@@ -188,11 +188,14 @@
         // Create geometry
         currentGeometry = createGeometryFromPlyData(data);
         
-        // Create material (simplified - no bounding box needed)
-        currentMaterial = createMaterial(data.hasColors, data.hasNormals);
-
         // Create mesh or points - default to points for point clouds, mesh for models with faces
         const shouldShowAsPoints = showAsPoints || data.faceCount === 0;
+        
+        // Update the showAsPoints variable to match the actual rendering decision
+        showAsPoints = shouldShowAsPoints;
+        
+        // Create material AFTER updating showAsPoints
+        currentMaterial = createMaterial(data.hasColors, data.hasNormals);
         
         // Store the rendering mode for display in info panel
         const renderingMode = shouldShowAsPoints ? 'Points' : 'Mesh';
