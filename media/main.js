@@ -3,7 +3,7 @@
 (function() {
     // Check if THREE is available
     if (typeof THREE === 'undefined') {
-        console.error('THREE.js is not loaded. Cannot initialize PLY viewer.');
+        console.error('THREE.js is not loaded. Cannot initialize PLY visualizer.');
         document.getElementById('loading').classList.add('hidden');
         document.getElementById('error-message').textContent = 'Three.js library failed to load. Please refresh the page.';
         document.getElementById('error').classList.remove('hidden');
@@ -19,6 +19,27 @@
     let isWireframe = false;
     let showAsPoints = false;
     let plyData = null;
+    
+    // Multi-file support
+    let isMultiViewer = false;
+    let multiPlyData = [];
+    let multiMeshes = [];
+    let fileVisibility = [];
+    let useOriginalColors = false; // Toggle between assigned colors and original colors
+    
+    // Predefined colors for different files
+    const FILE_COLORS = [
+        [1.0, 0.0, 0.0], // Red
+        [0.0, 1.0, 0.0], // Green
+        [0.0, 0.0, 1.0], // Blue
+        [1.0, 1.0, 0.0], // Yellow
+        [1.0, 0.0, 1.0], // Magenta
+        [0.0, 1.0, 1.0], // Cyan
+        [1.0, 0.5, 0.0], // Orange
+        [0.5, 0.0, 1.0], // Purple
+        [0.0, 0.5, 0.0], // Dark Green
+        [0.5, 0.5, 0.5]  // Gray
+    ];
 
     // Initialize Three.js scene
     function initThreeJS() {
@@ -229,6 +250,241 @@
         });
     }
 
+    function displayMultiPlyData(dataArray) {
+        isMultiViewer = true;
+        multiPlyData = dataArray;
+        multiMeshes = [];
+        fileVisibility = [];
+
+        // Clear existing meshes
+        while (scene.children.length > 0) {
+            const child = scene.children[0];
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) child.material.dispose();
+            scene.remove(child);
+        }
+
+        // Re-add lights
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 10, 5);
+        scene.add(directionalLight);
+
+        // Create mesh for each file
+        for (let i = 0; i < dataArray.length; i++) {
+            const data = dataArray[i];
+            const geometry = createGeometryFromPlyData(data);
+            
+            console.log(`Creating geometry for file ${i}:`, {
+                hasColors: data.hasColors,
+                vertexCount: data.vertexCount,
+                geometryHasColors: geometry.attributes.color !== undefined,
+                sampleVertex: data.vertices[0] // Show first vertex to see what properties it has
+            });
+            
+            const material = createMaterialForFile(data, i);
+            
+            const shouldShowAsPoints = data.faceCount === 0;
+            const mesh = shouldShowAsPoints ? 
+                new THREE.Points(geometry, material) : 
+                new THREE.Mesh(geometry, material);
+            
+            scene.add(mesh);
+            multiMeshes.push(mesh);
+            fileVisibility.push(true);
+        }
+
+        // Fit camera to all objects
+        fitCameraToAllObjects();
+
+        // Update UI
+        updateMultiFileStats();
+        updateFileList();
+
+        // Hide loading indicator
+        document.getElementById('loading').classList.add('hidden');
+    }
+
+    function createMaterialForFile(data, fileIndex) {
+        const shouldShowAsPoints = data.faceCount === 0;
+        
+        console.log(`Creating material for file ${fileIndex}:`, {
+            useOriginalColors,
+            hasColors: data.hasColors,
+            shouldShowAsPoints,
+            fileName: data.fileName
+        });
+        
+        if (shouldShowAsPoints) {
+            const materialParams = {
+                size: 0.001,
+                sizeAttenuation: false,
+                transparent: false
+            };
+            
+            if (useOriginalColors) {
+                if (data.hasColors) {
+                    materialParams.vertexColors = true;
+                    console.log(`Using vertex colors for file ${fileIndex}`);
+                } else {
+                    // No colors available, use white/gray for "original" look
+                    materialParams.color = new THREE.Color(0.7, 0.7, 0.7);
+                    console.log(`No colors available for file ${fileIndex}, using neutral gray`);
+                }
+            } else {
+                const color = FILE_COLORS[fileIndex % FILE_COLORS.length];
+                materialParams.color = new THREE.Color(color[0], color[1], color[2]);
+                console.log(`Using assigned color for file ${fileIndex}:`, color);
+            }
+            
+            return new THREE.PointsMaterial(materialParams);
+        } else {
+            const materialParams = {
+                side: THREE.DoubleSide
+            };
+            
+            if (useOriginalColors) {
+                if (data.hasColors) {
+                    materialParams.vertexColors = true;
+                    console.log(`Using vertex colors for mesh file ${fileIndex}`);
+                } else {
+                    // No colors available, use white/gray for "original" look
+                    materialParams.color = new THREE.Color(0.7, 0.7, 0.7);
+                    console.log(`No colors available for mesh file ${fileIndex}, using neutral gray`);
+                }
+            } else {
+                const color = FILE_COLORS[fileIndex % FILE_COLORS.length];
+                materialParams.color = new THREE.Color(color[0], color[1], color[2]);
+                console.log(`Using assigned color for mesh file ${fileIndex}:`, color);
+            }
+            
+            return new THREE.MeshLambertMaterial(materialParams);
+        }
+    }
+
+    function fitCameraToAllObjects() {
+        if (multiMeshes.length === 0) return;
+
+        const box = new THREE.Box3();
+        for (const mesh of multiMeshes) {
+            if (mesh.visible) {
+                box.expandByObject(mesh);
+            }
+        }
+
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const fov = camera.fov * (Math.PI / 180);
+        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+
+        cameraZ *= 2;
+
+        camera.position.set(center.x, center.y, center.z + cameraZ);
+        camera.lookAt(center);
+        
+        controls.target.copy(center);
+        controls.maxDistance = cameraZ * 10;
+        controls.update();
+    }
+
+    function updateMultiFileStats() {
+        const totalVertices = multiPlyData.reduce((sum, data) => sum + data.vertexCount, 0);
+        const totalFaces = multiPlyData.reduce((sum, data) => sum + data.faceCount, 0);
+        
+        const statsDiv = document.getElementById('file-stats');
+        statsDiv.innerHTML = `
+            <div><strong>Total Files:</strong> ${multiPlyData.length}</div>
+            <div><strong>Total Vertices:</strong> ${totalVertices.toLocaleString()}</div>
+            <div><strong>Total Faces:</strong> ${totalFaces.toLocaleString()}</div>
+        `;
+    }
+
+    function updateFileList() {
+        const fileListDiv = document.getElementById('file-list');
+        if (!fileListDiv) return;
+
+        let html = `<h5>Files (${useOriginalColors ? 'Original Colors' : 'Assigned Colors'}):</h5>`;
+        html += `<button id="toggle-colors" style="margin-bottom: 8px; font-size: 10px; padding: 4px 8px;">${useOriginalColors ? 'Use Assigned Colors' : 'Use Original Colors'}</button>`;
+        
+        for (let i = 0; i < multiPlyData.length; i++) {
+            const data = multiPlyData[i];
+            let colorIndicator = '';
+            
+            if (useOriginalColors && data.hasColors) {
+                colorIndicator = '<span class="color-indicator" style="background: linear-gradient(45deg, #ff0000, #00ff00, #0000ff); border: 1px solid #666;"></span>';
+            } else {
+                const color = FILE_COLORS[i % FILE_COLORS.length];
+                const colorHex = `#${Math.round(color[0] * 255).toString(16).padStart(2, '0')}${Math.round(color[1] * 255).toString(16).padStart(2, '0')}${Math.round(color[2] * 255).toString(16).padStart(2, '0')}`;
+                colorIndicator = `<span class="color-indicator" style="background-color: ${colorHex}"></span>`;
+            }
+            
+            html += `
+                <div class="file-item">
+                    <input type="checkbox" id="file-${i}" ${fileVisibility[i] ? 'checked' : ''}>
+                    ${colorIndicator}
+                    <label for="file-${i}">${data.fileName || `File ${i + 1}`}</label>
+                    <span class="file-info">(${data.vertexCount.toLocaleString()} vertices)</span>
+                </div>
+            `;
+        }
+        fileListDiv.innerHTML = html;
+        
+        // Add event listeners after setting innerHTML
+        for (let i = 0; i < multiPlyData.length; i++) {
+            const checkbox = document.getElementById(`file-${i}`);
+            if (checkbox) {
+                checkbox.addEventListener('change', () => toggleFileVisibility(i));
+            }
+        }
+        
+        // Add color toggle button listener
+        const colorToggleBtn = document.getElementById('toggle-colors');
+        if (colorToggleBtn) {
+            colorToggleBtn.addEventListener('click', toggleColorMode);
+        }
+    }
+
+    function toggleFileVisibility(fileIndex) {
+        if (fileIndex >= 0 && fileIndex < multiMeshes.length) {
+            fileVisibility[fileIndex] = !fileVisibility[fileIndex];
+            multiMeshes[fileIndex].visible = fileVisibility[fileIndex];
+        }
+    }
+
+    function toggleAllFiles() {
+        const allVisible = fileVisibility.every(visible => visible);
+        const newVisibility = !allVisible;
+        
+        for (let i = 0; i < fileVisibility.length; i++) {
+            fileVisibility[i] = newVisibility;
+            multiMeshes[i].visible = newVisibility;
+        }
+        
+        updateFileList();
+    }
+
+    function toggleColorMode() {
+        if (!isMultiViewer) return;
+        
+        useOriginalColors = !useOriginalColors;
+        console.log('Toggling color mode to:', useOriginalColors ? 'Original Colors' : 'Assigned Colors');
+        
+        // Recreate materials for all meshes
+        for (let i = 0; i < multiMeshes.length; i++) {
+            const oldMaterial = multiMeshes[i].material;
+            const newMaterial = createMaterialForFile(multiPlyData[i], i);
+            multiMeshes[i].material = newMaterial;
+            
+            if (oldMaterial) oldMaterial.dispose();
+        }
+        
+        // Update the file list to show current color mode
+        updateFileList();
+    }
+
     function fitCameraToObject(object) {
         const box = new THREE.Box3().setFromObject(object);
         const size = box.getSize(new THREE.Vector3());
@@ -320,6 +576,12 @@
     document.getElementById('reset-camera').addEventListener('click', resetCamera);
     document.getElementById('toggle-wireframe').addEventListener('click', toggleWireframe);
     document.getElementById('toggle-points').addEventListener('click', togglePoints);
+    
+    // Multi-viewer event listeners
+    const toggleAllBtn = document.getElementById('toggle-all');
+    if (toggleAllBtn) {
+        toggleAllBtn.addEventListener('click', toggleAllFiles);
+    }
 
     // Handle messages from extension
     window.addEventListener('message', event => {
@@ -332,6 +594,14 @@
                     displayPlyData(plyData);
                 } catch (error) {
                     console.error('Error displaying PLY data:', error);
+                    showError('Failed to display PLY data: ' + error.message);
+                }
+                break;
+            case 'multiPlyData':
+                try {
+                    displayMultiPlyData(message.data);
+                } catch (error) {
+                    console.error('Error displaying multi PLY data:', error);
                     showError('Failed to display PLY data: ' + error.message);
                 }
                 break;

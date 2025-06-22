@@ -25,6 +25,8 @@ export interface PlyData {
     faceCount: number;
     hasColors: boolean;
     hasNormals: boolean;
+    fileName?: string;
+    fileIndex?: number;
 }
 
 export class PlyParser {

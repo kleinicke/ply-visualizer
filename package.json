@@ -1,12 +1,12 @@
 {
-  "name": "ply-viewer",
-  "displayName": "PLY Viewer",
-  "description": "A 3D viewer for PLY (Polygon File Format) files using Three.js",
+  "name": "ply-visualizer",
+  "displayName": "PLY Visualizer",
+  "description": "A 3D visualizer for PLY (Polygon File Format) files using Three.js",
   "version": "0.0.1",
   "publisher": "kleinicke",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/ply-viewer.git"
+    "url": "https://github.com/kleinicke/ply-visualizer.git"
   },
   "engines": {
     "vscode": "^1.74.0"
@@ -30,7 +30,7 @@
     "customEditors": [
       {
         "viewType": "plyViewer.plyEditor",
-        "displayName": "PLY Viewer",
+        "displayName": "PLY Visualizer",
         "selector": [
           {
             "filenamePattern": "*.ply"
@@ -41,8 +41,13 @@
     "commands": [
       {
         "command": "plyViewer.openFile",
-        "title": "Open with PLY Viewer",
-        "category": "PLY Viewer"
+        "title": "Open with PLY Visualizer",
+        "category": "PLY Visualizer"
+      },
+      {
+        "command": "plyViewer.openMultipleFiles",
+        "title": "Open Multiple PLY Files",
+        "category": "PLY Visualizer"
       }
     ],
     "menus": {

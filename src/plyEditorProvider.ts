@@ -60,7 +60,49 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         );
     }
 
-    private getHtmlForWebview(webview: vscode.Webview): string {
+    public async setupMultiViewer(panel: vscode.WebviewPanel, files: vscode.Uri[]): Promise<void> {
+        panel.webview.html = this.getHtmlForWebview(panel.webview, true);
+
+        // Load and parse all PLY files
+        const allPlyData = [];
+        for (let i = 0; i < files.length; i++) {
+            try {
+                const plyData = await vscode.workspace.fs.readFile(files[i]);
+                const parser = new PlyParser();
+                const parsedData = await parser.parse(plyData);
+                
+                // Add file info
+                parsedData.fileName = path.basename(files[i].fsPath);
+                parsedData.fileIndex = i;
+                
+                allPlyData.push(parsedData);
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to load PLY file ${files[i].fsPath}: ${error}`);
+            }
+        }
+
+        // Send all parsed data to webview
+        panel.webview.postMessage({
+            type: 'multiPlyData',
+            data: allPlyData
+        });
+
+        // Handle messages from webview
+        panel.webview.onDidReceiveMessage(
+            message => {
+                switch (message.type) {
+                    case 'error':
+                        vscode.window.showErrorMessage(message.message);
+                        break;
+                    case 'info':
+                        vscode.window.showInformationMessage(message.message);
+                        break;
+                }
+            }
+        );
+    }
+
+    private getHtmlForWebview(webview: vscode.Webview, isMultiViewer: boolean = false): string {
         // Get the local path to main script run in the webview
         const scriptPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'main.js');
         const scriptUri = webview.asWebviewUri(scriptPathOnDisk);
@@ -86,7 +128,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https:; font-src ${webview.cspSource};">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <link href="${styleUri}" rel="stylesheet">
-                <title>PLY Viewer</title>
+                <title>PLY Visualizer</title>
             </head>
             <body>
                 <div id="loading" class="loading">
@@ -98,12 +140,14 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     <p id="error-message"></p>
                 </div>
                 <div id="info-panel" class="info-panel">
-                    <h4>File Information</h4>
+                    <h4>${isMultiViewer ? 'Multi-File Information' : 'File Information'}</h4>
                     <div id="file-stats"></div>
+                    ${isMultiViewer ? '<div id="file-list"></div>' : ''}
                     <div class="controls">
                         <button id="reset-camera">Reset Camera</button>
                         <button id="toggle-wireframe">Toggle Wireframe</button>
                         <button id="toggle-points">Toggle Points</button>
+                        ${isMultiViewer ? '<button id="toggle-all">Toggle All</button>' : ''}
                     </div>
                 </div>
                 <div id="viewer-container">
