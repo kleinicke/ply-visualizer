@@ -70,7 +70,7 @@ export class PlyParser {
 
         for (const line of headerLines) {
             const trimmed = line.trim();
-            if (!trimmed || trimmed === 'ply') continue;
+            if (!trimmed || trimmed === 'ply') {continue;}
 
             const parts = trimmed.split(/\s+/);
             

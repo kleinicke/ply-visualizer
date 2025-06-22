@@ -103,17 +103,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     }
 
     private getHtmlForWebview(webview: vscode.Webview, isMultiViewer: boolean = false): string {
-        // Get the local path to main script run in the webview
-        const scriptPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'main.js');
+        // Get the local path to bundled webview script
+        const scriptPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview', 'main.js');
         const scriptUri = webview.asWebviewUri(scriptPathOnDisk);
-
-        // Get path to Three.js library (copied to media folder)
-        const threePathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'three.min.js');
-        const threeUri = webview.asWebviewUri(threePathOnDisk);
-
-        // Get path to OrbitControls
-        const orbitControlsPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'three-orbit-controls.js');
-        const orbitControlsUri = webview.asWebviewUri(orbitControlsPathOnDisk);
 
         const stylePathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'style.css');
         const styleUri = webview.asWebviewUri(stylePathOnDisk);
@@ -154,29 +146,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     <canvas id="three-canvas"></canvas>
                 </div>
                 
-                <script nonce="${nonce}">
-                    // Check if Three.js loaded successfully
-                    console.log('Loading Three.js from: ${threeUri}');
-                </script>
-                <script nonce="${nonce}" src="${threeUri}" onerror="console.error('Failed to load Three.js from ${threeUri}')"></script>
-                <script nonce="${nonce}">
-                    // Check if Three.js is available
-                    if (typeof THREE === 'undefined') {
-                        console.error('THREE is not defined after loading three.js');
-                        document.getElementById('loading').classList.add('hidden');
-                        document.getElementById('error-message').textContent = 'Failed to load Three.js library. Please check the console for more details.';
-                        document.getElementById('error').classList.remove('hidden');
-                    } else {
-                        console.log('Three.js loaded successfully, version:', THREE.REVISION);
-                    }
-                </script>
-                <script nonce="${nonce}" src="${orbitControlsUri}"></script>
-                <script nonce="${nonce}">
-                    // Final check before loading main script
-                    if (typeof THREE === 'undefined') {
-                        console.error('THREE still not defined before loading main script');
-                    }
-                </script>
+                <!-- Load bundled webview script with Three.js -->
                 <script nonce="${nonce}" src="${scriptUri}"></script>
             </body>
             </html>`;

@@ -29,6 +29,7 @@ export function activate(context: vscode.ExtensionContext) {
             const files = await vscode.window.showOpenDialog({
                 canSelectMany: true,
                 filters: {
+                    // eslint-disable-next-line @typescript-eslint/naming-convention
                     'PLY Files': ['ply']
                 },
                 title: 'Select PLY files to compare'
