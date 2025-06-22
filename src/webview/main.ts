@@ -59,7 +59,7 @@ class PLYVisualizer {
     private multiPlyData: PlyData[] = [];
     private multiMeshes: (THREE.Mesh | THREE.Points)[] = [];
     private fileVisibility: boolean[] = [];
-    private useOriginalColors = false;
+    private useOriginalColors = true; // Default to original colors
     
     // Predefined colors for different files
     private readonly fileColors: [number, number, number][] = [
@@ -298,11 +298,10 @@ class PLYVisualizer {
         document.getElementById('toggle-wireframe')?.addEventListener('click', this.toggleWireframe.bind(this));
         document.getElementById('toggle-points')?.addEventListener('click', this.togglePoints.bind(this));
         
-        // Multi-viewer event listeners
-        const toggleAllBtn = document.getElementById('toggle-all');
-        if (toggleAllBtn) {
-            toggleAllBtn.addEventListener('click', this.toggleAllFiles.bind(this));
-        }
+        // File management event listeners
+        document.getElementById('add-file')?.addEventListener('click', this.requestAddFile.bind(this));
+        document.getElementById('clear-all')?.addEventListener('click', this.clearAllFiles.bind(this));
+        document.getElementById('toggle-all')?.addEventListener('click', this.toggleAllFiles.bind(this));
     }
 
     private setupMessageHandler(): void {
@@ -327,6 +326,30 @@ class PLYVisualizer {
                     } catch (error) {
                         console.error('Error displaying multi PLY data:', error);
                         this.showError('Failed to display PLY data: ' + (error instanceof Error ? error.message : String(error)));
+                    }
+                    break;
+                case 'addFiles':
+                    try {
+                        this.addNewFiles(message.data);
+                    } catch (error) {
+                        console.error('Error adding new files:', error);
+                        this.showError('Failed to add files: ' + (error instanceof Error ? error.message : String(error)));
+                    }
+                    break;
+                case 'fileRemoved':
+                    try {
+                        this.removeFileByIndex(message.fileIndex);
+                    } catch (error) {
+                        console.error('Error removing file:', error);
+                        this.showError('Failed to remove file: ' + (error instanceof Error ? error.message : String(error)));
+                    }
+                    break;
+                case 'allFilesCleared':
+                    try {
+                        this.clearAllFiles();
+                    } catch (error) {
+                        console.error('Error clearing files:', error);
+                        this.showError('Failed to clear files: ' + (error instanceof Error ? error.message : String(error)));
                     }
                     break;
             }
@@ -498,12 +521,19 @@ class PLYVisualizer {
         `;
     }
 
-    private updateFileList(): void {
+        private updateFileList(): void {
         const fileListDiv = document.getElementById('file-list');
         if (!fileListDiv) {return;}
 
-        let html = `<h5>Files (${this.useOriginalColors ? 'Original Colors' : 'Assigned Colors'}):</h5>`;
-        html += `<button id="toggle-colors" style="margin-bottom: 8px; font-size: 10px; padding: 4px 8px;">${this.useOriginalColors ? 'Use Assigned Colors' : 'Use Original Colors'}</button>`;
+        if (this.multiPlyData.length === 0) {
+            fileListDiv.innerHTML = '<p class="no-files">No files loaded. Click "Add PLY File" to get started.</p>';
+            return;
+        }
+
+        let html = `<div class="color-mode-section">
+            <label>Color Mode:</label>
+            <button id="toggle-colors" class="small-button">${this.useOriginalColors ? 'Use Assigned Colors' : 'Use Original Colors'}</button>
+        </div>`;
         
         for (let i = 0; i < this.multiPlyData.length; i++) {
             const data = this.multiPlyData[i];
@@ -519,23 +549,35 @@ class PLYVisualizer {
             
             html += `
                 <div class="file-item">
-                    <input type="checkbox" id="file-${i}" ${this.fileVisibility[i] ? 'checked' : ''}>
-                    ${colorIndicator}
-                    <label for="file-${i}">${data.fileName || `File ${i + 1}`}</label>
-                    <span class="file-info">(${data.vertexCount} vertices)</span>
+                    <div class="file-item-main">
+                        <input type="checkbox" id="file-${i}" ${this.fileVisibility[i] ? 'checked' : ''}>
+                        ${colorIndicator}
+                        <label for="file-${i}" class="file-name">${data.fileName || `File ${i + 1}`}</label>
+                        <button class="remove-file" data-file-index="${i}" title="Remove file">✕</button>
+                    </div>
+                    <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
                 </div>
             `;
         }
         
         fileListDiv.innerHTML = html;
         
-        // Add event listeners after setting innerHTML
+        // Add event listeners after setting innerHTML  
         for (let i = 0; i < this.multiPlyData.length; i++) {
             const checkbox = document.getElementById(`file-${i}`);
             if (checkbox) {
                 checkbox.addEventListener('change', () => this.toggleFileVisibility(i));
             }
         }
+        
+        // Add remove button listeners
+        const removeButtons = fileListDiv.querySelectorAll('.remove-file');
+        removeButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const fileIndex = parseInt((e.target as HTMLElement).getAttribute('data-file-index') || '0');
+                this.requestRemoveFile(fileIndex);
+            });
+        });
         
         const colorToggleBtn = document.getElementById('toggle-colors');
         if (colorToggleBtn) {
@@ -675,6 +717,145 @@ class PLYVisualizer {
         // Update the file stats to show new rendering mode
         this.updateFileStats(this.plyData);
     }
+
+    // File management methods
+    private requestAddFile(): void {
+        this.vscode.postMessage({
+            type: 'addFile'
+        });
+    }
+
+    private requestRemoveFile(fileIndex: number): void {
+        this.vscode.postMessage({
+            type: 'removeFile',
+            fileIndex: fileIndex
+        });
+    }
+
+    private clearAllFiles(): void {
+        // Clear all meshes from scene
+        for (const mesh of this.multiMeshes) {
+            this.scene.remove(mesh);
+            if (mesh.geometry) {mesh.geometry.dispose();}
+            if (mesh.material) {
+                if (Array.isArray(mesh.material)) {
+                    mesh.material.forEach(mat => mat.dispose());
+                } else {
+                    mesh.material.dispose();
+                }
+            }
+        }
+
+        // Clear arrays
+        this.multiPlyData = [];
+        this.multiMeshes = [];
+        this.fileVisibility = [];
+        this.isMultiViewer = false;
+
+        // Reset scene lighting
+        this.initSceneLighting();
+
+        // Update UI
+        this.updateFileList();
+        this.updateMultiFileStats();
+
+        console.log('All files cleared');
+    }
+
+    private addNewFiles(newFiles: PlyData[]): void {
+        for (const data of newFiles) {
+            // Assign new file index
+            data.fileIndex = this.multiPlyData.length;
+            
+            // Add to data array
+            this.multiPlyData.push(data);
+            
+            // Create geometry and material
+            const geometry = this.createGeometryFromPlyData(data);
+            const material = this.createMaterialForFile(data, data.fileIndex);
+            
+            // Create mesh
+            const shouldShowAsPoints = data.faceCount === 0;
+            const mesh = shouldShowAsPoints ?
+                new THREE.Points(geometry, material) :
+                new THREE.Mesh(geometry, material);
+            
+            this.scene.add(mesh);
+            this.multiMeshes.push(mesh);
+            this.fileVisibility.push(true);
+        }
+
+        // Update multi-viewer state
+        this.isMultiViewer = true;
+
+        // Update UI
+        this.updateFileList();
+        this.updateMultiFileStats();
+        this.fitCameraToAllObjects();
+
+        console.log(`Added ${newFiles.length} new files`);
+    }
+
+    private removeFileByIndex(fileIndex: number): void {
+        if (fileIndex < 0 || fileIndex >= this.multiPlyData.length) {
+            return;
+        }
+
+        // Remove mesh from scene
+        const mesh = this.multiMeshes[fileIndex];
+        this.scene.remove(mesh);
+        if (mesh.geometry) {mesh.geometry.dispose();}
+        if (mesh.material) {
+            if (Array.isArray(mesh.material)) {
+                mesh.material.forEach(mat => mat.dispose());
+            } else {
+                mesh.material.dispose();
+            }
+        }
+
+        // Remove from arrays
+        this.multiPlyData.splice(fileIndex, 1);
+        this.multiMeshes.splice(fileIndex, 1);
+        this.fileVisibility.splice(fileIndex, 1);
+
+        // Reassign file indices
+        for (let i = 0; i < this.multiPlyData.length; i++) {
+            this.multiPlyData[i].fileIndex = i;
+        }
+
+        // Update UI
+        this.updateFileList();
+        this.updateMultiFileStats();
+        
+        if (this.multiPlyData.length > 0) {
+            this.fitCameraToAllObjects();
+        } else {
+            this.isMultiViewer = false;
+        }
+
+        console.log(`Removed file at index ${fileIndex}`);
+    }
+
+    private initSceneLighting(): void {
+        // Remove existing lights
+        const lightsToRemove = this.scene.children.filter(child => 
+            child instanceof THREE.AmbientLight || child instanceof THREE.DirectionalLight
+        );
+        lightsToRemove.forEach(light => this.scene.remove(light));
+
+        // Add fresh lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+        this.scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 10, 5);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        this.scene.add(directionalLight);
+    }
+
+
 }
 
 // Initialize when DOM is ready

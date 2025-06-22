@@ -207,4 +207,124 @@ body {
     .file-item {
         font-size: 10px;
     }
-} 
+}
+
+/* Enhanced file management styles */
+.panel-section {
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--vscode-sideBar-border);
+    padding-bottom: 16px;
+}
+
+.panel-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.file-controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.primary-button {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    border-radius: 2px;
+    padding: 6px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    flex: 1;
+}
+
+.primary-button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.secondary-button {
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: 1px solid var(--vscode-button-border);
+    border-radius: 2px;
+    padding: 6px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.secondary-button:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.file-item-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.file-name {
+    flex-grow: 1;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.remove-file {
+    background-color: transparent;
+    color: var(--vscode-errorForeground);
+    border: none;
+    border-radius: 2px;
+    padding: 2px 6px;
+    font-size: 12px;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s, background-color 0.2s;
+}
+
+.remove-file:hover {
+    opacity: 1;
+    background-color: var(--vscode-inputValidation-errorBackground);
+}
+
+.color-mode-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding: 4px;
+    background-color: var(--vscode-editor-background);
+    border-radius: 2px;
+}
+
+.color-mode-section label {
+    font-size: 11px;
+    color: var(--vscode-foreground);
+}
+
+.small-button {
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: 1px solid var(--vscode-button-border);
+    border-radius: 2px;
+    padding: 2px 8px;
+    font-size: 10px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.small-button:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.no-files {
+    text-align: center;
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+    padding: 16px;
+    margin: 0;
+}
+
+ 
