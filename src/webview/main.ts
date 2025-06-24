@@ -1,11 +1,7 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-declare const acquireVsCodeApi: () => {
-    postMessage: (message: any) => void;
-    setState: (state: any) => void;
-    getState: () => any;
-};
+declare const acquireVsCodeApi: () => any;
 
 interface PlyVertex {
     x: number;
@@ -39,7 +35,7 @@ interface PlyData {
 }
 
 /**
- * Modern PLY Visualizer with TypeScript and proper Three.js imports
+ * Modern PLY Visualizer with unified file management
  */
 class PLYVisualizer {
     private vscode = acquireVsCodeApi();
@@ -47,17 +43,10 @@ class PLYVisualizer {
     private camera!: THREE.PerspectiveCamera;
     private renderer!: THREE.WebGLRenderer;
     private controls!: OrbitControls;
-    private currentMesh: THREE.Mesh | THREE.Points | null = null;
-    private currentGeometry: THREE.BufferGeometry | null = null;
-    private currentMaterial: THREE.Material | null = null;
-    private isWireframe = false;
-    private showAsPoints = false;
-    private plyData: PlyData | null = null;
     
-    // Multi-file support
-    private isMultiViewer = false;
-    private multiPlyData: PlyData[] = [];
-    private multiMeshes: (THREE.Mesh | THREE.Points)[] = [];
+    // Unified file management
+    private plyFiles: PlyData[] = [];
+    private meshes: (THREE.Mesh | THREE.Points)[] = [];
     private fileVisibility: boolean[] = [];
     private useOriginalColors = true; // Default to original colors
     
@@ -81,56 +70,68 @@ class PLYVisualizer {
 
     private async init(): Promise<void> {
         try {
-            console.log('Three.js loaded successfully, version:', THREE.REVISION);
-            
             this.initThreeJS();
             this.setupEventListeners();
             this.setupMessageHandler();
-            
         } catch (error) {
             this.showError(`Failed to initialize PLY Visualizer: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
     private initThreeJS(): void {
-        const container = document.getElementById('viewer-container');
-        const canvas = document.getElementById('three-canvas') as HTMLCanvasElement;
-        
-        if (!container || !canvas) {
-            throw new Error('Required DOM elements not found');
-        }
-        
         // Scene
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x1e1e1e);
+        this.scene.background = new THREE.Color(0x222222);
 
         // Camera
+        const container = document.getElementById('viewer-container');
+        if (!container) {throw new Error('Viewer container not found');}
+        
         this.camera = new THREE.PerspectiveCamera(
             75,
             container.clientWidth / container.clientHeight,
-            0.1,
-            10000
+            0.001,
+            1000
         );
+        this.camera.position.set(1, 1, 1);
 
         // Renderer
+        const canvas = document.getElementById('three-canvas') as HTMLCanvasElement;
+        if (!canvas) {throw new Error('Canvas not found');}
+        
         this.renderer = new THREE.WebGLRenderer({ 
             canvas: canvas,
-            antialias: true 
+            antialias: true,
+            alpha: true
         });
         this.renderer.setSize(container.clientWidth, container.clientHeight);
-        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
         // Controls
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
-        this.controls.dampingFactor = 0.05;
-        this.controls.screenSpacePanning = false;
-        this.controls.minDistance = 0.1;
-        this.controls.maxDistance = 1000;
+        this.controls.dampingFactor = 0.1;
 
-        // Lights
+        // Lighting
+        this.initSceneLighting();
+
+        // Window resize
+        window.addEventListener('resize', this.onWindowResize.bind(this));
+
+        // Start render loop
+        this.animate();
+    }
+
+    private initSceneLighting(): void {
+        // Remove existing lights
+        const lightsToRemove = this.scene.children.filter(child => 
+            child instanceof THREE.AmbientLight || child instanceof THREE.DirectionalLight
+        );
+        lightsToRemove.forEach(light => this.scene.remove(light));
+
+        // Add fresh lighting
         const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
         this.scene.add(ambientLight);
 
@@ -140,12 +141,6 @@ class PLYVisualizer {
         directionalLight.shadow.mapSize.width = 2048;
         directionalLight.shadow.mapSize.height = 2048;
         this.scene.add(directionalLight);
-
-        // Handle window resize
-        window.addEventListener('resize', this.onWindowResize.bind(this), false);
-
-        // Start render loop
-        this.animate();
     }
 
     private onWindowResize(): void {
@@ -205,11 +200,11 @@ class PLYVisualizer {
         }
 
         // Add faces if available
-        if (data.faces && data.faces.length > 0) {
+        if (data.faces.length > 0) {
             const indices: number[] = [];
             for (const face of data.faces) {
                 if (face.indices.length >= 3) {
-                    // Triangulate face (simple fan triangulation)
+                    // Triangulate faces (simple fan triangulation)
                     for (let i = 1; i < face.indices.length - 1; i++) {
                         indices.push(face.indices[0], face.indices[i], face.indices[i + 1]);
                     }
@@ -221,76 +216,7 @@ class PLYVisualizer {
         }
 
         geometry.computeBoundingBox();
-        geometry.computeBoundingSphere();
-
         return geometry;
-    }
-
-    private createMaterial(hasColors: boolean, hasNormals: boolean): THREE.Material {
-        const materialParams: any = {
-            vertexColors: hasColors,
-            side: THREE.DoubleSide,
-        };
-
-        if (this.showAsPoints) {
-            const pointSize = 0.001; // Small to prevent z-fighting
-            console.log('Using fixed point size:', pointSize);
-            
-            return new THREE.PointsMaterial({
-                ...materialParams,
-                size: pointSize,
-                sizeAttenuation: false,
-                transparent: false
-            });
-        } else if (this.isWireframe) {
-            return new THREE.MeshBasicMaterial({
-                ...materialParams,
-                wireframe: true
-            });
-        } else {
-            return new THREE.MeshLambertMaterial(materialParams);
-        }
-    }
-
-    private displayPlyData(data: PlyData): void {
-        // Remove existing mesh
-        if (this.currentMesh) {
-            this.scene.remove(this.currentMesh);
-            if (this.currentGeometry) {this.currentGeometry.dispose();}
-            if (this.currentMaterial) {this.currentMaterial.dispose();}
-        }
-
-        // Create geometry
-        this.currentGeometry = this.createGeometryFromPlyData(data);
-        
-        // Create mesh or points - default to points for point clouds, mesh for models with faces
-        const shouldShowAsPoints = this.showAsPoints || data.faceCount === 0;
-        this.showAsPoints = shouldShowAsPoints;
-        
-        // Create material AFTER updating showAsPoints
-        this.currentMaterial = this.createMaterial(data.hasColors, data.hasNormals);
-        
-        // Store the rendering mode for display in info panel
-        const renderingMode = shouldShowAsPoints ? 'Points' : 'Mesh';
-        
-        if (shouldShowAsPoints) {
-            this.currentMesh = new THREE.Points(this.currentGeometry, this.currentMaterial);
-            console.log('Rendering as POINTS');
-        } else {
-            this.currentMesh = new THREE.Mesh(this.currentGeometry, this.currentMaterial);
-            console.log('Rendering as MESH');
-        }
-
-        this.scene.add(this.currentMesh);
-
-        // Fit camera to object
-        this.fitCameraToObject(this.currentMesh);
-
-        // Update file statistics
-        this.updateFileStats(data, renderingMode);
-
-        // Hide loading indicator
-        document.getElementById('loading')?.classList.add('hidden');
     }
 
     private setupEventListeners(): void {
@@ -300,7 +226,6 @@ class PLYVisualizer {
         
         // File management event listeners
         document.getElementById('add-file')?.addEventListener('click', this.requestAddFile.bind(this));
-        document.getElementById('clear-all')?.addEventListener('click', this.clearAllFiles.bind(this));
         document.getElementById('toggle-all')?.addEventListener('click', this.toggleAllFiles.bind(this));
     }
 
@@ -310,21 +235,13 @@ class PLYVisualizer {
             
             switch (message.type) {
                 case 'plyData':
-                    try {
-                        this.plyData = message.data;
-                        if (this.plyData) {
-                            this.displayPlyData(this.plyData);
-                        }
-                    } catch (error) {
-                        console.error('Error displaying PLY data:', error);
-                        this.showError('Failed to display PLY data: ' + (error instanceof Error ? error.message : String(error)));
-                    }
-                    break;
                 case 'multiPlyData':
                     try {
-                        this.displayMultiPlyData(message.data);
+                        // Both single and multi-file data are handled the same way now
+                        const dataArray = Array.isArray(message.data) ? message.data : [message.data];
+                        this.displayFiles(dataArray);
                     } catch (error) {
-                        console.error('Error displaying multi PLY data:', error);
+                        console.error('Error displaying PLY data:', error);
                         this.showError('Failed to display PLY data: ' + (error instanceof Error ? error.message : String(error)));
                     }
                     break;
@@ -344,23 +261,14 @@ class PLYVisualizer {
                         this.showError('Failed to remove file: ' + (error instanceof Error ? error.message : String(error)));
                     }
                     break;
-                case 'allFilesCleared':
-                    try {
-                        this.clearAllFiles();
-                    } catch (error) {
-                        console.error('Error clearing files:', error);
-                        this.showError('Failed to clear files: ' + (error instanceof Error ? error.message : String(error)));
-                    }
-                    break;
+
             }
         });
     }
 
-    // Additional methods would be implemented here...
-    private displayMultiPlyData(dataArray: PlyData[]): void {
-        this.isMultiViewer = true;
-        this.multiPlyData = dataArray;
-        this.multiMeshes = [];
+    private displayFiles(dataArray: PlyData[]): void {
+        this.plyFiles = dataArray;
+        this.meshes = [];
         this.fileVisibility = [];
 
         // Clear existing meshes
@@ -380,11 +288,7 @@ class PLYVisualizer {
         }
 
         // Re-add lights
-        const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
-        this.scene.add(ambientLight);
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(10, 10, 5);
-        this.scene.add(directionalLight);
+        this.initSceneLighting();
 
         // Create mesh for each file
         for (let i = 0; i < dataArray.length; i++) {
@@ -405,7 +309,7 @@ class PLYVisualizer {
                 new THREE.Mesh(geometry, material);
             
             this.scene.add(mesh);
-            this.multiMeshes.push(mesh);
+            this.meshes.push(mesh);
             this.fileVisibility.push(true);
         }
 
@@ -413,7 +317,7 @@ class PLYVisualizer {
         this.fitCameraToAllObjects();
 
         // Update UI
-        this.updateMultiFileStats();
+        this.updateFileStats();
         this.updateFileList();
 
         // Hide loading indicator
@@ -423,13 +327,6 @@ class PLYVisualizer {
     private createMaterialForFile(data: PlyData, fileIndex: number): THREE.Material {
         const shouldShowAsPoints = data.faceCount === 0;
         
-        console.log(`Creating material for file ${fileIndex}:`, {
-            useOriginalColors: this.useOriginalColors,
-            hasColors: data.hasColors,
-            shouldShowAsPoints,
-            isWireframe: this.isWireframe
-        });
-
         if (shouldShowAsPoints) {
             const materialParams: any = {
                 size: 0.001,
@@ -437,57 +334,37 @@ class PLYVisualizer {
                 transparent: false
             };
             
-            if (this.useOriginalColors) {
-                if (data.hasColors) {
-                    materialParams.vertexColors = true;
-                    console.log(`Using original vertex colors for points file ${fileIndex}`);
-                } else {
-                    const color = this.fileColors[fileIndex % this.fileColors.length];
-                    materialParams.color = new THREE.Color(color[0], color[1], color[2]);
-                    console.log(`Using assigned color for points file ${fileIndex}:`, color);
-                }
+            if (this.useOriginalColors && data.hasColors) {
+                materialParams.vertexColors = true;
             } else {
                 const color = this.fileColors[fileIndex % this.fileColors.length];
                 materialParams.color = new THREE.Color(color[0], color[1], color[2]);
-                console.log(`Using assigned color for points file ${fileIndex}:`, color);
             }
             
             return new THREE.PointsMaterial(materialParams);
         } else {
             const materialParams: any = {
                 side: THREE.DoubleSide,
-                wireframe: this.isWireframe
+                wireframe: false
             };
             
-            if (this.useOriginalColors) {
-                if (data.hasColors) {
-                    materialParams.vertexColors = true;
-                    console.log(`Using original vertex colors for mesh file ${fileIndex}`);
-                } else {
-                    const color = this.fileColors[fileIndex % this.fileColors.length];
-                    materialParams.color = new THREE.Color(color[0], color[1], color[2]);
-                    console.log(`Using assigned color for mesh file ${fileIndex}:`, color);
-                }
+            if (this.useOriginalColors && data.hasColors) {
+                materialParams.vertexColors = true;
             } else {
                 const color = this.fileColors[fileIndex % this.fileColors.length];
                 materialParams.color = new THREE.Color(color[0], color[1], color[2]);
-                console.log(`Using assigned color for mesh file ${fileIndex}:`, color);
             }
             
-            return this.isWireframe ? 
-                new THREE.MeshBasicMaterial(materialParams) :
-                new THREE.MeshLambertMaterial(materialParams);
+            return new THREE.MeshLambertMaterial(materialParams);
         }
     }
 
     private fitCameraToAllObjects(): void {
-        if (this.multiMeshes.length === 0) {return;}
+        if (this.meshes.length === 0) {return;}
 
         const box = new THREE.Box3();
-        for (const mesh of this.multiMeshes) {
-            if (mesh.visible) {
-                box.expandByObject(mesh);
-            }
+        for (const mesh of this.meshes) {
+            box.expandByObject(mesh);
         }
 
         const size = box.getSize(new THREE.Vector3());
@@ -497,7 +374,7 @@ class PLYVisualizer {
         const fov = this.camera.fov * (Math.PI / 180);
         let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
 
-        cameraZ *= 2;
+        cameraZ *= 2; // Add some padding
 
         this.camera.position.set(center.x, center.y, center.z + cameraZ);
         this.camera.lookAt(center);
@@ -507,25 +384,46 @@ class PLYVisualizer {
         this.controls.update();
     }
 
-    private updateMultiFileStats(): void {
-        const totalVertices = this.multiPlyData.reduce((sum, data) => sum + data.vertexCount, 0);
-        const totalFaces = this.multiPlyData.reduce((sum, data) => sum + data.faceCount, 0);
-        
+    private updateFileStats(): void {
         const statsDiv = document.getElementById('file-stats');
         if (!statsDiv) {return;}
         
-        statsDiv.innerHTML = `
-            <div><strong>Total Files:</strong> ${this.multiPlyData.length}</div>
-            <div><strong>Total Vertices:</strong> ${totalVertices.toLocaleString()}</div>
-            <div><strong>Total Faces:</strong> ${totalFaces.toLocaleString()}</div>
-        `;
+        if (this.plyFiles.length === 0) {
+            statsDiv.innerHTML = '<div>No files loaded</div>';
+            return;
+        }
+        
+        if (this.plyFiles.length === 1) {
+            // Single file view
+            const data = this.plyFiles[0];
+            const renderingMode = data.faceCount === 0 ? 'Points' : 'Mesh';
+            statsDiv.innerHTML = `
+                <div><strong>Vertices:</strong> ${data.vertexCount.toLocaleString()}</div>
+                <div><strong>Faces:</strong> ${data.faceCount.toLocaleString()}</div>
+                <div><strong>Format:</strong> ${data.format}</div>
+                <div><strong>Colors:</strong> ${data.hasColors ? 'Yes' : 'No'}</div>
+                <div><strong>Normals:</strong> ${data.hasNormals ? 'Yes' : 'No'}</div>
+                <div><strong>Rendering Mode:</strong> ${renderingMode}</div>
+                ${data.comments.length > 0 ? `<div><strong>Comments:</strong><br>${data.comments.join('<br>')}</div>` : ''}
+            `;
+        } else {
+            // Multiple files view
+            const totalVertices = this.plyFiles.reduce((sum: number, data: PlyData) => sum + data.vertexCount, 0);
+            const totalFaces = this.plyFiles.reduce((sum: number, data: PlyData) => sum + data.faceCount, 0);
+            
+            statsDiv.innerHTML = `
+                <div><strong>Total Files:</strong> ${this.plyFiles.length}</div>
+                <div><strong>Total Vertices:</strong> ${totalVertices.toLocaleString()}</div>
+                <div><strong>Total Faces:</strong> ${totalFaces.toLocaleString()}</div>
+            `;
+        }
     }
 
-        private updateFileList(): void {
+    private updateFileList(): void {
         const fileListDiv = document.getElementById('file-list');
         if (!fileListDiv) {return;}
 
-        if (this.multiPlyData.length === 0) {
+        if (this.plyFiles.length === 0) {
             fileListDiv.innerHTML = '<p class="no-files">No files loaded. Click "Add PLY File" to get started.</p>';
             return;
         }
@@ -535,8 +433,8 @@ class PLYVisualizer {
             <button id="toggle-colors" class="small-button">${this.useOriginalColors ? 'Use Assigned Colors' : 'Use Original Colors'}</button>
         </div>`;
         
-        for (let i = 0; i < this.multiPlyData.length; i++) {
-            const data = this.multiPlyData[i];
+        for (let i = 0; i < this.plyFiles.length; i++) {
+            const data = this.plyFiles[i];
             let colorIndicator = '';
             
             if (this.useOriginalColors && data.hasColors) {
@@ -563,7 +461,7 @@ class PLYVisualizer {
         fileListDiv.innerHTML = html;
         
         // Add event listeners after setting innerHTML  
-        for (let i = 0; i < this.multiPlyData.length; i++) {
+        for (let i = 0; i < this.plyFiles.length; i++) {
             const checkbox = document.getElementById(`file-${i}`);
             if (checkbox) {
                 checkbox.addEventListener('change', () => this.toggleFileVisibility(i));
@@ -586,9 +484,9 @@ class PLYVisualizer {
     }
 
     private toggleFileVisibility(fileIndex: number): void {
-        if (fileIndex >= 0 && fileIndex < this.multiMeshes.length) {
+        if (fileIndex >= 0 && fileIndex < this.meshes.length) {
             this.fileVisibility[fileIndex] = !this.fileVisibility[fileIndex];
-            this.multiMeshes[fileIndex].visible = this.fileVisibility[fileIndex];
+            this.meshes[fileIndex].visible = this.fileVisibility[fileIndex];
         }
     }
 
@@ -598,23 +496,21 @@ class PLYVisualizer {
         
         for (let i = 0; i < this.fileVisibility.length; i++) {
             this.fileVisibility[i] = newVisibility;
-            this.multiMeshes[i].visible = newVisibility;
+            this.meshes[i].visible = newVisibility;
         }
         
         this.updateFileList();
     }
 
     private toggleColorMode(): void {
-        if (!this.isMultiViewer) {return;}
-        
         this.useOriginalColors = !this.useOriginalColors;
         console.log('Toggling color mode to:', this.useOriginalColors ? 'Original Colors' : 'Assigned Colors');
         
         // Recreate materials for all meshes
-        for (let i = 0; i < this.multiMeshes.length; i++) {
-            const oldMaterial = this.multiMeshes[i].material;
-            const newMaterial = this.createMaterialForFile(this.multiPlyData[i], i);
-            this.multiMeshes[i].material = newMaterial;
+        for (let i = 0; i < this.meshes.length; i++) {
+            const oldMaterial = this.meshes[i].material;
+            const newMaterial = this.createMaterialForFile(this.plyFiles[i], i);
+            this.meshes[i].material = newMaterial;
             
             if (oldMaterial) {
                 if (Array.isArray(oldMaterial)) {
@@ -629,38 +525,48 @@ class PLYVisualizer {
         this.updateFileList();
     }
 
-    private fitCameraToObject(object: THREE.Object3D): void {
-        const box = new THREE.Box3().setFromObject(object);
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const fov = this.camera.fov * (Math.PI / 180);
-        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-
-        cameraZ *= 2; // Add some padding
-
-        this.camera.position.set(center.x, center.y, center.z + cameraZ);
-        this.camera.lookAt(center);
-        
-        this.controls.target.copy(center);
-        this.controls.maxDistance = cameraZ * 10;
-        this.controls.update();
+    private resetCamera(): void {
+        this.fitCameraToAllObjects();
     }
 
-    private updateFileStats(data: PlyData, renderingMode?: string): void {
-        const statsDiv = document.getElementById('file-stats');
-        if (!statsDiv) {return;}
-        
-        statsDiv.innerHTML = `
-            <div><strong>Vertices:</strong> ${data.vertexCount.toLocaleString()}</div>
-            <div><strong>Faces:</strong> ${data.faceCount.toLocaleString()}</div>
-            <div><strong>Format:</strong> ${data.format}</div>
-            <div><strong>Colors:</strong> ${data.hasColors ? 'Yes' : 'No'}</div>
-            <div><strong>Normals:</strong> ${data.hasNormals ? 'Yes' : 'No'}</div>
-            <div><strong>Rendering Mode:</strong> ${renderingMode || (this.showAsPoints ? 'Points' : 'Mesh')}</div>
-            ${data.comments.length > 0 ? `<div><strong>Comments:</strong><br>${data.comments.join('<br>')}</div>` : ''}
-        `;
+    private toggleWireframe(): void {
+        // Toggle wireframe for all mesh materials
+        for (let i = 0; i < this.meshes.length; i++) {
+            const mesh = this.meshes[i];
+            if (mesh instanceof THREE.Mesh && mesh.material instanceof THREE.MeshLambertMaterial) {
+                mesh.material.wireframe = !mesh.material.wireframe;
+            }
+        }
+    }
+
+    private togglePoints(): void {
+        // Convert between mesh and points representation
+        for (let i = 0; i < this.meshes.length; i++) {
+            const oldMesh = this.meshes[i];
+            const data = this.plyFiles[i];
+            
+            this.scene.remove(oldMesh);
+            
+            const isCurrentlyMesh = oldMesh instanceof THREE.Mesh;
+            const shouldShowAsPoints = !isCurrentlyMesh;
+            
+            const material = this.createMaterialForFile(data, i);
+            const newMesh = shouldShowAsPoints ?
+                new THREE.Points(oldMesh.geometry, material) :
+                new THREE.Mesh(oldMesh.geometry, material);
+            
+            this.scene.add(newMesh);
+            this.meshes[i] = newMesh;
+            
+            // Dispose old material
+            if (oldMesh.material) {
+                if (Array.isArray(oldMesh.material)) {
+                    oldMesh.material.forEach(mat => mat.dispose());
+                } else {
+                    oldMesh.material.dispose();
+                }
+            }
+        }
     }
 
     private showError(message: string): void {
@@ -668,54 +574,6 @@ class PLYVisualizer {
         const errorMsg = document.getElementById('error-message');
         if (errorMsg) {errorMsg.textContent = message;}
         document.getElementById('error')?.classList.remove('hidden');
-    }
-
-    private resetCamera(): void {
-        if (this.currentMesh) {
-            this.fitCameraToObject(this.currentMesh);
-        }
-    }
-
-    private toggleWireframe(): void {
-        if (!this.currentMesh || !this.plyData || !this.currentGeometry) {return;}
-        
-        this.isWireframe = !this.isWireframe;
-        
-        // Recreate material
-        const oldMaterial = this.currentMaterial;
-        this.currentMaterial = this.createMaterial(this.plyData.hasColors, this.plyData.hasNormals);
-        this.currentMesh.material = this.currentMaterial;
-        
-        if (oldMaterial) {oldMaterial.dispose();}
-        
-        // Update the file stats to reflect current mode
-        this.updateFileStats(this.plyData);
-    }
-
-    private togglePoints(): void {
-        if (!this.currentMesh || !this.plyData || !this.currentGeometry) {return;}
-        
-        this.showAsPoints = !this.showAsPoints;
-        
-        // Remove current mesh
-        this.scene.remove(this.currentMesh);
-        
-        // Create new mesh/points
-        const oldMaterial = this.currentMaterial;
-        this.currentMaterial = this.createMaterial(this.plyData.hasColors, this.plyData.hasNormals);
-        
-        if (this.showAsPoints) {
-            this.currentMesh = new THREE.Points(this.currentGeometry, this.currentMaterial);
-        } else {
-            this.currentMesh = new THREE.Mesh(this.currentGeometry, this.currentMaterial);
-        }
-        
-        this.scene.add(this.currentMesh);
-        
-        if (oldMaterial) {oldMaterial.dispose();}
-        
-        // Update the file stats to show new rendering mode
-        this.updateFileStats(this.plyData);
     }
 
     // File management methods
@@ -732,43 +590,15 @@ class PLYVisualizer {
         });
     }
 
-    private clearAllFiles(): void {
-        // Clear all meshes from scene
-        for (const mesh of this.multiMeshes) {
-            this.scene.remove(mesh);
-            if (mesh.geometry) {mesh.geometry.dispose();}
-            if (mesh.material) {
-                if (Array.isArray(mesh.material)) {
-                    mesh.material.forEach(mat => mat.dispose());
-                } else {
-                    mesh.material.dispose();
-                }
-            }
-        }
 
-        // Clear arrays
-        this.multiPlyData = [];
-        this.multiMeshes = [];
-        this.fileVisibility = [];
-        this.isMultiViewer = false;
-
-        // Reset scene lighting
-        this.initSceneLighting();
-
-        // Update UI
-        this.updateFileList();
-        this.updateMultiFileStats();
-
-        console.log('All files cleared');
-    }
 
     private addNewFiles(newFiles: PlyData[]): void {
         for (const data of newFiles) {
             // Assign new file index
-            data.fileIndex = this.multiPlyData.length;
+            data.fileIndex = this.plyFiles.length;
             
             // Add to data array
-            this.multiPlyData.push(data);
+            this.plyFiles.push(data);
             
             // Create geometry and material
             const geometry = this.createGeometryFromPlyData(data);
@@ -781,28 +611,25 @@ class PLYVisualizer {
                 new THREE.Mesh(geometry, material);
             
             this.scene.add(mesh);
-            this.multiMeshes.push(mesh);
+            this.meshes.push(mesh);
             this.fileVisibility.push(true);
         }
 
-        // Update multi-viewer state
-        this.isMultiViewer = true;
-
         // Update UI
         this.updateFileList();
-        this.updateMultiFileStats();
+        this.updateFileStats();
         this.fitCameraToAllObjects();
 
         console.log(`Added ${newFiles.length} new files`);
     }
 
     private removeFileByIndex(fileIndex: number): void {
-        if (fileIndex < 0 || fileIndex >= this.multiPlyData.length) {
+        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
             return;
         }
 
         // Remove mesh from scene
-        const mesh = this.multiMeshes[fileIndex];
+        const mesh = this.meshes[fileIndex];
         this.scene.remove(mesh);
         if (mesh.geometry) {mesh.geometry.dispose();}
         if (mesh.material) {
@@ -814,48 +641,25 @@ class PLYVisualizer {
         }
 
         // Remove from arrays
-        this.multiPlyData.splice(fileIndex, 1);
-        this.multiMeshes.splice(fileIndex, 1);
+        this.plyFiles.splice(fileIndex, 1);
+        this.meshes.splice(fileIndex, 1);
         this.fileVisibility.splice(fileIndex, 1);
 
         // Reassign file indices
-        for (let i = 0; i < this.multiPlyData.length; i++) {
-            this.multiPlyData[i].fileIndex = i;
+        for (let i = 0; i < this.plyFiles.length; i++) {
+            this.plyFiles[i].fileIndex = i;
         }
 
         // Update UI
         this.updateFileList();
-        this.updateMultiFileStats();
+        this.updateFileStats();
         
-        if (this.multiPlyData.length > 0) {
+        if (this.plyFiles.length > 0) {
             this.fitCameraToAllObjects();
-        } else {
-            this.isMultiViewer = false;
         }
 
         console.log(`Removed file at index ${fileIndex}`);
     }
-
-    private initSceneLighting(): void {
-        // Remove existing lights
-        const lightsToRemove = this.scene.children.filter(child => 
-            child instanceof THREE.AmbientLight || child instanceof THREE.DirectionalLight
-        );
-        lightsToRemove.forEach(light => this.scene.remove(light));
-
-        // Add fresh lighting
-        const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
-        this.scene.add(ambientLight);
-
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(10, 10, 5);
-        directionalLight.castShadow = true;
-        directionalLight.shadow.mapSize.width = 2048;
-        directionalLight.shadow.mapSize.height = 2048;
-        this.scene.add(directionalLight);
-    }
-
-
 }
 
 // Initialize when DOM is ready

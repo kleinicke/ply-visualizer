@@ -68,60 +68,15 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                             fileIndex: message.fileIndex
                         });
                         break;
-                    case 'clearAll':
-                        webviewPanel.webview.postMessage({
-                            type: 'allFilesCleared'
-                        });
-                        break;
 
                 }
             }
         );
     }
 
-    public async setupMultiViewer(panel: vscode.WebviewPanel, files: vscode.Uri[]): Promise<void> {
-        panel.webview.html = this.getHtmlForWebview(panel.webview, true);
 
-        // Load and parse all PLY files
-        const allPlyData = [];
-        for (let i = 0; i < files.length; i++) {
-            try {
-                const plyData = await vscode.workspace.fs.readFile(files[i]);
-                const parser = new PlyParser();
-                const parsedData = await parser.parse(plyData);
-                
-                // Add file info
-                parsedData.fileName = path.basename(files[i].fsPath);
-                parsedData.fileIndex = i;
-                
-                allPlyData.push(parsedData);
-            } catch (error) {
-                vscode.window.showErrorMessage(`Failed to load PLY file ${files[i].fsPath}: ${error}`);
-            }
-        }
 
-        // Send all parsed data to webview
-        panel.webview.postMessage({
-            type: 'multiPlyData',
-            data: allPlyData
-        });
-
-        // Handle messages from webview
-        panel.webview.onDidReceiveMessage(
-            message => {
-                switch (message.type) {
-                    case 'error':
-                        vscode.window.showErrorMessage(message.message);
-                        break;
-                    case 'info':
-                        vscode.window.showInformationMessage(message.message);
-                        break;
-                }
-            }
-        );
-    }
-
-    private getHtmlForWebview(webview: vscode.Webview, isMultiViewer: boolean = true): string {
+    private getHtmlForWebview(webview: vscode.Webview): string {
         // Get the local path to bundled webview script
         const scriptPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview', 'main.js');
         const scriptUri = webview.asWebviewUri(scriptPathOnDisk);
@@ -155,7 +110,6 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         <h4>File Management</h4>
                         <div class="file-controls">
                             <button id="add-file" class="primary-button">+ Add PLY File</button>
-                            <button id="clear-all" class="secondary-button">Clear All</button>
                         </div>
                         <div id="file-list"></div>
                     </div>

@@ -23,38 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
-    // Register command for opening multiple PLY files
-    context.subscriptions.push(
-        vscode.commands.registerCommand('plyViewer.openMultipleFiles', async () => {
-            const files = await vscode.window.showOpenDialog({
-                canSelectMany: true,
-                filters: {
-                    // eslint-disable-next-line @typescript-eslint/naming-convention
-                    'PLY Files': ['ply']
-                },
-                title: 'Select PLY files to compare'
-            });
 
-            if (files && files.length > 0) {
-                // Create a new webview panel for multi-file viewing
-                const panel = vscode.window.createWebviewPanel(
-                    'plyMultiViewer',
-                    `PLY Multi-Viewer (${files.length} files)`,
-                    vscode.ViewColumn.One,
-                    {
-                        enableScripts: true,
-                        localResourceRoots: [
-                            vscode.Uri.joinPath(context.extensionUri, 'media'),
-                            vscode.Uri.joinPath(context.extensionUri, 'out', 'webview')
-                        ]
-                    }
-                );
-
-                const provider = new PlyEditorProvider(context);
-                await (provider as any).setupMultiViewer(panel, files);
-            }
-        })
-    );
 
     console.log('PLY Visualizer extension is now active!');
 }
