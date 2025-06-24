@@ -176,28 +176,104 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         plyDataArray: any[], 
         messageType: string
     ): Promise<void> {
-        // Check if data is too large for a single message  
-        const CHUNK_SIZE = 500000; // 500k vertices per chunk for maximum performance
-        const MAX_MESSAGE_SIZE = 100 * 1024 * 1024; // 100MB limit (less conservative)
-        
         for (const plyData of plyDataArray) {
-            // Smart size detection - use estimated JSON size to determine method
-            const estimatedJsonSize = this.estimateJsonSize(plyData);
-            const SIZE_LIMIT = 50 * 1024 * 1024; // 50MB limit
+            console.log(`🚀 Binary transfer for ${plyData.fileName} (${plyData.vertexCount} vertices)`);
+            const startTime = performance.now();
+            await this.sendBinaryData(webviewPanel, plyData, messageType);
+            const transferTime = performance.now() - startTime;
+            console.log(`⚡ Binary transfer complete: ${transferTime.toFixed(1)}ms`);
+        }
+    }
+
+    private async sendBinaryData(
+        webviewPanel: vscode.WebviewPanel,
+        plyData: any,
+        messageType: string
+    ): Promise<void> {
+        // Convert PLY data to binary ArrayBuffers for maximum transfer speed
+        const vertices = plyData.vertices;
+        const vertexCount = plyData.vertexCount;
+        const hasColors = plyData.hasColors;
+        const hasNormals = plyData.hasNormals;
+        
+        // Create typed arrays for vertices (always 3 floats: x, y, z)
+        const positionBuffer = new Float32Array(vertexCount * 3);
+        let colorBuffer: Uint8Array | null = null;
+        let normalBuffer: Float32Array | null = null;
+        
+        // Optional color buffer (RGB as bytes: 0-255)
+        if (hasColors) {
+            colorBuffer = new Uint8Array(vertexCount * 3);
+        }
+        
+        // Optional normal buffer (3 floats: nx, ny, nz)
+        if (hasNormals) {
+            normalBuffer = new Float32Array(vertexCount * 3);
+        }
+        
+        // Fill the buffers
+        for (let i = 0; i < vertexCount; i++) {
+            const vertex = vertices[i];
             
-            if (estimatedJsonSize < SIZE_LIMIT) {
-                try {
-                    await this.tryDirectSend(webviewPanel, plyData, messageType);
-                    console.log(`✅ Direct send succeeded for ${plyData.fileName} (${plyData.vertexCount} vertices, ~${Math.round(estimatedJsonSize/1024/1024)}MB)`);
-                } catch (error) {
-                    console.log(`⚠️ Direct send failed for ${plyData.fileName}, using ultra-fast chunking...`);
-                    await this.sendLargeFileInChunksOptimized(webviewPanel, plyData, messageType);
-                }
-            } else {
-                console.log(`📦 Large file ${plyData.fileName} (~${Math.round(estimatedJsonSize/1024/1024)}MB), using ultra-fast chunking...`);
-                await this.sendLargeFileInChunksOptimized(webviewPanel, plyData, messageType);
+            // Position (always present)
+            positionBuffer[i * 3] = vertex.x;
+            positionBuffer[i * 3 + 1] = vertex.y;
+            positionBuffer[i * 3 + 2] = vertex.z;
+            
+            // Colors (if present)
+            if (hasColors && colorBuffer) {
+                colorBuffer[i * 3] = vertex.red || 0;
+                colorBuffer[i * 3 + 1] = vertex.green || 0;
+                colorBuffer[i * 3 + 2] = vertex.blue || 0;
+            }
+            
+            // Normals (if present)
+            if (hasNormals && normalBuffer) {
+                normalBuffer[i * 3] = vertex.nx || 0;
+                normalBuffer[i * 3 + 1] = vertex.ny || 0;
+                normalBuffer[i * 3 + 2] = vertex.nz || 0;
             }
         }
+        
+        // Handle faces if present
+        let indexBuffer: Uint32Array | null = null;
+        if (plyData.faces && plyData.faces.length > 0) {
+            const faces = plyData.faces;
+            indexBuffer = new Uint32Array(faces.length * 3); // Assuming triangles
+            
+            for (let i = 0; i < faces.length; i++) {
+                const face = faces[i];
+                indexBuffer[i * 3] = face.indices[0];
+                indexBuffer[i * 3 + 1] = face.indices[1];
+                indexBuffer[i * 3 + 2] = face.indices[2];
+            }
+        }
+        
+        // Calculate total binary size
+        const totalSize = positionBuffer.byteLength + 
+                         (colorBuffer ? colorBuffer.byteLength : 0) +
+                         (normalBuffer ? normalBuffer.byteLength : 0) +
+                         (indexBuffer ? indexBuffer.byteLength : 0);
+        
+        console.log(`📦 Binary data: ${(totalSize / 1024 / 1024).toFixed(1)}MB (${vertexCount} vertices)`);
+        
+        // Send metadata + binary buffers
+        webviewPanel.webview.postMessage({
+            type: 'binaryPlyData',
+            messageType: messageType,
+            fileName: plyData.fileName,
+            vertexCount: vertexCount,
+            faceCount: plyData.faceCount,
+            hasColors: hasColors,
+            hasNormals: hasNormals,
+            format: plyData.format,
+            comments: plyData.comments,
+            // Binary buffers (will be transferred efficiently)
+            positionBuffer: positionBuffer.buffer,
+            colorBuffer: colorBuffer ? colorBuffer.buffer : null,
+            normalBuffer: normalBuffer ? normalBuffer.buffer : null,
+            indexBuffer: indexBuffer ? indexBuffer.buffer : null
+        });
     }
 
     private estimateJsonSize(plyData: any): number {

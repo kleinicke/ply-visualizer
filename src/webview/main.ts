@@ -442,6 +442,14 @@ class PLYVisualizer {
                         this.showError('Failed to display PLY data: ' + (error instanceof Error ? error.message : String(error)));
                     }
                     break;
+                case 'binaryPlyData':
+                    try {
+                        await this.handleBinaryPlyData(message);
+                    } catch (error) {
+                        console.error('Error handling binary PLY data:', error);
+                        this.showError('Failed to handle binary PLY data: ' + (error instanceof Error ? error.message : String(error)));
+                    }
+                    break;
                 case 'addFiles':
                     try {
                         this.addNewFiles(message.data);
@@ -908,6 +916,91 @@ class PLYVisualizer {
         }
 
         console.log(`Removed file at index ${fileIndex}`);
+    }
+
+    private async handleBinaryPlyData(message: any): Promise<void> {
+        console.log(`📦 Received binary PLY data for ${message.fileName} (${message.vertexCount} vertices)`);
+        const startTime = performance.now();
+        
+        // Convert binary ArrayBuffers back to PLY data format
+        const plyData: PlyData = {
+            vertices: [],
+            faces: [],
+            format: message.format,
+            version: '1.0',
+            comments: message.comments || [],
+            vertexCount: message.vertexCount,
+            faceCount: message.faceCount,
+            hasColors: message.hasColors,
+            hasNormals: message.hasNormals,
+            fileName: message.fileName
+        };
+        
+        // Convert position buffer
+        const positionArray = new Float32Array(message.positionBuffer);
+        
+        // Convert color buffer if present
+        let colorArray: Uint8Array | null = null;
+        if (message.colorBuffer) {
+            colorArray = new Uint8Array(message.colorBuffer);
+        }
+        
+        // Convert normal buffer if present
+        let normalArray: Float32Array | null = null;
+        if (message.normalBuffer) {
+            normalArray = new Float32Array(message.normalBuffer);
+        }
+        
+        // Reconstruct vertices from binary data
+        for (let i = 0; i < message.vertexCount; i++) {
+            const vertex: PlyVertex = {
+                x: positionArray[i * 3],
+                y: positionArray[i * 3 + 1],
+                z: positionArray[i * 3 + 2]
+            };
+            
+            // Add colors if present
+            if (colorArray && message.hasColors) {
+                vertex.red = colorArray[i * 3];
+                vertex.green = colorArray[i * 3 + 1];
+                vertex.blue = colorArray[i * 3 + 2];
+            }
+            
+            // Add normals if present
+            if (normalArray && message.hasNormals) {
+                vertex.nx = normalArray[i * 3];
+                vertex.ny = normalArray[i * 3 + 1];
+                vertex.nz = normalArray[i * 3 + 2];
+            }
+            
+            plyData.vertices.push(vertex);
+        }
+        
+        // Convert face buffer if present
+        if (message.indexBuffer) {
+            const indexArray = new Uint32Array(message.indexBuffer);
+            const faceCount = indexArray.length / 3; // Assuming triangles
+            
+            for (let i = 0; i < faceCount; i++) {
+                plyData.faces.push({
+                    indices: [
+                        indexArray[i * 3],
+                        indexArray[i * 3 + 1],
+                        indexArray[i * 3 + 2]
+                    ]
+                });
+            }
+        }
+        
+        const conversionTime = performance.now() - startTime;
+        console.log(`⚡ Binary conversion took ${conversionTime.toFixed(1)}ms`);
+        
+        // Handle based on message type
+        if (message.messageType === 'addFiles') {
+            this.addNewFiles([plyData]);
+        } else {
+            await this.displayFiles([plyData]);
+        }
     }
 
     private handleStartLargeFile(message: any): void {
