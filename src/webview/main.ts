@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 
 declare const acquireVsCodeApi: () => any;
 
@@ -42,7 +42,7 @@ class PLYVisualizer {
     private scene!: THREE.Scene;
     private camera!: THREE.PerspectiveCamera;
     private renderer!: THREE.WebGLRenderer;
-    private controls!: OrbitControls;
+    private controls!: TrackballControls;
     
     // Unified file management
     private plyFiles: PlyData[] = [];
@@ -109,19 +109,87 @@ class PLYVisualizer {
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-        // Controls
-        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-        this.controls.enableDamping = true;
-        this.controls.dampingFactor = 0.1;
+        // Controls - Trackball for better point cloud navigation
+        this.controls = new TrackballControls(this.camera, this.renderer.domElement);
+        this.controls.rotateSpeed = 2.0;  // Responsive rotation
+        this.controls.zoomSpeed = 2.5;    // Fast zooming
+        this.controls.panSpeed = 1.5;     // Good panning speed
+        this.controls.noZoom = false;
+        this.controls.noPan = false;
+        this.controls.staticMoving = false; // Enable smooth movement
+        this.controls.dynamicDampingFactor = 0.15; // Smooth damping
+        
+        // Set up screen coordinates for proper rotation
+        this.controls.screen.left = 0;
+        this.controls.screen.top = 0;
+        this.controls.screen.width = this.renderer.domElement.clientWidth;
+        this.controls.screen.height = this.renderer.domElement.clientHeight;
 
         // Lighting
         this.initSceneLighting();
 
+        // Add coordinate axes helper
+        this.addAxesHelper();
+
         // Window resize
         window.addEventListener('resize', this.onWindowResize.bind(this));
 
+        // Double-click to change rotation center (like CloudCompare)
+        this.renderer.domElement.addEventListener('dblclick', this.onDoubleClick.bind(this));
+
         // Start render loop
         this.animate();
+    }
+
+
+
+    private addAxesHelper(): void {
+        // Create coordinate axes helper (X=red, Y=green, Z=blue)
+        const axesHelper = new THREE.AxesHelper(1); // Size of 1 unit
+        
+        // Scale the axes based on the scene size once we have objects
+        // For now, use a reasonable default size
+        axesHelper.scale.setScalar(0.5);
+        
+        // Position it at the origin
+        axesHelper.position.set(0, 0, 0);
+        
+        // Add to scene
+        this.scene.add(axesHelper);
+        
+        // Store reference for potential resizing later
+        (this as any).axesHelper = axesHelper;
+    }
+
+    private updateAxesSize(): void {
+        const axesHelper = (this as any).axesHelper;
+        if (!axesHelper || this.meshes.length === 0) {return;}
+
+        // Calculate the bounding box of all visible objects
+        const box = new THREE.Box3();
+        for (let i = 0; i < this.meshes.length; i++) {
+            if (this.fileVisibility[i]) {
+                box.expandByObject(this.meshes[i]);
+            }
+        }
+
+        if (box.isEmpty()) {return;}
+
+        // Size the axes to be about 15% of the largest dimension
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const axesSize = maxDim * 0.15;
+
+        axesHelper.scale.setScalar(axesSize);
+        
+        // Position axes at the bottom-left corner of the bounding box
+        const center = box.getCenter(new THREE.Vector3());
+        const min = box.min;
+        axesHelper.position.set(
+            min.x + axesSize * 0.5,
+            min.y + axesSize * 0.5,
+            min.z + axesSize * 0.5
+        );
     }
 
     private initSceneLighting(): void {
@@ -150,12 +218,83 @@ class PLYVisualizer {
         this.camera.aspect = container.clientWidth / container.clientHeight;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(container.clientWidth, container.clientHeight);
+        
+        // Update trackball controls screen size for proper rotation
+        this.controls.screen.width = container.clientWidth;
+        this.controls.screen.height = container.clientHeight;
+        this.controls.handleResize();
     }
 
     private animate(): void {
         requestAnimationFrame(this.animate.bind(this));
         this.controls.update();
         this.renderer.render(this.scene, this.camera);
+    }
+
+    private onDoubleClick(event: MouseEvent): void {
+        // Convert mouse coordinates to normalized device coordinates (-1 to +1)
+        const canvas = this.renderer.domElement;
+        const rect = canvas.getBoundingClientRect();
+        const mouse = new THREE.Vector2();
+        
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+        // Create raycaster
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, this.camera);
+        
+        // Set parameters for better point cloud picking
+        raycaster.params.Points.threshold = 0.01; // Increase threshold for easier point picking
+
+        // Find intersections with all visible meshes
+        const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
+        const intersects = raycaster.intersectObjects(visibleMeshes, false);
+
+        if (intersects.length > 0) {
+            // Get the closest intersection point
+            const intersectionPoint = intersects[0].point;
+            
+            // Set this point as the new rotation center
+            this.setRotationCenter(intersectionPoint);
+            
+            console.log('New rotation center set at:', intersectionPoint);
+        }
+    }
+
+    private setRotationCenter(point: THREE.Vector3): void {
+        // Set the new target for the trackball controls
+        this.controls.target.copy(point);
+        
+        // Optionally adjust camera position to maintain good viewing angle
+        const currentDistance = this.camera.position.distanceTo(this.controls.target);
+        
+        // Update controls
+        this.controls.update();
+        
+        // Visual feedback - could add a temporary marker here
+        this.showRotationCenterFeedback(point);
+    }
+
+    private showRotationCenterFeedback(point: THREE.Vector3): void {
+        // Create a temporary visual indicator at the rotation center
+        const geometry = new THREE.SphereGeometry(0.01, 8, 6);
+        const material = new THREE.MeshBasicMaterial({ 
+            color: 0xff0000, 
+            transparent: true, 
+            opacity: 0.8 
+        });
+        const sphere = new THREE.Mesh(geometry, material);
+        sphere.position.copy(point);
+        
+        this.scene.add(sphere);
+        
+        // Remove the indicator after 2 seconds
+        setTimeout(() => {
+            this.scene.remove(sphere);
+            geometry.dispose();
+            material.dispose();
+        }, 2000);
     }
 
     private createGeometryFromPlyData(data: PlyData): THREE.BufferGeometry {
@@ -223,6 +362,7 @@ class PLYVisualizer {
         document.getElementById('reset-camera')?.addEventListener('click', this.resetCamera.bind(this));
         document.getElementById('toggle-wireframe')?.addEventListener('click', this.toggleWireframe.bind(this));
         document.getElementById('toggle-points')?.addEventListener('click', this.togglePoints.bind(this));
+        document.getElementById('toggle-axes')?.addEventListener('click', this.toggleAxes.bind(this));
         
         // File management event listeners
         document.getElementById('add-file')?.addEventListener('click', this.requestAddFile.bind(this));
@@ -316,6 +456,9 @@ class PLYVisualizer {
         // Fit camera to all objects
         this.fitCameraToAllObjects();
 
+        // Update axes size based on scene content
+        this.updateAxesSize();
+
         // Update UI
         this.updateFileStats();
         this.updateFileList();
@@ -380,7 +523,6 @@ class PLYVisualizer {
         this.camera.lookAt(center);
         
         this.controls.target.copy(center);
-        this.controls.maxDistance = cameraZ * 10;
         this.controls.update();
     }
 
@@ -566,6 +708,14 @@ class PLYVisualizer {
                     oldMesh.material.dispose();
                 }
             }
+        }
+    }
+
+    private toggleAxes(): void {
+        const axesHelper = (this as any).axesHelper;
+        if (axesHelper) {
+            axesHelper.visible = !axesHelper.visible;
+            console.log('Axes helper', axesHelper.visible ? 'shown' : 'hidden');
         }
     }
 

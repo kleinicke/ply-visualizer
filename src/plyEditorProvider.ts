@@ -125,6 +125,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                             <button id="reset-camera">Reset Camera</button>
                             <button id="toggle-wireframe">Toggle Wireframe</button>
                             <button id="toggle-points">Toggle Points</button>
+                            <button id="toggle-axes">Toggle Axes</button>
                             <button id="toggle-all">Toggle All Visibility</button>
                         </div>
                     </div>
