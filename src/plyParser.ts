@@ -115,15 +115,15 @@ export class PlyParser {
         }
 
         if (result.format === 'ascii') {
-            this.parseAsciiData(data, dataStartPos, result, vertexProperties, faceProperties);
+            this.parseAsciiDataOptimized(data, dataStartPos, result, vertexProperties, faceProperties);
         } else {
-            this.parseBinaryData(data, dataStartPos, result, vertexProperties, faceProperties);
+            this.parseBinaryDataOptimized(data, dataStartPos, result, vertexProperties, faceProperties);
         }
 
         return result;
     }
 
-    private parseAsciiData(
+    private parseAsciiDataOptimized(
         data: Uint8Array, 
         startPos: number, 
         result: PlyData, 
@@ -134,45 +134,71 @@ export class PlyParser {
         const text = decoder.decode(data.slice(startPos));
         const lines = text.split('\n').filter(line => line.trim());
 
+        // Pre-allocate vertices array for better performance
+        result.vertices = new Array(result.vertexCount);
+
         let lineIndex = 0;
 
-        // Parse vertices
+        // Create property index map for faster lookup
+        const propMap = new Map<string, number>();
+        vertexProperties.forEach((prop, index) => propMap.set(prop.name, index));
+
+        // Parse vertices with optimized approach
         for (let i = 0; i < result.vertexCount && lineIndex < lines.length; i++, lineIndex++) {
-            const values = lines[lineIndex].trim().split(/\s+/).map(v => parseFloat(v));
+            const values = lines[lineIndex].trim().split(/\s+/);
             const vertex: PlyVertex = { x: 0, y: 0, z: 0 };
 
-            for (let j = 0; j < vertexProperties.length && j < values.length; j++) {
-                const prop = vertexProperties[j];
-                const value = values[j];
+            // Use direct indexing instead of searching
+            const xIdx = propMap.get('x');
+            const yIdx = propMap.get('y');
+            const zIdx = propMap.get('z');
+            
+            if (xIdx !== undefined) vertex.x = parseFloat(values[xIdx]);
+            if (yIdx !== undefined) vertex.y = parseFloat(values[yIdx]);
+            if (zIdx !== undefined) vertex.z = parseFloat(values[zIdx]);
+
+            // Only parse colors if they exist
+            if (result.hasColors) {
+                const redIdx = propMap.get('red');
+                const greenIdx = propMap.get('green');
+                const blueIdx = propMap.get('blue');
                 
-                switch (prop.name) {
-                    case 'x': vertex.x = value; break;
-                    case 'y': vertex.y = value; break;
-                    case 'z': vertex.z = value; break;
-                    case 'red': vertex.red = value; break;
-                    case 'green': vertex.green = value; break;
-                    case 'blue': vertex.blue = value; break;
-                    case 'alpha': vertex.alpha = value; break;
-                    case 'nx': vertex.nx = value; break;
-                    case 'ny': vertex.ny = value; break;
-                    case 'nz': vertex.nz = value; break;
-                }
+                if (redIdx !== undefined) vertex.red = parseFloat(values[redIdx]);
+                if (greenIdx !== undefined) vertex.green = parseFloat(values[greenIdx]);
+                if (blueIdx !== undefined) vertex.blue = parseFloat(values[blueIdx]);
             }
-            result.vertices.push(vertex);
+
+            // Only parse normals if they exist
+            if (result.hasNormals) {
+                const nxIdx = propMap.get('nx');
+                const nyIdx = propMap.get('ny');
+                const nzIdx = propMap.get('nz');
+                
+                if (nxIdx !== undefined) vertex.nx = parseFloat(values[nxIdx]);
+                if (nyIdx !== undefined) vertex.ny = parseFloat(values[nyIdx]);
+                if (nzIdx !== undefined) vertex.nz = parseFloat(values[nzIdx]);
+            }
+
+            result.vertices[i] = vertex;
         }
 
-        // Parse faces
-        for (let i = 0; i < result.faceCount && lineIndex < lines.length; i++, lineIndex++) {
-            const values = lines[lineIndex].trim().split(/\s+/).map(v => parseInt(v));
-            if (values.length > 0) {
-                const vertexCount = values[0];
-                const indices = values.slice(1, vertexCount + 1);
-                result.faces.push({ indices });
+        // Pre-allocate faces array
+        if (result.faceCount > 0) {
+            result.faces = new Array(result.faceCount);
+            
+            // Parse faces
+            for (let i = 0; i < result.faceCount && lineIndex < lines.length; i++, lineIndex++) {
+                const values = lines[lineIndex].trim().split(/\s+/).map(v => parseInt(v));
+                if (values.length > 0) {
+                    const vertexCount = values[0];
+                    const indices = values.slice(1, vertexCount + 1);
+                    result.faces[i] = { indices };
+                }
             }
         }
     }
 
-    private parseBinaryData(
+    private parseBinaryDataOptimized(
         data: Uint8Array, 
         startPos: number, 
         result: PlyData, 
@@ -182,7 +208,10 @@ export class PlyParser {
         this.dataView = new DataView(data.buffer, data.byteOffset + startPos);
         this.offset = 0;
 
-        // Parse vertices
+        // Pre-allocate vertices array for better performance
+        result.vertices = new Array(result.vertexCount);
+
+        // Parse vertices with optimized binary reading
         for (let i = 0; i < result.vertexCount; i++) {
             const vertex: PlyVertex = { x: 0, y: 0, z: 0 };
 
@@ -202,19 +231,24 @@ export class PlyParser {
                     case 'nz': vertex.nz = value; break;
                 }
             }
-            result.vertices.push(vertex);
+            result.vertices[i] = vertex;
         }
 
-        // Parse faces
-        for (let i = 0; i < result.faceCount; i++) {
-            const vertexCount = this.readBinaryValue('uchar');
-            const indices: number[] = [];
+        // Pre-allocate faces array
+        if (result.faceCount > 0) {
+            result.faces = new Array(result.faceCount);
             
-            for (let j = 0; j < vertexCount; j++) {
-                indices.push(this.readBinaryValue('int'));
+            // Parse faces
+            for (let i = 0; i < result.faceCount; i++) {
+                const vertexCount = this.readBinaryValue('uchar');
+                const indices: number[] = new Array(vertexCount);
+                
+                for (let j = 0; j < vertexCount; j++) {
+                    indices[j] = this.readBinaryValue('int');
+                }
+                
+                result.faces[i] = { indices };
             }
-            
-            result.faces.push({ indices });
         }
     }
 

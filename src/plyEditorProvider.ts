@@ -40,11 +40,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             parsedData.fileName = path.basename(document.uri.fsPath);
             parsedData.fileIndex = 0;
 
-            // Send as array to start multi-file mode immediately
-            webviewPanel.webview.postMessage({
-                type: 'multiPlyData',
-                data: [parsedData]
-            });
+            // Send with chunking for large files
+            await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to load PLY file: ${error}`);
         }
@@ -169,14 +166,196 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             }
 
             if (newPlyData.length > 0) {
-                webviewPanel.webview.postMessage({
-                    type: 'addFiles',
-                    data: newPlyData
-                });
+                await this.sendPlyDataToWebview(webviewPanel, newPlyData, 'addFiles');
             }
         }
     }
 
+    private async sendPlyDataToWebview(
+        webviewPanel: vscode.WebviewPanel, 
+        plyDataArray: any[], 
+        messageType: string
+    ): Promise<void> {
+        // Check if data is too large for a single message  
+        const CHUNK_SIZE = 500000; // 500k vertices per chunk for maximum performance
+        const MAX_MESSAGE_SIZE = 100 * 1024 * 1024; // 100MB limit (less conservative)
+        
+        for (const plyData of plyDataArray) {
+            // Smart size detection - use estimated JSON size to determine method
+            const estimatedJsonSize = this.estimateJsonSize(plyData);
+            const SIZE_LIMIT = 50 * 1024 * 1024; // 50MB limit
+            
+            if (estimatedJsonSize < SIZE_LIMIT) {
+                try {
+                    await this.tryDirectSend(webviewPanel, plyData, messageType);
+                    console.log(`✅ Direct send succeeded for ${plyData.fileName} (${plyData.vertexCount} vertices, ~${Math.round(estimatedJsonSize/1024/1024)}MB)`);
+                } catch (error) {
+                    console.log(`⚠️ Direct send failed for ${plyData.fileName}, using ultra-fast chunking...`);
+                    await this.sendLargeFileInChunksOptimized(webviewPanel, plyData, messageType);
+                }
+            } else {
+                console.log(`📦 Large file ${plyData.fileName} (~${Math.round(estimatedJsonSize/1024/1024)}MB), using ultra-fast chunking...`);
+                await this.sendLargeFileInChunksOptimized(webviewPanel, plyData, messageType);
+            }
+        }
+    }
+
+    private estimateJsonSize(plyData: any): number {
+        // Rough estimation of JSON size to avoid expensive JSON.stringify
+        // Each vertex: ~60 bytes (x,y,z,r,g,b + JSON overhead)
+        // Each face: ~30 bytes per face
+        const vertexSize = plyData.hasColors ? 60 : 36; // With/without colors
+        const faceSize = 30;
+        const overhead = 1000; // JSON structure overhead
+        
+        return (plyData.vertexCount * vertexSize) + 
+               (plyData.faceCount * faceSize) + 
+               overhead;
+    }
+
+    private async tryDirectSend(
+        webviewPanel: vscode.WebviewPanel,
+        plyData: any,
+        messageType: string
+    ): Promise<void> {
+        return new Promise((resolve, reject) => {
+            try {
+                webviewPanel.webview.postMessage({
+                    type: messageType,
+                    data: [plyData]
+                });
+                // If we get here, the send was successful
+                resolve();
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
+    private async sendLargeFileInChunksOptimized(
+        webviewPanel: vscode.WebviewPanel,
+        plyData: any,
+        messageType: string
+    ): Promise<void> {
+        // ULTRA-AGGRESSIVE chunking for maximum transfer speed
+        const CHUNK_SIZE = 1000000; // 1M vertices per chunk!
+        const totalVertices = plyData.vertexCount;
+        const vertices = plyData.vertices;
+        const colors = plyData.colors;
+        const normals = plyData.normals;
+        const faces = plyData.faces;
+        
+        const totalChunks = Math.ceil(totalVertices / CHUNK_SIZE);
+        console.log(`🚀 Ultra-fast chunking: ${plyData.fileName} (${totalVertices} vertices, ${totalChunks} chunks)`);
+        
+        const startTime = performance.now();
+        let firstChunkTime = 0;
+        
+        // Send start message
+        webviewPanel.webview.postMessage({
+            type: 'startLargeFile',
+            fileName: plyData.fileName,
+            totalVertices: totalVertices,
+            totalChunks: totalChunks,
+            hasColors: plyData.hasColors,
+            hasNormals: plyData.hasNormals,
+            faces: faces,
+            format: plyData.format,
+            comments: plyData.comments,
+            messageType: messageType
+        });
+
+        // Send chunks with minimal overhead
+        for (let i = 0; i < totalChunks; i++) {
+            const startIdx = i * CHUNK_SIZE;
+            const endIdx = Math.min(startIdx + CHUNK_SIZE, totalVertices);
+            const chunkSize = endIdx - startIdx;
+            
+            // Extract chunk data efficiently
+            const chunkVertices = vertices.slice(startIdx, endIdx);
+            const chunkColors = colors ? colors.slice(startIdx, endIdx) : undefined;
+            const chunkNormals = normals ? normals.slice(startIdx, endIdx) : undefined;
+            
+            webviewPanel.webview.postMessage({
+                type: 'largeFileChunk',
+                fileName: plyData.fileName,
+                chunkIndex: i,
+                totalChunks: totalChunks,
+                vertices: chunkVertices,
+                colors: chunkColors,
+                normals: chunkNormals
+            });
+            
+            if (i === 0) {
+                firstChunkTime = performance.now();
+            }
+            
+            // Log only every 5th chunk to reduce console spam
+            if (i % 5 === 0 || i === totalChunks - 1) {
+                console.log(`Chunk ${i + 1}/${totalChunks} (${chunkSize} vertices)`);
+            }
+        }
+        
+        // Send completion message
+        webviewPanel.webview.postMessage({
+            type: 'largeFileComplete',
+            fileName: plyData.fileName,
+            messageType: messageType
+        });
+        
+        const totalTime = performance.now() - startTime;
+        console.log(`⚡ Ultra-fast transfer complete: ${totalTime.toFixed(1)}ms total, ${firstChunkTime ? (firstChunkTime - startTime).toFixed(1) : 0}ms to first chunk`);
+    }
+
+    private async sendLargeFileInChunks(
+        webviewPanel: vscode.WebviewPanel,
+        plyData: any,
+        messageType: string
+    ): Promise<void> {
+        const CHUNK_SIZE = 500000; // 500k vertices per chunk
+        const totalVertices = plyData.vertexCount;
+        const vertices = plyData.vertices;
+        
+        // Calculate number of chunks
+        const numChunks = Math.ceil(totalVertices / CHUNK_SIZE);
+        
+        // Send start message
+        webviewPanel.webview.postMessage({
+            type: 'startLargeFile',
+            fileName: plyData.fileName,
+            totalVertices: totalVertices,
+            totalChunks: numChunks,
+            hasColors: plyData.hasColors,
+            hasNormals: plyData.hasNormals,
+            faces: plyData.faces, // Send faces once
+            format: plyData.format,
+            comments: plyData.comments
+        });
+
+        // Send vertex data in chunks
+        for (let chunkIndex = 0; chunkIndex < numChunks; chunkIndex++) {
+            const startVertex = chunkIndex * CHUNK_SIZE;
+            const endVertex = Math.min(startVertex + CHUNK_SIZE, totalVertices);
+            const chunkVertices = vertices.slice(startVertex, endVertex);
+            
+            webviewPanel.webview.postMessage({
+                type: 'largeFileChunk',
+                chunkIndex: chunkIndex,
+                totalChunks: numChunks,
+                vertices: chunkVertices,
+                fileName: plyData.fileName
+            });
+            
+            // No artificial delay - let it run at maximum speed
+        }
+        
+        // Send completion message
+        webviewPanel.webview.postMessage({
+            type: 'largeFileComplete',
+            fileName: plyData.fileName,
+            messageType: messageType
+        });
+    }
 
 }
 

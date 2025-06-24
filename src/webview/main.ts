@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
+import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls';
 
 declare const acquireVsCodeApi: () => any;
 
@@ -49,6 +49,24 @@ class PLYVisualizer {
     private meshes: (THREE.Mesh | THREE.Points)[] = [];
     private fileVisibility: boolean[] = [];
     private useOriginalColors = true; // Default to original colors
+    
+    // Large file chunked loading state
+    private chunkedFileState: Map<string, {
+        fileName: string;
+        totalVertices: number;
+        totalChunks: number;
+        receivedChunks: number;
+        vertices: PlyVertex[];
+        hasColors: boolean;
+        hasNormals: boolean;
+        faces: PlyFace[];
+        format: string;
+        comments: string[];
+        messageType: string;
+        startTime: number;
+        firstChunkTime: number;
+        lastChunkTime: number;
+    }> = new Map();
     
     // Predefined colors for different files
     private readonly fileColors: [number, number, number][] = [
@@ -124,6 +142,9 @@ class PLYVisualizer {
         this.controls.screen.top = 0;
         this.controls.screen.width = this.renderer.domElement.clientWidth;
         this.controls.screen.height = this.renderer.domElement.clientHeight;
+        
+        // Fix Z-axis rotation direction
+        this.setupZAxisRotationFix();
 
         // Lighting
         this.initSceneLighting();
@@ -141,7 +162,11 @@ class PLYVisualizer {
         this.animate();
     }
 
-
+    private setupZAxisRotationFix(): void {
+        // Simple approach: just invert the rotateSpeed to fix Z-axis rotation direction
+        // This affects all rotations but should make Z-axis feel more natural
+        this.controls.rotateSpeed *= -1;
+    }
 
     private addAxesHelper(): void {
         // Create coordinate axes helper (X=red, Y=green, Z=blue)
@@ -299,26 +324,34 @@ class PLYVisualizer {
 
     private createGeometryFromPlyData(data: PlyData): THREE.BufferGeometry {
         const geometry = new THREE.BufferGeometry();
+        const vertexCount = data.vertices.length;
         
-        // Extract vertices
-        const vertices = new Float32Array(data.vertices.length * 3);
-        const colors = data.hasColors ? new Float32Array(data.vertices.length * 3) : null;
-        const normals = data.hasNormals ? new Float32Array(data.vertices.length * 3) : null;
+        console.log(`Creating geometry for ${vertexCount} vertices...`);
+        const startTime = performance.now();
+        
+        // Pre-allocate typed arrays for better performance
+        const vertices = new Float32Array(vertexCount * 3);
+        const colors = data.hasColors ? new Float32Array(vertexCount * 3) : null;
+        const normals = data.hasNormals ? new Float32Array(vertexCount * 3) : null;
 
-        for (let i = 0; i < data.vertices.length; i++) {
-            const vertex = data.vertices[i];
-            const i3 = i * 3;
+        // Optimized vertex processing - batch operations
+        const vertexArray = data.vertices;
+        for (let i = 0, i3 = 0; i < vertexCount; i++, i3 += 3) {
+            const vertex = vertexArray[i];
             
+            // Position data (required)
             vertices[i3] = vertex.x;
             vertices[i3 + 1] = vertex.y;
             vertices[i3 + 2] = vertex.z;
 
+            // Color data (optional)
             if (colors && vertex.red !== undefined) {
                 colors[i3] = vertex.red / 255;
                 colors[i3 + 1] = (vertex.green || 0) / 255;
                 colors[i3 + 2] = (vertex.blue || 0) / 255;
             }
 
+            // Normal data (optional)
             if (normals && vertex.nx !== undefined) {
                 normals[i3] = vertex.nx;
                 normals[i3 + 1] = vertex.ny || 0;
@@ -326,6 +359,7 @@ class PLYVisualizer {
             }
         }
 
+        // Set attributes
         geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
         
         if (colors) {
@@ -334,27 +368,50 @@ class PLYVisualizer {
 
         if (normals) {
             geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-        } else {
+        } else if (data.faces.length > 0) {
+            // Only compute normals for meshes, not point clouds
             geometry.computeVertexNormals();
         }
 
-        // Add faces if available
+        // Optimized face processing
         if (data.faces.length > 0) {
-            const indices: number[] = [];
+            // Estimate index count for pre-allocation
+            let estimatedIndexCount = 0;
             for (const face of data.faces) {
                 if (face.indices.length >= 3) {
-                    // Triangulate faces (simple fan triangulation)
-                    for (let i = 1; i < face.indices.length - 1; i++) {
-                        indices.push(face.indices[0], face.indices[i], face.indices[i + 1]);
+                    estimatedIndexCount += (face.indices.length - 2) * 3;
+                }
+            }
+            
+            const indices = new Uint32Array(estimatedIndexCount);
+            let indexOffset = 0;
+            
+            for (const face of data.faces) {
+                if (face.indices.length >= 3) {
+                    // Optimized fan triangulation
+                    const faceIndices = face.indices;
+                    const firstIndex = faceIndices[0];
+                    
+                    for (let i = 1; i < faceIndices.length - 1; i++) {
+                        indices[indexOffset++] = firstIndex;
+                        indices[indexOffset++] = faceIndices[i];
+                        indices[indexOffset++] = faceIndices[i + 1];
                     }
                 }
             }
-            if (indices.length > 0) {
-                geometry.setIndex(indices);
+            
+            if (indexOffset > 0) {
+                // Trim array if we over-estimated
+                const finalIndices = indexOffset < indices.length ? indices.slice(0, indexOffset) : indices;
+                geometry.setIndex(new THREE.BufferAttribute(finalIndices, 1));
             }
         }
 
         geometry.computeBoundingBox();
+        
+        const endTime = performance.now();
+        console.log(`Geometry creation took ${(endTime - startTime).toFixed(2)}ms`);
+        
         return geometry;
     }
 
@@ -370,7 +427,7 @@ class PLYVisualizer {
     }
 
     private setupMessageHandler(): void {
-        window.addEventListener('message', event => {
+        window.addEventListener('message', async (event) => {
             const message = event.data;
             
             switch (message.type) {
@@ -379,7 +436,7 @@ class PLYVisualizer {
                     try {
                         // Both single and multi-file data are handled the same way now
                         const dataArray = Array.isArray(message.data) ? message.data : [message.data];
-                        this.displayFiles(dataArray);
+                        await this.displayFiles(dataArray);
                     } catch (error) {
                         console.error('Error displaying PLY data:', error);
                         this.showError('Failed to display PLY data: ' + (error instanceof Error ? error.message : String(error)));
@@ -401,24 +458,43 @@ class PLYVisualizer {
                         this.showError('Failed to remove file: ' + (error instanceof Error ? error.message : String(error)));
                     }
                     break;
+                case 'startLargeFile':
+                    this.handleStartLargeFile(message);
+                    break;
+                case 'largeFileChunk':
+                    this.handleLargeFileChunk(message);
+                    break;
+                case 'largeFileComplete':
+                    await this.handleLargeFileComplete(message);
+                    break;
 
             }
         });
     }
 
-    private displayFiles(dataArray: PlyData[]): void {
+    private async displayFiles(dataArray: PlyData[]): Promise<void> {
         this.plyFiles = dataArray;
         this.meshes = [];
         this.fileVisibility = [];
 
-        // Clear existing meshes
-        while (this.scene.children.length > 0) {
-            const child = this.scene.children[0];
+        // Show loading indicator
+        document.getElementById('loading')?.classList.remove('hidden');
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl) {
+            loadingEl.textContent = 'Processing point cloud...';
+        }
+
+        // Clear existing meshes but preserve axes helper and lights
+        const childrenToRemove = this.scene.children.filter(child => 
+            child instanceof THREE.Mesh || child instanceof THREE.Points
+        );
+        
+        for (const child of childrenToRemove) {
             if (child instanceof THREE.Mesh || child instanceof THREE.Points) {
                 if (child.geometry) {child.geometry.dispose();}
                 if (child.material) {
                     if (Array.isArray(child.material)) {
-                        child.material.forEach(mat => mat.dispose());
+                        child.material.forEach((mat: any) => mat.dispose());
                     } else {
                         child.material.dispose();
                     }
@@ -427,20 +503,34 @@ class PLYVisualizer {
             this.scene.remove(child);
         }
 
-        // Re-add lights
+        // Re-add lights (in case they were accidentally removed)
         this.initSceneLighting();
+        
+        // Re-add axes helper if it was removed
+        const hasAxes = this.scene.children.some(child => child instanceof THREE.AxesHelper);
+        if (!hasAxes) {
+            this.addAxesHelper();
+        }
 
-        // Create mesh for each file
+        // Process files asynchronously to prevent UI freezing
         for (let i = 0; i < dataArray.length; i++) {
             const data = dataArray[i];
-            const geometry = this.createGeometryFromPlyData(data);
             
-            console.log(`Creating geometry for file ${i}:`, {
+            // Update progress
+            if (loadingEl) {
+                loadingEl.textContent = `Processing file ${i + 1}/${dataArray.length} (${data.vertexCount.toLocaleString()} vertices)...`;
+            }
+            
+            console.log(`Processing file ${i}:`, {
                 vertices: data.vertexCount,
                 faces: data.faceCount,
                 hasColors: data.hasColors
             });
             
+            // Yield control to prevent UI freezing on large files
+            await this.yieldToUI();
+            
+            const geometry = this.createGeometryFromPlyData(data);
             const material = this.createMaterialForFile(data, i);
             
             const shouldShowAsPoints = data.faceCount === 0;
@@ -451,6 +541,11 @@ class PLYVisualizer {
             this.scene.add(mesh);
             this.meshes.push(mesh);
             this.fileVisibility.push(true);
+        }
+
+        // Update progress
+        if (loadingEl) {
+            loadingEl.textContent = 'Finalizing...';
         }
 
         // Fit camera to all objects
@@ -465,6 +560,10 @@ class PLYVisualizer {
 
         // Hide loading indicator
         document.getElementById('loading')?.classList.add('hidden');
+    }
+
+    private async yieldToUI(): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, 0));
     }
 
     private createMaterialForFile(data: PlyData, fileIndex: number): THREE.Material {
@@ -809,6 +908,135 @@ class PLYVisualizer {
         }
 
         console.log(`Removed file at index ${fileIndex}`);
+    }
+
+    private handleStartLargeFile(message: any): void {
+        const startTime = performance.now();
+        console.log(`Starting chunked loading for ${message.fileName} (${message.totalVertices} vertices, ${message.totalChunks} chunks)`);
+        
+        // Show loading progress
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl) {
+            loadingEl.classList.remove('hidden');
+            loadingEl.textContent = `Loading ${message.fileName} (0/${message.totalChunks} chunks)...`;
+        }
+
+        // Initialize chunked file state
+        this.chunkedFileState.set(message.fileName, {
+            fileName: message.fileName,
+            totalVertices: message.totalVertices,
+            totalChunks: message.totalChunks,
+            receivedChunks: 0,
+            vertices: new Array(message.totalVertices),
+            hasColors: message.hasColors,
+            hasNormals: message.hasNormals,
+            faces: message.faces || [],
+            format: message.format,
+            comments: message.comments || [],
+            messageType: '',
+            startTime: startTime,
+            firstChunkTime: 0,
+            lastChunkTime: 0
+        });
+    }
+
+    private handleLargeFileChunk(message: any): void {
+        const chunkReceiveTime = performance.now();
+        const fileState = this.chunkedFileState.get(message.fileName);
+        if (!fileState) {
+            console.error(`No state found for chunked file: ${message.fileName}`);
+            return;
+        }
+
+        // Record timing for first and last chunks
+        if (fileState.receivedChunks === 0) {
+            fileState.firstChunkTime = chunkReceiveTime;
+            const timeSinceStart = chunkReceiveTime - fileState.startTime;
+            console.log(`First chunk received after ${timeSinceStart.toFixed(2)}ms`);
+        }
+
+        // Add chunk vertices to the appropriate position  
+        const startIndex = message.chunkIndex * 1000000; // Must match ultra-fast CHUNK_SIZE
+        const chunkVertices = message.vertices;
+        
+        const copyStartTime = performance.now();
+        for (let i = 0; i < chunkVertices.length; i++) {
+            fileState.vertices[startIndex + i] = chunkVertices[i];
+        }
+        const copyTime = performance.now() - copyStartTime;
+
+        fileState.receivedChunks++;
+        fileState.lastChunkTime = chunkReceiveTime;
+
+        // Update loading progress
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl) {
+            const progress = Math.round((fileState.receivedChunks / fileState.totalChunks) * 100);
+            loadingEl.textContent = `Loading ${message.fileName} (${fileState.receivedChunks}/${fileState.totalChunks} chunks, ${progress}%)...`;
+        }
+
+        // Only log every 10th chunk to reduce console spam
+        if (message.chunkIndex % 10 === 0 || fileState.receivedChunks === fileState.totalChunks) {
+            console.log(`Chunk ${message.chunkIndex + 1}/${message.totalChunks} (${chunkVertices.length} vertices, copy: ${copyTime.toFixed(2)}ms)`);
+        }
+    }
+
+    private async handleLargeFileComplete(message: any): Promise<void> {
+        const completeTime = performance.now();
+        const fileState = this.chunkedFileState.get(message.fileName);
+        if (!fileState) {
+            console.error(`No state found for completed chunked file: ${message.fileName}`);
+            return;
+        }
+
+        // Calculate comprehensive timing
+        const totalTransferTime = completeTime - fileState.startTime;
+        const firstChunkDelay = fileState.firstChunkTime - fileState.startTime;
+        const transferTime = fileState.lastChunkTime - fileState.firstChunkTime;
+        const assemblyStartTime = performance.now();
+
+        console.log(`📊 Chunked loading timing for ${message.fileName}:`);
+        console.log(`  • Total transfer time: ${totalTransferTime.toFixed(2)}ms`);
+        console.log(`  • Time to first chunk: ${firstChunkDelay.toFixed(2)}ms`);
+        console.log(`  • Chunk transfer time: ${transferTime.toFixed(2)}ms`);
+        console.log(`  • Chunks: ${fileState.totalChunks} (${(transferTime / fileState.totalChunks).toFixed(2)}ms avg)`);
+
+        // Create complete PLY data object
+        const plyData: PlyData = {
+            vertices: fileState.vertices,
+            faces: fileState.faces,
+            format: fileState.format as any,
+            version: '1.0',
+            comments: fileState.comments,
+            vertexCount: fileState.totalVertices,
+            faceCount: fileState.faces.length,
+            hasColors: fileState.hasColors,
+            hasNormals: fileState.hasNormals,
+            fileName: fileState.fileName,
+            fileIndex: 0
+        };
+
+        const assemblyTime = performance.now() - assemblyStartTime;
+        console.log(`  • PLY assembly time: ${assemblyTime.toFixed(2)}ms`);
+
+        // Process the completed file based on original message type
+        const processStartTime = performance.now();
+        if (message.messageType === 'multiPlyData') {
+            await this.displayFiles([plyData]);
+        } else if (message.messageType === 'addFiles') {
+            this.addNewFiles([plyData]);
+        }
+        const processTime = performance.now() - processStartTime;
+        
+        const totalTime = performance.now() - fileState.startTime;
+        console.log(`  • File processing time: ${processTime.toFixed(2)}ms`);
+        console.log(`  • TOTAL TIME: ${totalTime.toFixed(2)}ms`);
+
+        // Hide loading indicator
+        document.getElementById('loading')?.classList.add('hidden');
+
+        // Clean up chunked file state
+        this.chunkedFileState.delete(message.fileName);
     }
 }
 
