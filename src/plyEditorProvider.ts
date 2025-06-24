@@ -40,8 +40,13 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             parsedData.fileName = path.basename(document.uri.fsPath);
             parsedData.fileIndex = 0;
 
-            // Send with chunking for large files
-            await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
+            // Try binary transfer first, fallback to chunking for very large files
+            try {
+                await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
+            } catch (transferError) {
+                console.log(`Binary transfer failed for initial file, falling back to chunking...`);
+                await this.sendLargeFileInChunksOptimized(webviewPanel, parsedData, 'multiPlyData');
+            }
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to load PLY file: ${error}`);
         }
@@ -179,9 +184,15 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         for (const plyData of plyDataArray) {
             console.log(`🚀 Binary transfer for ${plyData.fileName} (${plyData.vertexCount} vertices)`);
             const startTime = performance.now();
-            await this.sendBinaryData(webviewPanel, plyData, messageType);
-            const transferTime = performance.now() - startTime;
-            console.log(`⚡ Binary transfer complete: ${transferTime.toFixed(1)}ms`);
+            
+            try {
+                await this.sendBinaryData(webviewPanel, plyData, messageType);
+                const transferTime = performance.now() - startTime;
+                console.log(`⚡ Binary transfer complete: ${transferTime.toFixed(1)}ms`);
+            } catch (error) {
+                console.log(`⚠️ Binary transfer failed for ${plyData.fileName}, falling back to chunking...`);
+                await this.sendLargeFileInChunksOptimized(webviewPanel, plyData, messageType);
+            }
         }
     }
 
