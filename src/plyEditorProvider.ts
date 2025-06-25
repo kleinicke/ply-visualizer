@@ -73,62 +73,65 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     });
                 };
                 
-                // ULTIMATE: Parse header only, send raw binary data
-                const headerResult = await parser.parseHeaderOnly(plyData, timingCallback);
-                const parsedData = headerResult.headerInfo;
-                const parseTime = performance.now();
-                webviewPanel.webview.postMessage({
-                    type: 'timingUpdate',
-                    message: `⚡ Extension: PLY parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
-                    timestamp: parseTime
-                });
+                // Detect format first
+                const decoder = new TextDecoder('utf-8');
+                const headerPreview = decoder.decode(plyData.slice(0, 1024));
+                const isBinary = headerPreview.includes('binary_little_endian') || headerPreview.includes('binary_big_endian');
                 
-                // Add file info
-                parsedData.fileName = path.basename(document.uri.fsPath);
-                parsedData.fileIndex = 0;
+                if (isBinary) {
+                    // Binary PLY - use ULTIMATE parsing
+                    const headerResult = await parser.parseHeaderOnly(plyData, timingCallback);
+                    const parsedData = headerResult.headerInfo;
+                    const parseTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `⚡ Extension: PLY parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
+                        timestamp: parseTime
+                    });
+                    
+                    // Add file info
+                    parsedData.fileName = path.basename(document.uri.fsPath);
+                    parsedData.fileIndex = 0;
 
-                webviewPanel.webview.postMessage({
-                    type: 'timingUpdate',
-                    message: '🚀 Extension: Starting binary data conversion...',
-                    timestamp: performance.now()
-                });
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: Starting binary data conversion...',
+                        timestamp: performance.now()
+                    });
 
-                // ULTIMATE: Send raw binary data for webview-side parsing
-                webviewPanel.webview.postMessage({
-                    type: 'timingUpdate',
-                    message: '🚀 Extension: ULTIMATE - Sending raw binary data...',
-                    timestamp: performance.now()
-                });
-                
-                // Send raw binary data + header info
-                await this.sendUltimateRawBinary(webviewPanel, parsedData, headerResult, plyData, 'multiPlyData');
+                    // ULTIMATE: Send raw binary data for webview-side parsing
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: ULTIMATE - Sending raw binary data...',
+                        timestamp: performance.now()
+                    });
+                    
+                    // Send raw binary data + header info
+                    await this.sendUltimateRawBinary(webviewPanel, parsedData, headerResult, plyData, 'multiPlyData');
+                } else {
+                    // ASCII PLY - use traditional parsing
+                    console.log(`📝 ASCII PLY detected: ${path.basename(document.uri.fsPath)} - using traditional parsing`);
+                    const parsedData = await parser.parse(plyData, timingCallback);
+                    const parseTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `⚡ Extension: PLY parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
+                        timestamp: parseTime
+                    });
+                    
+                    // Add file info
+                    parsedData.fileName = path.basename(document.uri.fsPath);
+                    parsedData.fileIndex = 0;
+
+                    // Send via traditional method (will use binary transfer if possible)
+                    await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
+                }
                 const totalTime = performance.now();
                 webviewPanel.webview.postMessage({
                     type: 'timingUpdate',
                     message: `🎯 Extension: Total processing time ${(totalTime - loadStartTime).toFixed(1)}ms`,
                     timestamp: totalTime
                 });
-                
-                // Legacy fallback (should never be used now)
-                if (false) {
-                    // Traditional vertex object handling
-                    try {
-                        await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
-                        const totalTime = performance.now();
-                        webviewPanel.webview.postMessage({
-                            type: 'timingUpdate',
-                            message: `🎯 Extension: Total processing time ${(totalTime - loadStartTime).toFixed(1)}ms`,
-                            timestamp: totalTime
-                        });
-                    } catch (transferError) {
-                        webviewPanel.webview.postMessage({
-                            type: 'timingUpdate',
-                            message: 'Binary transfer failed, falling back to chunking...',
-                            timestamp: performance.now()
-                        });
-                        await this.sendLargeFileInChunksOptimized(webviewPanel, parsedData, 'multiPlyData');
-                    }
-                }
             } catch (error) {
                 console.error(`Extension: PLY processing failed:`, error);
                 webviewPanel.webview.postMessage({
@@ -249,23 +252,44 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     const plyData = await vscode.workspace.fs.readFile(files[i]);
                     const fileReadTime = performance.now();
                     
-                    // Parse header only for binary PLY files
+                    // Parse file (detect format first)
                     const parser = new PlyParser();
-                    const headerResult = await parser.parseHeaderOnly(plyData);
-                    const parseTime = performance.now();
                     
-                    // Add file info
-                    headerResult.headerInfo.fileName = path.basename(files[i].fsPath);
-                    headerResult.headerInfo.fileIndex = i;
+                    // Quick format detection
+                    const decoder = new TextDecoder('utf-8');
+                    const headerPreview = decoder.decode(plyData.slice(0, 1024));
+                    const isBinary = headerPreview.includes('binary_little_endian') || headerPreview.includes('binary_big_endian');
                     
-                    // Send ultimate raw binary data
-                    await this.sendUltimateRawBinary(
-                        webviewPanel, 
-                        headerResult.headerInfo, 
-                        headerResult, 
-                        plyData, 
-                        'addFiles'
-                    );
+                    if (isBinary) {
+                        // Use ultimate binary transfer for binary PLY files
+                        const headerResult = await parser.parseHeaderOnly(plyData);
+                        const parseTime = performance.now();
+                        
+                        // Add file info
+                        headerResult.headerInfo.fileName = path.basename(files[i].fsPath);
+                        headerResult.headerInfo.fileIndex = i;
+                        
+                        // Send ultimate raw binary data
+                        await this.sendUltimateRawBinary(
+                            webviewPanel, 
+                            headerResult.headerInfo, 
+                            headerResult, 
+                            plyData, 
+                            'addFiles'
+                        );
+                    } else {
+                        // Use traditional parsing for ASCII PLY files
+                        console.log(`📝 ASCII PLY detected: ${path.basename(files[i].fsPath)} - using traditional parsing`);
+                        const parsedData = await parser.parse(plyData);
+                        const parseTime = performance.now();
+                        
+                        // Add file info
+                        parsedData.fileName = path.basename(files[i].fsPath);
+                        parsedData.fileIndex = i;
+                        
+                        // Send via traditional method (will use binary transfer if possible)
+                        await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'addFiles');
+                    }
                     
                     const totalTime = performance.now();
                     console.log(`🎯 ULTIMATE Add File: ${path.basename(files[i].fsPath)} processed in ${(totalTime - fileStartTime).toFixed(1)}ms`);
