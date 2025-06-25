@@ -129,7 +129,7 @@ class PLYVisualizer {
 
         // Controls - Trackball for better point cloud navigation
         this.controls = new TrackballControls(this.camera, this.renderer.domElement);
-        this.controls.rotateSpeed = 2.0;  // Responsive rotation (will be inverted later)
+        this.controls.rotateSpeed = 5.0;  // Strong rotation (will be inverted later)
         this.controls.zoomSpeed = 2.5;    // Fast zooming
         this.controls.panSpeed = 1.5;     // Good panning speed (will be inverted later)
         this.controls.noZoom = false;
