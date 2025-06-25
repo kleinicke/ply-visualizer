@@ -129,9 +129,9 @@ class PLYVisualizer {
 
         // Controls - Trackball for better point cloud navigation
         this.controls = new TrackballControls(this.camera, this.renderer.domElement);
-        this.controls.rotateSpeed = 2.0;  // Responsive rotation
+        this.controls.rotateSpeed = 2.0;  // Responsive rotation (will be inverted later)
         this.controls.zoomSpeed = 2.5;    // Fast zooming
-        this.controls.panSpeed = 1.5;     // Good panning speed
+        this.controls.panSpeed = 1.5;     // Good panning speed (will be inverted later)
         this.controls.noZoom = false;
         this.controls.noPan = false;
         this.controls.staticMoving = false; // Enable smooth movement
@@ -143,13 +143,13 @@ class PLYVisualizer {
         this.controls.screen.width = this.renderer.domElement.clientWidth;
         this.controls.screen.height = this.renderer.domElement.clientHeight;
         
-        // Fix Z-axis rotation direction
-        this.setupZAxisRotationFix();
+        // Fix ALL inverted controls - comprehensive approach
+        this.setupInvertedControls();
 
         // Lighting
         this.initSceneLighting();
 
-        // Add coordinate axes helper
+        // Add coordinate axes helper with labels
         this.addAxesHelper();
 
         // Window resize
@@ -162,33 +162,198 @@ class PLYVisualizer {
         this.animate();
     }
 
-    private setupZAxisRotationFix(): void {
-        // Simple approach: just invert the rotateSpeed to fix Z-axis rotation direction
-        // This affects all rotations but should make Z-axis feel more natural
-        this.controls.rotateSpeed *= -1;
+    private setupInvertedControls(): void {
+        // X AND Y AXIS ROTATION INVERSION + AXES VISIBILITY - Override the update method
+        console.log('🔄 Setting up X/Y axis rotation inversion and axes visibility');
+        
+        const controls = this.controls as any;
+        
+        // Store the original update method
+        const originalUpdate = controls.update.bind(controls);
+        
+        // Track interaction state for axes visibility
+        let axesHideTimeout: NodeJS.Timeout | null = null;
+        
+        // Override update to modify rotation deltas
+        controls.update = () => {
+            // Store current mouse positions if they exist
+            if (controls._rotateStart && controls._rotateEnd) {
+                // Invert X and Y rotation by swapping/negating the rotation vectors
+                const tempX = controls._rotateEnd.x;
+                const tempY = controls._rotateEnd.y;
+                
+                // Invert X axis rotation (horizontal mouse movement)
+                controls._rotateEnd.x = controls._rotateStart.x - (tempX - controls._rotateStart.x);
+                
+                // Invert Y axis rotation (vertical mouse movement) 
+                controls._rotateEnd.y = controls._rotateStart.y - (tempY - controls._rotateStart.y);
+            }
+            
+            // Call the original update method
+            originalUpdate();
+        };
+        
+        // Use TrackballControls events for reliable interaction detection
+        const showAxes = () => {
+            const axesGroup = (this as any).axesGroup;
+            const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
+            
+            if (axesGroup && !axesPermanentlyVisible) {
+                axesGroup.visible = true;
+                
+                // Clear any existing hide timeout
+                if (axesHideTimeout) {
+                    clearTimeout(axesHideTimeout);
+                    axesHideTimeout = null;
+                }
+            }
+        };
+        
+        const hideAxesAfterDelay = () => {
+            if (axesHideTimeout) {
+                clearTimeout(axesHideTimeout);
+            }
+            
+            axesHideTimeout = setTimeout(() => {
+                const axesGroup = (this as any).axesGroup;
+                const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
+                
+                if (axesGroup && !axesPermanentlyVisible) {
+                    axesGroup.visible = false;
+                }
+                axesHideTimeout = null;
+            }, 500);
+        };
+        
+        // Listen to TrackballControls events for reliable interaction detection
+        this.controls.addEventListener('start', showAxes);
+        this.controls.addEventListener('end', hideAxesAfterDelay);
+        
+        // Store the hide function for use in rotation center changes
+        (this as any).showAxesTemporarily = () => {
+            const axesGroup = (this as any).axesGroup;
+            const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
+            
+            if (axesGroup && !axesPermanentlyVisible) {
+                axesGroup.visible = true;
+                
+                // Clear any existing timeout
+                if (axesHideTimeout) {
+                    clearTimeout(axesHideTimeout);
+                }
+                
+                // Hide after same short timeframe as rotation (500ms)
+                axesHideTimeout = setTimeout(() => {
+                    const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
+                    if (axesGroup && !axesPermanentlyVisible) {
+                        axesGroup.visible = false;
+                    }
+                    axesHideTimeout = null;
+                }, 500);
+            }
+        };
+        
+        console.log('✅ X/Y axis rotation inversion and dynamic axes visibility applied');
+        console.log('  - Horizontal drag inverted');
+        console.log('  - Vertical drag inverted');
+        console.log('  - Axes show on interaction start');
+        console.log('  - Axes hide 500ms after interaction end');
     }
 
     private addAxesHelper(): void {
+        // Create a group to hold axes and labels
+        const axesGroup = new THREE.Group();
+        
         // Create coordinate axes helper (X=red, Y=green, Z=blue)
         const axesHelper = new THREE.AxesHelper(1); // Size of 1 unit
+        axesGroup.add(axesHelper);
+        
+        // Create text labels for each axis
+        this.createAxisLabels(axesGroup);
         
         // Scale the axes based on the scene size once we have objects
         // For now, use a reasonable default size
-        axesHelper.scale.setScalar(0.5);
+        axesGroup.scale.setScalar(0.5);
         
-        // Position it at the origin
-        axesHelper.position.set(0, 0, 0);
+        // Position at the rotation center (initially at origin)
+        axesGroup.position.copy(this.controls.target);
+        
+        // Initially hide the axes
+        axesGroup.visible = false;
         
         // Add to scene
-        this.scene.add(axesHelper);
+        this.scene.add(axesGroup);
         
-        // Store reference for potential resizing later
+        // Store reference for updating position and size
+        (this as any).axesGroup = axesGroup;
         (this as any).axesHelper = axesHelper;
     }
 
+    private createAxisLabels(axesGroup: THREE.Group): void {
+        // Function to create text texture (creates new canvas for each call)
+        const createTextTexture = (text: string, color: string) => {
+            // Create separate canvas for each texture
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d')!;
+            canvas.width = 256;
+            canvas.height = 256;
+            
+            // Set text properties
+            context.font = 'Bold 48px Arial';
+            context.fillStyle = color;
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            
+            // Draw text
+            context.fillText(text, canvas.width / 2, canvas.height / 2);
+            
+            // Create texture
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        };
+        
+        // Create materials for each axis label (each gets its own canvas)
+        const xTexture = createTextTexture('X', '#ff0000');
+        const yTexture = createTextTexture('Y', '#00ff00'); 
+        const zTexture = createTextTexture('Z', '#0080ff');
+        
+        const labelMaterial = (texture: THREE.Texture) => new THREE.SpriteMaterial({ 
+            map: texture,
+            transparent: true,
+            alphaTest: 0.1
+        });
+        
+        // Create sprite labels
+        const xLabel = new THREE.Sprite(labelMaterial(xTexture));
+        const yLabel = new THREE.Sprite(labelMaterial(yTexture));
+        const zLabel = new THREE.Sprite(labelMaterial(zTexture));
+        
+        // Scale labels appropriately
+        const labelScale = 0.3;
+        xLabel.scale.set(labelScale, labelScale, labelScale);
+        yLabel.scale.set(labelScale, labelScale, labelScale);
+        zLabel.scale.set(labelScale, labelScale, labelScale);
+        
+        // Position labels at the end of each axis (will be scaled with the group)
+        xLabel.position.set(1.2, 0, 0); // X-axis end
+        yLabel.position.set(0, 1.2, 0); // Y-axis end
+        zLabel.position.set(0, 0, 1.2); // Z-axis end
+        
+        // Add labels to the group
+        axesGroup.add(xLabel);
+        axesGroup.add(yLabel);
+        axesGroup.add(zLabel);
+        
+        // Store references for potential updates
+        (this as any).axisLabels = { x: xLabel, y: yLabel, z: zLabel };
+    }
+
+
+
     private updateAxesSize(): void {
-        const axesHelper = (this as any).axesHelper;
-        if (!axesHelper || this.meshes.length === 0) {return;}
+        const axesGroup = (this as any).axesGroup;
+        if (!axesGroup || this.meshes.length === 0) {return;}
 
         // Calculate the bounding box of all visible objects
         const box = new THREE.Box3();
@@ -205,16 +370,12 @@ class PLYVisualizer {
         const maxDim = Math.max(size.x, size.y, size.z);
         const axesSize = maxDim * 0.15;
 
-        axesHelper.scale.setScalar(axesSize);
+        axesGroup.scale.setScalar(axesSize);
         
-        // Position axes at the bottom-left corner of the bounding box
-        const center = box.getCenter(new THREE.Vector3());
-        const min = box.min;
-        axesHelper.position.set(
-            min.x + axesSize * 0.5,
-            min.y + axesSize * 0.5,
-            min.z + axesSize * 0.5
-        );
+        // Position axes at the current rotation center (controls.target)
+        axesGroup.position.copy(this.controls.target);
+        
+        console.log('✅ Axes updated - Size:', axesSize.toFixed(3), 'Position:', this.controls.target);
     }
 
     private initSceneLighting(): void {
@@ -291,6 +452,18 @@ class PLYVisualizer {
         // Set the new target for the trackball controls
         this.controls.target.copy(point);
         
+        // Update axes position to the new rotation center
+        const axesGroup = (this as any).axesGroup;
+        if (axesGroup) {
+            axesGroup.position.copy(point);
+        }
+        
+        // Show axes temporarily for 1 second to indicate new rotation center
+        const showAxesTemporarily = (this as any).showAxesTemporarily;
+        if (showAxesTemporarily) {
+            showAxesTemporarily();
+        }
+        
         // Optionally adjust camera position to maintain good viewing angle
         const currentDistance = this.camera.position.distanceTo(this.controls.target);
         
@@ -299,6 +472,8 @@ class PLYVisualizer {
         
         // Visual feedback - could add a temporary marker here
         this.showRotationCenterFeedback(point);
+        
+        console.log('🎯 Rotation center and axes moved to:', point.x.toFixed(3), point.y.toFixed(3), point.z.toFixed(3));
     }
 
     private showRotationCenterFeedback(point: THREE.Vector3): void {
@@ -569,8 +744,9 @@ class PLYVisualizer {
         // Re-add lights (in case they were accidentally removed)
         this.initSceneLighting();
         
-        // Re-add axes helper if it was removed
-        const hasAxes = this.scene.children.some(child => child instanceof THREE.AxesHelper);
+        // Re-add axes group if it was removed
+        const axesGroup = (this as any).axesGroup;
+        const hasAxes = axesGroup && this.scene.children.includes(axesGroup);
         if (!hasAxes) {
             this.addAxesHelper();
         }
@@ -874,10 +1050,16 @@ class PLYVisualizer {
     }
 
     private toggleAxes(): void {
-        const axesHelper = (this as any).axesHelper;
-        if (axesHelper) {
-            axesHelper.visible = !axesHelper.visible;
-            console.log('Axes helper', axesHelper.visible ? 'shown' : 'hidden');
+        const axesGroup = (this as any).axesGroup;
+        if (axesGroup) {
+            // Toggle permanent visibility (overrides dynamic behavior)
+            const currentlyVisible = axesGroup.visible;
+            axesGroup.visible = !currentlyVisible;
+            
+            // Store the permanent visibility state
+            (this as any).axesPermanentlyVisible = !currentlyVisible;
+            
+            console.log('Axes with labels', axesGroup.visible ? 'permanently shown' : 'dynamic mode');
         }
     }
 
