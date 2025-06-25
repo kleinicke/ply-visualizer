@@ -1235,25 +1235,49 @@ class PLYVisualizer {
         const nyOffset = propertyOffsets.get('ny');
         const nzOffset = propertyOffsets.get('nz');
         
-        // Ultra-fast direct binary parsing
+        // Helper function to read binary value based on type
+        const readBinaryValue = (offset: number, type: string): number => {
+            switch (type) {
+                case 'char': case 'int8':
+                    return dataView.getInt8(offset);
+                case 'uchar': case 'uint8':
+                    return dataView.getUint8(offset);
+                case 'short': case 'int16':
+                    return dataView.getInt16(offset, littleEndian);
+                case 'ushort': case 'uint16':
+                    return dataView.getUint16(offset, littleEndian);
+                case 'int': case 'int32':
+                    return dataView.getInt32(offset, littleEndian);
+                case 'uint': case 'uint32':
+                    return dataView.getUint32(offset, littleEndian);
+                case 'float': case 'float32':
+                    return dataView.getFloat32(offset, littleEndian);
+                case 'double': case 'float64':
+                    return dataView.getFloat64(offset, littleEndian);
+                default:
+                    throw new Error(`Unsupported data type: ${type}`);
+            }
+        };
+
+        // Ultra-fast direct binary parsing with proper type handling
         for (let i = 0; i < vertexCount; i++) {
             const vertexOffset = i * vertexStride;
             const i3 = i * 3;
             
-            // Read positions (always float32)
-            if (xOffset) positions[i3] = dataView.getFloat32(vertexOffset + (xOffset as any).offset, littleEndian);
-            if (yOffset) positions[i3 + 1] = dataView.getFloat32(vertexOffset + (yOffset as any).offset, littleEndian);
-            if (zOffset) positions[i3 + 2] = dataView.getFloat32(vertexOffset + (zOffset as any).offset, littleEndian);
+            // Read positions with correct data type
+            if (xOffset) positions[i3] = readBinaryValue(vertexOffset + (xOffset as any).offset, (xOffset as any).type);
+            if (yOffset) positions[i3 + 1] = readBinaryValue(vertexOffset + (yOffset as any).offset, (yOffset as any).type);
+            if (zOffset) positions[i3 + 2] = readBinaryValue(vertexOffset + (zOffset as any).offset, (zOffset as any).type);
             
-            // Read colors (usually uint8)
-            if (colors && redOffset) colors[i3] = dataView.getUint8(vertexOffset + (redOffset as any).offset);
-            if (colors && greenOffset) colors[i3 + 1] = dataView.getUint8(vertexOffset + (greenOffset as any).offset);
-            if (colors && blueOffset) colors[i3 + 2] = dataView.getUint8(vertexOffset + (blueOffset as any).offset);
+            // Read colors with correct data type
+            if (colors && redOffset) colors[i3] = readBinaryValue(vertexOffset + (redOffset as any).offset, (redOffset as any).type);
+            if (colors && greenOffset) colors[i3 + 1] = readBinaryValue(vertexOffset + (greenOffset as any).offset, (greenOffset as any).type);
+            if (colors && blueOffset) colors[i3 + 2] = readBinaryValue(vertexOffset + (blueOffset as any).offset, (blueOffset as any).type);
             
-            // Read normals (usually float32)
-            if (normals && nxOffset) normals[i3] = dataView.getFloat32(vertexOffset + (nxOffset as any).offset, littleEndian);
-            if (normals && nyOffset) normals[i3 + 1] = dataView.getFloat32(vertexOffset + (nyOffset as any).offset, littleEndian);
-            if (normals && nzOffset) normals[i3 + 2] = dataView.getFloat32(vertexOffset + (nzOffset as any).offset, littleEndian);
+            // Read normals with correct data type
+            if (normals && nxOffset) normals[i3] = readBinaryValue(vertexOffset + (nxOffset as any).offset, (nxOffset as any).type);
+            if (normals && nyOffset) normals[i3 + 1] = readBinaryValue(vertexOffset + (nyOffset as any).offset, (nyOffset as any).type);
+            if (normals && nzOffset) normals[i3 + 2] = readBinaryValue(vertexOffset + (nzOffset as any).offset, (nzOffset as any).type);
         }
         
         const parseTime = performance.now();
