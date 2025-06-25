@@ -481,6 +481,14 @@ class PLYVisualizer {
                         this.showError('Failed to display PLY data: ' + (error instanceof Error ? error.message : String(error)));
                     }
                     break;
+                case 'ultimateRawBinaryData':
+                    try {
+                        await this.handleUltimateRawBinaryData(message);
+                    } catch (error) {
+                        console.error('Error handling ultimate raw binary data:', error);
+                        this.showError('Failed to handle ultimate raw binary data: ' + (error instanceof Error ? error.message : String(error)));
+                    }
+                    break;
                 case 'directTypedArrayData':
                     try {
                         await this.handleDirectTypedArrayData(message);
@@ -879,6 +887,7 @@ class PLYVisualizer {
         
         // Store timing for complete analysis
         (window as any).loadingStartTime = uiStartTime;
+        (window as any).absoluteStartTime = uiStartTime;
         
         // Show loading indicator immediately
         const loadingEl = document.getElementById('loading');
@@ -1014,6 +1023,112 @@ class PLYVisualizer {
         console.log(`Removed file at index ${fileIndex}`);
     }
 
+    private async handleUltimateRawBinaryData(message: any): Promise<void> {
+        console.log(`🚀 ULTIMATE: Parsing raw binary data in webview for ${message.fileName}`);
+        const startTime = performance.now();
+        
+        // Parse raw binary data directly in webview
+        const rawData = new Uint8Array(message.rawBinaryData);
+        const dataView = new DataView(rawData.buffer);
+        const propertyOffsets = new Map(message.propertyOffsets);
+        const vertexStride = message.vertexStride;
+        const vertexCount = message.vertexCount;
+        const littleEndian = message.littleEndian;
+        
+        console.log(`⚡ ULTIMATE: Direct binary parsing ${vertexCount} vertices (${vertexStride} bytes/vertex)`);
+        
+        // Pre-allocate TypedArrays for maximum performance
+        const positions = new Float32Array(vertexCount * 3);
+        const colors = message.hasColors ? new Uint8Array(vertexCount * 3) : null;
+        const normals = message.hasNormals ? new Float32Array(vertexCount * 3) : null;
+        
+        // Get property offsets
+        const xOffset = propertyOffsets.get('x');
+        const yOffset = propertyOffsets.get('y');
+        const zOffset = propertyOffsets.get('z');
+        const redOffset = propertyOffsets.get('red');
+        const greenOffset = propertyOffsets.get('green');
+        const blueOffset = propertyOffsets.get('blue');
+        const nxOffset = propertyOffsets.get('nx');
+        const nyOffset = propertyOffsets.get('ny');
+        const nzOffset = propertyOffsets.get('nz');
+        
+        // Ultra-fast direct binary parsing
+        for (let i = 0; i < vertexCount; i++) {
+            const vertexOffset = i * vertexStride;
+            const i3 = i * 3;
+            
+            // Read positions (always float32)
+            if (xOffset) positions[i3] = dataView.getFloat32(vertexOffset + (xOffset as any).offset, littleEndian);
+            if (yOffset) positions[i3 + 1] = dataView.getFloat32(vertexOffset + (yOffset as any).offset, littleEndian);
+            if (zOffset) positions[i3 + 2] = dataView.getFloat32(vertexOffset + (zOffset as any).offset, littleEndian);
+            
+            // Read colors (usually uint8)
+            if (colors && redOffset) colors[i3] = dataView.getUint8(vertexOffset + (redOffset as any).offset);
+            if (colors && greenOffset) colors[i3 + 1] = dataView.getUint8(vertexOffset + (greenOffset as any).offset);
+            if (colors && blueOffset) colors[i3 + 2] = dataView.getUint8(vertexOffset + (blueOffset as any).offset);
+            
+            // Read normals (usually float32)
+            if (normals && nxOffset) normals[i3] = dataView.getFloat32(vertexOffset + (nxOffset as any).offset, littleEndian);
+            if (normals && nyOffset) normals[i3 + 1] = dataView.getFloat32(vertexOffset + (nyOffset as any).offset, littleEndian);
+            if (normals && nzOffset) normals[i3 + 2] = dataView.getFloat32(vertexOffset + (nzOffset as any).offset, littleEndian);
+        }
+        
+        const parseTime = performance.now();
+        console.log(`🎯 ULTIMATE: Webview binary parsing took ${(parseTime - startTime).toFixed(1)}ms`);
+        
+        // Create PLY data object with TypedArrays
+        const plyData: PlyData = {
+            vertices: [], // Empty - not used
+            faces: [],
+            format: message.format,
+            version: '1.0',
+            comments: message.comments || [],
+            vertexCount: message.vertexCount,
+            faceCount: message.faceCount,
+            hasColors: message.hasColors,
+            hasNormals: message.hasNormals,
+            fileName: message.fileName
+        };
+        
+        // Attach TypedArrays
+        (plyData as any).useTypedArrays = true;
+        (plyData as any).positionsArray = positions;
+        (plyData as any).colorsArray = colors;
+        (plyData as any).normalsArray = normals;
+        
+        console.log(`⚡ ULTIMATE: Total webview processing took ${(performance.now() - startTime).toFixed(1)}ms`);
+        
+        // Process as normal
+        const displayStartTime = performance.now();
+        if (message.messageType === 'multiPlyData') {
+            await this.displayFiles([plyData]);
+        } else if (message.messageType === 'addFiles') {
+            this.addNewFiles([plyData]);
+        }
+        const displayTime = performance.now() - displayStartTime;
+        
+        // Comprehensive timing analysis
+        // For add files, use message receive time as absolute start since there's no UI loading phase
+        const absoluteStartTime = message.messageType === 'addFiles' ? startTime : ((window as any).absoluteStartTime || startTime);
+        const absoluteCompleteTime = performance.now() - absoluteStartTime;
+        const webviewCompleteTime = performance.now() - startTime;
+        
+        console.log(`🎯 ULTIMATE COMPLETE TIME: ${webviewCompleteTime.toFixed(1)}ms (Data received → Point cloud visible)`);
+        
+        if (message.messageType === 'addFiles') {
+            console.log(`⏰ ADD FILE TOTAL TIME: ${absoluteCompleteTime.toFixed(1)}ms (Add button → Point cloud visible)`);
+        } else {
+            console.log(`⏰ ABSOLUTE TOTAL TIME: ${absoluteCompleteTime.toFixed(1)}ms (File open → Point cloud visible)`);
+        }
+        
+        // Calculate performance metrics
+        const totalVertices = message.vertexCount;
+        const verticesPerSecond = Math.round(totalVertices / (absoluteCompleteTime / 1000));
+        const modeLabel = message.messageType === 'addFiles' ? 'ADD FILE' : 'ULTIMATE';
+        console.log(`🚀 ${modeLabel} PERFORMANCE: ${totalVertices.toLocaleString()} vertices in ${absoluteCompleteTime.toFixed(1)}ms (${verticesPerSecond.toLocaleString()} vertices/sec)`);
+    }
+
     private async handleDirectTypedArrayData(message: any): Promise<void> {
         console.log(`🚀 REVOLUTIONARY: Handling direct TypedArray data for ${message.fileName}`);
         const startTime = performance.now();
@@ -1050,7 +1165,8 @@ class PLYVisualizer {
 
     private async handleBinaryPlyData(message: any): Promise<void> {
         const receiveTime = performance.now();
-        const loadingStartTime = (window as any).loadingStartTime || 0;
+        // For add files, we don't have a loadingStartTime, so use receiveTime as reference
+        const loadingStartTime = (window as any).loadingStartTime || receiveTime;
         const extensionProcessingTime = receiveTime - loadingStartTime;
         
         console.log(`📦 Received binary PLY data for ${message.fileName} (${message.vertexCount} vertices)`);
@@ -1141,8 +1257,26 @@ class PLYVisualizer {
         // Complete timing analysis
         const totalTime = performance.now();
         const completeLoadTime = totalTime - loadingStartTime;
+        // For add files, use receive time as absolute start since there's no UI loading phase
+        const absoluteStartTime = message.messageType === 'addFiles' ? receiveTime : ((window as any).absoluteStartTime || loadingStartTime);
+        const absoluteCompleteTime = totalTime - absoluteStartTime;
+        const geometryTime = totalTime - startTime - conversionTime;
+        
         console.log(`🎯 COMPLETE LOADING TIME: ${completeLoadTime.toFixed(1)}ms (UI show → Point cloud visible)`);
-        console.log(`📊 Breakdown: Extension ${extensionProcessingTime.toFixed(1)}ms + Conversion ${conversionTime.toFixed(1)}ms + Geometry ${(totalTime - startTime - conversionTime).toFixed(1)}ms`);
+        console.log(`⏰ ABSOLUTE TOTAL TIME: ${absoluteCompleteTime.toFixed(1)}ms (File open → Point cloud visible)`);
+        console.log(`📊 Breakdown: Extension ${extensionProcessingTime.toFixed(1)}ms + Conversion ${conversionTime.toFixed(1)}ms + Geometry ${geometryTime.toFixed(1)}ms`);
+        
+        // Calculate hidden time gaps
+        const measuredTime = extensionProcessingTime + conversionTime + geometryTime;
+        const hiddenTime = completeLoadTime - measuredTime;
+        if (hiddenTime > 10) {
+            console.log(`🔍 HIDDEN TIME: ${hiddenTime.toFixed(1)}ms (unmeasured overhead)`);
+        }
+        
+        // Performance summary
+        const totalVertices = message.vertexCount;
+        const verticesPerSecond = Math.round(totalVertices / (absoluteCompleteTime / 1000));
+        console.log(`🚀 PERFORMANCE: ${totalVertices.toLocaleString()} vertices in ${absoluteCompleteTime.toFixed(1)}ms (${verticesPerSecond.toLocaleString()} vertices/sec)`);
     }
 
     private handleStartLargeFile(message: any): void {

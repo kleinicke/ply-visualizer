@@ -60,7 +60,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 const parser = new PlyParser();
                 webviewPanel.webview.postMessage({
                     type: 'timingUpdate',
-                    message: '🔍 Extension: Starting PLY parsing...',
+                    message: '🚀 Extension: ULTIMATE - Starting header-only parsing...',
                     timestamp: performance.now()
                 });
                 
@@ -73,7 +73,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     });
                 };
                 
-                const parsedData = await parser.parse(plyData, timingCallback);
+                // ULTIMATE: Parse header only, send raw binary data
+                const headerResult = await parser.parseHeaderOnly(plyData, timingCallback);
+                const parsedData = headerResult.headerInfo;
                 const parseTime = performance.now();
                 webviewPanel.webview.postMessage({
                     type: 'timingUpdate',
@@ -91,23 +93,24 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     timestamp: performance.now()
                 });
 
-                // REVOLUTIONARY: Direct binary streaming - skip all parsing!
-                if ((parsedData as any).useTypedArrays) {
-                    webviewPanel.webview.postMessage({
-                        type: 'timingUpdate',
-                        message: '🚀 Extension: Using REVOLUTIONARY direct binary streaming...',
-                        timestamp: performance.now()
-                    });
-                    
-                    // Send TypedArrays directly without any conversion
-                    await this.sendDirectTypedArrays(webviewPanel, parsedData, 'multiPlyData');
-                    const totalTime = performance.now();
-                    webviewPanel.webview.postMessage({
-                        type: 'timingUpdate',
-                        message: `🎯 Extension: Total processing time ${(totalTime - loadStartTime).toFixed(1)}ms`,
-                        timestamp: totalTime
-                    });
-                } else {
+                // ULTIMATE: Send raw binary data for webview-side parsing
+                webviewPanel.webview.postMessage({
+                    type: 'timingUpdate',
+                    message: '🚀 Extension: ULTIMATE - Sending raw binary data...',
+                    timestamp: performance.now()
+                });
+                
+                // Send raw binary data + header info
+                await this.sendUltimateRawBinary(webviewPanel, parsedData, headerResult, plyData, 'multiPlyData');
+                const totalTime = performance.now();
+                webviewPanel.webview.postMessage({
+                    type: 'timingUpdate',
+                    message: `🎯 Extension: Total processing time ${(totalTime - loadStartTime).toFixed(1)}ms`,
+                    timestamp: totalTime
+                });
+                
+                // Legacy fallback (should never be used now)
+                if (false) {
                     // Traditional vertex object handling
                     try {
                         await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
@@ -237,25 +240,40 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         });
 
         if (files && files.length > 0) {
-            const newPlyData = [];
             for (let i = 0; i < files.length; i++) {
                 try {
+                    const fileStartTime = performance.now();
+                    console.log(`🚀 ULTIMATE: Processing add file ${path.basename(files[i].fsPath)}`);
+                    
+                    // Read file data
                     const plyData = await vscode.workspace.fs.readFile(files[i]);
+                    const fileReadTime = performance.now();
+                    
+                    // Parse header only for binary PLY files
                     const parser = new PlyParser();
-                    const parsedData = await parser.parse(plyData);
+                    const headerResult = await parser.parseHeaderOnly(plyData);
+                    const parseTime = performance.now();
                     
                     // Add file info
-                    parsedData.fileName = path.basename(files[i].fsPath);
-                    parsedData.fileIndex = i; // This will be reassigned in the webview
+                    headerResult.headerInfo.fileName = path.basename(files[i].fsPath);
+                    headerResult.headerInfo.fileIndex = i;
                     
-                    newPlyData.push(parsedData);
+                    // Send ultimate raw binary data
+                    await this.sendUltimateRawBinary(
+                        webviewPanel, 
+                        headerResult.headerInfo, 
+                        headerResult, 
+                        plyData, 
+                        'addFiles'
+                    );
+                    
+                    const totalTime = performance.now();
+                    console.log(`🎯 ULTIMATE Add File: ${path.basename(files[i].fsPath)} processed in ${(totalTime - fileStartTime).toFixed(1)}ms`);
+                    
                 } catch (error) {
+                    console.error(`Failed to load PLY file ${files[i].fsPath}:`, error);
                     vscode.window.showErrorMessage(`Failed to load PLY file ${files[i].fsPath}: ${error}`);
                 }
-            }
-
-            if (newPlyData.length > 0) {
-                await this.sendPlyDataToWebview(webviewPanel, newPlyData, 'addFiles');
             }
         }
     }
@@ -295,6 +313,41 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         delete parsedData.positionsArray;
         delete parsedData.colorsArray;
         delete parsedData.normalsArray;
+    }
+
+    private async sendUltimateRawBinary(
+        webviewPanel: vscode.WebviewPanel,
+        parsedData: any,
+        headerResult: any,
+        rawFileData: Uint8Array,
+        messageType: string
+    ): Promise<void> {
+        console.log(`🚀 ULTIMATE: Sending raw binary data for ${parsedData.fileName}`);
+        
+        // Extract just the binary vertex data
+        const binaryVertexData = rawFileData.slice(headerResult.binaryDataStart);
+        
+        // Send raw binary data + parsing metadata
+        webviewPanel.webview.postMessage({
+            type: 'ultimateRawBinaryData',
+            messageType: messageType,
+            fileName: parsedData.fileName,
+            vertexCount: parsedData.vertexCount,
+            faceCount: parsedData.faceCount,
+            hasColors: parsedData.hasColors,
+            hasNormals: parsedData.hasNormals,
+            format: parsedData.format,
+            comments: parsedData.comments,
+            
+            // Raw binary data + parsing info
+            rawBinaryData: binaryVertexData.buffer.slice(
+                binaryVertexData.byteOffset,
+                binaryVertexData.byteOffset + binaryVertexData.byteLength
+            ),
+            vertexStride: headerResult.vertexStride,
+            propertyOffsets: Array.from(headerResult.propertyOffsets.entries()),
+            littleEndian: headerResult.headerInfo.format === 'binary_little_endian'
+        });
     }
 
     private async sendDirectTypedArrays(

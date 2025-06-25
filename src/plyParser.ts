@@ -439,4 +439,133 @@ export class PlyParser {
             throw new Error(`Unsupported data type: ${type}`);
         }
     }
+
+    // ULTIMATE OPTIMIZATION: Extract header + raw binary data without parsing
+    async parseHeaderOnly(data: Uint8Array, timingCallback?: (message: string) => void): Promise<{
+        headerInfo: PlyData,
+        binaryDataStart: number,
+        vertexStride: number,
+        propertyOffsets: Map<string, { offset: number, type: string }>
+    }> {
+        const parseStartTime = performance.now();
+        const log = timingCallback || console.log;
+        log(`🚀 ULTIMATE: Header-only parsing for direct binary streaming...`);
+        
+        // Same header parsing as before
+        const result: PlyData = {
+            vertices: [],
+            faces: [],
+            format: 'ascii',
+            version: '1.0',
+            comments: [],
+            vertexCount: 0,
+            faceCount: 0,
+            hasColors: false,
+            hasNormals: false
+        };
+
+        const headerStartTime = performance.now();
+        const decoder = new TextDecoder('utf-8');
+        
+        const headerSearchSize = Math.min(4096, data.length);
+        let headerText = decoder.decode(data.slice(0, headerSearchSize));
+        
+        if (!headerText.startsWith('ply')) {
+            throw new Error('Invalid PLY file: missing PLY header');
+        }
+
+        let headerEndIndex = headerText.indexOf('end_header');
+        
+        if (headerEndIndex === -1) {
+            const expandedSize = Math.min(16384, data.length);
+            headerText = decoder.decode(data.slice(0, expandedSize));
+            headerEndIndex = headerText.indexOf('end_header');
+            
+            if (headerEndIndex === -1) {
+                throw new Error('Invalid PLY file: missing end_header');
+            }
+        }
+        
+        const headerDecodeTime = performance.now();
+        log(`⚡ ULTIMATE: Header decode took ${(headerDecodeTime - headerStartTime).toFixed(1)}ms`);
+        
+        const headerLines = headerText.split('\n');
+        const vertexProperties: Array<{name: string, type: string}> = [];
+        const faceProperties: Array<{name: string, type: string}> = [];
+        let currentElement = '';
+
+        for (const line of headerLines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed === 'ply') {continue;}
+
+            const parts = trimmed.split(/\s+/);
+            
+            if (parts[0] === 'format') {
+                result.format = parts[1] as any;
+                result.version = parts[2] || '1.0';
+                this.littleEndian = parts[1] === 'binary_little_endian';
+            } else if (parts[0] === 'comment') {
+                result.comments.push(parts.slice(1).join(' '));
+            } else if (parts[0] === 'element') {
+                currentElement = parts[1];
+                const count = parseInt(parts[2]);
+                if (parts[1] === 'vertex') {
+                    result.vertexCount = count;
+                } else if (parts[1] === 'face') {
+                    result.faceCount = count;
+                }
+            } else if (parts[0] === 'property') {
+                if (currentElement === 'vertex') {
+                    vertexProperties.push({
+                        name: parts[parts.length - 1],
+                        type: parts[1]
+                    });
+                } else if (currentElement === 'face') {
+                    faceProperties.push({
+                        name: parts[parts.length - 1],
+                        type: parts[1]
+                    });
+                }
+            }
+        }
+
+        result.hasColors = vertexProperties.some(p => ['red', 'green', 'blue'].includes(p.name));
+        result.hasNormals = vertexProperties.some(p => ['nx', 'ny', 'nz'].includes(p.name));
+
+        // Calculate binary data start position
+        const headerEndPos = headerEndIndex + 'end_header'.length;
+        let dataStartPos = headerEndPos;
+        while (dataStartPos < data.length && (data[dataStartPos] === 10 || data[dataStartPos] === 13)) {
+            dataStartPos++;
+        }
+
+        // Calculate vertex stride and property offsets for direct binary reading
+        let vertexStride = 0;
+        const propertyOffsets = new Map<string, { offset: number, type: string }>();
+        
+        for (const prop of vertexProperties) {
+            propertyOffsets.set(prop.name, { offset: vertexStride, type: prop.type });
+            
+            switch (prop.type) {
+                case 'char': case 'int8': case 'uchar': case 'uint8':
+                    vertexStride += 1; break;
+                case 'short': case 'int16': case 'ushort': case 'uint16':
+                    vertexStride += 2; break;
+                case 'int': case 'int32': case 'uint': case 'uint32': case 'float': case 'float32':
+                    vertexStride += 4; break;
+                case 'double': case 'float64':
+                    vertexStride += 8; break;
+            }
+        }
+        
+        const totalTime = performance.now();
+        log(`🎯 ULTIMATE: Header-only parsing took ${(totalTime - parseStartTime).toFixed(1)}ms`);
+
+        return {
+            headerInfo: result,
+            binaryDataStart: dataStartPos,
+            vertexStride,
+            propertyOffsets
+        };
+    }
 } 
