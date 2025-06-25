@@ -35,6 +35,9 @@ export class PlyParser {
     private littleEndian = true;
 
     async parse(data: Uint8Array): Promise<PlyData> {
+        const parseStartTime = performance.now();
+        console.log(`📋 Parser: Starting PLY parsing (${data.length} bytes)...`);
+        
         const result: PlyData = {
             vertices: [],
             faces: [],
@@ -47,20 +50,33 @@ export class PlyParser {
             hasNormals: false
         };
 
-        // Convert to string to read header
+        // Only decode enough bytes to find the header (major optimization!)
+        const headerStartTime = performance.now();
         const decoder = new TextDecoder('utf-8');
-        const text = decoder.decode(data);
         
-        if (!text.startsWith('ply')) {
+        // First, decode just the first 4KB to find header end
+        const headerSearchSize = Math.min(4096, data.length);
+        let headerText = decoder.decode(data.slice(0, headerSearchSize));
+        
+        if (!headerText.startsWith('ply')) {
             throw new Error('Invalid PLY file: missing PLY header');
         }
 
-        const headerEndIndex = text.indexOf('end_header');
+        let headerEndIndex = headerText.indexOf('end_header');
+        
+        // If not found in first 4KB, expand search (rare case)
         if (headerEndIndex === -1) {
-            throw new Error('Invalid PLY file: missing end_header');
+            const expandedSize = Math.min(16384, data.length); // Try 16KB
+            headerText = decoder.decode(data.slice(0, expandedSize));
+            headerEndIndex = headerText.indexOf('end_header');
+            
+            if (headerEndIndex === -1) {
+                throw new Error('Invalid PLY file: missing end_header');
+            }
         }
-
-        const headerText = text.substring(0, headerEndIndex);
+        
+        const headerDecodeTime = performance.now();
+        console.log(`🔤 Parser: Header decode took ${(headerDecodeTime - headerStartTime).toFixed(1)}ms (${headerSearchSize} bytes instead of ${data.length})`);
         const headerLines = headerText.split('\n');
 
         // Parse header
@@ -114,11 +130,19 @@ export class PlyParser {
             dataStartPos++;
         }
 
+        const dataParseStartTime = performance.now();
         if (result.format === 'ascii') {
+            console.log(`📝 Parser: Starting ASCII data parsing (${result.vertexCount} vertices)...`);
             this.parseAsciiDataOptimized(data, dataStartPos, result, vertexProperties, faceProperties);
         } else {
+            console.log(`🔢 Parser: Starting binary data parsing (${result.vertexCount} vertices)...`);
             this.parseBinaryDataOptimized(data, dataStartPos, result, vertexProperties, faceProperties);
         }
+        const dataParseTime = performance.now();
+        console.log(`⚡ Parser: Data parsing took ${(dataParseTime - dataParseStartTime).toFixed(1)}ms`);
+        
+        const totalParseTime = performance.now();
+        console.log(`🎯 Parser: Total parse time ${(totalParseTime - parseStartTime).toFixed(1)}ms`);
 
         return result;
     }

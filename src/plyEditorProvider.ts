@@ -28,28 +28,51 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             ]
         };
 
+        // Show UI immediately before any file processing
         webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
+        
+        // Send immediate message to show loading state
+        webviewPanel.webview.postMessage({
+            type: 'startLoading',
+            fileName: path.basename(document.uri.fsPath)
+        });
 
-        // Load and parse initial PLY file
-        try {
-            const plyData = await vscode.workspace.fs.readFile(document.uri);
-            const parser = new PlyParser();
-            const parsedData = await parser.parse(plyData);
-            
-            // Add file info
-            parsedData.fileName = path.basename(document.uri.fsPath);
-            parsedData.fileIndex = 0;
-
-            // Try binary transfer first, fallback to chunking for very large files
+        // Load and parse file asynchronously (don't await - let UI show first)
+        setImmediate(async () => {
             try {
-                await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
-            } catch (transferError) {
-                console.log(`Binary transfer failed for initial file, falling back to chunking...`);
-                await this.sendLargeFileInChunksOptimized(webviewPanel, parsedData, 'multiPlyData');
+                console.log(`🚀 Extension: Starting PLY file processing...`);
+                const loadStartTime = performance.now();
+                
+                const plyData = await vscode.workspace.fs.readFile(document.uri);
+                const fileReadTime = performance.now();
+                console.log(`📁 Extension: File read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`);
+                
+                const parser = new PlyParser();
+                const parsedData = await parser.parse(plyData);
+                const parseTime = performance.now();
+                console.log(`⚡ Extension: PLY parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`);
+                
+                // Add file info
+                parsedData.fileName = path.basename(document.uri.fsPath);
+                parsedData.fileIndex = 0;
+
+                // Try binary transfer first, fallback to chunking for very large files
+                try {
+                    await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
+                    const totalTime = performance.now();
+                    console.log(`🎯 Extension: Total processing time ${(totalTime - loadStartTime).toFixed(1)}ms`);
+                } catch (transferError) {
+                    console.log(`Binary transfer failed for initial file, falling back to chunking...`);
+                    await this.sendLargeFileInChunksOptimized(webviewPanel, parsedData, 'multiPlyData');
+                }
+            } catch (error) {
+                console.error(`Extension: PLY processing failed:`, error);
+                webviewPanel.webview.postMessage({
+                    type: 'loadingError',
+                    error: error instanceof Error ? error.message : String(error)
+                });
             }
-        } catch (error) {
-            vscode.window.showErrorMessage(`Failed to load PLY file: ${error}`);
-        }
+        });
 
         // Handle messages from webview
         webviewPanel.webview.onDidReceiveMessage(

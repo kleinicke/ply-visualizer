@@ -431,6 +431,12 @@ class PLYVisualizer {
             const message = event.data;
             
             switch (message.type) {
+                case 'startLoading':
+                    this.showImmediateLoading(message.fileName);
+                    break;
+                case 'loadingError':
+                    this.showError(`Failed to load PLY file: ${message.error}`);
+                    break;
                 case 'plyData':
                 case 'multiPlyData':
                     try {
@@ -823,6 +829,51 @@ class PLYVisualizer {
         if (axesHelper) {
             axesHelper.visible = !axesHelper.visible;
             console.log('Axes helper', axesHelper.visible ? 'shown' : 'hidden');
+        }
+    }
+
+    private showImmediateLoading(fileName: string): void {
+        console.log(`🎬 UI: Showing immediate loading for ${fileName}`);
+        
+        // Show loading indicator immediately
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl) {
+            loadingEl.classList.remove('hidden');
+            loadingEl.innerHTML = `
+                <div class="spinner"></div>
+                <p>Loading ${fileName}...</p>
+                <p class="loading-detail">Starting file processing...</p>
+            `;
+        }
+        
+        // Show the main UI elements immediately (before file loads)
+        const infoPanelEl = document.getElementById('info-panel');
+        if (infoPanelEl) {
+            infoPanelEl.style.visibility = 'visible';
+        }
+        
+        const viewerContainerEl = document.getElementById('viewer-container');
+        if (viewerContainerEl) {
+            viewerContainerEl.style.visibility = 'visible';
+        }
+        
+        // Update file stats with placeholder
+        this.updateFileStatsImmediate(fileName);
+    }
+
+    private updateFileStatsImmediate(fileName: string): void {
+        const statsEl = document.getElementById('file-stats');
+        if (statsEl) {
+            statsEl.innerHTML = `
+                <div class="stat">
+                    <span class="label">File:</span>
+                    <span class="value">${fileName}</span>
+                </div>
+                <div class="stat">
+                    <span class="label">Status:</span>
+                    <span class="value">Loading...</span>
+                </div>
+            `;
         }
     }
 
