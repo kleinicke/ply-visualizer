@@ -34,9 +34,10 @@ export class PlyParser {
     private offset = 0;
     private littleEndian = true;
 
-    async parse(data: Uint8Array): Promise<PlyData> {
+    async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<PlyData> {
         const parseStartTime = performance.now();
-        console.log(`📋 Parser: Starting PLY parsing (${data.length} bytes)...`);
+        const log = timingCallback || console.log;
+        log(`📋 Parser: Starting PLY parsing (${data.length} bytes)...`);
         
         const result: PlyData = {
             vertices: [],
@@ -76,7 +77,7 @@ export class PlyParser {
         }
         
         const headerDecodeTime = performance.now();
-        console.log(`🔤 Parser: Header decode took ${(headerDecodeTime - headerStartTime).toFixed(1)}ms (${headerSearchSize} bytes instead of ${data.length})`);
+        log(`🔤 Parser: Header decode took ${(headerDecodeTime - headerStartTime).toFixed(1)}ms (${headerSearchSize} bytes instead of ${data.length})`);
         const headerLines = headerText.split('\n');
 
         // Parse header
@@ -132,17 +133,20 @@ export class PlyParser {
 
         const dataParseStartTime = performance.now();
         if (result.format === 'ascii') {
-            console.log(`📝 Parser: Starting ASCII data parsing (${result.vertexCount} vertices)...`);
-            this.parseAsciiDataOptimized(data, dataStartPos, result, vertexProperties, faceProperties);
+            log(`📝 Parser: Starting ASCII data parsing (${result.vertexCount} vertices)...`);
+            this.parseAsciiDataOptimized(data, dataStartPos, result, vertexProperties, faceProperties, log);
         } else {
-            console.log(`🔢 Parser: Starting binary data parsing (${result.vertexCount} vertices)...`);
-            this.parseBinaryDataOptimized(data, dataStartPos, result, vertexProperties, faceProperties);
+            log(`🔢 Parser: Starting binary data parsing (${result.vertexCount} vertices)...`);
+            const binaryParseStartTime = performance.now();
+            this.parseBinaryDataOptimized(data, dataStartPos, result, vertexProperties, faceProperties, log);
+            const binaryParseEndTime = performance.now();
+            log(`🚀 Parser: Binary parsing took ${(binaryParseEndTime - binaryParseStartTime).toFixed(1)}ms`);
         }
         const dataParseTime = performance.now();
-        console.log(`⚡ Parser: Data parsing took ${(dataParseTime - dataParseStartTime).toFixed(1)}ms`);
+        log(`⚡ Parser: Data parsing took ${(dataParseTime - dataParseStartTime).toFixed(1)}ms`);
         
         const totalParseTime = performance.now();
-        console.log(`🎯 Parser: Total parse time ${(totalParseTime - parseStartTime).toFixed(1)}ms`);
+        log(`🎯 Parser: Total parse time ${(totalParseTime - parseStartTime).toFixed(1)}ms`);
 
         return result;
     }
@@ -152,7 +156,8 @@ export class PlyParser {
         startPos: number, 
         result: PlyData, 
         vertexProperties: Array<{name: string, type: string}>,
-        faceProperties: Array<{name: string, type: string}>
+        faceProperties: Array<{name: string, type: string}>,
+        log: (message: string) => void = console.log
     ): void {
         const decoder = new TextDecoder('utf-8');
         const text = decoder.decode(data.slice(startPos));
@@ -227,48 +232,109 @@ export class PlyParser {
         startPos: number, 
         result: PlyData, 
         vertexProperties: Array<{name: string, type: string}>,
-        faceProperties: Array<{name: string, type: string}>
+        faceProperties: Array<{name: string, type: string}>,
+        log: (message: string) => void = console.log
     ): void {
         this.dataView = new DataView(data.buffer, data.byteOffset + startPos);
         this.offset = 0;
 
+        // Create property index maps for fast lookup
+        const propIndexMap = new Map<string, number>();
+        const propTypeMap = new Map<string, string>();
+        vertexProperties.forEach((prop, index) => {
+            propIndexMap.set(prop.name, index);
+            propTypeMap.set(prop.name, prop.type);
+        });
+
+        // Calculate stride (bytes per vertex)
+        let vertexStride = 0;
+        for (const prop of vertexProperties) {
+            switch (prop.type) {
+                case 'char': case 'int8': case 'uchar': case 'uint8':
+                    vertexStride += 1; break;
+                case 'short': case 'int16': case 'ushort': case 'uint16':
+                    vertexStride += 2; break;
+                case 'int': case 'int32': case 'uint': case 'uint32': case 'float': case 'float32':
+                    vertexStride += 4; break;
+                case 'double': case 'float64':
+                    vertexStride += 8; break;
+            }
+        }
+
         // Pre-allocate vertices array for better performance
         result.vertices = new Array(result.vertexCount);
 
-        // Parse vertices with optimized binary reading
+                // ULTRA-FAST: Direct TypedArray parsing with zero object allocation
+        log(`🚀 Parser: Using zero-allocation direct parsing for ${result.vertexCount} vertices...`);
+        const vertexStartTime = performance.now();
+        
+        // Create property maps for lightning-fast lookup
+        const propIndices = new Map<string, number>();
+        vertexProperties.forEach((prop, idx) => propIndices.set(prop.name, idx));
+        
+        // Pre-allocate result arrays - NO individual vertex objects!
+        const positions = new Float32Array(result.vertexCount * 3);
+        const colors = result.hasColors ? new Uint8Array(result.vertexCount * 3) : null;
+        const normals = result.hasNormals ? new Float32Array(result.vertexCount * 3) : null;
+        
+        // Find property indices once
+        const xIdx = propIndices.get('x') ?? -1;
+        const yIdx = propIndices.get('y') ?? -1;
+        const zIdx = propIndices.get('z') ?? -1;
+        const redIdx = propIndices.get('red') ?? -1;
+        const greenIdx = propIndices.get('green') ?? -1;
+        const blueIdx = propIndices.get('blue') ?? -1;
+        const nxIdx = propIndices.get('nx') ?? -1;
+        const nyIdx = propIndices.get('ny') ?? -1;
+        const nzIdx = propIndices.get('nz') ?? -1;
+        
+        // Lightning-fast direct binary parsing
         for (let i = 0; i < result.vertexCount; i++) {
-            const vertex: PlyVertex = { x: 0, y: 0, z: 0 };
-
-            for (const prop of vertexProperties) {
-                const value = this.readBinaryValue(prop.type);
+            const i3 = i * 3;
+            
+            // Read all properties for this vertex
+            for (let propIdx = 0; propIdx < vertexProperties.length; propIdx++) {
+                const value = this.readBinaryValueFast(vertexProperties[propIdx].type);
                 
-                switch (prop.name) {
-                    case 'x': vertex.x = value; break;
-                    case 'y': vertex.y = value; break;
-                    case 'z': vertex.z = value; break;
-                    case 'red': vertex.red = value; break;
-                    case 'green': vertex.green = value; break;
-                    case 'blue': vertex.blue = value; break;
-                    case 'alpha': vertex.alpha = value; break;
-                    case 'nx': vertex.nx = value; break;
-                    case 'ny': vertex.ny = value; break;
-                    case 'nz': vertex.nz = value; break;
-                }
+                // Direct array assignment based on property index
+                if (propIdx === xIdx) positions[i3] = value;
+                else if (propIdx === yIdx) positions[i3 + 1] = value;
+                else if (propIdx === zIdx) positions[i3 + 2] = value;
+                else if (colors && propIdx === redIdx) colors[i3] = value;
+                else if (colors && propIdx === greenIdx) colors[i3 + 1] = value;
+                else if (colors && propIdx === blueIdx) colors[i3 + 2] = value;
+                else if (normals && propIdx === nxIdx) normals[i3] = value;
+                else if (normals && propIdx === nyIdx) normals[i3 + 1] = value;
+                else if (normals && propIdx === nzIdx) normals[i3 + 2] = value;
             }
-            result.vertices[i] = vertex;
         }
+        
+        // REVOLUTIONARY: Skip object creation entirely - store TypedArrays directly!
+        log(`🚀 Parser: Skipping object creation - storing raw TypedArrays for maximum performance!`);
+        
+        // Store TypedArrays directly in the result (new approach)
+        (result as any).positionsArray = positions;
+        (result as any).colorsArray = colors;
+        (result as any).normalsArray = normals;
+        (result as any).useTypedArrays = true;
+        
+        // Create minimal vertex array for compatibility (only if really needed)
+        result.vertices = [];
+
+        const vertexEndTime = performance.now();
+        log(`🎯 Parser: Vertex processing took ${(vertexEndTime - vertexStartTime).toFixed(1)}ms`);
 
         // Pre-allocate faces array
         if (result.faceCount > 0) {
             result.faces = new Array(result.faceCount);
             
-            // Parse faces
+            // Parse faces efficiently
             for (let i = 0; i < result.faceCount; i++) {
-                const vertexCount = this.readBinaryValue('uchar');
-                const indices: number[] = new Array(vertexCount);
+                const vertexCount = this.readBinaryValueFast('uchar');
+                const indices = new Array(vertexCount);
                 
                 for (let j = 0; j < vertexCount; j++) {
-                    indices[j] = this.readBinaryValue('int');
+                    indices[j] = this.readBinaryValueFast('int');
                 }
                 
                 result.faces[i] = { indices };
@@ -329,5 +395,48 @@ export class PlyParser {
         }
         
         return value;
+    }
+
+    private readBinaryValueFast(type: string): number {
+        if (!this.dataView) {
+            throw new Error('DataView not initialized');
+        }
+
+        // Optimized inline version with reduced function call overhead
+        if (type === 'float' || type === 'float32') {
+            const value = this.dataView.getFloat32(this.offset, this.littleEndian);
+            this.offset += 4;
+            return value;
+        } else if (type === 'uchar' || type === 'uint8') {
+            const value = this.dataView.getUint8(this.offset);
+            this.offset += 1;
+            return value;
+        } else if (type === 'int' || type === 'int32') {
+            const value = this.dataView.getInt32(this.offset, this.littleEndian);
+            this.offset += 4;
+            return value;
+        } else if (type === 'char' || type === 'int8') {
+            const value = this.dataView.getInt8(this.offset);
+            this.offset += 1;
+            return value;
+        } else if (type === 'short' || type === 'int16') {
+            const value = this.dataView.getInt16(this.offset, this.littleEndian);
+            this.offset += 2;
+            return value;
+        } else if (type === 'ushort' || type === 'uint16') {
+            const value = this.dataView.getUint16(this.offset, this.littleEndian);
+            this.offset += 2;
+            return value;
+        } else if (type === 'uint' || type === 'uint32') {
+            const value = this.dataView.getUint32(this.offset, this.littleEndian);
+            this.offset += 4;
+            return value;
+        } else if (type === 'double' || type === 'float64') {
+            const value = this.dataView.getFloat64(this.offset, this.littleEndian);
+            this.offset += 8;
+            return value;
+        } else {
+            throw new Error(`Unsupported data type: ${type}`);
+        }
     }
 } 

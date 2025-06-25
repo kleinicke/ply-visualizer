@@ -44,7 +44,15 @@ module.exports = [
         },
         devtool: 'nosources-source-map',
         resolve: {
-            extensions: ['.ts', '.js']
+            extensions: ['.ts', '.js'],
+            alias: {
+                // Force single Three.js instance to prevent multiple imports
+                'three': path.resolve(__dirname, 'node_modules/three'),
+            }
+        },
+        optimization: {
+            // Deduplicate modules to prevent multiple Three.js instances
+            splitChunks: false
         },
         module: {
             rules: [

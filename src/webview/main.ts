@@ -324,53 +324,83 @@ class PLYVisualizer {
 
     private createGeometryFromPlyData(data: PlyData): THREE.BufferGeometry {
         const geometry = new THREE.BufferGeometry();
-        const vertexCount = data.vertices.length;
         
-        console.log(`Creating geometry for ${vertexCount} vertices...`);
+        console.log(`Creating geometry for ${data.vertexCount} vertices...`);
         const startTime = performance.now();
         
-        // Pre-allocate typed arrays for better performance
-        const vertices = new Float32Array(vertexCount * 3);
-        const colors = data.hasColors ? new Float32Array(vertexCount * 3) : null;
-        const normals = data.hasNormals ? new Float32Array(vertexCount * 3) : null;
-
-        // Optimized vertex processing - batch operations
-        const vertexArray = data.vertices;
-        for (let i = 0, i3 = 0; i < vertexCount; i++, i3 += 3) {
-            const vertex = vertexArray[i];
+        // Check if we have direct TypedArrays (new ultra-fast path)
+        console.log(`🔍 Debug: useTypedArrays = ${(data as any).useTypedArrays}, positionsArray = ${!!(data as any).positionsArray}`);
+        if ((data as any).useTypedArrays) {
+            console.log(`🚀 Using direct TypedArray geometry creation - MAXIMUM PERFORMANCE!`);
             
-            // Position data (required)
-            vertices[i3] = vertex.x;
-            vertices[i3 + 1] = vertex.y;
-            vertices[i3 + 2] = vertex.z;
+            const positions = (data as any).positionsArray as Float32Array;
+            const colors = (data as any).colorsArray as Uint8Array | null;
+            const normals = (data as any).normalsArray as Float32Array | null;
+            
+            // Direct assignment - zero copying, zero processing!
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            if (colors && data.hasColors) {
+                // Convert Uint8Array colors to Float32Array for Three.js
+                const colorFloats = new Float32Array(colors.length);
+                for (let i = 0; i < colors.length; i++) {
+                    colorFloats[i] = colors[i] / 255;
+                }
+                geometry.setAttribute('color', new THREE.BufferAttribute(colorFloats, 3));
+            }
+            
+            if (normals && data.hasNormals) {
+                geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+            }
+            
+        } else {
+            // Fallback to traditional vertex object processing
+            const vertexCount = data.vertices.length;
+            console.log(`Using traditional vertex object processing for ${vertexCount} vertices...`);
+            
+            // Pre-allocate typed arrays for better performance
+            const vertices = new Float32Array(vertexCount * 3);
+            const colors = data.hasColors ? new Float32Array(vertexCount * 3) : null;
+            const normals = data.hasNormals ? new Float32Array(vertexCount * 3) : null;
 
-            // Color data (optional)
-            if (colors && vertex.red !== undefined) {
-                colors[i3] = vertex.red / 255;
-                colors[i3 + 1] = (vertex.green || 0) / 255;
-                colors[i3 + 2] = (vertex.blue || 0) / 255;
+            // Optimized vertex processing - batch operations
+            const vertexArray = data.vertices;
+            for (let i = 0, i3 = 0; i < vertexCount; i++, i3 += 3) {
+                const vertex = vertexArray[i];
+                
+                // Position data (required)
+                vertices[i3] = vertex.x;
+                vertices[i3 + 1] = vertex.y;
+                vertices[i3 + 2] = vertex.z;
+
+                // Color data (optional)
+                if (colors && vertex.red !== undefined) {
+                    colors[i3] = vertex.red / 255;
+                    colors[i3 + 1] = (vertex.green || 0) / 255;
+                    colors[i3 + 2] = (vertex.blue || 0) / 255;
+                }
+
+                // Normal data (optional)
+                if (normals && vertex.nx !== undefined) {
+                    normals[i3] = vertex.nx;
+                    normals[i3 + 1] = vertex.ny || 0;
+                    normals[i3 + 2] = vertex.nz || 0;
+                }
             }
 
-            // Normal data (optional)
-            if (normals && vertex.nx !== undefined) {
-                normals[i3] = vertex.nx;
-                normals[i3 + 1] = vertex.ny || 0;
-                normals[i3 + 2] = vertex.nz || 0;
+            // Set attributes
+            geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+            
+            if (colors) {
+                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
             }
-        }
 
-        // Set attributes
-        geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-        
-        if (colors) {
-            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        }
-
-        if (normals) {
-            geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-        } else if (data.faces.length > 0) {
-            // Only compute normals for meshes, not point clouds
-            geometry.computeVertexNormals();
+            if (normals) {
+                geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+            } else if (data.faces.length > 0) {
+                // Only compute normals for meshes, not point clouds
+                geometry.computeVertexNormals();
+            }
         }
 
         // Optimized face processing
@@ -434,6 +464,9 @@ class PLYVisualizer {
                 case 'startLoading':
                     this.showImmediateLoading(message.fileName);
                     break;
+                case 'timingUpdate':
+                    console.log(message.message);
+                    break;
                 case 'loadingError':
                     this.showError(`Failed to load PLY file: ${message.error}`);
                     break;
@@ -446,6 +479,14 @@ class PLYVisualizer {
                     } catch (error) {
                         console.error('Error displaying PLY data:', error);
                         this.showError('Failed to display PLY data: ' + (error instanceof Error ? error.message : String(error)));
+                    }
+                    break;
+                case 'directTypedArrayData':
+                    try {
+                        await this.handleDirectTypedArrayData(message);
+                    } catch (error) {
+                        console.error('Error handling direct TypedArray data:', error);
+                        this.showError('Failed to handle direct TypedArray data: ' + (error instanceof Error ? error.message : String(error)));
                     }
                     break;
                 case 'binaryPlyData':
@@ -833,7 +874,11 @@ class PLYVisualizer {
     }
 
     private showImmediateLoading(fileName: string): void {
-        console.log(`🎬 UI: Showing immediate loading for ${fileName}`);
+        const uiStartTime = performance.now();
+        console.log(`🎬 UI: Showing immediate loading for ${fileName} at ${uiStartTime.toFixed(1)}ms`);
+        
+        // Store timing for complete analysis
+        (window as any).loadingStartTime = uiStartTime;
         
         // Show loading indicator immediately
         const loadingEl = document.getElementById('loading');
@@ -969,8 +1014,48 @@ class PLYVisualizer {
         console.log(`Removed file at index ${fileIndex}`);
     }
 
+    private async handleDirectTypedArrayData(message: any): Promise<void> {
+        console.log(`🚀 REVOLUTIONARY: Handling direct TypedArray data for ${message.fileName}`);
+        const startTime = performance.now();
+        
+        // Create PLY data object with direct TypedArrays
+        const plyData: PlyData = {
+            vertices: [], // Empty - not used
+            faces: [],
+            format: message.format,
+            version: '1.0',
+            comments: message.comments || [],
+            vertexCount: message.vertexCount,
+            faceCount: message.faceCount,
+            hasColors: message.hasColors,
+            hasNormals: message.hasNormals,
+            fileName: message.fileName
+        };
+        
+        // Attach direct TypedArrays
+        (plyData as any).useTypedArrays = true;
+        (plyData as any).positionsArray = new Float32Array(message.positionsBuffer);
+        (plyData as any).colorsArray = message.colorsBuffer ? new Uint8Array(message.colorsBuffer) : null;
+        (plyData as any).normalsArray = message.normalsBuffer ? new Float32Array(message.normalsBuffer) : null;
+        
+        console.log(`⚡ Direct TypedArray reconstruction took ${(performance.now() - startTime).toFixed(1)}ms`);
+        
+        // Process as normal - but now with TypedArrays!
+        if (message.messageType === 'multiPlyData') {
+            await this.displayFiles([plyData]);
+        } else if (message.messageType === 'addFiles') {
+            this.addNewFiles([plyData]);
+        }
+    }
+
     private async handleBinaryPlyData(message: any): Promise<void> {
+        const receiveTime = performance.now();
+        const loadingStartTime = (window as any).loadingStartTime || 0;
+        const extensionProcessingTime = receiveTime - loadingStartTime;
+        
         console.log(`📦 Received binary PLY data for ${message.fileName} (${message.vertexCount} vertices)`);
+        console.log(`⏱️ Extension processing took: ${extensionProcessingTime.toFixed(1)}ms (UI→Data received)`);
+        
         const startTime = performance.now();
         
         // Convert binary ArrayBuffers back to PLY data format
@@ -1052,6 +1137,12 @@ class PLYVisualizer {
         } else {
             await this.displayFiles([plyData]);
         }
+        
+        // Complete timing analysis
+        const totalTime = performance.now();
+        const completeLoadTime = totalTime - loadingStartTime;
+        console.log(`🎯 COMPLETE LOADING TIME: ${completeLoadTime.toFixed(1)}ms (UI show → Point cloud visible)`);
+        console.log(`📊 Breakdown: Extension ${extensionProcessingTime.toFixed(1)}ms + Conversion ${conversionTime.toFixed(1)}ms + Geometry ${(totalTime - startTime - conversionTime).toFixed(1)}ms`);
     }
 
     private handleStartLargeFile(message: any): void {

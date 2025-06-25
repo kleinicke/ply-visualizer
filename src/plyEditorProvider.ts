@@ -40,30 +40,91 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         // Load and parse file asynchronously (don't await - let UI show first)
         setImmediate(async () => {
             try {
-                console.log(`🚀 Extension: Starting PLY file processing...`);
                 const loadStartTime = performance.now();
+                
+                // Send timing updates to webview for visibility
+                webviewPanel.webview.postMessage({
+                    type: 'timingUpdate',
+                    message: '🚀 Extension: Starting PLY file processing...',
+                    timestamp: loadStartTime
+                });
                 
                 const plyData = await vscode.workspace.fs.readFile(document.uri);
                 const fileReadTime = performance.now();
-                console.log(`📁 Extension: File read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`);
+                webviewPanel.webview.postMessage({
+                    type: 'timingUpdate',
+                    message: `📁 Extension: File read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
+                    timestamp: fileReadTime
+                });
                 
                 const parser = new PlyParser();
-                const parsedData = await parser.parse(plyData);
+                webviewPanel.webview.postMessage({
+                    type: 'timingUpdate',
+                    message: '🔍 Extension: Starting PLY parsing...',
+                    timestamp: performance.now()
+                });
+                
+                // Create timing callback that forwards to webview
+                const timingCallback = (message: string) => {
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: message,
+                        timestamp: performance.now()
+                    });
+                };
+                
+                const parsedData = await parser.parse(plyData, timingCallback);
                 const parseTime = performance.now();
-                console.log(`⚡ Extension: PLY parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`);
+                webviewPanel.webview.postMessage({
+                    type: 'timingUpdate',
+                    message: `⚡ Extension: PLY parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
+                    timestamp: parseTime
+                });
                 
                 // Add file info
                 parsedData.fileName = path.basename(document.uri.fsPath);
                 parsedData.fileIndex = 0;
 
-                // Try binary transfer first, fallback to chunking for very large files
-                try {
-                    await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
+                webviewPanel.webview.postMessage({
+                    type: 'timingUpdate',
+                    message: '🚀 Extension: Starting binary data conversion...',
+                    timestamp: performance.now()
+                });
+
+                // REVOLUTIONARY: Direct binary streaming - skip all parsing!
+                if ((parsedData as any).useTypedArrays) {
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: Using REVOLUTIONARY direct binary streaming...',
+                        timestamp: performance.now()
+                    });
+                    
+                    // Send TypedArrays directly without any conversion
+                    await this.sendDirectTypedArrays(webviewPanel, parsedData, 'multiPlyData');
                     const totalTime = performance.now();
-                    console.log(`🎯 Extension: Total processing time ${(totalTime - loadStartTime).toFixed(1)}ms`);
-                } catch (transferError) {
-                    console.log(`Binary transfer failed for initial file, falling back to chunking...`);
-                    await this.sendLargeFileInChunksOptimized(webviewPanel, parsedData, 'multiPlyData');
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `🎯 Extension: Total processing time ${(totalTime - loadStartTime).toFixed(1)}ms`,
+                        timestamp: totalTime
+                    });
+                } else {
+                    // Traditional vertex object handling
+                    try {
+                        await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
+                        const totalTime = performance.now();
+                        webviewPanel.webview.postMessage({
+                            type: 'timingUpdate',
+                            message: `🎯 Extension: Total processing time ${(totalTime - loadStartTime).toFixed(1)}ms`,
+                            timestamp: totalTime
+                        });
+                    } catch (transferError) {
+                        webviewPanel.webview.postMessage({
+                            type: 'timingUpdate',
+                            message: 'Binary transfer failed, falling back to chunking...',
+                            timestamp: performance.now()
+                        });
+                        await this.sendLargeFileInChunksOptimized(webviewPanel, parsedData, 'multiPlyData');
+                    }
                 }
             } catch (error) {
                 console.error(`Extension: PLY processing failed:`, error);
@@ -199,6 +260,72 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         }
     }
 
+    private convertTypedArraysToVertices(parsedData: any): void {
+        // Emergency fallback: convert TypedArrays back to vertex objects for chunking
+        const positions = parsedData.positionsArray as Float32Array;
+        const colors = parsedData.colorsArray as Uint8Array | null;
+        const normals = parsedData.normalsArray as Float32Array | null;
+        
+        parsedData.vertices = new Array(parsedData.vertexCount);
+        for (let i = 0; i < parsedData.vertexCount; i++) {
+            const i3 = i * 3;
+            const vertex: any = {
+                x: positions[i3],
+                y: positions[i3 + 1],
+                z: positions[i3 + 2]
+            };
+            
+            if (colors && parsedData.hasColors) {
+                vertex.red = colors[i3];
+                vertex.green = colors[i3 + 1];
+                vertex.blue = colors[i3 + 2];
+            }
+            
+            if (normals && parsedData.hasNormals) {
+                vertex.nx = normals[i3];
+                vertex.ny = normals[i3 + 1];
+                vertex.nz = normals[i3 + 2];
+            }
+            
+            parsedData.vertices[i] = vertex;
+        }
+        
+        // Clean up TypedArray flags
+        delete parsedData.useTypedArrays;
+        delete parsedData.positionsArray;
+        delete parsedData.colorsArray;
+        delete parsedData.normalsArray;
+    }
+
+    private async sendDirectTypedArrays(
+        webviewPanel: vscode.WebviewPanel,
+        parsedData: any,
+        messageType: string
+    ): Promise<void> {
+        console.log(`🚀 REVOLUTIONARY: Direct TypedArray streaming for ${parsedData.fileName}`);
+        
+        // Send TypedArrays directly without any conversion or processing
+        webviewPanel.webview.postMessage({
+            type: 'directTypedArrayData',
+            messageType: messageType,
+            fileName: parsedData.fileName,
+            vertexCount: parsedData.vertexCount,
+            faceCount: parsedData.faceCount,
+            hasColors: parsedData.hasColors,
+            hasNormals: parsedData.hasNormals,
+            format: parsedData.format,
+            comments: parsedData.comments,
+            
+            // Direct TypedArray transfer (ArrayBuffer)
+            positionsBuffer: parsedData.positionsArray.buffer,
+            colorsBuffer: parsedData.colorsArray ? parsedData.colorsArray.buffer : null,
+            normalsBuffer: parsedData.normalsArray ? parsedData.normalsArray.buffer : null,
+            
+            // Metadata for direct BufferAttribute creation
+            useDirectBuffers: true
+        });
+    }
+
     private async sendPlyDataToWebview(
         webviewPanel: vscode.WebviewPanel, 
         plyDataArray: any[], 
@@ -224,48 +351,61 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         plyData: any,
         messageType: string
     ): Promise<void> {
-        // Convert PLY data to binary ArrayBuffers for maximum transfer speed
-        const vertices = plyData.vertices;
+        // Check if we have direct TypedArrays (ultra-fast path)
         const vertexCount = plyData.vertexCount;
         const hasColors = plyData.hasColors;
         const hasNormals = plyData.hasNormals;
         
-        // Create typed arrays for vertices (always 3 floats: x, y, z)
-        const positionBuffer = new Float32Array(vertexCount * 3);
+        let positionBuffer: Float32Array;
         let colorBuffer: Uint8Array | null = null;
         let normalBuffer: Float32Array | null = null;
         
-        // Optional color buffer (RGB as bytes: 0-255)
-        if (hasColors) {
-            colorBuffer = new Uint8Array(vertexCount * 3);
-        }
-        
-        // Optional normal buffer (3 floats: nx, ny, nz)
-        if (hasNormals) {
-            normalBuffer = new Float32Array(vertexCount * 3);
-        }
-        
-        // Fill the buffers
-        for (let i = 0; i < vertexCount; i++) {
-            const vertex = vertices[i];
+        if (plyData.useTypedArrays) {
+            // Ultra-fast: Use TypedArrays directly (zero-copy)
+            console.log(`🚀 Using direct TypedArrays for binary transfer - ZERO COPY!`);
+            positionBuffer = plyData.positionsArray;
+            colorBuffer = plyData.colorsArray;
+            normalBuffer = plyData.normalsArray;
+        } else {
+            // Fallback: Convert vertex objects to TypedArrays
+            console.log(`🔄 Converting vertex objects to TypedArrays for binary transfer...`);
+            const vertices = plyData.vertices;
             
-            // Position (always present)
-            positionBuffer[i * 3] = vertex.x;
-            positionBuffer[i * 3 + 1] = vertex.y;
-            positionBuffer[i * 3 + 2] = vertex.z;
+            // Create typed arrays for vertices (always 3 floats: x, y, z)
+            positionBuffer = new Float32Array(vertexCount * 3);
             
-            // Colors (if present)
-            if (hasColors && colorBuffer) {
-                colorBuffer[i * 3] = vertex.red || 0;
-                colorBuffer[i * 3 + 1] = vertex.green || 0;
-                colorBuffer[i * 3 + 2] = vertex.blue || 0;
+            // Optional color buffer (RGB as bytes: 0-255)
+            if (hasColors) {
+                colorBuffer = new Uint8Array(vertexCount * 3);
             }
             
-            // Normals (if present)
-            if (hasNormals && normalBuffer) {
-                normalBuffer[i * 3] = vertex.nx || 0;
-                normalBuffer[i * 3 + 1] = vertex.ny || 0;
-                normalBuffer[i * 3 + 2] = vertex.nz || 0;
+            // Optional normal buffer (3 floats: nx, ny, nz)
+            if (hasNormals) {
+                normalBuffer = new Float32Array(vertexCount * 3);
+            }
+            
+            // Fill the buffers
+            for (let i = 0; i < vertexCount; i++) {
+                const vertex = vertices[i];
+                
+                // Position (always present)
+                positionBuffer[i * 3] = vertex.x;
+                positionBuffer[i * 3 + 1] = vertex.y;
+                positionBuffer[i * 3 + 2] = vertex.z;
+                
+                // Colors (if present)
+                if (hasColors && colorBuffer) {
+                    colorBuffer[i * 3] = vertex.red || 0;
+                    colorBuffer[i * 3 + 1] = vertex.green || 0;
+                    colorBuffer[i * 3 + 2] = vertex.blue || 0;
+                }
+                
+                // Normals (if present)
+                if (hasNormals && normalBuffer) {
+                    normalBuffer[i * 3] = vertex.nx || 0;
+                    normalBuffer[i * 3 + 1] = vertex.ny || 0;
+                    normalBuffer[i * 3 + 2] = vertex.nz || 0;
+                }
             }
         }
         
