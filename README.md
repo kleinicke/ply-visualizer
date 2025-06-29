@@ -1,6 +1,13 @@
 # PLY Visualizer
 
-A Visual Studio Code extension for visualizing PLY (Polygon File Format) files with interactive 3D visualization using Three.js.
+A Visual Studio Code extension for visualizing PLY (Polygon File Format) files with interactive 3D visualization using Three.js. It's currently mainly developed for point cloud visualization, but should work in the future equally well for any objects.
+
+## Features
+
+- **Visualize Point Clouds**: Navigate in colored or uncolored point clouds 
+- **Fast Loading of Big Point Clouds**: Even point clouds with 5 Million Points load in around a second.
+- **Compare Multiple Point Clouds**: Multiple point clouds can be loaded in the same view and activated and deactivated independently.
+- **Multiple Formats**: Support for both ASCII and binary PLY formats
 
 ## Features
 
@@ -14,7 +21,7 @@ A Visual Studio Code extension for visualizing PLY (Polygon File Format) files w
   - Reset camera to fit the model
 - **File Information**: Display detailed file statistics and metadata
 
-## Supported PLY Features
+## Theoretically supported PLY Features
 
 - **Vertex Properties**:
   - Position (x, y, z)
@@ -27,71 +34,14 @@ A Visual Studio Code extension for visualizing PLY (Polygon File Format) files w
   - ASCII PLY format
   - Binary PLY format (little-endian and big-endian)
 
-## Usage
-
-1. **Automatic Opening**: PLY files will automatically open with the PLY Visualizer when clicked
-2. **Manual Opening**: Right-click on a PLY file and select "Open with PLY Visualizer"
-3. **Controls**:
-   - **Mouse**: Orbit around the model
-   - **Scroll**: Zoom in and out
-   - **Right-click + drag**: Pan the view
-   - **Reset Camera**: Click the button to reset the view
-   - **Toggle Wireframe**: Switch between solid and wireframe rendering
-   - **Toggle Points**: Switch between mesh and point cloud rendering
-
-## Installation
-
-### From Source
-
-1. Clone this repository
-2. Install dependencies: `npm install`
-3. Compile the extension: `npm run compile`
-4. Open in VS Code and press `F5` to run in a new Extension Development Host window
-
-### Building VSIX Package
-
-```bash
-npm install -g vsce
-vsce package
-```
-
-## Development
-
-### Prerequisites
-
-- Node.js 16 or higher
-- Visual Studio Code
-
-### Setup
-
-```bash
-git clone <repository-url>
-cd ply-visualizer
-npm install
-```
-
-### Building
-
-```bash
-npm run compile
-```
-
-### Testing
-
-```bash
-npm test
-```
-
-### Running in Development
-
-1. Open the project in VS Code
-2. Press `F5` to start debugging
-3. A new VS Code window will open with the extension loaded
-4. Open a PLY file to test the extension
-
-## File Format Support
-
-The extension supports the standard PLY format specification:
+## Known Issues and Missing Features
+- **Wrong direction of Rotation**: When rotating the point cloud the direction is inversed. It's unclear how to fix this.
+- **Bad use case knowledge for Shapes**: It was mainly tested for point clouds, since the author mainly works with point clouds.
+- **Unused Buttons**: Not all buttons have a usecase yet
+- **Variable Point Size**: Allow changing the point size
+- **Rotation of points**: Allow Rotation matrix for single point clouds
+- **Trigger all**: Allow triggering all pointclouds off except for one
+- **Visualize Depth Image**: Interpret a depth image directly as a point cloud
 
 ### ASCII Format Example
 ```
@@ -110,44 +60,9 @@ end_header
 0.5 1.0 0.0 0 0 255
 ```
 
-### Binary Format Support
-- Binary little-endian format
-- Binary big-endian format
-- All standard PLY data types (char, uchar, short, ushort, int, uint, float, double)
+## Feature Requests and Issues
 
-## Technical Details
+If you have use cases that would be helpful for others or find problems, feel free to suggest them on the [GitHub repository](https://github.com/kleinicke/ply-visualizer/issues). If you know how to fix bugs or how to implement certain features, feel free to contribute.
 
-### Architecture
 
-- **Extension Host**: Main extension logic in TypeScript
-- **WebView**: Three.js visualization in a VSCode webview
-- **PLY Parser**: Custom parser for both ASCII and binary PLY formats
-- **Three.js Integration**: 3D rendering with interactive controls
 
-### Performance
-
-- Efficient parsing of large PLY files
-- Memory-optimized geometry creation
-- Viewport culling for better performance
-- Adaptive point size for point clouds
-
-## Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- [Three.js](https://threejs.org/) for 3D rendering
-- [VSCode Extension API](https://code.visualstudio.com/api) for extension framework
-- PLY format specification for file format details 
