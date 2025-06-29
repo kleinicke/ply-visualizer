@@ -70,6 +70,7 @@ class PLYVisualizer {
     
     // Predefined colors for different files
     private readonly fileColors: [number, number, number][] = [
+        [1.0, 1.0, 1.0], // White
         [1.0, 0.0, 0.0], // Red
         [0.0, 1.0, 0.0], // Green
         [0.0, 0.0, 1.0], // Blue
