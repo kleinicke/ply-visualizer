@@ -945,7 +945,11 @@ class PLYVisualizer {
         for (let i = 0; i < this.plyFiles.length; i++) {
             const checkbox = document.getElementById(`file-${i}`);
             if (checkbox) {
-                checkbox.addEventListener('change', () => this.toggleFileVisibility(i));
+                checkbox.addEventListener('click', (event) => {
+                    event.preventDefault(); // Prevent default checkbox behavior
+                    const isShiftClick = (event as MouseEvent).shiftKey;
+                    this.toggleFileVisibility(i, isShiftClick);
+                });
             }
         }
         
@@ -964,10 +968,22 @@ class PLYVisualizer {
         }
     }
 
-    private toggleFileVisibility(fileIndex: number): void {
+    private toggleFileVisibility(fileIndex: number, isShiftClick: boolean = false): void {
         if (fileIndex >= 0 && fileIndex < this.meshes.length) {
-            this.fileVisibility[fileIndex] = !this.fileVisibility[fileIndex];
-            this.meshes[fileIndex].visible = this.fileVisibility[fileIndex];
+            if (isShiftClick) {
+                // Solo mode: hide all except the selected one
+                for (let i = 0; i < this.meshes.length; i++) {
+                    const shouldBeVisible = i === fileIndex;
+                    this.fileVisibility[i] = shouldBeVisible;
+                    this.meshes[i].visible = shouldBeVisible;
+                }
+                // Update the UI to reflect the changes
+                this.updateFileList();
+            } else {
+                // Normal toggle behavior
+                this.fileVisibility[fileIndex] = !this.fileVisibility[fileIndex];
+                this.meshes[fileIndex].visible = this.fileVisibility[fileIndex];
+            }
         }
     }
 
