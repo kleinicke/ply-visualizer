@@ -50,6 +50,7 @@ class PLYVisualizer {
     private fileVisibility: boolean[] = [];
     private useOriginalColors = true; // Default to original colors
     private pointSizes: number[] = []; // Individual point sizes for each point cloud
+    private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
     
     // Large file chunked loading state
     private chunkedFileState: Map<string, {
@@ -351,8 +352,6 @@ class PLYVisualizer {
         (this as any).axisLabels = { x: xLabel, y: yLabel, z: zLabel };
     }
 
-
-
     private updateAxesSize(): void {
         const axesGroup = (this as any).axesGroup;
         if (!axesGroup || this.meshes.length === 0) {return;}
@@ -625,6 +624,37 @@ class PLYVisualizer {
     private setupEventListeners(): void {
         // File management event listeners
         document.getElementById('add-file')?.addEventListener('click', this.requestAddFile.bind(this));
+
+        // Color mode change event
+        document.addEventListener('change', (e) => {
+            const target = e.target as HTMLElement;
+            if (target.classList.contains('color-selector')) {
+                const fileIndex = parseInt(target.id.split('-')[1]);
+                const value = (target as HTMLSelectElement).value;
+                
+                if (fileIndex >= 0 && fileIndex < this.individualColorModes.length) {
+                    this.individualColorModes[fileIndex] = value;
+                    
+                    // Recreate material with new color mode
+                    if (fileIndex < this.plyFiles.length && fileIndex < this.meshes.length) {
+                        const oldMaterial = this.meshes[fileIndex].material;
+                        const newMaterial = this.createMaterialForFile(this.plyFiles[fileIndex], fileIndex);
+                        this.meshes[fileIndex].material = newMaterial;
+                        
+                        // Dispose of old material to prevent memory leaks
+                        if (oldMaterial) {
+                            if (Array.isArray(oldMaterial)) {
+                                oldMaterial.forEach(mat => mat.dispose());
+                            } else {
+                                oldMaterial.dispose();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // OLD COLOR SELECTOR LISTENERS REMOVED - now handled globally
     }
 
     private setupMessageHandler(): void {
@@ -701,7 +731,6 @@ class PLYVisualizer {
                 case 'largeFileComplete':
                     await this.handleLargeFileComplete(message);
                     break;
-
             }
         });
     }
@@ -711,6 +740,7 @@ class PLYVisualizer {
         this.meshes = [];
         this.fileVisibility = [];
         this.pointSizes = []; // Reset point sizes
+        this.individualColorModes = []; // Reset individual color modes
 
         // Show loading indicator
         document.getElementById('loading')?.classList.remove('hidden');
@@ -766,6 +796,11 @@ class PLYVisualizer {
             // Yield control to prevent UI freezing on large files
             await this.yieldToUI();
             
+            // Initialize color mode before creating material
+            const initialColorMode = this.useOriginalColors ? 'original' : 'assigned';
+            this.individualColorModes.push(initialColorMode);
+            console.log(`DisplayFiles: Initializing file ${i} with color mode: ${initialColorMode}, useOriginalColors: ${this.useOriginalColors}, hasColors: ${data.hasColors}`);
+            
             const geometry = this.createGeometryFromPlyData(data);
             const material = this.createMaterialForFile(data, i);
             
@@ -813,11 +848,21 @@ class PLYVisualizer {
                 transparent: false
             };
             
-            if (this.useOriginalColors && data.hasColors) {
+            // Use individual color mode for this file
+            const colorMode = this.individualColorModes[fileIndex];
+            console.log(`Creating material for file ${fileIndex}, colorMode: ${colorMode}, hasColors: ${data.hasColors}`);
+            
+            if (colorMode === 'original' && data.hasColors) {
                 materialParams.vertexColors = true;
+                console.log(`Using original colors for file ${fileIndex}`);
             } else {
-                const color = this.fileColors[fileIndex % this.fileColors.length];
+                let colorIndex = fileIndex % this.fileColors.length; // Default to assigned color
+                if (colorMode !== 'original' && colorMode !== 'assigned') {
+                    colorIndex = parseInt(colorMode) || fileIndex % this.fileColors.length;
+                }
+                const color = this.fileColors[colorIndex];
                 materialParams.color = new THREE.Color(color[0], color[1], color[2]);
+                console.log(`Using assigned color ${colorIndex} (${color}) for file ${fileIndex}`);
             }
             
             return new THREE.PointsMaterial(materialParams);
@@ -827,11 +872,21 @@ class PLYVisualizer {
                 wireframe: false
             };
             
-            if (this.useOriginalColors && data.hasColors) {
+            // Use individual color mode for this file
+            const colorMode = this.individualColorModes[fileIndex];
+            console.log(`Creating material for file ${fileIndex}, colorMode: ${colorMode}, hasColors: ${data.hasColors}`);
+            
+            if (colorMode === 'original' && data.hasColors) {
                 materialParams.vertexColors = true;
+                console.log(`Using original colors for file ${fileIndex}`);
             } else {
-                const color = this.fileColors[fileIndex % this.fileColors.length];
+                let colorIndex = fileIndex % this.fileColors.length; // Default to assigned color
+                if (colorMode !== 'original' && colorMode !== 'assigned') {
+                    colorIndex = parseInt(colorMode) || fileIndex % this.fileColors.length;
+                }
+                const color = this.fileColors[colorIndex];
                 materialParams.color = new THREE.Color(color[0], color[1], color[2]);
+                console.log(`Using assigned color ${colorIndex} (${color}) for file ${fileIndex}`);
             }
             
             return new THREE.MeshLambertMaterial(materialParams);
@@ -899,17 +954,9 @@ class PLYVisualizer {
 
     private updateFileList(): void {
         const fileListDiv = document.getElementById('file-list');
-        if (!fileListDiv) {return;}
+        if (!fileListDiv) return;
 
-        if (this.plyFiles.length === 0) {
-            fileListDiv.innerHTML = '<p class="no-files">No files loaded. Click "Add PLY File" to get started.</p>';
-            return;
-        }
-
-        let html = `<div class="color-mode-section">
-            <label>Color Mode:</label>
-            <button id="toggle-colors" class="small-button">${this.useOriginalColors ? 'Use Assigned Colors' : 'Use Original Colors'}</button>
-        </div>`;
+        let html = '';
         
         for (let i = 0; i < this.plyFiles.length; i++) {
             const data = this.plyFiles[i];
@@ -939,6 +986,14 @@ class PLYVisualizer {
                         <span class="size-value">${(this.pointSizes[i] || 0.001).toFixed(4)}</span>
                     </div>
                     ` : ''}
+                    <div class="color-control">
+                        <label for="color-${i}">Color:</label>
+                        <select id="color-${i}" class="color-selector">
+                            ${data.hasColors ? `<option value="original" ${this.individualColorModes[i] === 'original' ? 'selected' : ''}>Original</option>` : ''}
+                            <option value="assigned" ${this.individualColorModes[i] === 'assigned' ? 'selected' : ''}>Assigned (${this.getColorName(i)})</option>
+                            ${this.getColorOptions(i)}
+                        </select>
+                    </div>
                 </div>
             `;
         }
@@ -949,7 +1004,22 @@ class PLYVisualizer {
         for (let i = 0; i < this.plyFiles.length; i++) {
             const checkbox = document.getElementById(`file-${i}`);
             if (checkbox) {
-                checkbox.addEventListener('change', () => this.toggleFileVisibility(i));
+                checkbox.addEventListener('click', (e) => {
+                    const event = e as MouseEvent;
+                    if (event.shiftKey) {
+                        // Shift+click: solo this point cloud
+                        e.preventDefault(); // Prevent checkbox from toggling
+                        this.soloPointCloud(i);
+                    } else {
+                        // Normal click: let the checkbox toggle normally
+                        // The change event will handle the visibility toggle
+                    }
+                });
+                
+                // Keep the change event for normal toggling
+                checkbox.addEventListener('change', () => {
+                    this.toggleFileVisibility(i);
+                });
             }
             
             // Add size slider listeners for point clouds
@@ -966,6 +1036,8 @@ class PLYVisualizer {
                     }
                 });
             }
+            
+            // OLD COLOR SELECTOR LISTENERS REMOVED - now handled globally
         }
         
         // Add remove button listeners
@@ -1000,6 +1072,7 @@ class PLYVisualizer {
             const newMaterial = this.createMaterialForFile(this.plyFiles[i], i);
             this.meshes[i].material = newMaterial;
             
+            // Dispose of old material to prevent memory leaks
             if (oldMaterial) {
                 if (Array.isArray(oldMaterial)) {
                     oldMaterial.forEach(mat => mat.dispose());
@@ -1092,6 +1165,11 @@ class PLYVisualizer {
             // Add to data array
             this.plyFiles.push(data);
             
+            // Initialize color mode before creating material
+            const initialColorMode = this.useOriginalColors ? 'original' : 'assigned';
+            this.individualColorModes.push(initialColorMode);
+            console.log(`Initializing file ${data.fileIndex} with color mode: ${initialColorMode}, useOriginalColors: ${this.useOriginalColors}, hasColors: ${data.hasColors}`);
+            
             // Create geometry and material
             const geometry = this.createGeometryFromPlyData(data);
             const material = this.createMaterialForFile(data, data.fileIndex);
@@ -1138,6 +1216,7 @@ class PLYVisualizer {
         this.meshes.splice(fileIndex, 1);
         this.fileVisibility.splice(fileIndex, 1);
         this.pointSizes.splice(fileIndex, 1); // Remove point size for this file
+        this.individualColorModes.splice(fileIndex, 1); // Remove color mode for this file
 
         // Reassign file indices
         for (let i = 0; i < this.plyFiles.length; i++) {
@@ -1572,12 +1651,39 @@ class PLYVisualizer {
             const mesh = this.meshes[fileIndex];
             if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
                 mesh.material.size = newSize;
-                mesh.material.needsUpdate = true; // Force material update
-                console.log(`Updated point size for file ${fileIndex} to ${newSize}`);
-            } else {
-                console.log(`File ${fileIndex} is not a point cloud (mesh type: ${mesh.constructor.name})`);
             }
         }
+    }
+
+    private getColorName(fileIndex: number): string {
+        const colorNames = ['White', 'Red', 'Green', 'Blue', 'Yellow', 'Magenta', 'Cyan', 'Orange', 'Purple', 'Dark Green', 'Gray'];
+        return colorNames[fileIndex % colorNames.length];
+    }
+
+    private getColorOptions(fileIndex: number): string {
+        let options = '';
+        for (let i = 0; i < this.fileColors.length; i++) {
+            const isSelected = this.individualColorModes[fileIndex] === i.toString();
+            options += `<option value="${i}" ${isSelected ? 'selected' : ''}>${this.getColorName(i)}</option>`;
+        }
+        return options;
+    }
+
+    private soloPointCloud(fileIndex: number): void {
+        // Hide all point clouds first
+        for (let i = 0; i < this.meshes.length; i++) {
+            this.fileVisibility[i] = false;
+            this.meshes[i].visible = false;
+        }
+        
+        // Show only the selected point cloud
+        if (fileIndex >= 0 && fileIndex < this.meshes.length) {
+            this.fileVisibility[fileIndex] = true;
+            this.meshes[fileIndex].visible = true;
+        }
+        
+        // Update checkboxes to reflect the new state
+        this.updateFileList();
     }
 }
 

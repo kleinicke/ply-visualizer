@@ -384,4 +384,36 @@ body {
     text-align: right;
 }
 
+/* Color control styles */
+.color-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    padding: 4px 0;
+    font-size: 10px;
+}
+
+.color-control label {
+    color: var(--vscode-foreground);
+    min-width: 40px;
+    font-size: 10px;
+}
+
+.color-selector {
+    flex: 1;
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 2px;
+    padding: 2px 4px;
+    font-size: 10px;
+    cursor: pointer;
+}
+
+.color-selector:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    border-color: var(--vscode-focusBorder);
+}
+
  
