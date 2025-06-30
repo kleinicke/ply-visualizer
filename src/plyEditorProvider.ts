@@ -210,17 +210,6 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         <h4>Statistics</h4>
                         <div id="file-stats"></div>
                     </div>
-                    
-                    <div class="panel-section">
-                        <h4>View Controls</h4>
-                        <div class="controls">
-                            <button id="reset-camera">Reset Camera</button>
-                            <button id="toggle-wireframe">Toggle Wireframe</button>
-                            <button id="toggle-points">Toggle Points</button>
-                            <button id="toggle-axes">Toggle Axes</button>
-                            <button id="toggle-all">Toggle All Visibility</button>
-                        </div>
-                    </div>
                 </div>
                 <div id="viewer-container">
                     <canvas id="three-canvas"></canvas>

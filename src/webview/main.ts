@@ -623,14 +623,8 @@ class PLYVisualizer {
     }
 
     private setupEventListeners(): void {
-        document.getElementById('reset-camera')?.addEventListener('click', this.resetCamera.bind(this));
-        document.getElementById('toggle-wireframe')?.addEventListener('click', this.toggleWireframe.bind(this));
-        document.getElementById('toggle-points')?.addEventListener('click', this.togglePoints.bind(this));
-        document.getElementById('toggle-axes')?.addEventListener('click', this.toggleAxes.bind(this));
-        
         // File management event listeners
         document.getElementById('add-file')?.addEventListener('click', this.requestAddFile.bind(this));
-        document.getElementById('toggle-all')?.addEventListener('click', this.toggleAllFiles.bind(this));
     }
 
     private setupMessageHandler(): void {
@@ -996,18 +990,6 @@ class PLYVisualizer {
         }
     }
 
-    private toggleAllFiles(): void {
-        const allVisible = this.fileVisibility.every(visible => visible);
-        const newVisibility = !allVisible;
-        
-        for (let i = 0; i < this.fileVisibility.length; i++) {
-            this.fileVisibility[i] = newVisibility;
-            this.meshes[i].visible = newVisibility;
-        }
-        
-        this.updateFileList();
-    }
-
     private toggleColorMode(): void {
         this.useOriginalColors = !this.useOriginalColors;
         console.log('Toggling color mode to:', this.useOriginalColors ? 'Original Colors' : 'Assigned Colors');
@@ -1029,64 +1011,6 @@ class PLYVisualizer {
         
         // Update the file list to show current color mode
         this.updateFileList();
-    }
-
-    private resetCamera(): void {
-        this.fitCameraToAllObjects();
-    }
-
-    private toggleWireframe(): void {
-        // Toggle wireframe for all mesh materials
-        for (let i = 0; i < this.meshes.length; i++) {
-            const mesh = this.meshes[i];
-            if (mesh instanceof THREE.Mesh && mesh.material instanceof THREE.MeshLambertMaterial) {
-                mesh.material.wireframe = !mesh.material.wireframe;
-            }
-        }
-    }
-
-    private togglePoints(): void {
-        // Convert between mesh and points representation
-        for (let i = 0; i < this.meshes.length; i++) {
-            const oldMesh = this.meshes[i];
-            const data = this.plyFiles[i];
-            
-            this.scene.remove(oldMesh);
-            
-            const isCurrentlyMesh = oldMesh instanceof THREE.Mesh;
-            const shouldShowAsPoints = !isCurrentlyMesh;
-            
-            const material = this.createMaterialForFile(data, i);
-            const newMesh = shouldShowAsPoints ?
-                new THREE.Points(oldMesh.geometry, material) :
-                new THREE.Mesh(oldMesh.geometry, material);
-            
-            this.scene.add(newMesh);
-            this.meshes[i] = newMesh;
-            
-            // Dispose old material
-            if (oldMesh.material) {
-                if (Array.isArray(oldMesh.material)) {
-                    oldMesh.material.forEach(mat => mat.dispose());
-                } else {
-                    oldMesh.material.dispose();
-                }
-            }
-        }
-    }
-
-    private toggleAxes(): void {
-        const axesGroup = (this as any).axesGroup;
-        if (axesGroup) {
-            // Toggle permanent visibility (overrides dynamic behavior)
-            const currentlyVisible = axesGroup.visible;
-            axesGroup.visible = !currentlyVisible;
-            
-            // Store the permanent visibility state
-            (this as any).axesPermanentlyVisible = !currentlyVisible;
-            
-            console.log('Axes with labels', axesGroup.visible ? 'permanently shown' : 'dynamic mode');
-        }
     }
 
     private showImmediateLoading(fileName: string): void {
