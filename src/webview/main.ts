@@ -49,6 +49,7 @@ class PLYVisualizer {
     private meshes: (THREE.Mesh | THREE.Points)[] = [];
     private fileVisibility: boolean[] = [];
     private useOriginalColors = true; // Default to original colors
+    private pointSizes: number[] = []; // Individual point sizes for each point cloud
     
     // Large file chunked loading state
     private chunkedFileState: Map<string, {
@@ -715,6 +716,7 @@ class PLYVisualizer {
         this.plyFiles = dataArray;
         this.meshes = [];
         this.fileVisibility = [];
+        this.pointSizes = []; // Reset point sizes
 
         // Show loading indicator
         document.getElementById('loading')?.classList.remove('hidden');
@@ -781,6 +783,7 @@ class PLYVisualizer {
             this.scene.add(mesh);
             this.meshes.push(mesh);
             this.fileVisibility.push(true);
+            this.pointSizes.push(0.001); // Initialize with default point size
         }
 
         // Update progress
@@ -811,8 +814,8 @@ class PLYVisualizer {
         
         if (shouldShowAsPoints) {
             const materialParams: any = {
-                size: 0.001,
-                sizeAttenuation: false,
+                size: this.pointSizes[fileIndex] || 0.001, // Use individual point size or default
+                sizeAttenuation: true,
                 transparent: false
             };
             
@@ -935,6 +938,13 @@ class PLYVisualizer {
                         <button class="remove-file" data-file-index="${i}" title="Remove file">✕</button>
                     </div>
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
+                    ${data.faceCount === 0 ? `
+                    <div class="point-size-control">
+                        <label for="size-${i}">Point Size:</label>
+                        <input type="range" id="size-${i}" min="0.0001" max="0.01" step="0.0001" value="${this.pointSizes[i] || 0.001}" class="size-slider">
+                        <span class="size-value">${(this.pointSizes[i] || 0.001).toFixed(4)}</span>
+                    </div>
+                    ` : ''}
                 </div>
             `;
         }
@@ -945,10 +955,21 @@ class PLYVisualizer {
         for (let i = 0; i < this.plyFiles.length; i++) {
             const checkbox = document.getElementById(`file-${i}`);
             if (checkbox) {
-                checkbox.addEventListener('click', (event) => {
-                    event.preventDefault(); // Prevent default checkbox behavior
-                    const isShiftClick = (event as MouseEvent).shiftKey;
-                    this.toggleFileVisibility(i, isShiftClick);
+                checkbox.addEventListener('change', () => this.toggleFileVisibility(i));
+            }
+            
+            // Add size slider listeners for point clouds
+            const sizeSlider = document.getElementById(`size-${i}`) as HTMLInputElement;
+            if (sizeSlider && this.plyFiles[i].faceCount === 0) {
+                sizeSlider.addEventListener('input', (e) => {
+                    const newSize = parseFloat((e.target as HTMLInputElement).value);
+                    this.updatePointSize(i, newSize);
+                    
+                    // Update the displayed value
+                    const sizeValue = document.querySelector(`#size-${i} + .size-value`) as HTMLElement;
+                    if (sizeValue) {
+                        sizeValue.textContent = newSize.toFixed(4);
+                    }
                 });
             }
         }
@@ -968,22 +989,10 @@ class PLYVisualizer {
         }
     }
 
-    private toggleFileVisibility(fileIndex: number, isShiftClick: boolean = false): void {
+    private toggleFileVisibility(fileIndex: number): void {
         if (fileIndex >= 0 && fileIndex < this.meshes.length) {
-            if (isShiftClick) {
-                // Solo mode: hide all except the selected one
-                for (let i = 0; i < this.meshes.length; i++) {
-                    const shouldBeVisible = i === fileIndex;
-                    this.fileVisibility[i] = shouldBeVisible;
-                    this.meshes[i].visible = shouldBeVisible;
-                }
-                // Update the UI to reflect the changes
-                this.updateFileList();
-            } else {
-                // Normal toggle behavior
-                this.fileVisibility[fileIndex] = !this.fileVisibility[fileIndex];
-                this.meshes[fileIndex].visible = this.fileVisibility[fileIndex];
-            }
+            this.fileVisibility[fileIndex] = !this.fileVisibility[fileIndex];
+            this.meshes[fileIndex].visible = this.fileVisibility[fileIndex];
         }
     }
 
@@ -1151,8 +1160,6 @@ class PLYVisualizer {
         });
     }
 
-
-
     private addNewFiles(newFiles: PlyData[]): void {
         for (const data of newFiles) {
             // Assign new file index
@@ -1174,6 +1181,7 @@ class PLYVisualizer {
             this.scene.add(mesh);
             this.meshes.push(mesh);
             this.fileVisibility.push(true);
+            this.pointSizes.push(0.001); // Initialize with default point size
         }
 
         // Update UI
@@ -1205,6 +1213,7 @@ class PLYVisualizer {
         this.plyFiles.splice(fileIndex, 1);
         this.meshes.splice(fileIndex, 1);
         this.fileVisibility.splice(fileIndex, 1);
+        this.pointSizes.splice(fileIndex, 1); // Remove point size for this file
 
         // Reassign file indices
         for (let i = 0; i < this.plyFiles.length; i++) {
@@ -1629,6 +1638,22 @@ class PLYVisualizer {
 
         // Clean up chunked file state
         this.chunkedFileState.delete(message.fileName);
+    }
+
+    private updatePointSize(fileIndex: number, newSize: number): void {
+        if (fileIndex >= 0 && fileIndex < this.pointSizes.length) {
+            this.pointSizes[fileIndex] = newSize;
+            
+            // Update the material if it's a Points material
+            const mesh = this.meshes[fileIndex];
+            if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
+                mesh.material.size = newSize;
+                mesh.material.needsUpdate = true; // Force material update
+                console.log(`Updated point size for file ${fileIndex} to ${newSize}`);
+            } else {
+                console.log(`File ${fileIndex} is not a point cloud (mesh type: ${mesh.constructor.name})`);
+            }
+        }
     }
 }
 

@@ -333,4 +333,55 @@ body {
     margin: 5px 0 0 0;
 }
 
+/* Point size control styles */
+.point-size-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    padding: 4px 0;
+    font-size: 10px;
+}
+
+.point-size-control label {
+    color: var(--vscode-foreground);
+    min-width: 60px;
+    font-size: 10px;
+}
+
+.size-slider {
+    flex: 1;
+    height: 4px;
+    background: var(--vscode-progressBar-background);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+
+.size-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    background: var(--vscode-progressBar-foreground);
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.size-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    background: var(--vscode-progressBar-foreground);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+}
+
+.size-value {
+    color: var(--vscode-descriptionForeground);
+    font-family: monospace;
+    font-size: 9px;
+    min-width: 40px;
+    text-align: right;
+}
+
  
