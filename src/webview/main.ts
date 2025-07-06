@@ -830,8 +830,8 @@ class PLYVisualizer {
         this.updateAxesSize();
 
         // Update UI
-        this.updateFileStats();
         this.updateFileList();
+        this.updateFileStats();
 
         // Hide loading indicator
         document.getElementById('loading')?.classList.add('hidden');
@@ -1192,7 +1192,6 @@ class PLYVisualizer {
         // Update UI
         this.updateFileList();
         this.updateFileStats();
-        this.fitCameraToAllObjects();
 
         console.log(`Added ${newFiles.length} new files`);
     }
@@ -1230,10 +1229,6 @@ class PLYVisualizer {
         this.updateFileList();
         this.updateFileStats();
         
-        if (this.plyFiles.length > 0) {
-            this.fitCameraToAllObjects();
-        }
-
         console.log(`Removed file at index ${fileIndex}`);
     }
 
