@@ -166,37 +166,70 @@ class PLYVisualizer {
     }
 
     private setupInvertedControls(): void {
-        // X AND Y AXIS ROTATION INVERSION + AXES VISIBILITY - Override the update method
-        console.log('🔄 Setting up X/Y axis rotation inversion and axes visibility');
+        // TRACKBALL ROTATION DIRECTION INVERSION - Override the _rotateCamera method
+        console.log('🔄 Setting up TrackballControls rotation direction inversion');
         
         const controls = this.controls as any;
         
-        // Store the original update method
-        const originalUpdate = controls.update.bind(controls);
+        // Override _rotateCamera to invert up vector rotation using quaternion.invert()
+        controls._rotateCamera = function() {
+            const _moveDirection = new THREE.Vector3();
+            const _eyeDirection = new THREE.Vector3();
+            const _objectUpDirection = new THREE.Vector3();
+            const _objectSidewaysDirection = new THREE.Vector3();
+            const _axis = new THREE.Vector3();
+            const _quaternion = new THREE.Quaternion();
+            
+            _moveDirection.set(this._moveCurr.x - this._movePrev.x, this._moveCurr.y - this._movePrev.y, 0);
+            let angle = _moveDirection.length();
+
+            if (angle) {
+                this._eye.copy(this.object.position).sub(this.target);
+
+                _eyeDirection.copy(this._eye).normalize();
+                _objectUpDirection.copy(this.object.up).normalize();
+                _objectSidewaysDirection.crossVectors(_objectUpDirection, _eyeDirection).normalize();
+
+                _objectUpDirection.setLength(this._moveCurr.y - this._movePrev.y);
+                _objectSidewaysDirection.setLength(this._moveCurr.x - this._movePrev.x);
+
+                _moveDirection.copy(_objectUpDirection.add(_objectSidewaysDirection));
+
+                _axis.crossVectors(_moveDirection, this._eye).normalize();
+
+                angle *= this.rotateSpeed;
+                _quaternion.setFromAxisAngle(_axis, angle);
+
+                // Apply normal rotation to camera position
+                this._eye.applyQuaternion(_quaternion);
+                
+                // Apply inverted rotation to up vector
+                this.object.up.applyQuaternion(_quaternion.clone().invert());
+
+                this._lastAxis.copy(_axis);
+                this._lastAngle = angle;
+
+            } else if (!this.staticMoving && this._lastAngle) {
+                this._lastAngle *= Math.sqrt(1.0 - this.dynamicDampingFactor);
+                this._eye.copy(this.object.position).sub(this.target);
+                
+                _quaternion.setFromAxisAngle(this._lastAxis, this._lastAngle);
+                
+                // Apply normal rotation to camera position
+                this._eye.applyQuaternion(_quaternion);
+                
+                // Apply inverted rotation to up vector
+                this.object.up.applyQuaternion(_quaternion.clone().invert());
+            }
+
+            this._movePrev.copy(this._moveCurr);
+        };
+        
+        console.log('✅ Up vector rotation direction inversion applied using quaternion.invert()');
         
         // Track interaction state for axes visibility
         let axesHideTimeout: NodeJS.Timeout | null = null;
         
-        // Override update to modify rotation deltas
-        controls.update = () => {
-            // Store current mouse positions if they exist
-            if (controls._rotateStart && controls._rotateEnd) {
-                // Invert X and Y rotation by swapping/negating the rotation vectors
-                const tempX = controls._rotateEnd.x;
-                const tempY = controls._rotateEnd.y;
-                
-                // Invert X axis rotation (horizontal mouse movement)
-                controls._rotateEnd.x = controls._rotateStart.x - (tempX - controls._rotateStart.x);
-                
-                // Invert Y axis rotation (vertical mouse movement) 
-                controls._rotateEnd.y = controls._rotateStart.y - (tempY - controls._rotateStart.y);
-            }
-            
-            // Call the original update method
-            originalUpdate();
-        };
-        
-        // Use TrackballControls events for reliable interaction detection
         const showAxes = () => {
             const axesGroup = (this as any).axesGroup;
             const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
@@ -204,7 +237,6 @@ class PLYVisualizer {
             if (axesGroup && !axesPermanentlyVisible) {
                 axesGroup.visible = true;
                 
-                // Clear any existing hide timeout
                 if (axesHideTimeout) {
                     clearTimeout(axesHideTimeout);
                     axesHideTimeout = null;
@@ -228,39 +260,10 @@ class PLYVisualizer {
             }, 500);
         };
         
-        // Listen to TrackballControls events for reliable interaction detection
         this.controls.addEventListener('start', showAxes);
         this.controls.addEventListener('end', hideAxesAfterDelay);
         
-        // Store the hide function for use in rotation center changes
-        (this as any).showAxesTemporarily = () => {
-            const axesGroup = (this as any).axesGroup;
-            const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
-            
-            if (axesGroup && !axesPermanentlyVisible) {
-                axesGroup.visible = true;
-                
-                // Clear any existing timeout
-                if (axesHideTimeout) {
-                    clearTimeout(axesHideTimeout);
-                }
-                
-                // Hide after same short timeframe as rotation (500ms)
-                axesHideTimeout = setTimeout(() => {
-                    const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
-                    if (axesGroup && !axesPermanentlyVisible) {
-                        axesGroup.visible = false;
-                    }
-                    axesHideTimeout = null;
-                }, 500);
-            }
-        };
-        
-        console.log('✅ X/Y axis rotation inversion and dynamic axes visibility applied');
-        console.log('  - Horizontal drag inverted');
-        console.log('  - Vertical drag inverted');
-        console.log('  - Axes show on interaction start');
-        console.log('  - Axes hide 500ms after interaction end');
+        console.log('✅ TrackballControls rotation direction inversion applied');
     }
 
     private addAxesHelper(): void {
