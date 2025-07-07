@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 
 declare const acquireVsCodeApi: () => any;
 
@@ -42,7 +43,10 @@ class PLYVisualizer {
     private scene!: THREE.Scene;
     private camera!: THREE.PerspectiveCamera;
     private renderer!: THREE.WebGLRenderer;
-    private controls!: TrackballControls;
+    private controls!: TrackballControls | OrbitControls;
+    
+    // Camera control state
+    private controlType: 'trackball' | 'orbit' | 'inverse-trackball' = 'trackball';
     
     // Unified file management
     private plyFiles: PlyData[] = [];
@@ -130,24 +134,8 @@ class PLYVisualizer {
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-        // Controls - Trackball for better point cloud navigation
-        this.controls = new TrackballControls(this.camera, this.renderer.domElement);
-        this.controls.rotateSpeed = 5.0;  // Strong rotation (will be inverted later)
-        this.controls.zoomSpeed = 2.5;    // Fast zooming
-        this.controls.panSpeed = 1.5;     // Good panning speed (will be inverted later)
-        this.controls.noZoom = false;
-        this.controls.noPan = false;
-        this.controls.staticMoving = false; // Enable smooth movement
-        this.controls.dynamicDampingFactor = 0.15; // Smooth damping
-        
-        // Set up screen coordinates for proper rotation
-        this.controls.screen.left = 0;
-        this.controls.screen.top = 0;
-        this.controls.screen.width = this.renderer.domElement.clientWidth;
-        this.controls.screen.height = this.renderer.domElement.clientHeight;
-        
-        // Fix ALL inverted controls - comprehensive approach
-        this.setupInvertedControls();
+        // Initialize controls
+        this.initializeControls();
 
         // Lighting
         this.initSceneLighting();
@@ -165,14 +153,130 @@ class PLYVisualizer {
         this.animate();
     }
 
+    private initializeControls(): void {
+        // Store current camera state before disposing old controls
+        const currentCameraPosition = this.camera.position.clone();
+        const currentTarget = this.controls ? this.controls.target.clone() : new THREE.Vector3(0, 0, 0);
+        const currentUp = this.camera.up.clone();
+        
+        // Dispose of existing controls if any
+        if (this.controls) {
+            this.controls.dispose();
+        }
+
+        if (this.controlType === 'trackball') {
+            this.controls = new TrackballControls(this.camera, this.renderer.domElement);
+            const trackballControls = this.controls as TrackballControls;
+            trackballControls.rotateSpeed = 5.0;
+            trackballControls.zoomSpeed = 2.5;
+            trackballControls.panSpeed = 1.5;
+            trackballControls.noZoom = false;
+            trackballControls.noPan = false;
+            trackballControls.staticMoving = false;
+            trackballControls.dynamicDampingFactor = 0.15;
+            
+            // Set up screen coordinates for proper rotation
+            trackballControls.screen.left = 0;
+            trackballControls.screen.top = 0;
+            trackballControls.screen.width = this.renderer.domElement.clientWidth;
+            trackballControls.screen.height = this.renderer.domElement.clientHeight;
+        } else if (this.controlType === 'inverse-trackball') {
+            this.controls = new TrackballControls(this.camera, this.renderer.domElement);
+            const trackballControls = this.controls as TrackballControls;
+            trackballControls.rotateSpeed = 1.0;  // Reduced to 1.0 as requested
+            trackballControls.zoomSpeed = 2.5;
+            trackballControls.panSpeed = 1.5;
+            trackballControls.noZoom = false;
+            trackballControls.noPan = false;
+            trackballControls.staticMoving = false;
+            trackballControls.dynamicDampingFactor = 0.15;
+            
+            // Set up screen coordinates for proper rotation
+            trackballControls.screen.left = 0;
+            trackballControls.screen.top = 0;
+            trackballControls.screen.width = this.renderer.domElement.clientWidth;
+            trackballControls.screen.height = this.renderer.domElement.clientHeight;
+            
+            // Apply inversion
+            this.setupInvertedControls();
+        } else {
+            this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+            const orbitControls = this.controls as OrbitControls;
+            orbitControls.enableDamping = true;
+            orbitControls.dampingFactor = 0.15;
+            orbitControls.screenSpacePanning = false;
+            orbitControls.minDistance = 0.001;
+            orbitControls.maxDistance = 1000;
+        }
+        
+        // Set up axes visibility for all control types
+        this.setupAxesVisibility();
+        
+        // Restore camera state to prevent jumps
+        this.camera.position.copy(currentCameraPosition);
+        this.camera.up.copy(currentUp);
+        this.controls.target.copy(currentTarget);
+        this.controls.update();
+    }
+
+    private setupAxesVisibility(): void {
+        // Track interaction state for axes visibility
+        let axesHideTimeout: NodeJS.Timeout | null = null;
+        
+        const showAxes = () => {
+            const axesGroup = (this as any).axesGroup;
+            const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
+            
+            if (axesGroup && !axesPermanentlyVisible) {
+                axesGroup.visible = true;
+                
+                if (axesHideTimeout) {
+                    clearTimeout(axesHideTimeout);
+                    axesHideTimeout = null;
+                }
+            }
+        };
+        
+        const hideAxesAfterDelay = () => {
+            if (axesHideTimeout) {
+                clearTimeout(axesHideTimeout);
+            }
+            
+            axesHideTimeout = setTimeout(() => {
+                const axesGroup = (this as any).axesGroup;
+                const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
+                
+                if (axesGroup && !axesPermanentlyVisible) {
+                    axesGroup.visible = false;
+                }
+                axesHideTimeout = null;
+            }, 500);
+        };
+        
+        // Add event listeners for axes visibility based on control type
+        if (this.controlType === 'trackball' || this.controlType === 'inverse-trackball') {
+            const trackballControls = this.controls as TrackballControls;
+            trackballControls.addEventListener('start', showAxes);
+            trackballControls.addEventListener('end', hideAxesAfterDelay);
+        } else {
+            const orbitControls = this.controls as OrbitControls;
+            orbitControls.addEventListener('start', showAxes);
+            orbitControls.addEventListener('end', hideAxesAfterDelay);
+        }
+        
+        console.log('✅ Axes visibility set up for', this.controlType);
+    }
+
     private setupInvertedControls(): void {
+        if (this.controlType !== 'inverse-trackball') return;
+        
         // TRACKBALL ROTATION DIRECTION INVERSION - Override the _rotateCamera method
         console.log('🔄 Setting up TrackballControls rotation direction inversion');
         
-        const controls = this.controls as any;
+        const controls = this.controls as TrackballControls;
         
         // Override _rotateCamera to invert up vector rotation using quaternion.invert()
-        controls._rotateCamera = function() {
+        (controls as any)._rotateCamera = function() {
             const _moveDirection = new THREE.Vector3();
             const _eyeDirection = new THREE.Vector3();
             const _objectUpDirection = new THREE.Vector3();
@@ -226,43 +330,6 @@ class PLYVisualizer {
         };
         
         console.log('✅ Up vector rotation direction inversion applied using quaternion.invert()');
-        
-        // Track interaction state for axes visibility
-        let axesHideTimeout: NodeJS.Timeout | null = null;
-        
-        const showAxes = () => {
-            const axesGroup = (this as any).axesGroup;
-            const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
-            
-            if (axesGroup && !axesPermanentlyVisible) {
-                axesGroup.visible = true;
-                
-                if (axesHideTimeout) {
-                    clearTimeout(axesHideTimeout);
-                    axesHideTimeout = null;
-                }
-            }
-        };
-        
-        const hideAxesAfterDelay = () => {
-            if (axesHideTimeout) {
-                clearTimeout(axesHideTimeout);
-            }
-            
-            axesHideTimeout = setTimeout(() => {
-                const axesGroup = (this as any).axesGroup;
-                const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
-                
-                if (axesGroup && !axesPermanentlyVisible) {
-                    axesGroup.visible = false;
-                }
-                axesHideTimeout = null;
-            }, 500);
-        };
-        
-        this.controls.addEventListener('start', showAxes);
-        this.controls.addEventListener('end', hideAxesAfterDelay);
-        
         console.log('✅ TrackballControls rotation direction inversion applied');
     }
 
@@ -409,10 +476,16 @@ class PLYVisualizer {
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(container.clientWidth, container.clientHeight);
         
-        // Update trackball controls screen size for proper rotation
-        this.controls.screen.width = container.clientWidth;
-        this.controls.screen.height = container.clientHeight;
-        this.controls.handleResize();
+        // Update controls based on type
+        if (this.controlType === 'trackball') {
+            const trackballControls = this.controls as TrackballControls;
+            trackballControls.screen.width = container.clientWidth;
+            trackballControls.screen.height = container.clientHeight;
+            trackballControls.handleResize();
+        } else {
+            const orbitControls = this.controls as OrbitControls;
+            // OrbitControls automatically handles resize
+        }
     }
 
     private animate(): void {
@@ -453,7 +526,7 @@ class PLYVisualizer {
     }
 
     private setRotationCenter(point: THREE.Vector3): void {
-        // Set the new target for the trackball controls
+        // Set the new target for the controls (works for both TrackballControls and OrbitControls)
         this.controls.target.copy(point);
         
         // Update axes position to the new rotation center
@@ -657,7 +730,7 @@ class PLYVisualizer {
             }
         });
 
-        // Keyboard shortcuts for up vector control and camera reset
+        // Keyboard shortcuts for up vector control, camera reset, and camera controls
         document.addEventListener('keydown', (e) => {
             // Only handle shortcuts when not typing in input fields
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) {
@@ -681,6 +754,18 @@ class PLYVisualizer {
                     this.resetCameraAndUpVector();
                     e.preventDefault();
                     break;
+                case 't':
+                    this.switchToTrackballControls();
+                    e.preventDefault();
+                    break;
+                case 'o':
+                    this.switchToOrbitControls();
+                    e.preventDefault();
+                    break;
+                case 'i':
+                    this.switchToInverseTrackballControls();
+                    e.preventDefault();
+                    break;
             }
         });
 
@@ -700,7 +785,7 @@ class PLYVisualizer {
         // Force the camera to look at the current target with the new up vector
         this.camera.lookAt(this.controls.target);
         
-        // Update the controls
+        // Update the controls (works for both TrackballControls and OrbitControls)
         this.controls.update();
         
         // Show feedback
@@ -729,7 +814,7 @@ class PLYVisualizer {
             this.controls.target.set(0, 0, 0);
         }
         
-        // Update controls
+        // Update controls (works for both TrackballControls and OrbitControls)
         this.controls.update();
         
         // Update axes helper
@@ -775,6 +860,9 @@ class PLYVisualizer {
         console.log('  Y: Set Y-up (default)');
         console.log('  Z: Set Z-up (CAD style)');
         console.log('  R: Reset camera and up vector');
+        console.log('  T: Switch to TrackballControls');
+        console.log('  O: Switch to OrbitControls');
+        console.log('  I: Switch to Inverse TrackballControls');
         
         // Create permanent shortcuts UI section
         this.createShortcutsUI();
@@ -805,18 +893,29 @@ class PLYVisualizer {
         
         shortcutsDiv.innerHTML = `
             <div style="font-weight: bold; margin-bottom: 8px; color: var(--vscode-textLink-foreground);">⌨️ Keyboard Shortcuts</div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; font-family: var(--vscode-editor-font-family);">
-                <div style="font-weight: bold;">X</div><div>Set X-up orientation</div>
-                <div style="font-weight: bold;">Y</div><div>Set Y-up orientation (default)</div>
-                <div style="font-weight: bold;">Z</div><div>Set Z-up orientation (CAD style)</div>
-                <div style="font-weight: bold;">R</div><div>Reset camera and up vector</div>
+            <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4;">
+                <div><span style="font-weight: bold;">X</span> Set X-up orientation</div>
+                <div><span style="font-weight: bold;">Y</span> Set Y-up orientation (default)</div>
+                <div><span style="font-weight: bold;">Z</span> Set Z-up orientation (CAD style)</div>
+                <div><span style="font-weight: bold;">R</span> Reset camera and up vector</div>
+                <div><span style="font-weight: bold;">T</span> Switch to TrackballControls</div>
+                <div><span style="font-weight: bold;">O</span> Switch to OrbitControls</div>
+                <div><span style="font-weight: bold;">I</span> Switch to Inverse TrackballControls</div>
             </div>
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">🖱️ Mouse Interactions</div>
-            <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; font-family: var(--vscode-editor-font-family);">
-                <div style="font-weight: bold;">Shift+Click</div><div>Solo point cloud (hide others)</div>
-                <div style="font-weight: bold;">Double-Click</div><div>Set rotation center</div>
+            <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4;">
+                <div><span style="font-weight: bold;">Left Click + Drag</span> Move camera around</div>
+                <div><span style="font-weight: bold;">Shift+Click</span> Solo point cloud (hide others)</div>
+                <div><span style="font-weight: bold;">Double-Click</span> Set rotation center</div>
+            </div>
+            <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">📊 Camera Controls</div>
+            <div id="camera-control-status" style="font-family: var(--vscode-editor-font-family); padding: 4px; background: var(--vscode-input-background); border-radius: 2px;">
+                TRACKBALL
             </div>
         `;
+        
+        // Initialize the status display
+        this.updateControlStatus();
     }
 
     private setupMessageHandler(): void {
@@ -1841,6 +1940,44 @@ class PLYVisualizer {
         
         // Update checkboxes to reflect the new state
         this.updateFileList();
+    }
+
+    private switchToTrackballControls(): void {
+        if (this.controlType === 'trackball') return;
+        
+        console.log('🔄 Switching to TrackballControls');
+        this.controlType = 'trackball';
+        this.initializeControls();
+        this.updateControlStatus();
+    }
+
+    private switchToOrbitControls(): void {
+        if (this.controlType === 'orbit') return;
+        
+        console.log('🔄 Switching to OrbitControls');
+        this.controlType = 'orbit';
+        this.initializeControls();
+        this.updateControlStatus();
+    }
+
+    private switchToInverseTrackballControls(): void {
+        if (this.controlType === 'inverse-trackball') return;
+        
+        console.log('🔄 Switching to Inverse TrackballControls');
+        this.controlType = 'inverse-trackball';
+        this.initializeControls();
+        this.updateControlStatus();
+    }
+
+    private updateControlStatus(): void {
+        const status = this.controlType.toUpperCase();
+        console.log(`📊 Camera Controls: ${status}`);
+        
+        // Update UI if there's a status display
+        const statusElement = document.getElementById('camera-control-status');
+        if (statusElement) {
+            statusElement.textContent = status;
+        }
     }
 }
 
