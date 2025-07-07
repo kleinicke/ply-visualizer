@@ -2,7 +2,7 @@
   "name": "ply-visualizer",
   "displayName": "PLY Visualizer",
   "description": "A 3D visualizer for PLY (Polygon File Format) files using Three.js",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "kleinicke",
   "repository": {
     "type": "git",
