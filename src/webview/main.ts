@@ -786,6 +786,11 @@ class PLYVisualizer {
                     this.setBlenderOpenGLCameraConvention();
                     e.preventDefault();
                     break;
+                case 'w':
+                    console.log('🔑 W key pressed - setting rotation center to world origin (0,0,0)');
+                    this.setRotationCenter(new THREE.Vector3(0, 0, 0));
+                    e.preventDefault();
+                    break;
             }
         });
 
@@ -885,6 +890,7 @@ class PLYVisualizer {
         console.log('  I: Switch to Inverse TrackballControls');
         console.log('  C: Set OpenCV camera convention (Y-down)');
         console.log('  B: Set Blender/OpenGL camera convention (Y-up)');
+        console.log('  W: Set rotation center to world origin (0,0,0)');
         
         // Create permanent shortcuts UI section
         this.createShortcutsUI();
@@ -928,6 +934,7 @@ class PLYVisualizer {
             <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4; margin-bottom: 8px;">
                 <div><span id="opencv-camera" style="color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline;">OpenCV (Y↓) [C]</span></div>
                 <div><span id="blender-camera" style="color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline;">Blender/OpenGL (Y↑) [B]</span></div>
+                <div><span style="color: var(--vscode-foreground);">World Origin [W]</span></div>
             </div>
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">🖱️ Mouse Interactions</div>
             <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4;">
