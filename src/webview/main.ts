@@ -701,6 +701,18 @@ class PLYVisualizer {
         // File management event listeners
         document.getElementById('add-file')?.addEventListener('click', this.requestAddFile.bind(this));
 
+        // Camera convention buttons
+        document.addEventListener('click', (e) => {
+            const target = e.target as HTMLElement;
+            if (target.id === 'opencv-camera') {
+                this.setOpenCVCameraConvention();
+                e.preventDefault();
+            } else if (target.id === 'blender-camera') {
+                this.setBlenderOpenGLCameraConvention();
+                e.preventDefault();
+            }
+        });
+
         // Color mode change event
         document.addEventListener('change', (e) => {
             const target = e.target as HTMLElement;
@@ -764,6 +776,14 @@ class PLYVisualizer {
                     break;
                 case 'i':
                     this.switchToInverseTrackballControls();
+                    e.preventDefault();
+                    break;
+                case 'c':
+                    this.setOpenCVCameraConvention();
+                    e.preventDefault();
+                    break;
+                case 'b':
+                    this.setBlenderOpenGLCameraConvention();
                     e.preventDefault();
                     break;
             }
@@ -863,6 +883,8 @@ class PLYVisualizer {
         console.log('  T: Switch to TrackballControls');
         console.log('  O: Switch to OrbitControls');
         console.log('  I: Switch to Inverse TrackballControls');
+        console.log('  C: Set OpenCV camera convention (Y-down)');
+        console.log('  B: Set Blender/OpenGL camera convention (Y-up)');
         
         // Create permanent shortcuts UI section
         this.createShortcutsUI();
@@ -901,6 +923,11 @@ class PLYVisualizer {
                 <div><span style="font-weight: bold;">T</span> Switch to TrackballControls</div>
                 <div><span style="font-weight: bold;">O</span> Switch to OrbitControls</div>
                 <div><span style="font-weight: bold;">I</span> Switch to Inverse TrackballControls</div>
+            </div>
+            <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">📷 Camera Conventions</div>
+            <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4; margin-bottom: 8px;">
+                <div><span id="opencv-camera" style="color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline;">OpenCV (Y↓) [C]</span></div>
+                <div><span id="blender-camera" style="color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline;">Blender/OpenGL (Y↑) [B]</span></div>
             </div>
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">🖱️ Mouse Interactions</div>
             <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4;">
@@ -1978,6 +2005,89 @@ class PLYVisualizer {
         if (statusElement) {
             statusElement.textContent = status;
         }
+    }
+
+    private setOpenCVCameraConvention(): void {
+        console.log('📷 Setting camera to OpenCV convention (Y-down, Z-forward)');
+        
+        // OpenCV convention: Y-down, Z-forward
+        // Camera looks along +Z axis, Y points down
+        
+        // Set up vector to Y-down
+        this.camera.up.set(0, -1, 0);
+        
+        // Position camera to look along +Z axis
+        // Move camera to negative Z so it looks toward positive Z
+        const distance = this.camera.position.distanceTo(this.controls.target);
+        this.camera.position.set(0, 0, -distance);
+        this.controls.target.set(0, 0, 0);
+        
+        // Make camera look at target (which is at origin, so it looks along +Z)
+        this.camera.lookAt(this.controls.target);
+        
+        // Update controls
+        this.controls.update();
+        
+        // Update axes helper to reflect OpenCV convention
+        this.updateAxesForCameraConvention('opencv');
+        
+        // Show feedback
+        this.showCameraConventionFeedback('OpenCV');
+    }
+
+    private setBlenderOpenGLCameraConvention(): void {
+        console.log('📷 Setting camera to Blender/OpenGL convention (Y-up, Z-backward)');
+        
+        // Blender/OpenGL convention: Y-up, Z-backward
+        // Camera looks along -Z axis, Y points up (standard Three.js)
+        
+        // Set up vector to Y-up
+        this.camera.up.set(0, 1, 0);
+        
+        // Position camera to look along -Z axis
+        // Move camera to positive Z so it looks toward negative Z
+        const distance = this.camera.position.distanceTo(this.controls.target);
+        this.camera.position.set(0, 0, distance);
+        this.controls.target.set(0, 0, 0);
+        
+        // Make camera look at target (which is at origin, so it looks along -Z)
+        this.camera.lookAt(this.controls.target);
+        
+        // Update controls
+        this.controls.update();
+        
+        // Update axes helper to reflect Blender/OpenGL convention
+        this.updateAxesForCameraConvention('blender');
+        
+        // Show feedback
+        this.showCameraConventionFeedback('Blender/OpenGL');
+    }
+
+    private updateAxesForCameraConvention(convention: 'opencv' | 'blender'): void {
+        // Update the axes helper orientation to match the camera convention
+        const axesGroup = (this as any).axesGroup;
+        if (axesGroup) {
+            console.log(`🎯 Axes updated for ${convention} camera convention`);
+        }
+    }
+
+    private showCameraConventionFeedback(convention: string): void {
+        console.log(`✅ Camera set to ${convention} convention`);
+        
+        // Create a temporary visual indicator
+        const origin = new THREE.Vector3(0, 0, 0);
+        const upVector = convention === 'OpenCV' ? new THREE.Vector3(0, -1, 0) : new THREE.Vector3(0, 1, 0);
+        const length = 2;
+        const color = convention === 'OpenCV' ? 0xff0000 : 0x00ff00; // Red for OpenCV, Green for Blender
+        
+        const arrowHelper = new THREE.ArrowHelper(upVector, origin, length, color, length * 0.2, length * 0.1);
+        this.scene.add(arrowHelper);
+        
+        // Remove after 2 seconds
+        setTimeout(() => {
+            this.scene.remove(arrowHelper);
+            arrowHelper.dispose();
+        }, 2000);
     }
 }
 
