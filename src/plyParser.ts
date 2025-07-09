@@ -37,7 +37,7 @@ export class PlyParser {
     async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<PlyData> {
         const parseStartTime = performance.now();
         const log = timingCallback || console.log;
-        log(`📋 Parser: Starting PLY parsing (${data.length} bytes)...`);
+        log(`📋 Parser: Starting PLY/XYZ parsing (${data.length} bytes)...`);
         
         const result: PlyData = {
             vertices: [],
@@ -59,8 +59,20 @@ export class PlyParser {
         const headerSearchSize = Math.min(4096, data.length);
         let headerText = decoder.decode(data.slice(0, headerSearchSize));
         
+        // Check if this is an XYZ file (no header, just coordinates)
         if (!headerText.startsWith('ply')) {
-            throw new Error('Invalid PLY file: missing PLY header');
+            // Try to detect XYZ format by checking if first line has 3-6 space-separated numbers
+            const firstLine = headerText.split('\n')[0].trim();
+            const values = firstLine.split(/\s+/);
+            
+            if (values.length >= 3 && values.length <= 6 && 
+                !isNaN(parseFloat(values[0])) && !isNaN(parseFloat(values[1])) && !isNaN(parseFloat(values[2]))) {
+                
+                log(`📋 Parser: Detected XYZ format, treating as headerless PLY`);
+                return this.parseXyzData(data, result, log);
+            }
+            
+            throw new Error('Invalid PLY/XYZ file: missing PLY header or invalid XYZ format');
         }
 
         let headerEndIndex = headerText.indexOf('end_header');
@@ -567,5 +579,76 @@ export class PlyParser {
             vertexStride,
             propertyOffsets
         };
+    }
+
+    private parseXyzData(data: Uint8Array, result: PlyData, log: (message: string) => void): PlyData {
+        const decoder = new TextDecoder('utf-8');
+        const text = decoder.decode(data);
+        const lines = text.split('\n').filter(line => line.trim());
+
+        log(`📝 Parser: XYZ format detected, parsing ${lines.length} lines...`);
+
+        // Collect valid vertices instead of pre-allocating
+        const validVertices: PlyVertex[] = [];
+        let skippedLines = 0;
+
+        // Parse each line as X Y Z [R] [G] [B]
+        for (let i = 0; i < lines.length; i++) {
+            const values = lines[i].trim().split(/\s+/);
+            
+            if (values.length < 3) {
+                skippedLines++;
+                if (skippedLines <= 10) { // Only log first 10 skipped lines to avoid spam
+                    log(`⚠️ Parser: Skipping invalid line ${i + 1}: ${lines[i]}`);
+                }
+                continue;
+            }
+
+            // Validate that the first 3 values are valid numbers
+            const x = parseFloat(values[0]);
+            const y = parseFloat(values[1]);
+            const z = parseFloat(values[2]);
+            
+            if (isNaN(x) || isNaN(y) || isNaN(z)) {
+                skippedLines++;
+                if (skippedLines <= 10) {
+                    log(`⚠️ Parser: Skipping line with invalid numbers ${i + 1}: ${lines[i]}`);
+                }
+                continue;
+            }
+
+            const vertex: PlyVertex = { x, y, z };
+
+            // Check for RGB values (optional)
+            if (values.length >= 6) {
+                const red = parseFloat(values[3]);
+                const green = parseFloat(values[4]);
+                const blue = parseFloat(values[5]);
+                
+                if (!isNaN(red) && !isNaN(green) && !isNaN(blue)) {
+                    vertex.red = red;
+                    vertex.green = green;
+                    vertex.blue = blue;
+                    result.hasColors = true;
+                }
+            }
+
+            validVertices.push(vertex);
+
+            // Progress update every 1 million vertices
+            if (validVertices.length % 1000000 === 0) {
+                log(`📊 Parser: Processed ${validVertices.length} valid vertices...`);
+            }
+        }
+
+        result.vertices = validVertices;
+        result.vertexCount = validVertices.length;
+
+        if (skippedLines > 0) {
+            log(`⚠️ Parser: Skipped ${skippedLines} invalid lines`);
+        }
+
+        log(`✅ Parser: XYZ parsing complete - ${result.vertexCount} valid vertices${result.hasColors ? ' with colors' : ''}`);
+        return result;
     }
 } 

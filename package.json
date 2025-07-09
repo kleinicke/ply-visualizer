@@ -1,7 +1,7 @@
 {
   "name": "ply-visualizer",
-  "displayName": "PLY Visualizer",
-  "description": "A 3D visualizer for PLY (Polygon File Format) files using Three.js",
+  "displayName": "PLY Pointcloud Visualizer",
+  "description": "A 3D visualizer for PLY (Polygon File Format) and XYZ point cloud files using Three.js",
   "version": "0.0.8",
   "publisher": "kleinicke",
   "repository": {
@@ -16,24 +16,25 @@
   ],
   "keywords": [
     "ply",
+    "xyz",
     "3d",
     "point cloud",
     "mesh",
     "visualization",
     "three.js"
   ],
-  "activationEvents": [
-    "onCustomEditor:plyViewer.plyEditor"
-  ],
   "main": "./out/extension.js",
   "contributes": {
     "customEditors": [
       {
         "viewType": "plyViewer.plyEditor",
-        "displayName": "PLY Visualizer",
+        "displayName": "PLY Pointcloud Visualizer",
         "selector": [
           {
             "filenamePattern": "*.ply"
+          },
+          {
+            "filenamePattern": "*.xyz"
           }
         ]
       }
@@ -48,6 +49,11 @@
         "command": "plyViewer.openMultipleFiles",
         "title": "Open Multiple PLY Files",
         "category": "PLY Visualizer"
+      },
+      {
+        "command": "plyViewer.openXyzFile",
+        "title": "Open with PLY Pointcloud Visualizer",
+        "category": "PLY Pointcloud Visualizer"
       }
     ],
     "menus": {
@@ -55,6 +61,11 @@
         {
           "command": "plyViewer.openFile",
           "when": "resourceExtname == .ply",
+          "group": "navigation"
+        },
+        {
+          "command": "plyViewer.openXyzFile",
+          "when": "resourceExtname == .xyz || resourceExtname == .txt",
           "group": "navigation"
         }
       ]
