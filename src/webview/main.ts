@@ -2020,16 +2020,24 @@ class PLYVisualizer {
         // OpenCV convention: Y-down, Z-forward
         // Camera looks along +Z axis, Y points down
         
+        // Store current target position
+        const currentTarget = this.controls.target.clone();
+        
         // Set up vector to Y-down
         this.camera.up.set(0, -1, 0);
         
-        // Position camera to look along +Z axis
-        // Move camera to negative Z so it looks toward positive Z
-        const distance = this.camera.position.distanceTo(this.controls.target);
-        this.camera.position.set(0, 0, -distance);
-        this.controls.target.set(0, 0, 0);
+        // Calculate current camera direction relative to target
+        const cameraDirection = this.camera.position.clone().sub(currentTarget).normalize();
+        const distance = this.camera.position.distanceTo(currentTarget);
         
-        // Make camera look at target (which is at origin, so it looks along +Z)
+        // Position camera to look along +Z axis while maintaining focus on current target
+        // Move camera to negative Z relative to target so it looks toward positive Z
+        this.camera.position.copy(currentTarget).add(new THREE.Vector3(0, 0, -distance));
+        
+        // Keep the same target (don't reset to origin)
+        this.controls.target.copy(currentTarget);
+        
+        // Make camera look at target
         this.camera.lookAt(this.controls.target);
         
         // Update controls
@@ -2048,16 +2056,24 @@ class PLYVisualizer {
         // Blender/OpenGL convention: Y-up, Z-backward
         // Camera looks along -Z axis, Y points up (standard Three.js)
         
+        // Store current target position
+        const currentTarget = this.controls.target.clone();
+        
         // Set up vector to Y-up
         this.camera.up.set(0, 1, 0);
         
-        // Position camera to look along -Z axis
-        // Move camera to positive Z so it looks toward negative Z
-        const distance = this.camera.position.distanceTo(this.controls.target);
-        this.camera.position.set(0, 0, distance);
-        this.controls.target.set(0, 0, 0);
+        // Calculate current camera direction relative to target
+        const cameraDirection = this.camera.position.clone().sub(currentTarget).normalize();
+        const distance = this.camera.position.distanceTo(currentTarget);
         
-        // Make camera look at target (which is at origin, so it looks along -Z)
+        // Position camera to look along -Z axis while maintaining focus on current target
+        // Move camera to positive Z relative to target so it looks toward negative Z
+        this.camera.position.copy(currentTarget).add(new THREE.Vector3(0, 0, distance));
+        
+        // Keep the same target (don't reset to origin)
+        this.controls.target.copy(currentTarget);
+        
+        // Make camera look at target
         this.camera.lookAt(this.controls.target);
         
         // Update controls
