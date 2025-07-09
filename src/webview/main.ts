@@ -518,6 +518,15 @@ class PLYVisualizer {
             // Get the closest intersection point
             const intersectionPoint = intersects[0].point;
             
+            // Check if the point is too close to the camera
+            const distance = this.camera.position.distanceTo(intersectionPoint);
+            const minDistance = 0.005; // Very small minimum distance
+            
+            if (distance < minDistance) {
+                console.log('⚠️ Point too close to camera, ignoring double-click');
+                return; // Don't set rotation center for points too close
+            }
+            
             // Set this point as the new rotation center
             this.setRotationCenter(intersectionPoint);
             
@@ -526,13 +535,40 @@ class PLYVisualizer {
     }
 
     private setRotationCenter(point: THREE.Vector3): void {
-        // Set the new target for the controls (works for both TrackballControls and OrbitControls)
-        this.controls.target.copy(point);
+        // Check if the point is too close to the camera or behind it
+        const cameraToPoint = point.clone().sub(this.camera.position);
+        const distance = cameraToPoint.length();
+        const minDistance = 0.01; // Minimum distance to prevent issues
         
-        // Update axes position to the new rotation center
-        const axesGroup = (this as any).axesGroup;
-        if (axesGroup) {
-            axesGroup.position.copy(point);
+        // If point is too close or behind camera, adjust it
+        if (distance < minDistance) {
+            console.log('⚠️ Point too close to camera, adjusting rotation center');
+            
+            // Move the point away from camera along the camera's forward direction
+            const cameraDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+            const adjustedPoint = this.camera.position.clone().add(cameraDirection.multiplyScalar(minDistance));
+            
+            // Set the adjusted point as rotation center
+            this.controls.target.copy(adjustedPoint);
+            
+            // Update axes position
+            const axesGroup = (this as any).axesGroup;
+            if (axesGroup) {
+                axesGroup.position.copy(adjustedPoint);
+            }
+            
+            console.log('🎯 Adjusted rotation center to:', adjustedPoint.x.toFixed(3), adjustedPoint.y.toFixed(3), adjustedPoint.z.toFixed(3));
+        } else {
+            // Point is at a safe distance, use it directly
+            this.controls.target.copy(point);
+            
+            // Update axes position to the new rotation center
+            const axesGroup = (this as any).axesGroup;
+            if (axesGroup) {
+                axesGroup.position.copy(point);
+            }
+            
+            console.log('🎯 Rotation center and axes moved to:', point.x.toFixed(3), point.y.toFixed(3), point.z.toFixed(3));
         }
         
         // Show axes temporarily for 1 second to indicate new rotation center
@@ -541,16 +577,11 @@ class PLYVisualizer {
             showAxesTemporarily();
         }
         
-        // Optionally adjust camera position to maintain good viewing angle
-        const currentDistance = this.camera.position.distanceTo(this.controls.target);
-        
         // Update controls
         this.controls.update();
         
-        // Visual feedback - could add a temporary marker here
-        this.showRotationCenterFeedback(point);
-        
-        console.log('🎯 Rotation center and axes moved to:', point.x.toFixed(3), point.y.toFixed(3), point.z.toFixed(3));
+        // Visual feedback
+        this.showRotationCenterFeedback(this.controls.target);
     }
 
     private showRotationCenterFeedback(point: THREE.Vector3): void {
