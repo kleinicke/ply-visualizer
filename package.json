@@ -17,6 +17,8 @@
   "keywords": [
     "ply",
     "xyz",
+    "tif",
+    "tiff",
     "3d",
     "point cloud",
     "mesh",
@@ -54,6 +56,11 @@
         "command": "plyViewer.openXyzFile",
         "title": "Open with PLY Pointcloud Visualizer",
         "category": "PLY Pointcloud Visualizer"
+      },
+      {
+        "command": "plyViewer.convertTifToPointCloud",
+        "title": "Convert TIF to Point Cloud",
+        "category": "PLY Visualizer"
       }
     ],
     "menus": {
@@ -67,6 +74,12 @@
           "command": "plyViewer.openXyzFile",
           "when": "resourceExtname == .xyz || resourceExtname == .txt",
           "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "plyViewer.convertTifToPointCloud",
+          "when": "true"
         }
       ]
     }
