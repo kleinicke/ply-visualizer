@@ -209,6 +209,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     <div class="panel-section">
                         <h4>Statistics</h4>
                         <div id="file-stats"></div>
+                        <div id="camera-matrix-panel" style="margin-top:10px;"></div>
+                        <div id="camera-controls-panel" style="margin-top:10px;"></div>
                     </div>
                 </div>
                 <div id="viewer-container">

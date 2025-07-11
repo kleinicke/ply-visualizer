@@ -56,6 +56,11 @@ class PLYVisualizer {
     private pointSizes: number[] = []; // Individual point sizes for each point cloud
     private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
     
+    // Rotation matrices
+    private cameraMatrix: THREE.Matrix4 = new THREE.Matrix4(); // Current camera position and rotation
+    private transformationMatrices: THREE.Matrix4[] = []; // Individual transformation matrices for each point cloud
+    private frameCount: number = 0; // Frame counter for UI updates
+    
     // Large file chunked loading state
     private chunkedFileState: Map<string, {
         fileName: string;
@@ -491,7 +496,276 @@ class PLYVisualizer {
     private animate(): void {
         requestAnimationFrame(this.animate.bind(this));
         this.controls.update();
+        
+        // Update camera matrix
+        this.updateCameraMatrix();
+        
+        // Update camera matrix display every few frames
+        if (this.frameCount % 10 === 0) {
+            this.updateCameraMatrixDisplay();
+            this.updateCameraControlsPanel();
+        }
+        this.frameCount++;
+        
         this.renderer.render(this.scene, this.camera);
+    }
+
+    // Rotation Matrix Methods
+    private updateCameraMatrix(): void {
+        // Create a matrix that represents the camera's current position and rotation
+        this.cameraMatrix.identity();
+        
+        // Apply camera position
+        const positionMatrix = new THREE.Matrix4();
+        positionMatrix.makeTranslation(-this.camera.position.x, -this.camera.position.y, -this.camera.position.z);
+        
+        // Apply camera rotation (inverse of camera quaternion)
+        const rotationMatrix = new THREE.Matrix4();
+        rotationMatrix.makeRotationFromQuaternion(this.camera.quaternion.clone().invert());
+        
+        // Combine position and rotation
+        this.cameraMatrix.multiply(rotationMatrix).multiply(positionMatrix);
+    }
+
+    private getCameraMatrix(): THREE.Matrix4 {
+        return this.cameraMatrix.clone();
+    }
+
+    private getCameraMatrixAsArray(): number[] {
+        return this.cameraMatrix.elements.slice();
+    }
+
+    private setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void {
+        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
+            this.transformationMatrices[fileIndex].copy(matrix);
+            this.applyTransformationMatrix(fileIndex);
+        }
+    }
+
+    private getTransformationMatrix(fileIndex: number): THREE.Matrix4 {
+        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
+            return this.transformationMatrices[fileIndex].clone();
+        }
+        return new THREE.Matrix4(); // Return identity matrix if index is invalid
+    }
+
+    private getTransformationMatrixAsArray(fileIndex: number): number[] {
+        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
+            return this.transformationMatrices[fileIndex].elements.slice();
+        }
+        return new THREE.Matrix4().elements.slice(); // Return identity matrix if index is invalid
+    }
+
+    private applyTransformationMatrix(fileIndex: number): void {
+        if (fileIndex >= 0 && fileIndex < this.meshes.length && fileIndex < this.transformationMatrices.length) {
+            const mesh = this.meshes[fileIndex];
+            const matrix = this.transformationMatrices[fileIndex];
+            mesh.matrix.copy(matrix);
+            mesh.matrixAutoUpdate = false; // Disable auto-update to use our custom matrix
+        }
+    }
+
+    private resetTransformationMatrix(fileIndex: number): void {
+        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
+            this.transformationMatrices[fileIndex].identity();
+            this.applyTransformationMatrix(fileIndex);
+        }
+    }
+
+    private createRotationMatrix(axis: 'x' | 'y' | 'z', angle: number): THREE.Matrix4 {
+        const matrix = new THREE.Matrix4();
+        switch (axis) {
+            case 'x':
+                matrix.makeRotationX(angle);
+                break;
+            case 'y':
+                matrix.makeRotationY(angle);
+                break;
+            case 'z':
+                matrix.makeRotationZ(angle);
+                break;
+        }
+        return matrix;
+    }
+
+    private createTranslationMatrix(x: number, y: number, z: number): THREE.Matrix4 {
+        const matrix = new THREE.Matrix4();
+        matrix.makeTranslation(x, y, z);
+        return matrix;
+    }
+
+    private createScaleMatrix(x: number, y: number, z: number): THREE.Matrix4 {
+        const matrix = new THREE.Matrix4();
+        matrix.makeScale(x, y, z);
+        return matrix;
+    }
+
+    private multiplyTransformationMatrices(fileIndex: number, matrix: THREE.Matrix4): void {
+        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
+            this.transformationMatrices[fileIndex].multiply(matrix);
+            this.applyTransformationMatrix(fileIndex);
+        }
+    }
+
+    private getTransformationTranslation(fileIndex: number): THREE.Vector3 {
+        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
+            const matrix = this.transformationMatrices[fileIndex];
+            return new THREE.Vector3(matrix.elements[12], matrix.elements[13], matrix.elements[14]);
+        }
+        return new THREE.Vector3(0, 0, 0);
+    }
+
+    private setTransformationTranslation(fileIndex: number, x: number, y: number, z: number): void {
+        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
+            const matrix = this.transformationMatrices[fileIndex];
+            matrix.elements[12] = x;
+            matrix.elements[13] = y;
+            matrix.elements[14] = z;
+            this.applyTransformationMatrix(fileIndex);
+        }
+    }
+
+    private addTranslationToMatrix(fileIndex: number, x: number, y: number, z: number): void {
+        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
+            const translationMatrix = this.createTranslationMatrix(x, y, z);
+            this.multiplyTransformationMatrices(fileIndex, translationMatrix);
+        }
+    }
+
+    private updateMatrixTextarea(fileIndex: number): void {
+        const textarea = document.getElementById(`matrix-${fileIndex}`) as HTMLTextAreaElement;
+        if (textarea) {
+            const matrixArr = this.getTransformationMatrixAsArray(fileIndex);
+            let matrixStr = '';
+            for (let r = 0; r < 4; ++r) {
+                const row = matrixArr.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
+                matrixStr += row.join(' ') + '\n';
+            }
+            textarea.value = matrixStr.trim();
+        }
+    }
+
+    private updateCameraMatrixDisplay(): void {
+        const cameraPanel = document.getElementById('camera-matrix-panel');
+        if (cameraPanel && this.plyFiles.length > 0) {
+            const mat = this.getCameraMatrixAsArray();
+            let html = '<strong>Camera 4x4 Matrix</strong><br><table style="font-size:10px;line-height:1.1;margin-top:2px;border-collapse:collapse;">';
+            for (let i = 0; i < 4; ++i) {
+                html += '<tr>';
+                for (let j = 0; j < 4; ++j) {
+                    html += `<td style="padding:1px 4px;border:1px solid #666;text-align:right;">${mat[j + i * 4].toFixed(4)}</td>`;
+                }
+                html += '</tr>';
+            }
+            html += '</table>';
+            cameraPanel.innerHTML = html;
+        }
+    }
+
+    private updateCameraControlsPanel(): void {
+        const controlsPanel = document.getElementById('camera-controls-panel');
+        if (controlsPanel && this.plyFiles.length > 0) {
+            const mat = this.getCameraMatrixAsArray();
+            let matrixStr = '';
+            for (let r = 0; r < 4; ++r) {
+                const row = mat.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
+                matrixStr += row.join(' ') + '\n';
+            }
+
+            let html = `
+                <strong>Camera Controls</strong><br>
+                <label style="font-size:10px;">Field of View: ${this.camera.fov.toFixed(1)}°</label><br>
+                <input type="range" id="camera-fov" min="10" max="120" step="1" value="${this.camera.fov}" style="width:100%;margin:2px 0;">
+                <span id="fov-value" style="font-size:10px;">${this.camera.fov.toFixed(1)}°</span><br>
+                <label style="font-size:10px;">Camera Matrix (4x4):</label><br>
+                <textarea id="camera-matrix-input" rows="4" cols="50" style="width:98%;font-size:10px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${matrixStr.trim()}</textarea><br>
+                <button id="apply-camera-matrix" style="font-size:10px;">Apply Camera Matrix</button>
+                <button id="reset-camera-matrix" style="font-size:10px;">Reset Camera</button>
+            `;
+            controlsPanel.innerHTML = html;
+
+            // Add event listeners
+            const fovSlider = document.getElementById('camera-fov') as HTMLInputElement;
+            const fovValue = document.getElementById('fov-value');
+            if (fovSlider && fovValue) {
+                fovSlider.addEventListener('input', (e) => {
+                    const newFov = parseFloat((e.target as HTMLInputElement).value);
+                    this.camera.fov = newFov;
+                    this.camera.updateProjectionMatrix();
+                    if (fovValue) {
+                        fovValue.textContent = newFov.toFixed(1) + '°';
+                    }
+                });
+            }
+
+            const applyBtn = document.getElementById('apply-camera-matrix');
+            if (applyBtn) {
+                applyBtn.addEventListener('click', () => {
+                    this.applyCameraMatrixFromInput();
+                });
+            }
+
+            const resetBtn = document.getElementById('reset-camera-matrix');
+            if (resetBtn) {
+                resetBtn.addEventListener('click', () => {
+                    this.resetCameraToDefault();
+                });
+            }
+        }
+    }
+
+    private applyCameraMatrixFromInput(): void {
+        const textarea = document.getElementById('camera-matrix-input') as HTMLTextAreaElement;
+        if (textarea) {
+            const values = textarea.value.trim().split(/\s+/).map(Number);
+            if (values.length === 16 && values.every(v => !isNaN(v))) {
+                const mat = new THREE.Matrix4();
+                mat.set(
+                    values[0], values[4], values[8],  values[12],
+                    values[1], values[5], values[9],  values[13],
+                    values[2], values[6], values[10], values[14],
+                    values[3], values[7], values[11], values[15]
+                );
+                this.applyCameraMatrix(mat);
+            } else {
+                alert('Please enter 16 valid numbers for the 4x4 camera matrix.');
+            }
+        }
+    }
+
+    private applyCameraMatrix(matrix: THREE.Matrix4): void {
+        // Extract position from the matrix
+        const position = new THREE.Vector3();
+        position.setFromMatrixPosition(matrix);
+        
+        // Extract rotation from the matrix
+        const quaternion = new THREE.Quaternion();
+        quaternion.setFromRotationMatrix(matrix);
+        
+        // Apply to camera
+        this.camera.position.copy(position);
+        this.camera.quaternion.copy(quaternion);
+        
+        // Update controls target to maintain proper orientation
+        const direction = new THREE.Vector3(0, 0, -1);
+        direction.applyQuaternion(quaternion);
+        this.controls.target.copy(position.clone().add(direction));
+        this.controls.update();
+    }
+
+    private resetCameraToDefault(): void {
+        // Reset camera to default position
+        this.camera.position.set(1, 1, 1);
+        this.camera.lookAt(0, 0, 0);
+        this.camera.fov = 75;
+        this.camera.updateProjectionMatrix();
+        
+        // Reset controls
+        this.controls.target.set(0, 0, 0);
+        this.controls.update();
+        
+        // Update UI
+        this.updateCameraControlsPanel();
     }
 
     private onDoubleClick(event: MouseEvent): void {
@@ -1067,6 +1341,7 @@ class PLYVisualizer {
         this.fileVisibility = [];
         this.pointSizes = []; // Reset point sizes
         this.individualColorModes = []; // Reset individual color modes
+        this.transformationMatrices = []; // Reset transformation matrices
 
         // Show loading indicator
         document.getElementById('loading')?.classList.remove('hidden');
@@ -1139,6 +1414,12 @@ class PLYVisualizer {
             this.meshes.push(mesh);
             this.fileVisibility.push(true);
             this.pointSizes.push(0.001); // Initialize with default point size
+            
+            // Initialize transformation matrix for this file
+            this.transformationMatrices.push(new THREE.Matrix4());
+            
+            // Initialize transformation matrix for this file
+            this.transformationMatrices.push(new THREE.Matrix4());
         }
 
         // Update progress
@@ -1249,6 +1530,9 @@ class PLYVisualizer {
         
         if (this.plyFiles.length === 0) {
             statsDiv.innerHTML = '<div>No files loaded</div>';
+            // Also clear camera matrix panel
+            const cameraPanel = document.getElementById('camera-matrix-panel');
+            if (cameraPanel) cameraPanel.innerHTML = '';
             return;
         }
         
@@ -1276,6 +1560,10 @@ class PLYVisualizer {
                 <div><strong>Total Faces:</strong> ${totalFaces.toLocaleString()}</div>
             `;
         }
+
+        // Update camera matrix panel
+        this.updateCameraMatrixDisplay();
+        this.updateCameraControlsPanel();
     }
 
     private updateFileList(): void {
@@ -1296,6 +1584,13 @@ class PLYVisualizer {
                 colorIndicator = `<span class="color-indicator" style="background-color: ${colorHex}"></span>`;
             }
             
+            // Transformation matrix UI
+            const matrixArr = this.getTransformationMatrixAsArray(i);
+            let matrixStr = '';
+            for (let r = 0; r < 4; ++r) {
+                const row = matrixArr.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
+                matrixStr += row.join(' ') + '\n';
+            }
             html += `
                 <div class="file-item">
                     <div class="file-item-main">
@@ -1303,8 +1598,25 @@ class PLYVisualizer {
                         ${colorIndicator}
                         <label for="file-${i}" class="file-name">${data.fileName || `File ${i + 1}`}</label>
                         <button class="remove-file" data-file-index="${i}" title="Remove file">✕</button>
+                        <button class="transform-toggle" data-file-index="${i}" style="margin-left:4px;">Transform</button>
                     </div>
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
+                    <div class="transform-panel" id="transform-panel-${i}" style="display:none;margin:4px 0 4px 0;">
+                        <label for="matrix-${i}" style="font-size:10px;">4x4 Matrix (4 rows, 4 columns):</label><br>
+                        <textarea id="matrix-${i}" rows="4" cols="50" style="width:98%;font-size:10px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${matrixStr.trim()}</textarea><br>
+                        <button class="apply-matrix" data-file-index="${i}" style="font-size:10px;">Apply</button>
+                        <button class="reset-matrix" data-file-index="${i}" style="font-size:10px;">Reset</button>
+                        <div style="margin-top:4px;">
+                            <button class="translate-x" data-file-index="${i}" style="font-size:10px;">Translate X+1</button>
+                            <button class="translate-y" data-file-index="${i}" style="font-size:10px;">Translate Y+1</button>
+                            <button class="translate-z" data-file-index="${i}" style="font-size:10px;">Translate Z+1</button>
+                        </div>
+                        <div style="margin-top:2px;">
+                            <button class="rotate-x" data-file-index="${i}" style="font-size:10px;">Rotate X 90°</button>
+                            <button class="rotate-y" data-file-index="${i}" style="font-size:10px;">Rotate Y 90°</button>
+                            <button class="rotate-z" data-file-index="${i}" style="font-size:10px;">Rotate Z 90°</button>
+                        </div>
+                    </div>
                     ${data.faceCount === 0 ? `
                     <div class="point-size-control">
                         <label for="size-${i}">Point Size:</label>
@@ -1345,6 +1657,102 @@ class PLYVisualizer {
                 // Keep the change event for normal toggling
                 checkbox.addEventListener('change', () => {
                     this.toggleFileVisibility(i);
+                });
+            }
+            
+            // Transform toggle logic
+            const transformBtn = document.querySelector(`.transform-toggle[data-file-index="${i}"]`);
+            const transformPanel = document.getElementById(`transform-panel-${i}`);
+            if (transformBtn && transformPanel) {
+                transformBtn.addEventListener('click', () => {
+                    transformPanel.style.display = transformPanel.style.display === 'none' ? 'block' : 'none';
+                });
+            }
+            // Apply matrix logic
+            const applyBtn = document.querySelector(`.apply-matrix[data-file-index="${i}"]`);
+            if (applyBtn && transformPanel) {
+                applyBtn.addEventListener('click', () => {
+                    const textarea = document.getElementById(`matrix-${i}`) as HTMLTextAreaElement;
+                    if (textarea) {
+                        const values = textarea.value.trim().split(/\s+/).map(Number);
+                        if (values.length === 16 && values.every(v => !isNaN(v))) {
+                            const mat = new THREE.Matrix4();
+                            mat.set(
+                                values[0], values[4], values[8],  values[12],
+                                values[1], values[5], values[9],  values[13],
+                                values[2], values[6], values[10], values[14],
+                                values[3], values[7], values[11], values[15]
+                            );
+                            this.setTransformationMatrix(i, mat);
+                        } else {
+                            alert('Please enter 16 valid numbers for the 4x4 matrix.');
+                        }
+                    }
+                });
+            }
+            // Reset matrix logic
+            const resetBtn = document.querySelector(`.reset-matrix[data-file-index="${i}"]`);
+            if (resetBtn && transformPanel) {
+                resetBtn.addEventListener('click', () => {
+                    this.resetTransformationMatrix(i);
+                    // Update textarea to identity
+                    const textarea = document.getElementById(`matrix-${i}`) as HTMLTextAreaElement;
+                    if (textarea) {
+                        textarea.value = '1.000000 0.000000 0.000000 0.000000\n0.000000 1.000000 0.000000 0.000000\n0.000000 0.000000 1.000000 0.000000\n0.000000 0.000000 0.000000 1.000000';
+                    }
+                });
+            }
+
+            // Translation buttons
+            const translateXBtn = document.querySelector(`.translate-x[data-file-index="${i}"]`);
+            if (translateXBtn) {
+                translateXBtn.addEventListener('click', () => {
+                    this.addTranslationToMatrix(i, 1, 0, 0);
+                    this.updateMatrixTextarea(i);
+                });
+            }
+
+            const translateYBtn = document.querySelector(`.translate-y[data-file-index="${i}"]`);
+            if (translateYBtn) {
+                translateYBtn.addEventListener('click', () => {
+                    this.addTranslationToMatrix(i, 0, 1, 0);
+                    this.updateMatrixTextarea(i);
+                });
+            }
+
+            const translateZBtn = document.querySelector(`.translate-z[data-file-index="${i}"]`);
+            if (translateZBtn) {
+                translateZBtn.addEventListener('click', () => {
+                    this.addTranslationToMatrix(i, 0, 0, 1);
+                    this.updateMatrixTextarea(i);
+                });
+            }
+
+            // Rotation buttons
+            const rotateXBtn = document.querySelector(`.rotate-x[data-file-index="${i}"]`);
+            if (rotateXBtn) {
+                rotateXBtn.addEventListener('click', () => {
+                    const rotationMatrix = this.createRotationMatrix('x', Math.PI / 2); // 90 degrees
+                    this.multiplyTransformationMatrices(i, rotationMatrix);
+                    this.updateMatrixTextarea(i);
+                });
+            }
+
+            const rotateYBtn = document.querySelector(`.rotate-y[data-file-index="${i}"]`);
+            if (rotateYBtn) {
+                rotateYBtn.addEventListener('click', () => {
+                    const rotationMatrix = this.createRotationMatrix('y', Math.PI / 2); // 90 degrees
+                    this.multiplyTransformationMatrices(i, rotationMatrix);
+                    this.updateMatrixTextarea(i);
+                });
+            }
+
+            const rotateZBtn = document.querySelector(`.rotate-z[data-file-index="${i}"]`);
+            if (rotateZBtn) {
+                rotateZBtn.addEventListener('click', () => {
+                    const rotationMatrix = this.createRotationMatrix('z', Math.PI / 2); // 90 degrees
+                    this.multiplyTransformationMatrices(i, rotationMatrix);
+                    this.updateMatrixTextarea(i);
                 });
             }
             
