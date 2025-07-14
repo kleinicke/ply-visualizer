@@ -75,7 +75,7 @@ body {
     background-color: var(--vscode-sideBar-background);
     border: 1px solid var(--vscode-sideBar-border);
     border-radius: 6px;
-    max-width: 300px;
+    width: 300px;
     z-index: 100;
     font-size: 12px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
@@ -630,6 +630,15 @@ body {
     border-bottom: none;
     margin-bottom: 0;
     padding-bottom: 0;
+}
+
+/* Camera control buttons spacing */
+.camera-controls-section .control-button {
+    margin-bottom: 4px;
+}
+
+.camera-controls-section .control-button:last-child {
+    margin-bottom: 0;
 }
 
 .matrix-display {

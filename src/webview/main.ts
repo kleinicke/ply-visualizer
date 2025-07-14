@@ -60,6 +60,8 @@ class PLYVisualizer {
     private cameraMatrix: THREE.Matrix4 = new THREE.Matrix4(); // Current camera position and rotation
     private transformationMatrices: THREE.Matrix4[] = []; // Individual transformation matrices for each point cloud
     private frameCount: number = 0; // Frame counter for UI updates
+    private lastCameraPosition: THREE.Vector3 = new THREE.Vector3(); // Track camera position changes
+    private lastCameraQuaternion: THREE.Quaternion = new THREE.Quaternion(); // Track camera rotation changes
     
     // Large file chunked loading state
     private chunkedFileState: Map<string, {
@@ -124,6 +126,10 @@ class PLYVisualizer {
             1000
         );
         this.camera.position.set(1, 1, 1);
+        
+        // Initialize last camera state for change detection
+        this.lastCameraPosition.copy(this.camera.position);
+        this.lastCameraQuaternion.copy(this.camera.quaternion);
 
         // Renderer
         const canvas = document.getElementById('three-canvas') as HTMLCanvasElement;
@@ -178,7 +184,7 @@ class PLYVisualizer {
             trackballControls.noZoom = false;
             trackballControls.noPan = false;
             trackballControls.staticMoving = false;
-            trackballControls.dynamicDampingFactor = 0.15;
+            trackballControls.dynamicDampingFactor = 0.2;
             
             // Set up screen coordinates for proper rotation
             trackballControls.screen.left = 0;
@@ -194,7 +200,7 @@ class PLYVisualizer {
             trackballControls.noZoom = false;
             trackballControls.noPan = false;
             trackballControls.staticMoving = false;
-            trackballControls.dynamicDampingFactor = 0.15;
+            trackballControls.dynamicDampingFactor = 0.2;
             
             // Set up screen coordinates for proper rotation
             trackballControls.screen.left = 0;
@@ -208,7 +214,7 @@ class PLYVisualizer {
             this.controls = new OrbitControls(this.camera, this.renderer.domElement);
             const orbitControls = this.controls as OrbitControls;
             orbitControls.enableDamping = true;
-            orbitControls.dampingFactor = 0.15;
+            orbitControls.dampingFactor = 0.2;
             orbitControls.screenSpacePanning = false;
             orbitControls.minDistance = 0.001;
             orbitControls.maxDistance = 1000;
@@ -495,16 +501,23 @@ class PLYVisualizer {
 
     private animate(): void {
         requestAnimationFrame(this.animate.bind(this));
+        
+        // Update controls
         this.controls.update();
         
-        // Update camera matrix
-        this.updateCameraMatrix();
+        // Check if camera position or rotation has changed
+        const positionChanged = !this.camera.position.equals(this.lastCameraPosition);
+        const rotationChanged = !this.camera.quaternion.equals(this.lastCameraQuaternion);
         
-        // Update camera controls panel every few frames
-        if (this.frameCount % 10 === 0) {
+        // Only update camera matrix and UI when camera actually changes
+        if (positionChanged || rotationChanged) {
+            this.updateCameraMatrix();
             this.updateCameraControlsPanel();
+            
+            // Update last known position and rotation
+            this.lastCameraPosition.copy(this.camera.position);
+            this.lastCameraQuaternion.copy(this.camera.quaternion);
         }
-        this.frameCount++;
         
         this.renderer.render(this.scene, this.camera);
     }
@@ -636,9 +649,16 @@ class PLYVisualizer {
         if (textarea) {
             const matrixArr = this.getTransformationMatrixAsArray(fileIndex);
             let matrixStr = '';
-            for (let r = 0; r < 4; ++r) {
-                const row = matrixArr.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
-                matrixStr += row.join(' ') + '\n';
+            // Three.js stores matrices in column-major order: [m00, m10, m20, m30, m01, m11, m21, m31, m02, m12, m22, m32, m03, m13, m23, m33]
+            // Display in row-major order to match the input format: each row should be [m0r, m1r, m2r, m3r]
+            for (let row = 0; row < 4; ++row) {
+                const displayRow = [
+                    matrixArr[row],           // m0r (column r, row 0)
+                    matrixArr[row + 4],       // m1r (column r, row 1)
+                    matrixArr[row + 8],       // m2r (column r, row 2)
+                    matrixArr[row + 12]       // m3r (column r, row 3)
+                ].map(v => v.toFixed(6));
+                matrixStr += displayRow.join(' ') + '\n';
             }
             textarea.value = matrixStr.trim();
         }
@@ -655,71 +675,117 @@ class PLYVisualizer {
             const mat = this.getCameraMatrixAsArray();
             let matrixStr = '';
             for (let r = 0; r < 4; ++r) {
-                const row = mat.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
+                const row = [
+                    mat[r],           // elements[0,4,8,12] -> row 0
+                    mat[r + 4],       // elements[1,5,9,13] -> row 1  
+                    mat[r + 8],       // elements[2,6,10,14] -> row 2
+                    mat[r + 12]       // elements[3,7,11,15] -> row 3
+                ].map(v => v.toFixed(6));
                 matrixStr += row.join(' ') + '\n';
             }
 
-            let html = `
-                <div class="camera-controls-section">
-                    <label style="font-size:10px;">Field of View: ${this.camera.fov.toFixed(1)}°</label><br>
-                    <input type="range" id="camera-fov" min="10" max="120" step="1" value="${this.camera.fov}" style="width:100%;margin:2px 0;">
-                    <span id="fov-value" style="font-size:10px;">${this.camera.fov.toFixed(1)}°</span>
-                </div>
-                
-                <div class="camera-controls-section">
-                    <label style="font-size:10px;font-weight:bold;">Current Camera Matrix:</label>
-                    <div class="matrix-display">
-                        <table style="font-size:9px;line-height:1.1;margin:4px 0;border-collapse:collapse;width:100%;">
-            `;
-            
-            for (let i = 0; i < 4; ++i) {
-                html += '<tr>';
-                for (let j = 0; j < 4; ++j) {
-                    html += `<td style="padding:1px 2px;border:1px solid #666;text-align:right;font-family:monospace;">${mat[j + i * 4].toFixed(4)}</td>`;
-                }
-                html += '</tr>';
-            }
-            
-            html += `
-                        </table>
-                    </div>
-                    <button id="edit-camera-matrix" class="control-button" style="width:100%;margin-top:4px;">Edit Matrix</button>
-                </div>
-                
-                <div class="camera-controls-section">
-                    <button id="reset-camera-matrix" class="control-button">Reset Camera</button>
-                </div>
-            `;
-            
-            controlsPanel.innerHTML = html;
-
-            // Add event listeners
-            const fovSlider = document.getElementById('camera-fov') as HTMLInputElement;
-            const fovValue = document.getElementById('fov-value');
-            if (fovSlider && fovValue) {
-                fovSlider.addEventListener('input', (e) => {
-                    const newFov = parseFloat((e.target as HTMLInputElement).value);
-                    this.camera.fov = newFov;
-                    this.camera.updateProjectionMatrix();
-                    if (fovValue) {
-                        fovValue.textContent = newFov.toFixed(1) + '°';
+            // Only update the matrix display, not the entire panel
+            const matrixDisplay = controlsPanel.querySelector('.matrix-display');
+            if (matrixDisplay) {
+                let matrixHtml = '<table style="font-size:9px;line-height:1.1;margin:4px 0;border-collapse:collapse;width:100%;">';
+                for (let i = 0; i < 4; ++i) {
+                    matrixHtml += '<tr>';
+                    for (let j = 0; j < 4; ++j) {
+                        // Row-major display: mat[j + i * 4]
+                        matrixHtml += `<td style="padding:1px 2px;border:1px solid #666;text-align:right;font-family:monospace;">${mat[j + i * 4].toFixed(4)}</td>`;
                     }
-                });
-            }
+                    matrixHtml += '</tr>';
+                }
+                matrixHtml += '</table>';
+                matrixDisplay.innerHTML = matrixHtml;
+            } else {
+                // First time setup - create the entire panel
+                let html = `
+                    <div class="camera-controls-section">
+                        <label style="font-size:10px;">Field of View:</label><br>
+                        <input type="range" id="camera-fov" min="10" max="150" step="1" value="${this.camera.fov}" style="width:100%;margin:2px 0;">
+                        <span id="fov-value" style="font-size:10px;">${this.camera.fov.toFixed(1)}°</span>
+                    </div>
+                    
+                    <div class="camera-controls-section">
+                        <label style="font-size:10px;font-weight:bold;">Current Camera Matrix (broken):</label>
+                        <div class="matrix-display">
+                            <table style="font-size:9px;line-height:1.1;margin:4px 0;border-collapse:collapse;width:100%;">
+                `;
+                
+                for (let i = 0; i < 4; ++i) {
+                    html += '<tr>';
+                    for (let j = 0; j < 4; ++j) {
+                        html += `<td style="padding:1px 2px;border:1px solid #666;text-align:right;font-family:monospace;">${mat[j + i * 4].toFixed(4)}</td>`;
+                    }
+                    html += '</tr>';
+                }
+                
+                html += `
+                            </table>
+                        </div>
+                        <button id="edit-camera-matrix" class="control-button" style="width:100%;margin-top:4px;">Edit Matrix</button>
+                    </div>
+                    
+                    <div class="camera-controls-section">
+                        <button id="reset-camera-matrix" class="control-button">Reset Camera</button>
+                        <button id="set-diagonal-matrix" class="control-button">Set Diagonal Matrix</button>
+                    </div>
+                `;
+                
+                controlsPanel.innerHTML = html;
 
-            const editBtn = document.getElementById('edit-camera-matrix');
-            if (editBtn) {
-                editBtn.addEventListener('click', () => {
-                    this.showCameraMatrixEditor(matrixStr.trim());
-                });
+                // Add event listeners only once
+                this.setupCameraControlEventListeners(matrixStr.trim());
             }
+        }
+    }
 
-            const resetBtn = document.getElementById('reset-camera-matrix');
-            if (resetBtn) {
-                resetBtn.addEventListener('click', () => {
-                    this.resetCameraToDefault();
-                });
-            }
+    private setupCameraControlEventListeners(matrixStr: string): void {
+        const fovSlider = document.getElementById('camera-fov') as HTMLInputElement;
+        const fovValue = document.getElementById('fov-value');
+        if (fovSlider && fovValue) {
+            fovSlider.addEventListener('input', (e) => {
+                const newFov = parseFloat((e.target as HTMLInputElement).value);
+                this.camera.fov = newFov;
+                this.camera.updateProjectionMatrix();
+                if (fovValue) {
+                    fovValue.textContent = newFov.toFixed(1) + '°';
+                }
+            });
+        }
+
+        const editBtn = document.getElementById('edit-camera-matrix');
+        if (editBtn) {
+            editBtn.addEventListener('click', () => {
+                // Get current camera matrix instead of using stale matrixStr
+                const currentMat = this.getCameraMatrixAsArray();
+                let currentMatrixStr = '';
+                for (let r = 0; r < 4; ++r) {
+                    const row = [
+                        currentMat[r],           // elements[0,4,8,12] -> row 0
+                        currentMat[r + 4],       // elements[1,5,9,13] -> row 1  
+                        currentMat[r + 8],       // elements[2,6,10,14] -> row 2
+                        currentMat[r + 12]       // elements[3,7,11,15] -> row 3
+                    ].map(v => v.toFixed(6));
+                    currentMatrixStr += row.join(' ') + '\n';
+                }
+                this.showCameraMatrixEditor(currentMatrixStr.trim());
+            });
+        }
+
+        const resetBtn = document.getElementById('reset-camera-matrix');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                this.resetCameraToDefault();
+            });
+        }
+
+        const diagonalBtn = document.getElementById('set-diagonal-matrix');
+        if (diagonalBtn) {
+            diagonalBtn.addEventListener('click', () => {
+                this.setCameraToDiagonalMatrix();
+            });
         }
     }
 
@@ -769,11 +835,12 @@ class PLYVisualizer {
             const values = textarea.value.trim().split(/\s+/).map(Number);
             if (values.length === 16 && values.every(v => !isNaN(v))) {
                 const mat = new THREE.Matrix4();
+                // Fix: Read matrix in row-major order (as displayed in UI)
                 mat.set(
-                    values[0], values[4], values[8],  values[12],
-                    values[1], values[5], values[9],  values[13],
-                    values[2], values[6], values[10], values[14],
-                    values[3], values[7], values[11], values[15]
+                    values[0], values[1], values[2],  values[3],
+                    values[4], values[5], values[6],  values[7],
+                    values[8], values[9], values[10], values[11],
+                    values[12], values[13], values[14], values[15]
                 );
                 this.applyCameraMatrix(mat);
                 closeModal();
@@ -805,11 +872,12 @@ class PLYVisualizer {
             const values = textarea.value.trim().split(/\s+/).map(Number);
             if (values.length === 16 && values.every(v => !isNaN(v))) {
                 const mat = new THREE.Matrix4();
+                // Fix: Read matrix in row-major order (as displayed in UI)
                 mat.set(
-                    values[0], values[4], values[8],  values[12],
-                    values[1], values[5], values[9],  values[13],
-                    values[2], values[6], values[10], values[14],
-                    values[3], values[7], values[11], values[15]
+                    values[0], values[1], values[2],  values[3],
+                    values[4], values[5], values[6],  values[7],
+                    values[8], values[9], values[10], values[11],
+                    values[12], values[13], values[14], values[15]
                 );
                 this.applyCameraMatrix(mat);
             } else {
@@ -836,6 +904,10 @@ class PLYVisualizer {
         direction.applyQuaternion(quaternion);
         this.controls.target.copy(position.clone().add(direction));
         this.controls.update();
+        
+        // Update last known camera state to prevent unnecessary UI updates
+        this.lastCameraPosition.copy(this.camera.position);
+        this.lastCameraQuaternion.copy(this.camera.quaternion);
     }
 
     private resetCameraToDefault(): void {
@@ -849,8 +921,52 @@ class PLYVisualizer {
         this.controls.target.set(0, 0, 0);
         this.controls.update();
         
-        // Update UI
+        // Update last known camera state to prevent unnecessary UI updates
+        this.lastCameraPosition.copy(this.camera.position);
+        this.lastCameraQuaternion.copy(this.camera.quaternion);
+        
+        // Force update camera matrix and UI
+        this.updateCameraMatrix();
         this.updateCameraControlsPanel();
+    }
+
+    private setCameraToDiagonalMatrix(): void {
+        // Reset camera to default position (like resetCameraToDefault but keep current FOV)
+        this.camera.position.set(1, 1, 1);
+        this.camera.lookAt(0, 0, 0);
+        this.camera.updateProjectionMatrix();
+        
+        // Reset controls
+        this.controls.target.set(0, 0, 0);
+        this.controls.update();
+        
+        // Update last known camera state to prevent unnecessary UI updates
+        this.lastCameraPosition.copy(this.camera.position);
+        this.lastCameraQuaternion.copy(this.camera.quaternion);
+        
+        // Force update camera matrix and UI
+        this.updateCameraMatrix();
+        this.updateCameraControlsPanel();
+    }
+
+    private setRotationCenterToOrigin(): void {
+        // Set rotation center (target) to origin (0, 0, 0)
+        this.controls.target.set(0, 0, 0);
+        this.controls.update();
+        
+        // Update axes position to the new rotation center
+        const axesGroup = (this as any).axesGroup;
+        if (axesGroup) {
+            axesGroup.position.copy(this.controls.target);
+        }
+        
+        // Show axes temporarily to indicate new rotation center
+        const showAxesTemporarily = (this as any).showAxesTemporarily;
+        if (showAxesTemporarily) {
+            showAxesTemporarily();
+        }
+        
+        console.log('🎯 Rotation center set to origin (0, 0, 0)');
     }
 
     private onDoubleClick(event: MouseEvent): void {
@@ -1129,6 +1245,13 @@ class PLYVisualizer {
             });
         }
 
+        const setRotationOriginBtn = document.getElementById('set-rotation-origin');
+        if (setRotationOriginBtn) {
+            setRotationOriginBtn.addEventListener('click', () => {
+                this.setRotationCenterToOrigin();
+            });
+        }
+
         // Camera convention buttons
         const opencvBtn = document.getElementById('opencv-convention');
         if (opencvBtn) {
@@ -1224,7 +1347,7 @@ class PLYVisualizer {
                     break;
                 case 'w':
                     console.log('🔑 W key pressed - setting rotation center to world origin (0,0,0)');
-                    this.setRotationCenter(new THREE.Vector3(0, 0, 0));
+                    this.setRotationCenterToOrigin();
                     e.preventDefault();
                     break;
             }
@@ -1260,7 +1383,7 @@ class PLYVisualizer {
             axesGroup.visible = !axesGroup.visible;
             const toggleBtn = document.getElementById('toggle-axes');
             if (toggleBtn) {
-                toggleBtn.textContent = axesGroup.visible ? 'Hide Axes' : 'Show Axes';
+                toggleBtn.innerHTML = axesGroup.visible ? 'Hide Axes <span class="button-shortcut">A</span>' : 'Show Axes <span class="button-shortcut">A</span>';
             }
         }
     }
@@ -1806,11 +1929,12 @@ class PLYVisualizer {
                         const values = textarea.value.trim().split(/\s+/).map(Number);
                         if (values.length === 16 && values.every(v => !isNaN(v))) {
                             const mat = new THREE.Matrix4();
+                            // Fix: Read matrix in row-major order (as displayed in UI)
                             mat.set(
-                                values[0], values[4], values[8],  values[12],
-                                values[1], values[5], values[9],  values[13],
-                                values[2], values[6], values[10], values[14],
-                                values[3], values[7], values[11], values[15]
+                                values[0], values[1], values[2],  values[3],
+                                values[4], values[5], values[6],  values[7],
+                                values[8], values[9], values[10], values[11],
+                                values[12], values[13], values[14], values[15]
                             );
                             this.setTransformationMatrix(i, mat);
                         } else {
