@@ -673,15 +673,37 @@ class PLYVisualizer {
             }
 
             let html = `
-                <strong>Camera Controls</strong><br>
-                <label style="font-size:10px;">Field of View: ${this.camera.fov.toFixed(1)}°</label><br>
-                <input type="range" id="camera-fov" min="10" max="120" step="1" value="${this.camera.fov}" style="width:100%;margin:2px 0;">
-                <span id="fov-value" style="font-size:10px;">${this.camera.fov.toFixed(1)}°</span><br>
-                <label style="font-size:10px;">Camera Matrix (4x4):</label><br>
-                <textarea id="camera-matrix-input" rows="4" cols="50" style="width:98%;font-size:10px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${matrixStr.trim()}</textarea><br>
-                <button id="apply-camera-matrix" style="font-size:10px;">Apply Camera Matrix</button>
-                <button id="reset-camera-matrix" style="font-size:10px;">Reset Camera</button>
+                <div class="camera-controls-section">
+                    <label style="font-size:10px;">Field of View: ${this.camera.fov.toFixed(1)}°</label><br>
+                    <input type="range" id="camera-fov" min="10" max="120" step="1" value="${this.camera.fov}" style="width:100%;margin:2px 0;">
+                    <span id="fov-value" style="font-size:10px;">${this.camera.fov.toFixed(1)}°</span>
+                </div>
+                
+                <div class="camera-controls-section">
+                    <label style="font-size:10px;font-weight:bold;">Current Camera Matrix:</label>
+                    <div class="matrix-display">
+                        <table style="font-size:9px;line-height:1.1;margin:4px 0;border-collapse:collapse;width:100%;">
             `;
+            
+            for (let i = 0; i < 4; ++i) {
+                html += '<tr>';
+                for (let j = 0; j < 4; ++j) {
+                    html += `<td style="padding:1px 2px;border:1px solid #666;text-align:right;font-family:monospace;">${mat[j + i * 4].toFixed(4)}</td>`;
+                }
+                html += '</tr>';
+            }
+            
+            html += `
+                        </table>
+                    </div>
+                    <button id="edit-camera-matrix" class="control-button" style="width:100%;margin-top:4px;">Edit Matrix</button>
+                </div>
+                
+                <div class="camera-controls-section">
+                    <button id="reset-camera-matrix" class="control-button">Reset Camera</button>
+                </div>
+            `;
+            
             controlsPanel.innerHTML = html;
 
             // Add event listeners
@@ -698,10 +720,10 @@ class PLYVisualizer {
                 });
             }
 
-            const applyBtn = document.getElementById('apply-camera-matrix');
-            if (applyBtn) {
-                applyBtn.addEventListener('click', () => {
-                    this.applyCameraMatrixFromInput();
+            const editBtn = document.getElementById('edit-camera-matrix');
+            if (editBtn) {
+                editBtn.addEventListener('click', () => {
+                    this.showCameraMatrixEditor(matrixStr.trim());
                 });
             }
 
@@ -712,6 +734,82 @@ class PLYVisualizer {
                 });
             }
         }
+    }
+
+    private showCameraMatrixEditor(currentMatrix: string): void {
+        // Create modal overlay
+        const modal = document.createElement('div');
+        modal.className = 'matrix-modal-overlay';
+        modal.innerHTML = `
+            <div class="matrix-modal">
+                <div class="matrix-modal-header">
+                    <h4>Edit Camera Matrix</h4>
+                    <button class="close-modal">✕</button>
+                </div>
+                <div class="matrix-modal-content">
+                    <p style="font-size:11px;margin-bottom:8px;">Enter 16 numbers for the 4x4 camera matrix (space or newline separated):</p>
+                    <textarea id="modal-camera-matrix" rows="6" cols="50" style="width:100%;font-size:10px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${currentMatrix}</textarea>
+                </div>
+                <div class="matrix-modal-footer">
+                    <button id="apply-modal-matrix" class="primary-button">Apply</button>
+                    <button id="cancel-modal-matrix" class="secondary-button">Cancel</button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Focus on textarea
+        const textarea = document.getElementById('modal-camera-matrix') as HTMLTextAreaElement;
+        if (textarea) {
+            textarea.focus();
+            textarea.select();
+        }
+        
+        // Event listeners
+        const closeBtn = modal.querySelector('.close-modal');
+        const cancelBtn = modal.querySelector('#cancel-modal-matrix');
+        const applyBtn = modal.querySelector('#apply-modal-matrix');
+        
+        const closeModal = () => {
+            document.body.removeChild(modal);
+        };
+        
+        closeBtn?.addEventListener('click', closeModal);
+        cancelBtn?.addEventListener('click', closeModal);
+        
+        applyBtn?.addEventListener('click', () => {
+            const values = textarea.value.trim().split(/\s+/).map(Number);
+            if (values.length === 16 && values.every(v => !isNaN(v))) {
+                const mat = new THREE.Matrix4();
+                mat.set(
+                    values[0], values[4], values[8],  values[12],
+                    values[1], values[5], values[9],  values[13],
+                    values[2], values[6], values[10], values[14],
+                    values[3], values[7], values[11], values[15]
+                );
+                this.applyCameraMatrix(mat);
+                closeModal();
+            } else {
+                alert('Please enter 16 valid numbers for the 4x4 camera matrix.');
+            }
+        });
+        
+        // Close on escape key
+        const handleKeydown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                document.removeEventListener('keydown', handleKeydown);
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+        
+        // Close on overlay click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
     }
 
     private applyCameraMatrixFromInput(): void {
@@ -1003,51 +1101,85 @@ class PLYVisualizer {
     }
 
     private setupEventListeners(): void {
-        // File management event listeners
-        document.getElementById('add-file')?.addEventListener('click', this.requestAddFile.bind(this));
+        // Add file button
+        const addFileBtn = document.getElementById('add-file');
+        if (addFileBtn) {
+            addFileBtn.addEventListener('click', () => {
+                this.requestAddFile();
+            });
+        }
+
+        // Tab navigation
+        const tabButtons = document.querySelectorAll('.tab-button');
+        tabButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const targetTab = (e.target as HTMLElement).getAttribute('data-tab');
+                if (targetTab) {
+                    this.switchTab(targetTab);
+                }
+            });
+        });
+
+        // Control buttons
+        const fitCameraBtn = document.getElementById('fit-camera');
+        if (fitCameraBtn) {
+            fitCameraBtn.addEventListener('click', () => {
+                this.fitCameraToAllObjects();
+            });
+        }
+
+        const resetCameraBtn = document.getElementById('reset-camera');
+        if (resetCameraBtn) {
+            resetCameraBtn.addEventListener('click', () => {
+                this.resetCameraToDefault();
+            });
+        }
+
+        const toggleAxesBtn = document.getElementById('toggle-axes');
+        if (toggleAxesBtn) {
+            toggleAxesBtn.addEventListener('click', () => {
+                this.toggleAxesVisibility();
+            });
+        }
 
         // Camera convention buttons
-        document.addEventListener('click', (e) => {
-            const target = e.target as HTMLElement;
-            if (target.id === 'opencv-camera') {
+        const opencvBtn = document.getElementById('opencv-convention');
+        if (opencvBtn) {
+            opencvBtn.addEventListener('click', () => {
                 this.setOpenCVCameraConvention();
-                e.preventDefault();
-            } else if (target.id === 'blender-camera') {
+            });
+        }
+
+        const blenderBtn = document.getElementById('blender-convention');
+        if (blenderBtn) {
+            blenderBtn.addEventListener('click', () => {
                 this.setBlenderOpenGLCameraConvention();
-                e.preventDefault();
-            }
-        });
+            });
+        }
 
-        // Color mode change event
-        document.addEventListener('change', (e) => {
-            const target = e.target as HTMLElement;
-            if (target.classList.contains('color-selector')) {
-                const fileIndex = parseInt(target.id.split('-')[1]);
-                const value = (target as HTMLSelectElement).value;
-                
-                if (fileIndex >= 0 && fileIndex < this.individualColorModes.length) {
-                    this.individualColorModes[fileIndex] = value;
-                    
-                    // Recreate material with new color mode
-                    if (fileIndex < this.plyFiles.length && fileIndex < this.meshes.length) {
-                        const oldMaterial = this.meshes[fileIndex].material;
-                        const newMaterial = this.createMaterialForFile(this.plyFiles[fileIndex], fileIndex);
-                        this.meshes[fileIndex].material = newMaterial;
-                        
-                        // Dispose of old material to prevent memory leaks
-                        if (oldMaterial) {
-                            if (Array.isArray(oldMaterial)) {
-                                oldMaterial.forEach(mat => mat.dispose());
-                            } else {
-                                oldMaterial.dispose();
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        // Control type buttons
+        const trackballBtn = document.getElementById('trackball-controls');
+        if (trackballBtn) {
+            trackballBtn.addEventListener('click', () => {
+                this.switchToTrackballControls();
+            });
+        }
 
-        // Keyboard shortcuts for up vector control, camera reset, and camera controls
+        const orbitBtn = document.getElementById('orbit-controls');
+        if (orbitBtn) {
+            orbitBtn.addEventListener('click', () => {
+                this.switchToOrbitControls();
+            });
+        }
+
+        const inverseBtn = document.getElementById('inverse-trackball-controls');
+        if (inverseBtn) {
+            inverseBtn.addEventListener('click', () => {
+                this.switchToInverseTrackballControls();
+            });
+        }
+
+        // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             // Only handle shortcuts when not typing in input fields
             if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) {
@@ -1055,20 +1187,28 @@ class PLYVisualizer {
             }
 
             switch (e.key.toLowerCase()) {
-                case 'x':
-                    this.setUpVector(new THREE.Vector3(1, 0, 0));
+                case 'h':
+                    this.showKeyboardShortcuts();
                     e.preventDefault();
                     break;
-                case 'y':
-                    this.setUpVector(new THREE.Vector3(0, 1, 0));
-                    e.preventDefault();
-                    break;
-                case 'z':
-                    this.setUpVector(new THREE.Vector3(0, 0, 1));
+                case 'f':
+                    this.fitCameraToAllObjects();
                     e.preventDefault();
                     break;
                 case 'r':
-                    this.resetCameraAndUpVector();
+                    this.resetCameraToDefault();
+                    e.preventDefault();
+                    break;
+                case 'a':
+                    this.toggleAxesVisibility();
+                    e.preventDefault();
+                    break;
+                case 'c':
+                    this.setOpenCVCameraConvention();
+                    e.preventDefault();
+                    break;
+                case 'b':
+                    this.setBlenderOpenGLCameraConvention();
                     e.preventDefault();
                     break;
                 case 't':
@@ -1083,12 +1223,16 @@ class PLYVisualizer {
                     this.switchToInverseTrackballControls();
                     e.preventDefault();
                     break;
-                case 'c':
-                    this.setOpenCVCameraConvention();
+                case 'x':
+                    this.setUpVector(new THREE.Vector3(1, 0, 0));
                     e.preventDefault();
                     break;
-                case 'b':
-                    this.setBlenderOpenGLCameraConvention();
+                case 'y':
+                    this.setUpVector(new THREE.Vector3(0, 1, 0));
+                    e.preventDefault();
+                    break;
+                case 'z':
+                    this.setUpVector(new THREE.Vector3(0, 0, 1));
                     e.preventDefault();
                     break;
                 case 'w':
@@ -1099,8 +1243,39 @@ class PLYVisualizer {
             }
         });
 
-        // Show keyboard shortcuts info
-        this.showKeyboardShortcuts();
+        // Global color mode toggle (removed - now handled per file)
+    }
+
+    private switchTab(tabName: string): void {
+        // Remove active class from all tabs and panels
+        document.querySelectorAll('.tab-button').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        document.querySelectorAll('.tab-panel').forEach(panel => {
+            panel.classList.remove('active');
+        });
+
+        // Add active class to selected tab and panel
+        const activeTabBtn = document.querySelector(`[data-tab="${tabName}"]`);
+        const activePanel = document.getElementById(`${tabName}-tab`);
+        
+        if (activeTabBtn) {
+            activeTabBtn.classList.add('active');
+        }
+        if (activePanel) {
+            activePanel.classList.add('active');
+        }
+    }
+
+    private toggleAxesVisibility(): void {
+        const axesGroup = (this as any).axesGroup;
+        if (axesGroup) {
+            axesGroup.visible = !axesGroup.visible;
+            const toggleBtn = document.getElementById('toggle-axes');
+            if (toggleBtn) {
+                toggleBtn.textContent = axesGroup.visible ? 'Hide Axes' : 'Show Axes';
+            }
+        }
     }
 
     private setUpVector(upVector: THREE.Vector3): void {
@@ -1336,107 +1511,20 @@ class PLYVisualizer {
     }
 
     private async displayFiles(dataArray: PlyData[]): Promise<void> {
-        this.plyFiles = dataArray;
-        this.meshes = [];
-        this.fileVisibility = [];
-        this.pointSizes = []; // Reset point sizes
-        this.individualColorModes = []; // Reset individual color modes
-        this.transformationMatrices = []; // Reset transformation matrices
-
-        // Show loading indicator
-        document.getElementById('loading')?.classList.remove('hidden');
-        const loadingEl = document.getElementById('loading');
-        if (loadingEl) {
-            loadingEl.textContent = 'Processing point cloud...';
-        }
-
-        // Clear existing meshes but preserve axes helper and lights
-        const childrenToRemove = this.scene.children.filter(child => 
-            child instanceof THREE.Mesh || child instanceof THREE.Points
-        );
+        console.log(`📁 Displaying ${dataArray.length} PLY file(s)`);
         
-        for (const child of childrenToRemove) {
-            if (child instanceof THREE.Mesh || child instanceof THREE.Points) {
-                if (child.geometry) {child.geometry.dispose();}
-                if (child.material) {
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach((mat: any) => mat.dispose());
-                    } else {
-                        child.material.dispose();
-                    }
-                }
-            }
-            this.scene.remove(child);
-        }
-
-        // Re-add lights (in case they were accidentally removed)
-        this.initSceneLighting();
+        // Add new files to the existing array
+        this.addNewFiles(dataArray);
         
-        // Re-add axes group if it was removed
-        const axesGroup = (this as any).axesGroup;
-        const hasAxes = axesGroup && this.scene.children.includes(axesGroup);
-        if (!hasAxes) {
-            this.addAxesHelper();
-        }
-
-        // Process files asynchronously to prevent UI freezing
-        for (let i = 0; i < dataArray.length; i++) {
-            const data = dataArray[i];
-            
-            // Update progress
-            if (loadingEl) {
-                loadingEl.textContent = `Processing file ${i + 1}/${dataArray.length} (${data.vertexCount.toLocaleString()} vertices)...`;
-            }
-            
-            console.log(`Processing file ${i}:`, {
-                vertices: data.vertexCount,
-                faces: data.faceCount,
-                hasColors: data.hasColors
-            });
-            
-            // Yield control to prevent UI freezing on large files
-            await this.yieldToUI();
-            
-            // Initialize color mode before creating material
-            const initialColorMode = this.useOriginalColors ? 'original' : 'assigned';
-            this.individualColorModes.push(initialColorMode);
-            console.log(`DisplayFiles: Initializing file ${i} with color mode: ${initialColorMode}, useOriginalColors: ${this.useOriginalColors}, hasColors: ${data.hasColors}`);
-            
-            const geometry = this.createGeometryFromPlyData(data);
-            const material = this.createMaterialForFile(data, i);
-            
-            const shouldShowAsPoints = data.faceCount === 0;
-            const mesh = shouldShowAsPoints ?
-                new THREE.Points(geometry, material) :
-                new THREE.Mesh(geometry, material);
-            
-            this.scene.add(mesh);
-            this.meshes.push(mesh);
-            this.fileVisibility.push(true);
-            this.pointSizes.push(0.001); // Initialize with default point size
-            
-            // Initialize transformation matrix for this file
-            this.transformationMatrices.push(new THREE.Matrix4());
-            
-            // Initialize transformation matrix for this file
-            this.transformationMatrices.push(new THREE.Matrix4());
-        }
-
-        // Update progress
-        if (loadingEl) {
-            loadingEl.textContent = 'Finalizing...';
-        }
-
-        // Fit camera to all objects
-        this.fitCameraToAllObjects();
-
-        // Update axes size based on scene content
-        this.updateAxesSize();
-
         // Update UI
-        this.updateFileList();
         this.updateFileStats();
-
+        this.updateFileList();
+        this.updateCameraMatrixDisplay();
+        this.updateCameraControlsPanel();
+        
+        // Fit camera to show all objects
+        this.fitCameraToAllObjects();
+        
         // Hide loading indicator
         document.getElementById('loading')?.classList.add('hidden');
     }
@@ -1446,57 +1534,74 @@ class PLYVisualizer {
     }
 
     private createMaterialForFile(data: PlyData, fileIndex: number): THREE.Material {
-        const shouldShowAsPoints = data.faceCount === 0;
+        const colorMode = this.individualColorModes[fileIndex] || 'assigned';
         
-        if (shouldShowAsPoints) {
-            const materialParams: any = {
-                size: this.pointSizes[fileIndex] || 0.001, // Use individual point size or default
-                sizeAttenuation: true,
-                transparent: false
-            };
-            
-            // Use individual color mode for this file
-            const colorMode = this.individualColorModes[fileIndex];
-            console.log(`Creating material for file ${fileIndex}, colorMode: ${colorMode}, hasColors: ${data.hasColors}`);
+        if (data.faceCount > 0) {
+            // Mesh material
+            const material = new THREE.MeshLambertMaterial();
             
             if (colorMode === 'original' && data.hasColors) {
-                materialParams.vertexColors = true;
-                console.log(`Using original colors for file ${fileIndex}`);
-            } else {
-                let colorIndex = fileIndex % this.fileColors.length; // Default to assigned color
-                if (colorMode !== 'original' && colorMode !== 'assigned') {
-                    colorIndex = parseInt(colorMode) || fileIndex % this.fileColors.length;
+                // Use original colors from the PLY file
+                const colors = new Float32Array(data.vertices.length * 3);
+                for (let i = 0; i < data.vertices.length; i++) {
+                    const vertex = data.vertices[i];
+                    colors[i * 3] = (vertex.red || 0) / 255;
+                    colors[i * 3 + 1] = (vertex.green || 0) / 255;
+                    colors[i * 3 + 2] = (vertex.blue || 0) / 255;
                 }
-                const color = this.fileColors[colorIndex];
-                materialParams.color = new THREE.Color(color[0], color[1], color[2]);
-                console.log(`Using assigned color ${colorIndex} (${color}) for file ${fileIndex}`);
+                material.vertexColors = true;
+                material.color = new THREE.Color(1, 1, 1); // White base color
+            } else if (colorMode === 'assigned') {
+                // Use assigned color
+                const color = this.fileColors[fileIndex % this.fileColors.length];
+                material.color.setRGB(color[0], color[1], color[2]);
+            } else {
+                // Use color index
+                const colorIndex = parseInt(colorMode);
+                if (!isNaN(colorIndex) && colorIndex >= 0 && colorIndex < this.fileColors.length) {
+                    const color = this.fileColors[colorIndex];
+                    material.color.setRGB(color[0], color[1], color[2]);
+                }
             }
             
-            return new THREE.PointsMaterial(materialParams);
+            return material;
         } else {
-            const materialParams: any = {
-                side: THREE.DoubleSide,
-                wireframe: false
-            };
+            // Points material
+            const material = new THREE.PointsMaterial();
             
-            // Use individual color mode for this file
-            const colorMode = this.individualColorModes[fileIndex];
-            console.log(`Creating material for file ${fileIndex}, colorMode: ${colorMode}, hasColors: ${data.hasColors}`);
-            
-            if (colorMode === 'original' && data.hasColors) {
-                materialParams.vertexColors = true;
-                console.log(`Using original colors for file ${fileIndex}`);
-            } else {
-                let colorIndex = fileIndex % this.fileColors.length; // Default to assigned color
-                if (colorMode !== 'original' && colorMode !== 'assigned') {
-                    colorIndex = parseInt(colorMode) || fileIndex % this.fileColors.length;
-                }
-                const color = this.fileColors[colorIndex];
-                materialParams.color = new THREE.Color(color[0], color[1], color[2]);
-                console.log(`Using assigned color ${colorIndex} (${color}) for file ${fileIndex}`);
+            // Initialize point size if not set
+            if (!this.pointSizes[fileIndex]) {
+                this.pointSizes[fileIndex] = 0.001;
             }
             
-            return new THREE.MeshLambertMaterial(materialParams);
+            material.size = this.pointSizes[fileIndex];
+            material.sizeAttenuation = true;
+            
+            if (colorMode === 'original' && data.hasColors) {
+                // Use original colors from the PLY file
+                const colors = new Float32Array(data.vertices.length * 3);
+                for (let i = 0; i < data.vertices.length; i++) {
+                    const vertex = data.vertices[i];
+                    colors[i * 3] = (vertex.red || 0) / 255;
+                    colors[i * 3 + 1] = (vertex.green || 0) / 255;
+                    colors[i * 3 + 2] = (vertex.blue || 0) / 255;
+                }
+                material.vertexColors = true;
+                material.color = new THREE.Color(1, 1, 1); // White base color
+            } else if (colorMode === 'assigned') {
+                // Use assigned color
+                const color = this.fileColors[fileIndex % this.fileColors.length];
+                material.color.setRGB(color[0], color[1], color[2]);
+            } else {
+                // Use color index
+                const colorIndex = parseInt(colorMode);
+                if (!isNaN(colorIndex) && colorIndex >= 0 && colorIndex < this.fileColors.length) {
+                    const color = this.fileColors[colorIndex];
+                    material.color.setRGB(color[0], color[1], color[2]);
+                }
+            }
+            
+            return material;
         }
     }
 
@@ -1570,13 +1675,18 @@ class PLYVisualizer {
         const fileListDiv = document.getElementById('file-list');
         if (!fileListDiv) return;
 
+        if (this.plyFiles.length === 0) {
+            fileListDiv.innerHTML = '<div class="no-files">No PLY files loaded</div>';
+            return;
+        }
+
         let html = '';
-        
         for (let i = 0; i < this.plyFiles.length; i++) {
             const data = this.plyFiles[i];
-            let colorIndicator = '';
             
-            if (this.useOriginalColors && data.hasColors) {
+            // Color indicator
+            let colorIndicator = '';
+            if (this.individualColorModes[i] === 'original' && data.hasColors) {
                 colorIndicator = '<span class="color-indicator" style="background: linear-gradient(45deg, #ff0000, #00ff00, #0000ff); border: 1px solid #666;"></span>';
             } else {
                 const color = this.fileColors[i % this.fileColors.length];
@@ -1591,6 +1701,7 @@ class PLYVisualizer {
                 const row = matrixArr.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
                 matrixStr += row.join(' ') + '\n';
             }
+            
             html += `
                 <div class="file-item">
                     <div class="file-item-main">
@@ -1598,25 +1709,48 @@ class PLYVisualizer {
                         ${colorIndicator}
                         <label for="file-${i}" class="file-name">${data.fileName || `File ${i + 1}`}</label>
                         <button class="remove-file" data-file-index="${i}" title="Remove file">✕</button>
-                        <button class="transform-toggle" data-file-index="${i}" style="margin-left:4px;">Transform</button>
                     </div>
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
-                    <div class="transform-panel" id="transform-panel-${i}" style="display:none;margin:4px 0 4px 0;">
-                        <label for="matrix-${i}" style="font-size:10px;">4x4 Matrix (4 rows, 4 columns):</label><br>
-                        <textarea id="matrix-${i}" rows="4" cols="50" style="width:98%;font-size:10px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${matrixStr.trim()}</textarea><br>
-                        <button class="apply-matrix" data-file-index="${i}" style="font-size:10px;">Apply</button>
-                        <button class="reset-matrix" data-file-index="${i}" style="font-size:10px;">Reset</button>
-                        <div style="margin-top:4px;">
-                            <button class="translate-x" data-file-index="${i}" style="font-size:10px;">Translate X+1</button>
-                            <button class="translate-y" data-file-index="${i}" style="font-size:10px;">Translate Y+1</button>
-                            <button class="translate-z" data-file-index="${i}" style="font-size:10px;">Translate Z+1</button>
-                        </div>
-                        <div style="margin-top:2px;">
-                            <button class="rotate-x" data-file-index="${i}" style="font-size:10px;">Rotate X 90°</button>
-                            <button class="rotate-y" data-file-index="${i}" style="font-size:10px;">Rotate Y 90°</button>
-                            <button class="rotate-z" data-file-index="${i}" style="font-size:10px;">Rotate Z 90°</button>
+                    
+                    <!-- Transform Controls -->
+                    <div class="transform-section">
+                        <button class="transform-toggle" data-file-index="${i}">
+                            <span class="toggle-icon">▶</span> Transform
+                        </button>
+                        <div class="transform-panel" id="transform-panel-${i}" style="display:none;">
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Matrix Operations:</label>
+                                <div class="transform-buttons">
+                                    <button class="apply-matrix" data-file-index="${i}">Apply Matrix</button>
+                                    <button class="reset-matrix" data-file-index="${i}">Reset</button>
+                                </div>
+                            </div>
+                            
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Translation:</label>
+                                <div class="transform-buttons">
+                                    <button class="translate-x" data-file-index="${i}">X+1</button>
+                                    <button class="translate-y" data-file-index="${i}">Y+1</button>
+                                    <button class="translate-z" data-file-index="${i}">Z+1</button>
+                                </div>
+                            </div>
+                            
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Rotation (90°):</label>
+                                <div class="transform-buttons">
+                                    <button class="rotate-x" data-file-index="${i}">X</button>
+                                    <button class="rotate-y" data-file-index="${i}">Y</button>
+                                    <button class="rotate-z" data-file-index="${i}">Z</button>
+                                </div>
+                            </div>
+                            
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
+                                <textarea id="matrix-${i}" rows="4" cols="50" style="width:100%;font-size:9px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${matrixStr.trim()}</textarea>
+                            </div>
                         </div>
                     </div>
+                    
                     ${data.faceCount === 0 ? `
                     <div class="point-size-control">
                         <label for="size-${i}">Point Size:</label>
@@ -1624,6 +1758,7 @@ class PLYVisualizer {
                         <span class="size-value">${(this.pointSizes[i] || 0.001).toFixed(4)}</span>
                     </div>
                     ` : ''}
+                    
                     <div class="color-control">
                         <label for="color-${i}">Color:</label>
                         <select id="color-${i}" class="color-selector">
@@ -1660,14 +1795,22 @@ class PLYVisualizer {
                 });
             }
             
-            // Transform toggle logic
+            // Transform toggle logic with improved UI
             const transformBtn = document.querySelector(`.transform-toggle[data-file-index="${i}"]`);
             const transformPanel = document.getElementById(`transform-panel-${i}`);
             if (transformBtn && transformPanel) {
                 transformBtn.addEventListener('click', () => {
-                    transformPanel.style.display = transformPanel.style.display === 'none' ? 'block' : 'none';
+                    const isVisible = transformPanel.style.display !== 'none';
+                    transformPanel.style.display = isVisible ? 'none' : 'block';
+                    
+                    // Update toggle icon
+                    const toggleIcon = transformBtn.querySelector('.toggle-icon');
+                    if (toggleIcon) {
+                        toggleIcon.textContent = isVisible ? '▶' : '▼';
+                    }
                 });
             }
+            
             // Apply matrix logic
             const applyBtn = document.querySelector(`.apply-matrix[data-file-index="${i}"]`);
             if (applyBtn && transformPanel) {
@@ -1690,6 +1833,7 @@ class PLYVisualizer {
                     }
                 });
             }
+            
             // Reset matrix logic
             const resetBtn = document.querySelector(`.reset-matrix[data-file-index="${i}"]`);
             if (resetBtn && transformPanel) {
@@ -1771,7 +1915,33 @@ class PLYVisualizer {
                 });
             }
             
-            // OLD COLOR SELECTOR LISTENERS REMOVED - now handled globally
+            // Color selector listeners
+            const colorSelector = document.getElementById(`color-${i}`) as HTMLSelectElement;
+            if (colorSelector) {
+                colorSelector.addEventListener('change', () => {
+                    const value = colorSelector.value;
+                    
+                    if (i >= 0 && i < this.individualColorModes.length) {
+                        this.individualColorModes[i] = value;
+                        
+                        // Recreate material with new color mode
+                        if (i < this.plyFiles.length && i < this.meshes.length) {
+                            const oldMaterial = this.meshes[i].material;
+                            const newMaterial = this.createMaterialForFile(this.plyFiles[i], i);
+                            this.meshes[i].material = newMaterial;
+                            
+                            // Dispose of old material to prevent memory leaks
+                            if (oldMaterial) {
+                                if (Array.isArray(oldMaterial)) {
+                                    oldMaterial.forEach(mat => mat.dispose());
+                                } else {
+                                    oldMaterial.dispose();
+                                }
+                            }
+                        }
+                    }
+                });
+            }
         }
         
         // Add remove button listeners
@@ -1782,11 +1952,6 @@ class PLYVisualizer {
                 this.requestRemoveFile(fileIndex);
             });
         });
-        
-        const colorToggleBtn = document.getElementById('toggle-colors');
-        if (colorToggleBtn) {
-            colorToggleBtn.addEventListener('click', this.toggleColorMode.bind(this));
-        }
     }
 
     private toggleFileVisibility(fileIndex: number): void {
@@ -2558,4 +2723,4 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => new PLYVisualizer());
 } else {
     new PLYVisualizer();
-} 
+}

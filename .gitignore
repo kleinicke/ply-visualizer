@@ -1,6 +1,8 @@
 *.ply
+*.xyz
 .vscode
 .vscode-test
 node_modules
 out
 *.vsix
+package-lock.json

@@ -197,22 +197,158 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     <h3>Error loading PLY file</h3>
                     <p id="error-message"></p>
                 </div>
-                <div id="info-panel" class="info-panel">
-                    <div class="panel-section">
-                        <h4>File Management</h4>
-                        <div class="file-controls">
-                            <button id="add-file" class="primary-button">+ Add PLY File</button>
-                        </div>
-                        <div id="file-list"></div>
+                
+                <!-- Main UI Panel -->
+                <div id="main-ui-panel" class="main-ui-panel">
+                    <!-- Tab Navigation -->
+                    <div class="tab-navigation">
+                        <button class="tab-button active" data-tab="files">Files</button>
+                        <button class="tab-button" data-tab="camera">Camera</button>
+                        <button class="tab-button" data-tab="controls">Controls</button>
+                        <button class="tab-button" data-tab="info">Info</button>
                     </div>
                     
-                    <div class="panel-section">
-                        <h4>Statistics</h4>
-                        <div id="file-stats"></div>
-                        <div id="camera-matrix-panel" style="margin-top:10px;"></div>
-                        <div id="camera-controls-panel" style="margin-top:10px;"></div>
+                    <!-- Tab Content -->
+                    <div class="tab-content">
+                        <!-- Files Tab -->
+                        <div id="files-tab" class="tab-panel active">
+                            <div class="panel-section">
+                                <h4>File Management</h4>
+                                <div class="file-controls">
+                                    <button id="add-file" class="primary-button">+ Add PLY File</button>
+                                </div>
+                                <div id="file-list"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- Camera Tab -->
+                        <div id="camera-tab" class="tab-panel">
+                            <div class="panel-section">
+                                <h4>Camera Settings</h4>
+                                <div id="camera-controls-panel"></div>
+                            </div>
+                            <div class="panel-section">
+                                <h4>Camera Matrix</h4>
+                                <div id="camera-matrix-panel"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- Controls Tab -->
+                        <div id="controls-tab" class="tab-panel">
+                            <div class="panel-section">
+                                <h4>View Controls</h4>
+                                <div class="control-buttons">
+                                    <button id="fit-camera" class="control-button">Fit to View</button>
+                                    <button id="reset-camera" class="control-button">Reset Camera</button>
+                                    <button id="toggle-axes" class="control-button">Toggle Axes</button>
+                                </div>
+                                <div class="shortcuts-hint">
+                                    <span class="shortcut-hint">F</span> Fit to View
+                                    <span class="shortcut-hint">R</span> Reset Camera
+                                    <span class="shortcut-hint">A</span> Toggle Axes
+                                </div>
+                            </div>
+                            <div class="panel-section">
+                                <h4>Camera Conventions</h4>
+                                <div class="control-buttons">
+                                    <button id="opencv-convention" class="control-button">OpenCV</button>
+                                    <button id="blender-convention" class="control-button">Blender</button>
+                                </div>
+                                <div class="shortcuts-hint">
+                                    <span class="shortcut-hint">C</span> OpenCV
+                                    <span class="shortcut-hint">B</span> Blender
+                                </div>
+                            </div>
+                            <div class="panel-section">
+                                <h4>Control Type</h4>
+                                <div class="control-buttons">
+                                    <button id="trackball-controls" class="control-button">Trackball</button>
+                                    <button id="orbit-controls" class="control-button">Orbit</button>
+                                    <button id="inverse-trackball-controls" class="control-button">Inverse</button>
+                                </div>
+                                <div class="shortcuts-hint">
+                                    <span class="shortcut-hint">T</span> Trackball
+                                    <span class="shortcut-hint">O</span> Orbit
+                                    <span class="shortcut-hint">I</span> Inverse
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Info Tab -->
+                        <div id="info-tab" class="tab-panel">
+                            <div class="panel-section">
+                                <h4>Statistics</h4>
+                                <div id="file-stats"></div>
+                            </div>
+                            <div class="panel-section">
+                                <h4>Keyboard Shortcuts</h4>
+                                <div class="shortcuts-list">
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">Double-click</span>
+                                        <span class="shortcut-desc">Set rotation center</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">Shift + Click</span>
+                                        <span class="shortcut-desc">Solo point cloud</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">Mouse wheel</span>
+                                        <span class="shortcut-desc">Zoom</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">Drag</span>
+                                        <span class="shortcut-desc">Rotate/Pan</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">F</span>
+                                        <span class="shortcut-desc">Fit to view</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">R</span>
+                                        <span class="shortcut-desc">Reset camera</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">A</span>
+                                        <span class="shortcut-desc">Toggle axes</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">C</span>
+                                        <span class="shortcut-desc">OpenCV convention</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">B</span>
+                                        <span class="shortcut-desc">Blender convention</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">T</span>
+                                        <span class="shortcut-desc">Trackball controls</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">O</span>
+                                        <span class="shortcut-desc">Orbit controls</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">I</span>
+                                        <span class="shortcut-desc">Inverse trackball</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">X/Y/Z</span>
+                                        <span class="shortcut-desc">Set up vector</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">W</span>
+                                        <span class="shortcut-desc">Set rotation center to origin</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">H</span>
+                                        <span class="shortcut-desc">Show this help</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
+                
                 <div id="viewer-container">
                     <canvas id="three-canvas"></canvas>
                 </div>
