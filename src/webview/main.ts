@@ -500,9 +500,8 @@ class PLYVisualizer {
         // Update camera matrix
         this.updateCameraMatrix();
         
-        // Update camera matrix display every few frames
+        // Update camera controls panel every few frames
         if (this.frameCount % 10 === 0) {
-            this.updateCameraMatrixDisplay();
             this.updateCameraControlsPanel();
         }
         this.frameCount++;
@@ -646,20 +645,8 @@ class PLYVisualizer {
     }
 
     private updateCameraMatrixDisplay(): void {
-        const cameraPanel = document.getElementById('camera-matrix-panel');
-        if (cameraPanel && this.plyFiles.length > 0) {
-            const mat = this.getCameraMatrixAsArray();
-            let html = '<strong>Camera 4x4 Matrix</strong><br><table style="font-size:10px;line-height:1.1;margin-top:2px;border-collapse:collapse;">';
-            for (let i = 0; i < 4; ++i) {
-                html += '<tr>';
-                for (let j = 0; j < 4; ++j) {
-                    html += `<td style="padding:1px 4px;border:1px solid #666;text-align:right;">${mat[j + i * 4].toFixed(4)}</td>`;
-                }
-                html += '</tr>';
-            }
-            html += '</table>';
-            cameraPanel.innerHTML = html;
-        }
+        // Camera matrix is now displayed in the camera controls panel
+        // This method is kept for compatibility but doesn't display anything
     }
 
     private updateCameraControlsPanel(): void {
@@ -1519,7 +1506,6 @@ class PLYVisualizer {
         // Update UI
         this.updateFileStats();
         this.updateFileList();
-        this.updateCameraMatrixDisplay();
         this.updateCameraControlsPanel();
         
         // Fit camera to show all objects
@@ -1799,15 +1785,15 @@ class PLYVisualizer {
             const transformBtn = document.querySelector(`.transform-toggle[data-file-index="${i}"]`);
             const transformPanel = document.getElementById(`transform-panel-${i}`);
             if (transformBtn && transformPanel) {
+                // Always hide by default and set triangle to side
+                transformPanel.style.display = 'none';
+                const toggleIcon = transformBtn.querySelector('.toggle-icon');
+                if (toggleIcon) toggleIcon.textContent = '▶';
+                
                 transformBtn.addEventListener('click', () => {
                     const isVisible = transformPanel.style.display !== 'none';
                     transformPanel.style.display = isVisible ? 'none' : 'block';
-                    
-                    // Update toggle icon
-                    const toggleIcon = transformBtn.querySelector('.toggle-icon');
-                    if (toggleIcon) {
-                        toggleIcon.textContent = isVisible ? '▶' : '▼';
-                    }
+                    if (toggleIcon) toggleIcon.textContent = isVisible ? '▶' : '▼';
                 });
             }
             
@@ -2083,6 +2069,9 @@ class PLYVisualizer {
             this.meshes.push(mesh);
             this.fileVisibility.push(true);
             this.pointSizes.push(0.001); // Initialize with default point size
+            
+            // Initialize transformation matrix for this file
+            this.transformationMatrices.push(new THREE.Matrix4());
         }
 
         // Update UI

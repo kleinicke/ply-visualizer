@@ -164,6 +164,9 @@ body {
     cursor: pointer;
     transition: all 0.2s ease;
     text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .control-button:hover {
@@ -175,6 +178,18 @@ body {
     background-color: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
     border-color: var(--vscode-button-border);
+}
+
+.button-shortcut {
+    background-color: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 9px;
+    font-weight: 500;
+    margin-left: 8px;
+    flex-shrink: 0;
 }
 
 /* File Management */
@@ -379,28 +394,47 @@ body {
 
 .size-slider {
     flex: 1;
-    height: 4px;
+    height: 6px;
     background: var(--vscode-progressBar-background);
-    border-radius: 2px;
+    border-radius: 3px;
     outline: none;
     -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
 }
 
 .size-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 12px;
-    height: 12px;
+    appearance: none;
+    width: 16px;
+    height: 16px;
     background: var(--vscode-progressBar-foreground);
     border-radius: 50%;
     cursor: pointer;
+    border: 2px solid var(--vscode-progressBar-background);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .size-slider::-moz-range-thumb {
-    width: 12px;
-    height: 12px;
+    width: 16px;
+    height: 16px;
     background: var(--vscode-progressBar-foreground);
     border-radius: 50%;
     cursor: pointer;
+    border: 2px solid var(--vscode-progressBar-background);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.size-slider::-webkit-slider-track {
+    background: var(--vscode-progressBar-background);
+    border-radius: 3px;
+    height: 6px;
+}
+
+.size-slider::-moz-range-track {
+    background: var(--vscode-progressBar-background);
+    border-radius: 3px;
+    height: 6px;
     border: none;
 }
 

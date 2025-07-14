@@ -227,10 +227,6 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                                 <h4>Camera Settings</h4>
                                 <div id="camera-controls-panel"></div>
                             </div>
-                            <div class="panel-section">
-                                <h4>Camera Matrix</h4>
-                                <div id="camera-matrix-panel"></div>
-                            </div>
                         </div>
                         
                         <!-- Controls Tab -->
@@ -238,38 +234,24 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                             <div class="panel-section">
                                 <h4>View Controls</h4>
                                 <div class="control-buttons">
-                                    <button id="fit-camera" class="control-button">Fit to View</button>
-                                    <button id="reset-camera" class="control-button">Reset Camera</button>
-                                    <button id="toggle-axes" class="control-button">Toggle Axes</button>
-                                </div>
-                                <div class="shortcuts-hint">
-                                    <span class="shortcut-hint">F</span> Fit to View
-                                    <span class="shortcut-hint">R</span> Reset Camera
-                                    <span class="shortcut-hint">A</span> Toggle Axes
+                                    <button id="fit-camera" class="control-button">Fit to View <span class="button-shortcut">F</span></button>
+                                    <button id="reset-camera" class="control-button">Reset Camera <span class="button-shortcut">R</span></button>
+                                    <button id="toggle-axes" class="control-button">Toggle Axes <span class="button-shortcut">A</span></button>
                                 </div>
                             </div>
                             <div class="panel-section">
                                 <h4>Camera Conventions</h4>
                                 <div class="control-buttons">
-                                    <button id="opencv-convention" class="control-button">OpenCV</button>
-                                    <button id="blender-convention" class="control-button">Blender</button>
-                                </div>
-                                <div class="shortcuts-hint">
-                                    <span class="shortcut-hint">C</span> OpenCV
-                                    <span class="shortcut-hint">B</span> Blender
+                                    <button id="opencv-convention" class="control-button">OpenCV <span class="button-shortcut">C</span></button>
+                                    <button id="blender-convention" class="control-button">Blender <span class="button-shortcut">B</span></button>
                                 </div>
                             </div>
                             <div class="panel-section">
                                 <h4>Control Type</h4>
                                 <div class="control-buttons">
-                                    <button id="trackball-controls" class="control-button">Trackball</button>
-                                    <button id="orbit-controls" class="control-button">Orbit</button>
-                                    <button id="inverse-trackball-controls" class="control-button">Inverse</button>
-                                </div>
-                                <div class="shortcuts-hint">
-                                    <span class="shortcut-hint">T</span> Trackball
-                                    <span class="shortcut-hint">O</span> Orbit
-                                    <span class="shortcut-hint">I</span> Inverse
+                                    <button id="trackball-controls" class="control-button">Trackball <span class="button-shortcut">T</span></button>
+                                    <button id="orbit-controls" class="control-button">Orbit <span class="button-shortcut">O</span></button>
+                                    <button id="inverse-trackball-controls" class="control-button">Inverse <span class="button-shortcut">I</span></button>
                                 </div>
                             </div>
                         </div>
