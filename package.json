@@ -2,8 +2,9 @@
   "name": "ply-visualizer",
   "displayName": "PLY Pointcloud Visualizer",
   "description": "A 3D visualizer for PLY (Polygon File Format) and XYZ point cloud files using Three.js",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "publisher": "kleinicke",
+  "icon": "icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/kleinicke/ply-visualizer.git"
@@ -49,23 +50,13 @@
         "command": "plyViewer.openMultipleFiles",
         "title": "Open Multiple PLY Files",
         "category": "PLY Visualizer"
-      },
-      {
-        "command": "plyViewer.openXyzFile",
-        "title": "Open with PLY Pointcloud Visualizer",
-        "category": "PLY Pointcloud Visualizer"
       }
     ],
     "menus": {
       "explorer/context": [
         {
           "command": "plyViewer.openFile",
-          "when": "resourceExtname == .ply",
-          "group": "navigation"
-        },
-        {
-          "command": "plyViewer.openXyzFile",
-          "when": "resourceExtname == .xyz || resourceExtname == .txt",
+          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .txt",
           "group": "navigation"
         }
       ]

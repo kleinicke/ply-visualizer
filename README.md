@@ -9,21 +9,11 @@ Info: This extension is actively developed. The current UI will frequently chang
 - **Visualize Point Clouds**: Navigate in colored or uncolored point clouds 
 - **Fast Loading of Big Point Clouds**: Even point clouds with 5 Million Points load in around a second.
 - **Compare Multiple Point Clouds**: Multiple point clouds can be loaded in the same view and activated and deactivated independently.
-- **Multiple Formats**: Support for both ASCII and binary PLY formats
+- **Multiple Formats**: Support for both ASCII and binary PLY formats and XYZ pointclouds
+- **Rotation of points**: Rotation Matrix for single point clouds
 
-## Features
+![example-view](assets/example.png)
 
-- **3D Visualization**: View PLY files with interactive 3D rendering
-- **Multiple Formats**: Support for both ASCII and binary PLY formats
-- **Point Cloud Support**: Display point clouds with colors and normals
-- **Mesh Support**: Render triangulated meshes with faces
-- **Interactive Controls**: 
-  - Orbit, zoom, and pan controls
-  - Toggle between mesh, wireframe, and point rendering modes
-  - Reset camera to fit the model
-- **File Information**: Display detailed file statistics and metadata
-- **Trigger all**: Allow triggering all pointclouds off except for one
-- **Variable Point Size**: Allow changing the point size
 
 ## Theoretically supported PLY Features
 
@@ -37,11 +27,11 @@ Info: This extension is actively developed. The current UI will frequently chang
 - **Formats**:
   - ASCII PLY format
   - Binary PLY format (little-endian and big-endian)
+  - XYZ point cloud format
 
 ## Known Issues and Missing Features
 - **Wrong direction of Rotation**: When rotating the point cloud the direction is inversed. It's unclear how to fix this.
 - **Bad use case knowledge for Shapes**: It was mainly tested for point clouds, since the author mainly works with point clouds.
-- **Rotation of points**: Allow Rotation matrix for single point clouds
 - **Visualize Depth Image**: Interpret a depth image directly as a point cloud
 - **Visualizing gaussian splats**: Add gaussian splat support
 - **Add eye dome lighting**: Improve percenption of uncolored point clouds

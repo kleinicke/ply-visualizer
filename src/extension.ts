@@ -18,16 +18,9 @@ export function activate(context: vscode.ExtensionContext) {
 
 
 
-    // Register command for opening PLY files
+    // Register command for opening PLY/XYZ files
     context.subscriptions.push(
         vscode.commands.registerCommand('plyViewer.openFile', (uri: vscode.Uri) => {
-            vscode.commands.executeCommand('vscode.openWith', uri, 'plyViewer.plyEditor');
-        })
-    );
-
-    // Register command for opening XYZ files
-    context.subscriptions.push(
-        vscode.commands.registerCommand('plyViewer.openXyzFile', (uri: vscode.Uri) => {
             vscode.commands.executeCommand('vscode.openWith', uri, 'plyViewer.plyEditor');
         })
     );
