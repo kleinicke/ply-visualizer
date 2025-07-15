@@ -612,6 +612,22 @@ class PLYVisualizer {
         return matrix;
     }
 
+    private createQuaternionMatrix(x: number, y: number, z: number, w: number): THREE.Matrix4 {
+        const quaternion = new THREE.Quaternion(x, y, z, w);
+        quaternion.normalize();
+        const matrix = new THREE.Matrix4();
+        matrix.makeRotationFromQuaternion(quaternion);
+        return matrix;
+    }
+
+    private createAngleAxisMatrix(axis: THREE.Vector3, angle: number): THREE.Matrix4 {
+        const quaternion = new THREE.Quaternion();
+        quaternion.setFromAxisAngle(axis.normalize(), angle);
+        const matrix = new THREE.Matrix4();
+        matrix.makeRotationFromQuaternion(quaternion);
+        return matrix;
+    }
+
     private multiplyTransformationMatrices(fileIndex: number, matrix: THREE.Matrix4): void {
         if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
             this.transformationMatrices[fileIndex].multiply(matrix);
@@ -1828,19 +1844,11 @@ class PLYVisualizer {
                         </button>
                         <div class="transform-panel" id="transform-panel-${i}" style="display:none;">
                             <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Matrix Operations:</label>
+                                <label style="font-size:10px;font-weight:bold;">Transformations:</label>
                                 <div class="transform-buttons">
-                                    <button class="apply-matrix" data-file-index="${i}">Apply Matrix</button>
-                                    <button class="reset-matrix" data-file-index="${i}">Reset</button>
-                                </div>
-                            </div>
-                            
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Translation:</label>
-                                <div class="transform-buttons">
-                                    <button class="translate-x" data-file-index="${i}">X+1</button>
-                                    <button class="translate-y" data-file-index="${i}">Y+1</button>
-                                    <button class="translate-z" data-file-index="${i}">Z+1</button>
+                                    <button class="add-translation" data-file-index="${i}">Add Translation</button>
+                                    <button class="add-quaternion" data-file-index="${i}">Add Quaternion</button>
+                                    <button class="add-angle-axis" data-file-index="${i}">Add Angle-Axis</button>
                                 </div>
                             </div>
                             
@@ -1856,6 +1864,10 @@ class PLYVisualizer {
                             <div class="transform-group">
                                 <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
                                 <textarea id="matrix-${i}" rows="4" cols="50" style="width:100%;font-size:9px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${matrixStr.trim()}</textarea>
+                                <div class="transform-buttons" style="margin-top:4px;">
+                                    <button class="apply-matrix" data-file-index="${i}">Apply Matrix</button>
+                                    <button class="reset-matrix" data-file-index="${i}">Reset</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1957,28 +1969,25 @@ class PLYVisualizer {
                 });
             }
 
-            // Translation buttons
-            const translateXBtn = document.querySelector(`.translate-x[data-file-index="${i}"]`);
-            if (translateXBtn) {
-                translateXBtn.addEventListener('click', () => {
-                    this.addTranslationToMatrix(i, 1, 0, 0);
-                    this.updateMatrixTextarea(i);
+            // Transformation buttons
+            const addTranslationBtn = document.querySelector(`.add-translation[data-file-index="${i}"]`);
+            if (addTranslationBtn) {
+                addTranslationBtn.addEventListener('click', () => {
+                    this.showTranslationDialog(i);
                 });
             }
 
-            const translateYBtn = document.querySelector(`.translate-y[data-file-index="${i}"]`);
-            if (translateYBtn) {
-                translateYBtn.addEventListener('click', () => {
-                    this.addTranslationToMatrix(i, 0, 1, 0);
-                    this.updateMatrixTextarea(i);
+            const addQuaternionBtn = document.querySelector(`.add-quaternion[data-file-index="${i}"]`);
+            if (addQuaternionBtn) {
+                addQuaternionBtn.addEventListener('click', () => {
+                    this.showQuaternionDialog(i);
                 });
             }
 
-            const translateZBtn = document.querySelector(`.translate-z[data-file-index="${i}"]`);
-            if (translateZBtn) {
-                translateZBtn.addEventListener('click', () => {
-                    this.addTranslationToMatrix(i, 0, 0, 1);
-                    this.updateMatrixTextarea(i);
+            const addAngleAxisBtn = document.querySelector(`.add-angle-axis[data-file-index="${i}"]`);
+            if (addAngleAxisBtn) {
+                addAngleAxisBtn.addEventListener('click', () => {
+                    this.showAngleAxisDialog(i);
                 });
             }
 
@@ -2828,6 +2837,299 @@ class PLYVisualizer {
             this.scene.remove(arrowHelper);
             arrowHelper.dispose();
         }, 2000);
+    }
+
+    private showTranslationDialog(fileIndex: number): void {
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        `;
+        
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            min-width: 300px;
+            max-width: 400px;
+        `;
+        
+        dialog.innerHTML = `
+            <h3 style="margin-top:0;">Add Translation</h3>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Translation Amount:</label>
+                <input type="number" id="translation-amount" value="1" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Direction:</label>
+                <div style="display:flex;gap:10px;margin-top:5px;">
+                    <button id="translate-x" style="flex:1;padding:8px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;">X Axis</button>
+                    <button id="translate-y" style="flex:1;padding:8px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;">Y Axis</button>
+                    <button id="translate-z" style="flex:1;padding:8px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;">Z Axis</button>
+                </div>
+            </div>
+            <div style="text-align:right;">
+                <button id="cancel-translation" style="margin-right:10px;padding:8px 15px;">Cancel</button>
+            </div>
+        `;
+        
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        
+        const closeModal = () => {
+            modal.remove();
+        };
+        
+        const cancelBtn = dialog.querySelector('#cancel-translation');
+        
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', closeModal);
+        }
+        
+        // Translation direction buttons
+        const translateXBtn = dialog.querySelector('#translate-x');
+        const translateYBtn = dialog.querySelector('#translate-y');
+        const translateZBtn = dialog.querySelector('#translate-z');
+        
+        const applyTranslation = (x: number, y: number, z: number) => {
+            const amount = parseFloat((dialog.querySelector('#translation-amount') as HTMLInputElement).value);
+            if (!isNaN(amount)) {
+                this.addTranslationToMatrix(fileIndex, x * amount, y * amount, z * amount);
+                this.updateMatrixTextarea(fileIndex);
+            }
+            closeModal();
+        };
+        
+        if (translateXBtn) {
+            translateXBtn.addEventListener('click', () => applyTranslation(1, 0, 0));
+        }
+        
+        if (translateYBtn) {
+            translateYBtn.addEventListener('click', () => applyTranslation(0, 1, 0));
+        }
+        
+        if (translateZBtn) {
+            translateZBtn.addEventListener('click', () => applyTranslation(0, 0, 1));
+        }
+        
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+        
+        // Close on Escape key
+        const handleKeydown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                document.removeEventListener('keydown', handleKeydown);
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+    }
+
+    private showQuaternionDialog(fileIndex: number): void {
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        `;
+        
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            min-width: 300px;
+            max-width: 400px;
+        `;
+        
+        dialog.innerHTML = `
+            <h3 style="margin-top:0;">Add Quaternion Rotation</h3>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Quaternion X:</label>
+                <input type="number" id="quaternion-x" value="0" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Quaternion Y:</label>
+                <input type="number" id="quaternion-y" value="0" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Quaternion Z:</label>
+                <input type="number" id="quaternion-z" value="0" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Quaternion W:</label>
+                <input type="number" id="quaternion-w" value="1" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="text-align:right;">
+                <button id="cancel-quaternion" style="margin-right:10px;padding:8px 15px;">Cancel</button>
+                <button id="apply-quaternion" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
+            </div>
+        `;
+        
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        
+        const closeModal = () => {
+            modal.remove();
+        };
+        
+        const cancelBtn = dialog.querySelector('#cancel-quaternion');
+        const applyBtn = dialog.querySelector('#apply-quaternion');
+        
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', closeModal);
+        }
+        
+        if (applyBtn) {
+            applyBtn.addEventListener('click', () => {
+                const x = parseFloat((dialog.querySelector('#quaternion-x') as HTMLInputElement).value);
+                const y = parseFloat((dialog.querySelector('#quaternion-y') as HTMLInputElement).value);
+                const z = parseFloat((dialog.querySelector('#quaternion-z') as HTMLInputElement).value);
+                const w = parseFloat((dialog.querySelector('#quaternion-w') as HTMLInputElement).value);
+                
+                if (!isNaN(x) && !isNaN(y) && !isNaN(z) && !isNaN(w)) {
+                    const quaternionMatrix = this.createQuaternionMatrix(x, y, z, w);
+                    this.multiplyTransformationMatrices(fileIndex, quaternionMatrix);
+                    this.updateMatrixTextarea(fileIndex);
+                }
+                
+                closeModal();
+            });
+        }
+        
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+        
+        // Close on Escape key
+        const handleKeydown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                document.removeEventListener('keydown', handleKeydown);
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+    }
+
+    private showAngleAxisDialog(fileIndex: number): void {
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        `;
+        
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            min-width: 300px;
+            max-width: 400px;
+        `;
+        
+        dialog.innerHTML = `
+            <h3 style="margin-top:0;">Add Angle-Axis Rotation</h3>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Axis X:</label>
+                <input type="number" id="axis-x" value="0" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Axis Y:</label>
+                <input type="number" id="axis-y" value="1" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Axis Z:</label>
+                <input type="number" id="axis-z" value="0" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 20px;">
+                <label style="display:block;margin-bottom:5px;">Angle (degrees):</label>
+                <input type="number" id="angle-degrees" value="90" step="1" min="0" max="360" style="width:100%;padding:5px;">
+            </div>
+            <div style="text-align:right;">
+                <button id="cancel-angle-axis" style="margin-right:10px;padding:8px 15px;">Cancel</button>
+                <button id="apply-angle-axis" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
+            </div>
+        `;
+        
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        
+        const closeModal = () => {
+            modal.remove();
+        };
+        
+        const cancelBtn = dialog.querySelector('#cancel-angle-axis');
+        const applyBtn = dialog.querySelector('#apply-angle-axis');
+        
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', closeModal);
+        }
+        
+        if (applyBtn) {
+            applyBtn.addEventListener('click', () => {
+                const axisX = parseFloat((dialog.querySelector('#axis-x') as HTMLInputElement).value);
+                const axisY = parseFloat((dialog.querySelector('#axis-y') as HTMLInputElement).value);
+                const axisZ = parseFloat((dialog.querySelector('#axis-z') as HTMLInputElement).value);
+                const angleDegrees = parseFloat((dialog.querySelector('#angle-degrees') as HTMLInputElement).value);
+                
+                if (!isNaN(axisX) && !isNaN(axisY) && !isNaN(axisZ) && !isNaN(angleDegrees)) {
+                    const axis = new THREE.Vector3(axisX, axisY, axisZ);
+                    const angle = (angleDegrees * Math.PI) / 180; // Convert to radians
+                    const angleAxisMatrix = this.createAngleAxisMatrix(axis, angle);
+                    this.multiplyTransformationMatrices(fileIndex, angleAxisMatrix);
+                    this.updateMatrixTextarea(fileIndex);
+                }
+                
+                closeModal();
+            });
+        }
+        
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+        
+        // Close on Escape key
+        const handleKeydown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                document.removeEventListener('keydown', handleKeydown);
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
     }
 }
 
