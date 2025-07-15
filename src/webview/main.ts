@@ -539,6 +539,23 @@ class PLYVisualizer {
         this.cameraMatrix.multiply(rotationMatrix).multiply(positionMatrix);
     }
 
+    private getCameraMatrixForDisplay(): THREE.Matrix4 {
+        // Return the direct camera transformation (not the inverse) for display/editing
+        const displayMatrix = new THREE.Matrix4();
+        
+        // Create direct camera transformation
+        const positionMatrix = new THREE.Matrix4();
+        positionMatrix.makeTranslation(this.camera.position.x, this.camera.position.y, this.camera.position.z);
+        
+        const rotationMatrix = new THREE.Matrix4();
+        rotationMatrix.makeRotationFromQuaternion(this.camera.quaternion);
+        
+        // Combine: first translate, then rotate
+        displayMatrix.multiply(rotationMatrix).multiply(positionMatrix);
+        
+        return displayMatrix;
+    }
+
     private getCameraMatrix(): THREE.Matrix4 {
         return this.cameraMatrix.clone();
     }
@@ -688,14 +705,26 @@ class PLYVisualizer {
     private updateCameraControlsPanel(): void {
         const controlsPanel = document.getElementById('camera-controls-panel');
         if (controlsPanel && this.plyFiles.length > 0) {
-            const mat = this.getCameraMatrixAsArray();
+            // Get camera matrix for display (direct transformation, not inverse)
+            const displayMatrix = this.getCameraMatrixForDisplay();
+            const mat = displayMatrix.elements;
+            
+            // Three.js stores matrices in column-major order: [m00, m10, m20, m30, m01, m11, m21, m31, m02, m12, m22, m32, m03, m13, m23, m33]
+            // Convert to row-major for display: [m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33]
+            const rowMajorMat = [
+                mat[0], mat[4], mat[8], mat[12],   // row 0: [m00, m01, m02, m03]
+                mat[1], mat[5], mat[9], mat[13],   // row 1: [m10, m11, m12, m13] 
+                mat[2], mat[6], mat[10], mat[14],  // row 2: [m20, m21, m22, m23]
+                mat[3], mat[7], mat[11], mat[15]   // row 3: [m30, m31, m32, m33] (translation row)
+            ];
+            
             let matrixStr = '';
             for (let r = 0; r < 4; ++r) {
                 const row = [
-                    mat[r],           // elements[0,4,8,12] -> row 0
-                    mat[r + 4],       // elements[1,5,9,13] -> row 1  
-                    mat[r + 8],       // elements[2,6,10,14] -> row 2
-                    mat[r + 12]       // elements[3,7,11,15] -> row 3
+                    rowMajorMat[r * 4],       // row r, column 0
+                    rowMajorMat[r * 4 + 1],   // row r, column 1
+                    rowMajorMat[r * 4 + 2],   // row r, column 2
+                    rowMajorMat[r * 4 + 3]    // row r, column 3
                 ].map(v => v.toFixed(6));
                 matrixStr += row.join(' ') + '\n';
             }
@@ -707,8 +736,8 @@ class PLYVisualizer {
                 for (let i = 0; i < 4; ++i) {
                     matrixHtml += '<tr>';
                     for (let j = 0; j < 4; ++j) {
-                        // Row-major display: mat[j + i * 4]
-                        matrixHtml += `<td style="padding:1px 2px;border:1px solid #666;text-align:right;font-family:monospace;">${mat[j + i * 4].toFixed(4)}</td>`;
+                        // Display in row-major order with translation in last row
+                        matrixHtml += `<td style="padding:1px 2px;border:1px solid #666;text-align:right;font-family:monospace;">${rowMajorMat[i * 4 + j].toFixed(4)}</td>`;
                     }
                     matrixHtml += '</tr>';
                 }
@@ -732,7 +761,8 @@ class PLYVisualizer {
                 for (let i = 0; i < 4; ++i) {
                     html += '<tr>';
                     for (let j = 0; j < 4; ++j) {
-                        html += `<td style="padding:1px 2px;border:1px solid #666;text-align:right;font-family:monospace;">${mat[j + i * 4].toFixed(4)}</td>`;
+                        // Display in row-major order with translation in last row
+                        html += `<td style="padding:1px 2px;border:1px solid #666;text-align:right;font-family:monospace;">${rowMajorMat[i * 4 + j].toFixed(4)}</td>`;
                     }
                     html += '</tr>';
                 }
@@ -775,17 +805,25 @@ class PLYVisualizer {
         if (editBtn) {
             editBtn.addEventListener('click', () => {
                 // Get current camera matrix instead of using stale matrixStr
-                const currentMat = this.getCameraMatrixAsArray();
-                let currentMatrixStr = '';
-                for (let r = 0; r < 4; ++r) {
-                    const row = [
-                        currentMat[r],           // elements[0,4,8,12] -> row 0
-                        currentMat[r + 4],       // elements[1,5,9,13] -> row 1  
-                        currentMat[r + 8],       // elements[2,6,10,14] -> row 2
-                        currentMat[r + 12]       // elements[3,7,11,15] -> row 3
-                    ].map(v => v.toFixed(6));
-                    currentMatrixStr += row.join(' ') + '\n';
-                }
+                            const displayMatrix = this.getCameraMatrixForDisplay();
+            const currentMat = displayMatrix.elements;
+            // Convert to row-major for display
+            const rowMajorMat = [
+                currentMat[0], currentMat[4], currentMat[8], currentMat[12],   // row 0
+                currentMat[1], currentMat[5], currentMat[9], currentMat[13],   // row 1
+                currentMat[2], currentMat[6], currentMat[10], currentMat[14],  // row 2
+                currentMat[3], currentMat[7], currentMat[11], currentMat[15]   // row 3
+            ];
+            let currentMatrixStr = '';
+            for (let r = 0; r < 4; ++r) {
+                const row = [
+                    rowMajorMat[r * 4],       // row r, column 0
+                    rowMajorMat[r * 4 + 1],   // row r, column 1
+                    rowMajorMat[r * 4 + 2],   // row r, column 2
+                    rowMajorMat[r * 4 + 3]    // row r, column 3
+                ].map(v => v.toFixed(6));
+                currentMatrixStr += row.join(' ') + '\n';
+            }
                 this.showCameraMatrixEditor(currentMatrixStr.trim());
             });
         }
@@ -852,6 +890,7 @@ class PLYVisualizer {
             if (values.length === 16 && values.every(v => !isNaN(v))) {
                 const mat = new THREE.Matrix4();
                 // Fix: Read matrix in row-major order (as displayed in UI)
+                // values are in row-major order: [row0col0, row0col1, row0col2, row0col3, row1col0, ...]
                 mat.set(
                     values[0], values[1], values[2],  values[3],
                     values[4], values[5], values[6],  values[7],
@@ -903,7 +942,10 @@ class PLYVisualizer {
     }
 
     private applyCameraMatrix(matrix: THREE.Matrix4): void {
-        // Extract position from the matrix
+        // The input matrix represents the direct camera transformation
+        // We need to extract the camera position and rotation from it
+        
+        // Extract position from the matrix (last column in row-major format)
         const position = new THREE.Vector3();
         position.setFromMatrixPosition(matrix);
         
@@ -924,6 +966,10 @@ class PLYVisualizer {
         // Update last known camera state to prevent unnecessary UI updates
         this.lastCameraPosition.copy(this.camera.position);
         this.lastCameraQuaternion.copy(this.camera.quaternion);
+        
+        // Update camera matrix and refresh UI
+        this.updateCameraMatrix();
+        this.updateCameraControlsPanel();
     }
 
     private resetCameraToDefault(): void {
@@ -947,18 +993,12 @@ class PLYVisualizer {
     }
 
     private setCameraToDiagonalMatrix(): void {
-        // Reset camera to default position (like resetCameraToDefault but keep current FOV)
-        this.camera.position.set(1, 1, 1);
-        this.camera.lookAt(0, 0, 0);
-        this.camera.updateProjectionMatrix();
+        // Create a proper diagonal matrix (identity matrix)
+        const diagonalMatrix = new THREE.Matrix4();
+        diagonalMatrix.identity(); // This creates a proper 4x4 identity matrix
         
-        // Reset controls
-        this.controls.target.set(0, 0, 0);
-        this.controls.update();
-        
-        // Update last known camera state to prevent unnecessary UI updates
-        this.lastCameraPosition.copy(this.camera.position);
-        this.lastCameraQuaternion.copy(this.camera.quaternion);
+        // Apply the diagonal matrix to the camera
+        this.applyCameraMatrix(diagonalMatrix);
         
         // Force update camera matrix and UI
         this.updateCameraMatrix();
