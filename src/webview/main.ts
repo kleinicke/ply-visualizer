@@ -705,43 +705,25 @@ class PLYVisualizer {
     private updateCameraControlsPanel(): void {
         const controlsPanel = document.getElementById('camera-controls-panel');
         if (controlsPanel && this.plyFiles.length > 0) {
-            // Get camera matrix for display (direct transformation, not inverse)
-            const displayMatrix = this.getCameraMatrixForDisplay();
-            const mat = displayMatrix.elements;
+            // Show simple camera position and rotation instead of complex matrix
+            const pos = this.camera.position;
             
-            // Three.js stores matrices in column-major order: [m00, m10, m20, m30, m01, m11, m21, m31, m02, m12, m22, m32, m03, m13, m23, m33]
-            // Convert to row-major for display: [m00, m01, m02, m03, m10, m11, m12, m13, m20, m21, m22, m23, m30, m31, m32, m33]
-            const rowMajorMat = [
-                mat[0], mat[4], mat[8], mat[12],   // row 0: [m00, m01, m02, m03]
-                mat[1], mat[5], mat[9], mat[13],   // row 1: [m10, m11, m12, m13] 
-                mat[2], mat[6], mat[10], mat[14],  // row 2: [m20, m21, m22, m23]
-                mat[3], mat[7], mat[11], mat[15]   // row 3: [m30, m31, m32, m33] (translation row)
-            ];
+            // Get rotation from quaternion to handle all camera operations consistently
+            const euler = new THREE.Euler();
+            euler.setFromQuaternion(this.camera.quaternion, 'XYZ');
+            const rotX = (euler.x * 180 / Math.PI);
+            const rotY = (euler.y * 180 / Math.PI);
+            const rotZ = (euler.z * 180 / Math.PI);
             
-            let matrixStr = '';
-            for (let r = 0; r < 4; ++r) {
-                const row = [
-                    rowMajorMat[r * 4],       // row r, column 0
-                    rowMajorMat[r * 4 + 1],   // row r, column 1
-                    rowMajorMat[r * 4 + 2],   // row r, column 2
-                    rowMajorMat[r * 4 + 3]    // row r, column 3
-                ].map(v => v.toFixed(6));
-                matrixStr += row.join(' ') + '\n';
-            }
-
             // Only update the matrix display, not the entire panel
             const matrixDisplay = controlsPanel.querySelector('.matrix-display');
             if (matrixDisplay) {
-                let matrixHtml = '<table style="font-size:9px;line-height:1.1;margin:4px 0;border-collapse:collapse;width:100%;">';
-                for (let i = 0; i < 4; ++i) {
-                    matrixHtml += '<tr>';
-                    for (let j = 0; j < 4; ++j) {
-                        // Display in row-major order with translation in last row
-                        matrixHtml += `<td style="padding:1px 2px;border:1px solid #666;text-align:right;font-family:monospace;">${rowMajorMat[i * 4 + j].toFixed(4)}</td>`;
-                    }
-                    matrixHtml += '</tr>';
-                }
-                matrixHtml += '</table>';
+                let matrixHtml = `
+                    <div style="font-size:10px;margin:4px 0;">
+                        <div><strong>Position:</strong> (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})</div>
+                        <div><strong>Rotation:</strong> (${rotX.toFixed(1)}°, ${rotY.toFixed(1)}°, ${rotZ.toFixed(1)}°)</div>
+                    </div>
+                `;
                 matrixDisplay.innerHTML = matrixHtml;
             } else {
                 // First time setup - create the entire panel
@@ -753,41 +735,32 @@ class PLYVisualizer {
                     </div>
                     
                     <div class="camera-controls-section">
-                        <label style="font-size:10px;font-weight:bold;">Current Camera Matrix (broken):</label>
+                        <label style="font-size:10px;font-weight:bold;">Camera Position & Rotation:</label>
                         <div class="matrix-display">
-                            <table style="font-size:9px;line-height:1.1;margin:4px 0;border-collapse:collapse;width:100%;">
-                `;
-                
-                for (let i = 0; i < 4; ++i) {
-                    html += '<tr>';
-                    for (let j = 0; j < 4; ++j) {
-                        // Display in row-major order with translation in last row
-                        html += `<td style="padding:1px 2px;border:1px solid #666;text-align:right;font-family:monospace;">${rowMajorMat[i * 4 + j].toFixed(4)}</td>`;
-                    }
-                    html += '</tr>';
-                }
-                
-                html += `
-                            </table>
+                            <div style="font-size:10px;margin:4px 0;">
+                                <div><strong>Position:</strong> (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})</div>
+                                <div><strong>Rotation:</strong> (${rotX.toFixed(1)}°, ${rotY.toFixed(1)}°, ${rotZ.toFixed(1)}°)</div>
+                            </div>
                         </div>
-                        <button id="edit-camera-matrix" class="control-button" style="width:100%;margin-top:4px;">Edit Matrix</button>
-                    </div>
-                    
-                    <div class="camera-controls-section">
-                        <button id="reset-camera-matrix" class="control-button">Reset Camera</button>
-                        <button id="set-diagonal-matrix" class="control-button">Set Diagonal Matrix</button>
+                        <div style="display:flex;gap:4px;margin-top:4px;">
+                            <button id="modify-camera-position" class="control-button" style="flex:1;font-size:9px;">Modify Position</button>
+                        </div>
+                        <div style="display:flex;gap:4px;margin-top:4px;">
+                            <button id="modify-camera-rotation" class="control-button" style="flex:1;font-size:9px;">Modify Rotation (broken)</button>
+                        </div>
+                        <button id="reset-camera-matrix" class="control-button" style="margin-top:12px;">Reset Camera</button>
                     </div>
                 `;
                 
                 controlsPanel.innerHTML = html;
 
                 // Add event listeners only once
-                this.setupCameraControlEventListeners(matrixStr.trim());
+                this.setupCameraControlEventListeners('');
             }
         }
     }
 
-    private setupCameraControlEventListeners(matrixStr: string): void {
+        private setupCameraControlEventListeners(matrixStr: string): void {
         const fovSlider = document.getElementById('camera-fov') as HTMLInputElement;
         const fovValue = document.getElementById('fov-value');
         if (fovSlider && fovValue) {
@@ -801,33 +774,6 @@ class PLYVisualizer {
             });
         }
 
-        const editBtn = document.getElementById('edit-camera-matrix');
-        if (editBtn) {
-            editBtn.addEventListener('click', () => {
-                // Get current camera matrix instead of using stale matrixStr
-                            const displayMatrix = this.getCameraMatrixForDisplay();
-            const currentMat = displayMatrix.elements;
-            // Convert to row-major for display
-            const rowMajorMat = [
-                currentMat[0], currentMat[4], currentMat[8], currentMat[12],   // row 0
-                currentMat[1], currentMat[5], currentMat[9], currentMat[13],   // row 1
-                currentMat[2], currentMat[6], currentMat[10], currentMat[14],  // row 2
-                currentMat[3], currentMat[7], currentMat[11], currentMat[15]   // row 3
-            ];
-            let currentMatrixStr = '';
-            for (let r = 0; r < 4; ++r) {
-                const row = [
-                    rowMajorMat[r * 4],       // row r, column 0
-                    rowMajorMat[r * 4 + 1],   // row r, column 1
-                    rowMajorMat[r * 4 + 2],   // row r, column 2
-                    rowMajorMat[r * 4 + 3]    // row r, column 3
-                ].map(v => v.toFixed(6));
-                currentMatrixStr += row.join(' ') + '\n';
-            }
-                this.showCameraMatrixEditor(currentMatrixStr.trim());
-            });
-        }
-
         const resetBtn = document.getElementById('reset-camera-matrix');
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
@@ -835,10 +781,17 @@ class PLYVisualizer {
             });
         }
 
-        const diagonalBtn = document.getElementById('set-diagonal-matrix');
-        if (diagonalBtn) {
-            diagonalBtn.addEventListener('click', () => {
-                this.setCameraToDiagonalMatrix();
+        const modifyPositionBtn = document.getElementById('modify-camera-position');
+        if (modifyPositionBtn) {
+            modifyPositionBtn.addEventListener('click', () => {
+                this.showCameraPositionDialog();
+            });
+        }
+
+        const modifyRotationBtn = document.getElementById('modify-camera-rotation');
+        if (modifyRotationBtn) {
+            modifyRotationBtn.addEventListener('click', () => {
+                this.showCameraRotationDialog();
             });
         }
     }
@@ -973,9 +926,12 @@ class PLYVisualizer {
     }
 
     private resetCameraToDefault(): void {
-        // Reset camera to default position
+        // Reset camera to default position and orientation
         this.camera.position.set(1, 1, 1);
-        this.camera.lookAt(0, 0, 0);
+        
+        // Reset quaternion to identity (no rotation)
+        this.camera.quaternion.set(0, 0, 0, 1);
+        
         this.camera.fov = 75;
         this.camera.updateProjectionMatrix();
         
@@ -3149,6 +3105,243 @@ class PLYVisualizer {
                     const angleAxisMatrix = this.createAngleAxisMatrix(axis, angle);
                     this.multiplyTransformationMatrices(fileIndex, angleAxisMatrix);
                     this.updateMatrixTextarea(fileIndex);
+                }
+                
+                closeModal();
+            });
+        }
+        
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+        
+        // Close on Escape key
+        const handleKeydown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                document.removeEventListener('keydown', handleKeydown);
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+    }
+
+    private showCameraPositionDialog(): void {
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        `;
+        
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            min-width: 300px;
+            max-width: 400px;
+        `;
+        
+        const currentPos = this.camera.position;
+        
+        dialog.innerHTML = `
+            <h3 style="margin-top:0;">Modify Camera Position</h3>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">X Position:</label>
+                <input type="number" id="camera-pos-x" value="${currentPos.x.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Y Position:</label>
+                <input type="number" id="camera-pos-y" value="${currentPos.y.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Z Position:</label>
+                <input type="number" id="camera-pos-z" value="${currentPos.z.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="text-align:right;">
+                <button id="set-all-pos-zero" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set All to 0</button>
+                <button id="cancel-camera-pos" style="margin-right:10px;padding:8px 15px;">Cancel</button>
+                <button id="apply-camera-pos" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
+            </div>
+        `;
+        
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        
+        const closeModal = () => {
+            modal.remove();
+        };
+        
+        const cancelBtn = dialog.querySelector('#cancel-camera-pos');
+        const applyBtn = dialog.querySelector('#apply-camera-pos');
+        const setAllZeroBtn = dialog.querySelector('#set-all-pos-zero');
+        
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', closeModal);
+        }
+        
+        if (setAllZeroBtn) {
+            setAllZeroBtn.addEventListener('click', () => {
+                (dialog.querySelector('#camera-pos-x') as HTMLInputElement).value = '0';
+                (dialog.querySelector('#camera-pos-y') as HTMLInputElement).value = '0';
+                (dialog.querySelector('#camera-pos-z') as HTMLInputElement).value = '0';
+            });
+        }
+        
+        if (applyBtn) {
+            applyBtn.addEventListener('click', () => {
+                const x = parseFloat((dialog.querySelector('#camera-pos-x') as HTMLInputElement).value);
+                const y = parseFloat((dialog.querySelector('#camera-pos-y') as HTMLInputElement).value);
+                const z = parseFloat((dialog.querySelector('#camera-pos-z') as HTMLInputElement).value);
+                
+                if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                    // Store current camera orientation
+                    const currentQuaternion = this.camera.quaternion.clone();
+                    const currentTarget = this.controls.target.clone();
+                    
+                    // Update position
+                    this.camera.position.set(x, y, z);
+                    
+                    // Restore orientation
+                    this.camera.quaternion.copy(currentQuaternion);
+                    
+                    // Update controls target to maintain proper orientation
+                    const direction = new THREE.Vector3(0, 0, -1);
+                    direction.applyQuaternion(currentQuaternion);
+                    this.controls.target.copy(this.camera.position.clone().add(direction));
+                    
+                    this.controls.update();
+                    this.updateCameraControlsPanel();
+                }
+                
+                closeModal();
+            });
+        }
+        
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+        
+        // Close on Escape key
+        const handleKeydown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                document.removeEventListener('keydown', handleKeydown);
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+    }
+
+    private showCameraRotationDialog(): void {
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        `;
+        
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            min-width: 300px;
+            max-width: 400px;
+        `;
+        
+        // Get rotation from quaternion to handle all camera operations consistently
+        const euler = new THREE.Euler();
+        euler.setFromQuaternion(this.camera.quaternion, 'XYZ');
+        const rotX = (euler.x * 180 / Math.PI);
+        const rotY = (euler.y * 180 / Math.PI);
+        const rotZ = (euler.z * 180 / Math.PI);
+        
+        dialog.innerHTML = `
+            <h3 style="margin-top:0;">Modify Camera Rotation</h3>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">X Rotation (degrees):</label>
+                <input type="number" id="camera-rot-x" value="${rotX.toFixed(1)}" step="1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Y Rotation (degrees):</label>
+                <input type="number" id="camera-rot-y" value="${rotY.toFixed(1)}" step="1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Z Rotation (degrees):</label>
+                <input type="number" id="camera-rot-z" value="${rotZ.toFixed(1)}" step="1" style="width:100%;padding:5px;">
+            </div>
+            <div style="text-align:right;">
+                <button id="set-all-rot-zero" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set All to 0</button>
+                <button id="cancel-camera-rot" style="margin-right:10px;padding:8px 15px;">Cancel</button>
+                <button id="apply-camera-rot" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
+            </div>
+        `;
+        
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        
+        const closeModal = () => {
+            modal.remove();
+        };
+        
+        const cancelBtn = dialog.querySelector('#cancel-camera-rot');
+        const applyBtn = dialog.querySelector('#apply-camera-rot');
+        const setAllZeroBtn = dialog.querySelector('#set-all-rot-zero');
+        
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', closeModal);
+        }
+        
+        if (setAllZeroBtn) {
+            setAllZeroBtn.addEventListener('click', () => {
+                (dialog.querySelector('#camera-rot-x') as HTMLInputElement).value = '0';
+                (dialog.querySelector('#camera-rot-y') as HTMLInputElement).value = '0';
+                (dialog.querySelector('#camera-rot-z') as HTMLInputElement).value = '0';
+            });
+        }
+        
+        if (applyBtn) {
+            applyBtn.addEventListener('click', () => {
+                const x = parseFloat((dialog.querySelector('#camera-rot-x') as HTMLInputElement).value);
+                const y = parseFloat((dialog.querySelector('#camera-rot-y') as HTMLInputElement).value);
+                const z = parseFloat((dialog.querySelector('#camera-rot-z') as HTMLInputElement).value);
+                
+                if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                    // Create quaternion from Euler angles and apply to camera
+                    const euler = new THREE.Euler(
+                        (x * Math.PI) / 180,
+                        (y * Math.PI) / 180,
+                        (z * Math.PI) / 180,
+                        'XYZ'
+                    );
+                    const quaternion = new THREE.Quaternion();
+                    quaternion.setFromEuler(euler);
+                    
+                    // Apply quaternion to camera
+                    this.camera.quaternion.copy(quaternion);
+                    
+                    this.controls.update();
+                    this.updateCameraControlsPanel();
                 }
                 
                 closeModal();

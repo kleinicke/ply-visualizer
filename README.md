@@ -35,6 +35,7 @@ Info: This extension is actively developed. The current UI will frequently chang
 - **Visualize Depth Image**: Interpret a depth image directly as a point cloud
 - **Visualizing gaussian splats**: Add gaussian splat support
 - **Add eye dome lighting**: Improve percenption of uncolored point clouds
+- **Drag and Drop**: Add more pc to a given pc using drag and drop instead of adding them in an extra window
 
 
 ### ASCII Format Example
