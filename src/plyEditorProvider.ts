@@ -28,19 +28,50 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             ]
         };
 
+        // Check if this is a TIF file that needs conversion
+        const isTifFile = document.uri.fsPath.toLowerCase().endsWith('.tif') || document.uri.fsPath.toLowerCase().endsWith('.tiff');
+        
         // Show UI immediately before any file processing
-        webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
+        webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview, isTifFile);
         
         // Send immediate message to show loading state
         webviewPanel.webview.postMessage({
             type: 'startLoading',
-            fileName: path.basename(document.uri.fsPath)
+            fileName: path.basename(document.uri.fsPath),
+            isTifFile: isTifFile
         });
 
         // Load and parse file asynchronously (don't await - let UI show first)
         setImmediate(async () => {
             try {
                 const loadStartTime = performance.now();
+                
+                if (isTifFile) {
+                    // Handle TIF file for depth conversion
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: Starting TIF file processing for depth conversion...',
+                        timestamp: loadStartTime
+                    });
+                    
+                    // Read TIF file and send for webview processing
+                    const tifData = await vscode.workspace.fs.readFile(document.uri);
+                    const fileReadTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `📁 Extension: TIF file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
+                        timestamp: fileReadTime
+                    });
+                    
+                    // Send TIF data to webview for conversion
+                    webviewPanel.webview.postMessage({
+                        type: 'tifData',
+                        fileName: path.basename(document.uri.fsPath),
+                        data: tifData.buffer.slice(tifData.byteOffset, tifData.byteOffset + tifData.byteLength)
+                    });
+                    
+                    return; // Exit early for TIF files
+                }
                 
                 // Send timing updates to webview for visibility
                 webviewPanel.webview.postMessage({
@@ -160,7 +191,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                             fileIndex: message.fileIndex
                         });
                         break;
-
+                    case 'requestCameraParams':
+                        // Request camera parameters for TIF conversion
+                        await this.handleCameraParametersRequest(webviewPanel, message);
+                        break;
                 }
             }
         );
@@ -168,13 +202,20 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
 
 
-    private getHtmlForWebview(webview: vscode.Webview): string {
+    private getHtmlForWebview(webview: vscode.Webview, includeTifSupport: boolean = false): string {
         // Get the local path to bundled webview script
         const scriptPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview', 'main.js');
         const scriptUri = webview.asWebviewUri(scriptPathOnDisk);
 
         const stylePathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'style.css');
         const styleUri = webview.asWebviewUri(stylePathOnDisk);
+
+        // Add GeoTIFF library if TIF support is needed
+        let geotiffUri = '';
+        if (includeTifSupport) {
+            const geotiffPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'geotiff.min.js');
+            geotiffUri = webview.asWebviewUri(geotiffPathOnDisk).toString();
+        }
 
         // Use a nonce to only allow specific scripts to be run
         const nonce = getNonce();
@@ -336,6 +377,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     <canvas id="three-canvas"></canvas>
                 </div>
                 
+                ${includeTifSupport ? `<script nonce="${nonce}" src="${geotiffUri}"></script>` : ''}
                 <!-- Load bundled webview script with Three.js -->
                 <script nonce="${nonce}" src="${scriptUri}"></script>
             </body>
@@ -792,6 +834,65 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             fileName: plyData.fileName,
             messageType: messageType
         });
+    }
+
+    private async handleCameraParametersRequest(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
+        try {
+            // Show camera model selection dialog
+            const cameraModel = await vscode.window.showQuickPick(
+                [
+                    { label: 'Pinhole Camera', description: 'Standard perspective projection model', value: 'pinhole' },
+                    { label: 'Fisheye Camera', description: 'Wide-angle fisheye projection model', value: 'fisheye' }
+                ],
+                {
+                    placeHolder: 'Select camera model used to capture the depth image',
+                    ignoreFocusOut: true
+                }
+            );
+
+            if (!cameraModel) {
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled'
+                });
+                return;
+            }
+
+            // Show focal length input dialog
+            const focalLengthInput = await vscode.window.showInputBox({
+                prompt: 'Enter the focal length in pixels (e.g., 1000)',
+                placeHolder: '1000',
+                validateInput: (value: string) => {
+                    const num = parseFloat(value);
+                    if (isNaN(num) || num <= 0) {
+                        return 'Please enter a valid positive number for focal length';
+                    }
+                    return null;
+                },
+                ignoreFocusOut: true
+            });
+
+            if (!focalLengthInput) {
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled'
+                });
+                return;
+            }
+
+            const focalLength = parseFloat(focalLengthInput);
+
+            // Send camera parameters to webview
+            webviewPanel.webview.postMessage({
+                type: 'cameraParams',
+                cameraModel: cameraModel.value,
+                focalLength: focalLength
+            });
+
+        } catch (error) {
+            webviewPanel.webview.postMessage({
+                type: 'cameraParamsError',
+                error: error instanceof Error ? error.message : String(error)
+            });
+        }
     }
 
 }

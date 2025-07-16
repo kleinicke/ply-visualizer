@@ -3,6 +3,7 @@ import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 
 declare const acquireVsCodeApi: () => any;
+declare const GeoTIFF: any;
 
 interface PlyVertex {
     x: number;
@@ -35,8 +36,19 @@ interface PlyData {
     fileIndex?: number;
 }
 
+interface CameraParams {
+    cameraModel: 'pinhole' | 'fisheye';
+    focalLength: number;
+}
+
+interface TifConversionResult {
+    vertices: Float32Array;
+    colors?: Float32Array;
+    pointCount: number;
+}
+
 /**
- * Modern PLY Visualizer with unified file management
+ * Modern PLY Visualizer with unified file management and TIF processing
  */
 class PLYVisualizer {
     private vscode = acquireVsCodeApi();
@@ -80,6 +92,10 @@ class PLYVisualizer {
         firstChunkTime: number;
         lastChunkTime: number;
     }> = new Map();
+    
+    // TIF processing state
+    private pendingTifData: ArrayBuffer | null = null;
+    private pendingTifFileName: string | null = null;
     
     // Predefined colors for different files
     private readonly fileColors: [number, number, number][] = [
@@ -1627,6 +1643,18 @@ class PLYVisualizer {
                     break;
                 case 'largeFileComplete':
                     await this.handleLargeFileComplete(message);
+                    break;
+                case 'tifData':
+                    this.handleTifData(message);
+                    break;
+                case 'cameraParams':
+                    this.handleCameraParams(message);
+                    break;
+                case 'cameraParamsCancelled':
+                    this.handleCameraParamsCancelled();
+                    break;
+                case 'cameraParamsError':
+                    this.handleCameraParamsError(message.error);
                     break;
             }
         });
@@ -3363,6 +3391,273 @@ class PLYVisualizer {
             }
         };
         document.addEventListener('keydown', handleKeydown);
+    }
+
+    private async handleTifData(message: any): Promise<void> {
+        try {
+            console.log('Received TIF data for processing:', message.fileName);
+            this.pendingTifData = message.data;
+            this.pendingTifFileName = message.fileName;
+            
+            // Request camera parameters from the extension
+            this.vscode.postMessage({
+                type: 'requestCameraParams',
+                fileName: message.fileName
+            });
+            
+            this.showStatus('Waiting for camera parameters...');
+            
+        } catch (error) {
+            console.error('Error handling TIF data:', error);
+            this.showError(`Failed to process TIF data: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handleCameraParams(message: any): Promise<void> {
+        try {
+            if (!this.pendingTifData || !this.pendingTifFileName) {
+                throw new Error('No TIF data available for processing');
+            }
+
+            console.log('Processing TIF with camera params:', message);
+            this.showStatus('Converting depth image to point cloud...');
+
+            const cameraParams: CameraParams = {
+                cameraModel: message.cameraModel,
+                focalLength: message.focalLength
+            };
+
+            // Process the TIF data
+            const result = await this.processTifToPointCloud(this.pendingTifData, cameraParams);
+            
+            // Create PLY data structure
+            const plyData: PlyData = {
+                vertices: this.convertTifResultToVertices(result),
+                faces: [],
+                format: 'binary_little_endian',
+                version: '1.0',
+                comments: [`Converted from TIF depth image: ${this.pendingTifFileName}`, `Camera: ${cameraParams.cameraModel}`, `Focal length: ${cameraParams.focalLength}px`],
+                vertexCount: result.pointCount,
+                faceCount: 0,
+                hasColors: !!result.colors,
+                hasNormals: false,
+                fileName: this.pendingTifFileName.replace(/\.(tif|tiff)$/i, '_pointcloud.ply'),
+                fileIndex: this.plyFiles.length
+            };
+
+            // Add to visualization
+            await this.displayFiles([plyData]);
+            
+            // Clear pending data
+            this.pendingTifData = null;
+            this.pendingTifFileName = null;
+            
+            this.showStatus('TIF conversion completed successfully!');
+            
+        } catch (error) {
+            console.error('Error processing TIF with camera params:', error);
+            this.showError(`TIF conversion failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private handleCameraParamsCancelled(): void {
+        console.log('Camera parameter selection cancelled');
+        this.pendingTifData = null;
+        this.pendingTifFileName = null;
+        this.showError('TIF conversion cancelled by user');
+    }
+
+    private handleCameraParamsError(error: string): void {
+        console.error('Camera parameter error:', error);
+        this.pendingTifData = null;
+        this.pendingTifFileName = null;
+        this.showError(`Camera parameter error: ${error}`);
+    }
+
+    /**
+     * Process TIF file data and convert to point cloud
+     */
+    private async processTifToPointCloud(tifData: ArrayBuffer, cameraParams: CameraParams): Promise<TifConversionResult> {
+        try {
+            // Load TIF using GeoTIFF
+            const tiff = await GeoTIFF.fromArrayBuffer(tifData);
+            const image = await tiff.getImage();
+            
+            // Get image dimensions and data
+            const width = image.getWidth();
+            const height = image.getHeight();
+            const rasters = await image.readRasters();
+            
+            console.log(`Processing TIF: ${width}x${height}, camera: ${cameraParams.cameraModel}, focal: ${cameraParams.focalLength}`);
+            
+            // Extract depth data (assuming single band depth image)
+            const depthData = new Float32Array(rasters[0]);
+            
+            // Calculate camera intrinsics (principal point at image center)
+            const fx = cameraParams.focalLength;
+            const fy = cameraParams.focalLength;
+            const cx = width / 2;
+            const cy = height / 2;
+            
+            // Convert depth image to point cloud
+            const result = this.depthToPointCloud(
+                depthData,
+                width,
+                height,
+                fx,
+                fy,
+                cx,
+                cy,
+                cameraParams.cameraModel
+            );
+            
+            return result;
+            
+        } catch (error) {
+            console.error('Error processing TIF:', error);
+            throw new Error(`Failed to process TIF file: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    
+    /**
+     * Convert depth image to 3D point cloud
+     * Based on the Python reference implementation
+     */
+    private depthToPointCloud(
+        depthData: Float32Array,
+        width: number,
+        height: number,
+        fx: number,
+        fy: number,
+        cx: number,
+        cy: number,
+        cameraModel: 'pinhole' | 'fisheye'
+    ): TifConversionResult {
+        
+        const points: number[] = [];
+        const colors: number[] = [];
+        
+        if (cameraModel === 'fisheye') {
+            // Fisheye (equidistant) projection model
+            for (let i = 0; i < width; i++) {
+                for (let j = 0; j < height; j++) {
+                    const depthIndex = j * width + i; // Note: j*width + i for proper indexing
+                    const depth = depthData[depthIndex];
+                    
+                    // Skip invalid depth values
+                    if (isNaN(depth) || depth <= 0) {
+                        continue;
+                    }
+                    
+                    // Compute offset from principal point
+                    const u = i - cx;
+                    const v = j - cy;
+                    const r = Math.sqrt(u * u + v * v);
+                    
+                    if (r === 0) {
+                        // Handle center point
+                        points.push(0, 0, depth);
+                    } else {
+                        // Normalize offset
+                        const u_norm = u / r;
+                        const v_norm = v / r;
+                        
+                        // Compute angle for equidistant fisheye
+                        const theta = r / fx;
+                        
+                        // Create 3D unit vector
+                        const x_norm = u_norm * Math.sin(theta);
+                        const y_norm = v_norm * Math.sin(theta);
+                        const z_norm = Math.cos(theta);
+                        
+                        // Scale by depth
+                        points.push(
+                            x_norm * depth,
+                            y_norm * depth,
+                            z_norm * depth
+                        );
+                    }
+                    
+                    // Add color based on depth (grayscale visualization)
+                    const normalizedDepth = Math.min(depth / 10, 1); // Scale depth for visualization
+                    colors.push(normalizedDepth, normalizedDepth, normalizedDepth);
+                }
+            }
+        } else {
+            // Pinhole camera model
+            for (let v = 0; v < height; v++) {
+                for (let u = 0; u < width; u++) {
+                    const depthIndex = v * width + u;
+                    const depth = depthData[depthIndex];
+                    
+                    // Skip invalid depth values
+                    if (isNaN(depth) || depth <= 0) {
+                        continue;
+                    }
+                    
+                    // Compute normalized pixel coordinates
+                    const X = (u - cx) / fx;
+                    const Y = (v - cy) / fy;
+                    const Z = 1.0;
+                    
+                    // Create direction vector
+                    const norm = Math.sqrt(X * X + Y * Y + Z * Z);
+                    const dirX = X / norm;
+                    const dirY = Y / norm;
+                    const dirZ = Z / norm;
+                    
+                    // Scale by depth (euclidean depth)
+                    points.push(
+                        dirX * depth,
+                        dirY * depth,
+                        dirZ * depth
+                    );
+                    
+                    // Add color based on depth (grayscale visualization)
+                    const normalizedDepth = Math.min(depth / 10, 1); // Scale depth for visualization
+                    colors.push(normalizedDepth, normalizedDepth, normalizedDepth);
+                }
+            }
+        }
+        
+        console.log(`Generated ${points.length / 3} points from ${width}x${height} depth image`);
+        
+        return {
+            vertices: new Float32Array(points),
+            colors: new Float32Array(colors),
+            pointCount: points.length / 3
+        };
+    }
+
+    /**
+     * Convert TIF processing result to PLY vertex format
+     */
+    private convertTifResultToVertices(result: TifConversionResult): PlyVertex[] {
+        const vertices: PlyVertex[] = [];
+        
+        for (let i = 0; i < result.pointCount; i++) {
+            const i3 = i * 3;
+            const vertex: PlyVertex = {
+                x: result.vertices[i3],
+                y: result.vertices[i3 + 1],
+                z: result.vertices[i3 + 2]
+            };
+            
+            if (result.colors) {
+                vertex.red = Math.round(result.colors[i3] * 255);
+                vertex.green = Math.round(result.colors[i3 + 1] * 255);
+                vertex.blue = Math.round(result.colors[i3 + 2] * 255);
+            }
+            
+            vertices.push(vertex);
+        }
+        
+        return vertices;
+    }
+
+    private showStatus(message: string): void {
+        console.log('Status:', message);
+        // You could also update UI here if needed
     }
 }
 

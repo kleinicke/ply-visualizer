@@ -36,6 +36,12 @@
           },
           {
             "filenamePattern": "*.xyz"
+          },
+          {
+            "filenamePattern": "*.tif"
+          },
+          {
+            "filenamePattern": "*.tiff"
           }
         ]
       }
@@ -50,6 +56,11 @@
         "command": "plyViewer.openMultipleFiles",
         "title": "Open Multiple PLY Files",
         "category": "PLY Visualizer"
+      },
+      {
+        "command": "plyViewer.convertTifToPointCloud",
+        "title": "Convert TIF to Point Cloud",
+        "category": "PLY Visualizer"
       }
     ],
     "menus": {
@@ -57,6 +68,11 @@
         {
           "command": "plyViewer.openFile",
           "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .txt",
+          "group": "navigation"
+        },
+        {
+          "command": "plyViewer.convertTifToPointCloud",
+          "when": "resourceExtname == .tif || resourceExtname == .tiff",
           "group": "navigation"
         }
       ]
@@ -88,6 +104,7 @@
     "ts-loader": "^9.5.1"
   },
   "dependencies": {
-    "three": "^0.178.0"
+    "three": "^0.178.0",
+    "geotiff": "^2.1.3"
   }
 } 
