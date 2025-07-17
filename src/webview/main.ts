@@ -76,6 +76,8 @@ class PLYVisualizer {
         cameraParams: CameraParams;
         fileName: string;
         tifDimensions: { width: number; height: number };
+        colorImageData?: ImageData;
+        colorImageName?: string;
     }> = new Map();
     
     // Rotation matrices
@@ -160,7 +162,7 @@ class PLYVisualizer {
             75,
             container.clientWidth / container.clientHeight,
             0.001,
-            100000  // Increased far plane for large point clouds
+            1000000  // Further increased far plane for disparity TIF files
         );
         this.camera.position.set(1, 1, 1);
         
@@ -551,12 +553,53 @@ class PLYVisualizer {
             this.updateCameraMatrix();
             this.updateCameraControlsPanel();
             
+            // Debug: Check if any TIF-derived point clouds are being culled
+            // Only log every 60 frames to avoid spam
+            this.frameCount++;
+            if (this.frameCount % 60 === 0) {
+                this.checkMeshVisibility();
+            }
+            
             // Update last known position and rotation
             this.lastCameraPosition.copy(this.camera.position);
             this.lastCameraQuaternion.copy(this.camera.quaternion);
         }
         
         this.renderer.render(this.scene, this.camera);
+    }
+
+    private checkMeshVisibility(): void {
+        // Check if any meshes are being culled by frustum culling
+        for (let i = 0; i < this.meshes.length; i++) {
+            const mesh = this.meshes[i];
+            const isVisible = this.fileVisibility[i];
+            
+            if (!isVisible) continue; // Skip if manually hidden
+            
+            // Check if mesh should be visible but might be culled
+            if (mesh && mesh.geometry && mesh.geometry.boundingBox) {
+                const box = mesh.geometry.boundingBox.clone();
+                box.applyMatrix4(mesh.matrixWorld);
+                
+                // Simple frustum check - if bounding box is completely outside view
+                const center = box.getCenter(new THREE.Vector3());
+                const distanceToCamera = this.camera.position.distanceTo(center);
+                
+                // Check if it's within camera range
+                const withinNearFar = distanceToCamera >= this.camera.near && distanceToCamera <= this.camera.far;
+                
+                if (!withinNearFar) {
+                    console.log(`👻 Mesh ${i} may be culled: distance=${distanceToCamera.toFixed(3)}, camera range=[${this.camera.near}, ${this.camera.far}]`);
+                }
+                
+                // Check if bounding box is extremely large
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                if (maxDim > 50000) {
+                    console.log(`📏 Mesh ${i} has very large bounds: ${maxDim.toFixed(3)} - may cause culling issues`);
+                }
+            }
+        }
     }
 
     // Rotation Matrix Methods
@@ -1291,6 +1334,31 @@ class PLYVisualizer {
 
         geometry.computeBoundingBox();
         
+        // Debug bounding box for disparity TIF files (may help with disappearing issue)
+        if (geometry.boundingBox) {
+            const box = geometry.boundingBox;
+            const size = box.getSize(new THREE.Vector3());
+            const center = box.getCenter(new THREE.Vector3());
+            
+            console.log(`📦 Geometry bounding box:`);
+            console.log(`   Min: [${box.min.x.toFixed(3)}, ${box.min.y.toFixed(3)}, ${box.min.z.toFixed(3)}]`);
+            console.log(`   Max: [${box.max.x.toFixed(3)}, ${box.max.y.toFixed(3)}, ${box.max.z.toFixed(3)}]`);
+            console.log(`   Size: [${size.x.toFixed(3)}, ${size.y.toFixed(3)}, ${size.z.toFixed(3)}]`);
+            console.log(`   Center: [${center.x.toFixed(3)}, ${center.y.toFixed(3)}, ${center.z.toFixed(3)}]`);
+            
+            // Check for extreme values that might cause culling issues
+            const maxDimension = Math.max(size.x, size.y, size.z);
+            if (maxDimension > 10000) {
+                console.warn(`⚠️ Very large bounding box (${maxDimension.toFixed(3)}) may cause rendering issues!`);
+            }
+            
+            // Check distance from origin
+            const distanceFromOrigin = center.length();
+            if (distanceFromOrigin > 1000) {
+                console.warn(`⚠️ Point cloud center very far from origin (${distanceFromOrigin.toFixed(3)}) - may cause culling issues!`);
+            }
+        }
+        
         const endTime = performance.now();
         console.log(`Geometry creation took ${(endTime - startTime).toFixed(2)}ms`);
         
@@ -2020,6 +2088,7 @@ class PLYVisualizer {
                             <div class="tif-group" style="margin-bottom: 8px;">
                                 <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Color Image (optional):</label>
                                 <input type="file" id="color-image-${i}" accept="image/*,.tif,.tiff" style="width: 100%; padding: 2px; font-size: 11px;" />
+                                ${this.getStoredColorImageName(i) ? `<div style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-top: 2px; display: flex; align-items: center; gap: 4px;">📷 Current: ${this.getStoredColorImageName(i)} <button class="remove-color-image" data-file-index="${i}" style="font-size: 8px; padding: 1px 4px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer;">✕</button></div>` : ''}
                             </div>
                             <div class="tif-group">
                                 <button class="apply-tif-settings" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">Apply Settings</button>
@@ -2242,6 +2311,14 @@ class PLYVisualizer {
                         if (colorImageInput.files && colorImageInput.files.length > 0) {
                             await this.applyColorImageToTif(i);
                         }
+                    });
+                }
+
+                // Remove color image button
+                const removeColorBtn = document.querySelector(`.remove-color-image[data-file-index="${i}"]`);
+                if (removeColorBtn) {
+                    removeColorBtn.addEventListener('click', async () => {
+                        await this.removeColorImageFromTif(i);
                     });
                 }
             }
@@ -3943,10 +4020,11 @@ class PLYVisualizer {
             }
             
             // Calculate camera intrinsics (principal point at image center)
+            // For 0-based pixel indexing, center is at (width/2 - 0.5, height/2 - 0.5)
             const fx = cameraParams.focalLength;
             const fy = cameraParams.focalLength;
-            const cx = width / 2;
-            const cy = height / 2;
+            const cx = width / 2 - 0.5;
+            const cy = height / 2 - 0.5;
             
             // Convert depth image to point cloud
             const result = this.depthToPointCloud(
@@ -3990,6 +4068,12 @@ class PLYVisualizer {
         const points: number[] = [];
         const colors: number[] = [];
         
+        // Track depth statistics for debugging disappearing point clouds
+        let minDepth = Infinity;
+        let maxDepth = -Infinity;
+        let validPointCount = 0;
+        let skippedPoints = 0;
+        
         if (cameraModel === 'fisheye') {
             // Fisheye (equidistant) projection model
             for (let i = 0; i < width; i++) {
@@ -3999,8 +4083,14 @@ class PLYVisualizer {
                     
                     // Skip invalid depth values (NaN, 0, ±Infinity)
                     if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
+                        skippedPoints++;
                         continue;
                     }
+                    
+                    // Track depth statistics for fisheye
+                    minDepth = Math.min(minDepth, depth);
+                    maxDepth = Math.max(maxDepth, depth);
+                    validPointCount++;
                     
                     // Compute offset from principal point
                     const u = i - cx;
@@ -4045,6 +4135,7 @@ class PLYVisualizer {
                     
                     // Skip invalid depth values (NaN, 0, ±Infinity)
                     if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
+                        skippedPoints++;
                         continue;
                     }
                     
@@ -4052,6 +4143,7 @@ class PLYVisualizer {
                     if (depthType === 'disparity') {
                         if (!baseline || baseline <= 0) {
                             console.warn('Baseline is required for disparity conversion, skipping point');
+                            skippedPoints++;
                             continue;
                         }
                         
@@ -4066,9 +4158,15 @@ class PLYVisualizer {
                         
                         // Re-validate depth after conversion (disparity could be 0 → depth = Infinity)
                         if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
+                            skippedPoints++;
                             continue;
                         }
                     }
+                    
+                    // Track depth statistics
+                    minDepth = Math.min(minDepth, depth);
+                    maxDepth = Math.max(maxDepth, depth);
+                    validPointCount++;
                     
                     // Compute normalized pixel coordinates
                     const X = (u - cx) / fx;
@@ -4103,6 +4201,25 @@ class PLYVisualizer {
         }
         
         console.log(`Generated ${points.length / 3} points from ${width}x${height} depth image`);
+        console.log(`📊 Depth statistics: min=${minDepth.toFixed(3)}, max=${maxDepth.toFixed(3)}, valid=${validPointCount}, skipped=${skippedPoints}`);
+        console.log(`🎥 Camera range: near=${0.001}, far=${1000000}`);
+        
+        // Check for potential clipping issues
+        if (minDepth < 0.001) {
+            console.warn(`⚠️ Some points (${minDepth.toFixed(6)}) are closer than camera near plane (0.001) - may be clipped!`);
+        }
+        if (maxDepth > 100000) {
+            console.warn(`⚠️ Some points (${maxDepth.toFixed(3)}) are farther than camera far plane (100000) - may be clipped!`);
+        }
+        
+        // Convert from OpenCV convention (Y-down, Z-forward) to Blender/OpenGL/Three.js convention (Y-up, Z-backward)
+        // Multiply Y and Z coordinates by -1
+        console.log('🔄 Converting coordinates from OpenCV to Blender/OpenGL/Three.js convention (Y↑, Z←)');
+        for (let i = 0; i < points.length; i += 3) {
+            // X stays the same (i+0)
+            points[i + 1] = -points[i + 1]; // Y coordinate: flip from down to up
+            points[i + 2] = -points[i + 2]; // Z coordinate: flip from forward to backward
+        }
         
         return {
             vertices: new Float32Array(points),
@@ -4640,8 +4757,8 @@ class PLYVisualizer {
         if (this.currentCameraParams.cameraModel === 'fisheye') {
             // Calculate camera intrinsics (matching processTifToPointCloud logic)
             const fx = this.currentCameraParams.focalLength;
-            const cx = width / 2;
-            const cy = height / 2;
+            const cx = width / 2 - 0.5;
+            const cy = height / 2 - 0.5;
             
             // Fisheye processing - match the exact same logic as depthToPointCloud
             for (let i = 0; i < width; i++) {
@@ -4777,6 +4894,11 @@ class PLYVisualizer {
         return 50; // Default baseline for disparity
     }
 
+    private getStoredColorImageName(fileIndex: number): string | null {
+        const tifData = this.fileTifData.get(fileIndex);
+        return tifData?.colorImageName || null;
+    }
+
     private async applyTifSettings(fileIndex: number): Promise<void> {
         try {
             // Get the current values from the form
@@ -4814,6 +4936,12 @@ class PLYVisualizer {
 
             // Process the TIF data with new parameters
             const result = await this.processTifToPointCloud(tifData.originalData, newCameraParams);
+            
+            // If there's a stored color image, reapply it
+            if (tifData.colorImageData) {
+                console.log(`🎨 Reapplying stored color image: ${tifData.colorImageName}`);
+                await this.applyColorToTifResult(result, tifData.colorImageData, { cameraParams: newCameraParams });
+            }
             
             // Update the PLY data
             const plyData = this.plyFiles[fileIndex];
@@ -4915,6 +5043,10 @@ class PLYVisualizer {
                 throw new Error(`Color image dimensions (${imageData.width}x${imageData.height}) do not match TIF dimensions (${tifData.tifDimensions.width}x${tifData.tifDimensions.height})`);
             }
 
+            // Store color image data and name in TIF data for future reprocessing
+            tifData.colorImageData = imageData;
+            tifData.colorImageName = file.name;
+
             // Reprocess TIF with color data
             const result = await this.processTifToPointCloud(tifData.originalData, tifData.cameraParams);
             await this.applyColorToTifResult(result, imageData, tifData);
@@ -4991,26 +5123,32 @@ class PLYVisualizer {
 
         for (let i = 0; i < result.pointCount; i++) {
             const vertexIndex = i * 3;
-            const x = result.vertices[vertexIndex];
-            const y = result.vertices[vertexIndex + 1];
-            const z = result.vertices[vertexIndex + 2];
+            let x = result.vertices[vertexIndex];
+            let y = result.vertices[vertexIndex + 1];
+            let z = result.vertices[vertexIndex + 2];
 
             // Skip invalid points (NaN, 0, ±Infinity)
-            if (z <= 0 || isNaN(x) || isNaN(y) || isNaN(z) || !isFinite(x) || !isFinite(y) || !isFinite(z)) {
+            // In Blender convention, negative Z values are valid (pointing backward into scene)
+            if (z >= 0 || isNaN(x) || isNaN(y) || isNaN(z) || !isFinite(x) || !isFinite(y) || !isFinite(z)) {
                 colors[colorIndex++] = 0.5;
                 colors[colorIndex++] = 0.5; 
                 colors[colorIndex++] = 0.5;
                 continue;
             }
 
-            // Project 3D point to image coordinates
+            // Convert back from Blender/OpenGL convention to OpenCV convention for color lookup
+            // (Undo the Y and Z flip that was applied in depthToPointCloud)
+            y = -y; // Flip Y back: Y-up → Y-down
+            z = -z; // Flip Z back: Z-backward → Z-forward (now positive, valid in OpenCV)
+
+            // Project 3D point to image coordinates (using original OpenCV coordinates)
             let u, v;
             if (tifData.cameraParams.cameraModel === 'fisheye') {
                 // Fisheye projection
                 const fx = tifData.cameraParams.focalLength;
                 const fy = fx;
-                const cx = width / 2;
-                const cy = height / 2;
+                const cx = width / 2 - 0.5;
+                const cy = height / 2 - 0.5;
                 
                 const r = Math.sqrt(x * x + y * y);
                 const theta = Math.atan2(r, z);
@@ -5023,8 +5161,8 @@ class PLYVisualizer {
                 // Pinhole projection
                 const fx = tifData.cameraParams.focalLength;
                 const fy = fx;
-                const cx = width / 2;
-                const cy = height / 2;
+                const cx = width / 2 - 0.5;
+                const cy = height / 2 - 0.5;
                 
                 u = Math.round(fx * (x / z) + cx);
                 v = Math.round(fy * (y / z) + cy);
@@ -5045,6 +5183,85 @@ class PLYVisualizer {
         }
 
         result.colors = colors;
+    }
+
+    private async removeColorImageFromTif(fileIndex: number): Promise<void> {
+        try {
+            const tifData = this.fileTifData.get(fileIndex);
+            if (!tifData) {
+                throw new Error('No cached TIF data found for this file');
+            }
+
+            this.showStatus('Removing color image and reverting to default colors...');
+
+            // Remove stored color image data
+            delete tifData.colorImageData;
+            delete tifData.colorImageName;
+
+            // Reprocess TIF without color data (will use default grayscale colors)
+            const result = await this.processTifToPointCloud(tifData.originalData, tifData.cameraParams);
+
+            // Update the PLY data
+            const plyData = this.plyFiles[fileIndex];
+            plyData.vertices = this.convertTifResultToVertices(result);
+            plyData.hasColors = !!result.colors;
+
+            // Update the mesh with default colors
+            const oldMaterial = this.meshes[fileIndex].material;
+            const newMaterial = this.createMaterialForFile(plyData, fileIndex);
+            this.meshes[fileIndex].material = newMaterial;
+            
+            // Ensure point size is correctly applied to the new material
+            if (this.meshes[fileIndex] instanceof THREE.Points && newMaterial instanceof THREE.PointsMaterial) {
+                const currentPointSize = this.pointSizes[fileIndex] || 0.001;
+                newMaterial.size = currentPointSize;
+                console.log(`🔧 Applied point size ${currentPointSize} to default-color TIF material for file ${fileIndex}`);
+            }
+            
+            // Update geometry
+            const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
+            
+            // Create position array
+            const positions = new Float32Array(plyData.vertices.length * 3);
+            for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                const vertex = plyData.vertices[i];
+                positions[i3] = vertex.x;
+                positions[i3 + 1] = vertex.y;
+                positions[i3 + 2] = vertex.z;
+            }
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            if (plyData.hasColors) {
+                // Create color array with default grayscale colors
+                const colors = new Float32Array(plyData.vertices.length * 3);
+                for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                    const vertex = plyData.vertices[i];
+                    colors[i3] = (vertex.red || 0) / 255;
+                    colors[i3 + 1] = (vertex.green || 0) / 255;
+                    colors[i3 + 2] = (vertex.blue || 0) / 255;
+                }
+                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            }
+            geometry.computeBoundingBox();
+            
+            // Dispose old material
+            if (oldMaterial) {
+                if (Array.isArray(oldMaterial)) {
+                    oldMaterial.forEach(mat => mat.dispose());
+                } else {
+                    oldMaterial.dispose();
+                }
+            }
+
+            // Update UI
+            this.updateFileStats();
+            this.updateFileList();
+            this.showStatus('Color image removed - reverted to default depth-based colors');
+
+        } catch (error) {
+            console.error('Error removing color image:', error);
+            this.showError(`Failed to remove color image: ${error instanceof Error ? error.message : String(error)}`);
+        }
     }
 }
 
