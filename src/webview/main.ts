@@ -70,6 +70,14 @@ class PLYVisualizer {
     private pointSizes: number[] = []; // Individual point sizes for each point cloud
     private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
     
+    // Per-file TIF data storage for reprocessing
+    private fileTifData: Map<number, {
+        originalData: ArrayBuffer;
+        cameraParams: CameraParams;
+        fileName: string;
+        tifDimensions: { width: number; height: number };
+    }> = new Map();
+    
     // Rotation matrices
     private cameraMatrix: THREE.Matrix4 = new THREE.Matrix4(); // Current camera position and rotation
     private transformationMatrices: THREE.Matrix4[] = []; // Individual transformation matrices for each point cloud
@@ -1735,9 +1743,9 @@ class PLYVisualizer {
             const material = new THREE.PointsMaterial();
             
             // Initialize point size if not set
-            if (!this.pointSizes[fileIndex]) {
-                this.pointSizes[fileIndex] = 0.01;  // Increased default point size for better visibility
-            }
+                if (!this.pointSizes[fileIndex]) {
+        this.pointSizes[fileIndex] = 0.0001;  // Default point size 1e-4
+    }
             
             material.size = this.pointSizes[fileIndex];
             material.sizeAttenuation = true;
@@ -1915,8 +1923,8 @@ class PLYVisualizer {
                     ${data.faceCount === 0 ? `
                     <div class="point-size-control">
                         <label for="size-${i}">Point Size:</label>
-                        <input type="range" id="size-${i}" min="0.0001" max="0.01" step="0.0001" value="${this.pointSizes[i] || 0.001}" class="size-slider">
-                        <span class="size-value">${(this.pointSizes[i] || 0.001).toFixed(4)}</span>
+                        <input type="range" id="size-${i}" min="0.00001" max="0.01" step="0.00001" value="${this.pointSizes[i] || 0.0001}" class="size-slider">
+                        <span class="size-value">${(this.pointSizes[i] || 0.0001).toFixed(5)}</span>
                     </div>
                     ` : ''}
                     
@@ -1928,6 +1936,46 @@ class PLYVisualizer {
                             ${this.getColorOptions(i)}
                         </select>
                     </div>
+                    
+                    ${this.isTifDerivedFile(data) ? `
+                    <div class="tif-controls" style="margin-top: 8px;">
+                        <button class="tif-settings-toggle" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%;">
+                            <span class="toggle-icon">▶</span> TIF Settings
+                        </button>
+                        <div class="tif-settings-panel" id="tif-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
+                            <div class="tif-group" style="margin-bottom: 8px;">
+                                <label for="camera-model-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Camera Model:</label>
+                                <select id="camera-model-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
+                                    <option value="pinhole" ${this.getTifSetting(data, 'camera').includes('pinhole') ? 'selected' : ''}>Pinhole</option>
+                                    <option value="fisheye" ${this.getTifSetting(data, 'camera').includes('fisheye') ? 'selected' : ''}>Fisheye</option>
+                                </select>
+                            </div>
+                            <div class="tif-group" style="margin-bottom: 8px;">
+                                <label for="focal-length-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Focal Length (px):</label>
+                                <input type="number" id="focal-length-${i}" value="${this.getTifFocalLength(data)}" min="1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                            </div>
+                            <div class="tif-group" style="margin-bottom: 8px;">
+                                <label for="depth-type-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Depth Type:</label>
+                                <select id="depth-type-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
+                                    <option value="euclidean" ${this.getTifSetting(data, 'depth').includes('euclidean') ? 'selected' : ''}>Euclidean</option>
+                                    <option value="orthogonal" ${this.getTifSetting(data, 'depth').includes('orthogonal') ? 'selected' : ''}>Orthogonal</option>
+                                    <option value="disparity" ${this.getTifSetting(data, 'depth').includes('disparity') ? 'selected' : ''}>Disparity</option>
+                                </select>
+                            </div>
+                            <div class="tif-group" id="baseline-group-${i}" style="margin-bottom: 8px; ${this.getTifSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
+                                <label for="baseline-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Baseline (mm):</label>
+                                <input type="number" id="baseline-${i}" value="${this.getTifBaseline(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                            </div>
+                            <div class="tif-group" style="margin-bottom: 8px;">
+                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Color Image (optional):</label>
+                                <input type="file" id="color-image-${i}" accept="image/*,.tif,.tiff" style="width: 100%; padding: 2px; font-size: 11px;" />
+                            </div>
+                            <div class="tif-group">
+                                <button class="apply-tif-settings" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">Apply Settings</button>
+                            </div>
+                        </div>
+                    </div>
+                    ` : ''}
                 </div>
             `;
         }
@@ -2069,7 +2117,7 @@ class PLYVisualizer {
                     // Update the displayed value
                     const sizeValue = document.querySelector(`#size-${i} + .size-value`) as HTMLElement;
                     if (sizeValue) {
-                        sizeValue.textContent = newSize.toFixed(4);
+                        sizeValue.textContent = newSize.toFixed(5);
                     }
                 });
             }
@@ -2100,6 +2148,51 @@ class PLYVisualizer {
                         }
                     }
                 });
+            }
+
+            // TIF settings toggle and controls
+            if (this.isTifDerivedFile(this.plyFiles[i])) {
+                const tifToggleBtn = document.querySelector(`.tif-settings-toggle[data-file-index="${i}"]`);
+                const tifPanel = document.getElementById(`tif-panel-${i}`);
+                if (tifToggleBtn && tifPanel) {
+                    // Hide by default
+                    tifPanel.style.display = 'none';
+                    const toggleIcon = tifToggleBtn.querySelector('.toggle-icon');
+                    if (toggleIcon) toggleIcon.textContent = '▶';
+                    
+                    tifToggleBtn.addEventListener('click', () => {
+                        const isVisible = tifPanel.style.display !== 'none';
+                        tifPanel.style.display = isVisible ? 'none' : 'block';
+                        if (toggleIcon) toggleIcon.textContent = isVisible ? '▶' : '▼';
+                    });
+                }
+
+                // Depth type change handler for baseline visibility
+                const depthTypeSelect = document.getElementById(`depth-type-${i}`) as HTMLSelectElement;
+                const baselineGroup = document.getElementById(`baseline-group-${i}`);
+                if (depthTypeSelect && baselineGroup) {
+                    depthTypeSelect.addEventListener('change', () => {
+                        baselineGroup.style.display = depthTypeSelect.value === 'disparity' ? '' : 'none';
+                    });
+                }
+
+                // Apply TIF settings button
+                const applyTifBtn = document.querySelector(`.apply-tif-settings[data-file-index="${i}"]`);
+                if (applyTifBtn) {
+                    applyTifBtn.addEventListener('click', async () => {
+                        await this.applyTifSettings(i);
+                    });
+                }
+
+                // Color image file input auto-apply
+                const colorImageInput = document.getElementById(`color-image-${i}`) as HTMLInputElement;
+                if (colorImageInput) {
+                    colorImageInput.addEventListener('change', async () => {
+                        if (colorImageInput.files && colorImageInput.files.length > 0) {
+                            await this.applyColorImageToTif(i);
+                        }
+                    });
+                }
             }
         }
         
@@ -2241,7 +2334,7 @@ class PLYVisualizer {
             this.scene.add(mesh);
             this.meshes.push(mesh);
             this.fileVisibility.push(true);
-            this.pointSizes.push(0.001); // Initialize with default point size
+            this.pointSizes.push(0.0001); // Changed from 0.001 to 1e-4 (0.0001) as default
             
             // Initialize transformation matrix for this file
             this.transformationMatrices.push(new THREE.Matrix4());
@@ -2277,6 +2370,20 @@ class PLYVisualizer {
         this.fileVisibility.splice(fileIndex, 1);
         this.pointSizes.splice(fileIndex, 1); // Remove point size for this file
         this.individualColorModes.splice(fileIndex, 1); // Remove color mode for this file
+        
+        // Remove TIF data if it exists for this file
+        this.fileTifData.delete(fileIndex);
+        
+        // Update TIF data indices for remaining files (shift down)
+        const newTifData = new Map<number, any>();
+        for (const [key, value] of this.fileTifData) {
+            if (key > fileIndex) {
+                newTifData.set(key - 1, value);
+            } else if (key < fileIndex) {
+                newTifData.set(key, value);
+            }
+        }
+        this.fileTifData = newTifData;
 
         // Reassign file indices
         for (let i = 0; i < this.plyFiles.length; i++) {
@@ -3445,14 +3552,19 @@ class PLYVisualizer {
                 // Check for saved camera parameters in localStorage
                 const savedParams = this.loadSavedCameraParams();
                 
+                console.log(`🔍 Debug - localStorage key exists: ${!!localStorage.getItem('plyVisualizerCameraParams')}`);
+                console.log(`🔍 Debug - savedParams: ${savedParams ? JSON.stringify(savedParams) : 'null'}`);
+                console.log(`🔍 Debug - First TIF file: ${this.plyFiles.length === 0 ? 'YES' : 'NO'}`);
+                console.log(`🔍 Debug - requestId: ${requestId}`);
+                
                 if (savedParams) {
-                    console.log('Using saved camera parameters:', savedParams);
+                    console.log('✅ Using saved camera parameters:', savedParams);
                     this.showStatus(`Using saved settings: ${savedParams.cameraModel} camera, focal length ${savedParams.focalLength}px, ${savedParams.depthType} depth...`);
                     
                     // Use saved parameters directly
                     await this.processTifWithParams(requestId, savedParams);
                 } else {
-                    console.log('No saved parameters found - requesting camera parameters from user');
+                    console.log('❓ No saved parameters found - requesting camera parameters from user');
                     
                     // Request camera parameters from the extension for depth conversion
                     this.vscode.postMessage({
@@ -3630,6 +3742,14 @@ class PLYVisualizer {
             width: image.getWidth(),
             height: image.getHeight()
         };
+
+        // Store TIF data for this specific file (will be updated with fileIndex after adding to plyFiles)
+        const tempTifData = {
+            originalData: tifFileData.data,
+            cameraParams: cameraParams,
+            fileName: tifFileData.fileName,
+            tifDimensions: this.tifDimensions
+        };
         
         // Create PLY data structure
         const plyData: PlyData = {
@@ -3655,8 +3775,13 @@ class PLYVisualizer {
         // Add to visualization based on whether this is an add file or initial load
         if (tifFileData.isAddFile) {
             this.addNewFiles([plyData]);
+            // Store TIF data for the newly added file
+            const fileIndex = this.plyFiles.length - 1;
+            this.fileTifData.set(fileIndex, tempTifData);
         } else {
             await this.displayFiles([plyData]);
+            // Store TIF data for the replaced file (index 0)
+            this.fileTifData.set(0, tempTifData);
         }
         
         // Remove from pending files
@@ -3786,8 +3911,8 @@ class PLYVisualizer {
                     const depthIndex = j * width + i; // Note: j*width + i for proper indexing
                     const depth = depthData[depthIndex];
                     
-                    // Skip invalid depth values
-                    if (isNaN(depth) || depth <= 0) {
+                    // Skip invalid depth values (NaN, 0, ±Infinity)
+                    if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
                         continue;
                     }
                     
@@ -3832,8 +3957,8 @@ class PLYVisualizer {
                     const depthIndex = v * width + u;
                     let depth = depthData[depthIndex];
                     
-                    // Skip invalid depth values
-                    if (isNaN(depth) || depth <= 0) {
+                    // Skip invalid depth values (NaN, 0, ±Infinity)
+                    if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
                         continue;
                     }
                     
@@ -3845,6 +3970,11 @@ class PLYVisualizer {
                         }
                         // Convert disparity to depth: depth = baseline * focal_length / disparity
                         depth = (baseline * fx) / depth;
+                        
+                        // Re-validate depth after conversion (disparity could be 0 → depth = Infinity)
+                        if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
+                            continue;
+                        }
                     }
                     
                     // Compute normalized pixel coordinates
@@ -4419,7 +4549,7 @@ class PLYVisualizer {
                     const depth = depthData[depthIndex];
                     
                     // Skip invalid depth values (same logic as in depthToPointCloud)
-                    if (isNaN(depth) || depth <= 0) {
+                    if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
                         continue;
                     }
                     
@@ -4443,7 +4573,7 @@ class PLYVisualizer {
                     const depth = depthData[depthIndex];
                     
                     // Skip invalid depth values (same logic as in depthToPointCloud)
-                    if (isNaN(depth) || depth <= 0) {
+                    if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
                         continue;
                     }
                     
@@ -4508,6 +4638,298 @@ class PLYVisualizer {
         // If bit depth is unknown but format is confirmed float, accept it
         
         return true;
+    }
+
+    private isTifDerivedFile(data: PlyData): boolean {
+        return data.comments.some(comment => comment.includes('Converted from TIF depth image'));
+    }
+
+    private getTifSetting(data: PlyData, setting: 'camera' | 'depth'): string {
+        for (const comment of data.comments) {
+            if (setting === 'camera' && comment.startsWith('Camera: ')) {
+                return comment.replace('Camera: ', '').toLowerCase();
+            }
+            if (setting === 'depth' && comment.startsWith('Depth type: ')) {
+                return comment.replace('Depth type: ', '').toLowerCase();
+            }
+        }
+        return '';
+    }
+
+    private getTifFocalLength(data: PlyData): number {
+        for (const comment of data.comments) {
+            if (comment.startsWith('Focal length: ')) {
+                const match = comment.match(/(\d+(?:\.\d+)?)px/);
+                return match ? parseFloat(match[1]) : 500;
+            }
+        }
+        return 500; // Default focal length
+    }
+
+    private getTifBaseline(data: PlyData): number {
+        for (const comment of data.comments) {
+            if (comment.startsWith('Baseline: ')) {
+                const match = comment.match(/(\d+(?:\.\d+)?)mm/);
+                return match ? parseFloat(match[1]) : 50;
+            }
+        }
+        return 50; // Default baseline for disparity
+    }
+
+    private async applyTifSettings(fileIndex: number): Promise<void> {
+        try {
+            // Get the current values from the form
+            const cameraModelSelect = document.getElementById(`camera-model-${fileIndex}`) as HTMLSelectElement;
+            const focalLengthInput = document.getElementById(`focal-length-${fileIndex}`) as HTMLInputElement;
+            const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
+            const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
+
+            if (!cameraModelSelect || !focalLengthInput || !depthTypeSelect) {
+                throw new Error('TIF settings form elements not found');
+            }
+
+            const newCameraParams: CameraParams = {
+                cameraModel: cameraModelSelect.value as 'pinhole' | 'fisheye',
+                focalLength: parseFloat(focalLengthInput.value),
+                depthType: depthTypeSelect.value as 'euclidean' | 'orthogonal' | 'disparity',
+                baseline: depthTypeSelect.value === 'disparity' ? parseFloat(baselineInput.value) : undefined
+            };
+
+            // Validate parameters
+            if (!newCameraParams.focalLength || newCameraParams.focalLength <= 0) {
+                throw new Error('Focal length must be a positive number');
+            }
+            if (newCameraParams.depthType === 'disparity' && (!newCameraParams.baseline || newCameraParams.baseline <= 0)) {
+                throw new Error('Baseline must be a positive number for disparity mode');
+            }
+
+            // Check if we have cached TIF data for this file
+            const tifData = this.fileTifData.get(fileIndex);
+            if (!tifData) {
+                throw new Error('No cached TIF data found for this file. Please reload the TIF file.');
+            }
+
+            this.showStatus('Reprocessing TIF with new settings...');
+
+            // Process the TIF data with new parameters
+            const result = await this.processTifToPointCloud(tifData.originalData, newCameraParams);
+            
+            // Update the PLY data
+            const plyData = this.plyFiles[fileIndex];
+            plyData.vertices = this.convertTifResultToVertices(result);
+            plyData.vertexCount = result.pointCount;
+            plyData.hasColors = !!result.colors;
+            plyData.comments = [
+                `Converted from TIF depth image: ${tifData.fileName}`,
+                `Camera: ${newCameraParams.cameraModel}`,
+                `Depth type: ${newCameraParams.depthType}`,
+                `Focal length: ${newCameraParams.focalLength}px`,
+                ...(newCameraParams.baseline ? [`Baseline: ${newCameraParams.baseline}mm`] : [])
+            ];
+
+            // Update cached parameters
+            tifData.cameraParams = newCameraParams;
+
+            // Update the mesh with new data
+            const oldMaterial = this.meshes[fileIndex].material;
+            const newMaterial = this.createMaterialForFile(plyData, fileIndex);
+            this.meshes[fileIndex].material = newMaterial;
+            
+            // Update geometry
+            const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
+            
+            // Create position array
+            const positions = new Float32Array(plyData.vertices.length * 3);
+            for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                const vertex = plyData.vertices[i];
+                positions[i3] = vertex.x;
+                positions[i3 + 1] = vertex.y;
+                positions[i3 + 2] = vertex.z;
+            }
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            if (plyData.hasColors) {
+                // Create color array
+                const colors = new Float32Array(plyData.vertices.length * 3);
+                for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                    const vertex = plyData.vertices[i];
+                    colors[i3] = (vertex.red || 0) / 255;
+                    colors[i3 + 1] = (vertex.green || 0) / 255;
+                    colors[i3 + 2] = (vertex.blue || 0) / 255;
+                }
+                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            }
+            geometry.computeBoundingBox();
+            
+            // Dispose old material
+            if (oldMaterial) {
+                if (Array.isArray(oldMaterial)) {
+                    oldMaterial.forEach(mat => mat.dispose());
+                } else {
+                    oldMaterial.dispose();
+                }
+            }
+
+            // Update UI
+            this.updateFileStats();
+            this.showStatus('TIF settings applied successfully!');
+
+        } catch (error) {
+            console.error('Error applying TIF settings:', error);
+            this.showError(`Failed to apply TIF settings: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async applyColorImageToTif(fileIndex: number): Promise<void> {
+        try {
+            const colorImageInput = document.getElementById(`color-image-${fileIndex}`) as HTMLInputElement;
+            if (!colorImageInput || !colorImageInput.files || colorImageInput.files.length === 0) {
+                this.showError('No color image file selected');
+                return;
+            }
+
+            const tifData = this.fileTifData.get(fileIndex);
+            if (!tifData) {
+                throw new Error('No cached TIF data found for this file');
+            }
+
+            this.showStatus('Applying color image...');
+
+            const file = colorImageInput.files[0];
+            const imageData = await this.loadAndValidateColorImage(file);
+            
+            if (!imageData) {
+                return; // Error already shown in loadAndValidateColorImage
+            }
+
+            // Validate dimensions match TIF
+            if (imageData.width !== tifData.tifDimensions.width || imageData.height !== tifData.tifDimensions.height) {
+                throw new Error(`Color image dimensions (${imageData.width}x${imageData.height}) do not match TIF dimensions (${tifData.tifDimensions.width}x${tifData.tifDimensions.height})`);
+            }
+
+            // Reprocess TIF with color data
+            const result = await this.processTifToPointCloud(tifData.originalData, tifData.cameraParams);
+            await this.applyColorToTifResult(result, imageData, tifData);
+
+            // Update the PLY data
+            const plyData = this.plyFiles[fileIndex];
+            plyData.vertices = this.convertTifResultToVertices(result);
+            plyData.hasColors = true;
+
+            // Update the mesh with colored data
+            const oldMaterial = this.meshes[fileIndex].material;
+            const newMaterial = this.createMaterialForFile(plyData, fileIndex);
+            this.meshes[fileIndex].material = newMaterial;
+            
+            // Update geometry with colors
+            const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
+            
+            // Create position array
+            const positions = new Float32Array(plyData.vertices.length * 3);
+            for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                const vertex = plyData.vertices[i];
+                positions[i3] = vertex.x;
+                positions[i3 + 1] = vertex.y;
+                positions[i3 + 2] = vertex.z;
+            }
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            // Create color array
+            const colors = new Float32Array(plyData.vertices.length * 3);
+            for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                const vertex = plyData.vertices[i];
+                colors[i3] = (vertex.red || 0) / 255;
+                colors[i3 + 1] = (vertex.green || 0) / 255;
+                colors[i3 + 2] = (vertex.blue || 0) / 255;
+            }
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.computeBoundingBox();
+            
+            // Dispose old material
+            if (oldMaterial) {
+                if (Array.isArray(oldMaterial)) {
+                    oldMaterial.forEach(mat => mat.dispose());
+                } else {
+                    oldMaterial.dispose();
+                }
+            }
+
+            // Update UI
+            this.updateFileStats();
+            this.updateFileList();
+            this.showStatus('Color image applied successfully!');
+
+        } catch (error) {
+            console.error('Error applying color image:', error);
+            this.showError(`Failed to apply color image: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async applyColorToTifResult(result: TifConversionResult, imageData: ImageData, tifData: any): Promise<void> {
+        const colorData = imageData.data;
+        const width = imageData.width;
+        const height = imageData.height;
+        
+        // Create color array for vertices
+        const colors = new Float32Array(result.pointCount * 3);
+        let colorIndex = 0;
+
+        for (let i = 0; i < result.pointCount; i++) {
+            const vertexIndex = i * 3;
+            const x = result.vertices[vertexIndex];
+            const y = result.vertices[vertexIndex + 1];
+            const z = result.vertices[vertexIndex + 2];
+
+            // Skip invalid points (NaN, 0, ±Infinity)
+            if (z <= 0 || isNaN(x) || isNaN(y) || isNaN(z) || !isFinite(x) || !isFinite(y) || !isFinite(z)) {
+                colors[colorIndex++] = 0.5;
+                colors[colorIndex++] = 0.5; 
+                colors[colorIndex++] = 0.5;
+                continue;
+            }
+
+            // Project 3D point to image coordinates
+            let u, v;
+            if (tifData.cameraParams.cameraModel === 'fisheye') {
+                // Fisheye projection
+                const fx = tifData.cameraParams.focalLength;
+                const fy = fx;
+                const cx = width / 2;
+                const cy = height / 2;
+                
+                const r = Math.sqrt(x * x + y * y);
+                const theta = Math.atan2(r, z);
+                const phi = Math.atan2(y, x);
+                
+                const rFish = fx * theta;
+                u = Math.round(cx + rFish * Math.cos(phi));
+                v = Math.round(cy + rFish * Math.sin(phi));
+            } else {
+                // Pinhole projection
+                const fx = tifData.cameraParams.focalLength;
+                const fy = fx;
+                const cx = width / 2;
+                const cy = height / 2;
+                
+                u = Math.round(fx * (x / z) + cx);
+                v = Math.round(fy * (y / z) + cy);
+            }
+
+            // Check bounds and get color
+            if (u >= 0 && u < width && v >= 0 && v < height) {
+                const pixelIndex = (v * width + u) * 4;
+                colors[colorIndex++] = colorData[pixelIndex] / 255.0;     // R
+                colors[colorIndex++] = colorData[pixelIndex + 1] / 255.0; // G
+                colors[colorIndex++] = colorData[pixelIndex + 2] / 255.0; // B
+            } else {
+                // Default gray for out-of-bounds
+                colors[colorIndex++] = 0.5;
+                colors[colorIndex++] = 0.5;
+                colors[colorIndex++] = 0.5;
+            }
+        }
+
+        result.colors = colors;
     }
 }
 
