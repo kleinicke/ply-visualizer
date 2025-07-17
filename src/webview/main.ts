@@ -39,6 +39,8 @@ interface PlyData {
 interface CameraParams {
     cameraModel: 'pinhole' | 'fisheye';
     focalLength: number;
+    depthType: 'euclidean' | 'orthogonal' | 'disparity';
+    baseline?: number; // Required for disparity mode
 }
 
 interface TifConversionResult {
@@ -96,6 +98,13 @@ class PLYVisualizer {
     // TIF processing state
     private pendingTifData: ArrayBuffer | null = null;
     private pendingTifFileName: string | null = null;
+    
+    // TIF conversion tracking
+    private originalTifData: ArrayBuffer | null = null;
+    private originalTifFileName: string | null = null;
+    private currentCameraParams: CameraParams | null = null;
+    private tifDimensions: { width: number; height: number } | null = null;
+    private currentColorImageData: ImageData | null = null;
     
     // Predefined colors for different files
     private readonly fileColors: [number, number, number][] = [
@@ -3424,11 +3433,26 @@ class PLYVisualizer {
 
             const cameraParams: CameraParams = {
                 cameraModel: message.cameraModel,
-                focalLength: message.focalLength
+                focalLength: message.focalLength,
+                depthType: message.depthType || 'euclidean', // Default to euclidean for backward compatibility
+                baseline: message.baseline
             };
+
+            // Store original data for re-processing
+            this.originalTifData = this.pendingTifData;
+            this.originalTifFileName = this.pendingTifFileName;
+            this.currentCameraParams = cameraParams;
 
             // Process the TIF data
             const result = await this.processTifToPointCloud(this.pendingTifData, cameraParams);
+            
+            // Store TIF dimensions for color validation
+            const tiff = await GeoTIFF.fromArrayBuffer(this.pendingTifData);
+            const image = await tiff.getImage();
+            this.tifDimensions = {
+                width: image.getWidth(),
+                height: image.getHeight()
+            };
             
             // Create PLY data structure
             const plyData: PlyData = {
@@ -3436,7 +3460,13 @@ class PLYVisualizer {
                 faces: [],
                 format: 'binary_little_endian',
                 version: '1.0',
-                comments: [`Converted from TIF depth image: ${this.pendingTifFileName}`, `Camera: ${cameraParams.cameraModel}`, `Focal length: ${cameraParams.focalLength}px`],
+                comments: [
+                `Converted from TIF depth image: ${this.pendingTifFileName}`, 
+                `Camera: ${cameraParams.cameraModel}`, 
+                `Depth type: ${cameraParams.depthType}`,
+                `Focal length: ${cameraParams.focalLength}px`,
+                ...(cameraParams.baseline ? [`Baseline: ${cameraParams.baseline}mm`] : [])
+            ],
                 vertexCount: result.pointCount,
                 faceCount: 0,
                 hasColors: !!result.colors,
@@ -3451,6 +3481,9 @@ class PLYVisualizer {
             // Clear pending data
             this.pendingTifData = null;
             this.pendingTifFileName = null;
+            
+            // Initialize TIF controls UI
+            this.initializeTifControls();
             
             this.showStatus('TIF conversion completed successfully!');
             
@@ -3508,7 +3541,9 @@ class PLYVisualizer {
                 fy,
                 cx,
                 cy,
-                cameraParams.cameraModel
+                cameraParams.cameraModel,
+                cameraParams.depthType,
+                cameraParams.baseline
             );
             
             return result;
@@ -3531,7 +3566,9 @@ class PLYVisualizer {
         fy: number,
         cx: number,
         cy: number,
-        cameraModel: 'pinhole' | 'fisheye'
+        cameraModel: 'pinhole' | 'fisheye',
+        depthType: 'euclidean' | 'orthogonal' | 'disparity' = 'euclidean',
+        baseline?: number
     ): TifConversionResult {
         
         const points: number[] = [];
@@ -3588,11 +3625,21 @@ class PLYVisualizer {
             for (let v = 0; v < height; v++) {
                 for (let u = 0; u < width; u++) {
                     const depthIndex = v * width + u;
-                    const depth = depthData[depthIndex];
+                    let depth = depthData[depthIndex];
                     
                     // Skip invalid depth values
                     if (isNaN(depth) || depth <= 0) {
                         continue;
+                    }
+                    
+                    // Convert disparity to depth if needed
+                    if (depthType === 'disparity') {
+                        if (!baseline || baseline <= 0) {
+                            console.warn('Baseline is required for disparity conversion, skipping point');
+                            continue;
+                        }
+                        // Convert disparity to depth: depth = baseline * focal_length / disparity
+                        depth = (baseline * fx) / depth;
                     }
                     
                     // Compute normalized pixel coordinates
@@ -3600,13 +3647,20 @@ class PLYVisualizer {
                     const Y = (v - cy) / fy;
                     const Z = 1.0;
                     
-                    // Create direction vector
-                    const norm = Math.sqrt(X * X + Y * Y + Z * Z);
-                    const dirX = X / norm;
-                    const dirY = Y / norm;
-                    const dirZ = Z / norm;
+                    let dirX = X;
+                    let dirY = Y;
+                    let dirZ = Z;
                     
-                    // Scale by depth (euclidean depth)
+                    if (depthType === 'euclidean') {
+                        // For euclidean depth, normalize the direction vector
+                        const norm = Math.sqrt(X * X + Y * Y + Z * Z);
+                        dirX = X / norm;
+                        dirY = Y / norm;
+                        dirZ = Z / norm;
+                    }
+                    // For orthogonal depth, use direction vector as-is (no normalization)
+                    
+                    // Scale by depth
                     points.push(
                         dirX * depth,
                         dirY * depth,
@@ -3658,6 +3712,533 @@ class PLYVisualizer {
     private showStatus(message: string): void {
         console.log('Status:', message);
         // You could also update UI here if needed
+    }
+
+    /**
+     * Initialize TIF controls UI
+     */
+    private initializeTifControls(): void {
+        if (!this.currentCameraParams || !this.tifDimensions) {
+            return;
+        }
+
+        // Set current values in UI
+        const focalLengthInput = document.getElementById('focal-length-input') as HTMLInputElement;
+        const cameraModelSelect = document.getElementById('camera-model-select') as HTMLSelectElement;
+        const depthTypeSelect = document.getElementById('depth-type-select') as HTMLSelectElement;
+        const baselineInput = document.getElementById('baseline-input') as HTMLInputElement;
+        const baselineGroup = document.getElementById('baseline-input-group') as HTMLDivElement;
+        
+        if (focalLengthInput) {
+            focalLengthInput.value = this.currentCameraParams.focalLength.toString();
+        }
+        
+        if (cameraModelSelect) {
+            cameraModelSelect.value = this.currentCameraParams.cameraModel;
+        }
+        
+        if (depthTypeSelect) {
+            depthTypeSelect.value = this.currentCameraParams.depthType;
+        }
+        
+        if (baselineInput && this.currentCameraParams.baseline !== undefined) {
+            baselineInput.value = this.currentCameraParams.baseline.toString();
+        }
+        
+        // Show/hide baseline input based on depth type
+        if (baselineGroup) {
+            baselineGroup.style.display = this.currentCameraParams.depthType === 'disparity' ? 'flex' : 'none';
+        }
+
+        // Update TIF info display
+        const tifInfoDisplay = document.getElementById('tif-info-display');
+        if (tifInfoDisplay) {
+            let baselineInfo = '';
+            if (this.currentCameraParams.depthType === 'disparity' && this.currentCameraParams.baseline) {
+                baselineInfo = `<div><strong>Baseline:</strong> ${this.currentCameraParams.baseline}mm</div>`;
+            }
+            
+            tifInfoDisplay.innerHTML = `
+                <div><strong>Original File:</strong> ${this.originalTifFileName}</div>
+                <div><strong>Dimensions:</strong> ${this.tifDimensions.width} × ${this.tifDimensions.height}</div>
+                <div><strong>Camera Model:</strong> ${this.currentCameraParams.cameraModel}</div>
+                <div><strong>Depth Type:</strong> ${this.currentCameraParams.depthType}</div>
+                <div><strong>Focal Length:</strong> ${this.currentCameraParams.focalLength}px</div>
+                ${baselineInfo}
+            `;
+        }
+
+        // Add event listeners
+        this.setupTifControlEventListeners();
+    }
+
+    /**
+     * Setup event listeners for TIF controls
+     */
+    private setupTifControlEventListeners(): void {
+        // Update focal length
+        const updateFocalLengthBtn = document.getElementById('update-focal-length');
+        if (updateFocalLengthBtn) {
+            updateFocalLengthBtn.addEventListener('click', () => this.updateFocalLength());
+        }
+
+        // Update camera model
+        const updateCameraModelBtn = document.getElementById('update-camera-model');
+        if (updateCameraModelBtn) {
+            updateCameraModelBtn.addEventListener('click', () => this.updateCameraModel());
+        }
+
+        // Update depth type
+        const updateDepthTypeBtn = document.getElementById('update-depth-type');
+        if (updateDepthTypeBtn) {
+            updateDepthTypeBtn.addEventListener('click', () => this.updateDepthType());
+        }
+
+        // Update baseline
+        const updateBaselineBtn = document.getElementById('update-baseline');
+        if (updateBaselineBtn) {
+            updateBaselineBtn.addEventListener('click', () => this.updateBaseline());
+        }
+
+        // Show/hide baseline controls when depth type changes
+        const depthTypeSelect = document.getElementById('depth-type-select') as HTMLSelectElement;
+        if (depthTypeSelect) {
+            depthTypeSelect.addEventListener('change', () => this.toggleBaselineControls());
+        }
+
+        // Apply color image
+        const applyColorImageBtn = document.getElementById('apply-color-image');
+        if (applyColorImageBtn) {
+            applyColorImageBtn.addEventListener('click', () => this.applyColorImage());
+        }
+
+        // Remove color mapping
+        const removeColorMappingBtn = document.getElementById('remove-color-mapping');
+        if (removeColorMappingBtn) {
+            removeColorMappingBtn.addEventListener('click', () => this.removeColorMapping());
+        }
+    }
+
+    /**
+     * Update focal length and re-process TIF
+     */
+    private async updateFocalLength(): Promise<void> {
+        try {
+            const focalLengthInput = document.getElementById('focal-length-input') as HTMLInputElement;
+            if (!focalLengthInput || !this.currentCameraParams || !this.originalTifData) {
+                return;
+            }
+
+            const newFocalLength = parseFloat(focalLengthInput.value);
+            if (isNaN(newFocalLength) || newFocalLength <= 0) {
+                this.showColorMappingStatus('Please enter a valid focal length', 'error');
+                return;
+            }
+
+            this.currentCameraParams.focalLength = newFocalLength;
+            await this.reprocessTifData();
+            this.initializeTifControls(); // Refresh UI
+            
+        } catch (error) {
+            console.error('Error updating focal length:', error);
+            this.showColorMappingStatus(`Failed to update focal length: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+    }
+
+    /**
+     * Update camera model and re-process TIF
+     */
+    private async updateCameraModel(): Promise<void> {
+        try {
+            const cameraModelSelect = document.getElementById('camera-model-select') as HTMLSelectElement;
+            if (!cameraModelSelect || !this.currentCameraParams || !this.originalTifData) {
+                return;
+            }
+
+            const newCameraModel = cameraModelSelect.value as 'pinhole' | 'fisheye';
+            this.currentCameraParams.cameraModel = newCameraModel;
+            await this.reprocessTifData();
+            this.initializeTifControls(); // Refresh UI
+            
+        } catch (error) {
+            console.error('Error updating camera model:', error);
+            this.showColorMappingStatus(`Failed to update camera model: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+    }
+
+    /**
+     * Update depth type and re-process TIF
+     */
+    private async updateDepthType(): Promise<void> {
+        try {
+            const depthTypeSelect = document.getElementById('depth-type-select') as HTMLSelectElement;
+            if (!depthTypeSelect || !this.currentCameraParams || !this.originalTifData) {
+                return;
+            }
+
+            const newDepthType = depthTypeSelect.value as 'euclidean' | 'orthogonal' | 'disparity';
+            this.currentCameraParams.depthType = newDepthType;
+            
+            // If switching to disparity mode and no baseline is set, prompt for it
+            if (newDepthType === 'disparity' && !this.currentCameraParams.baseline) {
+                this.showColorMappingStatus('Please set baseline for disparity conversion', 'warning');
+                this.toggleBaselineControls();
+                return;
+            }
+            
+            await this.reprocessTifData();
+            this.initializeTifControls(); // Refresh UI
+            
+        } catch (error) {
+            console.error('Error updating depth type:', error);
+            this.showColorMappingStatus(`Failed to update depth type: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+    }
+
+    /**
+     * Update baseline parameter and re-process TIF
+     */
+    private async updateBaseline(): Promise<void> {
+        try {
+            const baselineInput = document.getElementById('baseline-input') as HTMLInputElement;
+            if (!baselineInput || !this.currentCameraParams || !this.originalTifData) {
+                return;
+            }
+
+            const newBaseline = parseFloat(baselineInput.value);
+            if (isNaN(newBaseline) || newBaseline <= 0) {
+                this.showColorMappingStatus('Please enter a valid baseline value', 'error');
+                return;
+            }
+
+            this.currentCameraParams.baseline = newBaseline;
+            await this.reprocessTifData();
+            this.initializeTifControls(); // Refresh UI
+            
+        } catch (error) {
+            console.error('Error updating baseline:', error);
+            this.showColorMappingStatus(`Failed to update baseline: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+    }
+
+    /**
+     * Toggle baseline controls visibility based on depth type
+     */
+    private toggleBaselineControls(): void {
+        const depthTypeSelect = document.getElementById('depth-type-select') as HTMLSelectElement;
+        const baselineGroup = document.getElementById('baseline-input-group') as HTMLDivElement;
+        
+        if (depthTypeSelect && baselineGroup) {
+            const isDisparity = depthTypeSelect.value === 'disparity';
+            baselineGroup.style.display = isDisparity ? 'flex' : 'none';
+        }
+    }
+
+    /**
+     * Re-process TIF data with updated parameters
+     */
+    private async reprocessTifData(): Promise<void> {
+        if (!this.originalTifData || !this.currentCameraParams || !this.originalTifFileName) {
+            throw new Error('No TIF data available for re-processing');
+        }
+
+        this.showStatus('Re-processing point cloud with updated parameters...');
+
+        // Process the TIF data with updated parameters
+        const result = await this.processTifToPointCloud(this.originalTifData, this.currentCameraParams);
+        
+        // Apply current color mapping if available
+        if (this.currentColorImageData) {
+            await this.applyColorToResult(result);
+        }
+        
+        // Create updated PLY data structure
+        const plyData: PlyData = {
+            vertices: this.convertTifResultToVertices(result),
+            faces: [],
+            format: 'binary_little_endian',
+            version: '1.0',
+            comments: [
+                `Converted from TIF depth image: ${this.originalTifFileName}`, 
+                `Camera: ${this.currentCameraParams.cameraModel}`, 
+                `Depth type: ${this.currentCameraParams.depthType}`,
+                `Focal length: ${this.currentCameraParams.focalLength}px`,
+                ...(this.currentCameraParams.baseline ? [`Baseline: ${this.currentCameraParams.baseline}mm`] : [])
+            ],
+            vertexCount: result.pointCount,
+            faceCount: 0,
+            hasColors: !!result.colors,
+            hasNormals: false,
+            fileName: this.originalTifFileName.replace(/\.(tif|tiff)$/i, '_pointcloud.ply'),
+            fileIndex: 0
+        };
+
+        // Replace existing point cloud
+        if (this.plyFiles.length > 0) {
+            // Remove all existing files
+            while (this.plyFiles.length > 0) {
+                this.removeFileByIndex(0);
+            }
+        }
+        
+        // Display updated point cloud
+        await this.displayFiles([plyData]);
+        
+        this.showStatus('Point cloud updated successfully!');
+    }
+
+    /**
+     * Apply color image to point cloud
+     */
+    private async applyColorImage(): Promise<void> {
+        try {
+            const colorImageInput = document.getElementById('color-image-input') as HTMLInputElement;
+            if (!colorImageInput || !colorImageInput.files || colorImageInput.files.length === 0) {
+                this.showColorMappingStatus('Please select a color image file', 'error');
+                return;
+            }
+
+            const file = colorImageInput.files[0];
+            
+            // Load and validate image
+            const imageData = await this.loadAndValidateColorImage(file);
+            if (!imageData) {
+                return; // Error already shown in loadAndValidateColorImage
+            }
+
+            this.currentColorImageData = imageData;
+            
+            // Re-process point cloud with color mapping
+            await this.reprocessTifData();
+            
+            this.showColorMappingStatus(`Color mapping applied successfully from ${file.name}`, 'success');
+            
+        } catch (error) {
+            console.error('Error applying color image:', error);
+            this.showColorMappingStatus(`Failed to apply color image: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+    }
+
+    /**
+     * Remove color mapping and revert to depth-based colors
+     */
+    private async removeColorMapping(): Promise<void> {
+        try {
+            this.currentColorImageData = null;
+            await this.reprocessTifData();
+            this.showColorMappingStatus('Color mapping removed, reverted to depth-based colors', 'success');
+            
+        } catch (error) {
+            console.error('Error removing color mapping:', error);
+            this.showColorMappingStatus(`Failed to remove color mapping: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+    }
+
+    /**
+     * Load and validate color image dimensions
+     */
+    private async loadAndValidateColorImage(file: File): Promise<ImageData | null> {
+        return new Promise((resolve) => {
+            if (!this.tifDimensions) {
+                this.showColorMappingStatus('No TIF dimensions available for validation', 'error');
+                resolve(null);
+                return;
+            }
+
+            const img = new Image();
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            img.onload = () => {
+                // Validate dimensions
+                if (img.width !== this.tifDimensions!.width || img.height !== this.tifDimensions!.height) {
+                    this.showColorMappingStatus(
+                        `Image dimensions (${img.width}×${img.height}) don't match depth image (${this.tifDimensions!.width}×${this.tifDimensions!.height})`,
+                        'error'
+                    );
+                    resolve(null);
+                    return;
+                }
+
+                // Extract image data
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx!.drawImage(img, 0, 0);
+                const imageData = ctx!.getImageData(0, 0, img.width, img.height);
+                
+                resolve(imageData);
+            };
+
+            img.onerror = () => {
+                this.showColorMappingStatus('Failed to load color image', 'error');
+                resolve(null);
+            };
+
+            // Handle different file types
+            if (file.type.startsWith('image/')) {
+                img.src = URL.createObjectURL(file);
+            } else {
+                // Handle TIF files using GeoTIFF
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    try {
+                        const buffer = e.target!.result as ArrayBuffer;
+                        const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+                        const image = await tiff.getImage();
+                        const rasters = await image.readRasters();
+                        
+                        // Validate dimensions
+                        const width = image.getWidth();
+                        const height = image.getHeight();
+                        
+                        if (width !== this.tifDimensions!.width || height !== this.tifDimensions!.height) {
+                            this.showColorMappingStatus(
+                                `TIF dimensions (${width}×${height}) don't match depth image (${this.tifDimensions!.width}×${this.tifDimensions!.height})`,
+                                'error'
+                            );
+                            resolve(null);
+                            return;
+                        }
+
+                        // Convert TIF data to ImageData
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        canvas.width = width;
+                        canvas.height = height;
+                        
+                        const imageData = ctx!.createImageData(width, height);
+                        const data = imageData.data;
+                        
+                        if (rasters.length >= 3) {
+                            // RGB TIF
+                            const r = new Uint8Array(rasters[0]);
+                            const g = new Uint8Array(rasters[1]);
+                            const b = new Uint8Array(rasters[2]);
+                            
+                            for (let i = 0; i < width * height; i++) {
+                                data[i * 4] = r[i];
+                                data[i * 4 + 1] = g[i];
+                                data[i * 4 + 2] = b[i];
+                                data[i * 4 + 3] = 255; // Alpha
+                            }
+                        } else {
+                            // Grayscale TIF
+                            const gray = new Uint8Array(rasters[0]);
+                            for (let i = 0; i < width * height; i++) {
+                                data[i * 4] = gray[i];
+                                data[i * 4 + 1] = gray[i];
+                                data[i * 4 + 2] = gray[i];
+                                data[i * 4 + 3] = 255; // Alpha
+                            }
+                        }
+                        
+                        resolve(imageData);
+                        
+                    } catch (error) {
+                        this.showColorMappingStatus('Failed to process TIF color image', 'error');
+                        resolve(null);
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        });
+    }
+
+    /**
+     * Apply color mapping to TIF conversion result
+     */
+    private async applyColorToResult(result: TifConversionResult): Promise<void> {
+        if (!this.currentColorImageData || !this.tifDimensions || !this.originalTifData || !this.currentCameraParams) {
+            return;
+        }
+
+        const colorData = this.currentColorImageData.data;
+        const width = this.tifDimensions.width;
+        const height = this.tifDimensions.height;
+        
+        // Re-load the depth data to match the exact same processing logic
+        const tiff = await GeoTIFF.fromArrayBuffer(this.originalTifData);
+        const image = await tiff.getImage();
+        const rasters = await image.readRasters();
+        const depthData = new Float32Array(rasters[0]);
+        
+        // Create new color array
+        const newColors = new Float32Array(result.pointCount * 3);
+        let colorIndex = 0;
+        
+        if (this.currentCameraParams.cameraModel === 'fisheye') {
+            // Calculate camera intrinsics (matching processTifToPointCloud logic)
+            const fx = this.currentCameraParams.focalLength;
+            const cx = width / 2;
+            const cy = height / 2;
+            
+            // Fisheye processing - match the exact same logic as depthToPointCloud
+            for (let i = 0; i < width; i++) {
+                for (let j = 0; j < height; j++) {
+                    const depthIndex = j * width + i;
+                    const depth = depthData[depthIndex];
+                    
+                    // Skip invalid depth values (same logic as in depthToPointCloud)
+                    if (isNaN(depth) || depth <= 0) {
+                        continue;
+                    }
+                    
+                    // Get color from image data
+                    const colorPixelIndex = depthIndex * 4;
+                    const r = colorData[colorPixelIndex] / 255;
+                    const g = colorData[colorPixelIndex + 1] / 255;
+                    const b = colorData[colorPixelIndex + 2] / 255;
+                    
+                    newColors[colorIndex * 3] = r;
+                    newColors[colorIndex * 3 + 1] = g;
+                    newColors[colorIndex * 3 + 2] = b;
+                    colorIndex++;
+                }
+            }
+        } else {
+            // Pinhole processing - match the exact same logic as depthToPointCloud
+            for (let v = 0; v < height; v++) {
+                for (let u = 0; u < width; u++) {
+                    const depthIndex = v * width + u;
+                    const depth = depthData[depthIndex];
+                    
+                    // Skip invalid depth values (same logic as in depthToPointCloud)
+                    if (isNaN(depth) || depth <= 0) {
+                        continue;
+                    }
+                    
+                    // Get color from image data
+                    const colorPixelIndex = depthIndex * 4;
+                    const r = colorData[colorPixelIndex] / 255;
+                    const g = colorData[colorPixelIndex + 1] / 255;
+                    const b = colorData[colorPixelIndex + 2] / 255;
+                    
+                    newColors[colorIndex * 3] = r;
+                    newColors[colorIndex * 3 + 1] = g;
+                    newColors[colorIndex * 3 + 2] = b;
+                    colorIndex++;
+                }
+            }
+        }
+        
+        result.colors = newColors;
+    }
+
+    /**
+     * Show color mapping status message
+     */
+    private showColorMappingStatus(message: string, type: 'success' | 'error' | 'warning'): void {
+        const statusElement = document.getElementById('color-mapping-status');
+        if (statusElement) {
+            statusElement.textContent = message;
+            statusElement.className = `status-text ${type}`;
+            
+            // Clear after 5 seconds
+            setTimeout(() => {
+                statusElement.textContent = '';
+                statusElement.className = 'status-text';
+            }, 5000);
+        }
     }
 }
 

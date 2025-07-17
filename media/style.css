@@ -763,4 +763,72 @@ body {
     margin-right: 4px;
 }
 
+/* TIF Controls Styles */
+.input-group {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+    gap: 8px;
+}
+
+.input-group label {
+    min-width: 120px;
+    font-size: 11px;
+    color: var(--vscode-foreground);
+}
+
+.input-group input[type="number"],
+.input-group select {
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 3px;
+    padding: 4px 8px;
+    font-size: 11px;
+    min-width: 80px;
+    flex: 1;
+}
+
+.input-group input[type="number"]:focus,
+.input-group select:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    border-color: var(--vscode-focusBorder);
+}
+
+.input-group input[type="file"] {
+    font-size: 11px;
+    color: var(--vscode-foreground);
+    flex: 1;
+}
+
+.camera-params-controls,
+.color-mapping-controls {
+    background-color: var(--vscode-editor-inactiveSelectionBackground);
+    border-radius: 4px;
+    padding: 8px;
+    margin-bottom: 8px;
+}
+
+.status-text {
+    font-size: 10px;
+    padding: 4px 8px;
+    border-radius: 3px;
+    margin-top: 4px;
+}
+
+.status-text.success {
+    background-color: var(--vscode-terminal-ansiGreen);
+    color: var(--vscode-terminal-background);
+}
+
+.status-text.error {
+    background-color: var(--vscode-errorForeground);
+    color: var(--vscode-terminal-background);
+}
+
+.status-text.warning {
+    background-color: var(--vscode-warningForeground);
+    color: var(--vscode-terminal-background);
+}
+
  

@@ -246,6 +246,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         <button class="tab-button active" data-tab="files">Files</button>
                         <button class="tab-button" data-tab="camera">Camera</button>
                         <button class="tab-button" data-tab="controls">Controls</button>
+                        <button class="tab-button ${includeTifSupport ? '' : 'hidden'}" data-tab="tif-controls">TIF Controls</button>
                         <button class="tab-button" data-tab="info">Info</button>
                     </div>
                     
@@ -368,6 +369,60 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                                         <span class="shortcut-desc">Show this help</span>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                        
+                        <!-- TIF Controls Tab -->
+                        <div id="tif-controls-tab" class="tab-panel ${includeTifSupport ? '' : 'hidden'}">
+                            <div class="panel-section">
+                                <h4>Camera Parameters</h4>
+                                <div class="camera-params-controls">
+                                    <div class="input-group">
+                                        <label for="focal-length-input">Focal Length (px):</label>
+                                        <input type="number" id="focal-length-input" min="1" step="1" placeholder="1000">
+                                        <button id="update-focal-length" class="control-button">Update</button>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="camera-model-select">Camera Model:</label>
+                                        <select id="camera-model-select">
+                                            <option value="pinhole">Pinhole Camera</option>
+                                            <option value="fisheye">Fisheye Camera</option>
+                                        </select>
+                                        <button id="update-camera-model" class="control-button">Update</button>
+                                    </div>
+                                    <div class="input-group">
+                                        <label for="depth-type-select">Depth Type:</label>
+                                        <select id="depth-type-select">
+                                            <option value="euclidean">Euclidean Depth</option>
+                                            <option value="orthogonal">Orthogonal Depth (Z-buffer)</option>
+                                            <option value="disparity">Disparity</option>
+                                        </select>
+                                        <button id="update-depth-type" class="control-button">Update</button>
+                                    </div>
+                                    <div class="input-group" id="baseline-input-group">
+                                        <label for="baseline-input">Baseline (mm):</label>
+                                        <input type="number" id="baseline-input" min="0" step="0.1" placeholder="120.0">
+                                        <button id="update-baseline" class="control-button">Update</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="panel-section">
+                                <h4>Color Mapping</h4>
+                                <div class="color-mapping-controls">
+                                    <div class="input-group">
+                                        <label for="color-image-input">Color Image:</label>
+                                        <input type="file" id="color-image-input" accept=".png,.jpg,.jpeg,.tif,.tiff">
+                                        <button id="apply-color-image" class="control-button">Apply Colors</button>
+                                    </div>
+                                    <div class="input-group">
+                                        <button id="remove-color-mapping" class="control-button">Remove Color Mapping</button>
+                                    </div>
+                                    <div id="color-mapping-status" class="status-text"></div>
+                                </div>
+                            </div>
+                            <div class="panel-section">
+                                <h4>TIF Info</h4>
+                                <div id="tif-info-display"></div>
                             </div>
                         </div>
                     </div>
@@ -857,6 +912,26 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 return;
             }
 
+            // Show depth type selection dialog
+            const depthType = await vscode.window.showQuickPick(
+                [
+                    { label: 'Euclidean Depth', description: 'Metric depth values (distance from camera center)', value: 'euclidean' },
+                    { label: 'Orthogonal Depth', description: 'Z-buffer depth values (Z-coordinate)', value: 'orthogonal' },
+                    { label: 'Disparity', description: 'Disparity values (requires baseline parameter)', value: 'disparity' }
+                ],
+                {
+                    placeHolder: 'Select the type of depth data in your image',
+                    ignoreFocusOut: true
+                }
+            );
+
+            if (!depthType) {
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled'
+                });
+                return;
+            }
+
             // Show focal length input dialog
             const focalLengthInput = await vscode.window.showInputBox({
                 prompt: 'Enter the focal length in pixels (e.g., 1000)',
@@ -880,11 +955,39 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
             const focalLength = parseFloat(focalLengthInput);
 
+            // Show baseline input dialog if disparity is selected
+            let baseline: number | undefined;
+            if (depthType.value === 'disparity') {
+                const baselineInput = await vscode.window.showInputBox({
+                    prompt: 'Enter the baseline in millimeters (e.g., 120.0)',
+                    placeHolder: '120.0',
+                    validateInput: (value: string) => {
+                        const num = parseFloat(value);
+                        if (isNaN(num) || num <= 0) {
+                            return 'Please enter a valid positive number for baseline';
+                        }
+                        return null;
+                    },
+                    ignoreFocusOut: true
+                });
+
+                if (!baselineInput) {
+                    webviewPanel.webview.postMessage({
+                        type: 'cameraParamsCancelled'
+                    });
+                    return;
+                }
+
+                baseline = parseFloat(baselineInput);
+            }
+
             // Send camera parameters to webview
             webviewPanel.webview.postMessage({
                 type: 'cameraParams',
                 cameraModel: cameraModel.value,
-                focalLength: focalLength
+                focalLength: focalLength,
+                depthType: depthType.value,
+                baseline: baseline
             });
 
         } catch (error) {
