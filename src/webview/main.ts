@@ -148,7 +148,7 @@ class PLYVisualizer {
             75,
             container.clientWidth / container.clientHeight,
             0.001,
-            1000
+            100000  // Increased far plane for large point clouds
         );
         this.camera.position.set(1, 1, 1);
         
@@ -242,7 +242,7 @@ class PLYVisualizer {
             orbitControls.dampingFactor = 0.2;
             orbitControls.screenSpacePanning = false;
             orbitControls.minDistance = 0.001;
-            orbitControls.maxDistance = 1000;
+            orbitControls.maxDistance = 50000;  // Increased to match camera far plane
         }
         
         // Set up axes visibility for all control types
@@ -1729,7 +1729,7 @@ class PLYVisualizer {
             
             // Initialize point size if not set
             if (!this.pointSizes[fileIndex]) {
-                this.pointSizes[fileIndex] = 0.001;
+                this.pointSizes[fileIndex] = 0.01;  // Increased default point size for better visibility
             }
             
             material.size = this.pointSizes[fileIndex];
@@ -3408,13 +3408,42 @@ class PLYVisualizer {
             this.pendingTifData = message.data;
             this.pendingTifFileName = message.fileName;
             
-            // Request camera parameters from the extension
-            this.vscode.postMessage({
-                type: 'requestCameraParams',
-                fileName: message.fileName
-            });
+            // First, analyze the TIF to determine if it's a depth image or regular image
+            const tiff = await GeoTIFF.fromArrayBuffer(message.data);
+            const image = await tiff.getImage();
             
-            this.showStatus('Waiting for camera parameters...');
+            const width = image.getWidth();
+            const height = image.getHeight();
+            const samplesPerPixel = image.getSamplesPerPixel();
+            const sampleFormat = image.getSampleFormat ? image.getSampleFormat() : null;
+            const bitsPerSample = image.getBitsPerSample();
+            
+            console.log(`TIF Analysis: ${width}x${height}, samples: ${samplesPerPixel}, format: ${sampleFormat}, bits: ${bitsPerSample}`);
+            
+            // Determine if this is a depth image or regular image
+            const isDepthImage = this.isDepthTifImage(samplesPerPixel, sampleFormat, bitsPerSample);
+            
+            if (isDepthImage) {
+                console.log('Detected depth TIF image - requesting camera parameters for point cloud conversion');
+                
+                // Request camera parameters from the extension for depth conversion
+                this.vscode.postMessage({
+                    type: 'requestCameraParams',
+                    fileName: message.fileName
+                });
+                
+                this.showStatus('Waiting for camera parameters...');
+            } else {
+                const bitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 'unknown';
+                const formatDesc = sampleFormat === 3 ? 'float' : sampleFormat === 1 ? 'uint' : sampleFormat === 2 ? 'int' : 'unknown';
+                
+                console.log('Detected regular TIF image - not suitable for point cloud conversion');
+                this.showError(`This TIF file appears to be a regular image (${samplesPerPixel} channel(s), ${bitDepth}-bit ${formatDesc}) rather than a depth image. Please use a single-channel floating-point (float16 or float32) depth TIF for point cloud conversion.`);
+                
+                // Clear pending data since we won't process this
+                this.pendingTifData = null;
+                this.pendingTifFileName = null;
+            }
             
         } catch (error) {
             console.error('Error handling TIF data:', error);
@@ -3523,8 +3552,25 @@ class PLYVisualizer {
             
             console.log(`Processing TIF: ${width}x${height}, camera: ${cameraParams.cameraModel}, focal: ${cameraParams.focalLength}`);
             
-            // Extract depth data (assuming single band depth image)
-            const depthData = new Float32Array(rasters[0]);
+            // Extract depth data - handle different data types properly
+            const rawDepthData = rasters[0];
+            let depthData: Float32Array;
+            
+            if (rawDepthData instanceof Float32Array) {
+                depthData = rawDepthData;
+                console.log('Using original Float32Array depth data');
+            } else if (rawDepthData instanceof Uint16Array) {
+                // Convert uint16 to float32 for processing
+                depthData = new Float32Array(rawDepthData.length);
+                for (let i = 0; i < rawDepthData.length; i++) {
+                    depthData[i] = rawDepthData[i];
+                }
+                console.log('Converted Uint16Array to Float32Array for depth processing');
+            } else {
+                // Fallback: convert whatever we have to Float32Array
+                depthData = new Float32Array(rawDepthData);
+                console.log(`Converted ${rawDepthData.constructor.name} to Float32Array for depth processing`);
+            }
             
             // Calculate camera intrinsics (principal point at image center)
             const fx = cameraParams.focalLength;
@@ -4075,10 +4121,15 @@ class PLYVisualizer {
             };
 
             // Handle different file types
-            if (file.type.startsWith('image/')) {
+            console.log(`Loading color image: ${file.name}, type: ${file.type}, size: ${file.size} bytes`);
+            
+            if (file.type.startsWith('image/') && !file.type.includes('tiff') && !file.type.includes('tif')) {
+                // Regular image files (PNG, JPEG, etc.) - not TIF
+                console.log('Loading as regular image file');
                 img.src = URL.createObjectURL(file);
             } else {
                 // Handle TIF files using GeoTIFF
+                console.log('Loading as TIF file using GeoTIFF');
                 const reader = new FileReader();
                 reader.onload = async (e) => {
                     try {
@@ -4110,24 +4161,26 @@ class PLYVisualizer {
                         const data = imageData.data;
                         
                         if (rasters.length >= 3) {
-                            // RGB TIF
-                            const r = new Uint8Array(rasters[0]);
-                            const g = new Uint8Array(rasters[1]);
-                            const b = new Uint8Array(rasters[2]);
+                            // RGB TIF - handle different data types
+                            const r = rasters[0];
+                            const g = rasters[1];
+                            const b = rasters[2];
                             
                             for (let i = 0; i < width * height; i++) {
-                                data[i * 4] = r[i];
-                                data[i * 4 + 1] = g[i];
-                                data[i * 4 + 2] = b[i];
+                                // Normalize to 0-255 range regardless of input data type
+                                data[i * 4] = Math.min(255, Math.max(0, Math.round(r[i])));
+                                data[i * 4 + 1] = Math.min(255, Math.max(0, Math.round(g[i])));
+                                data[i * 4 + 2] = Math.min(255, Math.max(0, Math.round(b[i])));
                                 data[i * 4 + 3] = 255; // Alpha
                             }
                         } else {
-                            // Grayscale TIF
-                            const gray = new Uint8Array(rasters[0]);
+                            // Grayscale TIF - handle different data types
+                            const gray = rasters[0];
                             for (let i = 0; i < width * height; i++) {
-                                data[i * 4] = gray[i];
-                                data[i * 4 + 1] = gray[i];
-                                data[i * 4 + 2] = gray[i];
+                                const grayValue = Math.min(255, Math.max(0, Math.round(gray[i])));
+                                data[i * 4] = grayValue;
+                                data[i * 4 + 1] = grayValue;
+                                data[i * 4 + 2] = grayValue;
                                 data[i * 4 + 3] = 255; // Alpha
                             }
                         }
@@ -4135,7 +4188,8 @@ class PLYVisualizer {
                         resolve(imageData);
                         
                     } catch (error) {
-                        this.showColorMappingStatus('Failed to process TIF color image', 'error');
+                        console.error('Error processing TIF color image:', error);
+                        this.showColorMappingStatus(`Failed to process TIF color image: ${error instanceof Error ? error.message : String(error)}`, 'error');
                         resolve(null);
                     }
                 };
@@ -4239,6 +4293,35 @@ class PLYVisualizer {
                 statusElement.className = 'status-text';
             }, 5000);
         }
+    }
+
+    /**
+     * Determine if a TIF image is a depth image suitable for point cloud conversion
+     * Only floating-point formats are considered valid depth images
+     */
+    private isDepthTifImage(samplesPerPixel: number, sampleFormat: number | null, bitsPerSample: number[]): boolean {
+        // Depth images should be single-channel
+        if (samplesPerPixel !== 1) {
+            return false;
+        }
+        
+        // Only floating-point formats are valid for depth images (sampleFormat 3)
+        // Integer formats (sampleFormat 1, 2) are not considered valid depth images
+        if (sampleFormat !== 3) {
+            return false;
+        }
+        
+        // If bit depth information is available, validate it
+        if (bitsPerSample && bitsPerSample.length > 0 && bitsPerSample[0] !== undefined) {
+            const bitDepth = bitsPerSample[0];
+            // If bit depth is known, it should be 16 or 32 for depth images
+            if (bitDepth !== 16 && bitDepth !== 32) {
+                return false;
+            }
+        }
+        // If bit depth is unknown but format is confirmed float, accept it
+        
+        return true;
     }
 }
 
