@@ -770,10 +770,15 @@ class PLYVisualizer {
                     matrixArr[row + 4],       // m1r (column r, row 1)
                     matrixArr[row + 8],       // m2r (column r, row 2)
                     matrixArr[row + 12]       // m3r (column r, row 3)
-                ].map(v => v.toFixed(6));
+                ].map(v => {
+                    // Format numbers consistently: 6 decimal places, right-aligned
+                    const formatted = v.toFixed(6);
+                    return formatted.padStart(9, ' '); // Pad to 9 characters for alignment
+                });
                 matrixStr += displayRow.join(' ') + '\n';
             }
             textarea.value = matrixStr.trim();
+            console.log(`📐 Matrix display updated for file ${fileIndex}`);
         }
     }
 
@@ -1793,6 +1798,9 @@ class PLYVisualizer {
                 case 'cameraParamsError':
                     this.handleCameraParamsError(message.error, message.requestId);
                     break;
+                case 'savePlyFileResult':
+                    this.handleSavePlyFileResult(message);
+                    break;
             }
         });
     }
@@ -2004,59 +2012,8 @@ class PLYVisualizer {
                     </div>
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
                     
-                    <!-- Transform Controls -->
-                    <div class="transform-section">
-                        <button class="transform-toggle" data-file-index="${i}">
-                            <span class="toggle-icon">▶</span> Transform
-                        </button>
-                        <div class="transform-panel" id="transform-panel-${i}" style="display:none;">
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Transformations:</label>
-                                <div class="transform-buttons">
-                                    <button class="add-translation" data-file-index="${i}">Add Translation</button>
-                                    <button class="add-quaternion" data-file-index="${i}">Add Quaternion</button>
-                                    <button class="add-angle-axis" data-file-index="${i}">Add Angle-Axis</button>
-                                </div>
-                            </div>
-                            
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Rotation (90°):</label>
-                                <div class="transform-buttons">
-                                    <button class="rotate-x" data-file-index="${i}">X</button>
-                                    <button class="rotate-y" data-file-index="${i}">Y</button>
-                                    <button class="rotate-z" data-file-index="${i}">Z</button>
-                                </div>
-                            </div>
-                            
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
-                                <textarea id="matrix-${i}" rows="4" cols="50" style="width:100%;font-size:9px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${matrixStr.trim()}</textarea>
-                                <div class="transform-buttons" style="margin-top:4px;">
-                                    <button class="apply-matrix" data-file-index="${i}">Apply Matrix</button>
-                                    <button class="reset-matrix" data-file-index="${i}">Reset</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    ${data.faceCount === 0 ? `
-                    <div class="point-size-control">
-                        <label for="size-${i}">Point Size:</label>
-                        <input type="range" id="size-${i}" min="0.00001" max="0.01" step="0.00001" value="${this.pointSizes[i] || 0.001}" class="size-slider">
-                        <span class="size-value">${(this.pointSizes[i] || 0.001).toFixed(5)}</span>
-                    </div>
-                    ` : ''}
-                    
-                    <div class="color-control">
-                        <label for="color-${i}">Color:</label>
-                        <select id="color-${i}" class="color-selector">
-                            ${data.hasColors ? `<option value="original" ${this.individualColorModes[i] === 'original' ? 'selected' : ''}>Original</option>` : ''}
-                            <option value="assigned" ${this.individualColorModes[i] === 'assigned' ? 'selected' : ''}>Assigned (${this.getColorName(i)})</option>
-                            ${this.getColorOptions(i)}
-                        </select>
-                    </div>
-                    
                     ${this.isTifDerivedFile(data) ? `
+                    <!-- TIF Settings (First) -->
                     <div class="tif-controls" style="margin-top: 8px;">
                         <button class="tif-settings-toggle" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%;">
                             <span class="toggle-icon">▶</span> TIF Settings
@@ -2090,12 +2047,70 @@ class PLYVisualizer {
                                 <input type="file" id="color-image-${i}" accept="image/*,.tif,.tiff" style="width: 100%; padding: 2px; font-size: 11px;" />
                                 ${this.getStoredColorImageName(i) ? `<div style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-top: 2px; display: flex; align-items: center; gap: 4px;">📷 Current: ${this.getStoredColorImageName(i)} <button class="remove-color-image" data-file-index="${i}" style="font-size: 8px; padding: 1px 4px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer;">✕</button></div>` : ''}
                             </div>
-                            <div class="tif-group">
-                                <button class="apply-tif-settings" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">Apply Settings</button>
+                            <div class="tif-group" style="margin-bottom: 8px;">
+                                <div style="display: flex; gap: 4px;">
+                                    <button class="apply-tif-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">Apply Settings</button>
+                                    <button class="save-ply-file" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">💾 Save PLY</button>
+                                </div>
                             </div>
                         </div>
                     </div>
                     ` : ''}
+                    
+                    <!-- Transform Controls (Second) -->
+                    <div class="transform-section">
+                        <button class="transform-toggle" data-file-index="${i}">
+                            <span class="toggle-icon">▶</span> Transform
+                        </button>
+                        <div class="transform-panel" id="transform-panel-${i}" style="display:none;">
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Transformations:</label>
+                                <div class="transform-buttons">
+                                    <button class="add-translation" data-file-index="${i}">Add Translation</button>
+                                    <button class="add-quaternion" data-file-index="${i}">Add Quaternion</button>
+                                    <button class="add-angle-axis" data-file-index="${i}">Add Angle-Axis</button>
+                                </div>
+                            </div>
+                            
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Rotation (90°):</label>
+                                <div class="transform-buttons">
+                                    <button class="rotate-x" data-file-index="${i}">X</button>
+                                    <button class="rotate-y" data-file-index="${i}">Y</button>
+                                    <button class="rotate-z" data-file-index="${i}">Z</button>
+                                </div>
+                            </div>
+                            
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
+                                <textarea id="matrix-${i}" rows="4" cols="50" style="width:100%;font-size:9px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${matrixStr.trim()}</textarea>
+                                <div class="transform-buttons" style="margin-top:4px;">
+                                    <button class="apply-matrix" data-file-index="${i}">Apply Matrix</button>
+                                    <button class="invert-matrix" data-file-index="${i}">Invert</button>
+                                    <button class="reset-matrix" data-file-index="${i}">Reset</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    ${data.faceCount === 0 ? `
+                    <!-- Point Size Control (Third) -->
+                    <div class="point-size-control">
+                        <label for="size-${i}">Point Size:</label>
+                        <input type="range" id="size-${i}" min="0.00001" max="0.01" step="0.00001" value="${this.pointSizes[i] || 0.001}" class="size-slider">
+                        <span class="size-value">${(this.pointSizes[i] || 0.001).toFixed(5)}</span>
+                    </div>
+                    ` : ''}
+                    
+                    <!-- Color Control (Fourth) -->
+                    <div class="color-control">
+                        <label for="color-${i}">Color:</label>
+                        <select id="color-${i}" class="color-selector">
+                            ${data.hasColors ? `<option value="original" ${this.individualColorModes[i] === 'original' ? 'selected' : ''}>Original</option>` : ''}
+                            <option value="assigned" ${this.individualColorModes[i] === 'assigned' ? 'selected' : ''}>Assigned (${this.getColorName(i)})</option>
+                            ${this.getColorOptions(i)}
+                        </select>
+                    </div>
                 </div>
             `;
         }
@@ -2140,16 +2155,16 @@ class PLYVisualizer {
                 });
             }
             
-            // Apply matrix logic
+            // Apply matrix logic with improved parsing
             const applyBtn = document.querySelector(`.apply-matrix[data-file-index="${i}"]`);
             if (applyBtn && transformPanel) {
                 applyBtn.addEventListener('click', () => {
                     const textarea = document.getElementById(`matrix-${i}`) as HTMLTextAreaElement;
                     if (textarea) {
-                        const values = textarea.value.trim().split(/\s+/).map(Number);
-                        if (values.length === 16 && values.every(v => !isNaN(v))) {
+                        const values = this.parseMatrixInput(textarea.value);
+                        if (values && values.length === 16) {
                             const mat = new THREE.Matrix4();
-                            // Fix: Read matrix in row-major order (as displayed in UI)
+                            // Read matrix in row-major order (as displayed in UI)
                             mat.set(
                                 values[0], values[1], values[2],  values[3],
                                 values[4], values[5], values[6],  values[7],
@@ -2157,9 +2172,26 @@ class PLYVisualizer {
                                 values[12], values[13], values[14], values[15]
                             );
                             this.setTransformationMatrix(i, mat);
+                            // Auto-format the matrix after applying
+                            this.updateMatrixTextarea(i);
                         } else {
                             alert('Please enter 16 valid numbers for the 4x4 matrix.');
                         }
+                    }
+                });
+            }
+
+            // Invert matrix logic
+            const invertBtn = document.querySelector(`.invert-matrix[data-file-index="${i}"]`);
+            if (invertBtn && transformPanel) {
+                invertBtn.addEventListener('click', () => {
+                    const currentMatrix = this.getTransformationMatrix(i);
+                    try {
+                        const invertedMatrix = currentMatrix.clone().invert();
+                        this.setTransformationMatrix(i, invertedMatrix);
+                        this.updateMatrixTextarea(i);
+                    } catch (error) {
+                        alert('Matrix is not invertible (determinant is zero).');
                     }
                 });
             }
@@ -2301,6 +2333,14 @@ class PLYVisualizer {
                 if (applyTifBtn) {
                     applyTifBtn.addEventListener('click', async () => {
                         await this.applyTifSettings(i);
+                    });
+                }
+
+                // Save PLY file button
+                const savePlyBtn = document.querySelector(`.save-ply-file[data-file-index="${i}"]`);
+                if (savePlyBtn) {
+                    savePlyBtn.addEventListener('click', () => {
+                        this.savePlyFile(i);
                     });
                 }
 
@@ -3958,6 +3998,20 @@ class PLYVisualizer {
         }
     }
 
+    private handleSavePlyFileResult(message: any): void {
+        if (message.success) {
+            this.showStatus(`PLY file saved successfully: ${message.filePath}`);
+            console.log(`✅ PLY file saved: ${message.filePath}`);
+        } else {
+            if (message.cancelled) {
+                this.showStatus('Save operation cancelled by user');
+            } else {
+                this.showError(`Failed to save PLY file: ${message.error || 'Unknown error'}`);
+                console.error('PLY save error:', message.error);
+            }
+        }
+    }
+
     /**
      * Process TIF file data and convert to point cloud
      */
@@ -4899,6 +4953,32 @@ class PLYVisualizer {
         return tifData?.colorImageName || null;
     }
 
+    private parseMatrixInput(input: string): number[] | null {
+        try {
+            // Remove brackets, commas, and other unwanted characters, keep numbers, spaces, dots, minus signs
+            const cleaned = input.replace(/[\[\],]/g, ' ').replace(/\s+/g, ' ').trim();
+            
+            // Split by whitespace and parse numbers
+            const values = cleaned.split(/\s+/).map(str => {
+                const num = parseFloat(str);
+                return isNaN(num) ? null : num;
+            }).filter(val => val !== null) as number[];
+            
+            // Should have exactly 16 numbers
+            if (values.length !== 16) {
+                console.warn(`Matrix parsing: Expected 16 numbers, got ${values.length}`);
+                return null;
+            }
+            
+            console.log(`✅ Matrix parsed successfully: ${values.length} numbers`);
+            return values;
+            
+        } catch (error) {
+            console.error('Matrix parsing error:', error);
+            return null;
+        }
+    }
+
     private async applyTifSettings(fileIndex: number): Promise<void> {
         try {
             // Get the current values from the form
@@ -5262,6 +5342,121 @@ class PLYVisualizer {
             console.error('Error removing color image:', error);
             this.showError(`Failed to remove color image: ${error instanceof Error ? error.message : String(error)}`);
         }
+    }
+
+    private savePlyFile(fileIndex: number): void {
+        try {
+            if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+                throw new Error('Invalid file index');
+            }
+
+            const plyData = this.plyFiles[fileIndex];
+            this.showStatus(`Generating PLY file for ${plyData.fileName}...`);
+
+            // Generate PLY file content with current state (including transformations and colors)
+            const plyContent = this.generatePlyFileContent(plyData, fileIndex);
+            
+            // Use VS Code save dialog instead of automatic download
+            const defaultFileName = plyData.fileName || `pointcloud_${fileIndex + 1}.ply`;
+            
+            this.vscode.postMessage({
+                type: 'savePlyFile',
+                content: plyContent,
+                defaultFileName: defaultFileName,
+                fileIndex: fileIndex
+            });
+            
+            this.showStatus(`Opening save dialog for ${defaultFileName}...`);
+            
+        } catch (error) {
+            console.error('Error preparing PLY file:', error);
+            this.showError(`Failed to prepare PLY file: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private generatePlyFileContent(plyData: PlyData, fileIndex: number): string {
+        // Get current transformed vertices from the actual geometry
+        const mesh = this.meshes[fileIndex];
+        const geometry = mesh.geometry as THREE.BufferGeometry;
+        const positionAttribute = geometry.getAttribute('position') as THREE.BufferAttribute;
+        const colorAttribute = geometry.getAttribute('color') as THREE.BufferAttribute;
+        
+        const vertexCount = positionAttribute.count;
+        
+        // PLY header
+        let content = 'ply\n';
+        content += `format ascii 1.0\n`;
+        
+        // Add comments including transformation info
+        content += `comment Generated from ${plyData.fileName || 'point cloud'}\n`;
+        content += `comment Coordinate system: Blender/OpenGL (Y-up, Z-backward)\n`;
+        if (plyData.comments.length > 0) {
+            plyData.comments.forEach(comment => {
+                content += `comment ${comment}\n`;
+            });
+        }
+        
+        // Vertex element definition
+        content += `element vertex ${vertexCount}\n`;
+        content += 'property float x\n';
+        content += 'property float y\n';
+        content += 'property float z\n';
+        
+        const hasColors = !!colorAttribute;
+        if (hasColors) {
+            content += 'property uchar red\n';
+            content += 'property uchar green\n';
+            content += 'property uchar blue\n';
+        }
+        
+        if (plyData.hasNormals) {
+            content += 'property float nx\n';
+            content += 'property float ny\n';
+            content += 'property float nz\n';
+        }
+        
+        // Face element definition (if any)
+        if (plyData.faceCount > 0) {
+            content += `element face ${plyData.faceCount}\n`;
+            content += 'property list uchar int vertex_indices\n';
+        }
+        
+        content += 'end_header\n';
+        
+        // Vertex data from current geometry (includes transformations)
+        for (let i = 0; i < vertexCount; i++) {
+            const i3 = i * 3;
+            const x = positionAttribute.array[i3];
+            const y = positionAttribute.array[i3 + 1];
+            const z = positionAttribute.array[i3 + 2];
+            
+            content += `${x} ${y} ${z}`;
+            
+            if (hasColors) {
+                const r = Math.round(colorAttribute.array[i3] * 255);
+                const g = Math.round(colorAttribute.array[i3 + 1] * 255);
+                const b = Math.round(colorAttribute.array[i3 + 2] * 255);
+                content += ` ${r} ${g} ${b}`;
+            }
+            
+            if (plyData.hasNormals && plyData.vertices[i]) {
+                const vertex = plyData.vertices[i];
+                content += ` ${vertex.nx || 0} ${vertex.ny || 0} ${vertex.nz || 0}`;
+            }
+            
+            content += '\n';
+        }
+        
+        // Face data (if any) - these don't change with transformations
+        plyData.faces.forEach(face => {
+            content += `${face.indices.length}`;
+            face.indices.forEach(index => {
+                content += ` ${index}`;
+            });
+            content += '\n';
+        });
+        
+        return content;
     }
 }
 

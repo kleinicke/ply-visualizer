@@ -195,6 +195,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         // Request camera parameters for TIF conversion
                         await this.handleCameraParametersRequest(webviewPanel, message);
                         break;
+                    case 'savePlyFile':
+                        // Handle PLY file save request
+                        await this.handleSavePlyFile(webviewPanel, message);
+                        break;
                 }
             }
         );
@@ -993,6 +997,65 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 error: error instanceof Error ? error.message : String(error),
                 requestId: message.requestId
             });
+        }
+    }
+
+    private async handleSavePlyFile(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
+        try {
+            console.log(`📁 Handling PLY save request for: ${message.defaultFileName}`);
+            
+            // Show save dialog
+            const saveUri = await vscode.window.showSaveDialog({
+                defaultUri: vscode.Uri.file(message.defaultFileName),
+                filters: {
+                    'PLY Files': ['ply'],
+                    'All Files': ['*']
+                }
+            });
+
+            if (saveUri) {
+                // User selected a location, write the file
+                console.log(`💾 Saving PLY file to: ${saveUri.fsPath}`);
+                
+                const plyContent = Buffer.from(message.content, 'utf8');
+                await vscode.workspace.fs.writeFile(saveUri, plyContent);
+                
+                // Send success response back to webview
+                webviewPanel.webview.postMessage({
+                    type: 'savePlyFileResult',
+                    success: true,
+                    filePath: saveUri.fsPath,
+                    fileIndex: message.fileIndex
+                });
+                
+                // Show success message to user
+                vscode.window.showInformationMessage(`PLY file saved successfully: ${path.basename(saveUri.fsPath)}`);
+                console.log(`✅ PLY file saved successfully: ${saveUri.fsPath}`);
+                
+            } else {
+                // User cancelled the save dialog
+                console.log('🚫 User cancelled PLY save dialog');
+                webviewPanel.webview.postMessage({
+                    type: 'savePlyFileResult',
+                    success: false,
+                    cancelled: true,
+                    fileIndex: message.fileIndex
+                });
+            }
+            
+        } catch (error) {
+            console.error('❌ Error saving PLY file:', error);
+            
+            // Send error response back to webview
+            webviewPanel.webview.postMessage({
+                type: 'savePlyFileResult',
+                success: false,
+                error: error instanceof Error ? error.message : String(error),
+                fileIndex: message.fileIndex
+            });
+            
+            // Show error message to user
+            vscode.window.showErrorMessage(`Failed to save PLY file: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
