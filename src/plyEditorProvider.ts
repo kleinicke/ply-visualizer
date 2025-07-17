@@ -32,7 +32,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         const isTifFile = document.uri.fsPath.toLowerCase().endsWith('.tif') || document.uri.fsPath.toLowerCase().endsWith('.tiff');
         
         // Show UI immediately before any file processing
-        webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview, isTifFile);
+        webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
         
         // Send immediate message to show loading state
         webviewPanel.webview.postMessage({
@@ -202,7 +202,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
 
 
-    private getHtmlForWebview(webview: vscode.Webview, includeTifSupport: boolean = false): string {
+    private getHtmlForWebview(webview: vscode.Webview): string {
         // Get the local path to bundled webview script
         const scriptPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview', 'main.js');
         const scriptUri = webview.asWebviewUri(scriptPathOnDisk);
@@ -210,12 +210,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         const stylePathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'style.css');
         const styleUri = webview.asWebviewUri(stylePathOnDisk);
 
-        // Add GeoTIFF library if TIF support is needed
-        let geotiffUri = '';
-        if (includeTifSupport) {
-            const geotiffPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'geotiff.min.js');
-            geotiffUri = webview.asWebviewUri(geotiffPathOnDisk).toString();
-        }
+        // Add GeoTIFF library for TIF support
+        const geotiffPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'geotiff.min.js');
+        const geotiffUri = webview.asWebviewUri(geotiffPathOnDisk).toString();
 
         // Use a nonce to only allow specific scripts to be run
         const nonce = getNonce();
@@ -246,7 +243,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         <button class="tab-button active" data-tab="files">Files</button>
                         <button class="tab-button" data-tab="camera">Camera</button>
                         <button class="tab-button" data-tab="controls">Controls</button>
-                        <button class="tab-button ${includeTifSupport ? '' : 'hidden'}" data-tab="tif-controls">TIF Controls</button>
+
                         <button class="tab-button" data-tab="info">Info</button>
                     </div>
                     
@@ -257,7 +254,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                             <div class="panel-section">
                                 <h4>File Management</h4>
                                 <div class="file-controls">
-                                    <button id="add-file" class="primary-button">+ Add PLY File</button>
+                                    <button id="add-file" class="primary-button">+ Add Point Cloud</button>
                                 </div>
                                 <div id="file-list"></div>
                             </div>
@@ -371,60 +368,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                                 </div>
                             </div>
                         </div>
-                        
-                        <!-- TIF Controls Tab -->
-                        <div id="tif-controls-tab" class="tab-panel ${includeTifSupport ? '' : 'hidden'}">
-                            <div class="panel-section">
-                                <h4>Camera Parameters</h4>
-                                <div class="camera-params-controls">
-                                    <div class="input-group">
-                                        <label for="focal-length-input">Focal Length (px):</label>
-                                        <input type="number" id="focal-length-input" min="1" step="1" placeholder="1000">
-                                        <button id="update-focal-length" class="control-button">Update</button>
-                                    </div>
-                                    <div class="input-group">
-                                        <label for="camera-model-select">Camera Model:</label>
-                                        <select id="camera-model-select">
-                                            <option value="pinhole">Pinhole Camera</option>
-                                            <option value="fisheye">Fisheye Camera</option>
-                                        </select>
-                                        <button id="update-camera-model" class="control-button">Update</button>
-                                    </div>
-                                    <div class="input-group">
-                                        <label for="depth-type-select">Depth Type:</label>
-                                        <select id="depth-type-select">
-                                            <option value="euclidean">Euclidean Depth</option>
-                                            <option value="orthogonal">Orthogonal Depth (Z-buffer)</option>
-                                            <option value="disparity">Disparity</option>
-                                        </select>
-                                        <button id="update-depth-type" class="control-button">Update</button>
-                                    </div>
-                                    <div class="input-group" id="baseline-input-group">
-                                        <label for="baseline-input">Baseline (mm):</label>
-                                        <input type="number" id="baseline-input" min="0" step="0.1" placeholder="120.0">
-                                        <button id="update-baseline" class="control-button">Update</button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="panel-section">
-                                <h4>Color Mapping</h4>
-                                <div class="color-mapping-controls">
-                                    <div class="input-group">
-                                        <label for="color-image-input">Color Image:</label>
-                                        <input type="file" id="color-image-input" accept=".png,.jpg,.jpeg,.tif,.tiff">
-                                        <button id="apply-color-image" class="control-button">Apply Colors</button>
-                                    </div>
-                                    <div class="input-group">
-                                        <button id="remove-color-mapping" class="control-button">Remove Color Mapping</button>
-                                    </div>
-                                    <div id="color-mapping-status" class="status-text"></div>
-                                </div>
-                            </div>
-                            <div class="panel-section">
-                                <h4>TIF Info</h4>
-                                <div id="tif-info-display"></div>
-                            </div>
-                        </div>
+
                     </div>
                 </div>
                 
@@ -432,7 +376,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     <canvas id="three-canvas"></canvas>
                 </div>
                 
-                ${includeTifSupport ? `<script nonce="${nonce}" src="${geotiffUri}"></script>` : ''}
+                <script nonce="${nonce}" src="${geotiffUri}"></script>
                 <!-- Load bundled webview script with Three.js -->
                 <script nonce="${nonce}" src="${scriptUri}"></script>
             </body>
@@ -444,66 +388,114 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             canSelectMany: true,
             filters: {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'PLY Files': ['ply']
+                'Point Cloud Files': ['ply', 'xyz', 'tif', 'tiff'],
+                // eslint-disable-next-line @typescript-eslint/naming-convention
+                'PLY Files': ['ply'],
+                // eslint-disable-next-line @typescript-eslint/naming-convention
+                'XYZ Files': ['xyz'],
+                // eslint-disable-next-line @typescript-eslint/naming-convention
+                'TIF Depth Images': ['tif', 'tiff']
             },
-            title: 'Select PLY files to add'
+            title: 'Select point cloud files to add'
         });
 
         if (files && files.length > 0) {
             for (let i = 0; i < files.length; i++) {
                 try {
                     const fileStartTime = performance.now();
-                    console.log(`🚀 ULTIMATE: Processing add file ${path.basename(files[i].fsPath)}`);
+                    const fileName = path.basename(files[i].fsPath);
+                    const fileExtension = path.extname(files[i].fsPath).toLowerCase();
+                    console.log(`🚀 ULTIMATE: Processing add file ${fileName} (${fileExtension})`);
                     
-                    // Read file data
-                    const plyData = await vscode.workspace.fs.readFile(files[i]);
-                    const fileReadTime = performance.now();
-                    
-                    // Parse file (detect format first)
-                    const parser = new PlyParser();
-                    
-                    // Quick format detection
-                    const decoder = new TextDecoder('utf-8');
-                    const headerPreview = decoder.decode(plyData.slice(0, 1024));
-                    const isBinary = headerPreview.includes('binary_little_endian') || headerPreview.includes('binary_big_endian');
-                    
-                    if (isBinary) {
-                        // Use ultimate binary transfer for binary PLY files
-                        const headerResult = await parser.parseHeaderOnly(plyData);
-                        const parseTime = performance.now();
+                    // Handle different file types
+                    if (fileExtension === '.tif' || fileExtension === '.tiff') {
+                        // Handle TIF files for depth conversion
+                        const tifData = await vscode.workspace.fs.readFile(files[i]);
                         
-                        // Add file info
-                        headerResult.headerInfo.fileName = path.basename(files[i].fsPath);
-                        headerResult.headerInfo.fileIndex = i;
+                        // Send TIF data to webview for conversion
+                        webviewPanel.webview.postMessage({
+                            type: 'tifData',
+                            fileName: fileName,
+                            data: tifData.buffer.slice(tifData.byteOffset, tifData.byteOffset + tifData.byteLength),
+                            isAddFile: true // Flag to indicate this is from "Add Point Cloud"
+                        });
                         
-                        // Send ultimate raw binary data
-                        await this.sendUltimateRawBinary(
-                            webviewPanel, 
-                            headerResult.headerInfo, 
-                            headerResult, 
-                            plyData, 
-                            'addFiles'
-                        );
-                    } else {
-                        // Use traditional parsing for ASCII PLY files
-                        console.log(`📝 ASCII PLY detected: ${path.basename(files[i].fsPath)} - using traditional parsing`);
-                        const parsedData = await parser.parse(plyData);
-                        const parseTime = performance.now();
-                        
-                        // Add file info
-                        parsedData.fileName = path.basename(files[i].fsPath);
-                        parsedData.fileIndex = i;
-                        
-                        // Send via traditional method (will use binary transfer if possible)
-                        await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'addFiles');
+                        console.log(`🎯 TIF Add File: ${fileName} sent for processing`);
+                        continue;
                     }
                     
-                    const totalTime = performance.now();
-                    console.log(`🎯 ULTIMATE Add File: ${path.basename(files[i].fsPath)} processed in ${(totalTime - fileStartTime).toFixed(1)}ms`);
+                    // Handle PLY files (existing logic)
+                    if (fileExtension === '.ply') {
+                        // Read file data
+                        const plyData = await vscode.workspace.fs.readFile(files[i]);
+                        const fileReadTime = performance.now();
+                        
+                        // Parse file (detect format first)
+                        const parser = new PlyParser();
+                        
+                        // Quick format detection
+                        const decoder = new TextDecoder('utf-8');
+                        const headerPreview = decoder.decode(plyData.slice(0, 1024));
+                        const isBinary = headerPreview.includes('binary_little_endian') || headerPreview.includes('binary_big_endian');
+                        
+                        if (isBinary) {
+                            // Use ultimate binary transfer for binary PLY files
+                            const headerResult = await parser.parseHeaderOnly(plyData);
+                            const parseTime = performance.now();
+                            
+                            // Add file info
+                            headerResult.headerInfo.fileName = fileName;
+                            headerResult.headerInfo.fileIndex = i;
+                            
+                            // Send ultimate raw binary data
+                            await this.sendUltimateRawBinary(
+                                webviewPanel, 
+                                headerResult.headerInfo, 
+                                headerResult, 
+                                plyData, 
+                                'addFiles'
+                            );
+                        } else {
+                            // Use traditional parsing for ASCII PLY files
+                            console.log(`📝 ASCII PLY detected: ${fileName} - using traditional parsing`);
+                            const parsedData = await parser.parse(plyData);
+                            const parseTime = performance.now();
+                            
+                            // Add file info
+                            parsedData.fileName = fileName;
+                            parsedData.fileIndex = i;
+                            
+                            // Send via traditional method (will use binary transfer if possible)
+                            await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'addFiles');
+                        }
+                        
+                        const totalTime = performance.now();
+                        console.log(`🎯 ULTIMATE Add PLY File: ${fileName} processed in ${(totalTime - fileStartTime).toFixed(1)}ms`);
+                        continue;
+                    }
+                    
+                    // Handle XYZ files
+                    if (fileExtension === '.xyz') {
+                        const xyzData = await vscode.workspace.fs.readFile(files[i]);
+                        
+                        // Send XYZ data to webview for parsing
+                        webviewPanel.webview.postMessage({
+                            type: 'xyzData',
+                            fileName: fileName,
+                            data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength),
+                            isAddFile: true
+                        });
+                        
+                        console.log(`🎯 XYZ Add File: ${fileName} sent for processing`);
+                        continue;
+                    }
+                    
+                    // Unsupported file type
+                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .tif, .tiff`);
                     
                 } catch (error) {
-                    console.error(`Failed to load PLY file ${files[i].fsPath}:`, error);
-                    vscode.window.showErrorMessage(`Failed to load PLY file ${files[i].fsPath}: ${error}`);
+                    console.error(`Failed to load file ${files[i].fsPath}:`, error);
+                    vscode.window.showErrorMessage(`Failed to load file ${files[i].fsPath}: ${error}`);
                 }
             }
         }
@@ -907,7 +899,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
             if (!cameraModel) {
                 webviewPanel.webview.postMessage({
-                    type: 'cameraParamsCancelled'
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
                 });
                 return;
             }
@@ -927,7 +920,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
             if (!depthType) {
                 webviewPanel.webview.postMessage({
-                    type: 'cameraParamsCancelled'
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
                 });
                 return;
             }
@@ -948,7 +942,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
             if (!focalLengthInput) {
                 webviewPanel.webview.postMessage({
-                    type: 'cameraParamsCancelled'
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
                 });
                 return;
             }
@@ -973,7 +968,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
                 if (!baselineInput) {
                     webviewPanel.webview.postMessage({
-                        type: 'cameraParamsCancelled'
+                        type: 'cameraParamsCancelled',
+                        requestId: message.requestId
                     });
                     return;
                 }
@@ -987,13 +983,15 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 cameraModel: cameraModel.value,
                 focalLength: focalLength,
                 depthType: depthType.value,
-                baseline: baseline
+                baseline: baseline,
+                requestId: message.requestId
             });
 
         } catch (error) {
             webviewPanel.webview.postMessage({
                 type: 'cameraParamsError',
-                error: error instanceof Error ? error.message : String(error)
+                error: error instanceof Error ? error.message : String(error),
+                requestId: message.requestId
             });
         }
     }

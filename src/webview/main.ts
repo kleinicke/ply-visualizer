@@ -95,9 +95,13 @@ class PLYVisualizer {
         lastChunkTime: number;
     }> = new Map();
     
-    // TIF processing state
-    private pendingTifData: ArrayBuffer | null = null;
-    private pendingTifFileName: string | null = null;
+    // TIF processing state - support multiple pending TIF files
+    private pendingTifFiles: Map<string, {
+        data: ArrayBuffer;
+        fileName: string;
+        isAddFile: boolean;
+        requestId: string;
+    }> = new Map();
     
     // TIF conversion tracking
     private originalTifData: ArrayBuffer | null = null;
@@ -1656,14 +1660,17 @@ class PLYVisualizer {
                 case 'tifData':
                     this.handleTifData(message);
                     break;
+                case 'xyzData':
+                    this.handleXyzData(message);
+                    break;
                 case 'cameraParams':
                     this.handleCameraParams(message);
                     break;
                 case 'cameraParamsCancelled':
-                    this.handleCameraParamsCancelled();
+                    this.handleCameraParamsCancelled(message.requestId);
                     break;
                 case 'cameraParamsError':
-                    this.handleCameraParamsError(message.error);
+                    this.handleCameraParamsError(message.error, message.requestId);
                     break;
             }
         });
@@ -3405,8 +3412,17 @@ class PLYVisualizer {
     private async handleTifData(message: any): Promise<void> {
         try {
             console.log('Received TIF data for processing:', message.fileName);
-            this.pendingTifData = message.data;
-            this.pendingTifFileName = message.fileName;
+            
+            // Generate unique request ID for this TIF file
+            const requestId = `tif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            
+            // Store TIF data in the map
+            this.pendingTifFiles.set(requestId, {
+                data: message.data,
+                fileName: message.fileName,
+                isAddFile: message.isAddFile || false,
+                requestId: requestId
+            });
             
             // First, analyze the TIF to determine if it's a depth image or regular image
             const tiff = await GeoTIFF.fromArrayBuffer(message.data);
@@ -3424,15 +3440,29 @@ class PLYVisualizer {
             const isDepthImage = this.isDepthTifImage(samplesPerPixel, sampleFormat, bitsPerSample);
             
             if (isDepthImage) {
-                console.log('Detected depth TIF image - requesting camera parameters for point cloud conversion');
+                console.log('Detected depth TIF image - checking for saved camera parameters...');
                 
-                // Request camera parameters from the extension for depth conversion
-                this.vscode.postMessage({
-                    type: 'requestCameraParams',
-                    fileName: message.fileName
-                });
+                // Check for saved camera parameters in localStorage
+                const savedParams = this.loadSavedCameraParams();
                 
-                this.showStatus('Waiting for camera parameters...');
+                if (savedParams) {
+                    console.log('Using saved camera parameters:', savedParams);
+                    this.showStatus(`Using saved settings: ${savedParams.cameraModel} camera, focal length ${savedParams.focalLength}px, ${savedParams.depthType} depth...`);
+                    
+                    // Use saved parameters directly
+                    await this.processTifWithParams(requestId, savedParams);
+                } else {
+                    console.log('No saved parameters found - requesting camera parameters from user');
+                    
+                    // Request camera parameters from the extension for depth conversion
+                    this.vscode.postMessage({
+                        type: 'requestCameraParams',
+                        fileName: message.fileName,
+                        requestId: requestId
+                    });
+                    
+                    this.showStatus('Waiting for camera parameters...');
+                }
             } else {
                 const bitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 'unknown';
                 const formatDesc = sampleFormat === 3 ? 'float' : sampleFormat === 1 ? 'uint' : sampleFormat === 2 ? 'int' : 'unknown';
@@ -3440,9 +3470,8 @@ class PLYVisualizer {
                 console.log('Detected regular TIF image - not suitable for point cloud conversion');
                 this.showError(`This TIF file appears to be a regular image (${samplesPerPixel} channel(s), ${bitDepth}-bit ${formatDesc}) rather than a depth image. Please use a single-channel floating-point (float16 or float32) depth TIF for point cloud conversion.`);
                 
-                // Clear pending data since we won't process this
-                this.pendingTifData = null;
-                this.pendingTifFileName = null;
+                // Remove from pending files since we won't process this
+                this.pendingTifFiles.delete(requestId);
             }
             
         } catch (error) {
@@ -3451,15 +3480,91 @@ class PLYVisualizer {
         }
     }
 
+    private async handleXyzData(message: any): Promise<void> {
+        try {
+            console.log('Received XYZ data for processing:', message.fileName);
+            this.showStatus('Parsing XYZ file...');
+            
+            // Parse XYZ file (simple format: x y z [r g b] per line)
+            const decoder = new TextDecoder('utf-8');
+            const text = decoder.decode(message.data);
+            const lines = text.split('\n').filter(line => line.trim().length > 0);
+            
+            const vertices: PlyVertex[] = [];
+            let hasColors = false;
+            
+            for (const line of lines) {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length >= 3) {
+                    const x = parseFloat(parts[0]);
+                    const y = parseFloat(parts[1]);
+                    const z = parseFloat(parts[2]);
+                    
+                    if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                        const vertex: PlyVertex = { x, y, z };
+                        
+                        // Check for color data (RGB values)
+                        if (parts.length >= 6) {
+                            const r = parseInt(parts[3]);
+                            const g = parseInt(parts[4]);
+                            const b = parseInt(parts[5]);
+                            
+                            if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+                                vertex.red = Math.max(0, Math.min(255, r));
+                                vertex.green = Math.max(0, Math.min(255, g));
+                                vertex.blue = Math.max(0, Math.min(255, b));
+                                hasColors = true;
+                            }
+                        }
+                        
+                        vertices.push(vertex);
+                    }
+                }
+            }
+            
+            if (vertices.length === 0) {
+                throw new Error('No valid vertices found in XYZ file');
+            }
+            
+            // Create PLY data structure
+            const plyData: PlyData = {
+                vertices,
+                faces: [],
+                format: 'ascii',
+                version: '1.0',
+                comments: [`Converted from XYZ file: ${message.fileName}`],
+                vertexCount: vertices.length,
+                faceCount: 0,
+                hasColors,
+                hasNormals: false,
+                fileName: message.fileName.replace(/\.xyz$/i, '_pointcloud.ply'),
+                fileIndex: this.plyFiles.length
+            };
+            
+            // Add to visualization
+            if (message.isAddFile) {
+                this.addNewFiles([plyData]);
+            } else {
+                await this.displayFiles([plyData]);
+            }
+            
+            this.showStatus(`XYZ file loaded successfully! ${vertices.length.toLocaleString()} points${hasColors ? ' with colors' : ''}`);
+            
+        } catch (error) {
+            console.error('Error handling XYZ data:', error);
+            this.showError(`Failed to process XYZ file: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
     private async handleCameraParams(message: any): Promise<void> {
         try {
-            if (!this.pendingTifData || !this.pendingTifFileName) {
+            const requestId = message.requestId;
+            if (!requestId || !this.pendingTifFiles.has(requestId)) {
                 throw new Error('No TIF data available for processing');
             }
 
             console.log('Processing TIF with camera params:', message);
-            this.showStatus('Converting depth image to point cloud...');
-
+            
             const cameraParams: CameraParams = {
                 cameraModel: message.cameraModel,
                 focalLength: message.focalLength,
@@ -3467,54 +3572,12 @@ class PLYVisualizer {
                 baseline: message.baseline
             };
 
-            // Store original data for re-processing
-            this.originalTifData = this.pendingTifData;
-            this.originalTifFileName = this.pendingTifFileName;
-            this.currentCameraParams = cameraParams;
-
-            // Process the TIF data
-            const result = await this.processTifToPointCloud(this.pendingTifData, cameraParams);
+            // Save camera parameters for future use
+            this.saveCameraParams(cameraParams);
+            console.log('✅ Camera parameters saved for future TIF files');
             
-            // Store TIF dimensions for color validation
-            const tiff = await GeoTIFF.fromArrayBuffer(this.pendingTifData);
-            const image = await tiff.getImage();
-            this.tifDimensions = {
-                width: image.getWidth(),
-                height: image.getHeight()
-            };
-            
-            // Create PLY data structure
-            const plyData: PlyData = {
-                vertices: this.convertTifResultToVertices(result),
-                faces: [],
-                format: 'binary_little_endian',
-                version: '1.0',
-                comments: [
-                `Converted from TIF depth image: ${this.pendingTifFileName}`, 
-                `Camera: ${cameraParams.cameraModel}`, 
-                `Depth type: ${cameraParams.depthType}`,
-                `Focal length: ${cameraParams.focalLength}px`,
-                ...(cameraParams.baseline ? [`Baseline: ${cameraParams.baseline}mm`] : [])
-            ],
-                vertexCount: result.pointCount,
-                faceCount: 0,
-                hasColors: !!result.colors,
-                hasNormals: false,
-                fileName: this.pendingTifFileName.replace(/\.(tif|tiff)$/i, '_pointcloud.ply'),
-                fileIndex: this.plyFiles.length
-            };
-
-            // Add to visualization
-            await this.displayFiles([plyData]);
-            
-            // Clear pending data
-            this.pendingTifData = null;
-            this.pendingTifFileName = null;
-            
-            // Initialize TIF controls UI
-            this.initializeTifControls();
-            
-            this.showStatus('TIF conversion completed successfully!');
+            // Process the TIF file
+            await this.processTifWithParams(requestId, cameraParams);
             
         } catch (error) {
             console.error('Error processing TIF with camera params:', error);
@@ -3522,18 +3585,114 @@ class PLYVisualizer {
         }
     }
 
-    private handleCameraParamsCancelled(): void {
-        console.log('Camera parameter selection cancelled');
-        this.pendingTifData = null;
-        this.pendingTifFileName = null;
-        this.showError('TIF conversion cancelled by user');
+    private loadSavedCameraParams(): CameraParams | null {
+        try {
+            const saved = localStorage.getItem('plyVisualizerCameraParams');
+            if (saved) {
+                return JSON.parse(saved);
+            }
+        } catch (error) {
+            console.warn('Failed to load saved camera parameters:', error);
+        }
+        return null;
     }
 
-    private handleCameraParamsError(error: string): void {
+    private saveCameraParams(params: CameraParams): void {
+        try {
+            localStorage.setItem('plyVisualizerCameraParams', JSON.stringify(params));
+            console.log('Camera parameters saved for future use');
+        } catch (error) {
+            console.warn('Failed to save camera parameters:', error);
+        }
+    }
+
+    private async processTifWithParams(requestId: string, cameraParams: CameraParams): Promise<void> {
+        const tifFileData = this.pendingTifFiles.get(requestId);
+        if (!tifFileData) {
+            throw new Error('TIF data not found for processing');
+        }
+
+        console.log('Processing TIF with camera params:', cameraParams);
+        this.showStatus('Converting depth image to point cloud...');
+
+        // Store original data for re-processing (for the first/current TIF file)
+        this.originalTifData = tifFileData.data;
+        this.originalTifFileName = tifFileData.fileName;
+        this.currentCameraParams = cameraParams;
+
+        // Process the TIF data
+        const result = await this.processTifToPointCloud(tifFileData.data, cameraParams);
+        
+        // Store TIF dimensions for color validation
+        const tiff = await GeoTIFF.fromArrayBuffer(tifFileData.data);
+        const image = await tiff.getImage();
+        this.tifDimensions = {
+            width: image.getWidth(),
+            height: image.getHeight()
+        };
+        
+        // Create PLY data structure
+        const plyData: PlyData = {
+            vertices: this.convertTifResultToVertices(result),
+            faces: [],
+            format: 'binary_little_endian',
+            version: '1.0',
+            comments: [
+            `Converted from TIF depth image: ${tifFileData.fileName}`, 
+            `Camera: ${cameraParams.cameraModel}`, 
+            `Depth type: ${cameraParams.depthType}`,
+            `Focal length: ${cameraParams.focalLength}px`,
+            ...(cameraParams.baseline ? [`Baseline: ${cameraParams.baseline}mm`] : [])
+        ],
+            vertexCount: result.pointCount,
+            faceCount: 0,
+            hasColors: !!result.colors,
+            hasNormals: false,
+            fileName: tifFileData.fileName.replace(/\.(tif|tiff)$/i, '_pointcloud.ply'),
+            fileIndex: this.plyFiles.length
+        };
+
+        // Add to visualization based on whether this is an add file or initial load
+        if (tifFileData.isAddFile) {
+            this.addNewFiles([plyData]);
+        } else {
+            await this.displayFiles([plyData]);
+        }
+        
+        // Remove from pending files
+        this.pendingTifFiles.delete(requestId);
+        
+        // TIF file processed successfully
+        const settingsSaved = localStorage.getItem('plyVisualizerCameraParams') ? true : false;
+        this.showStatus(`TIF conversion completed successfully!${settingsSaved ? ' (Settings saved for future use)' : ''}`);
+    }
+
+    private handleCameraParamsCancelled(requestId?: string): void {
+        console.log('Camera parameter selection cancelled');
+        if (requestId && this.pendingTifFiles.has(requestId)) {
+            // Remove only the specific cancelled TIF file
+            const tifData = this.pendingTifFiles.get(requestId);
+            this.pendingTifFiles.delete(requestId);
+            this.showError(`TIF conversion cancelled for ${tifData?.fileName || 'file'}`);
+        } else {
+            // Fallback: clear all pending TIF files
+            this.pendingTifFiles.clear();
+            this.showError('TIF conversion cancelled by user');
+        }
+    }
+
+    private handleCameraParamsError(error: string, requestId?: string): void {
         console.error('Camera parameter error:', error);
-        this.pendingTifData = null;
-        this.pendingTifFileName = null;
-        this.showError(`Camera parameter error: ${error}`);
+        if (requestId && this.pendingTifFiles.has(requestId)) {
+            // Remove only the specific TIF file with error
+            const tifData = this.pendingTifFiles.get(requestId);
+            this.pendingTifFiles.delete(requestId);
+            this.showError(`Camera parameter error for ${tifData?.fileName || 'file'}: ${error}`);
+        } else {
+            // Fallback: clear all pending TIF files
+            this.pendingTifFiles.clear();
+            this.showError(`Camera parameter error: ${error}`);
+        }
     }
 
     /**
@@ -3883,7 +4042,7 @@ class PLYVisualizer {
 
             this.currentCameraParams.focalLength = newFocalLength;
             await this.reprocessTifData();
-            this.initializeTifControls(); // Refresh UI
+            // Focal length updated
             
         } catch (error) {
             console.error('Error updating focal length:', error);
@@ -3904,7 +4063,7 @@ class PLYVisualizer {
             const newCameraModel = cameraModelSelect.value as 'pinhole' | 'fisheye';
             this.currentCameraParams.cameraModel = newCameraModel;
             await this.reprocessTifData();
-            this.initializeTifControls(); // Refresh UI
+            // Camera model updated
             
         } catch (error) {
             console.error('Error updating camera model:', error);
@@ -3933,7 +4092,7 @@ class PLYVisualizer {
             }
             
             await this.reprocessTifData();
-            this.initializeTifControls(); // Refresh UI
+            // Depth type updated
             
         } catch (error) {
             console.error('Error updating depth type:', error);
@@ -3959,7 +4118,7 @@ class PLYVisualizer {
 
             this.currentCameraParams.baseline = newBaseline;
             await this.reprocessTifData();
-            this.initializeTifControls(); // Refresh UI
+            // Baseline updated
             
         } catch (error) {
             console.error('Error updating baseline:', error);
@@ -4019,16 +4178,43 @@ class PLYVisualizer {
             fileIndex: 0
         };
 
-        // Replace existing point cloud
-        if (this.plyFiles.length > 0) {
-            // Remove all existing files
-            while (this.plyFiles.length > 0) {
-                this.removeFileByIndex(0);
+        // Find and replace the specific TIF file instead of removing all files
+        let tifFileIndex = -1;
+        for (let i = 0; i < this.plyFiles.length; i++) {
+            const originalFileName = this.originalTifFileName?.replace(/\.(tif|tiff)$/i, '_pointcloud.ply');
+            if (this.plyFiles[i].fileName === originalFileName) {
+                tifFileIndex = i;
+                break;
             }
         }
         
-        // Display updated point cloud
-        await this.displayFiles([plyData]);
+        if (tifFileIndex >= 0) {
+            // Update existing TIF file
+            plyData.fileIndex = tifFileIndex;
+            
+            // Remove old file
+            this.removeFileByIndex(tifFileIndex);
+            
+            // Insert updated file at the same position
+            this.plyFiles.splice(tifFileIndex, 0, plyData);
+            
+            // Recreate geometry and material
+            const geometry = this.createGeometryFromPlyData(plyData);
+            const material = this.createMaterialForFile(plyData, tifFileIndex);
+            const mesh = new THREE.Points(geometry, material);
+            
+            // Replace mesh at the same position
+            this.scene.remove(this.meshes[tifFileIndex]);
+            this.meshes[tifFileIndex] = mesh;
+            this.scene.add(mesh);
+            
+            // Update UI
+            this.updateFileList();
+            this.updateFileStats();
+        } else {
+            // If TIF file not found, add as new file
+            this.addNewFiles([plyData]);
+        }
         
         this.showStatus('Point cloud updated successfully!');
     }
