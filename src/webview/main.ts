@@ -1031,14 +1031,59 @@ class PLYVisualizer {
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, this.camera);
         
-        // Set parameters for better point cloud picking
-        raycaster.params.Points.threshold = 0.01; // Increase threshold for easier point picking
-
+        // Progressive threshold approach for double-click detection
+        const validPointSizes = this.pointSizes.filter(size => size > 0);
+        const maxPointSize = validPointSizes.length > 0 ? Math.max(...validPointSizes) : 0.001;
+        
         // Find intersections with all visible meshes
         const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
-        const intersects = raycaster.intersectObjects(visibleMeshes, false);
+        
+        // Debug camera and ray information
+        console.log(`📷 Camera position: [${this.camera.position.x.toFixed(3)}, ${this.camera.position.y.toFixed(3)}, ${this.camera.position.z.toFixed(3)}]`);
+        console.log(`🎯 Mouse coordinates: [${mouse.x.toFixed(3)}, ${mouse.y.toFixed(3)}]`);
+        
+        // Debug visible meshes
+        visibleMeshes.forEach((mesh, index) => {
+            const realIndex = this.meshes.indexOf(mesh);
+            const geometry = mesh.geometry as THREE.BufferGeometry;
+            const positionAttribute = geometry.getAttribute('position');
+            const pointCount = positionAttribute ? positionAttribute.count : 0;
+            console.log(`🔍 Mesh ${realIndex}: ${mesh.constructor.name}, ${pointCount} points, material size: ${(mesh.material as any).size || 'N/A'}`);
+        });
+        
+        // Try progressive thresholds until we find an intersection
+        const thresholds = [
+            Math.max(maxPointSize * 10, 0.001), // Start with point-size based threshold
+            0.01,  // Small threshold
+            0.05,  // Medium threshold  
+            0.1,   // Larger threshold
+            0.5,   // Large threshold
+            2.0    // Very large threshold for distant point clouds
+        ];
+        
+        let intersects: THREE.Intersection[] = [];
+        let usedThreshold = 0;
+        
+        for (const threshold of thresholds) {
+            raycaster.params.Points.threshold = threshold;
+            intersects = raycaster.intersectObjects(visibleMeshes, false);
+            usedThreshold = threshold;
+            
+            console.log(`🎯 Trying threshold ${threshold}: ${intersects.length} intersections found`);
+            
+            if (intersects.length > 0) {
+                console.log(`✅ Success with threshold ${threshold}! Distance to closest point: ${intersects[0].distance.toFixed(3)}`);
+                break;
+            }
+        }
+        
+        console.log(`🔍 Final result: ${intersects.length} intersections found using threshold ${usedThreshold}`);
 
         if (intersects.length > 0) {
+            console.log(`🎯 Found ${intersects.length} intersections:`);
+            intersects.forEach((intersect, i) => {
+                console.log(`  ${i}: distance=${intersect.distance.toFixed(3)}, point=[${intersect.point.x.toFixed(3)}, ${intersect.point.y.toFixed(3)}, ${intersect.point.z.toFixed(3)}]`);
+            });
             // Get the closest intersection point
             const intersectionPoint = intersects[0].point;
             
@@ -1743,12 +1788,18 @@ class PLYVisualizer {
             const material = new THREE.PointsMaterial();
             
             // Initialize point size if not set
-                if (!this.pointSizes[fileIndex]) {
-        this.pointSizes[fileIndex] = 0.0001;  // Default point size 1e-4
-    }
+            if (!this.pointSizes[fileIndex]) {
+                this.pointSizes[fileIndex] = 0.001;  // Default point size for better visibility
+            }
             
             material.size = this.pointSizes[fileIndex];
-            material.sizeAttenuation = true;
+            material.sizeAttenuation = true; // Always use distance-based scaling
+            
+            // Improve point rendering quality
+            material.transparent = true;
+            material.alphaTest = 0.1; // Helps with point edge quality
+            
+            console.log(`📍 Created PointsMaterial for file ${fileIndex}: size=${material.size}, sizeAttenuation=${material.sizeAttenuation}`);
             
             if (colorMode === 'original' && data.hasColors) {
                 // Use original colors from the PLY file
@@ -1923,8 +1974,8 @@ class PLYVisualizer {
                     ${data.faceCount === 0 ? `
                     <div class="point-size-control">
                         <label for="size-${i}">Point Size:</label>
-                        <input type="range" id="size-${i}" min="0.00001" max="0.01" step="0.00001" value="${this.pointSizes[i] || 0.0001}" class="size-slider">
-                        <span class="size-value">${(this.pointSizes[i] || 0.0001).toFixed(5)}</span>
+                        <input type="range" id="size-${i}" min="0.00001" max="0.01" step="0.00001" value="${this.pointSizes[i] || 0.001}" class="size-slider">
+                        <span class="size-value">${(this.pointSizes[i] || 0.001).toFixed(5)}</span>
                     </div>
                     ` : ''}
                     
@@ -2334,7 +2385,7 @@ class PLYVisualizer {
             this.scene.add(mesh);
             this.meshes.push(mesh);
             this.fileVisibility.push(true);
-            this.pointSizes.push(0.0001); // Changed from 0.001 to 1e-4 (0.0001) as default
+            this.pointSizes.push(0.001); // Default point size for good visibility
             
             // Initialize transformation matrix for this file
             this.transformationMatrices.push(new THREE.Matrix4());
@@ -2808,13 +2859,21 @@ class PLYVisualizer {
 
     private updatePointSize(fileIndex: number, newSize: number): void {
         if (fileIndex >= 0 && fileIndex < this.pointSizes.length) {
+            const oldSize = this.pointSizes[fileIndex];
+            console.log(`🎚️ Updating point size for file ${fileIndex}: ${oldSize} → ${newSize}`);
             this.pointSizes[fileIndex] = newSize;
             
             // Update the material if it's a Points material
             const mesh = this.meshes[fileIndex];
             if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
                 mesh.material.size = newSize;
+                console.log(`✅ Point size applied to material for file ${fileIndex}: ${newSize}`);
+            } else {
+                console.warn(`⚠️ Could not apply point size for file ${fileIndex}: mesh is not Points or material is not PointsMaterial`);
+                console.log(`Mesh type: ${mesh?.constructor.name}, Material type: ${mesh?.material?.constructor.name}`);
             }
+        } else {
+            console.error(`❌ Invalid fileIndex ${fileIndex} for pointSizes array of length ${this.pointSizes.length}`);
         }
     }
 
@@ -3546,6 +3605,8 @@ class PLYVisualizer {
             // Determine if this is a depth image or regular image
             const isDepthImage = this.isDepthTifImage(samplesPerPixel, sampleFormat, bitsPerSample);
             
+            console.log(`🔍 TIF image classification: ${isDepthImage ? 'DEPTH/DISPARITY IMAGE' : 'REGULAR IMAGE'}`);
+            
             if (isDepthImage) {
                 console.log('Detected depth TIF image - checking for saved camera parameters...');
                 
@@ -3580,7 +3641,7 @@ class PLYVisualizer {
                 const formatDesc = sampleFormat === 3 ? 'float' : sampleFormat === 1 ? 'uint' : sampleFormat === 2 ? 'int' : 'unknown';
                 
                 console.log('Detected regular TIF image - not suitable for point cloud conversion');
-                this.showError(`This TIF file appears to be a regular image (${samplesPerPixel} channel(s), ${bitDepth}-bit ${formatDesc}) rather than a depth image. Please use a single-channel floating-point (float16 or float32) depth TIF for point cloud conversion.`);
+                this.showError(`This TIF file appears to be a regular image (${samplesPerPixel} channel(s), ${bitDepth}-bit ${formatDesc}) rather than a depth/disparity image. Please use a single-channel depth TIF (floating-point) or disparity TIF (integer or floating-point) for point cloud conversion.`);
                 
                 // Remove from pending files since we won't process this
                 this.pendingTifFiles.delete(requestId);
@@ -3840,6 +3901,8 @@ class PLYVisualizer {
             const rawDepthData = rasters[0];
             let depthData: Float32Array;
             
+            console.log(`📊 Raw TIF data: type=${rawDepthData.constructor.name}, length=${rawDepthData.length}, depthType=${cameraParams.depthType}`);
+            
             if (rawDepthData instanceof Float32Array) {
                 depthData = rawDepthData;
                 console.log('Using original Float32Array depth data');
@@ -3849,11 +3912,34 @@ class PLYVisualizer {
                 for (let i = 0; i < rawDepthData.length; i++) {
                     depthData[i] = rawDepthData[i];
                 }
-                console.log('Converted Uint16Array to Float32Array for depth processing');
+                console.log('Converted Uint16Array to Float32Array for depth/disparity processing');
+                
+                // Log sample values for debugging disparity conversion
+                if (cameraParams.depthType === 'disparity') {
+                    const sampleValues = Array.from(depthData.slice(0, 10));
+                    console.log(`📈 Sample disparity values: [${sampleValues.join(', ')}]`);
+                }
+            } else if (rawDepthData instanceof Uint8Array) {
+                // Convert uint8 to float32 for processing
+                depthData = new Float32Array(rawDepthData.length);
+                for (let i = 0; i < rawDepthData.length; i++) {
+                    depthData[i] = rawDepthData[i];
+                }
+                console.log('Converted Uint8Array to Float32Array for depth/disparity processing');
+                
+                // Log sample values for debugging disparity conversion
+                if (cameraParams.depthType === 'disparity') {
+                    const sampleValues = Array.from(depthData.slice(0, 10));
+                    console.log(`📈 Sample disparity values: [${sampleValues.join(', ')}]`);
+                }
             } else {
                 // Fallback: convert whatever we have to Float32Array
                 depthData = new Float32Array(rawDepthData);
-                console.log(`Converted ${rawDepthData.constructor.name} to Float32Array for depth processing`);
+                console.log(`Converted ${rawDepthData.constructor.name} to Float32Array for depth/disparity processing`);
+                
+                // Log sample values for debugging
+                const sampleValues = Array.from(depthData.slice(0, 10));
+                console.log(`📈 Sample values after conversion: [${sampleValues.join(', ')}]`);
             }
             
             // Calculate camera intrinsics (principal point at image center)
@@ -3968,8 +4054,15 @@ class PLYVisualizer {
                             console.warn('Baseline is required for disparity conversion, skipping point');
                             continue;
                         }
+                        
+                        const originalDisparity = depth;
                         // Convert disparity to depth: depth = baseline * focal_length / disparity
                         depth = (baseline * fx) / depth;
+                        
+                        // Log conversion for debugging (only for first few pixels)
+                        if (v === 0 && u < 5) {
+                            console.log(`🔄 Disparity conversion: disparity=${originalDisparity} → depth=${depth} (baseline=${baseline}, fx=${fx})`);
+                        }
                         
                         // Re-validate depth after conversion (disparity could be 0 → depth = Infinity)
                         if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
@@ -4331,6 +4424,14 @@ class PLYVisualizer {
             // Recreate geometry and material
             const geometry = this.createGeometryFromPlyData(plyData);
             const material = this.createMaterialForFile(plyData, tifFileIndex);
+            
+            // Ensure point size is correctly applied to the new material
+            if (material instanceof THREE.PointsMaterial) {
+                const currentPointSize = this.pointSizes[tifFileIndex] || 0.001;
+                material.size = currentPointSize;
+                console.log(`🔧 Applied point size ${currentPointSize} to reprocessed TIF material for file ${tifFileIndex}`);
+            }
+            
             const mesh = new THREE.Points(geometry, material);
             
             // Replace mesh at the same position
@@ -4613,7 +4714,7 @@ class PLYVisualizer {
 
     /**
      * Determine if a TIF image is a depth image suitable for point cloud conversion
-     * Only floating-point formats are considered valid depth images
+     * Accepts both floating-point and integer formats (for disparity images)
      */
     private isDepthTifImage(samplesPerPixel: number, sampleFormat: number | null, bitsPerSample: number[]): boolean {
         // Depth images should be single-channel
@@ -4621,22 +4722,22 @@ class PLYVisualizer {
             return false;
         }
         
-        // Only floating-point formats are valid for depth images (sampleFormat 3)
-        // Integer formats (sampleFormat 1, 2) are not considered valid depth images
-        if (sampleFormat !== 3) {
+        // Accept floating-point formats (sampleFormat 3) for depth images
+        // and integer formats (sampleFormat 1, 2) for disparity images
+        if (sampleFormat !== null && sampleFormat !== 1 && sampleFormat !== 2 && sampleFormat !== 3) {
             return false;
         }
         
         // If bit depth information is available, validate it
         if (bitsPerSample && bitsPerSample.length > 0 && bitsPerSample[0] !== undefined) {
             const bitDepth = bitsPerSample[0];
-            // If bit depth is known, it should be 16 or 32 for depth images
-            if (bitDepth !== 16 && bitDepth !== 32) {
+            // Accept common bit depths for depth/disparity images
+            if (bitDepth !== 8 && bitDepth !== 16 && bitDepth !== 32) {
                 return false;
             }
         }
-        // If bit depth is unknown but format is confirmed float, accept it
         
+        console.log(`✅ TIF validated as depth/disparity image: samples=${samplesPerPixel}, format=${sampleFormat}, bits=${bitsPerSample?.[0]}`);
         return true;
     }
 
@@ -4735,6 +4836,13 @@ class PLYVisualizer {
             const newMaterial = this.createMaterialForFile(plyData, fileIndex);
             this.meshes[fileIndex].material = newMaterial;
             
+            // Ensure point size is correctly applied to the new material
+            if (this.meshes[fileIndex] instanceof THREE.Points && newMaterial instanceof THREE.PointsMaterial) {
+                const currentPointSize = this.pointSizes[fileIndex] || 0.001;
+                newMaterial.size = currentPointSize;
+                console.log(`🔧 Applied point size ${currentPointSize} to updated TIF material for file ${fileIndex}`);
+            }
+            
             // Update geometry
             const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
             
@@ -4820,6 +4928,13 @@ class PLYVisualizer {
             const oldMaterial = this.meshes[fileIndex].material;
             const newMaterial = this.createMaterialForFile(plyData, fileIndex);
             this.meshes[fileIndex].material = newMaterial;
+            
+            // Ensure point size is correctly applied to the new material
+            if (this.meshes[fileIndex] instanceof THREE.Points && newMaterial instanceof THREE.PointsMaterial) {
+                const currentPointSize = this.pointSizes[fileIndex] || 0.001;
+                newMaterial.size = currentPointSize;
+                console.log(`🔧 Applied point size ${currentPointSize} to color-updated TIF material for file ${fileIndex}`);
+            }
             
             // Update geometry with colors
             const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
