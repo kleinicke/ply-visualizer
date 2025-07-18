@@ -217,6 +217,14 @@ body {
     border-color: var(--vscode-button-border);
 }
 
+.setting-description {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+    margin: 8px 0 0 0;
+    line-height: 1.3;
+    font-style: italic;
+}
+
 .button-shortcut {
     background-color: var(--vscode-badge-background);
     color: var(--vscode-badge-foreground);

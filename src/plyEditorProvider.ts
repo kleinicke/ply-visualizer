@@ -301,6 +301,13 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                                     <button id="inverse-trackball-controls" class="control-button">Inverse <span class="button-shortcut">I</span></button>
                                 </div>
                             </div>
+                            <div class="panel-section">
+                                <h4>Color Settings</h4>
+                                <div class="control-buttons">
+                                    <button id="toggle-gamma-correction" class="control-button">Toggle Gamma Correction <span class="button-shortcut">G</span></button>
+                                </div>
+                                <p class="setting-description">Linear color space (disabled gamma) is recommended for already gamma-corrected images</p>
+                            </div>
                         </div>
                         
                         <!-- Info Tab -->
@@ -367,6 +374,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                                     <div class="shortcut-item">
                                         <span class="shortcut-key">W</span>
                                         <span class="shortcut-desc">Set rotation center to origin</span>
+                                    </div>
+                                    <div class="shortcut-item">
+                                        <span class="shortcut-key">G</span>
+                                        <span class="shortcut-desc">Toggle gamma correction</span>
                                     </div>
                                     <div class="shortcut-item">
                                         <span class="shortcut-key">H</span>

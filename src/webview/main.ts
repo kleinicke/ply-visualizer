@@ -119,6 +119,7 @@ class PLYVisualizer {
     private currentCameraParams: CameraParams | null = null;
     private tifDimensions: { width: number; height: number } | null = null;
     private currentColorImageData: ImageData | null = null;
+    private useLinearColorSpace: boolean = true; // Default to linear to disable gamma correction
     
     // Predefined colors for different files
     private readonly fileColors: [number, number, number][] = [
@@ -183,6 +184,9 @@ class PLYVisualizer {
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        
+        // Set initial color space based on preference
+        this.updateRendererColorSpace();
 
         // Initialize controls
         this.initializeControls();
@@ -516,6 +520,26 @@ class PLYVisualizer {
         directionalLight.shadow.mapSize.width = 2048;
         directionalLight.shadow.mapSize.height = 2048;
         this.scene.add(directionalLight);
+    }
+
+    private updateRendererColorSpace(): void {
+        if (this.useLinearColorSpace) {
+            this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+            console.log('🎨 Using Linear color space (no gamma correction)');
+        } else {
+            this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+            console.log('🎨 Using sRGB color space (with gamma correction)');
+        }
+    }
+
+    private toggleGammaCorrection(): void {
+        this.useLinearColorSpace = !this.useLinearColorSpace;
+        this.updateRendererColorSpace();
+        
+        const statusMessage = this.useLinearColorSpace 
+            ? 'Gamma correction disabled (Linear color space)' 
+            : 'Gamma correction enabled (sRGB color space)';
+        this.showStatus(statusMessage);
     }
 
     private onWindowResize(): void {
@@ -1456,6 +1480,14 @@ class PLYVisualizer {
             });
         }
 
+        // Color settings
+        const toggleGammaCorrectionBtn = document.getElementById('toggle-gamma-correction');
+        if (toggleGammaCorrectionBtn) {
+            toggleGammaCorrectionBtn.addEventListener('click', () => {
+                this.toggleGammaCorrection();
+            });
+        }
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             // Only handle shortcuts when not typing in input fields
@@ -1515,6 +1547,10 @@ class PLYVisualizer {
                 case 'w':
                     console.log('🔑 W key pressed - setting rotation center to world origin (0,0,0)');
                     this.setRotationCenterToOrigin();
+                    e.preventDefault();
+                    break;
+                case 'g':
+                    this.toggleGammaCorrection();
                     e.preventDefault();
                     break;
             }
