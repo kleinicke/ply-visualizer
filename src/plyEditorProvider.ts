@@ -236,7 +236,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     <p>Loading PLY file...</p>
                 </div>
                 <div id="error" class="error hidden">
-                    <h3>Error loading PLY file</h3>
+                    <div class="error-header">
+                        <h3>Error</h3>
+                        <button id="error-close" class="error-close-btn" title="Close error message">✕</button>
+                    </div>
                     <p id="error-message"></p>
                 </div>
                 

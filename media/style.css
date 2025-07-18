@@ -63,6 +63,43 @@ body {
     color: var(--vscode-errorForeground);
 }
 
+.error-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+    gap: 12px;
+}
+
+.error-header h3 {
+    margin: 0;
+    flex: 1;
+    line-height: 1.4;
+}
+
+.error-close-btn {
+    background: var(--vscode-button-secondaryBackground);
+    border: 1px solid var(--vscode-button-border);
+    color: var(--vscode-button-secondaryForeground);
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 4px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.error-close-btn:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+    transform: scale(1.1);
+}
+
 .hidden {
     display: none !important;
 }

@@ -1819,8 +1819,9 @@ class PLYVisualizer {
         // Fit camera to show all objects
         this.fitCameraToAllObjects();
         
-        // Hide loading indicator
+        // Hide loading indicator and clear any errors
         document.getElementById('loading')?.classList.add('hidden');
+        this.clearError();
     }
 
     private async yieldToUI(): Promise<void> {
@@ -2458,8 +2459,42 @@ class PLYVisualizer {
     private showError(message: string): void {
         document.getElementById('loading')?.classList.add('hidden');
         const errorMsg = document.getElementById('error-message');
-        if (errorMsg) {errorMsg.textContent = message;}
-        document.getElementById('error')?.classList.remove('hidden');
+        const errorDiv = document.getElementById('error');
+        
+        if (errorMsg) {
+            errorMsg.textContent = message;
+        }
+        
+        if (errorDiv) {
+            errorDiv.classList.remove('hidden');
+            
+            // Set up close button (only once)
+            const closeBtn = document.getElementById('error-close');
+            if (closeBtn) {
+                console.log('✅ Error close button found');
+                if (!closeBtn.hasAttribute('data-listener-added')) {
+                    closeBtn.setAttribute('data-listener-added', 'true');
+                    closeBtn.addEventListener('click', () => {
+                        console.log('🔴 Error close button clicked');
+                        this.clearError();
+                    });
+                    console.log('✅ Error close button listener added');
+                } else {
+                    console.log('ℹ️ Error close button listener already exists');
+                }
+            } else {
+                console.warn('⚠️ Error close button not found!');
+            }
+        }
+        
+        console.error('Error displayed:', message);
+    }
+
+    private clearError(): void {
+        const errorDiv = document.getElementById('error');
+        if (errorDiv) {
+            errorDiv.classList.add('hidden');
+        }
     }
 
     // File management methods
@@ -4310,6 +4345,10 @@ class PLYVisualizer {
 
     private showStatus(message: string): void {
         console.log('Status:', message);
+        
+        // Clear any existing errors when showing a status update
+        this.clearError();
+        
         // You could also update UI here if needed
     }
 
