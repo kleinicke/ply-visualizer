@@ -199,6 +199,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         // Handle PLY file save request
                         await this.handleSavePlyFile(webviewPanel, message);
                         break;
+                    case 'selectColorImage':
+                        await this.handleSelectColorImage(webviewPanel, message);
+                        break;
                 }
             }
         );
@@ -1070,6 +1073,73 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             
             // Show error message to user
             vscode.window.showErrorMessage(`Failed to save PLY file: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handleSelectColorImage(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
+        try {
+            console.log(`📁 Handling color image selection for file index: ${message.fileIndex}`);
+            
+            // Show open dialog for color images
+            const files = await vscode.window.showOpenDialog({
+                canSelectMany: false,
+                filters: {
+                    'Image Files': ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'tif', 'tiff'],
+                    'All Files': ['*']
+                },
+                title: 'Select color image file'
+            });
+
+            if (files && files.length > 0) {
+                const selectedFile = files[0];
+                console.log(`📷 Selected color image: ${selectedFile.fsPath}`);
+                
+                // Read the file data
+                const fileData = await vscode.workspace.fs.readFile(selectedFile);
+                const fileName = path.basename(selectedFile.fsPath);
+                const fileExtension = path.extname(selectedFile.fsPath).toLowerCase();
+                
+                // Determine MIME type
+                let mimeType = 'application/octet-stream';
+                switch (fileExtension) {
+                    case '.png':
+                        mimeType = 'image/png';
+                        break;
+                    case '.jpg':
+                    case '.jpeg':
+                        mimeType = 'image/jpeg';
+                        break;
+                    case '.bmp':
+                        mimeType = 'image/bmp';
+                        break;
+                    case '.gif':
+                        mimeType = 'image/gif';
+                        break;
+                    case '.tif':
+                    case '.tiff':
+                        mimeType = 'image/tiff';
+                        break;
+                }
+                
+                // Send file data back to webview
+                webviewPanel.webview.postMessage({
+                    type: 'colorImageData',
+                    fileIndex: message.fileIndex,
+                    data: fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength),
+                    fileName: fileName,
+                    mimeType: mimeType
+                });
+                
+                console.log(`✅ Color image data sent to webview: ${fileName}`);
+                
+            } else {
+                console.log('🚫 User cancelled color image selection');
+                // Optionally send cancellation message to webview
+            }
+            
+        } catch (error) {
+            console.error('❌ Error selecting color image:', error);
+            vscode.window.showErrorMessage(`Failed to select color image: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

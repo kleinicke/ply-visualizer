@@ -28,4 +28,6 @@ QUICK_FIXES.md
 *.md
 !README.md
 !CHANGELOG.md 
-implementation/
+implementation/**
+test/**
+*.py

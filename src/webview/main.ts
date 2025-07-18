@@ -1837,6 +1837,9 @@ class PLYVisualizer {
                 case 'savePlyFileResult':
                     this.handleSavePlyFileResult(message);
                     break;
+                case 'colorImageData':
+                    this.handleColorImageData(message);
+                    break;
             }
         });
     }
@@ -2081,7 +2084,7 @@ class PLYVisualizer {
                             </div>
                             <div class="tif-group" style="margin-bottom: 8px;">
                                 <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Color Image (optional):</label>
-                                <input type="file" id="color-image-${i}" accept="image/*,.tif,.tiff" style="width: 100%; padding: 2px; font-size: 11px;" />
+                                <button class="select-color-image" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px; text-align: left;">📁 Select Color Image...</button>
                                 ${this.getStoredColorImageName(i) ? `<div style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-top: 2px; display: flex; align-items: center; gap: 4px;">📷 Current: ${this.getStoredColorImageName(i)} <button class="remove-color-image" data-file-index="${i}" style="font-size: 8px; padding: 1px 4px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer;">✕</button></div>` : ''}
                             </div>
                             <div class="tif-group" style="margin-bottom: 8px;">
@@ -2381,13 +2384,11 @@ class PLYVisualizer {
                     });
                 }
 
-                // Color image file input auto-apply
-                const colorImageInput = document.getElementById(`color-image-${i}`) as HTMLInputElement;
-                if (colorImageInput) {
-                    colorImageInput.addEventListener('change', async () => {
-                        if (colorImageInput.files && colorImageInput.files.length > 0) {
-                            await this.applyColorImageToTif(i);
-                        }
+                // Color image selection button
+                const selectColorImageBtn = document.querySelector(`.select-color-image[data-file-index="${i}"]`);
+                if (selectColorImageBtn) {
+                    selectColorImageBtn.addEventListener('click', () => {
+                        this.requestColorImageForTif(i);
                     });
                 }
 
@@ -2543,6 +2544,13 @@ class PLYVisualizer {
     private requestRemoveFile(fileIndex: number): void {
         this.vscode.postMessage({
             type: 'removeFile',
+            fileIndex: fileIndex
+        });
+    }
+
+    private requestColorImageForTif(fileIndex: number): void {
+        this.vscode.postMessage({
+            type: 'selectColorImage',
             fileIndex: fileIndex
         });
     }
@@ -4083,6 +4091,101 @@ class PLYVisualizer {
         }
     }
 
+    private async handleColorImageData(message: any): Promise<void> {
+        try {
+            console.log('Received color image data for file index:', message.fileIndex);
+            
+            // Convert the ArrayBuffer back to a File-like object for processing
+            const blob = new Blob([message.data], { type: message.mimeType || 'image/png' });
+            const file = new File([blob], message.fileName, { type: message.mimeType || 'image/png' });
+            
+            // Load and validate the color image
+            const imageData = await this.loadAndValidateColorImage(file);
+            
+            if (!imageData) {
+                return; // Error already shown in loadAndValidateColorImage
+            }
+
+            const fileIndex = message.fileIndex;
+            const tifData = this.fileTifData.get(fileIndex);
+            if (!tifData) {
+                throw new Error('No cached TIF data found for this file');
+            }
+
+            // Validate dimensions match TIF
+            if (imageData.width !== tifData.tifDimensions.width || imageData.height !== tifData.tifDimensions.height) {
+                throw new Error(`Color image dimensions (${imageData.width}x${imageData.height}) do not match TIF dimensions (${tifData.tifDimensions.width}x${tifData.tifDimensions.height})`);
+            }
+
+            // Store color image data and name in TIF data for future reprocessing
+            tifData.colorImageData = imageData;
+            tifData.colorImageName = message.fileName;
+
+            // Reprocess TIF with color data
+            const result = await this.processTifToPointCloud(tifData.originalData, tifData.cameraParams);
+            await this.applyColorToTifResult(result, imageData, tifData);
+
+            // Update the PLY data
+            const plyData = this.plyFiles[fileIndex];
+            plyData.vertices = this.convertTifResultToVertices(result);
+            plyData.hasColors = true;
+
+            // Update the mesh with colored data
+            const oldMaterial = this.meshes[fileIndex].material;
+            const newMaterial = this.createMaterialForFile(plyData, fileIndex);
+            this.meshes[fileIndex].material = newMaterial;
+            
+            // Ensure point size is correctly applied to the new material
+            if (this.meshes[fileIndex] instanceof THREE.Points && newMaterial instanceof THREE.PointsMaterial) {
+                const currentPointSize = this.pointSizes[fileIndex] || 0.001;
+                newMaterial.size = currentPointSize;
+                console.log(`🔧 Applied point size ${currentPointSize} to color-updated TIF material for file ${fileIndex}`);
+            }
+            
+            // Update geometry with colors
+            const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
+            
+            // Create position array
+            const positions = new Float32Array(plyData.vertices.length * 3);
+            for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                const vertex = plyData.vertices[i];
+                positions[i3] = vertex.x;
+                positions[i3 + 1] = vertex.y;
+                positions[i3 + 2] = vertex.z;
+            }
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            // Create color array
+            const colors = new Float32Array(plyData.vertices.length * 3);
+            for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                const vertex = plyData.vertices[i];
+                colors[i3] = (vertex.red || 0) / 255;
+                colors[i3 + 1] = (vertex.green || 0) / 255;
+                colors[i3 + 2] = (vertex.blue || 0) / 255;
+            }
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.computeBoundingBox();
+            
+            // Dispose old material
+            if (oldMaterial) {
+                if (Array.isArray(oldMaterial)) {
+                    oldMaterial.forEach(mat => mat.dispose());
+                } else {
+                    oldMaterial.dispose();
+                }
+            }
+
+            // Update UI
+            this.updateFileStats();
+            this.updateFileList();
+            this.showStatus(`Color image "${message.fileName}" applied successfully!`);
+
+        } catch (error) {
+            console.error('Error handling color image data:', error);
+            this.showError(`Failed to apply color image: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
     /**
      * Process TIF file data and convert to point cloud
      */
@@ -5171,101 +5274,7 @@ class PLYVisualizer {
         }
     }
 
-    private async applyColorImageToTif(fileIndex: number): Promise<void> {
-        try {
-            const colorImageInput = document.getElementById(`color-image-${fileIndex}`) as HTMLInputElement;
-            if (!colorImageInput || !colorImageInput.files || colorImageInput.files.length === 0) {
-                this.showError('No color image file selected');
-                return;
-            }
 
-            const tifData = this.fileTifData.get(fileIndex);
-            if (!tifData) {
-                throw new Error('No cached TIF data found for this file');
-            }
-
-            this.showStatus('Applying color image...');
-
-            const file = colorImageInput.files[0];
-            const imageData = await this.loadAndValidateColorImage(file);
-            
-            if (!imageData) {
-                return; // Error already shown in loadAndValidateColorImage
-            }
-
-            // Validate dimensions match TIF
-            if (imageData.width !== tifData.tifDimensions.width || imageData.height !== tifData.tifDimensions.height) {
-                throw new Error(`Color image dimensions (${imageData.width}x${imageData.height}) do not match TIF dimensions (${tifData.tifDimensions.width}x${tifData.tifDimensions.height})`);
-            }
-
-            // Store color image data and name in TIF data for future reprocessing
-            tifData.colorImageData = imageData;
-            tifData.colorImageName = file.name;
-
-            // Reprocess TIF with color data
-            const result = await this.processTifToPointCloud(tifData.originalData, tifData.cameraParams);
-            await this.applyColorToTifResult(result, imageData, tifData);
-
-            // Update the PLY data
-            const plyData = this.plyFiles[fileIndex];
-            plyData.vertices = this.convertTifResultToVertices(result);
-            plyData.hasColors = true;
-
-            // Update the mesh with colored data
-            const oldMaterial = this.meshes[fileIndex].material;
-            const newMaterial = this.createMaterialForFile(plyData, fileIndex);
-            this.meshes[fileIndex].material = newMaterial;
-            
-            // Ensure point size is correctly applied to the new material
-            if (this.meshes[fileIndex] instanceof THREE.Points && newMaterial instanceof THREE.PointsMaterial) {
-                const currentPointSize = this.pointSizes[fileIndex] || 0.001;
-                newMaterial.size = currentPointSize;
-                console.log(`🔧 Applied point size ${currentPointSize} to color-updated TIF material for file ${fileIndex}`);
-            }
-            
-            // Update geometry with colors
-            const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
-            
-            // Create position array
-            const positions = new Float32Array(plyData.vertices.length * 3);
-            for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-                const vertex = plyData.vertices[i];
-                positions[i3] = vertex.x;
-                positions[i3 + 1] = vertex.y;
-                positions[i3 + 2] = vertex.z;
-            }
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            
-            // Create color array
-            const colors = new Float32Array(plyData.vertices.length * 3);
-            for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-                const vertex = plyData.vertices[i];
-                colors[i3] = (vertex.red || 0) / 255;
-                colors[i3 + 1] = (vertex.green || 0) / 255;
-                colors[i3 + 2] = (vertex.blue || 0) / 255;
-            }
-            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-            geometry.computeBoundingBox();
-            
-            // Dispose old material
-            if (oldMaterial) {
-                if (Array.isArray(oldMaterial)) {
-                    oldMaterial.forEach(mat => mat.dispose());
-                } else {
-                    oldMaterial.dispose();
-                }
-            }
-
-            // Update UI
-            this.updateFileStats();
-            this.updateFileList();
-            this.showStatus('Color image applied successfully!');
-
-        } catch (error) {
-            console.error('Error applying color image:', error);
-            this.showError(`Failed to apply color image: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
 
     private async applyColorToTifResult(result: TifConversionResult, imageData: ImageData, tifData: any): Promise<void> {
         const colorData = imageData.data;
