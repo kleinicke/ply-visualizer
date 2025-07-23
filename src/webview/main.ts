@@ -271,6 +271,9 @@ class PLYVisualizer {
         this.camera.up.copy(currentUp);
         this.controls.target.copy(currentTarget);
         this.controls.update();
+        
+        // Update control status to highlight active button
+        this.updateControlStatus();
     }
 
     private setupAxesVisibility(): void {
@@ -3111,6 +3114,7 @@ class PLYVisualizer {
         this.controlType = 'trackball';
         this.initializeControls();
         this.updateControlStatus();
+        this.showStatus('Switched to Trackball controls');
     }
 
     private switchToOrbitControls(): void {
@@ -3120,6 +3124,7 @@ class PLYVisualizer {
         this.controlType = 'orbit';
         this.initializeControls();
         this.updateControlStatus();
+        this.showStatus('Switched to Orbit controls');
     }
 
     private switchToInverseTrackballControls(): void {
@@ -3129,6 +3134,7 @@ class PLYVisualizer {
         this.controlType = 'inverse-trackball';
         this.initializeControls();
         this.updateControlStatus();
+        this.showStatus('Switched to Inverse Trackball controls');
     }
 
     private updateControlStatus(): void {
@@ -3140,6 +3146,24 @@ class PLYVisualizer {
         if (statusElement) {
             statusElement.textContent = status;
         }
+
+        // Update button active states
+        const controlButtons = [
+            { id: 'trackball-controls', type: 'trackball' },
+            { id: 'orbit-controls', type: 'orbit' },
+            { id: 'inverse-trackball-controls', type: 'inverse-trackball' }
+        ];
+
+        controlButtons.forEach(button => {
+            const btn = document.getElementById(button.id);
+            if (btn) {
+                if (button.type === this.controlType) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            }
+        });
     }
 
     private setOpenCVCameraConvention(): void {
