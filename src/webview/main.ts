@@ -855,7 +855,7 @@ class PLYVisualizer {
                             <button id="modify-camera-position" class="control-button" style="flex:1;font-size:9px;">Modify Position</button>
                         </div>
                         <div style="display:flex;gap:4px;margin-top:4px;">
-                            <button id="modify-camera-rotation" class="control-button" style="flex:1;font-size:9px;">Modify Rotation (broken)</button>
+                            <button id="modify-camera-rotation" class="control-button" style="flex:1;font-size:9px;">Modify Rotation</button>
                         </div>
                         <button id="reset-camera-matrix" class="control-button" style="margin-top:12px;">Reset Camera</button>
                     </div>
@@ -3733,7 +3733,11 @@ class PLYVisualizer {
                 const z = parseFloat((dialog.querySelector('#camera-rot-z') as HTMLInputElement).value);
                 
                 if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-                    // Create quaternion from Euler angles and apply to camera
+                    // Store current camera distance from target for orbit controls
+                    const target = this.controls.target.clone();
+                    const distance = this.camera.position.distanceTo(target);
+                    
+                    // Create quaternion from Euler angles
                     const euler = new THREE.Euler(
                         (x * Math.PI) / 180,
                         (y * Math.PI) / 180,
@@ -3743,8 +3747,21 @@ class PLYVisualizer {
                     const quaternion = new THREE.Quaternion();
                     quaternion.setFromEuler(euler);
                     
-                    // Apply quaternion to camera
-                    this.camera.quaternion.copy(quaternion);
+                    // Apply rotation by positioning camera relative to target
+                    // Start with a forward vector and apply rotation
+                    const direction = new THREE.Vector3(0, 0, distance);
+                    direction.applyQuaternion(quaternion);
+                    
+                    // Position camera at target + rotated direction vector
+                    this.camera.position.copy(target).add(direction);
+                    
+                    // Set up vector based on rotation (extract up vector from quaternion)
+                    const up = new THREE.Vector3(0, 1, 0);
+                    up.applyQuaternion(quaternion);
+                    this.camera.up.copy(up);
+                    
+                    // Make camera look at target
+                    this.camera.lookAt(target);
                     
                     this.controls.update();
                     this.updateCameraControlsPanel();
