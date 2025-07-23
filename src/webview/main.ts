@@ -798,9 +798,8 @@ class PLYVisualizer {
                     matrixArr[row + 8],       // m2r (column r, row 2)
                     matrixArr[row + 12]       // m3r (column r, row 3)
                 ].map(v => {
-                    // Format numbers consistently: 6 decimal places, right-aligned
-                    const formatted = v.toFixed(6);
-                    return formatted.padStart(9, ' '); // Pad to 9 characters for alignment
+                    // Format numbers consistently: 6 decimal places, no padding
+                    return v.toFixed(6);
                 });
                 matrixStr += displayRow.join(' ') + '\n';
             }
