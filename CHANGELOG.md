@@ -1,11 +1,16 @@
 # Change Log
 
+## [0.0.14] - 2025-07-23
+- **Added Rotation Center Controls**: New "Modify Rotation Center" button in camera panel with coordinate display and editing dialog
+- **Enhanced Camera Control Status**: Added visual indicator showing currently active camera control mode (Trackball, Orbit, etc.)
+- **Fixed Matrix Formatting**: Ignores all additional symbols when interpreting a matrix, only focusses on the numbers.
+- **Improved Camera Rotation Logic**: Fixed camera positioning relative to orbit controls target for stable rotation behavior
+
 ## [0.0.13] - 2025-07-18
 - Add improved TIF to point cloud support for multiple depth types: Euclidean, Orthogonal, and Disparity
 - Remove additional gamma correction
 - Improved error messages and TIF processing stability
 - Enhanced TIF controls UI with color mapping support
-
 
 ## [0.0.12] 
 - Added TIF to Point Cloud conversion feature

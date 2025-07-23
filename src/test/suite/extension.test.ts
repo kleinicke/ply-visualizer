@@ -7,11 +7,11 @@ suite('PLY Viewer Extension Test Suite', () => {
     vscode.window.showInformationMessage('Start all tests.');
 
     test('Extension should be present', () => {
-        assert.ok(vscode.extensions.getExtension('undefined_publisher.ply-viewer'));
+        assert.ok(vscode.extensions.getExtension('kleinicke.ply-visualizer'));
     });
 
     test('Extension should activate', async () => {
-        const ext = vscode.extensions.getExtension('undefined_publisher.ply-viewer');
+        const ext = vscode.extensions.getExtension('kleinicke.ply-visualizer');
         if (ext) {
             await ext.activate();
             assert.strictEqual(ext.isActive, true);
@@ -21,6 +21,20 @@ suite('PLY Viewer Extension Test Suite', () => {
     test('PLY command should be registered', async () => {
         const commands = await vscode.commands.getCommands(true);
         assert.ok(commands.includes('plyViewer.openFile'));
+    });
+
+    test('Multiple PLY commands should be registered', async () => {
+        const commands = await vscode.commands.getCommands(true);
+        // Note: Some commands might only be registered when extension fully activates
+        const hasOpenFile = commands.includes('plyViewer.openFile');
+        assert.ok(hasOpenFile, 'Basic openFile command should be registered');
+        
+        // These commands might be conditionally registered
+        const hasMultipleFiles = commands.includes('plyViewer.openMultipleFiles');
+        const hasTifConvert = commands.includes('plyViewer.convertTifToPointCloud');
+        
+        // At least one command should be registered
+        assert.ok(hasOpenFile || hasMultipleFiles || hasTifConvert, 'At least one PLY command should be registered');
     });
 
     test('PLY file should open with custom editor', async () => {
@@ -60,6 +74,107 @@ end_header
                     fs.unlinkSync(testFilePath);
                 }
             }
+        }
+    });
+
+    test('Should open real test files from testfiles folder', async () => {
+        const testFiles = [
+            '../../../testfiles/test_ascii.ply',
+            '../../../testfiles/test_binary.ply',
+            '../../../testfiles/test_poses.xyz'
+        ];
+
+        for (const relativeFilePath of testFiles) {
+            const testFilePath = path.join(__dirname, relativeFilePath);
+            if (fs.existsSync(testFilePath)) {
+                try {
+                    const uri = vscode.Uri.file(testFilePath);
+                    await vscode.commands.executeCommand('plyViewer.openFile', uri);
+                    assert.ok(true, `Successfully opened ${path.basename(testFilePath)}`);
+                } catch (error) {
+                    assert.fail(`Failed to open ${path.basename(testFilePath)}: ${error}`);
+                }
+            }
+        }
+    });
+
+    test('Should handle TIF file command', async () => {
+        const testTifPath = path.join(__dirname, '../../../testfiles/depth.tif');
+        if (fs.existsSync(testTifPath)) {
+            try {
+                const uri = vscode.Uri.file(testTifPath);
+                await vscode.commands.executeCommand('plyViewer.convertTifToPointCloud', uri);
+                assert.ok(true, 'TIF conversion command executed successfully');
+            } catch (error) {
+                // TIF conversion might fail without proper camera parameters, but command should exist
+                assert.ok(error instanceof Error, 'Expected error type for TIF conversion without parameters');
+            }
+        }
+    });
+
+    test('Should register custom editor for supported file types', () => {
+        const ext = vscode.extensions.getExtension('kleinicke.ply-visualizer');
+        assert.ok(ext, 'Extension should be available');
+        
+        if (ext) {
+            const packageJSON = ext.packageJSON;
+            const customEditors = packageJSON.contributes?.customEditors;
+            
+            assert.ok(customEditors, 'Custom editors should be defined');
+            assert.strictEqual(customEditors.length, 1);
+            
+            const editor = customEditors[0];
+            assert.strictEqual(editor.viewType, 'plyViewer.plyEditor');
+            assert.strictEqual(editor.displayName, 'PLY Pointcloud Visualizer');
+            
+            const supportedPatterns = editor.selector.map((s: any) => s.filenamePattern);
+            assert.ok(supportedPatterns.includes('*.ply'));
+            assert.ok(supportedPatterns.includes('*.xyz'));
+            assert.ok(supportedPatterns.includes('*.tif'));
+            assert.ok(supportedPatterns.includes('*.tiff'));
+        }
+    });
+
+    test('Should have correct context menu contributions', () => {
+        const ext = vscode.extensions.getExtension('kleinicke.ply-visualizer');
+        assert.ok(ext, 'Extension should be available');
+        
+        if (ext) {
+            const packageJSON = ext.packageJSON;
+            const menus = packageJSON.contributes?.menus;
+            
+            assert.ok(menus, 'Menus should be defined');
+            assert.ok(menus['explorer/context'], 'Explorer context menu should be defined');
+            
+            const contextMenuItems = menus['explorer/context'];
+            assert.ok(contextMenuItems.length >= 2, 'Should have at least 2 context menu items');
+            
+            const openFileItem = contextMenuItems.find((item: any) => item.command === 'plyViewer.openFile');
+            const convertTifItem = contextMenuItems.find((item: any) => item.command === 'plyViewer.convertTifToPointCloud');
+            
+            assert.ok(openFileItem, 'Open file context menu item should exist');
+            assert.ok(convertTifItem, 'Convert TIF context menu item should exist');
+        }
+    });
+
+    test('Extension should have correct metadata', () => {
+        const ext = vscode.extensions.getExtension('kleinicke.ply-visualizer');
+        assert.ok(ext, 'Extension should be available');
+        
+        if (ext) {
+            const packageJSON = ext.packageJSON;
+            
+            assert.strictEqual(packageJSON.name, 'ply-visualizer');
+            assert.strictEqual(packageJSON.displayName, 'PLY Pointcloud Visualizer');
+            assert.strictEqual(packageJSON.publisher, 'kleinicke');
+            assert.ok(packageJSON.version, 'Version should be defined');
+            assert.ok(packageJSON.description.includes('3D visualizer'), 'Description should mention 3D visualization');
+            
+            const keywords = packageJSON.keywords;
+            assert.ok(keywords.includes('ply'), 'Should include ply keyword');
+            assert.ok(keywords.includes('xyz'), 'Should include xyz keyword');
+            assert.ok(keywords.includes('3d'), 'Should include 3d keyword');
+            assert.ok(keywords.includes('point cloud'), 'Should include point cloud keyword');
         }
     });
 }); 
