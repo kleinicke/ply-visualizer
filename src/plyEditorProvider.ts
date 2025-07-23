@@ -292,8 +292,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                             <div class="panel-section">
                                 <h4>Camera Conventions</h4>
                                 <div class="control-buttons">
-                                    <button id="opencv-convention" class="control-button">OpenCV <span class="button-shortcut">C</span></button>
-                                    <button id="blender-convention" class="control-button">Blender <span class="button-shortcut">B</span></button>
+                                    <button id="opencv-convention" class="control-button">OpenCV (Y down) <span class="button-shortcut">C</span></button>
+                                    <button id="blender-convention" class="control-button">Blender (Y up) <span class="button-shortcut">B</span></button>
                                 </div>
                             </div>
                             <div class="panel-section">
@@ -352,11 +352,11 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                                     </div>
                                     <div class="shortcut-item">
                                         <span class="shortcut-key">C</span>
-                                        <span class="shortcut-desc">OpenCV convention</span>
+                                        <span class="shortcut-desc">OpenCV convention (Y down)</span>
                                     </div>
                                     <div class="shortcut-item">
                                         <span class="shortcut-key">B</span>
-                                        <span class="shortcut-desc">Blender convention</span>
+                                        <span class="shortcut-desc">Blender convention (Y up)</span>
                                     </div>
                                     <div class="shortcut-item">
                                         <span class="shortcut-key">T</span>
