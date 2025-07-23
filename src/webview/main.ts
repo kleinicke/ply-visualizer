@@ -830,10 +830,13 @@ class PLYVisualizer {
             // Only update the matrix display, not the entire panel
             const matrixDisplay = controlsPanel.querySelector('.matrix-display');
             if (matrixDisplay) {
+                // Get rotation center (controls target)
+                const target = this.controls.target;
                 let matrixHtml = `
                     <div style="font-size:10px;margin:4px 0;">
                         <div><strong>Position:</strong> (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})</div>
                         <div><strong>Rotation:</strong> (${rotX.toFixed(1)}°, ${rotY.toFixed(1)}°, ${rotZ.toFixed(1)}°)</div>
+                        <div><strong>Rotation Center:</strong> (${target.x.toFixed(3)}, ${target.y.toFixed(3)}, ${target.z.toFixed(3)})</div>
                     </div>
                 `;
                 matrixDisplay.innerHTML = matrixHtml;
@@ -852,6 +855,7 @@ class PLYVisualizer {
                             <div style="font-size:10px;margin:4px 0;">
                                 <div><strong>Position:</strong> (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})</div>
                                 <div><strong>Rotation:</strong> (${rotX.toFixed(1)}°, ${rotY.toFixed(1)}°, ${rotZ.toFixed(1)}°)</div>
+                                <div><strong>Rotation Center:</strong> (${this.controls.target.x.toFixed(3)}, ${this.controls.target.y.toFixed(3)}, ${this.controls.target.z.toFixed(3)})</div>
                             </div>
                         </div>
                         <div style="display:flex;gap:4px;margin-top:4px;">
@@ -859,6 +863,9 @@ class PLYVisualizer {
                         </div>
                         <div style="display:flex;gap:4px;margin-top:4px;">
                             <button id="modify-camera-rotation" class="control-button" style="flex:1;font-size:9px;">Modify Rotation</button>
+                        </div>
+                        <div style="display:flex;gap:4px;margin-top:4px;">
+                            <button id="modify-rotation-center" class="control-button" style="flex:1;font-size:9px;">Modify Rotation Center</button>
                         </div>
                         <button id="reset-camera-matrix" class="control-button" style="margin-top:12px;">Reset Camera</button>
                     </div>
@@ -904,6 +911,13 @@ class PLYVisualizer {
         if (modifyRotationBtn) {
             modifyRotationBtn.addEventListener('click', () => {
                 this.showCameraRotationDialog();
+            });
+        }
+
+        const modifyRotationCenterBtn = document.getElementById('modify-rotation-center');
+        if (modifyRotationCenterBtn) {
+            modifyRotationCenterBtn.addEventListener('click', () => {
+                this.showRotationCenterDialog();
             });
         }
     }
@@ -3789,6 +3803,121 @@ class PLYVisualizer {
                     
                     this.controls.update();
                     this.updateCameraControlsPanel();
+                }
+                
+                closeModal();
+            });
+        }
+        
+        // Close on background click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+        
+        // Close on Escape key
+        const handleKeydown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                closeModal();
+                document.removeEventListener('keydown', handleKeydown);
+            }
+        };
+        document.addEventListener('keydown', handleKeydown);
+    }
+
+    private showRotationCenterDialog(): void {
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        `;
+        
+        const dialog = document.createElement('div');
+        dialog.style.cssText = `
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            min-width: 300px;
+            max-width: 400px;
+        `;
+        
+        // Get current rotation center (controls target)
+        const target = this.controls.target;
+        
+        dialog.innerHTML = `
+            <h3 style="margin-top:0;">Modify Rotation Center</h3>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">X Coordinate:</label>
+                <input type="number" id="rotation-center-x" value="${target.x.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Y Coordinate:</label>
+                <input type="number" id="rotation-center-y" value="${target.y.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="display:block;margin-bottom:5px;">Z Coordinate:</label>
+                <input type="number" id="rotation-center-z" value="${target.z.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
+            </div>
+            <div style="text-align:right;">
+                <button id="set-center-origin" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set to Origin (0,0,0)</button>
+                <button id="cancel-rotation-center" style="margin-right:10px;padding:8px 15px;">Cancel</button>
+                <button id="apply-rotation-center" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
+            </div>
+        `;
+        
+        modal.appendChild(dialog);
+        document.body.appendChild(modal);
+        
+        const closeModal = () => {
+            document.body.removeChild(modal);
+        };
+        
+        // Event listeners
+        const setOriginBtn = dialog.querySelector('#set-center-origin');
+        const cancelBtn = dialog.querySelector('#cancel-rotation-center');
+        const applyBtn = dialog.querySelector('#apply-rotation-center');
+        
+        if (setOriginBtn) {
+            setOriginBtn.addEventListener('click', () => {
+                (dialog.querySelector('#rotation-center-x') as HTMLInputElement).value = '0';
+                (dialog.querySelector('#rotation-center-y') as HTMLInputElement).value = '0';
+                (dialog.querySelector('#rotation-center-z') as HTMLInputElement).value = '0';
+            });
+        }
+        
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', closeModal);
+        }
+        
+        if (applyBtn) {
+            applyBtn.addEventListener('click', () => {
+                const x = parseFloat((dialog.querySelector('#rotation-center-x') as HTMLInputElement).value);
+                const y = parseFloat((dialog.querySelector('#rotation-center-y') as HTMLInputElement).value);
+                const z = parseFloat((dialog.querySelector('#rotation-center-z') as HTMLInputElement).value);
+                
+                if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                    // Set the new rotation center
+                    this.controls.target.set(x, y, z);
+                    
+                    // Update controls and camera panel
+                    this.controls.update();
+                    this.updateCameraControlsPanel();
+                    
+                    // Update axes position to show new rotation center
+                    if ((this as any).axesHelper) {
+                        (this as any).axesHelper.position.copy(this.controls.target);
+                    }
+                    
+                    console.log(`🎯 Rotation center set to: (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`);
                 }
                 
                 closeModal();
