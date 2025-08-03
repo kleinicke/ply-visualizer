@@ -14,6 +14,8 @@ Info: This extension is actively developed. The current UI will frequently chang
 
 ![example-view](assets/example.png)
 
+Load two point clouds and switch between them imediatly pressing shift and click
+![load-two](https://github.com/kleinicke/ply-visualizer/releases/download/v0.0.14/load2.gif)
 
 ## Theoretically supported PLY Features
 
@@ -36,24 +38,7 @@ Info: This extension is actively developed. The current UI will frequently chang
 - **Visualizing gaussian splats**: Add gaussian splat support
 - **Add eye dome lighting**: Improve percenption of uncolored point clouds
 - **Drag and Drop**: Add more pc to a given pc using drag and drop instead of adding them in an extra window
-
-
-### ASCII Format Example
-```
-ply
-format ascii 1.0
-element vertex 3
-property float x
-property float y
-property float z
-property uchar red
-property uchar green
-property uchar blue
-end_header
-0.0 0.0 0.0 255 0 0
-1.0 0.0 0.0 0 255 0
-0.5 1.0 0.0 0 0 255
-```
+- **Support Obj files**: In Obj files point clouds and shapes can be stored. Add support for them.
 
 ## Feature Requests and Issues
 
