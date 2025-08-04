@@ -2801,6 +2801,39 @@ class PLYVisualizer {
                     subMeshes.push(groupMesh);
                 }
             }
+            
+            // Handle lines in this material group (same as initial loading)
+            if (materialGroup.lines.length > 0) {
+                const linePositions = new Float32Array(materialGroup.lines.length * 6);
+                
+                for (let i = 0; i < materialGroup.lines.length; i++) {
+                    const line = materialGroup.lines[i];
+                    const startVertex = data.vertices[line.start];
+                    const endVertex = data.vertices[line.end];
+                    
+                    const i6 = i * 6;
+                    linePositions[i6] = startVertex.x;
+                    linePositions[i6 + 1] = startVertex.y;
+                    linePositions[i6 + 2] = startVertex.z;
+                    linePositions[i6 + 3] = endVertex.x;
+                    linePositions[i6 + 4] = endVertex.y;
+                    linePositions[i6 + 5] = endVertex.z;
+                }
+                
+                const lineGeometry = new THREE.BufferGeometry();
+                lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+                
+                const lineMaterial = new THREE.LineBasicMaterial({ 
+                    color: 0xff0000 // Default red - will be colored by MTL
+                });
+                
+                const lineSegments = new THREE.LineSegments(lineGeometry, lineMaterial);
+                (lineSegments as any).materialName = materialGroup.material;
+                (lineSegments as any).isLineSegments = true;
+                
+                meshGroup.add(lineSegments);
+                subMeshes.push(lineSegments);
+            }
         }
         
         (meshGroup as any).isObjMesh = true;
