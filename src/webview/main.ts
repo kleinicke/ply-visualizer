@@ -69,6 +69,8 @@ class PLYVisualizer {
     private useOriginalColors = true; // Default to original colors
     private pointSizes: number[] = []; // Individual point sizes for each point cloud
     private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
+    private appliedMtlColors: (number | null)[] = []; // Store applied MTL hex colors for each file
+    private appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
     
     // Per-file TIF data storage for reprocessing
     private fileTifData: Map<number, {
@@ -2164,12 +2166,32 @@ class PLYVisualizer {
                     </div>
                     ` : ''}
                     
-                    ${(data as any).isObjWireframe ? `
-                    <!-- MTL Material Control (for OBJ files) -->
-                    <div class="mtl-control" style="margin-top: 8px;">
-                        <button class="load-mtl-btn" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%;">
+                    ${((data as any).isObjWireframe || (data as any).isObjFile) ? `
+                    <!-- OBJ Controls -->
+                    <div class="obj-controls" style="margin-top: 8px;">
+                        <!-- MTL Material Control -->
+                        <button class="load-mtl-btn" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%; margin-bottom: 4px;">
                             🎨 Load MTL Material
                         </button>
+                        ${this.appliedMtlNames[i] ? `
+                        <div class="mtl-status" style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-bottom: 4px; text-align: center;">
+                            📄 ${this.appliedMtlNames[i]} applied
+                        </div>
+                        ` : ''}
+                        <!-- Wireframe/Solid Toggle (for OBJ files with faces or lines) -->
+                        ${((data as any).objData && ((data as any).objData.faceCount > 0 || (data as any).objData.lineCount > 0)) || data.faceCount > 0 ? `
+                        <div class="render-mode-control" style="margin-top: 4px;">
+                            <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Render Mode:</label>
+                            <div style="display: flex; gap: 2px;">
+                                <button class="render-mode-btn solid-btn" data-file-index="${i}" data-mode="solid" style="flex: 1; padding: 4px 8px; background: ${(data as any).objRenderType === 'mesh' ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)'}; color: ${(data as any).objRenderType === 'mesh' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)'}; border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
+                                    🔲 Solid
+                                </button>
+                                <button class="render-mode-btn wireframe-btn" data-file-index="${i}" data-mode="wireframe" style="flex: 1; padding: 4px 8px; background: ${(data as any).objRenderType === 'wireframe' ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)'}; color: ${(data as any).objRenderType === 'wireframe' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)'}; border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
+                                    📐 Wireframe
+                                </button>
+                            </div>
+                        </div>
+                        ` : ''}
                     </div>
                     ` : ''}
                     
@@ -2450,6 +2472,17 @@ class PLYVisualizer {
                 this.requestLoadMtl(fileIndex);
             });
         });
+        
+        // Add render mode button listeners for OBJ files
+        const renderModeButtons = fileListDiv.querySelectorAll('.render-mode-btn');
+        renderModeButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                const mode = target.getAttribute('data-mode') || 'solid';
+                this.toggleObjRenderMode(fileIndex, mode);
+            });
+        });
     }
 
     private toggleFileVisibility(fileIndex: number): void {
@@ -2457,6 +2490,172 @@ class PLYVisualizer {
             this.fileVisibility[fileIndex] = !this.fileVisibility[fileIndex];
             this.meshes[fileIndex].visible = this.fileVisibility[fileIndex];
         }
+    }
+    
+    private toggleObjRenderMode(fileIndex: number, mode: string): void {
+        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
+        
+        const data = this.plyFiles[fileIndex];
+        const isObjFile = (data as any).isObjFile;
+        const objData = (data as any).objData;
+        
+        if (!isObjFile || !objData) {
+            console.warn('Cannot toggle render mode: not an OBJ file');
+            return;
+        }
+        
+        // Check if the file has the required data for the requested mode
+        if (mode === 'solid' && objData.faceCount === 0) {
+            this.showError('Cannot switch to solid mode: OBJ file has no faces');
+            return;
+        }
+        
+        if (mode === 'wireframe' && objData.lineCount === 0 && objData.faceCount === 0) {
+            this.showError('Cannot switch to wireframe mode: OBJ file has no lines or faces');
+            return;
+        }
+        
+        // Update the file data
+        (data as any).objRenderType = mode === 'solid' ? 'mesh' : 'wireframe';
+        
+        // Remove the current mesh
+        if (fileIndex < this.meshes.length) {
+            this.scene.remove(this.meshes[fileIndex]);
+        }
+        
+        // Create the geometry
+        const geometry = this.createGeometryFromPlyData(data);
+        
+        // Create appropriate mesh based on mode
+        let newMesh: THREE.Mesh | THREE.Points | THREE.LineSegments;
+        
+        if (mode === 'solid') {
+            // Create solid mesh (MeshBasicMaterial for reliable color display)
+            const meshMaterial = new THREE.MeshBasicMaterial({
+                color: 0x808080,
+                side: THREE.DoubleSide,
+                vertexColors: data.hasColors
+            });
+            
+            // Apply normals if available
+            if (objData.hasNormals && objData.normals.length > 0) {
+                const normals = new Float32Array(data.vertexCount * 3);
+                for (let i = 0; i < data.vertexCount && i < objData.normals.length; i++) {
+                    const normal = objData.normals[i];
+                    normals[i * 3] = normal.nx;
+                    normals[i * 3 + 1] = normal.ny;
+                    normals[i * 3 + 2] = normal.nz;
+                }
+                geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+            }
+            
+            newMesh = new THREE.Mesh(geometry, meshMaterial);
+            (newMesh as any).isObjMesh = true;
+        } else {
+            // Create wireframe from either explicit lines or face edges
+            let linePositions: Float32Array;
+            
+            if (objData.lineCount > 0) {
+                // Use explicit lines if available
+                const lines = objData.lines;
+                linePositions = new Float32Array(lines.length * 6);
+                
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    const startVertex = data.vertices[line.start];
+                    const endVertex = data.vertices[line.end];
+                    
+                    const i6 = i * 6;
+                    linePositions[i6] = startVertex.x;
+                    linePositions[i6 + 1] = startVertex.y;
+                    linePositions[i6 + 2] = startVertex.z;
+                    linePositions[i6 + 3] = endVertex.x;
+                    linePositions[i6 + 4] = endVertex.y;
+                    linePositions[i6 + 5] = endVertex.z;
+                }
+            } else {
+                // Generate wireframe from face edges
+                const edgeSet = new Set<string>();
+                const edges: Array<[number, number]> = [];
+                
+                // Extract unique edges from faces
+                for (const face of objData.faces) {
+                    const indices = face.indices;
+                    for (let i = 0; i < indices.length; i++) {
+                        const start = indices[i];
+                        const end = indices[(i + 1) % indices.length];
+                        
+                        // Create edge key (smaller index first to avoid duplicates)
+                        const edgeKey = start < end ? `${start}-${end}` : `${end}-${start}`;
+                        
+                        if (!edgeSet.has(edgeKey)) {
+                            edgeSet.add(edgeKey);
+                            edges.push([start, end]);
+                        }
+                    }
+                }
+                
+                // Create line positions from edges
+                linePositions = new Float32Array(edges.length * 6);
+                
+                for (let i = 0; i < edges.length; i++) {
+                    const [startIdx, endIdx] = edges[i];
+                    const startVertex = data.vertices[startIdx];
+                    const endVertex = data.vertices[endIdx];
+                    
+                    const i6 = i * 6;
+                    linePositions[i6] = startVertex.x;
+                    linePositions[i6 + 1] = startVertex.y;
+                    linePositions[i6 + 2] = startVertex.z;
+                    linePositions[i6 + 3] = endVertex.x;
+                    linePositions[i6 + 4] = endVertex.y;
+                    linePositions[i6 + 5] = endVertex.z;
+                }
+                
+                console.log(`Generated ${edges.length} wireframe edges from ${objData.faceCount} faces`);
+            }
+            
+            const lineGeometry = new THREE.BufferGeometry();
+            lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+            
+            const lineMaterial = new THREE.LineBasicMaterial({ 
+                color: 0xff0000,
+                linewidth: 1 
+            });
+            
+            newMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
+            (newMesh as any).isLineSegments = true;
+        }
+        
+        // Apply current transformation matrix
+        const transformationMatrix = this.getTransformationMatrix(fileIndex);
+        newMesh.applyMatrix4(transformationMatrix);
+        
+        // Add to scene and update array
+        this.scene.add(newMesh);
+        if (fileIndex < this.meshes.length) {
+            this.meshes[fileIndex] = newMesh;
+        } else {
+            this.meshes.push(newMesh);
+        }
+        
+        // Update visibility
+        newMesh.visible = this.fileVisibility[fileIndex];
+        
+        // Reapply stored MTL color if available
+        if (this.appliedMtlColors[fileIndex] !== null) {
+            const storedColor = this.appliedMtlColors[fileIndex]!; // Non-null assertion since we checked above
+            const material = (newMesh as any).material;
+            if (material && material.color) {
+                material.color.setHex(storedColor);
+                console.log(`Reapplied stored MTL color #${storedColor.toString(16).padStart(6, '0')} after mode switch`);
+            }
+        }
+        
+        // Update UI to reflect the change
+        this.updateFileList();
+        
+        this.showStatus(`Switched OBJ file to ${mode} mode`);
     }
 
     private toggleColorMode(): void {
@@ -2619,51 +2818,125 @@ class PLYVisualizer {
             const geometry = this.createGeometryFromPlyData(data);
             const material = this.createMaterialForFile(data, data.fileIndex);
             
-            // Check if this is an OBJ wireframe
-            const isObjWireframe = (data as any).isObjWireframe;
+            // Check if this is an OBJ file and handle different rendering modes
+            const isObjFile = (data as any).isObjFile;
+            const objRenderType = (data as any).objRenderType;
             
-            if (isObjWireframe && (data as any).objLines) {
-                // Create wireframe using LineSegments
-                const lines = (data as any).objLines;
-                const linePositions = new Float32Array(lines.length * 6); // 2 vertices per line, 3 coords per vertex
-                
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i];
-                    const startVertex = data.vertices[line.start];
-                    const endVertex = data.vertices[line.end];
+            if (isObjFile) {
+                if (objRenderType === 'wireframe' && (data as any).objLines) {
+                    // Create wireframe using LineSegments
+                    const lines = (data as any).objLines;
+                    const linePositions = new Float32Array(lines.length * 6); // 2 vertices per line, 3 coords per vertex
                     
-                    const i6 = i * 6;
-                    linePositions[i6] = startVertex.x;
-                    linePositions[i6 + 1] = startVertex.y;
-                    linePositions[i6 + 2] = startVertex.z;
-                    linePositions[i6 + 3] = endVertex.x;
-                    linePositions[i6 + 4] = endVertex.y;
-                    linePositions[i6 + 5] = endVertex.z;
+                    for (let i = 0; i < lines.length; i++) {
+                        const line = lines[i];
+                        const startVertex = data.vertices[line.start];
+                        const endVertex = data.vertices[line.end];
+                        
+                        const i6 = i * 6;
+                        linePositions[i6] = startVertex.x;
+                        linePositions[i6 + 1] = startVertex.y;
+                        linePositions[i6 + 2] = startVertex.z;
+                        linePositions[i6 + 3] = endVertex.x;
+                        linePositions[i6 + 4] = endVertex.y;
+                        linePositions[i6 + 5] = endVertex.z;
+                    }
+                    
+                    const lineGeometry = new THREE.BufferGeometry();
+                    lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+                    
+                    const lineMaterial = new THREE.LineBasicMaterial({ 
+                        color: 0xff0000, // Red wireframe
+                        linewidth: 1 
+                    });
+                    
+                    const wireframeMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
+                    (wireframeMesh as any).isLineSegments = true;
+                    this.scene.add(wireframeMesh);
+                    this.meshes.push(wireframeMesh);
+                } else if (objRenderType === 'mesh' && data.faceCount > 0) {
+                    // Create solid mesh with proper material
+                    const objData = (data as any).objData;
+                    
+                    // Use appropriate material for mesh rendering (MeshBasicMaterial for reliable color display)
+                    const meshMaterial = new THREE.MeshBasicMaterial({
+                        color: 0x808080, // Gray color
+                        side: THREE.DoubleSide,
+                        vertexColors: data.hasColors
+                    });
+                    
+                    // Apply normals if available from OBJ
+                    if (objData && objData.hasNormals && objData.normals.length > 0) {
+                        const normals = new Float32Array(data.vertexCount * 3);
+                        for (let i = 0; i < data.vertexCount && i < objData.normals.length; i++) {
+                            const normal = objData.normals[i];
+                            normals[i * 3] = normal.nx;
+                            normals[i * 3 + 1] = normal.ny;
+                            normals[i * 3 + 2] = normal.nz;
+                        }
+                        geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+                    }
+                    
+                    const mesh = new THREE.Mesh(geometry, meshMaterial);
+                    (mesh as any).isObjMesh = true;
+                    this.scene.add(mesh);
+                    this.meshes.push(mesh);
+                } else {
+                    // Fallback to points
+                    const mesh = new THREE.Points(geometry, material);
+                    this.scene.add(mesh);
+                    this.meshes.push(mesh);
                 }
-                
-                const lineGeometry = new THREE.BufferGeometry();
-                lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
-                
-                const lineMaterial = new THREE.LineBasicMaterial({ 
-                    color: 0xff0000, // Red wireframe
-                    linewidth: 1 
-                });
-                
-                const wireframeMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
-                this.scene.add(wireframeMesh);
-                this.meshes.push(wireframeMesh);
             } else {
-                // Create regular mesh
-                const shouldShowAsPoints = data.faceCount === 0;
-                const mesh = shouldShowAsPoints ?
-                    new THREE.Points(geometry, material) :
-                    new THREE.Mesh(geometry, material);
+                // Handle legacy OBJ wireframe format and regular PLY files
+                const isObjWireframe = (data as any).isObjWireframe;
                 
-                this.scene.add(mesh);
-                this.meshes.push(mesh);
+                if (isObjWireframe && (data as any).objLines) {
+                    // Legacy wireframe handling
+                    const lines = (data as any).objLines;
+                    const linePositions = new Float32Array(lines.length * 6);
+                    
+                    for (let i = 0; i < lines.length; i++) {
+                        const line = lines[i];
+                        const startVertex = data.vertices[line.start];
+                        const endVertex = data.vertices[line.end];
+                        
+                        const i6 = i * 6;
+                        linePositions[i6] = startVertex.x;
+                        linePositions[i6 + 1] = startVertex.y;
+                        linePositions[i6 + 2] = startVertex.z;
+                        linePositions[i6 + 3] = endVertex.x;
+                        linePositions[i6 + 4] = endVertex.y;
+                        linePositions[i6 + 5] = endVertex.z;
+                    }
+                    
+                    const lineGeometry = new THREE.BufferGeometry();
+                    lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+                    
+                    const lineMaterial = new THREE.LineBasicMaterial({ 
+                        color: 0xff0000,
+                        linewidth: 1 
+                    });
+                    
+                    const wireframeMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
+                    (wireframeMesh as any).isLineSegments = true;
+                    this.scene.add(wireframeMesh);
+                    this.meshes.push(wireframeMesh);
+                } else {
+                    // Create regular mesh for PLY files
+                    const shouldShowAsPoints = data.faceCount === 0;
+                    const mesh = shouldShowAsPoints ?
+                        new THREE.Points(geometry, material) :
+                        new THREE.Mesh(geometry, material);
+                    
+                    this.scene.add(mesh);
+                    this.meshes.push(mesh);
+                }
             }
             this.fileVisibility.push(true);
             this.pointSizes.push(0.001); // Default point size for good visibility
+            this.appliedMtlColors.push(null); // No MTL color applied initially
+            this.appliedMtlNames.push(null); // No MTL material applied initially
             
             // Initialize transformation matrix for this file
             this.transformationMatrices.push(new THREE.Matrix4());
@@ -2699,6 +2972,8 @@ class PLYVisualizer {
         this.fileVisibility.splice(fileIndex, 1);
         this.pointSizes.splice(fileIndex, 1); // Remove point size for this file
         this.individualColorModes.splice(fileIndex, 1); // Remove color mode for this file
+        this.appliedMtlColors.splice(fileIndex, 1); // Remove MTL color for this file
+        this.appliedMtlNames.splice(fileIndex, 1); // Remove MTL name for this file
         
         // Remove TIF data if it exists for this file
         this.fileTifData.delete(fileIndex);
@@ -4087,38 +4362,62 @@ class PLYVisualizer {
     private async handleObjData(message: any): Promise<void> {
         try {
             console.log('Received OBJ data for processing:', message.fileName);
-            this.showStatus('Processing OBJ wireframe...');
+            this.showStatus('Processing OBJ data...');
             
             const objData = message.data;
+            const hasFaces = objData.faceCount > 0;
+            const hasLines = objData.lineCount > 0;
             
-            // Convert OBJ data to PLY-compatible format for visualization
+            console.log(`OBJ Analysis: ${objData.vertexCount} vertices, ${objData.faceCount} faces, ${objData.lineCount} lines`);
+            console.log(`Has textures: ${objData.hasTextures}, Has normals: ${objData.hasNormals}`);
+            
+            // Convert OBJ vertices to PLY format
             const vertices: PlyVertex[] = objData.vertices.map((v: any) => ({
                 x: v.x,
                 y: v.y,
                 z: v.z,
-                red: 255,  // Default red color
-                green: 0,
-                blue: 0
+                red: 128,  // Default gray color
+                green: 128,
+                blue: 128
             }));
             
-            // Create PLY data structure for points
+            // Convert OBJ faces to PLY format if they exist
+            const faces: PlyFace[] = [];
+            if (hasFaces) {
+                for (const objFace of objData.faces) {
+                    if (objFace.indices.length >= 3) {
+                        faces.push({
+                            indices: objFace.indices
+                        });
+                    }
+                }
+            }
+            
+            // Create PLY data structure
             const plyData: PlyData = {
                 vertices,
-                faces: [],
+                faces,
                 format: 'ascii',
                 version: '1.0',
                 comments: [`Converted from OBJ file: ${message.fileName}`],
                 vertexCount: vertices.length,
-                faceCount: 0,
+                faceCount: faces.length,
                 hasColors: true,
-                hasNormals: false,
-                fileName: message.fileName.replace(/\.obj$/i, '_wireframe.ply'),
+                hasNormals: objData.hasNormals,
+                fileName: message.fileName.replace(/\.obj$/i, hasFaces ? '_mesh.ply' : '_wireframe.ply'),
                 fileIndex: this.plyFiles.length
             };
             
-            // Store OBJ line data for wireframe rendering
-            (plyData as any).objLines = objData.lines;
-            (plyData as any).isObjWireframe = true;
+            // Store OBJ-specific data for enhanced rendering
+            (plyData as any).objData = objData;
+            (plyData as any).isObjFile = true;
+            (plyData as any).objRenderType = hasFaces ? 'mesh' : 'wireframe';
+            
+            // Store line data for wireframe rendering (either as primary or secondary visualization)
+            if (hasLines) {
+                (plyData as any).objLines = objData.lines;
+                (plyData as any).hasWireframe = true;
+            }
             
             // Add to visualization
             if (message.isAddFile) {
@@ -4127,7 +4426,14 @@ class PLYVisualizer {
                 await this.displayFiles([plyData]);
             }
             
-            this.showStatus(`OBJ wireframe loaded! ${vertices.length.toLocaleString()} vertices, ${objData.lines.length} line segments`);
+            // Status message based on what was loaded
+            let statusParts = [`${vertices.length.toLocaleString()} vertices`];
+            if (hasFaces) statusParts.push(`${faces.length.toLocaleString()} faces`);
+            if (hasLines) statusParts.push(`${objData.lineCount} line segments`);
+            if (objData.hasTextures) statusParts.push(`${objData.textureCoordCount} texture coords`);
+            if (objData.hasNormals) statusParts.push(`${objData.normalCount} normals`);
+            
+            this.showStatus(`OBJ ${hasFaces ? 'mesh' : 'wireframe'} loaded! ${statusParts.join(', ')}`);
             
         } catch (error) {
             console.error('Error handling OBJ data:', error);
@@ -5835,6 +6141,7 @@ class PLYVisualizer {
             const fileIndex = message.fileIndex;
             const mtlData = message.data;
             console.log('MTL data structure:', mtlData);
+            console.log('Available materials:', Object.keys(mtlData.materials || {}));
             
             if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
                 console.error('Invalid file index for MTL data:', fileIndex);
@@ -5842,40 +6149,98 @@ class PLYVisualizer {
             }
             
             const objFile = this.plyFiles[fileIndex];
-            if (!(objFile as any).isObjWireframe) {
-                console.error('File is not an OBJ wireframe:', fileIndex);
+            const isObjFile = (objFile as any).isObjFile || (objFile as any).isObjWireframe;
+            
+            console.log('OBJ file data:', {
+                isObjFile: (objFile as any).isObjFile,
+                isObjWireframe: (objFile as any).isObjWireframe,
+                objRenderType: (objFile as any).objRenderType,
+                fileName: objFile.fileName
+            });
+            
+            if (!isObjFile) {
+                console.error('File is not an OBJ file:', fileIndex);
                 return;
             }
             
-            // Find the material to use - get the first material if multiple exist
+            // Find the material to use - prioritize the current material from OBJ, then first material
             let materialColor = { r: 1.0, g: 0.0, b: 0.0 }; // Default red
+            let materialName = '';
             
             if (mtlData.materials && Object.keys(mtlData.materials).length > 0) {
-                // Get the first material
+                const objData = (objFile as any).objData;
                 const materialNames = Object.keys(mtlData.materials);
-                const firstMaterial = mtlData.materials[materialNames[0]];
-                if (firstMaterial && firstMaterial.diffuseColor) {
-                    materialColor = firstMaterial.diffuseColor;
-                    console.log(`Using material '${materialNames[0]}' with color: RGB(${materialColor.r}, ${materialColor.g}, ${materialColor.b})`);
+                
+                // Try to use the material referenced in the OBJ file first
+                if (objData && objData.currentMaterial && mtlData.materials[objData.currentMaterial]) {
+                    const material = mtlData.materials[objData.currentMaterial];
+                    if (material.diffuseColor) {
+                        materialColor = material.diffuseColor;
+                        materialName = objData.currentMaterial;
+                    }
+                } else {
+                    // Fall back to first available material
+                    const firstMaterial = mtlData.materials[materialNames[0]];
+                    if (firstMaterial && firstMaterial.diffuseColor) {
+                        materialColor = firstMaterial.diffuseColor;
+                        materialName = materialNames[0];
+                    }
                 }
+                
+                console.log(`Using material '${materialName}' with color: RGB(${materialColor.r}, ${materialColor.g}, ${materialColor.b})`);
             }
             
-            // Update the wireframe mesh color
+            // Convert RGB 0-1 to Three.js hex color
+            const hexColor = (Math.round(materialColor.r * 255) << 16) | 
+                           (Math.round(materialColor.g * 255) << 8) | 
+                           Math.round(materialColor.b * 255);
+            
+            // Update the mesh color based on current render type
             const mesh = this.meshes[fileIndex];
-            if (mesh && (mesh as any).isLineSegments) {
-                const lineMaterial = (mesh as any).material;
-                if (lineMaterial) {
-                    // Convert RGB 0-1 to Three.js color
-                    const hexColor = (Math.round(materialColor.r * 255) << 16) | 
-                                   (Math.round(materialColor.g * 255) << 8) | 
-                                   Math.round(materialColor.b * 255);
-                    lineMaterial.color.setHex(hexColor);
-                    console.log(`Updated wireframe color to #${hexColor.toString(16).padStart(6, '0')}`);
+            console.log('Mesh info:', {
+                meshExists: !!mesh,
+                meshType: mesh?.type,
+                isLineSegments: (mesh as any)?.isLineSegments,
+                isObjMesh: (mesh as any)?.isObjMesh,
+                materialType: (mesh as any)?.material?.type
+            });
+            
+            if (mesh) {
+                if ((mesh as any).isLineSegments) {
+                    // Update wireframe color
+                    const lineMaterial = (mesh as any).material;
+                    if (lineMaterial) {
+                        lineMaterial.color.setHex(hexColor);
+                        console.log(`Updated wireframe color to #${hexColor.toString(16).padStart(6, '0')}`);
+                    }
+                } else if ((mesh as any).isObjMesh || mesh.type === 'Mesh') {
+                    // Update solid mesh color
+                    const meshMaterial = (mesh as any).material;
+                    if (meshMaterial) {
+                        meshMaterial.color.setHex(hexColor);
+                        console.log(`Updated solid mesh color to #${hexColor.toString(16).padStart(6, '0')}`);
+                    }
+                } else {
+                    console.warn('Unknown mesh type, trying to update material anyway');
+                    const anyMaterial = (mesh as any).material;
+                    if (anyMaterial && anyMaterial.color) {
+                        anyMaterial.color.setHex(hexColor);
+                        console.log(`Updated generic material color to #${hexColor.toString(16).padStart(6, '0')}`);
+                    }
                 }
+            } else {
+                console.error('No mesh found at index:', fileIndex);
             }
+            
+            // Store the applied MTL color and name for future use
+            this.appliedMtlColors[fileIndex] = hexColor;
+            this.appliedMtlNames[fileIndex] = materialName;
+            
+            // Update UI to show loaded MTL
+            this.updateFileList();
             
             const materialCount = mtlData.materialCount || Object.keys(mtlData.materials || {}).length;
-            this.showStatus(`MTL material applied! Using ${materialCount} material(s) from ${message.fileName}`);
+            this.showStatus(`MTL material applied! Using material '${materialName}' from ${message.fileName}`);
             
         } catch (error) {
             console.error('Error handling MTL data:', error);

@@ -4,24 +4,44 @@ export interface ObjVertex {
     z: number;
 }
 
+export interface ObjTextureCoord {
+    u: number;
+    v: number;
+    w?: number;
+}
+
+export interface ObjNormal {
+    nx: number;
+    ny: number;
+    nz: number;
+}
+
 export interface ObjLine {
     start: number; // vertex index
     end: number;   // vertex index
 }
 
 export interface ObjFace {
-    indices: number[];
+    indices: number[];           // vertex indices
+    textureIndices?: number[];   // texture coordinate indices
+    normalIndices?: number[];    // normal vector indices
 }
 
 export interface ObjData {
     vertices: ObjVertex[];
+    textureCoords: ObjTextureCoord[];
+    normals: ObjNormal[];
     lines: ObjLine[];
     faces: ObjFace[];
     materialFile?: string;
     currentMaterial?: string;
     vertexCount: number;
+    textureCoordCount: number;
+    normalCount: number;
     lineCount: number;
     faceCount: number;
+    hasTextures: boolean;
+    hasNormals: boolean;
     fileName?: string;
     fileIndex?: number;
 }
@@ -34,11 +54,17 @@ export class ObjParser {
         
         const result: ObjData = {
             vertices: [],
+            textureCoords: [],
+            normals: [],
             lines: [],
             faces: [],
             vertexCount: 0,
+            textureCoordCount: 0,
+            normalCount: 0,
             lineCount: 0,
-            faceCount: 0
+            faceCount: 0,
+            hasTextures: false,
+            hasNormals: false
         };
 
         // Decode the entire file as text
@@ -83,6 +109,36 @@ export class ObjParser {
                     }
                     break;
 
+                case 'vt':
+                    // Texture coordinate: vt u [v] [w]
+                    if (parts.length >= 2) {
+                        const texCoord: ObjTextureCoord = {
+                            u: parseFloat(parts[1]),
+                            v: parts.length >= 3 ? parseFloat(parts[2]) : 0.0
+                        };
+                        if (parts.length >= 4) {
+                            texCoord.w = parseFloat(parts[3]);
+                        }
+                        result.textureCoords.push(texCoord);
+                        result.textureCoordCount++;
+                        result.hasTextures = true;
+                    }
+                    break;
+
+                case 'vn':
+                    // Vertex normal: vn nx ny nz
+                    if (parts.length >= 4) {
+                        const normal: ObjNormal = {
+                            nx: parseFloat(parts[1]),
+                            ny: parseFloat(parts[2]),
+                            nz: parseFloat(parts[3])
+                        };
+                        result.normals.push(normal);
+                        result.normalCount++;
+                        result.hasNormals = true;
+                    }
+                    break;
+
                 case 'l':
                     // Line: l v1 v2 [v3 ...]
                     // OBJ uses 1-based indexing, so subtract 1 for 0-based indexing
@@ -103,12 +159,40 @@ export class ObjParser {
                     // Face: f v1[/vt1/vn1] v2[/vt2/vn2] v3[/vt3/vn3] ...
                     if (parts.length >= 4) {
                         const faceIndices: number[] = [];
+                        const textureIndices: number[] = [];
+                        const normalIndices: number[] = [];
+                        let hasTexInFace = false;
+                        let hasNormInFace = false;
+                        
                         for (let j = 1; j < parts.length; j++) {
-                            // Handle vertex/texture/normal format (take only vertex index)
-                            const vertexRef = parts[j].split('/')[0];
-                            faceIndices.push(parseInt(vertexRef) - 1); // Convert to 0-based
+                            // Handle vertex/texture/normal format: v/vt/vn or v//vn or v/vt or v
+                            const indices = parts[j].split('/');
+                            
+                            // Vertex index (required)
+                            faceIndices.push(parseInt(indices[0]) - 1); // Convert to 0-based
+                            
+                            // Texture coordinate index (optional)
+                            if (indices.length >= 2 && indices[1] !== '') {
+                                textureIndices.push(parseInt(indices[1]) - 1); // Convert to 0-based
+                                hasTexInFace = true;
+                            }
+                            
+                            // Normal index (optional)
+                            if (indices.length >= 3 && indices[2] !== '') {
+                                normalIndices.push(parseInt(indices[2]) - 1); // Convert to 0-based
+                                hasNormInFace = true;
+                            }
                         }
-                        result.faces.push({ indices: faceIndices });
+                        
+                        const face: ObjFace = { indices: faceIndices };
+                        if (hasTexInFace) {
+                            face.textureIndices = textureIndices;
+                        }
+                        if (hasNormInFace) {
+                            face.normalIndices = normalIndices;
+                        }
+                        
+                        result.faces.push(face);
                         result.faceCount++;
                     }
                     break;
@@ -127,6 +211,12 @@ export class ObjParser {
         const totalParseTime = performance.now();
         log(`🎯 Parser: OBJ parsing complete in ${(totalParseTime - parseStartTime).toFixed(1)}ms`);
         log(`📊 Parser: Found ${result.vertexCount} vertices, ${result.lineCount} lines, ${result.faceCount} faces`);
+        if (result.hasTextures) {
+            log(`🗺️ Parser: Found ${result.textureCoordCount} texture coordinates`);
+        }
+        if (result.hasNormals) {
+            log(`📐 Parser: Found ${result.normalCount} normals`);
+        }
         if (result.materialFile) {
             log(`🎨 Parser: Material file: ${result.materialFile}`);
         }
