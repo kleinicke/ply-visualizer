@@ -1859,6 +1859,9 @@ class PLYVisualizer {
                 case 'colorImageData':
                     this.handleColorImageData(message);
                     break;
+                case 'mtlData':
+                    this.handleMtlData(message);
+                    break;
             }
         });
     }
@@ -2161,6 +2164,15 @@ class PLYVisualizer {
                     </div>
                     ` : ''}
                     
+                    ${(data as any).isObjWireframe ? `
+                    <!-- MTL Material Control (for OBJ files) -->
+                    <div class="mtl-control" style="margin-top: 8px;">
+                        <button class="load-mtl-btn" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%;">
+                            🎨 Load MTL Material
+                        </button>
+                    </div>
+                    ` : ''}
+                    
                     <!-- Color Control (Fourth) -->
                     <div class="color-control">
                         <label for="color-${i}">Color:</label>
@@ -2429,6 +2441,15 @@ class PLYVisualizer {
                 this.requestRemoveFile(fileIndex);
             });
         });
+
+        // Add MTL button listeners for OBJ files
+        const mtlButtons = fileListDiv.querySelectorAll('.load-mtl-btn');
+        mtlButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const fileIndex = parseInt((e.target as HTMLElement).getAttribute('data-file-index') || '0');
+                this.requestLoadMtl(fileIndex);
+            });
+        });
     }
 
     private toggleFileVisibility(fileIndex: number): void {
@@ -2563,6 +2584,13 @@ class PLYVisualizer {
     private requestRemoveFile(fileIndex: number): void {
         this.vscode.postMessage({
             type: 'removeFile',
+            fileIndex: fileIndex
+        });
+    }
+
+    private requestLoadMtl(fileIndex: number): void {
+        this.vscode.postMessage({
+            type: 'loadMtl',
             fileIndex: fileIndex
         });
     }
@@ -5799,6 +5827,60 @@ class PLYVisualizer {
         });
         
         return content;
+    }
+
+    private handleMtlData(message: any): void {
+        try {
+            console.log('Received MTL data for file index:', message.fileIndex);
+            const fileIndex = message.fileIndex;
+            const mtlData = message.data;
+            console.log('MTL data structure:', mtlData);
+            
+            if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+                console.error('Invalid file index for MTL data:', fileIndex);
+                return;
+            }
+            
+            const objFile = this.plyFiles[fileIndex];
+            if (!(objFile as any).isObjWireframe) {
+                console.error('File is not an OBJ wireframe:', fileIndex);
+                return;
+            }
+            
+            // Find the material to use - get the first material if multiple exist
+            let materialColor = { r: 1.0, g: 0.0, b: 0.0 }; // Default red
+            
+            if (mtlData.materials && Object.keys(mtlData.materials).length > 0) {
+                // Get the first material
+                const materialNames = Object.keys(mtlData.materials);
+                const firstMaterial = mtlData.materials[materialNames[0]];
+                if (firstMaterial && firstMaterial.diffuseColor) {
+                    materialColor = firstMaterial.diffuseColor;
+                    console.log(`Using material '${materialNames[0]}' with color: RGB(${materialColor.r}, ${materialColor.g}, ${materialColor.b})`);
+                }
+            }
+            
+            // Update the wireframe mesh color
+            const mesh = this.meshes[fileIndex];
+            if (mesh && (mesh as any).isLineSegments) {
+                const lineMaterial = (mesh as any).material;
+                if (lineMaterial) {
+                    // Convert RGB 0-1 to Three.js color
+                    const hexColor = (Math.round(materialColor.r * 255) << 16) | 
+                                   (Math.round(materialColor.g * 255) << 8) | 
+                                   Math.round(materialColor.b * 255);
+                    lineMaterial.color.setHex(hexColor);
+                    console.log(`Updated wireframe color to #${hexColor.toString(16).padStart(6, '0')}`);
+                }
+            }
+            
+            const materialCount = mtlData.materialCount || Object.keys(mtlData.materials || {}).length;
+            this.showStatus(`MTL material applied! Using ${materialCount} material(s) from ${message.fileName}`);
+            
+        } catch (error) {
+            console.error('Error handling MTL data:', error);
+            this.showError(`Failed to apply MTL material: ${error instanceof Error ? error.message : String(error)}`);
+        }
     }
 }
 

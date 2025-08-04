@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { PlyParser } from './plyParser';
 import { ObjParser } from './objParser';
+import { MtlParser } from './mtlParser';
 
 export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private static readonly viewType = 'plyViewer.plyEditor';
@@ -248,6 +249,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         break;
                     case 'selectColorImage':
                         await this.handleSelectColorImage(webviewPanel, message);
+                        break;
+                    case 'loadMtl':
+                        await this.handleLoadMtl(webviewPanel, message);
                         break;
                 }
             }
@@ -1206,6 +1210,57 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         } catch (error) {
             console.error('❌ Error selecting color image:', error);
             vscode.window.showErrorMessage(`Failed to select color image: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handleLoadMtl(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
+        try {
+            // Show file picker for MTL files
+            const files = await vscode.window.showOpenDialog({
+                canSelectMany: false,
+                filters: {
+                    // eslint-disable-next-line @typescript-eslint/naming-convention
+                    'MTL Material Files': ['mtl']
+                },
+                title: 'Select MTL material file'
+            });
+
+            if (files && files.length > 0) {
+                const mtlFile = files[0];
+                console.log(`Loading MTL file: ${mtlFile.fsPath}`);
+                
+                // Read and parse MTL file
+                const mtlData = await vscode.workspace.fs.readFile(mtlFile);
+                const mtlParser = new MtlParser();
+                const parsedMtl = await mtlParser.parse(mtlData);
+                
+                // Convert Map to plain object for serialization
+                const materialsObj: { [key: string]: any } = {};
+                if (parsedMtl.materials) {
+                    parsedMtl.materials.forEach((material, name) => {
+                        materialsObj[name] = material;
+                    });
+                }
+                
+                const serializedMtl = {
+                    materials: materialsObj,
+                    materialCount: parsedMtl.materials ? parsedMtl.materials.size : 0,
+                    fileName: parsedMtl.fileName
+                };
+                
+                // Send MTL data to webview
+                webviewPanel.webview.postMessage({
+                    type: 'mtlData',
+                    fileIndex: message.fileIndex,
+                    fileName: path.basename(mtlFile.fsPath),
+                    data: serializedMtl
+                });
+                
+                console.log(`MTL file ${path.basename(mtlFile.fsPath)} sent to webview for file index ${message.fileIndex}`);
+            }
+        } catch (error) {
+            console.error('Error loading MTL file:', error);
+            vscode.window.showErrorMessage(`Failed to load MTL file: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
