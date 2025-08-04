@@ -1932,7 +1932,8 @@ class PLYVisualizer {
             
             // Initialize point size if not set
             if (!this.pointSizes[fileIndex]) {
-                this.pointSizes[fileIndex] = 0.001;  // Default point size for better visibility
+                const isObjFile = (data as any).isObjFile;
+                this.pointSizes[fileIndex] = isObjFile ? 5.0 : 0.001;  // Default point size for better visibility
             }
             
             material.size = this.pointSizes[fileIndex];
@@ -2160,12 +2161,16 @@ class PLYVisualizer {
                         </div>
                     </div>
                     
-                    ${data.faceCount === 0 ? `
-                    <!-- Point Size Control (Third) -->
+                    ${(data.faceCount === 0 || (data as any).isObjFile) ? `
+                    <!-- Point/Line Size Control (Third) -->
                     <div class="point-size-control">
-                        <label for="size-${i}">Max Point Size:</label>
-                        <input type="range" id="size-${i}" min="0.00001" max="0.01" step="0.00001" value="${this.pointSizes[i] || 0.001}" class="size-slider">
-                        <span class="size-value">${(this.pointSizes[i] || 0.001).toFixed(5)}</span>
+                        <label for="size-${i}">${(data as any).isObjFile ? 'Point Size:' : 'Max Point Size:'}</label>
+                        ${(data as any).isObjFile ? 
+                            `<input type="range" id="size-${i}" min="0.1" max="20.0" step="0.1" value="${this.pointSizes[i] || 5.0}" class="size-slider">
+                            <span class="size-value">${(this.pointSizes[i] || 5.0).toFixed(1)}</span>` :
+                            `<input type="range" id="size-${i}" min="0.00001" max="0.01" step="0.00001" value="${this.pointSizes[i] || 0.001}" class="size-slider">
+                            <span class="size-value">${(this.pointSizes[i] || 0.001).toFixed(5)}</span>`
+                        }
                     </div>
                     ` : ''}
                     
@@ -2355,9 +2360,10 @@ class PLYVisualizer {
                 });
             }
             
-            // Add size slider listeners for point clouds
+            // Add size slider listeners for point clouds and OBJ files
             const sizeSlider = document.getElementById(`size-${i}`) as HTMLInputElement;
-            if (sizeSlider && this.plyFiles[i].faceCount === 0) {
+            const isObjFile = (this.plyFiles[i] as any).isObjFile;
+            if (sizeSlider && (this.plyFiles[i].faceCount === 0 || isObjFile)) {
                 sizeSlider.addEventListener('input', (e) => {
                     const newSize = parseFloat((e.target as HTMLInputElement).value);
                     this.updatePointSize(i, newSize);
@@ -2365,7 +2371,7 @@ class PLYVisualizer {
                     // Update the displayed value
                     const sizeValue = document.querySelector(`#size-${i} + .size-value`) as HTMLElement;
                     if (sizeValue) {
-                        sizeValue.textContent = newSize.toFixed(5);
+                        sizeValue.textContent = isObjFile ? newSize.toFixed(1) : newSize.toFixed(5);
                     }
                 });
             }
@@ -2686,13 +2692,15 @@ class PLYVisualizer {
                 
                 const pointMaterial = new THREE.PointsMaterial({ 
                     color: 0xff0000, // Default red - will be colored by MTL
-                    size: 5.0,
+                    size: this.pointSizes[fileIndex] || 5.0, // Use stored point size
                     sizeAttenuation: false
                 });
                 
                 const points = new THREE.Points(pointGeometry, pointMaterial);
                 (points as any).materialName = materialGroup.material;
                 (points as any).isPoints = true;
+                
+                console.log(`🔴 Created ${materialGroup.points.length} points for material ${materialGroup.material}, size: ${pointMaterial.size}`);
                 
                 meshGroup.add(points);
                 subMeshes.push(points);
@@ -2770,8 +2778,7 @@ class PLYVisualizer {
         lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
         
         const lineMaterial = new THREE.LineBasicMaterial({ 
-            color: 0xff0000,
-            linewidth: 1 
+            color: 0xff0000
         });
         
         const wireframeMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
@@ -2885,13 +2892,15 @@ class PLYVisualizer {
                 
                 const pointMaterial = new THREE.PointsMaterial({ 
                     color: 0xff0000, // Default red - will be colored by MTL
-                    size: 5.0,
+                    size: this.pointSizes[fileIndex] || 5.0, // Use stored point size
                     sizeAttenuation: false
                 });
                 
                 const points = new THREE.Points(pointGeometry, pointMaterial);
                 (points as any).materialName = materialGroup.material;
                 (points as any).isPoints = true;
+                
+                console.log(`🔴 Created ${materialGroup.points.length} points for material ${materialGroup.material}, size: ${pointMaterial.size}`);
                 
                 meshGroup.add(points);
                 subMeshes.push(points);
@@ -3119,10 +3128,10 @@ class PLYVisualizer {
             const material = this.createMaterialForFile(data, data.fileIndex);
             
             // Check if this is an OBJ file and handle different rendering modes
-            const isObjFile = (data as any).isObjFile;
+            const isObjFile2 = (data as any).isObjFile;
             const objRenderType = (data as any).objRenderType;
             
-            if (isObjFile) {
+            if (isObjFile2) {
                 if (objRenderType === 'wireframe' && (data as any).objLines) {
                     // Create wireframe using LineSegments
                     const lines = (data as any).objLines;
@@ -3146,8 +3155,7 @@ class PLYVisualizer {
                     lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
                     
                     const lineMaterial = new THREE.LineBasicMaterial({ 
-                        color: 0xff0000, // Red wireframe
-                        linewidth: 1 
+                        color: 0xff0000 // Red wireframe
                     });
                     
                     const wireframeMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
@@ -3263,7 +3271,7 @@ class PLYVisualizer {
                                 
                                 const pointMaterial = new THREE.PointsMaterial({ 
                                     color: 0xff0000, // Default red - will be colored by MTL
-                                    size: 5.0, // Visible point size
+                                    size: this.pointSizes[data.fileIndex] || 5.0, // Use stored point size
                                     sizeAttenuation: false // Keep constant size regardless of distance
                                 });
                                 
@@ -3340,8 +3348,7 @@ class PLYVisualizer {
                     lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
                     
                     const lineMaterial = new THREE.LineBasicMaterial({ 
-                        color: 0xff0000,
-                        linewidth: 1 
+                        color: 0xff0000
                     });
                     
                     const wireframeMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
@@ -3360,7 +3367,8 @@ class PLYVisualizer {
                 }
             }
             this.fileVisibility.push(true);
-            this.pointSizes.push(0.001); // Default point size for good visibility
+            const isObjFile3 = (data as any).isObjFile;
+            this.pointSizes.push(isObjFile3 ? 5.0 : 0.001); // Default point size for good visibility
             this.appliedMtlColors.push(null); // No MTL color applied initially
             this.appliedMtlNames.push(null); // No MTL material applied initially
             this.appliedMtlData.push(null); // No MTL data applied initially
@@ -3848,14 +3856,49 @@ class PLYVisualizer {
             console.log(`🎚️ Updating point size for file ${fileIndex}: ${oldSize} → ${newSize}`);
             this.pointSizes[fileIndex] = newSize;
             
-            // Update the material if it's a Points material
-            const mesh = this.meshes[fileIndex];
-            if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
-                mesh.material.size = newSize;
-                console.log(`✅ Point size applied to material for file ${fileIndex}: ${newSize}`);
+            const data = this.plyFiles[fileIndex];
+            const isObjFile = (data as any).isObjFile;
+            
+            if (isObjFile) {
+                // Handle OBJ files - update both points and lines in multi-material groups
+                const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
+                const subMeshes = this.materialMeshes[fileIndex];
+                
+                if (multiMaterialGroup && subMeshes) {
+                    // Update all sub-meshes in multi-material OBJ
+                    let pointsUpdated = 0;
+                    
+                    for (const subMesh of subMeshes) {
+                        if ((subMesh as any).isPoints && subMesh instanceof THREE.Points) {
+                            // Update point size
+                            const material = (subMesh as any).material;
+                            if (material instanceof THREE.PointsMaterial) {
+                                material.size = newSize; // Use direct size for OBJ points
+                                pointsUpdated++;
+                            }
+                        }
+                        // Line width is now controlled separately by updateLineWidth method
+                    }
+                    
+                    console.log(`✅ Updated ${pointsUpdated} point materials for OBJ file ${fileIndex}`);
+                } else {
+                    // Single OBJ mesh
+                    const mesh = this.meshes[fileIndex];
+                    if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
+                        mesh.material.size = newSize; // Use direct size for OBJ points
+                        console.log(`✅ Point size applied to single OBJ mesh for file ${fileIndex}: ${newSize}`);
+                    }
+                }
             } else {
-                console.warn(`⚠️ Could not apply point size for file ${fileIndex}: mesh is not Points or material is not PointsMaterial`);
-                console.log(`Mesh type: ${mesh?.constructor.name}, Material type: ${mesh?.material?.constructor.name}`);
+                // Handle regular point clouds (PLY files)
+                const mesh = this.meshes[fileIndex];
+                if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
+                    mesh.material.size = newSize;
+                    console.log(`✅ Point size applied to material for file ${fileIndex}: ${newSize}`);
+                } else {
+                    console.warn(`⚠️ Could not apply point size for file ${fileIndex}: mesh is not Points or material is not PointsMaterial`);
+                    console.log(`Mesh type: ${mesh?.constructor.name}, Material type: ${mesh?.material?.constructor.name}`);
+                }
             }
         } else {
             console.error(`❌ Invalid fileIndex ${fileIndex} for pointSizes array of length ${this.pointSizes.length}`);
