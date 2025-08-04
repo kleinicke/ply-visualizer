@@ -1,0 +1,75 @@
+# Minimal OBJ file with various object types
+# Created for demonstration purposes
+
+mtllib minimal_objects.mtl
+
+# Vertices for all objects
+v 0.0 0.0 0.0      # Origin point
+v 1.0 0.0 0.0      # Line end point
+v 0.0 1.0 0.0      # Triangle vertex 1
+v 1.0 1.0 0.0      # Triangle vertex 2
+v 0.5 1.5 0.0      # Triangle vertex 3
+v 0.0 0.0 1.0      # Quad vertex 1
+v 1.0 0.0 1.0      # Quad vertex 2
+v 1.0 1.0 1.0      # Quad vertex 3
+v 0.0 1.0 1.0      # Quad vertex 4
+v 0.5 0.5 2.0      # Pyramid apex
+
+# Texture coordinates
+vt 0.0 0.0
+vt 1.0 0.0
+vt 0.5 1.0
+vt 0.0 1.0
+vt 1.0 1.0
+
+# Vertex normals
+vn 0.0 0.0 1.0     # Z-up normal
+vn 0.0 0.0 -1.0    # Z-down normal
+vn 0.0 1.0 0.0     # Y-up normal
+
+# Point object
+o Point
+usemtl red_material
+p 1
+
+# Line object
+o Line
+usemtl green_material
+l 1 2
+
+# Triangle face
+o Triangle
+usemtl blue_material
+f 3/1/1 4/2/1 5/3/1
+
+# Quad face
+o Quad
+usemtl yellow_material
+f 6/1/1 7/2/1 8/4/1 9/5/1
+
+# Pyramid (using triangular faces)
+o Pyramid
+usemtl purple_material
+f 6/1/2 7/2/2 10/3/2
+f 7/2/2 8/4/2 10/3/2
+f 8/4/2 9/5/2 10/3/2
+f 9/5/2 6/1/2 10/3/2
+
+# Free-form curve (NURBS)
+o Curve
+usemtl curve_material
+cstype bspline
+deg 2 2
+curv 0.0 1.0 1 2 5
+parm u 0.0 0.0 1.0 1.0
+end
+
+# Free-form surface (NURBS)
+o Surface
+usemtl surface_material
+cstype bspline
+deg 1 1
+surf 0.0 1.0 0.0 1.0 6 7 8 9
+parm u 0.0 1.0
+parm v 0.0 1.0
+end

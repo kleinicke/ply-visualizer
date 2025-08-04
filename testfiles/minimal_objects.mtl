@@ -1,0 +1,55 @@
+# Material file for minimal_objects.obj
+# Contains various material types for demonstration
+
+newmtl red_material
+Ka 0.2 0.0 0.0      # Ambient color
+Kd 0.8 0.0 0.0      # Diffuse color (red)
+Ks 0.5 0.5 0.5      # Specular color
+Ns 32.0             # Specular exponent
+d 1.0               # Dissolve (opacity)
+
+newmtl green_material
+Ka 0.0 0.2 0.0
+Kd 0.0 0.8 0.0      # Green
+Ks 0.5 0.5 0.5
+Ns 64.0
+d 1.0
+
+newmtl blue_material
+Ka 0.0 0.0 0.2
+Kd 0.0 0.0 0.8      # Blue
+Ks 0.5 0.5 0.5      # Moderate specular
+Ns 32.0
+d 1.0
+illum 1             # Simple shading
+
+newmtl yellow_material
+Ka 0.2 0.2 0.0
+Kd 0.8 0.8 0.0      # Yellow
+Ks 0.3 0.3 0.3
+Ns 16.0
+d 1.0               # Fully opaque
+
+newmtl purple_material
+Ka 0.2 0.0 0.2
+Kd 0.6 0.0 0.6      # Purple
+Ks 0.8 0.8 0.8
+Ns 96.0
+d 1.0
+illum 2             # Illumination model (highlights)
+
+newmtl curve_material
+Ka 0.1 0.1 0.1
+Kd 0.5 0.5 0.5      # Gray
+Ks 0.0 0.0 0.0      # No specular
+Ns 1.0
+d 1.0
+illum 1             # Color on, ambient off
+
+newmtl surface_material
+Ka 0.0 0.2 0.2
+Kd 0.0 0.8 0.8      # Cyan
+Ks 0.5 0.5 0.5
+Ns 32.0
+d 1.0
+illum 1             # Simple shading

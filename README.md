@@ -9,7 +9,7 @@ Info: This extension is actively developed. The current UI will frequently chang
 - **Visualize Point Clouds**: Navigate in colored or uncolored point clouds 
 - **Fast Loading of Big Point Clouds**: Even point clouds with 5 Million Points load in around a second.
 - **Compare Multiple Point Clouds**: Multiple point clouds can be loaded in the same view and activated and deactivated independently.
-- **Multiple Formats**: Support for both ASCII and binary PLY formats and XYZ pointclouds
+- **Multiple Formats**: Support for both ASCII and binary PLY formats, XYZ pointclouds, and OBJ wireframes
 - **Rotation of points**: Rotation Matrix for single point clouds
 
 ![example-view](assets/example.png)
@@ -30,6 +30,7 @@ Load two point clouds and switch between them imediatly pressing shift and click
   - ASCII PLY format
   - Binary PLY format (little-endian and big-endian)
   - XYZ point cloud format
+  - OBJ wireframe format (points, vertices and line segments)
 
 ## Known Issues and Missing Features
 - **Wrong direction of Rotation**: When rotating the point cloud the direction is inversed. It's unclear how to fix this.
@@ -39,6 +40,30 @@ Load two point clouds and switch between them imediatly pressing shift and click
 - **Add eye dome lighting**: Improve percenption of uncolored point clouds
 - **Drag and Drop**: Add more pc to a given pc using drag and drop instead of adding them in an extra window
 - **Support Obj files**: In Obj files point clouds and shapes can be stored. Add support for them.
+
+### OBJ Wireframe Format Example
+```
+# Vertices
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.5 1.0 0.0
+
+# Lines connecting vertices (1-based indexing)
+l 1 2
+l 2 3
+l 3 1
+
+# Material file reference (colors currently ignored)
+mtllib wireframe.mtl
+usemtl red
+```
+
+**OBJ Support:**
+- Vertices (`v` elements) are parsed and rendered as points
+- Line segments (`l` elements) create wireframe connections
+- MTL material files are recognized but colors are currently ignored
+- Wireframes render in red by default and overlay existing point clouds
+- Can be added to existing visualizations using "Add Point Cloud" button
 
 ## Feature Requests and Issues
 

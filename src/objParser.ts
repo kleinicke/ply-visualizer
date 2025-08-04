@@ -22,6 +22,11 @@ export interface ObjLine {
     material?: string; // material used for this line
 }
 
+export interface ObjPoint {
+    index: number; // vertex index
+    material?: string; // material used for this point
+}
+
 export interface ObjFace {
     indices: number[];           // vertex indices
     textureIndices?: number[];   // texture coordinate indices
@@ -31,6 +36,7 @@ export interface ObjFace {
 
 export interface MaterialGroup {
     material: string;
+    points: ObjPoint[];
     lines: ObjLine[];
     faces: ObjFace[];
 }
@@ -39,6 +45,7 @@ export interface ObjData {
     vertices: ObjVertex[];
     textureCoords: ObjTextureCoord[];
     normals: ObjNormal[];
+    points: ObjPoint[];
     lines: ObjLine[];
     faces: ObjFace[];
     materialGroups: MaterialGroup[]; // Geometry grouped by material
@@ -47,6 +54,7 @@ export interface ObjData {
     vertexCount: number;
     textureCoordCount: number;
     normalCount: number;
+    pointCount: number;
     lineCount: number;
     faceCount: number;
     hasTextures: boolean;
@@ -65,12 +73,14 @@ export class ObjParser {
             vertices: [],
             textureCoords: [],
             normals: [],
+            points: [],
             lines: [],
             faces: [],
             materialGroups: [],
             vertexCount: 0,
             textureCoordCount: 0,
             normalCount: 0,
+            pointCount: 0,
             lineCount: 0,
             faceCount: 0,
             hasTextures: false,
@@ -152,6 +162,22 @@ export class ObjParser {
                     }
                     break;
 
+                case 'p':
+                    // Point: p v1 [v2 v3 ...]
+                    // OBJ uses 1-based indexing, so subtract 1 for 0-based indexing
+                    if (parts.length >= 2) {
+                        // Points can reference multiple vertices
+                        for (let j = 1; j < parts.length; j++) {
+                            const objPoint: ObjPoint = {
+                                index: parseInt(parts[j]) - 1, // Convert to 0-based
+                                material: currentMaterialName
+                            };
+                            result.points.push(objPoint);
+                            result.pointCount++;
+                        }
+                    }
+                    break;
+
                 case 'l':
                     // Line: l v1 v2 [v3 ...]
                     // OBJ uses 1-based indexing, so subtract 1 for 0-based indexing
@@ -228,12 +254,27 @@ export class ObjParser {
         // Group geometry by materials for multi-material rendering
         const materialGroups = new Map<string, MaterialGroup>();
         
+        // Group points by material
+        for (const point of result.points) {
+            const materialName = point.material || 'default';
+            if (!materialGroups.has(materialName)) {
+                materialGroups.set(materialName, {
+                    material: materialName,
+                    points: [],
+                    lines: [],
+                    faces: []
+                });
+            }
+            materialGroups.get(materialName)!.points.push(point);
+        }
+        
         // Group lines by material
         for (const line of result.lines) {
             const materialName = line.material || 'default';
             if (!materialGroups.has(materialName)) {
                 materialGroups.set(materialName, {
                     material: materialName,
+                    points: [],
                     lines: [],
                     faces: []
                 });
@@ -247,6 +288,7 @@ export class ObjParser {
             if (!materialGroups.has(materialName)) {
                 materialGroups.set(materialName, {
                     material: materialName,
+                    points: [],
                     lines: [],
                     faces: []
                 });
@@ -258,7 +300,7 @@ export class ObjParser {
 
         const totalParseTime = performance.now();
         log(`🎯 Parser: OBJ parsing complete in ${(totalParseTime - parseStartTime).toFixed(1)}ms`);
-        log(`📊 Parser: Found ${result.vertexCount} vertices, ${result.lineCount} lines, ${result.faceCount} faces`);
+        log(`📊 Parser: Found ${result.vertexCount} vertices, ${result.pointCount} points, ${result.lineCount} lines, ${result.faceCount} faces`);
         log(`🎨 Parser: Grouped into ${result.materialGroups.length} material group(s)`);
         if (result.hasTextures) {
             log(`🗺️ Parser: Found ${result.textureCoordCount} texture coordinates`);
