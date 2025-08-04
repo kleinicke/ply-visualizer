@@ -345,7 +345,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                             </div>
                             <div class="panel-section">
                                 <h4>Camera Conventions</h4>
-                                <div class="control-buttons">
+                                <div class="control-buttons camera-conventions">
                                     <button id="opencv-convention" class="control-button">OpenCV (Y down) <span class="button-shortcut">C</span></button>
                                     <button id="blender-convention" class="control-button">Blender (Y up) <span class="button-shortcut">B</span></button>
                                 </div>

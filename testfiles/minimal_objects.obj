@@ -15,6 +15,28 @@ v 1.0 1.0 1.0      # Quad vertex 3
 v 0.0 1.0 1.0      # Quad vertex 4
 v 0.5 0.5 2.0      # Pyramid apex
 
+# Additional vertices for point cloud
+v 0.1 0.1 0.1      # Point 11
+v -0.1 0.1 0.1     # Point 12
+v 0.1 -0.1 0.1     # Point 13
+v -0.1 -0.1 0.1    # Point 14
+v 0.1 0.1 -0.1     # Point 15
+v -0.1 0.1 -0.1    # Point 16
+v 0.1 -0.1 -0.1    # Point 17
+v -0.1 -0.1 -0.1   # Point 18
+v 0.2 0.0 0.0      # Point 19
+v -0.2 0.0 0.0     # Point 20
+v 0.0 0.2 0.0      # Point 21
+v 0.0 -0.2 0.0     # Point 22
+v 0.0 0.0 0.2      # Point 23
+v 0.0 0.0 -0.2     # Point 24
+v 0.15 0.15 0.0    # Point 25
+v -0.15 0.15 0.0   # Point 26
+v 0.15 -0.15 0.0   # Point 27
+v -0.15 -0.15 0.0  # Point 28
+v 0.05 0.05 0.05   # Point 29
+v -0.05 -0.05 -0.05 # Point 30
+
 # Texture coordinates
 vt 0.0 0.0
 vt 1.0 0.0
@@ -31,6 +53,11 @@ vn 0.0 1.0 0.0     # Y-up normal
 o Point
 usemtl red_material
 p 1
+
+# Additional points for point cloud visibility
+o PointCloud
+usemtl red_material
+p 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30
 
 # Line object
 o Line

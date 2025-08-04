@@ -2163,7 +2163,7 @@ class PLYVisualizer {
                     ${data.faceCount === 0 ? `
                     <!-- Point Size Control (Third) -->
                     <div class="point-size-control">
-                        <label for="size-${i}">Point Size:</label>
+                        <label for="size-${i}">Max Point Size:</label>
                         <input type="range" id="size-${i}" min="0.00001" max="0.01" step="0.00001" value="${this.pointSizes[i] || 0.001}" class="size-slider">
                         <span class="size-value">${(this.pointSizes[i] || 0.001).toFixed(5)}</span>
                     </div>
@@ -2666,6 +2666,37 @@ class PLYVisualizer {
                     subMeshes.push(lineSegments);
                 }
             }
+            
+            // Handle points in this material group (same for wireframe and solid modes)
+            if (materialGroup.points.length > 0) {
+                const pointPositions = new Float32Array(materialGroup.points.length * 3);
+                
+                for (let i = 0; i < materialGroup.points.length; i++) {
+                    const point = materialGroup.points[i];
+                    const vertex = data.vertices[point.index];
+                    
+                    const i3 = i * 3;
+                    pointPositions[i3] = vertex.x;
+                    pointPositions[i3 + 1] = vertex.y;
+                    pointPositions[i3 + 2] = vertex.z;
+                }
+                
+                const pointGeometry = new THREE.BufferGeometry();
+                pointGeometry.setAttribute('position', new THREE.BufferAttribute(pointPositions, 3));
+                
+                const pointMaterial = new THREE.PointsMaterial({ 
+                    color: 0xff0000, // Default red - will be colored by MTL
+                    size: 5.0,
+                    sizeAttenuation: false
+                });
+                
+                const points = new THREE.Points(pointGeometry, pointMaterial);
+                (points as any).materialName = materialGroup.material;
+                (points as any).isPoints = true;
+                
+                meshGroup.add(points);
+                subMeshes.push(points);
+            }
         }
         
         if (subMeshes.length > 0) {
@@ -2833,6 +2864,37 @@ class PLYVisualizer {
                 
                 meshGroup.add(lineSegments);
                 subMeshes.push(lineSegments);
+            }
+            
+            // Handle points in this material group (same as initial loading)
+            if (materialGroup.points.length > 0) {
+                const pointPositions = new Float32Array(materialGroup.points.length * 3);
+                
+                for (let i = 0; i < materialGroup.points.length; i++) {
+                    const point = materialGroup.points[i];
+                    const vertex = data.vertices[point.index];
+                    
+                    const i3 = i * 3;
+                    pointPositions[i3] = vertex.x;
+                    pointPositions[i3 + 1] = vertex.y;
+                    pointPositions[i3 + 2] = vertex.z;
+                }
+                
+                const pointGeometry = new THREE.BufferGeometry();
+                pointGeometry.setAttribute('position', new THREE.BufferAttribute(pointPositions, 3));
+                
+                const pointMaterial = new THREE.PointsMaterial({ 
+                    color: 0xff0000, // Default red - will be colored by MTL
+                    size: 5.0,
+                    sizeAttenuation: false
+                });
+                
+                const points = new THREE.Points(pointGeometry, pointMaterial);
+                (points as any).materialName = materialGroup.material;
+                (points as any).isPoints = true;
+                
+                meshGroup.add(points);
+                subMeshes.push(points);
             }
         }
         
@@ -3180,6 +3242,37 @@ class PLYVisualizer {
                                 
                                 meshGroup.add(lineSegments);
                                 subMeshes.push(lineSegments);
+                            }
+                            
+                            // Handle points in this material group
+                            if (materialGroup.points.length > 0) {
+                                const pointPositions = new Float32Array(materialGroup.points.length * 3);
+                                
+                                for (let i = 0; i < materialGroup.points.length; i++) {
+                                    const point = materialGroup.points[i];
+                                    const vertex = data.vertices[point.index];
+                                    
+                                    const i3 = i * 3;
+                                    pointPositions[i3] = vertex.x;
+                                    pointPositions[i3 + 1] = vertex.y;
+                                    pointPositions[i3 + 2] = vertex.z;
+                                }
+                                
+                                const pointGeometry = new THREE.BufferGeometry();
+                                pointGeometry.setAttribute('position', new THREE.BufferAttribute(pointPositions, 3));
+                                
+                                const pointMaterial = new THREE.PointsMaterial({ 
+                                    color: 0xff0000, // Default red - will be colored by MTL
+                                    size: 5.0, // Visible point size
+                                    sizeAttenuation: false // Keep constant size regardless of distance
+                                });
+                                
+                                const points = new THREE.Points(pointGeometry, pointMaterial);
+                                (points as any).materialName = materialGroup.material;
+                                (points as any).isPoints = true;
+                                
+                                meshGroup.add(points);
+                                subMeshes.push(points);
                             }
                         }
                         
@@ -4706,13 +4799,14 @@ class PLYVisualizer {
             const objData = message.data;
             const hasFaces = objData.faceCount > 0;
             const hasLines = objData.lineCount > 0;
+            const hasPoints = objData.pointCount > 0;
             
-            console.log(`OBJ Analysis: ${objData.vertexCount} vertices, ${objData.faceCount} faces, ${objData.lineCount} lines`);
+            console.log(`OBJ Analysis: ${objData.vertexCount} vertices, ${objData.pointCount} points, ${objData.faceCount} faces, ${objData.lineCount} lines`);
             console.log(`Has textures: ${objData.hasTextures}, Has normals: ${objData.hasNormals}`);
             console.log(`Material groups found: ${objData.materialGroups ? objData.materialGroups.length : 0}`);
             if (objData.materialGroups) {
                 objData.materialGroups.forEach((group: any, index: number) => {
-                    console.log(`Group ${index}: ${group.material} - ${group.faces.length} faces, ${group.lines.length} lines`);
+                    console.log(`Group ${index}: ${group.material} - ${group.points.length} points, ${group.faces.length} faces, ${group.lines.length} lines`);
                 });
             }
             
@@ -4764,6 +4858,12 @@ class PLYVisualizer {
                 (plyData as any).hasWireframe = true;
             }
             
+            // Store point data for point rendering
+            if (hasPoints) {
+                (plyData as any).objPoints = objData.points;
+                (plyData as any).hasPoints = true;
+            }
+            
             // Add to visualization
             if (message.isAddFile) {
                 this.addNewFiles([plyData]);
@@ -4773,6 +4873,7 @@ class PLYVisualizer {
             
             // Status message based on what was loaded
             let statusParts = [`${vertices.length.toLocaleString()} vertices`];
+            if (hasPoints) statusParts.push(`${objData.pointCount} points`);
             if (hasFaces) statusParts.push(`${faces.length.toLocaleString()} faces`);
             if (hasLines) statusParts.push(`${objData.lineCount} line segments`);
             if (objData.hasTextures) statusParts.push(`${objData.textureCoordCount} texture coords`);
@@ -6580,7 +6681,7 @@ class PLYVisualizer {
                 }
                 
                 console.log(`Applied materials to ${appliedCount}/${subMeshes.length} sub-meshes`);
-                materialName = message.fileName;
+                materialName = message.fileName; // For multi-material, show filename
             } else if (mesh && (mesh as any).isLineSegments) {
                 // Update wireframe color
                 const lineMaterial = (mesh as any).material;
@@ -6588,6 +6689,7 @@ class PLYVisualizer {
                     lineMaterial.color.setHex(hexColor);
                     console.log(`Updated wireframe color to #${hexColor.toString(16).padStart(6, '0')}`);
                 }
+                materialName = message.fileName; // For single-material, show filename
             } else if (mesh && ((mesh as any).isObjMesh || mesh.type === 'Mesh')) {
                 // Update solid mesh color
                 const meshMaterial = (mesh as any).material;
@@ -6595,6 +6697,7 @@ class PLYVisualizer {
                     meshMaterial.color.setHex(hexColor);
                     console.log(`Updated solid mesh color to #${hexColor.toString(16).padStart(6, '0')}`);
                 }
+                materialName = message.fileName; // For single-material, show filename
             } else if (mesh) {
                 console.warn('Unknown mesh type, trying to update material anyway');
                 const anyMaterial = (mesh as any).material;
@@ -6602,6 +6705,7 @@ class PLYVisualizer {
                     anyMaterial.color.setHex(hexColor);
                     console.log(`Updated generic material color to #${hexColor.toString(16).padStart(6, '0')}`);
                 }
+                materialName = message.fileName; // For single-material, show filename
             } else {
                 console.error('No mesh or multi-material group found at index:', fileIndex);
             }

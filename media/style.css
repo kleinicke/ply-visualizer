@@ -577,6 +577,19 @@ body {
         flex-wrap: wrap;
     }
     
+    /* Keep camera conventions on their own row */
+    .control-buttons.camera-conventions {
+        flex-direction: row;
+        flex-wrap: nowrap;
+        justify-content: space-between;
+    }
+    
+    .control-buttons.camera-conventions .control-button {
+        flex: 1;
+        margin: 0 2px;
+        min-width: 0;
+    }
+    
     .control-button {
         flex: 1;
         min-width: 80px;
