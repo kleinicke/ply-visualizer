@@ -118,6 +118,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         data: parsedData
                     });
                     
+                    // Try to auto-load MTL file
+                    await this.tryAutoLoadMtl(webviewPanel, document.uri, parsedData, 0);
+                    
                     return; // Exit early for OBJ files
                 }
                 
@@ -576,6 +579,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                             data: parsedData,
                             isAddFile: true
                         });
+                        
+                        // Try to auto-load MTL file for added OBJ files
+                        await this.tryAutoLoadMtl(webviewPanel, files[i], parsedData, i);
                         
                         console.log(`🎯 OBJ Add File: ${fileName} sent for processing`);
                         continue;
@@ -1261,6 +1267,82 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         } catch (error) {
             console.error('Error loading MTL file:', error);
             vscode.window.showErrorMessage(`Failed to load MTL file: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async tryAutoLoadMtl(
+        webviewPanel: vscode.WebviewPanel, 
+        objUri: vscode.Uri, 
+        parsedData: any, 
+        fileIndex: number
+    ): Promise<void> {
+        try {
+            const objDir = path.dirname(objUri.fsPath);
+            const objBaseName = path.basename(objUri.fsPath, '.obj');
+            let mtlPath: string | null = null;
+            
+            // 1. First try: MTL file explicitly referenced in OBJ
+            if (parsedData.materialFile) {
+                const referencedMtlPath = path.join(objDir, parsedData.materialFile);
+                try {
+                    const mtlUri = vscode.Uri.file(referencedMtlPath);
+                    await vscode.workspace.fs.stat(mtlUri); // Check if file exists
+                    mtlPath = referencedMtlPath;
+                    console.log(`🎨 Auto-loading referenced MTL: ${parsedData.materialFile}`);
+                } catch {
+                    // Referenced MTL file doesn't exist, will try same-name fallback
+                }
+            }
+            
+            // 2. Second try: Same-name MTL file (fallback)
+            if (!mtlPath) {
+                const sameNameMtlPath = path.join(objDir, `${objBaseName}.mtl`);
+                try {
+                    const mtlUri = vscode.Uri.file(sameNameMtlPath);
+                    await vscode.workspace.fs.stat(mtlUri); // Check if file exists
+                    mtlPath = sameNameMtlPath;
+                    console.log(`🎨 Auto-loading same-name MTL: ${objBaseName}.mtl`);
+                } catch {
+                    // Same-name MTL file doesn't exist either
+                }
+            }
+            
+            // 3. Load MTL file if found
+            if (mtlPath) {
+                const mtlUri = vscode.Uri.file(mtlPath);
+                const mtlData = await vscode.workspace.fs.readFile(mtlUri);
+                const mtlParser = new MtlParser();
+                const parsedMtl = await mtlParser.parse(mtlData);
+                
+                // Convert Map to plain object for serialization
+                const materialsObj: { [key: string]: any } = {};
+                if (parsedMtl.materials) {
+                    parsedMtl.materials.forEach((material, name) => {
+                        materialsObj[name] = material;
+                    });
+                }
+                
+                const serializedMtl = {
+                    materials: materialsObj,
+                    materialCount: parsedMtl.materials ? parsedMtl.materials.size : 0,
+                    fileName: parsedMtl.fileName
+                };
+                
+                // Send MTL data to webview
+                webviewPanel.webview.postMessage({
+                    type: 'mtlData',
+                    fileIndex: fileIndex,
+                    fileName: path.basename(mtlPath),
+                    data: serializedMtl,
+                    autoLoaded: true // Flag to indicate this was auto-loaded
+                });
+                
+                console.log(`✅ Auto-loaded MTL: ${path.basename(mtlPath)} for ${path.basename(objUri.fsPath)}`);
+            }
+            
+        } catch (error) {
+            // Silently fail - no error messages for auto-loading as requested
+            console.log(`ℹ️ No MTL file found for ${path.basename(objUri.fsPath)}`);
         }
     }
 
