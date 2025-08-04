@@ -64,7 +64,7 @@ class PLYVisualizer {
     
     // Unified file management
     private plyFiles: PlyData[] = [];
-    private meshes: (THREE.Mesh | THREE.Points)[] = [];
+    private meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
     private fileVisibility: boolean[] = [];
     private useOriginalColors = true; // Default to original colors
     private pointSizes: number[] = []; // Individual point sizes for each point cloud
@@ -1838,6 +1838,9 @@ class PLYVisualizer {
                 case 'tifData':
                     this.handleTifData(message);
                     break;
+                case 'objData':
+                    this.handleObjData(message);
+                    break;
                 case 'xyzData':
                     this.handleXyzData(message);
                     break;
@@ -2588,14 +2591,49 @@ class PLYVisualizer {
             const geometry = this.createGeometryFromPlyData(data);
             const material = this.createMaterialForFile(data, data.fileIndex);
             
-            // Create mesh
-            const shouldShowAsPoints = data.faceCount === 0;
-            const mesh = shouldShowAsPoints ?
-                new THREE.Points(geometry, material) :
-                new THREE.Mesh(geometry, material);
+            // Check if this is an OBJ wireframe
+            const isObjWireframe = (data as any).isObjWireframe;
             
-            this.scene.add(mesh);
-            this.meshes.push(mesh);
+            if (isObjWireframe && (data as any).objLines) {
+                // Create wireframe using LineSegments
+                const lines = (data as any).objLines;
+                const linePositions = new Float32Array(lines.length * 6); // 2 vertices per line, 3 coords per vertex
+                
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    const startVertex = data.vertices[line.start];
+                    const endVertex = data.vertices[line.end];
+                    
+                    const i6 = i * 6;
+                    linePositions[i6] = startVertex.x;
+                    linePositions[i6 + 1] = startVertex.y;
+                    linePositions[i6 + 2] = startVertex.z;
+                    linePositions[i6 + 3] = endVertex.x;
+                    linePositions[i6 + 4] = endVertex.y;
+                    linePositions[i6 + 5] = endVertex.z;
+                }
+                
+                const lineGeometry = new THREE.BufferGeometry();
+                lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+                
+                const lineMaterial = new THREE.LineBasicMaterial({ 
+                    color: 0xff0000, // Red wireframe
+                    linewidth: 1 
+                });
+                
+                const wireframeMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
+                this.scene.add(wireframeMesh);
+                this.meshes.push(wireframeMesh);
+            } else {
+                // Create regular mesh
+                const shouldShowAsPoints = data.faceCount === 0;
+                const mesh = shouldShowAsPoints ?
+                    new THREE.Points(geometry, material) :
+                    new THREE.Mesh(geometry, material);
+                
+                this.scene.add(mesh);
+                this.meshes.push(mesh);
+            }
             this.fileVisibility.push(true);
             this.pointSizes.push(0.001); // Default point size for good visibility
             
@@ -4015,6 +4053,57 @@ class PLYVisualizer {
         } catch (error) {
             console.error('Error handling TIF data:', error);
             this.showError(`Failed to process TIF data: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handleObjData(message: any): Promise<void> {
+        try {
+            console.log('Received OBJ data for processing:', message.fileName);
+            this.showStatus('Processing OBJ wireframe...');
+            
+            const objData = message.data;
+            
+            // Convert OBJ data to PLY-compatible format for visualization
+            const vertices: PlyVertex[] = objData.vertices.map((v: any) => ({
+                x: v.x,
+                y: v.y,
+                z: v.z,
+                red: 255,  // Default red color
+                green: 0,
+                blue: 0
+            }));
+            
+            // Create PLY data structure for points
+            const plyData: PlyData = {
+                vertices,
+                faces: [],
+                format: 'ascii',
+                version: '1.0',
+                comments: [`Converted from OBJ file: ${message.fileName}`],
+                vertexCount: vertices.length,
+                faceCount: 0,
+                hasColors: true,
+                hasNormals: false,
+                fileName: message.fileName.replace(/\.obj$/i, '_wireframe.ply'),
+                fileIndex: this.plyFiles.length
+            };
+            
+            // Store OBJ line data for wireframe rendering
+            (plyData as any).objLines = objData.lines;
+            (plyData as any).isObjWireframe = true;
+            
+            // Add to visualization
+            if (message.isAddFile) {
+                this.addNewFiles([plyData]);
+            } else {
+                await this.displayFiles([plyData]);
+            }
+            
+            this.showStatus(`OBJ wireframe loaded! ${vertices.length.toLocaleString()} vertices, ${objData.lines.length} line segments`);
+            
+        } catch (error) {
+            console.error('Error handling OBJ data:', error);
+            this.showError(`Failed to process OBJ file: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

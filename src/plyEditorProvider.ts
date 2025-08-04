@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { PlyParser } from './plyParser';
+import { ObjParser } from './objParser';
 
 export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private static readonly viewType = 'plyViewer.plyEditor';
@@ -28,8 +29,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             ]
         };
 
-        // Check if this is a TIF file that needs conversion
-        const isTifFile = document.uri.fsPath.toLowerCase().endsWith('.tif') || document.uri.fsPath.toLowerCase().endsWith('.tiff');
+        // Check file type
+        const filePath = document.uri.fsPath.toLowerCase();
+        const isTifFile = filePath.endsWith('.tif') || filePath.endsWith('.tiff');
+        const isObjFile = filePath.endsWith('.obj');
         
         // Show UI immediately before any file processing
         webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
@@ -38,7 +41,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         webviewPanel.webview.postMessage({
             type: 'startLoading',
             fileName: path.basename(document.uri.fsPath),
-            isTifFile: isTifFile
+            isTifFile: isTifFile,
+            isObjFile: isObjFile
         });
 
         // Load and parse file asynchronously (don't await - let UI show first)
@@ -71,6 +75,49 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     });
                     
                     return; // Exit early for TIF files
+                }
+
+                if (isObjFile) {
+                    // Handle OBJ file
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: Starting OBJ file processing...',
+                        timestamp: loadStartTime
+                    });
+                    
+                    const objData = await vscode.workspace.fs.readFile(document.uri);
+                    const fileReadTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `📁 Extension: OBJ file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
+                        timestamp: fileReadTime
+                    });
+                    
+                    const objParser = new ObjParser();
+                    const timingCallback = (message: string) => {
+                        webviewPanel.webview.postMessage({
+                            type: 'timingUpdate',
+                            message: message,
+                            timestamp: performance.now()
+                        });
+                    };
+                    
+                    const parsedData = await objParser.parse(objData, timingCallback);
+                    const parseTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `🎯 Extension: OBJ parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
+                        timestamp: parseTime
+                    });
+                    
+                    // Send parsed OBJ data to webview
+                    webviewPanel.webview.postMessage({
+                        type: 'objData',
+                        fileName: path.basename(document.uri.fsPath),
+                        data: parsedData
+                    });
+                    
+                    return; // Exit early for OBJ files
                 }
                 
                 // Send timing updates to webview for visibility
@@ -511,8 +558,25 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         continue;
                     }
                     
+                    // Handle OBJ files
+                    if (fileExtension === '.obj') {
+                        const objData = await vscode.workspace.fs.readFile(files[i]);
+                        const objParser = new ObjParser();
+                        const parsedData = await objParser.parse(objData);
+                        
+                        webviewPanel.webview.postMessage({
+                            type: 'objData',
+                            fileName: fileName,
+                            data: parsedData,
+                            isAddFile: true
+                        });
+                        
+                        console.log(`🎯 OBJ Add File: ${fileName} sent for processing`);
+                        continue;
+                    }
+                    
                     // Unsupported file type
-                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .tif, .tiff`);
+                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .tif, .tiff`);
                     
                 } catch (error) {
                     console.error(`Failed to load file ${files[i].fsPath}:`, error);
