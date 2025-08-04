@@ -65,12 +65,15 @@ class PLYVisualizer {
     // Unified file management
     private plyFiles: PlyData[] = [];
     private meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
+    private multiMaterialGroups: (THREE.Group | null)[] = []; // Multi-material Groups for OBJ files
+    private materialMeshes: (THREE.Object3D[] | null)[] = []; // Sub-meshes for multi-material OBJ files
     private fileVisibility: boolean[] = [];
     private useOriginalColors = true; // Default to original colors
     private pointSizes: number[] = []; // Individual point sizes for each point cloud
     private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
     private appliedMtlColors: (number | null)[] = []; // Store applied MTL hex colors for each file
     private appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
+    private appliedMtlData: (any | null)[] = []; // Store applied MTL data for each file
     
     // Per-file TIF data storage for reprocessing
     private fileTifData: Map<number, {
@@ -2518,50 +2521,74 @@ class PLYVisualizer {
         // Update the file data
         (data as any).objRenderType = mode === 'solid' ? 'mesh' : 'wireframe';
         
-        // Remove the current mesh
-        if (fileIndex < this.meshes.length) {
+        // Remove current meshes/groups from scene
+        if (fileIndex < this.meshes.length && this.meshes[fileIndex]) {
             this.scene.remove(this.meshes[fileIndex]);
+            this.meshes[fileIndex] = null as any;
         }
         
-        // Create the geometry
-        const geometry = this.createGeometryFromPlyData(data);
+        const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
+        if (multiMaterialGroup) {
+            this.scene.remove(multiMaterialGroup);
+            this.multiMaterialGroups[fileIndex] = null;
+        }
         
-        // Create appropriate mesh based on mode
-        let newMesh: THREE.Mesh | THREE.Points | THREE.LineSegments;
+        // Clear sub-meshes
+        this.materialMeshes[fileIndex] = null;
         
-        if (mode === 'solid') {
-            // Create solid mesh (MeshBasicMaterial for reliable color display)
-            const meshMaterial = new THREE.MeshBasicMaterial({
-                color: 0x808080,
-                side: THREE.DoubleSide,
-                vertexColors: data.hasColors
-            });
-            
-            // Apply normals if available
-            if (objData.hasNormals && objData.normals.length > 0) {
-                const normals = new Float32Array(data.vertexCount * 3);
-                for (let i = 0; i < data.vertexCount && i < objData.normals.length; i++) {
-                    const normal = objData.normals[i];
-                    normals[i * 3] = normal.nx;
-                    normals[i * 3 + 1] = normal.ny;
-                    normals[i * 3 + 2] = normal.nz;
-                }
-                geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+        // Re-create using the multi-material system
+        this.createObjMeshWithMaterials(data, fileIndex, mode);
+        
+        // Update UI to reflect the change
+        this.updateFileList();
+        
+        this.showStatus(`Switched OBJ file to ${mode} mode`);
+    }
+    
+    private createObjMeshWithMaterials(data: any, fileIndex: number, mode: string): void {
+        const objData = data.objData;
+        
+        if (mode === 'wireframe') {
+            if (objData && objData.materialGroups && objData.materialGroups.length > 1) {
+                this.createMultiMaterialWireframe(data, fileIndex);
+            } else {
+                this.createSingleMaterialWireframe(data, fileIndex);
             }
-            
-            newMesh = new THREE.Mesh(geometry, meshMaterial);
-            (newMesh as any).isObjMesh = true;
         } else {
-            // Create wireframe from either explicit lines or face edges
-            let linePositions: Float32Array;
-            
-            if (objData.lineCount > 0) {
-                // Use explicit lines if available
-                const lines = objData.lines;
-                linePositions = new Float32Array(lines.length * 6);
+            if (objData && objData.materialGroups && objData.materialGroups.length > 1) {
+                this.createMultiMaterialSolid(data, fileIndex);
+            } else {
+                this.createSingleMaterialSolid(data, fileIndex);
+            }
+        }
+        
+        // Apply transformation matrix and visibility
+        const mesh = this.meshes[fileIndex];
+        const group = this.multiMaterialGroups[fileIndex];
+        const target = group || mesh;
+        
+        if (target) {
+            const transformationMatrix = this.getTransformationMatrix(fileIndex);
+            target.applyMatrix4(transformationMatrix);
+            target.visible = this.fileVisibility[fileIndex];
+        }
+        
+        // Reapply MTL colors if available
+        this.reapplyMtlColors(fileIndex);
+    }
+    
+    private createMultiMaterialWireframe(data: any, fileIndex: number): void {
+        const objData = data.objData;
+        const subMeshes: THREE.Object3D[] = [];
+        const meshGroup = new THREE.Group();
+        
+        for (const materialGroup of objData.materialGroups) {
+            if (materialGroup.lines.length > 0) {
+                // Use explicit lines for this material group
+                const linePositions = new Float32Array(materialGroup.lines.length * 6);
                 
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i];
+                for (let i = 0; i < materialGroup.lines.length; i++) {
+                    const line = materialGroup.lines[i];
                     const startVertex = data.vertices[line.start];
                     const endVertex = data.vertices[line.end];
                     
@@ -2573,19 +2600,32 @@ class PLYVisualizer {
                     linePositions[i6 + 4] = endVertex.y;
                     linePositions[i6 + 5] = endVertex.z;
                 }
-            } else {
-                // Generate wireframe from face edges
+                
+                const lineGeometry = new THREE.BufferGeometry();
+                lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+                
+                const lineMaterial = new THREE.LineBasicMaterial({ 
+                    color: 0xff0000 // Default red - will be colored by MTL
+                });
+                
+                const lineSegments = new THREE.LineSegments(lineGeometry, lineMaterial);
+                (lineSegments as any).materialName = materialGroup.material;
+                (lineSegments as any).isLineSegments = true;
+                
+                meshGroup.add(lineSegments);
+                subMeshes.push(lineSegments);
+            }
+            
+            if (materialGroup.faces.length > 0) {
+                // Generate wireframe from face edges for this material group
                 const edgeSet = new Set<string>();
                 const edges: Array<[number, number]> = [];
                 
-                // Extract unique edges from faces
-                for (const face of objData.faces) {
+                for (const face of materialGroup.faces) {
                     const indices = face.indices;
                     for (let i = 0; i < indices.length; i++) {
                         const start = indices[i];
                         const end = indices[(i + 1) % indices.length];
-                        
-                        // Create edge key (smaller index first to avoid duplicates)
                         const edgeKey = start < end ? `${start}-${end}` : `${end}-${start}`;
                         
                         if (!edgeSet.has(edgeKey)) {
@@ -2595,67 +2635,232 @@ class PLYVisualizer {
                     }
                 }
                 
-                // Create line positions from edges
-                linePositions = new Float32Array(edges.length * 6);
-                
-                for (let i = 0; i < edges.length; i++) {
-                    const [startIdx, endIdx] = edges[i];
-                    const startVertex = data.vertices[startIdx];
-                    const endVertex = data.vertices[endIdx];
+                if (edges.length > 0) {
+                    const linePositions = new Float32Array(edges.length * 6);
+                    for (let i = 0; i < edges.length; i++) {
+                        const [start, end] = edges[i];
+                        const startVertex = data.vertices[start];
+                        const endVertex = data.vertices[end];
+                        
+                        const i6 = i * 6;
+                        linePositions[i6] = startVertex.x;
+                        linePositions[i6 + 1] = startVertex.y;
+                        linePositions[i6 + 2] = startVertex.z;
+                        linePositions[i6 + 3] = endVertex.x;
+                        linePositions[i6 + 4] = endVertex.y;
+                        linePositions[i6 + 5] = endVertex.z;
+                    }
                     
-                    const i6 = i * 6;
-                    linePositions[i6] = startVertex.x;
-                    linePositions[i6 + 1] = startVertex.y;
-                    linePositions[i6 + 2] = startVertex.z;
-                    linePositions[i6 + 3] = endVertex.x;
-                    linePositions[i6 + 4] = endVertex.y;
-                    linePositions[i6 + 5] = endVertex.z;
+                    const lineGeometry = new THREE.BufferGeometry();
+                    lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+                    
+                    const lineMaterial = new THREE.LineBasicMaterial({ 
+                        color: 0xff0000 // Default red - will be colored by MTL
+                    });
+                    
+                    const lineSegments = new THREE.LineSegments(lineGeometry, lineMaterial);
+                    (lineSegments as any).materialName = materialGroup.material;
+                    (lineSegments as any).isLineSegments = true;
+                    
+                    meshGroup.add(lineSegments);
+                    subMeshes.push(lineSegments);
+                }
+            }
+        }
+        
+        if (subMeshes.length > 0) {
+            (meshGroup as any).isObjMesh = true;
+            (meshGroup as any).isMultiMaterial = true;
+            this.scene.add(meshGroup);
+            this.multiMaterialGroups[fileIndex] = meshGroup;
+            this.materialMeshes[fileIndex] = subMeshes;
+            console.log(`Created multi-material wireframe with ${subMeshes.length} sub-meshes`);
+        }
+    }
+    
+    private createSingleMaterialWireframe(data: any, fileIndex: number): void {
+        const objData = data.objData;
+        let linePositions: Float32Array;
+        
+        if (objData.lineCount > 0) {
+            // Use explicit lines
+            const lines = objData.lines;
+            linePositions = new Float32Array(lines.length * 6);
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const startVertex = data.vertices[line.start];
+                const endVertex = data.vertices[line.end];
+                
+                const i6 = i * 6;
+                linePositions[i6] = startVertex.x;
+                linePositions[i6 + 1] = startVertex.y;
+                linePositions[i6 + 2] = startVertex.z;
+                linePositions[i6 + 3] = endVertex.x;
+                linePositions[i6 + 4] = endVertex.y;
+                linePositions[i6 + 5] = endVertex.z;
+            }
+        } else {
+            // Generate from face edges
+            const edgeSet = new Set<string>();
+            const edges: Array<[number, number]> = [];
+            
+            for (const face of objData.faces) {
+                const indices = face.indices;
+                for (let i = 0; i < indices.length; i++) {
+                    const start = indices[i];
+                    const end = indices[(i + 1) % indices.length];
+                    const edgeKey = start < end ? `${start}-${end}` : `${end}-${start}`;
+                    
+                    if (!edgeSet.has(edgeKey)) {
+                        edgeSet.add(edgeKey);
+                        edges.push([start, end]);
+                    }
+                }
+            }
+            
+            linePositions = new Float32Array(edges.length * 6);
+            for (let i = 0; i < edges.length; i++) {
+                const [start, end] = edges[i];
+                const startVertex = data.vertices[start];
+                const endVertex = data.vertices[end];
+                
+                const i6 = i * 6;
+                linePositions[i6] = startVertex.x;
+                linePositions[i6 + 1] = startVertex.y;
+                linePositions[i6 + 2] = startVertex.z;
+                linePositions[i6 + 3] = endVertex.x;
+                linePositions[i6 + 4] = endVertex.y;
+                linePositions[i6 + 5] = endVertex.z;
+            }
+        }
+        
+        const lineGeometry = new THREE.BufferGeometry();
+        lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+        
+        const lineMaterial = new THREE.LineBasicMaterial({ 
+            color: 0xff0000,
+            linewidth: 1 
+        });
+        
+        const wireframeMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
+        (wireframeMesh as any).isLineSegments = true;
+        this.scene.add(wireframeMesh);
+        this.meshes[fileIndex] = wireframeMesh;
+    }
+    
+    private createMultiMaterialSolid(data: any, fileIndex: number): void {
+        const objData = data.objData;
+        const subMeshes: THREE.Object3D[] = [];
+        const meshGroup = new THREE.Group();
+        
+        for (const materialGroup of objData.materialGroups) {
+            if (materialGroup.faces.length > 0) {
+                // Create geometry for this material group
+                const groupGeometry = new THREE.BufferGeometry();
+                
+                // Collect vertices for faces in this group
+                const faceVertices: number[] = [];
+                const faceIndices: number[] = [];
+                let vertexOffset = 0;
+                
+                for (const face of materialGroup.faces) {
+                    if (face.indices.length >= 3) {
+                        // Add vertices for this face
+                        for (const vertexIndex of face.indices) {
+                            const vertex = data.vertices[vertexIndex];
+                            faceVertices.push(vertex.x, vertex.y, vertex.z);
+                        }
+                        
+                        // Triangulate face (fan triangulation)
+                        for (let i = 1; i < face.indices.length - 1; i++) {
+                            faceIndices.push(vertexOffset);
+                            faceIndices.push(vertexOffset + i);
+                            faceIndices.push(vertexOffset + i + 1);
+                        }
+                        
+                        vertexOffset += face.indices.length;
+                    }
                 }
                 
-                console.log(`Generated ${edges.length} wireframe edges from ${objData.faceCount} faces`);
-            }
-            
-            const lineGeometry = new THREE.BufferGeometry();
-            lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
-            
-            const lineMaterial = new THREE.LineBasicMaterial({ 
-                color: 0xff0000,
-                linewidth: 1 
-            });
-            
-            newMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
-            (newMesh as any).isLineSegments = true;
-        }
-        
-        // Apply current transformation matrix
-        const transformationMatrix = this.getTransformationMatrix(fileIndex);
-        newMesh.applyMatrix4(transformationMatrix);
-        
-        // Add to scene and update array
-        this.scene.add(newMesh);
-        if (fileIndex < this.meshes.length) {
-            this.meshes[fileIndex] = newMesh;
-        } else {
-            this.meshes.push(newMesh);
-        }
-        
-        // Update visibility
-        newMesh.visible = this.fileVisibility[fileIndex];
-        
-        // Reapply stored MTL color if available
-        if (this.appliedMtlColors[fileIndex] !== null) {
-            const storedColor = this.appliedMtlColors[fileIndex]!; // Non-null assertion since we checked above
-            const material = (newMesh as any).material;
-            if (material && material.color) {
-                material.color.setHex(storedColor);
-                console.log(`Reapplied stored MTL color #${storedColor.toString(16).padStart(6, '0')} after mode switch`);
+                if (faceVertices.length > 0) {
+                    groupGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(faceVertices), 3));
+                    groupGeometry.setIndex(faceIndices);
+                    groupGeometry.computeVertexNormals();
+                    
+                    const groupMaterial = new THREE.MeshBasicMaterial({
+                        color: 0x808080, // Default gray - will be colored by MTL
+                        side: THREE.DoubleSide
+                    });
+                    
+                    const groupMesh = new THREE.Mesh(groupGeometry, groupMaterial);
+                    (groupMesh as any).materialName = materialGroup.material;
+                    (groupMesh as any).isObjMesh = true;
+                    
+                    meshGroup.add(groupMesh);
+                    subMeshes.push(groupMesh);
+                }
             }
         }
         
-        // Update UI to reflect the change
-        this.updateFileList();
+        (meshGroup as any).isObjMesh = true;
+        (meshGroup as any).isMultiMaterial = true;
+        this.scene.add(meshGroup);
+        this.multiMaterialGroups[fileIndex] = meshGroup;
+        this.materialMeshes[fileIndex] = subMeshes;
         
-        this.showStatus(`Switched OBJ file to ${mode} mode`);
+        console.log(`Created multi-material solid with ${subMeshes.length} sub-meshes`);
+    }
+    
+    private createSingleMaterialSolid(data: any, fileIndex: number): void {
+        const geometry = this.createGeometryFromPlyData(data);
+        const material = this.createMaterialForFile(data, fileIndex);
+        
+        const mesh = new THREE.Mesh(geometry, material);
+        (mesh as any).isObjMesh = true;
+        this.scene.add(mesh);
+        this.meshes[fileIndex] = mesh;
+    }
+    
+    private reapplyMtlColors(fileIndex: number): void {
+        if (this.appliedMtlData[fileIndex] !== null) {
+            const mtlData = this.appliedMtlData[fileIndex]!;
+            const mesh = this.meshes[fileIndex];
+            const subMeshes = this.materialMeshes[fileIndex];
+            
+            if (subMeshes && mtlData.materials) {
+                // Multi-material: reapply materials to each sub-mesh
+                let appliedCount = 0;
+                
+                for (const subMesh of subMeshes) {
+                    const subMaterialName = (subMesh as any).materialName;
+                    if (subMaterialName && mtlData.materials[subMaterialName]) {
+                        const subMaterial = mtlData.materials[subMaterialName];
+                        if (subMaterial.diffuseColor) {
+                            const subHexColor = (Math.round(subMaterial.diffuseColor.r * 255) << 16) | 
+                                               (Math.round(subMaterial.diffuseColor.g * 255) << 8) | 
+                                               Math.round(subMaterial.diffuseColor.b * 255);
+                            
+                            const subMeshMaterial = (subMesh as any).material;
+                            if (subMeshMaterial && subMeshMaterial.color) {
+                                subMeshMaterial.color.setHex(subHexColor);
+                                appliedCount++;
+                            }
+                        }
+                    }
+                }
+                
+                console.log(`Reapplied MTL colors to ${appliedCount}/${subMeshes.length} sub-meshes after mode switch`);
+            } else if (mesh && this.appliedMtlColors[fileIndex] !== null) {
+                // Single material: apply stored color
+                const storedColor = this.appliedMtlColors[fileIndex]!;
+                const material = (mesh as any).material;
+                if (material && material.color) {
+                    material.color.setHex(storedColor);
+                    console.log(`Reapplied stored MTL color #${storedColor.toString(16).padStart(6, '0')} after mode switch`);
+                }
+            }
+        }
     }
 
     private toggleColorMode(): void {
@@ -2855,32 +3060,127 @@ class PLYVisualizer {
                     this.scene.add(wireframeMesh);
                     this.meshes.push(wireframeMesh);
                 } else if (objRenderType === 'mesh' && data.faceCount > 0) {
-                    // Create solid mesh with proper material
+                    // Create multi-material mesh(es)
                     const objData = (data as any).objData;
                     
-                    // Use appropriate material for mesh rendering (MeshBasicMaterial for reliable color display)
-                    const meshMaterial = new THREE.MeshBasicMaterial({
-                        color: 0x808080, // Gray color
-                        side: THREE.DoubleSide,
-                        vertexColors: data.hasColors
-                    });
-                    
-                    // Apply normals if available from OBJ
-                    if (objData && objData.hasNormals && objData.normals.length > 0) {
-                        const normals = new Float32Array(data.vertexCount * 3);
-                        for (let i = 0; i < data.vertexCount && i < objData.normals.length; i++) {
-                            const normal = objData.normals[i];
-                            normals[i * 3] = normal.nx;
-                            normals[i * 3 + 1] = normal.ny;
-                            normals[i * 3 + 2] = normal.nz;
+                    if (objData && objData.materialGroups && objData.materialGroups.length > 1) {
+                        // Multi-material rendering: create separate mesh for each material group
+                        const subMeshes: THREE.Object3D[] = [];
+                        const meshGroup = new THREE.Group();
+                        
+                        for (const materialGroup of objData.materialGroups) {
+                            if (materialGroup.faces.length > 0) {
+                                // Create geometry for this material group
+                                const groupGeometry = new THREE.BufferGeometry();
+                                
+                                // Collect vertices for faces in this group
+                                const faceVertices: number[] = [];
+                                const faceIndices: number[] = [];
+                                let vertexOffset = 0;
+                                
+                                for (const face of materialGroup.faces) {
+                                    if (face.indices.length >= 3) {
+                                        // Add vertices for this face
+                                        for (const vertexIndex of face.indices) {
+                                            const vertex = data.vertices[vertexIndex];
+                                            faceVertices.push(vertex.x, vertex.y, vertex.z);
+                                        }
+                                        
+                                        // Triangulate face (fan triangulation)
+                                        for (let i = 1; i < face.indices.length - 1; i++) {
+                                            faceIndices.push(vertexOffset);
+                                            faceIndices.push(vertexOffset + i);
+                                            faceIndices.push(vertexOffset + i + 1);
+                                        }
+                                        
+                                        vertexOffset += face.indices.length;
+                                    }
+                                }
+                                
+                                if (faceVertices.length > 0) {
+                                    groupGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(faceVertices), 3));
+                                    groupGeometry.setIndex(faceIndices);
+                                    groupGeometry.computeVertexNormals();
+                                    
+                                    const groupMaterial = new THREE.MeshBasicMaterial({
+                                        color: 0x808080, // Default gray - will be colored by MTL
+                                        side: THREE.DoubleSide
+                                    });
+                                    
+                                    const groupMesh = new THREE.Mesh(groupGeometry, groupMaterial);
+                                    (groupMesh as any).materialName = materialGroup.material;
+                                    (groupMesh as any).isObjMesh = true;
+                                    
+                                    meshGroup.add(groupMesh);
+                                    subMeshes.push(groupMesh);
+                                }
+                            }
+                            
+                            // Handle lines in this material group
+                            if (materialGroup.lines.length > 0) {
+                                const linePositions = new Float32Array(materialGroup.lines.length * 6);
+                                
+                                for (let i = 0; i < materialGroup.lines.length; i++) {
+                                    const line = materialGroup.lines[i];
+                                    const startVertex = data.vertices[line.start];
+                                    const endVertex = data.vertices[line.end];
+                                    
+                                    const i6 = i * 6;
+                                    linePositions[i6] = startVertex.x;
+                                    linePositions[i6 + 1] = startVertex.y;
+                                    linePositions[i6 + 2] = startVertex.z;
+                                    linePositions[i6 + 3] = endVertex.x;
+                                    linePositions[i6 + 4] = endVertex.y;
+                                    linePositions[i6 + 5] = endVertex.z;
+                                }
+                                
+                                const lineGeometry = new THREE.BufferGeometry();
+                                lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+                                
+                                const lineMaterial = new THREE.LineBasicMaterial({ 
+                                    color: 0xff0000 // Default red - will be colored by MTL
+                                });
+                                
+                                const lineSegments = new THREE.LineSegments(lineGeometry, lineMaterial);
+                                (lineSegments as any).materialName = materialGroup.material;
+                                (lineSegments as any).isLineSegments = true;
+                                
+                                meshGroup.add(lineSegments);
+                                subMeshes.push(lineSegments);
+                            }
                         }
-                        geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+                        
+                        (meshGroup as any).isObjMesh = true;
+                        (meshGroup as any).isMultiMaterial = true;
+                        this.scene.add(meshGroup);
+                        this.multiMaterialGroups[data.fileIndex!] = meshGroup;
+                        this.materialMeshes[data.fileIndex!] = subMeshes;
+                        
+                        console.log(`Created multi-material OBJ with ${subMeshes.length} sub-meshes`);
+                    } else {
+                        // Single material or fallback to original logic
+                        const meshMaterial = new THREE.MeshBasicMaterial({
+                            color: 0x808080,
+                            side: THREE.DoubleSide,
+                            vertexColors: data.hasColors
+                        });
+                        
+                        if (objData && objData.hasNormals && objData.normals.length > 0) {
+                            const normals = new Float32Array(data.vertexCount * 3);
+                            for (let i = 0; i < data.vertexCount && i < objData.normals.length; i++) {
+                                const normal = objData.normals[i];
+                                normals[i * 3] = normal.nx;
+                                normals[i * 3 + 1] = normal.ny;
+                                normals[i * 3 + 2] = normal.nz;
+                            }
+                            geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+                        }
+                        
+                        const mesh = new THREE.Mesh(geometry, meshMaterial);
+                        (mesh as any).isObjMesh = true;
+                        this.scene.add(mesh);
+                        this.meshes.push(mesh);
                     }
-                    
-                    const mesh = new THREE.Mesh(geometry, meshMaterial);
-                    (mesh as any).isObjMesh = true;
-                    this.scene.add(mesh);
-                    this.meshes.push(mesh);
                 } else {
                     // Fallback to points
                     const mesh = new THREE.Points(geometry, material);
@@ -2937,6 +3237,9 @@ class PLYVisualizer {
             this.pointSizes.push(0.001); // Default point size for good visibility
             this.appliedMtlColors.push(null); // No MTL color applied initially
             this.appliedMtlNames.push(null); // No MTL material applied initially
+            this.appliedMtlData.push(null); // No MTL data applied initially
+            this.multiMaterialGroups.push(null); // No multi-material group initially
+            this.materialMeshes.push(null); // No sub-meshes initially
             
             // Initialize transformation matrix for this file
             this.transformationMatrices.push(new THREE.Matrix4());
@@ -2974,6 +3277,9 @@ class PLYVisualizer {
         this.individualColorModes.splice(fileIndex, 1); // Remove color mode for this file
         this.appliedMtlColors.splice(fileIndex, 1); // Remove MTL color for this file
         this.appliedMtlNames.splice(fileIndex, 1); // Remove MTL name for this file
+        this.appliedMtlData.splice(fileIndex, 1); // Remove MTL data for this file
+        this.multiMaterialGroups.splice(fileIndex, 1); // Remove multi-material group for this file
+        this.materialMeshes.splice(fileIndex, 1); // Remove sub-meshes for this file
         
         // Remove TIF data if it exists for this file
         this.fileTifData.delete(fileIndex);
@@ -4370,6 +4676,12 @@ class PLYVisualizer {
             
             console.log(`OBJ Analysis: ${objData.vertexCount} vertices, ${objData.faceCount} faces, ${objData.lineCount} lines`);
             console.log(`Has textures: ${objData.hasTextures}, Has normals: ${objData.hasNormals}`);
+            console.log(`Material groups found: ${objData.materialGroups ? objData.materialGroups.length : 0}`);
+            if (objData.materialGroups) {
+                objData.materialGroups.forEach((group: any, index: number) => {
+                    console.log(`Group ${index}: ${group.material} - ${group.faces.length} faces, ${group.lines.length} lines`);
+                });
+            }
             
             // Convert OBJ vertices to PLY format
             const vertices: PlyVertex[] = objData.vertices.map((v: any) => ({
@@ -6197,44 +6509,74 @@ class PLYVisualizer {
             
             // Update the mesh color based on current render type
             const mesh = this.meshes[fileIndex];
+            const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
+            const subMeshes = this.materialMeshes[fileIndex];
+            
             console.log('Mesh info:', {
                 meshExists: !!mesh,
                 meshType: mesh?.type,
                 isLineSegments: (mesh as any)?.isLineSegments,
                 isObjMesh: (mesh as any)?.isObjMesh,
+                isMultiMaterial: (mesh as any)?.isMultiMaterial,
+                multiMaterialGroupExists: !!multiMaterialGroup,
+                subMeshCount: subMeshes?.length || 0,
                 materialType: (mesh as any)?.material?.type
             });
             
-            if (mesh) {
-                if ((mesh as any).isLineSegments) {
-                    // Update wireframe color
-                    const lineMaterial = (mesh as any).material;
-                    if (lineMaterial) {
-                        lineMaterial.color.setHex(hexColor);
-                        console.log(`Updated wireframe color to #${hexColor.toString(16).padStart(6, '0')}`);
-                    }
-                } else if ((mesh as any).isObjMesh || mesh.type === 'Mesh') {
-                    // Update solid mesh color
-                    const meshMaterial = (mesh as any).material;
-                    if (meshMaterial) {
-                        meshMaterial.color.setHex(hexColor);
-                        console.log(`Updated solid mesh color to #${hexColor.toString(16).padStart(6, '0')}`);
-                    }
-                } else {
-                    console.warn('Unknown mesh type, trying to update material anyway');
-                    const anyMaterial = (mesh as any).material;
-                    if (anyMaterial && anyMaterial.color) {
-                        anyMaterial.color.setHex(hexColor);
-                        console.log(`Updated generic material color to #${hexColor.toString(16).padStart(6, '0')}`);
+            if (multiMaterialGroup && subMeshes) {
+                // Multi-material OBJ: apply materials to each sub-mesh
+                let appliedCount = 0;
+                
+                for (const subMesh of subMeshes) {
+                    const subMaterialName = (subMesh as any).materialName;
+                    if (subMaterialName && mtlData.materials[subMaterialName]) {
+                        const subMaterial = mtlData.materials[subMaterialName];
+                        if (subMaterial.diffuseColor) {
+                            const subHexColor = (Math.round(subMaterial.diffuseColor.r * 255) << 16) | 
+                                               (Math.round(subMaterial.diffuseColor.g * 255) << 8) | 
+                                               Math.round(subMaterial.diffuseColor.b * 255);
+                            
+                            const subMeshMaterial = (subMesh as any).material;
+                            if (subMeshMaterial && subMeshMaterial.color) {
+                                subMeshMaterial.color.setHex(subHexColor);
+                                console.log(`Applied ${subMaterialName} color #${subHexColor.toString(16).padStart(6, '0')} to sub-mesh`);
+                                appliedCount++;
+                            }
+                        }
                     }
                 }
+                
+                console.log(`Applied materials to ${appliedCount}/${subMeshes.length} sub-meshes`);
+                materialName = message.fileName;
+            } else if (mesh && (mesh as any).isLineSegments) {
+                // Update wireframe color
+                const lineMaterial = (mesh as any).material;
+                if (lineMaterial) {
+                    lineMaterial.color.setHex(hexColor);
+                    console.log(`Updated wireframe color to #${hexColor.toString(16).padStart(6, '0')}`);
+                }
+            } else if (mesh && ((mesh as any).isObjMesh || mesh.type === 'Mesh')) {
+                // Update solid mesh color
+                const meshMaterial = (mesh as any).material;
+                if (meshMaterial) {
+                    meshMaterial.color.setHex(hexColor);
+                    console.log(`Updated solid mesh color to #${hexColor.toString(16).padStart(6, '0')}`);
+                }
+            } else if (mesh) {
+                console.warn('Unknown mesh type, trying to update material anyway');
+                const anyMaterial = (mesh as any).material;
+                if (anyMaterial && anyMaterial.color) {
+                    anyMaterial.color.setHex(hexColor);
+                    console.log(`Updated generic material color to #${hexColor.toString(16).padStart(6, '0')}`);
+                }
             } else {
-                console.error('No mesh found at index:', fileIndex);
+                console.error('No mesh or multi-material group found at index:', fileIndex);
             }
             
-            // Store the applied MTL color and name for future use
+            // Store the applied MTL color, name, and data for future use
             this.appliedMtlColors[fileIndex] = hexColor;
             this.appliedMtlNames[fileIndex] = materialName;
+            this.appliedMtlData[fileIndex] = mtlData;
             
             // Update UI to show loaded MTL
             this.updateFileList();

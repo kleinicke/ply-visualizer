@@ -19,12 +19,20 @@ export interface ObjNormal {
 export interface ObjLine {
     start: number; // vertex index
     end: number;   // vertex index
+    material?: string; // material used for this line
 }
 
 export interface ObjFace {
     indices: number[];           // vertex indices
     textureIndices?: number[];   // texture coordinate indices
     normalIndices?: number[];    // normal vector indices
+    material?: string;           // material used for this face
+}
+
+export interface MaterialGroup {
+    material: string;
+    lines: ObjLine[];
+    faces: ObjFace[];
 }
 
 export interface ObjData {
@@ -33,6 +41,7 @@ export interface ObjData {
     normals: ObjNormal[];
     lines: ObjLine[];
     faces: ObjFace[];
+    materialGroups: MaterialGroup[]; // Geometry grouped by material
     materialFile?: string;
     currentMaterial?: string;
     vertexCount: number;
@@ -58,6 +67,7 @@ export class ObjParser {
             normals: [],
             lines: [],
             faces: [],
+            materialGroups: [],
             vertexCount: 0,
             textureCoordCount: 0,
             normalCount: 0,
@@ -66,6 +76,8 @@ export class ObjParser {
             hasTextures: false,
             hasNormals: false
         };
+
+        let currentMaterialName: string | undefined;
 
         // Decode the entire file as text
         const decoder = new TextDecoder('utf-8');
@@ -93,6 +105,7 @@ export class ObjParser {
 
                 case 'usemtl':
                     // Use material
+                    currentMaterialName = parts[1];
                     result.currentMaterial = parts[1];
                     break;
 
@@ -147,7 +160,8 @@ export class ObjParser {
                         for (let j = 1; j < parts.length - 1; j++) {
                             const objLine: ObjLine = {
                                 start: parseInt(parts[j]) - 1,  // Convert to 0-based
-                                end: parseInt(parts[j + 1]) - 1 // Convert to 0-based
+                                end: parseInt(parts[j + 1]) - 1, // Convert to 0-based
+                                material: currentMaterialName
                             };
                             result.lines.push(objLine);
                             result.lineCount++;
@@ -184,7 +198,10 @@ export class ObjParser {
                             }
                         }
                         
-                        const face: ObjFace = { indices: faceIndices };
+                        const face: ObjFace = { 
+                            indices: faceIndices,
+                            material: currentMaterialName
+                        };
                         if (hasTexInFace) {
                             face.textureIndices = textureIndices;
                         }
@@ -208,9 +225,41 @@ export class ObjParser {
             }
         }
 
+        // Group geometry by materials for multi-material rendering
+        const materialGroups = new Map<string, MaterialGroup>();
+        
+        // Group lines by material
+        for (const line of result.lines) {
+            const materialName = line.material || 'default';
+            if (!materialGroups.has(materialName)) {
+                materialGroups.set(materialName, {
+                    material: materialName,
+                    lines: [],
+                    faces: []
+                });
+            }
+            materialGroups.get(materialName)!.lines.push(line);
+        }
+        
+        // Group faces by material
+        for (const face of result.faces) {
+            const materialName = face.material || 'default';
+            if (!materialGroups.has(materialName)) {
+                materialGroups.set(materialName, {
+                    material: materialName,
+                    lines: [],
+                    faces: []
+                });
+            }
+            materialGroups.get(materialName)!.faces.push(face);
+        }
+        
+        result.materialGroups = Array.from(materialGroups.values());
+
         const totalParseTime = performance.now();
         log(`🎯 Parser: OBJ parsing complete in ${(totalParseTime - parseStartTime).toFixed(1)}ms`);
         log(`📊 Parser: Found ${result.vertexCount} vertices, ${result.lineCount} lines, ${result.faceCount} faces`);
+        log(`🎨 Parser: Grouped into ${result.materialGroups.length} material group(s)`);
         if (result.hasTextures) {
             log(`🗺️ Parser: Found ${result.textureCoordCount} texture coordinates`);
         }
