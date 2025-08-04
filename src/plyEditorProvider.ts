@@ -456,11 +456,13 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             canSelectMany: true,
             filters: {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'Point Cloud Files': ['ply', 'xyz', 'tif', 'tiff'],
+                'Point Cloud Files': ['ply', 'xyz', 'obj', 'tif', 'tiff'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'PLY Files': ['ply'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'XYZ Files': ['xyz'],
+                // eslint-disable-next-line @typescript-eslint/naming-convention
+                'OBJ Wireframes': ['obj'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'TIF Depth Images': ['tif', 'tiff']
             },

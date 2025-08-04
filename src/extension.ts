@@ -30,6 +30,13 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // Register command for opening multiple files
+    context.subscriptions.push(
+        vscode.commands.registerCommand('plyViewer.openMultipleFiles', async () => {
+            await handleOpenMultipleFiles();
+        })
+    );
+
     console.log('PLY Visualizer extension is now active!');
 }
 
@@ -64,6 +71,49 @@ async function handleTifToPointCloudConversion(uri: vscode.Uri): Promise<void> {
     } catch (error) {
         vscode.window.showErrorMessage(
             `Failed to open TIF for conversion: ${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+}
+
+async function handleOpenMultipleFiles(): Promise<void> {
+    try {
+        // Show file picker for multiple files
+        const files = await vscode.window.showOpenDialog({
+            canSelectMany: true,
+            canSelectFiles: true,
+            canSelectFolders: false,
+            filters: {
+                'Point Cloud Files': ['ply', 'xyz', 'obj'],
+                'TIFF Files': ['tif', 'tiff'],
+                'All Files': ['*']
+            },
+            title: 'Select Point Cloud Files to Open Together'
+        });
+
+        if (!files || files.length === 0) {
+            return;
+        }
+
+        // Check if we have a mix of file types
+        const plyFiles = files.filter(f => f.fsPath.toLowerCase().endsWith('.ply'));
+        const xyzFiles = files.filter(f => f.fsPath.toLowerCase().endsWith('.xyz'));
+        const objFiles = files.filter(f => f.fsPath.toLowerCase().endsWith('.obj'));
+        const tifFiles = files.filter(f => f.fsPath.toLowerCase().endsWith('.tif') || f.fsPath.toLowerCase().endsWith('.tiff'));
+
+        // Open the first file to create the main editor, then add others
+        const firstFile = files[0];
+        await vscode.commands.executeCommand('vscode.openWith', firstFile, 'plyViewer.plyEditor');
+
+        // If there are additional files, add them
+        if (files.length > 1) {
+            vscode.window.showInformationMessage(
+                `Opening ${files.length} files together: ${plyFiles.length} PLY, ${xyzFiles.length} XYZ, ${objFiles.length} OBJ, ${tifFiles.length} TIF files`
+            );
+        }
+
+    } catch (error) {
+        vscode.window.showErrorMessage(
+            `Failed to open multiple files: ${error instanceof Error ? error.message : String(error)}`
         );
     }
 }

@@ -56,8 +56,8 @@
         "category": "PLY Visualizer"
       },
       {
-        "command": "plyViewer.openMultipleFiles",
-        "title": "Open Multiple PLY Files",
+        "command": "plyViewer.openMultipleFiles", 
+        "title": "Open Multiple Point Cloud Files",
         "category": "PLY Visualizer"
       },
       {
