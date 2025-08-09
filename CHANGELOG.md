@@ -1,5 +1,14 @@
 # Change Log
 
+## [1.1.0] - 2025-07-23
+Add support for obj files
+Add experimental Arcball camera rotation 
+
+
+## [1.0.0] - 2025-07-23
+Improve Readme
+Add some tests
+
 ## [0.0.14] - 2025-07-23
 - **Added Rotation Center Controls**: New "Modify Rotation Center" button in camera panel with coordinate display and editing dialog
 - **Enhanced Camera Control Status**: Added visual indicator showing currently active camera control mode (Trackball, Orbit, etc.)

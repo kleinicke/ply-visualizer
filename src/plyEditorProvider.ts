@@ -358,10 +358,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                                     <button id="inverse-trackball-controls" class="control-button">Inverse <span class="button-shortcut">I</span></button>
                                     <button id="arcball-controls" class="control-button">Arcball <span class="button-shortcut">K</span></button>
                                 </div>
-                                <div class="control-buttons">
-                                    <button id="arcball-toggle-handedness" class="control-button">Flip Arcball Handedness <span class="button-shortcut">L</span></button>
-                                </div>
                             </div>
+                            <!-- Arcball settings UI removed per request -->
                             <div class="panel-section">
                                 <h4>Color Settings</h4>
                                 <div class="control-buttons">
