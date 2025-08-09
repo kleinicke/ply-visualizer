@@ -52,15 +52,197 @@ interface TifConversionResult {
 /**
  * Modern PLY Visualizer with unified file management and TIF processing
  */
+// Minimal, self-contained Arcball-like controls that expose a .target similar to Trackball/Orbit
+class CustomArcballControls {
+    public object: THREE.PerspectiveCamera;
+    public domElement: HTMLElement;
+    public enabled = true;
+    public target: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
+    public rotateSpeed = 1.0;
+    public zoomSpeed = 1.0;
+    public panSpeed = 1.0;
+    public minDistance = 0.001;
+    public maxDistance = 50000;
+    public invertRotation = false; // flip rotational sense
+
+    private isRotating = false;
+    private isPanning = false;
+    private lastArcVec: THREE.Vector3 = new THREE.Vector3();
+    private panStart: THREE.Vector2 = new THREE.Vector2();
+    private listeners: Map<string, Set<(e?: any) => void>> = new Map();
+
+    constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
+        this.object = camera;
+        this.domElement = domElement;
+        this.addDOMListeners();
+    }
+
+    private addDOMListeners(): void {
+        this.onPointerDown = this.onPointerDown.bind(this);
+        this.onPointerMove = this.onPointerMove.bind(this);
+        this.onPointerUp = this.onPointerUp.bind(this);
+        this.onWheel = this.onWheel.bind(this);
+
+        this.domElement.addEventListener('pointerdown', this.onPointerDown);
+        window.addEventListener('pointermove', this.onPointerMove);
+        window.addEventListener('pointerup', this.onPointerUp);
+        this.domElement.addEventListener('wheel', this.onWheel, { passive: false });
+    }
+
+    addEventListener(type: 'start' | 'end' | 'change', listener: (e?: any) => void): void {
+        if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+        this.listeners.get(type)!.add(listener);
+    }
+
+    removeEventListener(type: 'start' | 'end' | 'change', listener: (e?: any) => void): void {
+        this.listeners.get(type)?.delete(listener);
+    }
+
+    private dispatchEvent(type: 'start' | 'end' | 'change'): void {
+        const set = this.listeners.get(type);
+        if (!set) return;
+        for (const l of set) l();
+    }
+
+    private getCanvasRect(): DOMRect {
+        return this.domElement.getBoundingClientRect();
+    }
+
+    private projectOnUnitSphere(clientX: number, clientY: number): THREE.Vector3 {
+        const rect = this.getCanvasRect();
+        const x = (2 * (clientX - rect.left) / rect.width) - 1;
+        const y = 1 - (2 * (clientY - rect.top) / rect.height);
+        const v = new THREE.Vector3(x, y, 0);
+        const len2 = x * x + y * y;
+        if (len2 <= 1) {
+            v.z = Math.sqrt(1 - len2);
+        } else {
+            v.normalize();
+        }
+        return v;
+    }
+
+    private onPointerDown(e: PointerEvent): void {
+        if (!this.enabled) return;
+        this.domElement.setPointerCapture(e.pointerId);
+        if (e.button === 0 && !e.shiftKey) {
+            this.isRotating = true;
+            this.lastArcVec.copy(this.projectOnUnitSphere(e.clientX, e.clientY));
+            this.dispatchEvent('start');
+        } else {
+            this.isPanning = true;
+            this.panStart.set(e.clientX, e.clientY);
+            this.dispatchEvent('start');
+        }
+    }
+
+    private onPointerMove(e: PointerEvent): void {
+        if (!this.enabled) return;
+        if (!this.isRotating && !this.isPanning) return;
+
+        if (this.isRotating) {
+            const curr = this.projectOnUnitSphere(e.clientX, e.clientY);
+
+            // Build an orthonormal camera basis in world space
+            const forward = this.object.getWorldDirection(new THREE.Vector3()).normalize();
+            const right = new THREE.Vector3().crossVectors(forward, this.object.up).normalize();
+            const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+
+            // Map arcball vectors from screen space to world space using the camera basis
+            const v1 = new THREE.Vector3()
+                .addScaledVector(right, this.lastArcVec.x)
+                .addScaledVector(up, this.lastArcVec.y)
+                .addScaledVector(forward, this.lastArcVec.z)
+                .normalize();
+            const v2 = new THREE.Vector3()
+                .addScaledVector(right, curr.x)
+                .addScaledVector(up, curr.y)
+                .addScaledVector(forward, curr.z)
+                .normalize();
+
+            const q = new THREE.Quaternion().setFromUnitVectors(v1, v2);
+            if (this.invertRotation) q.invert();
+
+            // Eye vector relative to target
+            const eye = this.object.position.clone().sub(this.target);
+            eye.applyQuaternion(q);
+            this.object.up.applyQuaternion(q);
+            this.object.position.copy(this.target.clone().add(eye));
+            this.object.lookAt(this.target);
+            this.lastArcVec.copy(curr);
+            this.dispatchEvent('change');
+        } else if (this.isPanning) {
+            const rect = this.getCanvasRect();
+            const deltaX = (e.clientX - this.panStart.x);
+            const deltaY = (e.clientY - this.panStart.y);
+            this.panStart.set(e.clientX, e.clientY);
+
+            const distance = this.object.position.distanceTo(this.target);
+            const fov = this.object.fov * (Math.PI / 180);
+            const scale = (2 * Math.tan(fov / 2) * distance) / rect.height;
+
+            const right = new THREE.Vector3();
+            const up = new THREE.Vector3();
+            right.crossVectors(this.object.getWorldDirection(new THREE.Vector3()), this.object.up).normalize();
+            up.copy(this.object.up).normalize();
+
+            const move = new THREE.Vector3();
+            move.addScaledVector(right, -deltaX * scale * this.panSpeed);
+            move.addScaledVector(up, deltaY * scale * this.panSpeed);
+
+            this.target.add(move);
+            this.object.position.add(move);
+            this.object.lookAt(this.target);
+            this.dispatchEvent('change');
+        }
+    }
+
+    private onPointerUp(e: PointerEvent): void {
+        if (this.isRotating || this.isPanning) {
+            this.isRotating = false;
+            this.isPanning = false;
+            try { this.domElement.releasePointerCapture(e.pointerId); } catch (_) {}
+            this.dispatchEvent('end');
+        }
+    }
+
+    private onWheel(e: WheelEvent): void {
+        if (!this.enabled) return;
+        e.preventDefault();
+        const delta = e.deltaY; // positive: typically zoom out (move away)
+        const scale = Math.exp((delta / 100) * this.zoomSpeed);
+        const eye = this.object.position.clone().sub(this.target);
+        let newLen = eye.length() * scale;
+        newLen = Math.max(this.minDistance, Math.min(this.maxDistance, newLen));
+        eye.setLength(newLen);
+        this.object.position.copy(this.target.clone().add(eye));
+        this.object.lookAt(this.target);
+        this.dispatchEvent('start');
+        this.dispatchEvent('change');
+        this.dispatchEvent('end');
+    }
+
+    update(): void {
+        // No damping; nothing to do per frame
+    }
+
+    dispose(): void {
+        this.domElement.removeEventListener('pointerdown', this.onPointerDown);
+        window.removeEventListener('pointermove', this.onPointerMove);
+        window.removeEventListener('pointerup', this.onPointerUp);
+        this.domElement.removeEventListener('wheel', this.onWheel as any);
+    }
+}
+
 class PLYVisualizer {
     private vscode = acquireVsCodeApi();
     private scene!: THREE.Scene;
     private camera!: THREE.PerspectiveCamera;
     private renderer!: THREE.WebGLRenderer;
-    private controls!: TrackballControls | OrbitControls;
+    private controls!: TrackballControls | OrbitControls | CustomArcballControls;
     
     // Camera control state
-    private controlType: 'trackball' | 'orbit' | 'inverse-trackball' = 'trackball';
+    private controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' = 'trackball';
     
     // Unified file management
     private plyFiles: PlyData[] = [];
@@ -91,6 +273,7 @@ class PLYVisualizer {
     private frameCount: number = 0; // Frame counter for UI updates
     private lastCameraPosition: THREE.Vector3 = new THREE.Vector3(); // Track camera position changes
     private lastCameraQuaternion: THREE.Quaternion = new THREE.Quaternion(); // Track camera rotation changes
+    private arcballInvertRotation: boolean = false; // preference for arcball handedness
     
     // Large file chunked loading state
     private chunkedFileState: Map<string, {
@@ -258,6 +441,14 @@ class PLYVisualizer {
             
             // Apply inversion
             this.setupInvertedControls();
+        } else if (this.controlType === 'arcball') {
+            this.controls = new CustomArcballControls(this.camera, this.renderer.domElement);
+            const arc = this.controls as CustomArcballControls;
+            arc.rotateSpeed = 1.0;
+            arc.zoomSpeed = 1.0;
+            arc.panSpeed = 1.0;
+            // Apply preference
+            arc.invertRotation = this.arcballInvertRotation;
         } else {
             this.controls = new OrbitControls(this.camera, this.renderer.domElement);
             const orbitControls = this.controls as OrbitControls;
@@ -316,10 +507,9 @@ class PLYVisualizer {
         };
         
         // Add event listeners for axes visibility based on control type
-        if (this.controlType === 'trackball' || this.controlType === 'inverse-trackball') {
-            const trackballControls = this.controls as TrackballControls;
-            trackballControls.addEventListener('start', showAxes);
-            trackballControls.addEventListener('end', hideAxesAfterDelay);
+        if (this.controlType === 'trackball' || this.controlType === 'inverse-trackball' || this.controlType === 'arcball') {
+            (this.controls as any).addEventListener('start', showAxes);
+            (this.controls as any).addEventListener('end', hideAxesAfterDelay);
         } else {
             const orbitControls = this.controls as OrbitControls;
             orbitControls.addEventListener('start', showAxes);
@@ -1501,6 +1691,27 @@ class PLYVisualizer {
             });
         }
 
+        const arcballBtn = document.getElementById('arcball-controls');
+        if (arcballBtn) {
+            arcballBtn.addEventListener('click', () => {
+                this.switchToArcballControls();
+            });
+        }
+
+        const arcballFlipBtn = document.getElementById('arcball-toggle-handedness');
+        if (arcballFlipBtn) {
+            arcballFlipBtn.addEventListener('click', () => {
+                this.arcballInvertRotation = !this.arcballInvertRotation;
+                if (this.controlType === 'arcball') {
+                    const arc = this.controls as any;
+                    if (arc && typeof arc.invertRotation === 'boolean') {
+                        arc.invertRotation = this.arcballInvertRotation;
+                    }
+                }
+                this.showStatus(`Arcball handedness: ${this.arcballInvertRotation ? 'Inverted' : 'Normal'}`);
+            });
+        }
+
         // Color settings
         const toggleGammaCorrectionBtn = document.getElementById('toggle-gamma-correction');
         if (toggleGammaCorrectionBtn) {
@@ -1553,6 +1764,10 @@ class PLYVisualizer {
                     this.switchToInverseTrackballControls();
                     e.preventDefault();
                     break;
+                case 'k':
+                    this.switchToArcballControls();
+                    e.preventDefault();
+                    break;
                 case 'x':
                     this.setUpVector(new THREE.Vector3(1, 0, 0));
                     e.preventDefault();
@@ -1572,6 +1787,17 @@ class PLYVisualizer {
                     break;
                 case 'g':
                     this.toggleGammaCorrection();
+                    e.preventDefault();
+                    break;
+                case 'l':
+                    this.arcballInvertRotation = !this.arcballInvertRotation;
+                    if (this.controlType === 'arcball') {
+                        const arc = this.controls as any;
+                        if (arc && typeof arc.invertRotation === 'boolean') {
+                            arc.invertRotation = this.arcballInvertRotation;
+                        }
+                    }
+                    this.showStatus(`Arcball handedness: ${this.arcballInvertRotation ? 'Inverted' : 'Normal'}`);
                     e.preventDefault();
                     break;
             }
@@ -1743,6 +1969,7 @@ class PLYVisualizer {
                 <div><span style="font-weight: bold;">T</span> Switch to TrackballControls</div>
                 <div><span style="font-weight: bold;">O</span> Switch to OrbitControls</div>
                 <div><span style="font-weight: bold;">I</span> Switch to Inverse TrackballControls</div>
+                <div><span style="font-weight: bold;">K</span> Switch to ArcballControls</div>
             </div>
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">📷 Camera Conventions</div>
             <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4; margin-bottom: 8px;">
@@ -3966,6 +4193,16 @@ class PLYVisualizer {
         this.showStatus('Switched to Inverse Trackball controls');
     }
 
+    private switchToArcballControls(): void {
+        if (this.controlType === 'arcball') return;
+        
+        console.log('🔄 Switching to ArcballControls');
+        this.controlType = 'arcball';
+        this.initializeControls();
+        this.updateControlStatus();
+        this.showStatus('Switched to Arcball controls');
+    }
+
     private updateControlStatus(): void {
         const status = this.controlType.toUpperCase();
         console.log(`📊 Camera Controls: ${status}`);
@@ -3980,7 +4217,8 @@ class PLYVisualizer {
         const controlButtons = [
             { id: 'trackball-controls', type: 'trackball' },
             { id: 'orbit-controls', type: 'orbit' },
-            { id: 'inverse-trackball-controls', type: 'inverse-trackball' }
+            { id: 'inverse-trackball-controls', type: 'inverse-trackball' },
+            { id: 'arcball-controls', type: 'arcball' }
         ];
 
         controlButtons.forEach(button => {

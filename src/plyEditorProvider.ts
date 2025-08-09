@@ -356,6 +356,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                                     <button id="trackball-controls" class="control-button">Trackball <span class="button-shortcut">T</span></button>
                                     <button id="orbit-controls" class="control-button">Orbit <span class="button-shortcut">O</span></button>
                                     <button id="inverse-trackball-controls" class="control-button">Inverse <span class="button-shortcut">I</span></button>
+                                    <button id="arcball-controls" class="control-button">Arcball <span class="button-shortcut">K</span></button>
+                                </div>
+                                <div class="control-buttons">
+                                    <button id="arcball-toggle-handedness" class="control-button">Flip Arcball Handedness <span class="button-shortcut">L</span></button>
                                 </div>
                             </div>
                             <div class="panel-section">
