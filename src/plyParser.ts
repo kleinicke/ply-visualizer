@@ -94,7 +94,7 @@ export class PlyParser {
 
         // Parse header
         const vertexProperties: Array<{name: string, type: string}> = [];
-        const faceProperties: Array<{name: string, type: string}> = [];
+        const faceProperties: Array<{name: string, type: string, countType?: string, indexType?: string}> = [];
         let currentElement = '';
 
         for (const line of headerLines) {
@@ -124,10 +124,20 @@ export class PlyParser {
                         type: parts[1]
                     });
                 } else if (currentElement === 'face') {
-                    faceProperties.push({
-                        name: parts[parts.length - 1],
-                        type: parts[1]
-                    });
+                    if (parts[1] === 'list') {
+                        // property list <countType> <indexType> <name>
+                        faceProperties.push({
+                            name: parts[parts.length - 1],
+                            type: 'list',
+                            countType: parts[2],
+                            indexType: parts[3]
+                        });
+                    } else {
+                        faceProperties.push({
+                            name: parts[parts.length - 1],
+                            type: parts[1]
+                        });
+                    }
                 }
             }
         }
@@ -227,12 +237,15 @@ export class PlyParser {
         if (result.faceCount > 0) {
             result.faces = new Array(result.faceCount);
             
-            // Parse faces
+            // Parse faces (ASCII: first value is count, followed by indices)
             for (let i = 0; i < result.faceCount && lineIndex < lines.length; i++, lineIndex++) {
-                const values = lines[lineIndex].trim().split(/\s+/).map(v => parseInt(v));
-                if (values.length > 0) {
-                    const vertexCount = values[0];
-                    const indices = values.slice(1, vertexCount + 1);
+                const tokens = lines[lineIndex].trim().split(/\s+/);
+                if (tokens.length > 0) {
+                    const vertexCount = parseInt(tokens[0], 10);
+                    const indices = new Array(vertexCount);
+                    for (let j = 0; j < vertexCount; j++) {
+                        indices[j] = parseInt(tokens[1 + j], 10);
+                    }
                     result.faces[i] = { indices };
                 }
             }
@@ -336,19 +349,21 @@ export class PlyParser {
         const vertexEndTime = performance.now();
         log(`🎯 Parser: Vertex processing took ${(vertexEndTime - vertexStartTime).toFixed(1)}ms`);
 
-        // Pre-allocate faces array
+        // Pre-allocate faces array honoring header-declared list types
         if (result.faceCount > 0) {
             result.faces = new Array(result.faceCount);
-            
-            // Parse faces efficiently
+
+            // Find the vertex_indices property to get count/index types
+            const faceIndexProp = faceProperties.find(p => p.name === 'vertex_indices' && p.type === 'list');
+            const countType = (faceIndexProp as any)?.countType || 'uchar';
+            const indexType = (faceIndexProp as any)?.indexType || 'int';
+
             for (let i = 0; i < result.faceCount; i++) {
-                const vertexCount = this.readBinaryValueFast('uchar');
+                const vertexCount = this.readBinaryValueFast(countType);
                 const indices = new Array(vertexCount);
-                
                 for (let j = 0; j < vertexCount; j++) {
-                    indices[j] = this.readBinaryValueFast('int');
+                    indices[j] = this.readBinaryValueFast(indexType);
                 }
-                
                 result.faces[i] = { indices };
             }
         }
@@ -457,7 +472,9 @@ export class PlyParser {
         headerInfo: PlyData,
         binaryDataStart: number,
         vertexStride: number,
-        propertyOffsets: Map<string, { offset: number, type: string }>
+        propertyOffsets: Map<string, { offset: number, type: string }>,
+        faceCountType?: string,
+        faceIndexType?: string
     }> {
         const parseStartTime = performance.now();
         const log = timingCallback || console.log;
@@ -503,7 +520,7 @@ export class PlyParser {
         
         const headerLines = headerText.split('\n');
         const vertexProperties: Array<{name: string, type: string}> = [];
-        const faceProperties: Array<{name: string, type: string}> = [];
+        const faceProperties: Array<{name: string, type: string, countType?: string, indexType?: string}> = [];
         let currentElement = '';
 
         for (const line of headerLines) {
@@ -533,10 +550,20 @@ export class PlyParser {
                         type: parts[1]
                     });
                 } else if (currentElement === 'face') {
-                    faceProperties.push({
-                        name: parts[parts.length - 1],
-                        type: parts[1]
-                    });
+                    if (parts[1] === 'list') {
+                        // property list <countType> <indexType> <name>
+                        faceProperties.push({
+                            name: parts[parts.length - 1],
+                            type: 'list',
+                            countType: parts[2],
+                            indexType: parts[3]
+                        });
+                    } else {
+                        faceProperties.push({
+                            name: parts[parts.length - 1],
+                            type: parts[1]
+                        });
+                    }
                 }
             }
         }
@@ -570,6 +597,19 @@ export class PlyParser {
             }
         }
         
+        // Extract face list types if present
+        let faceCountType: string | undefined;
+        let faceIndexType: string | undefined;
+        let faceIndexProp = faceProperties.find(p => p.name === 'vertex_indices' && p.type === 'list');
+        if (!faceIndexProp) {
+            // Fallback: take the first list-type face property if name differs
+            faceIndexProp = faceProperties.find(p => p.type === 'list');
+        }
+        if (faceIndexProp) {
+            faceCountType = faceIndexProp.countType;
+            faceIndexType = faceIndexProp.indexType;
+        }
+
         const totalTime = performance.now();
         log(`🎯 ULTIMATE: Header-only parsing took ${(totalTime - parseStartTime).toFixed(1)}ms`);
 
@@ -577,7 +617,9 @@ export class PlyParser {
             headerInfo: result,
             binaryDataStart: dataStartPos,
             vertexStride,
-            propertyOffsets
+            propertyOffsets,
+            faceCountType,
+            faceIndexType
         };
     }
 

@@ -189,6 +189,13 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     });
                     
                     // Send raw binary data + header info
+                    // Extra logging to aid debugging face offsets/types
+                    // Log face types once for debugging
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `🧪 Header face types: count=${headerResult.faceCountType || 'n/a'}, index=${headerResult.faceIndexType || 'n/a'}`,
+                        timestamp: performance.now()
+                    });
                     await this.sendUltimateRawBinary(webviewPanel, parsedData, headerResult, plyData, 'multiPlyData');
                 } else {
                     // ASCII PLY - use traditional parsing
@@ -674,7 +681,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             ),
             vertexStride: headerResult.vertexStride,
             propertyOffsets: Array.from(headerResult.propertyOffsets.entries()),
-            littleEndian: headerResult.headerInfo.format === 'binary_little_endian'
+            littleEndian: headerResult.headerInfo.format === 'binary_little_endian',
+            faceCountType: headerResult.faceCountType,
+            faceIndexType: headerResult.faceIndexType
         });
     }
 

@@ -4181,6 +4181,8 @@ class PLYVisualizer {
         const vertexStride = message.vertexStride;
         const vertexCount = message.vertexCount;
         const littleEndian = message.littleEndian;
+        const faceCountType = message.faceCountType as (string | undefined);
+        const faceIndexType = message.faceIndexType as (string | undefined);
         
         console.log(`⚡ ULTIMATE: Direct binary parsing ${vertexCount} vertices (${vertexStride} bytes/vertex)`);
         
@@ -4267,6 +4269,63 @@ class PLYVisualizer {
         (plyData as any).positionsArray = positions;
         (plyData as any).colorsArray = colors;
         (plyData as any).normalsArray = normals;
+
+        // Faces: if face info was provided in header, read faces after vertex block
+        // Note: rawBinaryData starts at vertex buffer; if faces follow, they are after vertexStride * vertexCount bytes
+        if (message.faceCount && faceCountType && faceIndexType) {
+            const faceStart = vertexStride * vertexCount;
+            console.log(`🧪 Faces: vertexStride=${vertexStride}, vertexCount=${vertexCount}, faceStart=${faceStart}, dataBytes=${rawData.byteLength}`);
+            if (faceStart < rawData.byteLength) {
+                let offs = 0; // Offset within the face DataView (already anchored at faceStart)
+                const dv = new DataView(rawData.buffer, rawData.byteOffset + faceStart, rawData.byteLength - faceStart);
+                const readVal = (off: number, type: string): { val: number, next: number } => {
+                    switch (type) {
+                        case 'char': case 'int8': return { val: dv.getInt8(off), next: off + 1 };
+                        case 'uchar': case 'uint8': return { val: dv.getUint8(off), next: off + 1 };
+                        case 'short': case 'int16': return { val: dv.getInt16(off, littleEndian), next: off + 2 };
+                        case 'ushort': case 'uint16': return { val: dv.getUint16(off, littleEndian), next: off + 2 };
+                        case 'int': case 'int32': return { val: dv.getInt32(off, littleEndian), next: off + 4 };
+                        case 'uint': case 'uint32': return { val: dv.getUint32(off, littleEndian), next: off + 4 };
+                        case 'float': case 'float32': return { val: dv.getFloat32(off, littleEndian), next: off + 4 };
+                        case 'double': case 'float64': return { val: dv.getFloat64(off, littleEndian), next: off + 8 };
+                        default: throw new Error(`Unsupported face type: ${type}`);
+                    }
+                };
+                // Sample first few faces for sanity logging
+                const sampleCount = Math.min(5, message.faceCount);
+                const sampleSummary: Array<{ count: number, firstIdxs: number[] }> = [];
+                let sampleOffs = 0;
+                for (let sf = 0; sf < sampleCount && sampleOffs < dv.byteLength; sf++) {
+                    let r = readVal(sampleOffs, faceCountType);
+                    const cnt = r.val >>> 0; sampleOffs = r.next;
+                    const firstIdxs: number[] = [];
+                    for (let j = 0; j < Math.min(cnt, 4) && sampleOffs < dv.byteLength; j++) {
+                        r = readVal(sampleOffs, faceIndexType);
+                        firstIdxs.push(r.val >>> 0);
+                        sampleOffs = r.next;
+                    }
+                    // Skip rest of indices for sampling
+                    for (let j = Math.min(cnt, 4); j < cnt && sampleOffs < dv.byteLength; j++) {
+                        r = readVal(sampleOffs, faceIndexType);
+                        sampleOffs = r.next;
+                    }
+                    sampleSummary.push({ count: cnt, firstIdxs });
+                }
+                console.log('🧪 Face sample:', sampleSummary);
+                for (let f = 0; f < message.faceCount; f++) {
+                    let res = readVal(offs, faceCountType);
+                    const cnt = res.val >>> 0; // count is non-negative
+                    offs = res.next;
+                    const indices: number[] = new Array(cnt);
+                    for (let j = 0; j < cnt; j++) {
+                        res = readVal(offs, faceIndexType);
+                        indices[j] = res.val >>> 0;
+                        offs = res.next;
+                    }
+                    plyData.faces.push({ indices });
+                }
+            }
+        }
         
         console.log(`⚡ ULTIMATE: Total webview processing took ${(performance.now() - startTime).toFixed(1)}ms`);
         
@@ -4402,15 +4461,10 @@ class PLYVisualizer {
         // Convert face buffer if present
         if (message.indexBuffer) {
             const indexArray = new Uint32Array(message.indexBuffer);
-            const faceCount = indexArray.length / 3; // Assuming triangles
-            
-            for (let i = 0; i < faceCount; i++) {
+            // The buffer already represents triangulated indices; push as triples
+            for (let i = 0; i < indexArray.length; i += 3) {
                 plyData.faces.push({
-                    indices: [
-                        indexArray[i * 3],
-                        indexArray[i * 3 + 1],
-                        indexArray[i * 3 + 2]
-                    ]
+                    indices: [indexArray[i], indexArray[i + 1], indexArray[i + 2]]
                 });
             }
         }
