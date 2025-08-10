@@ -1885,9 +1885,6 @@ class PLYVisualizer {
 
             if (normals) {
                 geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-            } else if (data.faces.length > 0) {
-                // Only compute normals for meshes, not point clouds
-                geometry.computeVertexNormals();
             }
         }
 
@@ -1923,6 +1920,11 @@ class PLYVisualizer {
                 const finalIndices = indexOffset < indices.length ? indices.slice(0, indexOffset) : indices;
                 geometry.setIndex(new THREE.BufferAttribute(finalIndices, 1));
             }
+        }
+
+        // Ensure normals are available for proper lighting after indices are set
+        if (!geometry.getAttribute('normal') && data.faces.length > 0) {
+            geometry.computeVertexNormals();
         }
 
         geometry.computeBoundingBox();
@@ -2510,6 +2512,9 @@ class PLYVisualizer {
         if (data.faceCount > 0) {
             // Mesh material
             const material = new THREE.MeshLambertMaterial();
+            material.side = THREE.DoubleSide; // More robust visibility if face winding varies
+            // For files without explicit normals, prefer flat shading to avoid odd gradients
+            material.flatShading = !data.hasNormals;
             
             if (colorMode === 'original' && data.hasColors) {
                 // Use original colors from the PLY file
@@ -2549,6 +2554,7 @@ class PLYVisualizer {
                 }
             }
             
+            material.needsUpdate = true;
             return material;
         } else {
             // Points material
