@@ -147,13 +147,15 @@ end_header
             assert.ok(menus['explorer/context'], 'Explorer context menu should be defined');
             
             const contextMenuItems = menus['explorer/context'];
-            assert.ok(contextMenuItems.length >= 2, 'Should have at least 2 context menu items');
+            assert.ok(contextMenuItems.length >= 3, 'Should have at least 3 context menu items');
             
             const openFileItem = contextMenuItems.find((item: any) => item.command === 'plyViewer.openFile');
             const convertTifItem = contextMenuItems.find((item: any) => item.command === 'plyViewer.convertTifToPointCloud');
+            const loadJsonPoseItem = contextMenuItems.find((item: any) => item.command === 'plyViewer.loadJsonAsPose');
             
             assert.ok(openFileItem, 'Open file context menu item should exist');
             assert.ok(convertTifItem, 'Convert TIF context menu item should exist');
+            assert.ok(loadJsonPoseItem, 'Load JSON as 3D Pose context menu item should exist');
         }
     });
 

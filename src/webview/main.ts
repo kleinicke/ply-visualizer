@@ -85,7 +85,6 @@ class CustomArcballControls {
         this.domElement = domElement;
         this.addDOMListeners();
     }
-
     private addDOMListeners(): void {
         this.onPointerDown = this.onPointerDown.bind(this);
         this.onPointerMove = this.onPointerMove.bind(this);
@@ -482,6 +481,10 @@ class PLYVisualizer {
         colorImageData?: ImageData;
         colorImageName?: string;
     }> = new Map();
+
+    // Pose entries managed like files but stored as Object3D groups
+    private poseGroups: THREE.Group[] = [];
+    private poseMeta: { jointCount: number; edgeCount: number; fileName: string }[] = [];
     
     // Rotation matrices
     private cameraMatrix: THREE.Matrix4 = new THREE.Matrix4(); // Current camera position and rotation
@@ -2574,6 +2577,14 @@ class PLYVisualizer {
                 case 'mtlData':
                     this.handleMtlData(message);
                     break;
+                case 'poseData':
+                    try {
+                        await (this as any).handlePoseData(message);
+                    } catch (error) {
+                        console.error('Error handling pose data:', error);
+                        this.showError('Failed to handle pose data: ' + (error instanceof Error ? error.message : String(error)));
+                    }
+                    break;
             }
         });
     }
@@ -2735,12 +2746,11 @@ class PLYVisualizer {
     }
 
     private fitCameraToAllObjects(): void {
-        if (this.meshes.length === 0) {return;}
+        if (this.meshes.length === 0 && this.poseGroups.length === 0) {return;}
 
         const box = new THREE.Box3();
-        for (const mesh of this.meshes) {
-            box.expandByObject(mesh);
-        }
+        for (const obj of this.meshes) { box.expandByObject(obj); }
+        for (const group of this.poseGroups) { box.expandByObject(group); }
 
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
@@ -2762,15 +2772,15 @@ class PLYVisualizer {
         const statsDiv = document.getElementById('file-stats');
         if (!statsDiv) {return;}
         
-        if (this.plyFiles.length === 0) {
-            statsDiv.innerHTML = '<div>No files loaded</div>';
+        if (this.plyFiles.length === 0 && this.poseGroups.length === 0) {
+            statsDiv.innerHTML = '<div>No objects loaded</div>';
             // Also clear camera matrix panel
             const cameraPanel = document.getElementById('camera-matrix-panel');
             if (cameraPanel) cameraPanel.innerHTML = '';
             return;
         }
         
-        if (this.plyFiles.length === 1) {
+        if (this.plyFiles.length + this.poseGroups.length === 1 && this.plyFiles.length === 1) {
             // Single file view
             const data = this.plyFiles[0];
             const renderingMode = data.faceCount === 0 ? 'Points' : 'Mesh';
@@ -2781,15 +2791,16 @@ class PLYVisualizer {
                 <div><strong>Colors:</strong> ${data.hasColors ? 'Yes' : 'No'}</div>
                 <div><strong>Normals:</strong> ${data.hasNormals ? 'Yes' : 'No'}</div>
                 <div><strong>Rendering Mode:</strong> ${renderingMode}</div>
-                ${data.comments.length > 0 ? `<div><strong>Comments:</strong><br>${data.comments.join('<br>')}</div>` : ''}
+                ${Array.isArray((data as any).comments) && (data as any).comments.length > 0 ? `<div><strong>Comments:</strong><br>${(data as any).comments.join('<br>')}</div>` : ''}
             `;
         } else {
             // Multiple files view
             const totalVertices = this.plyFiles.reduce((sum: number, data: PlyData) => sum + data.vertexCount, 0);
             const totalFaces = this.plyFiles.reduce((sum: number, data: PlyData) => sum + data.faceCount, 0);
+            const totalObjects = this.plyFiles.length + this.poseGroups.length;
             
             statsDiv.innerHTML = `
-                <div><strong>Total Files:</strong> ${this.plyFiles.length}</div>
+                <div><strong>Total Objects:</strong> ${totalObjects} (Pointclouds: ${this.plyFiles.length}, Poses: ${this.poseGroups.length})</div>
                 <div><strong>Total Vertices:</strong> ${totalVertices.toLocaleString()}</div>
                 <div><strong>Total Faces:</strong> ${totalFaces.toLocaleString()}</div>
             `;
@@ -2804,12 +2815,13 @@ class PLYVisualizer {
         const fileListDiv = document.getElementById('file-list');
         if (!fileListDiv) return;
 
-        if (this.plyFiles.length === 0) {
-            fileListDiv.innerHTML = '<div class="no-files">No PLY files loaded</div>';
+        if (this.plyFiles.length === 0 && this.poseGroups.length === 0) {
+            fileListDiv.innerHTML = '<div class="no-files">No objects loaded</div>';
             return;
         }
 
         let html = '';
+        // Render point clouds and meshes
         for (let i = 0; i < this.plyFiles.length; i++) {
             const data = this.plyFiles[i];
             
@@ -2976,11 +2988,87 @@ class PLYVisualizer {
                 </div>
             `;
         }
+
+        // Render pose entries appended after point clouds
+        const baseIndex = this.plyFiles.length;
+        for (let p = 0; p < this.poseGroups.length; p++) {
+            const i = baseIndex + p;
+            const meta = this.poseMeta[p];
+            const color = this.fileColors[i % this.fileColors.length];
+            const colorHex = `#${Math.round(color[0] * 255).toString(16).padStart(2, '0')}${Math.round(color[1] * 255).toString(16).padStart(2, '0')}${Math.round(color[2] * 255).toString(16).padStart(2, '0')}`;
+            const colorIndicator = `<span class="color-indicator" style="background-color: ${colorHex}"></span>`;
+            const visible = this.fileVisibility[i] ?? true;
+            const sizeVal = this.pointSizes[i] ?? 5.0;
+            // Transformation matrix UI content for pose
+            const poseMatrixArr = this.getTransformationMatrixAsArray(i);
+            let poseMatrixStr = '';
+            for (let r = 0; r < 4; ++r) {
+                const row = poseMatrixArr.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
+                poseMatrixStr += row.join(' ') + '\n';
+            }
+
+            html += `
+                <div class="file-item">
+                    <div class="file-item-main">
+                        <input type="checkbox" id="file-${i}" ${visible ? 'checked' : ''}>
+                        ${colorIndicator}
+                        <label for="file-${i}" class="file-name">${meta.fileName || `Pose ${p + 1}`}</label>
+                        <button class="remove-file" data-file-index="${i}" title="Remove object">✕</button>
+                    </div>
+                    <div class="file-info">${meta.jointCount} joints, ${meta.edgeCount} edges</div>
+                    <div class="transform-section">
+                        <button class="transform-toggle" data-file-index="${i}">
+                            <span class="toggle-icon">▶</span> Transform
+                        </button>
+                        <div class="transform-panel" id="transform-panel-${i}" style="display:none;">
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Transformations:</label>
+                                <div class="transform-buttons">
+                                    <button class="add-translation" data-file-index="${i}">Add Translation</button>
+                                    <button class="add-quaternion" data-file-index="${i}">Add Quaternion</button>
+                                    <button class="add-angle-axis" data-file-index="${i}">Add Angle-Axis</button>
+                                </div>
+                            </div>
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Rotation (90°):</label>
+                                <div class="transform-buttons">
+                                    <button class="rotate-x" data-file-index="${i}">X</button>
+                                    <button class="rotate-y" data-file-index="${i}">Y</button>
+                                    <button class="rotate-z" data-file-index="${i}">Z</button>
+                                </div>
+                            </div>
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
+                                <textarea id="matrix-${i}" rows="4" cols="50" style="width:100%;font-size:9px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${poseMatrixStr.trim()}</textarea>
+                                <div class="transform-buttons" style="margin-top:4px;">
+                                    <button class="apply-matrix" data-file-index="${i}">Apply Matrix</button>
+                                    <button class="invert-matrix" data-file-index="${i}">Invert</button>
+                                    <button class="reset-matrix" data-file-index="${i}">Reset</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="point-size-control">
+                        <label for="size-${i}">Joint Size:</label>
+                        <input type="range" id="size-${i}" min="0.1" max="20.0" step="0.1" value="${sizeVal}" class="size-slider">
+                        <span class="size-value">${sizeVal.toFixed(1)}</span>
+                    </div>
+                    <div class="color-control">
+                        <label for="color-${i}">Color:</label>
+                        <select id="color-${i}" class="color-selector">
+                            <option value="assigned" ${this.individualColorModes[i] === 'assigned' ? 'selected' : ''}>Assigned (Red)</option>
+                            ${this.getColorOptions(i)}
+                        </select>
+                    </div>
+                </div>
+            `;
+        }
         
         fileListDiv.innerHTML = html;
         
-        // Add event listeners after setting innerHTML  
-        for (let i = 0; i < this.plyFiles.length; i++) {
+        // Add event listeners after setting innerHTML
+        const totalEntries = this.plyFiles.length + this.poseGroups.length;
+        for (let i = 0; i < totalEntries; i++) {
             const checkbox = document.getElementById(`file-${i}`);
             if (checkbox) {
                 checkbox.addEventListener('click', (e) => {
@@ -3123,8 +3211,9 @@ class PLYVisualizer {
             
             // Add size slider listeners for point clouds and OBJ files
             const sizeSlider = document.getElementById(`size-${i}`) as HTMLInputElement;
-            const isObjFile = (this.plyFiles[i] as any).isObjFile;
-            if (sizeSlider && (this.plyFiles[i].faceCount === 0 || isObjFile)) {
+            const isPose = i >= this.plyFiles.length;
+            const isObjFile = !isPose && (this.plyFiles[i] as any).isObjFile;
+            if (sizeSlider && (isPose || this.plyFiles[i].faceCount === 0 || isObjFile)) {
                 sizeSlider.addEventListener('input', (e) => {
                     const newSize = parseFloat((e.target as HTMLInputElement).value);
                     this.updatePointSize(i, newSize);
@@ -3132,7 +3221,7 @@ class PLYVisualizer {
                     // Update the displayed value
                     const sizeValue = document.querySelector(`#size-${i} + .size-value`) as HTMLElement;
                     if (sizeValue) {
-                        sizeValue.textContent = isObjFile ? newSize.toFixed(1) : newSize.toFixed(5);
+                        sizeValue.textContent = (isPose || isObjFile) ? newSize.toFixed(1) : newSize.toFixed(5);
                     }
                 });
             }
@@ -3256,9 +3345,20 @@ class PLYVisualizer {
     }
 
     private toggleFileVisibility(fileIndex: number): void {
-        if (fileIndex >= 0 && fileIndex < this.meshes.length) {
+        if (fileIndex < 0) return;
+        // If it's a mesh/pointcloud entry
+        if (fileIndex < this.meshes.length && this.meshes[fileIndex]) {
             this.fileVisibility[fileIndex] = !this.fileVisibility[fileIndex];
             this.meshes[fileIndex].visible = this.fileVisibility[fileIndex];
+            return;
+        }
+        // Pose entries are appended after meshes
+        const poseIndex = fileIndex - this.plyFiles.length;
+        if (poseIndex >= 0 && poseIndex < this.poseGroups.length) {
+            const vis = !(this.fileVisibility[fileIndex] ?? true);
+            this.fileVisibility[fileIndex] = vis;
+            const group = this.poseGroups[poseIndex];
+            if (group) group.visible = vis;
         }
     }
     
@@ -3803,6 +3903,8 @@ class PLYVisualizer {
     }
 
     private showError(message: string): void {
+        // Log to console for developer tools visibility
+        try { console.error(message); } catch (_) {}
         document.getElementById('loading')?.classList.add('hidden');
         const errorMsg = document.getElementById('error-message');
         const errorDiv = document.getElementById('error');
@@ -4148,9 +4250,36 @@ class PLYVisualizer {
     }
 
     private removeFileByIndex(fileIndex: number): void {
-        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+        if (fileIndex < 0) { return; }
+
+        // Determine if this index refers to a pose or a pointcloud/mesh
+        if (fileIndex >= this.plyFiles.length) {
+            const poseIndex = fileIndex - this.plyFiles.length;
+            if (poseIndex < 0 || poseIndex >= this.poseGroups.length) { return; }
+
+            const group = this.poseGroups[poseIndex];
+            this.scene.remove(group);
+            group.traverse((obj: any) => {
+                if (obj.geometry && typeof obj.geometry.dispose === 'function') obj.geometry.dispose();
+                if (obj.material) {
+                    if (Array.isArray(obj.material)) obj.material.forEach((m: any) => m.dispose && m.dispose());
+                    else if (typeof obj.material.dispose === 'function') obj.material.dispose();
+                }
+            });
+            this.poseGroups.splice(poseIndex, 1);
+            this.poseMeta.splice(poseIndex, 1);
+            // Remove UI-aligned state for this unified index
+            this.fileVisibility.splice(fileIndex, 1);
+            this.pointSizes.splice(fileIndex, 1);
+            if (this.individualColorModes[fileIndex] !== undefined) {
+                this.individualColorModes.splice(fileIndex, 1);
+            }
+            this.updateFileList();
+            this.updateFileStats();
             return;
         }
+
+        if (fileIndex >= this.plyFiles.length) { return; }
 
         // Remove mesh from scene
         const mesh = this.meshes[fileIndex];
@@ -4670,10 +4799,33 @@ class PLYVisualizer {
             console.log(`🎚️ Updating point size for file ${fileIndex}: ${oldSize} → ${newSize}`);
             this.pointSizes[fileIndex] = newSize;
             
-            const data = this.plyFiles[fileIndex];
-            const isObjFile = (data as any).isObjFile;
+            const isPose = fileIndex >= this.plyFiles.length;
+            const data = !isPose ? this.plyFiles[fileIndex] : undefined as any;
+            const isObjFile = data ? (data as any).isObjFile : false;
             
-            if (isObjFile) {
+            if (isPose) {
+                // Update instanced sphere scale in pose group if stored using PointsMaterial size semantics is different.
+                const poseIndex = fileIndex - this.plyFiles.length;
+                const group = this.poseGroups[poseIndex];
+                if (group) {
+                    group.traverse((obj) => {
+                        if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
+                            // Rebuild or update instance matrices scaling
+                            const count = obj.count;
+                            const dummy = new THREE.Object3D();
+                            for (let i = 0; i < count; i++) {
+                                obj.getMatrixAt(i, dummy.matrix);
+                                // Reset scale part and apply uniform scale by newSize
+                                dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+                                dummy.scale.setScalar(newSize);
+                                dummy.updateMatrix();
+                                obj.setMatrixAt(i, dummy.matrix);
+                            }
+                            obj.instanceMatrix.needsUpdate = true;
+                        }
+                    });
+                }
+            } else if (isObjFile) {
                 // Handle OBJ files - update both points and lines in multi-material groups
                 const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
                 const subMeshes = this.materialMeshes[fileIndex];
@@ -4734,19 +4886,30 @@ class PLYVisualizer {
     }
 
     private soloPointCloud(fileIndex: number): void {
-        // Hide all point clouds first
-        for (let i = 0; i < this.meshes.length; i++) {
+        // Hide all objects (point clouds and poses)
+        const totalEntries = this.plyFiles.length + this.poseGroups.length;
+        for (let i = 0; i < totalEntries; i++) {
             this.fileVisibility[i] = false;
-            this.meshes[i].visible = false;
+            if (i < this.meshes.length) {
+                const obj = this.meshes[i];
+                if (obj) obj.visible = false;
+            } else {
+                const poseIndex = i - this.plyFiles.length;
+                const group = this.poseGroups[poseIndex];
+                if (group) group.visible = false;
+            }
         }
-        
-        // Show only the selected point cloud
-        if (fileIndex >= 0 && fileIndex < this.meshes.length) {
-            this.fileVisibility[fileIndex] = true;
-            this.meshes[fileIndex].visible = true;
+        // Show only the selected entry
+        this.fileVisibility[fileIndex] = true;
+        if (fileIndex < this.meshes.length) {
+            const obj = this.meshes[fileIndex];
+            if (obj) obj.visible = true;
+        } else {
+            const poseIndex = fileIndex - this.plyFiles.length;
+            const group = this.poseGroups[poseIndex];
+            if (group) group.visible = true;
         }
-        
-        // Update checkboxes to reflect the new state
+        // Update UI
         this.updateFileList();
     }
 
@@ -7473,6 +7636,189 @@ class PLYVisualizer {
         });
         
         return content;
+    }
+
+    // ========== Pose loading ==========
+    private async handlePoseData(message: any): Promise<void> {
+        const fileName: string = message.fileName || 'pose.json';
+        const data = message.data;
+        try {
+            const pose = this.normalizePose(data);
+            const group = this.buildPoseGroup(pose);
+            this.scene.add(group);
+            // Track pose group and meta
+            this.poseGroups.push(group);
+            this.poseMeta.push({ jointCount: pose.joints.length, edgeCount: pose.edges.length, fileName });
+            // Initialize UI state slots aligned after plyFiles
+            const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
+            this.fileVisibility[unifiedIndex] = true;
+            this.pointSizes[unifiedIndex] = 5.0;
+            this.individualColorModes[unifiedIndex] = 'assigned';
+            // Initialize transformation matrix for this pose
+            this.transformationMatrices.push(new THREE.Matrix4());
+            this.applyTransformationMatrix(unifiedIndex);
+            // Update UI
+            this.updateFileList();
+            this.updateFileStats();
+            this.fitCameraToAllObjects();
+        } catch (err) {
+            this.showError('Pose parse error: ' + (err instanceof Error ? err.message : String(err)));
+        }
+    }
+
+    private normalizePose(raw: any): { joints: Array<{ x: number; y: number; z: number; score?: number }>; edges: Array<[number, number]> } {
+        // If already in generic shape
+        if (raw && Array.isArray(raw.joints) && Array.isArray(raw.edges)) {
+            const joints = raw.joints.map((j: any) => ({ x: +j.x, y: +j.y, z: j.z != null ? +j.z : 0, score: j.score }));
+            const edges = raw.edges.map((e: any) => [e[0] | 0, e[1] | 0] as [number, number]);
+            return { joints, edges };
+        }
+
+        // Human3.6M-like: positions_3d + skeleton.connections (and optional confidence array)
+        if (raw && Array.isArray(raw.positions_3d)) {
+            const joints = raw.positions_3d.map((p: any, idx: number) => ({
+                x: +p[0] || 0,
+                y: +p[1] || 0,
+                z: +p[2] || 0,
+                score: Array.isArray(raw.confidence) && typeof raw.confidence[idx] === 'number' ? +raw.confidence[idx] : undefined
+            }));
+            let edges: Array<[number, number]> = [];
+            if (raw.skeleton && Array.isArray(raw.skeleton.connections)) {
+                edges = raw.skeleton.connections.map((e: any) => [e[0] | 0, e[1] | 0] as [number, number]);
+            } else if (Array.isArray(raw.connections)) {
+                edges = raw.connections.map((e: any) => [e[0] | 0, e[1] | 0] as [number, number]);
+            } else {
+                edges = this.autoConnectKnn(joints, 2);
+            }
+            return { joints, edges };
+        }
+
+        // OpenPose / Halpe style: people[0].pose_keypoints_3d or _2d
+        if (raw && Array.isArray(raw.people) && raw.people.length > 0) {
+            const p = raw.people[0];
+            const arr = p.pose_keypoints_3d || p.pose_keypoints_2d;
+            if (Array.isArray(arr)) {
+                const step = p.pose_keypoints_3d ? 4 : 3; // x,y,z,(c?) or x,y,c
+                const joints: Array<{ x: number; y: number; z: number; score?: number }> = [];
+                for (let i = 0; i + (step - 1) < arr.length; i += step) {
+                    const x = +arr[i];
+                    const y = +arr[i + 1];
+                    const z = step === 4 ? +arr[i + 2] : 0;
+                    const c = step === 4 ? +arr[i + 3] : +arr[i + 2];
+                    joints.push({ x, y, z, score: isFinite(c) ? c : undefined });
+                }
+                let edges: Array<[number, number]> = [];
+                if (Array.isArray((raw as any).connections)) {
+                    edges = (raw as any).connections.map((e: any) => [e[0] | 0, e[1] | 0] as [number, number]);
+                } else {
+                    edges = this.autoConnectKnn(joints, 2);
+                }
+                return { joints, edges };
+            }
+        }
+
+        // COCO-like flat keypoints
+        if (raw && Array.isArray(raw.keypoints)) {
+            const arr = raw.keypoints;
+            const step = arr.length % 4 === 0 ? 4 : 3;
+            const joints: Array<{ x: number; y: number; z: number; score?: number }> = [];
+            for (let i = 0; i + (step - 1) < arr.length; i += step) {
+                const x = +arr[i];
+                const y = +arr[i + 1];
+                const z = step === 4 ? +arr[i + 2] : 0;
+                const c = step === 4 ? +arr[i + 3] : +arr[i + 2];
+                joints.push({ x, y, z, score: isFinite(c) ? c : undefined });
+            }
+            const edges = Array.isArray((raw as any).connections)
+                ? (raw as any).connections.map((e: any) => [e[0] | 0, e[1] | 0] as [number, number])
+                : this.autoConnectKnn(joints, 2);
+            return { joints, edges };
+        }
+
+        // Generic arrays
+        if (raw && Array.isArray(raw.points)) {
+            const joints = raw.points.map((p: any) => ({ x: +p[0] || +p.x || 0, y: +p[1] || +p.y || 0, z: +p[2] || +p.z || 0 }));
+            const edges = Array.isArray(raw.connections) ? raw.connections.map((e: any) => [e[0]|0, e[1]|0] as [number, number]) : this.autoConnectKnn(joints, 2);
+            return { joints, edges };
+        }
+
+        // Last resort: array of [x,y,(z)]
+        if (Array.isArray(raw) && raw.length && Array.isArray(raw[0])) {
+            const joints = raw.map((p: any[]) => ({ x: +p[0], y: +p[1], z: p.length > 2 ? +p[2] : 0 }));
+            const edges = this.autoConnectKnn(joints, 2);
+            return { joints, edges };
+        }
+        throw new Error('Unsupported pose JSON structure');
+    }
+
+    private autoConnectKnn(joints: Array<{ x: number; y: number; z: number }>, k: number): Array<[number, number]> {
+        const edges: Array<[number, number]> = [];
+        for (let i = 0; i < joints.length; i++) {
+            const distances: Array<{ j: number; d: number }> = [];
+            for (let j = 0; j < joints.length; j++) {
+                if (i === j) continue;
+                const dx = joints[i].x - joints[j].x;
+                const dy = joints[i].y - joints[j].y;
+                const dz = joints[i].z - joints[j].z;
+                distances.push({ j, d: dx*dx + dy*dy + dz*dz });
+            }
+            distances.sort((a, b) => a.d - b.d);
+            for (let n = 0; n < Math.min(k, distances.length); n++) {
+                const j = distances[n].j;
+                const a = Math.min(i, j);
+                const b = Math.max(i, j);
+                edges.push([a, b]);
+            }
+        }
+        const set = new Set<string>();
+        const dedup: Array<[number, number]> = [];
+        for (const [a, b] of edges) {
+            const key = `${a}-${b}`;
+            if (!set.has(key)) { set.add(key); dedup.push([a, b]); }
+        }
+        return dedup;
+    }
+
+    private buildPoseGroup(pose: { joints: Array<{ x: number; y: number; z: number; score?: number }>; edges: Array<[number, number]> }): THREE.Group {
+        const group = new THREE.Group();
+        const unifiedIndex = this.plyFiles.length + this.poseGroups.length;
+        // Default pose color: red
+        const baseColor = new THREE.Color(1, 0, 0);
+
+        // Joints as instanced spheres
+        const radius = this.pointSizes[unifiedIndex] ?? 5.0;
+        const sphereGeo = new THREE.SphereGeometry(1, 12, 12);
+        const mat = new THREE.MeshBasicMaterial({ color: baseColor, transparent: true, opacity: 0.95 });
+        const inst = new THREE.InstancedMesh(sphereGeo, mat, pose.joints.length);
+        const dummy = new THREE.Object3D();
+        for (let i = 0; i < pose.joints.length; i++) {
+            const p = pose.joints[i];
+            dummy.position.set(p.x, p.y, p.z);
+            dummy.scale.setScalar(radius);
+            dummy.updateMatrix();
+            inst.setMatrixAt(i, dummy.matrix);
+        }
+        inst.instanceMatrix.needsUpdate = true;
+        group.add(inst);
+
+        // Edges as line segments
+        if (pose.edges.length > 0) {
+            const positions = new Float32Array(pose.edges.length * 2 * 3);
+            let idx = 0;
+            for (const [a, b] of pose.edges) {
+                const pa = pose.joints[a];
+                const pb = pose.joints[b];
+                positions[idx++] = pa.x; positions[idx++] = pa.y; positions[idx++] = pa.z;
+                positions[idx++] = pb.x; positions[idx++] = pb.y; positions[idx++] = pb.z;
+            }
+            const lineGeo = new THREE.BufferGeometry();
+            lineGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const lineMat = new THREE.LineBasicMaterial({ color: baseColor, transparent: true, opacity: 0.8 });
+            const lines = new THREE.LineSegments(lineGeo, lineMat);
+            group.add(lines);
+        }
+
+        return group;
     }
 
     private handleMtlData(message: any): void {

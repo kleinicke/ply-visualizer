@@ -64,6 +64,11 @@
         "command": "plyViewer.convertTifToPointCloud",
         "title": "Convert TIFF to Point Cloud",
         "category": "PLY Visualizer"
+      },
+      {
+        "command": "plyViewer.loadJsonAsPose",
+        "title": "Load JSON as 3D Pose",
+        "category": "PLY Visualizer"
       }
     ],
     "menus": {
@@ -76,6 +81,11 @@
         {
           "command": "plyViewer.convertTifToPointCloud",
           "when": "resourceExtname == .tif || resourceExtname == .tiff",
+          "group": "navigation"
+        },
+        {
+          "command": "plyViewer.loadJsonAsPose",
+          "when": "resourceExtname == .json",
           "group": "navigation"
         }
       ]

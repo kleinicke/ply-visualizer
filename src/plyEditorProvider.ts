@@ -34,6 +34,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         const filePath = document.uri.fsPath.toLowerCase();
         const isTifFile = filePath.endsWith('.tif') || filePath.endsWith('.tiff');
         const isObjFile = filePath.endsWith('.obj');
+        const isJsonFile = filePath.endsWith('.json');
         
         // Show UI immediately before any file processing
         webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
@@ -120,7 +121,27 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     
                     return; // Exit early for OBJ files
                 }
-                
+                // Handle JSON pose files
+                if (isJsonFile) {
+                    try {
+                        const jsonBytes = await vscode.workspace.fs.readFile(document.uri);
+                        const jsonText = Buffer.from(jsonBytes).toString('utf-8');
+                        const parsed = JSON.parse(jsonText);
+                        webviewPanel.webview.postMessage({
+                            type: 'poseData',
+                            fileName: path.basename(document.uri.fsPath),
+                            data: parsed
+                        });
+                        return; // Exit early for JSON pose files
+                    } catch (err) {
+                        webviewPanel.webview.postMessage({
+                            type: 'loadingError',
+                            error: err instanceof Error ? err.message : String(err)
+                        });
+                        return;
+                    }
+                }
+
                 // Send timing updates to webview for visibility
                 webviewPanel.webview.postMessage({ type: 'timing', phase: 'start', kind: 'ply', at: wallStart });
                 
@@ -456,7 +477,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             canSelectMany: true,
             filters: {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'Point Cloud Files': ['ply', 'xyz', 'obj', 'tif', 'tiff'],
+                'Point Cloud & Pose Files': ['ply', 'xyz', 'obj', 'tif', 'tiff', 'json'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'PLY Files': ['ply'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -464,7 +485,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'OBJ Wireframes': ['obj'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'TIF Depth Images': ['tif', 'tiff']
+                'TIF Depth Images': ['tif', 'tiff'],
+                // eslint-disable-next-line @typescript-eslint/naming-convention
+                'Pose JSON': ['json']
             },
             title: 'Select point cloud files to add'
         });
@@ -580,8 +603,27 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         continue;
                     }
                     
+                    // Handle JSON pose files
+                    if (fileExtension === '.json') {
+                        try {
+                            const jsonBytes = await vscode.workspace.fs.readFile(files[i]);
+                            const jsonText = Buffer.from(jsonBytes).toString('utf-8');
+                            const parsed = JSON.parse(jsonText);
+                            webviewPanel.webview.postMessage({
+                                type: 'poseData',
+                                fileName: fileName,
+                                data: parsed,
+                                isAddFile: true
+                            });
+                            console.log(`🎯 JSON Pose Add File: ${fileName} sent for processing`);
+                        } catch (err) {
+                            vscode.window.showErrorMessage(`Failed to load JSON pose ${fileName}: ${err instanceof Error ? err.message : String(err)}`);
+                        }
+                        continue;
+                    }
+
                     // Unsupported file type
-                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .tif, .tiff`);
+                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .tif, .tiff, .json`);
                     
                 } catch (error) {
                     console.error(`Failed to load file ${files[i].fsPath}:`, error);

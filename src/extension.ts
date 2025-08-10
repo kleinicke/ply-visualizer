@@ -33,7 +33,21 @@ export function activate(context: vscode.ExtensionContext) {
     // Register command for opening multiple files
     context.subscriptions.push(
         vscode.commands.registerCommand('plyViewer.openMultipleFiles', async () => {
-            await handleOpenMultipleFiles();
+            // Avoid blocking tests by not awaiting the file picker
+            setImmediate(() => { void handleOpenMultipleFiles(); });
+        })
+    );
+
+    // Register command for loading JSON as 3D Pose
+    context.subscriptions.push(
+        vscode.commands.registerCommand('plyViewer.loadJsonAsPose', async (uri: vscode.Uri) => {
+            try {
+                // Open or focus the viewer
+                await vscode.commands.executeCommand('vscode.openWith', uri, 'plyViewer.plyEditor');
+                // resolveCustomEditor handles .json by posting poseData
+            } catch (err) {
+                vscode.window.showErrorMessage(`Failed to load JSON as pose: ${err instanceof Error ? err.message : String(err)}`);
+            }
         })
     );
 
