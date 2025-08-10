@@ -523,8 +523,21 @@ class PLYVisualizer {
     private currentCameraParams: CameraParams | null = null;
     private tifDimensions: { width: number; height: number } | null = null;
     private currentColorImageData: ImageData | null = null;
-    private useLinearColorSpace: boolean = true; // Default to linear to disable gamma correction
+    private useLinearColorSpace: boolean = true; // Default: toggle is inactive; renderer still outputs sRGB
     private axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
+    // Color space handling: always output sRGB, optionally convert source sRGB colors to linear before shading
+    private convertSrgbToLinear: boolean = true; // Default: remove gamma from source colors
+    private srgbToLinearLUT: Float32Array | null = null;
+
+    private ensureSrgbLUT(): void {
+        if (this.srgbToLinearLUT) return;
+        const lut = new Float32Array(256);
+        for (let i = 0; i < 256; i++) {
+            const s = i / 255;
+            lut[i] = s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+        }
+        this.srgbToLinearLUT = lut;
+    }
     
     // Predefined colors for different files
     private readonly fileColors: [number, number, number][] = [
@@ -954,35 +967,106 @@ class PLYVisualizer {
     }
 
     private updateRendererColorSpace(): void {
-        if (this.useLinearColorSpace) {
-            this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-            console.log('🎨 Using Linear color space (no gamma correction)');
-        } else {
-            this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-            console.log('🎨 Using sRGB color space (with gamma correction)');
-        }
+        // Always output sRGB for correct display on standard monitors
+        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+        console.log('🎨 Output color space: sRGB');
     }
 
     private toggleGammaCorrection(): void {
-        this.useLinearColorSpace = !this.useLinearColorSpace;
-        this.updateRendererColorSpace();
-        
-        const statusMessage = this.useLinearColorSpace 
-            ? 'Gamma correction disabled (Linear color space)' 
-            : 'Gamma correction enabled (sRGB color space)';
+        // Toggle whether we convert sRGB source colors to linear
+        this.convertSrgbToLinear = !this.convertSrgbToLinear;
+        // Keep the legacy flag loosely in sync (not used elsewhere for logic)
+        this.useLinearColorSpace = !this.convertSrgbToLinear;
+        const statusMessage = this.convertSrgbToLinear 
+            ? 'Treat source colors as sRGB (convert to linear before shading)' 
+            : 'Treat source colors as linear (no sRGB-to-linear conversion)';
         this.showStatus(statusMessage);
+        this.updateGammaButtonState();
+        // Rebuild color attributes to reflect new conversion setting
+        this.rebuildAllColorAttributesForCurrentGammaSetting();
     }
 
     private updateGammaButtonState(): void {
         const btn = document.getElementById('toggle-gamma-correction');
         if (!btn) return;
-        // Active (blue) when gamma correction is enabled (sRGB space)
-        if (!this.useLinearColorSpace) {
+        // Active (blue) when we apply additional gamma (i.e., we do NOT convert input sRGB → linear)
+        // This matches the UX: blue means extra gamma appearance compared to default pipeline
+        if (!this.convertSrgbToLinear) {
             btn.classList.add('active');
         } else {
             btn.classList.remove('active');
         }
         // Keep label text unchanged per request
+    }
+
+    private rebuildAllColorAttributesForCurrentGammaSetting(): void {
+        // Update colors for all meshes based on current convertSrgbToLinear flag
+        try {
+            for (let i = 0; i < this.plyFiles.length && i < this.meshes.length; i++) {
+                const plyData = this.plyFiles[i];
+                const mesh = this.meshes[i];
+                if (!mesh || !plyData || !plyData.hasColors) continue;
+                const geometry = mesh.geometry as THREE.BufferGeometry;
+                const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+                if (!positionAttr) continue;
+                const vertexCount = positionAttr.count;
+
+                let colorsFloat = new Float32Array(vertexCount * 3);
+                let filled = false;
+
+                // Prefer original byte colors when available (typed arrays path)
+                const typedColors: Uint8Array | null = (plyData as any).colorsArray || null;
+                if (typedColors && typedColors.length === colorsFloat.length) {
+                    if (this.convertSrgbToLinear) {
+                        this.ensureSrgbLUT();
+                        const lut = this.srgbToLinearLUT!;
+                        for (let j = 0; j < typedColors.length; j++) colorsFloat[j] = lut[typedColors[j]];
+                    } else {
+                        for (let j = 0; j < typedColors.length; j++) colorsFloat[j] = typedColors[j] / 255;
+                    }
+                    filled = true;
+                }
+
+                // Fallback: derive from per-vertex properties if present
+                if (!filled && Array.isArray((plyData as any).vertices)) {
+                    const verts: any[] = (plyData as any).vertices;
+                    const count = Math.min(vertexCount, verts.length);
+                    if (this.convertSrgbToLinear) {
+                        this.ensureSrgbLUT();
+                        const lut = this.srgbToLinearLUT!;
+                        for (let v = 0, o = 0; v < count; v++, o += 3) {
+                            const vert = verts[v];
+                            const r8 = (vert.red || 0) & 255;
+                            const g8 = (vert.green || 0) & 255;
+                            const b8 = (vert.blue || 0) & 255;
+                            colorsFloat[o] = lut[r8];
+                            colorsFloat[o + 1] = lut[g8];
+                            colorsFloat[o + 2] = lut[b8];
+                        }
+                    } else {
+                        for (let v = 0, o = 0; v < count; v++, o += 3) {
+                            const vert = verts[v];
+                            colorsFloat[o] = ((vert.red || 0) & 255) / 255;
+                            colorsFloat[o + 1] = ((vert.green || 0) & 255) / 255;
+                            colorsFloat[o + 2] = ((vert.blue || 0) & 255) / 255;
+                        }
+                    }
+                    filled = true;
+                }
+
+                if (filled) {
+                    geometry.setAttribute('color', new THREE.BufferAttribute(colorsFloat, 3));
+                    const colorAttr = geometry.getAttribute('color');
+                    if (colorAttr) (colorAttr as any).needsUpdate = true;
+                    // Ensure material uses vertex colors
+                    if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
+                        mesh.material.vertexColors = true;
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('Gamma toggle: failed to rebuild colors:', err);
+        }
     }
 
     private onWindowResize(): void {
@@ -1721,10 +1805,17 @@ class PLYVisualizer {
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             
             if (colors && data.hasColors) {
-                // Convert Uint8Array colors to Float32Array for Three.js
                 const colorFloats = new Float32Array(colors.length);
-                for (let i = 0; i < colors.length; i++) {
-                    colorFloats[i] = colors[i] / 255;
+                if (this.convertSrgbToLinear) {
+                    this.ensureSrgbLUT();
+                    const lut = this.srgbToLinearLUT!;
+                    for (let i = 0; i < colors.length; i++) {
+                        colorFloats[i] = lut[colors[i]];
+                    }
+                } else {
+                    for (let i = 0; i < colors.length; i++) {
+                        colorFloats[i] = colors[i] / 255;
+                    }
                 }
                 geometry.setAttribute('color', new THREE.BufferAttribute(colorFloats, 3));
             }
@@ -1755,9 +1846,20 @@ class PLYVisualizer {
 
                 // Color data (optional)
                 if (colors && vertex.red !== undefined) {
-                    colors[i3] = vertex.red / 255;
-                    colors[i3 + 1] = (vertex.green || 0) / 255;
-                    colors[i3 + 2] = (vertex.blue || 0) / 255;
+                    const r8 = (vertex.red || 0) & 255;
+                    const g8 = (vertex.green || 0) & 255;
+                    const b8 = (vertex.blue || 0) & 255;
+                    if (this.convertSrgbToLinear) {
+                        this.ensureSrgbLUT();
+                        const lut = this.srgbToLinearLUT!;
+                        colors[i3] = lut[r8];
+                        colors[i3 + 1] = lut[g8];
+                        colors[i3 + 2] = lut[b8];
+                    } else {
+                        colors[i3] = r8 / 255;
+                        colors[i3 + 1] = g8 / 255;
+                        colors[i3 + 2] = b8 / 255;
+                    }
                 }
 
                 // Normal data (optional)
@@ -2392,11 +2494,25 @@ class PLYVisualizer {
             if (colorMode === 'original' && data.hasColors) {
                 // Use original colors from the PLY file
                 const colors = new Float32Array(data.vertices.length * 3);
-                for (let i = 0; i < data.vertices.length; i++) {
-                    const vertex = data.vertices[i];
-                    colors[i * 3] = (vertex.red || 0) / 255;
-                    colors[i * 3 + 1] = (vertex.green || 0) / 255;
-                    colors[i * 3 + 2] = (vertex.blue || 0) / 255;
+                if (this.convertSrgbToLinear) {
+                    this.ensureSrgbLUT();
+                    const lut = this.srgbToLinearLUT!;
+                    for (let i = 0; i < data.vertices.length; i++) {
+                        const v = data.vertices[i];
+                        const r8 = (v.red || 0) & 255;
+                        const g8 = (v.green || 0) & 255;
+                        const b8 = (v.blue || 0) & 255;
+                        colors[i * 3] = lut[r8];
+                        colors[i * 3 + 1] = lut[g8];
+                        colors[i * 3 + 2] = lut[b8];
+                    }
+                } else {
+                    for (let i = 0; i < data.vertices.length; i++) {
+                        const v = data.vertices[i];
+                        colors[i * 3] = ((v.red || 0) & 255) / 255;
+                        colors[i * 3 + 1] = ((v.green || 0) & 255) / 255;
+                        colors[i * 3 + 2] = ((v.blue || 0) & 255) / 255;
+                    }
                 }
                 material.vertexColors = true;
                 material.color = new THREE.Color(1, 1, 1); // White base color
@@ -5740,11 +5856,25 @@ class PLYVisualizer {
             
             // Create color array
             const colors = new Float32Array(plyData.vertices.length * 3);
-            for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-                const vertex = plyData.vertices[i];
-                colors[i3] = (vertex.red || 0) / 255;
-                colors[i3 + 1] = (vertex.green || 0) / 255;
-                colors[i3 + 2] = (vertex.blue || 0) / 255;
+            if (this.convertSrgbToLinear) {
+                this.ensureSrgbLUT();
+                const lut = this.srgbToLinearLUT!;
+                for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                    const v = plyData.vertices[i];
+                    const r8 = (v.red || 0) & 255;
+                    const g8 = (v.green || 0) & 255;
+                    const b8 = (v.blue || 0) & 255;
+                    colors[i3] = lut[r8];
+                    colors[i3 + 1] = lut[g8];
+                    colors[i3 + 2] = lut[b8];
+                }
+            } else {
+                for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                    const v = plyData.vertices[i];
+                    colors[i3] = ((v.red || 0) & 255) / 255;
+                    colors[i3 + 1] = ((v.green || 0) & 255) / 255;
+                    colors[i3 + 2] = ((v.blue || 0) & 255) / 255;
+                }
             }
             geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
             geometry.computeBoundingBox();
@@ -6828,12 +6958,26 @@ class PLYVisualizer {
             if (plyData.hasColors) {
                 // Create color array
                 const colors = new Float32Array(plyData.vertices.length * 3);
+            if (this.convertSrgbToLinear) {
+                this.ensureSrgbLUT();
+                const lut = this.srgbToLinearLUT!;
                 for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-                    const vertex = plyData.vertices[i];
-                    colors[i3] = (vertex.red || 0) / 255;
-                    colors[i3 + 1] = (vertex.green || 0) / 255;
-                    colors[i3 + 2] = (vertex.blue || 0) / 255;
+                    const v = plyData.vertices[i];
+                    const r8 = (v.red || 0) & 255;
+                    const g8 = (v.green || 0) & 255;
+                    const b8 = (v.blue || 0) & 255;
+                    colors[i3] = lut[r8];
+                    colors[i3 + 1] = lut[g8];
+                    colors[i3 + 2] = lut[b8];
                 }
+            } else {
+                for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
+                    const v = plyData.vertices[i];
+                    colors[i3] = ((v.red || 0) & 255) / 255;
+                    colors[i3 + 1] = ((v.green || 0) & 255) / 255;
+                    colors[i3 + 2] = ((v.blue || 0) & 255) / 255;
+                }
+            }
                 geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
             }
             geometry.computeBoundingBox();
