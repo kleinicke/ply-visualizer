@@ -755,8 +755,10 @@ class PLYVisualizer {
         
         console.log('✅ Axes visibility set up for', this.controlType);
 
-        // Initialize button state to reflect current persistent visibility
+        // Initialize button state
         this.updateAxesButtonState();
+        // Only mark rotation-origin button active if target is exactly at origin right now
+        this.updateRotationOriginButtonState();
     }
 
     private setupInvertedControls(): void {
@@ -1628,6 +1630,7 @@ class PLYVisualizer {
         }
         
         console.log('🎯 Rotation center set to origin (0, 0, 0)');
+        this.updateRotationOriginButtonState();
     }
 
     private onDoubleClick(event: MouseEvent): void {
@@ -1712,6 +1715,7 @@ class PLYVisualizer {
             this.setRotationCenter(intersectionPoint);
             
             console.log('New rotation center set at:', intersectionPoint);
+            this.updateRotationOriginButtonState();
         }
     }
 
@@ -1739,6 +1743,7 @@ class PLYVisualizer {
             }
             
             console.log('🎯 Adjusted rotation center to:', adjustedPoint.x.toFixed(3), adjustedPoint.y.toFixed(3), adjustedPoint.z.toFixed(3));
+            this.updateRotationOriginButtonState();
         } else {
             // Point is at a safe distance, use it directly
             this.controls.target.copy(point);
@@ -1750,6 +1755,7 @@ class PLYVisualizer {
             }
             
             console.log('🎯 Rotation center and axes moved to:', point.x.toFixed(3), point.y.toFixed(3), point.z.toFixed(3));
+            this.updateRotationOriginButtonState();
         }
         
         // Show axes temporarily for 1 second to indicate new rotation center
@@ -1999,6 +2005,7 @@ class PLYVisualizer {
         if (setRotationOriginBtn) {
             setRotationOriginBtn.addEventListener('click', () => {
                 this.setRotationCenterToOrigin();
+                this.updateRotationOriginButtonState();
             });
         }
 
@@ -2130,6 +2137,7 @@ class PLYVisualizer {
                 case 'w':
                     console.log('🔑 W key pressed - setting rotation center to world origin (0,0,0)');
                     this.setRotationCenterToOrigin();
+                    this.updateRotationOriginButtonState();
                     e.preventDefault();
                     break;
                 case 'g':
@@ -2198,6 +2206,18 @@ class PLYVisualizer {
         } else {
             toggleBtn.classList.remove('active');
             toggleBtn.innerHTML = 'Show Axes <span class="button-shortcut">A</span>';
+        }
+    }
+
+    private updateRotationOriginButtonState(): void {
+        const btn = document.getElementById('set-rotation-origin');
+        if (!btn) return;
+        const t = this.controls?.target;
+        const atOrigin = !!t && Math.abs(t.x) < 1e-9 && Math.abs(t.y) < 1e-9 && Math.abs(t.z) < 1e-9;
+        if (atOrigin) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
         }
     }
 
@@ -5341,7 +5361,7 @@ class PLYVisualizer {
                     // Set the new rotation center
                     this.controls.target.set(x, y, z);
                     
-                    // Update controls and camera panel
+                        // Update controls and camera panel
                     this.controls.update();
                     this.updateCameraControlsPanel();
                     
@@ -5351,6 +5371,7 @@ class PLYVisualizer {
                     }
                     
                     console.log(`🎯 Rotation center set to: (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`);
+                    this.updateRotationOriginButtonState();
                 }
                 
                 closeModal();
