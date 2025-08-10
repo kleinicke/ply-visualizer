@@ -50,6 +50,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         setImmediate(async () => {
             try {
                 const loadStartTime = performance.now();
+                const wallStart = new Date().toISOString();
                 
                 if (isTifFile) {
                     // Handle TIF file for depth conversion
@@ -62,11 +63,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     // Read TIF file and send for webview processing
                     const tifData = await vscode.workspace.fs.readFile(document.uri);
                     const fileReadTime = performance.now();
-                    webviewPanel.webview.postMessage({
-                        type: 'timingUpdate',
-                        message: `📁 Extension: TIF file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
-                        timestamp: fileReadTime
-                    });
+                    webviewPanel.webview.postMessage({ type: 'timing', phase: 'read', kind: 'tif', ms: +(fileReadTime - loadStartTime).toFixed(1) });
                     
                     // Send TIF data to webview for conversion
                     webviewPanel.webview.postMessage({
@@ -125,19 +122,11 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 }
                 
                 // Send timing updates to webview for visibility
-                webviewPanel.webview.postMessage({
-                    type: 'timingUpdate',
-                    message: '🚀 Extension: Starting PLY file processing...',
-                    timestamp: loadStartTime
-                });
+                webviewPanel.webview.postMessage({ type: 'timing', phase: 'start', kind: 'ply', at: wallStart });
                 
                 const plyData = await vscode.workspace.fs.readFile(document.uri);
                 const fileReadTime = performance.now();
-                webviewPanel.webview.postMessage({
-                    type: 'timingUpdate',
-                    message: `📁 Extension: File read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
-                    timestamp: fileReadTime
-                });
+                webviewPanel.webview.postMessage({ type: 'timing', phase: 'read', kind: 'ply', ms: +(fileReadTime - loadStartTime).toFixed(1) });
                 
                 const parser = new PlyParser();
                 webviewPanel.webview.postMessage({
@@ -165,11 +154,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     const headerResult = await parser.parseHeaderOnly(plyData, timingCallback);
                     const parsedData = headerResult.headerInfo;
                     const parseTime = performance.now();
-                    webviewPanel.webview.postMessage({
-                        type: 'timingUpdate',
-                        message: `⚡ Extension: PLY parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
-                        timestamp: parseTime
-                    });
+                    webviewPanel.webview.postMessage({ type: 'timing', phase: 'parse', kind: 'ply', format: parsedData.format, ms: +(parseTime - fileReadTime).toFixed(1) });
                     
                     // Add file info
                     parsedData.fileName = path.basename(document.uri.fsPath);
@@ -191,9 +176,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     // Send raw binary data + header info
                     // Extra logging to aid debugging face offsets/types
                     // Log face types once for debugging
+                    // concise header info for debugging (once)
                     webviewPanel.webview.postMessage({
                         type: 'timingUpdate',
-                        message: `🧪 Header face types: count=${headerResult.faceCountType || 'n/a'}, index=${headerResult.faceIndexType || 'n/a'}`,
+                        message: `Header face types: count=${headerResult.faceCountType || 'n/a'}, index=${headerResult.faceIndexType || 'n/a'}`,
                         timestamp: performance.now()
                     });
                     await this.sendUltimateRawBinary(webviewPanel, parsedData, headerResult, plyData, 'multiPlyData');
@@ -202,11 +188,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     console.log(`📝 ASCII PLY detected: ${path.basename(document.uri.fsPath)} - using traditional parsing`);
                     const parsedData = await parser.parse(plyData, timingCallback);
                     const parseTime = performance.now();
-                    webviewPanel.webview.postMessage({
-                        type: 'timingUpdate',
-                        message: `⚡ Extension: PLY parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
-                        timestamp: parseTime
-                    });
+                    webviewPanel.webview.postMessage({ type: 'timing', phase: 'parse', kind: 'ply', format: parsedData.format, ms: +(parseTime - fileReadTime).toFixed(1) });
                     
                     // Add file info
                     parsedData.fileName = path.basename(document.uri.fsPath);
@@ -216,11 +198,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
                 }
                 const totalTime = performance.now();
-                webviewPanel.webview.postMessage({
-                    type: 'timingUpdate',
-                    message: `🎯 Extension: Total processing time ${(totalTime - loadStartTime).toFixed(1)}ms`,
-                    timestamp: totalTime
-                });
+                webviewPanel.webview.postMessage({ type: 'timing', phase: 'total', kind: 'ply', ms: +(totalTime - loadStartTime).toFixed(1), at: new Date().toISOString() });
             } catch (error) {
                 console.error(`Extension: PLY processing failed:`, error);
                 webviewPanel.webview.postMessage({

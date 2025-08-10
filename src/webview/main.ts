@@ -533,6 +533,8 @@ class PLYVisualizer {
     // Color space handling: always output sRGB, optionally convert source sRGB colors to linear before shading
     private convertSrgbToLinear: boolean = true; // Default: remove gamma from source colors
     private srgbToLinearLUT: Float32Array | null = null;
+    private lastGeometryMs: number = 0;
+    private lastAbsoluteMs: number = 0;
 
     private ensureSrgbLUT(): void {
         if (this.srgbToLinearLUT) return;
@@ -758,7 +760,7 @@ class PLYVisualizer {
             orbitControls.addEventListener('end', hideAxesAfterDelay);
         }
         
-        console.log('✅ Axes visibility set up for', this.controlType);
+        // debug: axes visibility init
 
         // Initialize button state
         this.updateAxesButtonState();
@@ -770,7 +772,7 @@ class PLYVisualizer {
         if (this.controlType !== 'inverse-trackball') return;
         
         // TRACKBALL ROTATION DIRECTION INVERSION - Override the _rotateCamera method
-        console.log('🔄 Setting up TrackballControls rotation direction inversion');
+        // debug: controls inversion setup
         
         const controls = this.controls as TrackballControls;
         
@@ -828,8 +830,7 @@ class PLYVisualizer {
             this._movePrev.copy(this._moveCurr);
         };
         
-        console.log('✅ Up vector rotation direction inversion applied using quaternion.invert()');
-        console.log('✅ TrackballControls rotation direction inversion applied');
+        // debug: inversion applied
     }
 
     private addAxesHelper(): void {
@@ -945,7 +946,7 @@ class PLYVisualizer {
         // Position axes at the current rotation center (controls.target)
         axesGroup.position.copy(this.controls.target);
         
-        console.log('✅ Axes updated - Size:', axesSize.toFixed(3), 'Position:', this.controls.target);
+        // debug: axes updated
     }
 
     private initSceneLighting(): void {
@@ -1006,7 +1007,7 @@ class PLYVisualizer {
     private updateRendererColorSpace(): void {
         // Always output sRGB for correct display on standard monitors
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-        console.log('🎨 Output color space: sRGB');
+        // concise summary already printed elsewhere
     }
 
     private toggleGammaCorrection(): void {
@@ -1102,7 +1103,7 @@ class PLYVisualizer {
                 }
             }
         } catch (err) {
-            console.warn('Gamma toggle: failed to rebuild colors:', err);
+            console.warn('Gamma rebuild failed:', err);
         }
     }
 
@@ -1177,14 +1178,14 @@ class PLYVisualizer {
                 const withinNearFar = distanceToCamera >= this.camera.near && distanceToCamera <= this.camera.far;
                 
                 if (!withinNearFar) {
-                    console.log(`👻 Mesh ${i} may be culled: distance=${distanceToCamera.toFixed(3)}, camera range=[${this.camera.near}, ${this.camera.far}]`);
+                    // debug: culling warning
                 }
                 
                 // Check if bounding box is extremely large
                 const size = box.getSize(new THREE.Vector3());
                 const maxDim = Math.max(size.x, size.y, size.z);
                 if (maxDim > 50000) {
-                    console.log(`📏 Mesh ${i} has very large bounds: ${maxDim.toFixed(3)} - may cause culling issues`);
+                    // debug: large bounds
                 }
             }
         }
@@ -1365,7 +1366,7 @@ class PLYVisualizer {
                 matrixStr += displayRow.join(' ') + '\n';
             }
             textarea.value = matrixStr.trim();
-            console.log(`📐 Matrix display updated for file ${fileIndex}`);
+            // debug: matrix display updated
         }
     }
 
@@ -1664,7 +1665,7 @@ class PLYVisualizer {
             showAxesTemporarily();
         }
         
-        console.log('🎯 Rotation center set to origin (0, 0, 0)');
+        // debug
         this.updateRotationOriginButtonState();
     }
 
@@ -1689,8 +1690,7 @@ class PLYVisualizer {
         const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
         
         // Debug camera and ray information
-        console.log(`📷 Camera position: [${this.camera.position.x.toFixed(3)}, ${this.camera.position.y.toFixed(3)}, ${this.camera.position.z.toFixed(3)}]`);
-        console.log(`🎯 Mouse coordinates: [${mouse.x.toFixed(3)}, ${mouse.y.toFixed(3)}]`);
+        // debug: camera/mouse
         
         // Debug visible meshes
         visibleMeshes.forEach((mesh, index) => {
@@ -1698,7 +1698,7 @@ class PLYVisualizer {
             const geometry = mesh.geometry as THREE.BufferGeometry;
             const positionAttribute = geometry.getAttribute('position');
             const pointCount = positionAttribute ? positionAttribute.count : 0;
-            console.log(`🔍 Mesh ${realIndex}: ${mesh.constructor.name}, ${pointCount} points, material size: ${(mesh.material as any).size || 'N/A'}`);
+            // debug: mesh info
         });
         
         // Try progressive thresholds until we find an intersection
@@ -1719,20 +1719,20 @@ class PLYVisualizer {
             intersects = raycaster.intersectObjects(visibleMeshes, false);
             usedThreshold = threshold;
             
-            console.log(`🎯 Trying threshold ${threshold}: ${intersects.length} intersections found`);
+            // debug: intersection threshold
             
             if (intersects.length > 0) {
-                console.log(`✅ Success with threshold ${threshold}! Distance to closest point: ${intersects[0].distance.toFixed(3)}`);
+                // debug: success threshold
                 break;
             }
         }
         
-        console.log(`🔍 Final result: ${intersects.length} intersections found using threshold ${usedThreshold}`);
+        // debug: final intersections result
 
         if (intersects.length > 0) {
-            console.log(`🎯 Found ${intersects.length} intersections:`);
+            // debug list
             intersects.forEach((intersect, i) => {
-                console.log(`  ${i}: distance=${intersect.distance.toFixed(3)}, point=[${intersect.point.x.toFixed(3)}, ${intersect.point.y.toFixed(3)}, ${intersect.point.z.toFixed(3)}]`);
+                // debug details
             });
             // Get the closest intersection point
             const intersectionPoint = intersects[0].point;
@@ -1742,14 +1742,14 @@ class PLYVisualizer {
             const minDistance = 0.005; // Very small minimum distance
             
             if (distance < minDistance) {
-                console.log('⚠️ Point too close to camera, ignoring double-click');
+                // debug
                 return; // Don't set rotation center for points too close
             }
             
             // Set this point as the new rotation center
             this.setRotationCenter(intersectionPoint);
             
-            console.log('New rotation center set at:', intersectionPoint);
+            // debug
             this.updateRotationOriginButtonState();
         }
     }
@@ -1762,7 +1762,7 @@ class PLYVisualizer {
         
         // If point is too close or behind camera, adjust it
         if (distance < minDistance) {
-            console.log('⚠️ Point too close to camera, adjusting rotation center');
+            // debug
             
             // Move the point away from camera along the camera's forward direction
             const cameraDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
@@ -1777,7 +1777,7 @@ class PLYVisualizer {
                 axesGroup.position.copy(adjustedPoint);
             }
             
-            console.log('🎯 Adjusted rotation center to:', adjustedPoint.x.toFixed(3), adjustedPoint.y.toFixed(3), adjustedPoint.z.toFixed(3));
+            // debug
             this.updateRotationOriginButtonState();
         } else {
             // Point is at a safe distance, use it directly
@@ -1789,7 +1789,7 @@ class PLYVisualizer {
                 axesGroup.position.copy(point);
             }
             
-            console.log('🎯 Rotation center and axes moved to:', point.x.toFixed(3), point.y.toFixed(3), point.z.toFixed(3));
+            // debug
             this.updateRotationOriginButtonState();
         }
         
@@ -1830,13 +1830,10 @@ class PLYVisualizer {
     private createGeometryFromPlyData(data: PlyData): THREE.BufferGeometry {
         const geometry = new THREE.BufferGeometry();
         
-        console.log(`Creating geometry for ${data.vertexCount} vertices...`);
         const startTime = performance.now();
         
         // Check if we have direct TypedArrays (new ultra-fast path)
-        console.log(`🔍 Debug: useTypedArrays = ${(data as any).useTypedArrays}, positionsArray = ${!!(data as any).positionsArray}`);
         if ((data as any).useTypedArrays) {
-            console.log(`🚀 Using direct TypedArray geometry creation - MAXIMUM PERFORMANCE!`);
             
             const positions = (data as any).positionsArray as Float32Array;
             const colors = (data as any).colorsArray as Uint8Array | null;
@@ -1868,7 +1865,7 @@ class PLYVisualizer {
         } else {
             // Fallback to traditional vertex object processing
             const vertexCount = data.vertices.length;
-            console.log(`Using traditional vertex object processing for ${vertexCount} vertices...`);
+            // fallback path
             
             // Pre-allocate typed arrays for better performance
             const vertices = new Float32Array(vertexCount * 3);
@@ -1970,27 +1967,24 @@ class PLYVisualizer {
             const size = box.getSize(new THREE.Vector3());
             const center = box.getCenter(new THREE.Vector3());
             
-            console.log(`📦 Geometry bounding box:`);
-            console.log(`   Min: [${box.min.x.toFixed(3)}, ${box.min.y.toFixed(3)}, ${box.min.z.toFixed(3)}]`);
-            console.log(`   Max: [${box.max.x.toFixed(3)}, ${box.max.y.toFixed(3)}, ${box.max.z.toFixed(3)}]`);
-            console.log(`   Size: [${size.x.toFixed(3)}, ${size.y.toFixed(3)}, ${size.z.toFixed(3)}]`);
-            console.log(`   Center: [${center.x.toFixed(3)}, ${center.y.toFixed(3)}, ${center.z.toFixed(3)}]`);
+        // debug: bbox
             
             // Check for extreme values that might cause culling issues
             const maxDimension = Math.max(size.x, size.y, size.z);
             if (maxDimension > 10000) {
-                console.warn(`⚠️ Very large bounding box (${maxDimension.toFixed(3)}) may cause rendering issues!`);
+                // debug
             }
             
             // Check distance from origin
             const distanceFromOrigin = center.length();
             if (distanceFromOrigin > 1000) {
-                console.warn(`⚠️ Point cloud center very far from origin (${distanceFromOrigin.toFixed(3)}) - may cause culling issues!`);
+                // debug
             }
         }
         
         const endTime = performance.now();
-        console.log(`Geometry creation took ${(endTime - startTime).toFixed(2)}ms`);
+        this.lastGeometryMs = +(endTime - startTime).toFixed(1);
+        console.log(`Render: geometry ${this.lastGeometryMs}ms`);
         
         return geometry;
     }
@@ -2212,7 +2206,7 @@ class PLYVisualizer {
                     e.preventDefault();
                     break;
                 case 'w':
-                    console.log('🔑 W key pressed - setting rotation center to world origin (0,0,0)');
+        // debug
                     this.setRotationCenterToOrigin();
                     this.updateRotationOriginButtonState();
                     e.preventDefault();
@@ -2319,7 +2313,7 @@ class PLYVisualizer {
     }
 
     private setUpVector(upVector: THREE.Vector3): void {
-        console.log(`🔄 Setting up vector to: [${upVector.x}, ${upVector.y}, ${upVector.z}]`);
+        // debug
         
         // Normalize the up vector
         upVector.normalize();
@@ -2344,7 +2338,7 @@ class PLYVisualizer {
     }
 
     private resetCameraAndUpVector(): void {
-        console.log('🔄 Resetting camera and up vector to defaults');
+        // debug
         
         // Reset up vector to Y-up
         this.camera.up.set(0, 1, 0);
@@ -2365,12 +2359,12 @@ class PLYVisualizer {
         // Update axes helper
         this.updateAxesForUpVector(new THREE.Vector3(0, 1, 0));
         
-        console.log('✅ Camera and up vector reset completed');
+        // debug
     }
 
     private showUpVectorFeedback(upVector: THREE.Vector3): void {
         const axisName = upVector.x === 1 ? 'X' : upVector.y === 1 ? 'Y' : upVector.z === 1 ? 'Z' : 'Custom';
-        console.log(`Up vector set to ${axisName}-axis: [${upVector.x.toFixed(1)}, ${upVector.y.toFixed(1)}, ${upVector.z.toFixed(1)}]`);
+        // debug
     }
 
     private updateAxesForUpVector(upVector: THREE.Vector3): void {
@@ -2378,7 +2372,7 @@ class PLYVisualizer {
         const axesGroup = (this as any).axesGroup;
         if (axesGroup) {
             // Simple approach: just update the axes to reflect the current coordinate system
-            console.log(`🎯 Axes updated for up vector: [${upVector.x}, ${upVector.y}, ${upVector.z}]`);
+            // debug
         }
     }
 
@@ -2400,7 +2394,7 @@ class PLYVisualizer {
     }
 
     private showKeyboardShortcuts(): void {
-        console.log('⌨️ Keyboard shortcuts:');
+        // debug
         console.log('  X: Set X-up');
         console.log('  Y: Set Y-up (default)');
         console.log('  Z: Set Z-up (CAD style)');
@@ -2478,11 +2472,17 @@ class PLYVisualizer {
             const message = event.data;
             
             switch (message.type) {
+                case 'timing':
+                    this.handleTimingMessage(message);
+                    break;
                 case 'startLoading':
                     this.showImmediateLoading(message.fileName);
                     break;
                 case 'timingUpdate':
-                    console.log(message.message);
+                    // Allow timing updates, suppress other spam
+                    if (typeof message.message === 'string' && message.message.includes('🧪 Header face types')) {
+                        console.log(message.message);
+                    }
                     break;
                 case 'loadingError':
                     this.showError(`Failed to load PLY file: ${message.error}`);
@@ -2578,8 +2578,37 @@ class PLYVisualizer {
         });
     }
 
+    private currentTiming: { kind: string; startAt?: string; readMs?: number; parseMs?: number; convertMs?: number; totalMs?: number; format?: string } | null = null;
+    private handleTimingMessage(msg: any): void {
+        if (!this.currentTiming) this.currentTiming = { kind: msg.kind };
+        if (msg.phase === 'start') {
+            this.currentTiming = { kind: msg.kind, startAt: msg.at };
+        } else if (msg.phase === 'read') {
+            this.currentTiming = { ...(this.currentTiming || { kind: msg.kind }), readMs: msg.ms };
+        } else if (msg.phase === 'parse') {
+            this.currentTiming = { ...(this.currentTiming || { kind: msg.kind }), parseMs: msg.ms, format: msg.format || this.currentTiming?.format };
+        } else if (msg.phase === 'convert') {
+            this.currentTiming = { ...(this.currentTiming || { kind: msg.kind }), convertMs: msg.ms };
+        } else if (msg.phase === 'total') {
+            this.currentTiming = { ...(this.currentTiming || { kind: msg.kind }), totalMs: msg.ms, startAt: this.currentTiming?.startAt || msg.at };
+            // Emit final summary line with exact timestamp
+        const iso = msg.at ? new Date(msg.at).toISOString() : new Date().toISOString();
+        const timeOnly = `${new Date(iso).toTimeString().split(' ')[0]}.${new Date(iso).getMilliseconds().toString().padStart(3,'0')}`;
+            const kind = (this.currentTiming.kind || 'unknown').toUpperCase();
+            const fmt = this.currentTiming.format ? `, format=${this.currentTiming.format}` : '';
+            const read = this.currentTiming.readMs != null ? `read ${this.currentTiming.readMs}ms` : null;
+            const parse = this.currentTiming.parseMs != null ? `parse ${this.currentTiming.parseMs}ms` : null;
+            const convert = this.currentTiming.convertMs != null ? `convert ${this.currentTiming.convertMs}ms` : null;
+        const render = this.lastGeometryMs ? `render ${this.lastGeometryMs}ms` : null;
+            const parts = [read, parse, convert, render].filter(Boolean).join(', ');
+        const totalAbs = this.lastAbsoluteMs ? this.lastAbsoluteMs.toFixed(1) : (this.currentTiming.totalMs ?? 0).toFixed(1);
+        console.log(`[${timeOnly}] Summary: ${kind}${fmt} - ${parts} | total ${totalAbs}ms`);
+            this.currentTiming = null;
+        }
+    }
+
     private async displayFiles(dataArray: PlyData[]): Promise<void> {
-        console.log(`📁 Displaying ${dataArray.length} PLY file(s)`);
+        // concise summary printed separately
         
         // Add new files to the existing array
         this.addNewFiles(dataArray);
@@ -2595,6 +2624,9 @@ class PLYVisualizer {
         // Hide loading indicator and clear any errors
         document.getElementById('loading')?.classList.add('hidden');
         this.clearError();
+        // Update absolute total time based on UI start
+        const absStart = (window as any).absoluteStartTime || performance.now();
+        this.lastAbsoluteMs = performance.now() - absStart;
     }
 
     private async yieldToUI(): Promise<void> {
@@ -2672,7 +2704,7 @@ class PLYVisualizer {
             material.transparent = true;
             material.alphaTest = 0.1; // Helps with point edge quality
             
-            console.log(`📍 Created PointsMaterial for file ${fileIndex}: size=${material.size}, sizeAttenuation=${material.sizeAttenuation}`);
+            // debug
             
             if (colorMode === 'original' && data.hasColors) {
                 // Use original colors from the PLY file
@@ -3238,7 +3270,7 @@ class PLYVisualizer {
         const objData = (data as any).objData;
         
         if (!isObjFile || !objData) {
-            console.warn('Cannot toggle render mode: not an OBJ file');
+            // debug
             return;
         }
         
@@ -3429,7 +3461,7 @@ class PLYVisualizer {
                 (points as any).materialName = materialGroup.material;
                 (points as any).isPoints = true;
                 
-                console.log(`🔴 Created ${materialGroup.points.length} points for material ${materialGroup.material}, size: ${pointMaterial.size}`);
+                // debug
                 
                 meshGroup.add(points);
                 subMeshes.push(points);
@@ -3442,7 +3474,7 @@ class PLYVisualizer {
             this.scene.add(meshGroup);
             this.multiMaterialGroups[fileIndex] = meshGroup;
             this.materialMeshes[fileIndex] = subMeshes;
-            console.log(`Created multi-material wireframe with ${subMeshes.length} sub-meshes`);
+            // debug
         }
     }
     
@@ -3629,7 +3661,7 @@ class PLYVisualizer {
                 (points as any).materialName = materialGroup.material;
                 (points as any).isPoints = true;
                 
-                console.log(`🔴 Created ${materialGroup.points.length} points for material ${materialGroup.material}, size: ${pointMaterial.size}`);
+                // debug
                 
                 meshGroup.add(points);
                 subMeshes.push(points);
@@ -3642,7 +3674,7 @@ class PLYVisualizer {
         this.multiMaterialGroups[fileIndex] = meshGroup;
         this.materialMeshes[fileIndex] = subMeshes;
         
-        console.log(`Created multi-material solid with ${subMeshes.length} sub-meshes`);
+        // debug
     }
     
     private createSingleMaterialSolid(data: any, fileIndex: number): void {
@@ -3683,14 +3715,14 @@ class PLYVisualizer {
                     }
                 }
                 
-                console.log(`Reapplied MTL colors to ${appliedCount}/${subMeshes.length} sub-meshes after mode switch`);
+                // debug
             } else if (mesh && this.appliedMtlColors[fileIndex] !== null) {
                 // Single material: apply stored color
                 const storedColor = this.appliedMtlColors[fileIndex]!;
                 const material = (mesh as any).material;
                 if (material && material.color) {
                     material.color.setHex(storedColor);
-                    console.log(`Reapplied stored MTL color #${storedColor.toString(16).padStart(6, '0')} after mode switch`);
+                    // debug
                 }
             }
         }
@@ -3698,7 +3730,7 @@ class PLYVisualizer {
 
     private toggleColorMode(): void {
         this.useOriginalColors = !this.useOriginalColors;
-        console.log('Toggling color mode to:', this.useOriginalColors ? 'Original Colors' : 'Assigned Colors');
+        // debug
         
         // Recreate materials for all meshes
         for (let i = 0; i < this.meshes.length; i++) {
@@ -3722,7 +3754,7 @@ class PLYVisualizer {
 
     private showImmediateLoading(fileName: string): void {
         const uiStartTime = performance.now();
-        console.log(`🎬 UI: Showing immediate loading for ${fileName} at ${uiStartTime.toFixed(1)}ms`);
+        console.log(`Load: UI start ${fileName} at ${uiStartTime.toFixed(1)}ms`);
         
         // Store timing for complete analysis
         (window as any).loadingStartTime = uiStartTime;
@@ -3785,23 +3817,23 @@ class PLYVisualizer {
             // Set up close button (only once)
             const closeBtn = document.getElementById('error-close');
             if (closeBtn) {
-                console.log('✅ Error close button found');
+                    // debug
                 if (!closeBtn.hasAttribute('data-listener-added')) {
                     closeBtn.setAttribute('data-listener-added', 'true');
                     closeBtn.addEventListener('click', () => {
-                        console.log('🔴 Error close button clicked');
+                        // debug
                         this.clearError();
                     });
-                    console.log('✅ Error close button listener added');
+                    // debug
                 } else {
-                    console.log('ℹ️ Error close button listener already exists');
+                    // debug
                 }
             } else {
-                console.warn('⚠️ Error close button not found!');
+                // debug
             }
         }
         
-        console.error('Error displayed:', message);
+        // keep error visible in UI only
     }
 
     private clearError(): void {
@@ -3850,7 +3882,7 @@ class PLYVisualizer {
             // Initialize color mode before creating material
             const initialColorMode = this.useOriginalColors ? 'original' : 'assigned';
             this.individualColorModes.push(initialColorMode);
-            console.log(`Initializing file ${data.fileIndex} with color mode: ${initialColorMode}, useOriginalColors: ${this.useOriginalColors}, hasColors: ${data.hasColors}`);
+            // debug
             
             // Create geometry and material
             const geometry = this.createGeometryFromPlyData(data);
@@ -4112,7 +4144,7 @@ class PLYVisualizer {
         this.updateFileList();
         this.updateFileStats();
 
-        console.log(`Added ${newFiles.length} new files`);
+        // debug
     }
 
     private removeFileByIndex(fileIndex: number): void {
@@ -4167,11 +4199,10 @@ class PLYVisualizer {
         this.updateFileList();
         this.updateFileStats();
         
-        console.log(`Removed file at index ${fileIndex}`);
+        // debug
     }
 
     private async handleUltimateRawBinaryData(message: any): Promise<void> {
-        console.log(`🚀 ULTIMATE: Parsing raw binary data in webview for ${message.fileName}`);
         const startTime = performance.now();
         
         // Parse raw binary data directly in webview
@@ -4184,7 +4215,7 @@ class PLYVisualizer {
         const faceCountType = message.faceCountType as (string | undefined);
         const faceIndexType = message.faceIndexType as (string | undefined);
         
-        console.log(`⚡ ULTIMATE: Direct binary parsing ${vertexCount} vertices (${vertexStride} bytes/vertex)`);
+        // concise timing printed after
         
         // Pre-allocate TypedArrays for maximum performance
         const positions = new Float32Array(vertexCount * 3);
@@ -4248,7 +4279,7 @@ class PLYVisualizer {
         }
         
         const parseTime = performance.now();
-        console.log(`🎯 ULTIMATE: Webview binary parsing took ${(parseTime - startTime).toFixed(1)}ms`);
+        console.log(`Load: parse ${message.fileName} ${(parseTime - startTime).toFixed(1)}ms`);
         
         // Create PLY data object with TypedArrays
         const plyData: PlyData = {
@@ -4274,7 +4305,7 @@ class PLYVisualizer {
         // Note: rawBinaryData starts at vertex buffer; if faces follow, they are after vertexStride * vertexCount bytes
         if (message.faceCount && faceCountType && faceIndexType) {
             const faceStart = vertexStride * vertexCount;
-            console.log(`🧪 Faces: vertexStride=${vertexStride}, vertexCount=${vertexCount}, faceStart=${faceStart}, dataBytes=${rawData.byteLength}`);
+            // debug faces summary
             if (faceStart < rawData.byteLength) {
                 let offs = 0; // Offset within the face DataView (already anchored at faceStart)
                 const dv = new DataView(rawData.buffer, rawData.byteOffset + faceStart, rawData.byteLength - faceStart);
@@ -4311,7 +4342,7 @@ class PLYVisualizer {
                     }
                     sampleSummary.push({ count: cnt, firstIdxs });
                 }
-                console.log('🧪 Face sample:', sampleSummary);
+                // debug sample
                 for (let f = 0; f < message.faceCount; f++) {
                     let res = readVal(offs, faceCountType);
                     const cnt = res.val >>> 0; // count is non-negative
@@ -4327,7 +4358,7 @@ class PLYVisualizer {
             }
         }
         
-        console.log(`⚡ ULTIMATE: Total webview processing took ${(performance.now() - startTime).toFixed(1)}ms`);
+        console.log(`Load: total ${(performance.now() - startTime).toFixed(1)}ms`);
         
         // Process as normal
         const displayStartTime = performance.now();
@@ -4342,25 +4373,26 @@ class PLYVisualizer {
         // For add files, use message receive time as absolute start since there's no UI loading phase
         const absoluteStartTime = message.messageType === 'addFiles' ? startTime : ((window as any).absoluteStartTime || startTime);
         const absoluteCompleteTime = performance.now() - absoluteStartTime;
+        this.lastAbsoluteMs = absoluteCompleteTime;
         const webviewCompleteTime = performance.now() - startTime;
         
-        console.log(`🎯 ULTIMATE COMPLETE TIME: ${webviewCompleteTime.toFixed(1)}ms (Data received → Point cloud visible)`);
+        console.log(`Load: visible ${webviewCompleteTime.toFixed(1)}ms @ ${new Date().toISOString()}`);
         
         if (message.messageType === 'addFiles') {
-            console.log(`⏰ ADD FILE TOTAL TIME: ${absoluteCompleteTime.toFixed(1)}ms (Add button → Point cloud visible)`);
+            console.log(`Load: add-file total ${absoluteCompleteTime.toFixed(1)}ms @ ${new Date().toISOString()}`);
         } else {
-            console.log(`⏰ ABSOLUTE TOTAL TIME: ${absoluteCompleteTime.toFixed(1)}ms (File open → Point cloud visible)`);
+            console.log(`Load: absolute total ${absoluteCompleteTime.toFixed(1)}ms @ ${new Date().toISOString()}`);
         }
         
         // Calculate performance metrics
         const totalVertices = message.vertexCount;
         const verticesPerSecond = Math.round(totalVertices / (absoluteCompleteTime / 1000));
         const modeLabel = message.messageType === 'addFiles' ? 'ADD FILE' : 'ULTIMATE';
-        console.log(`🚀 ${modeLabel} PERFORMANCE: ${totalVertices.toLocaleString()} vertices in ${absoluteCompleteTime.toFixed(1)}ms (${verticesPerSecond.toLocaleString()} vertices/sec)`);
+        // concise metrics printed above
     }
 
     private async handleDirectTypedArrayData(message: any): Promise<void> {
-        console.log(`🚀 REVOLUTIONARY: Handling direct TypedArray data for ${message.fileName}`);
+        // debug
         const startTime = performance.now();
         
         // Create PLY data object with direct TypedArrays
@@ -4383,7 +4415,7 @@ class PLYVisualizer {
         (plyData as any).colorsArray = message.colorsBuffer ? new Uint8Array(message.colorsBuffer) : null;
         (plyData as any).normalsArray = message.normalsBuffer ? new Float32Array(message.normalsBuffer) : null;
         
-        console.log(`⚡ Direct TypedArray reconstruction took ${(performance.now() - startTime).toFixed(1)}ms`);
+        console.log(`Load: typedarray ${(performance.now() - startTime).toFixed(1)}ms`);
         
         // Process as normal - but now with TypedArrays!
         if (message.messageType === 'multiPlyData') {
@@ -4399,8 +4431,7 @@ class PLYVisualizer {
         const loadingStartTime = (window as any).loadingStartTime || receiveTime;
         const extensionProcessingTime = receiveTime - loadingStartTime;
         
-        console.log(`📦 Received binary PLY data for ${message.fileName} (${message.vertexCount} vertices)`);
-        console.log(`⏱️ Extension processing took: ${extensionProcessingTime.toFixed(1)}ms (UI→Data received)`);
+        console.log(`Load: received ${message.fileName}, ext ${(extensionProcessingTime).toFixed(1)}ms`);
         
         const startTime = performance.now();
         
@@ -4470,7 +4501,7 @@ class PLYVisualizer {
         }
         
         const conversionTime = performance.now() - startTime;
-        console.log(`⚡ Binary conversion took ${conversionTime.toFixed(1)}ms`);
+        console.log(`Load: convert ${(conversionTime).toFixed(1)}ms`);
         
         // Handle based on message type
         if (message.messageType === 'addFiles') {
@@ -4487,8 +4518,8 @@ class PLYVisualizer {
         const absoluteCompleteTime = totalTime - absoluteStartTime;
         const geometryTime = totalTime - startTime - conversionTime;
         
-        console.log(`🎯 COMPLETE LOADING TIME: ${completeLoadTime.toFixed(1)}ms (UI show → Point cloud visible)`);
-        console.log(`⏰ ABSOLUTE TOTAL TIME: ${absoluteCompleteTime.toFixed(1)}ms (File open → Point cloud visible)`);
+        const ts = new Date().toISOString();
+        console.log(`Load: complete ${completeLoadTime.toFixed(1)}ms, absolute ${absoluteCompleteTime.toFixed(1)}ms @ ${ts}`);
         console.log(`📊 Breakdown: Extension ${extensionProcessingTime.toFixed(1)}ms + Conversion ${conversionTime.toFixed(1)}ms + Geometry ${geometryTime.toFixed(1)}ms`);
         
         // Calculate hidden time gaps
@@ -5634,22 +5665,15 @@ class PLYVisualizer {
 
     private async handleObjData(message: any): Promise<void> {
         try {
-            console.log('Received OBJ data for processing:', message.fileName);
-            this.showStatus('Processing OBJ data...');
+                console.log(`Load: recv OBJ ${message.fileName}`);
+                this.showStatus(`OBJ: processing ${message.fileName}`);
             
             const objData = message.data;
             const hasFaces = objData.faceCount > 0;
             const hasLines = objData.lineCount > 0;
             const hasPoints = objData.pointCount > 0;
             
-            console.log(`OBJ Analysis: ${objData.vertexCount} vertices, ${objData.pointCount} points, ${objData.faceCount} faces, ${objData.lineCount} lines`);
-            console.log(`Has textures: ${objData.hasTextures}, Has normals: ${objData.hasNormals}`);
-            console.log(`Material groups found: ${objData.materialGroups ? objData.materialGroups.length : 0}`);
-            if (objData.materialGroups) {
-                objData.materialGroups.forEach((group: any, index: number) => {
-                    console.log(`Group ${index}: ${group.material} - ${group.points.length} points, ${group.faces.length} faces, ${group.lines.length} lines`);
-                });
-            }
+                console.log(`OBJ: v=${objData.vertexCount}, pts=${objData.pointCount}, f=${objData.faceCount}, lines=${objData.lineCount}, groups=${objData.materialGroups ? objData.materialGroups.length : 0}`);
             
             // Convert OBJ vertices to PLY format
             const vertices: PlyVertex[] = objData.vertices.map((v: any) => ({
@@ -5720,7 +5744,7 @@ class PLYVisualizer {
             if (objData.hasTextures) statusParts.push(`${objData.textureCoordCount} texture coords`);
             if (objData.hasNormals) statusParts.push(`${objData.normalCount} normals`);
             
-            this.showStatus(`OBJ ${hasFaces ? 'mesh' : 'wireframe'} loaded! ${statusParts.join(', ')}`);
+            this.showStatus(`OBJ ${hasFaces ? 'mesh' : 'wireframe'} loaded: ${statusParts.join(', ')}`);
             
         } catch (error) {
             console.error('Error handling OBJ data:', error);
@@ -6376,7 +6400,8 @@ class PLYVisualizer {
     }
 
     private showStatus(message: string): void {
-        console.log('Status:', message);
+        const ts = new Date().toISOString();
+        console.log(`[${ts}] ${message}`);
         
         // Clear any existing errors when showing a status update
         this.clearError();
