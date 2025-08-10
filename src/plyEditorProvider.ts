@@ -361,11 +361,17 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                             </div>
                             <!-- Arcball settings UI removed per request -->
                             <div class="panel-section">
-                                <h4>Color Settings</h4>
+                                <h4>Color & Lighting</h4>
                                 <div class="control-buttons">
                                     <button id="toggle-gamma-correction" class="control-button">Toggle Gamma Correction <span class="button-shortcut">G</span></button>
                                 </div>
-                                <p class="setting-description">Linear color space (disabled gamma) is recommended for already gamma-corrected images</p>
+                                <p class="setting-description">Gamma affects original vertex colors. Unlit PLY ignores scene lights. Choose Normal or Flat lighting for scene illumination.</p>
+                                <div class="control-buttons">
+                                    <button id="toggle-unlit-ply" class="control-button">Use Unlit PLY (Uniform)</button>
+                                    <button id="use-normal-lighting" class="control-button">Use Normal Lighting</button>
+                                    <button id="use-flat-lighting" class="control-button">Use Flat Lighting</button>
+                                </div>
+                                <p class="setting-description">Shading options are only effecting PLY files with faces.</p>
                             </div>
                         </div>
                         

@@ -491,6 +491,11 @@ class PLYVisualizer {
     private lastCameraQuaternion: THREE.Quaternion = new THREE.Quaternion(); // Track camera rotation changes
     private arcballInvertRotation: boolean = false; // preference for arcball handedness
     
+    // Lighting/material toggles
+    private useUnlitPly: boolean = false;
+    private useFlatLighting: boolean = false;
+    private lightingMode: 'normal' | 'flat' | 'unlit' = 'normal';
+    
     // Large file chunked loading state
     private chunkedFileState: Map<string, {
         fileName: string;
@@ -946,26 +951,56 @@ class PLYVisualizer {
     private initSceneLighting(): void {
         // Remove existing lights
         const lightsToRemove = this.scene.children.filter(child => 
-            child instanceof THREE.AmbientLight || child instanceof THREE.DirectionalLight
+            child instanceof THREE.AmbientLight || child instanceof THREE.DirectionalLight || child instanceof THREE.HemisphereLight
         );
         lightsToRemove.forEach(light => this.scene.remove(light));
 
-        // Add fresh lighting
-        const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
-        this.scene.add(ambientLight);
-
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(10, 10, 5);
-        directionalLight.castShadow = true;
-        directionalLight.shadow.mapSize.width = 2048;
-        directionalLight.shadow.mapSize.height = 2048;
-        this.scene.add(directionalLight);
+        // Add fresh lighting based on mode
+        if (this.useFlatLighting) {
+            const ambient = new THREE.AmbientLight(0xffffff, 0.9);
+            this.scene.add(ambient);
+            const hemi = new THREE.HemisphereLight(0xffffff, 0x888888, 0.6);
+            this.scene.add(hemi);
+        } else {
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+            this.scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 10, 5);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            this.scene.add(directionalLight);
+        }
 
         // Ensure initial UI states reflect current settings
         setTimeout(() => {
             this.updateGammaButtonState();
             this.updateAxesButtonState();
+            this.updateLightingButtonsState();
         }, 0);
+    }
+
+    private updateLightingButtonsState(): void {
+        const normalBtn = document.getElementById('use-normal-lighting');
+        const flatBtn = document.getElementById('use-flat-lighting');
+        if (normalBtn && flatBtn) {
+            if (this.lightingMode === 'flat') {
+                normalBtn.classList.remove('active');
+                flatBtn.classList.add('active');
+            } else if (this.lightingMode === 'normal') {
+                flatBtn.classList.remove('active');
+                normalBtn.classList.add('active');
+            } else {
+                // Unlit mode: neither normal nor flat highlighted
+                flatBtn.classList.remove('active');
+                normalBtn.classList.remove('active');
+            }
+        }
+        const unlitBtn = document.getElementById('toggle-unlit-ply');
+        if (unlitBtn) {
+            if (this.lightingMode === 'unlit') unlitBtn.classList.add('active');
+            else unlitBtn.classList.remove('active');
+        }
     }
 
     private updateRendererColorSpace(): void {
@@ -2066,6 +2101,46 @@ class PLYVisualizer {
             });
         }
 
+        // Unlit PLY button - acts as a mode switch now
+        const toggleUnlitPlyBtn = document.getElementById('toggle-unlit-ply');
+        if (toggleUnlitPlyBtn) {
+            toggleUnlitPlyBtn.addEventListener('click', () => {
+                this.lightingMode = 'unlit';
+                this.useUnlitPly = true;
+                this.useFlatLighting = false;
+                this.rebuildAllPlyMaterials();
+                this.initSceneLighting();
+                this.updateLightingButtonsState();
+                this.showStatus('Using unlit PLY (uniform)');
+            });
+        }
+
+        // Lighting mode buttons
+        const normalLightingBtn = document.getElementById('use-normal-lighting');
+        if (normalLightingBtn) {
+            normalLightingBtn.addEventListener('click', () => {
+                this.lightingMode = 'normal';
+                this.useFlatLighting = false;
+                this.useUnlitPly = false;
+                this.rebuildAllPlyMaterials();
+                this.initSceneLighting();
+                this.updateLightingButtonsState();
+                this.showStatus('Using normal lighting');
+            });
+        }
+        const flatLightingBtn = document.getElementById('use-flat-lighting');
+        if (flatLightingBtn) {
+            flatLightingBtn.addEventListener('click', () => {
+                this.lightingMode = 'flat';
+                this.useFlatLighting = true;
+                this.useUnlitPly = false;
+                this.rebuildAllPlyMaterials();
+                this.initSceneLighting();
+                this.updateLightingButtonsState();
+                this.showStatus('Using flat lighting');
+            });
+        }
+
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
             // Only handle shortcuts when not typing in input fields
@@ -2161,6 +2236,26 @@ class PLYVisualizer {
         });
 
         // Global color mode toggle (removed - now handled per file)
+    }
+
+    private rebuildAllPlyMaterials(): void {
+        for (let i = 0; i < this.meshes.length && i < this.plyFiles.length; i++) {
+            const data = this.plyFiles[i];
+            const mesh = this.meshes[i];
+            if (!data || !mesh) { continue; }
+            // Only update triangle meshes, not points or line segments
+            const isTriangleMesh = (mesh.type === 'Mesh') && !(mesh as any).isLineSegments;
+            if (!isTriangleMesh) { continue; }
+            const oldMaterial = (mesh as any).material as THREE.Material | THREE.Material[] | undefined;
+            const newMaterial = this.createMaterialForFile(data, i);
+            (mesh as any).material = newMaterial;
+            if (oldMaterial) {
+                if (Array.isArray(oldMaterial)) { oldMaterial.forEach(m => m.dispose()); }
+                else { oldMaterial.dispose(); }
+            }
+        }
+        // Trigger a single render after material changes
+        try { (this as any).renderOnce?.(); } catch {}
     }
 
     private switchTab(tabName: string): void {
@@ -2511,10 +2606,14 @@ class PLYVisualizer {
         
         if (data.faceCount > 0) {
             // Mesh material
-            const material = new THREE.MeshLambertMaterial();
+            const material: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial = this.useUnlitPly
+                ? new THREE.MeshBasicMaterial()
+                : new THREE.MeshLambertMaterial();
             material.side = THREE.DoubleSide; // More robust visibility if face winding varies
             // For files without explicit normals, prefer flat shading to avoid odd gradients
-            material.flatShading = !data.hasNormals;
+            if (material instanceof THREE.MeshLambertMaterial) {
+                material.flatShading = !data.hasNormals;
+            }
             
             if (colorMode === 'original' && data.hasColors) {
                 // Use original colors from the PLY file
