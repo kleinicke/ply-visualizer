@@ -524,6 +524,7 @@ class PLYVisualizer {
     private tifDimensions: { width: number; height: number } | null = null;
     private currentColorImageData: ImageData | null = null;
     private useLinearColorSpace: boolean = true; // Default to linear to disable gamma correction
+    private axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
     
     // Predefined colors for different files
     private readonly fileColors: [number, number, number][] = [
@@ -740,6 +741,9 @@ class PLYVisualizer {
         }
         
         console.log('✅ Axes visibility set up for', this.controlType);
+
+        // Initialize button state to reflect current persistent visibility
+        this.updateAxesButtonState();
     }
 
     private setupInvertedControls(): void {
@@ -941,6 +945,12 @@ class PLYVisualizer {
         directionalLight.shadow.mapSize.width = 2048;
         directionalLight.shadow.mapSize.height = 2048;
         this.scene.add(directionalLight);
+
+        // Ensure initial UI states reflect current settings
+        setTimeout(() => {
+            this.updateGammaButtonState();
+            this.updateAxesButtonState();
+        }, 0);
     }
 
     private updateRendererColorSpace(): void {
@@ -961,6 +971,18 @@ class PLYVisualizer {
             ? 'Gamma correction disabled (Linear color space)' 
             : 'Gamma correction enabled (sRGB color space)';
         this.showStatus(statusMessage);
+    }
+
+    private updateGammaButtonState(): void {
+        const btn = document.getElementById('toggle-gamma-correction');
+        if (!btn) return;
+        // Active (blue) when gamma correction is enabled (sRGB space)
+        if (!this.useLinearColorSpace) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+        // Keep label text unchanged per request
     }
 
     private onWindowResize(): void {
@@ -1867,6 +1889,7 @@ class PLYVisualizer {
         if (toggleAxesBtn) {
             toggleAxesBtn.addEventListener('click', () => {
                 this.toggleAxesVisibility();
+                this.updateAxesButtonState();
             });
         }
 
@@ -1928,6 +1951,7 @@ class PLYVisualizer {
         if (toggleGammaCorrectionBtn) {
             toggleGammaCorrectionBtn.addEventListener('click', () => {
                 this.toggleGammaCorrection();
+                this.updateGammaButtonState();
             });
         }
 
@@ -2050,12 +2074,28 @@ class PLYVisualizer {
 
     private toggleAxesVisibility(): void {
         const axesGroup = (this as any).axesGroup;
-        if (axesGroup) {
-            axesGroup.visible = !axesGroup.visible;
-            const toggleBtn = document.getElementById('toggle-axes');
-            if (toggleBtn) {
-                toggleBtn.innerHTML = axesGroup.visible ? 'Hide Axes <span class="button-shortcut">A</span>' : 'Show Axes <span class="button-shortcut">A</span>';
-            }
+        if (!axesGroup) return;
+
+        // Flip persistent visibility flag
+        this.axesPermanentlyVisible = !this.axesPermanentlyVisible;
+
+        // Apply visibility immediately
+        axesGroup.visible = this.axesPermanentlyVisible;
+
+        // When permanently visible, keep axes shown regardless of idle timeout in setupAxesVisibility
+        // When turned off, allow setupAxesVisibility handlers to hide them after interactions
+    }
+
+    private updateAxesButtonState(): void {
+        const toggleBtn = document.getElementById('toggle-axes');
+        if (!toggleBtn) return;
+        // Active (blue) when axes are permanently visible
+        if (this.axesPermanentlyVisible) {
+            toggleBtn.classList.add('active');
+            toggleBtn.innerHTML = 'Show Axes <span class="button-shortcut">A</span>';
+        } else {
+            toggleBtn.classList.remove('active');
+            toggleBtn.innerHTML = 'Show Axes <span class="button-shortcut">A</span>';
         }
     }
 
