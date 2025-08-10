@@ -175,10 +175,10 @@ export class TifProcessor {
      */
     private applyCoordinateConvention(
         vertices: Float32Array,
-        convention: 'opencv' | 'blender'
+        convention: 'opencv' | 'opengl'
     ): Float32Array {
-        if (convention === 'blender') {
-            // Convert from OpenCV (Y-down, Z-forward) to Blender (Y-up, Z-backward)
+        if (convention === 'opengl') {
+            // Convert from OpenCV (Y-down, Z-forward) to OpenGL (Y-up, Z-backward)
             for (let i = 0; i < vertices.length; i += 3) {
                 const x = vertices[i];
                 const y = vertices[i + 1];

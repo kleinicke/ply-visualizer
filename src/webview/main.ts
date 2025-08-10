@@ -1885,10 +1885,10 @@ class PLYVisualizer {
             });
         }
 
-        const blenderBtn = document.getElementById('blender-convention');
-        if (blenderBtn) {
-            blenderBtn.addEventListener('click', () => {
-                this.setBlenderOpenGLCameraConvention();
+        const openglBtn = document.getElementById('opengl-convention');
+        if (openglBtn) {
+            openglBtn.addEventListener('click', () => {
+                this.setOpenGLCameraConvention();
             });
         }
 
@@ -1960,7 +1960,7 @@ class PLYVisualizer {
                     e.preventDefault();
                     break;
                 case 'b':
-                    this.setBlenderOpenGLCameraConvention();
+                    this.setOpenGLCameraConvention();
                     e.preventDefault();
                     break;
                 case 't':
@@ -2150,7 +2150,7 @@ class PLYVisualizer {
         console.log('  O: Switch to OrbitControls');
         console.log('  I: Switch to Inverse TrackballControls');
         console.log('  C: Set OpenCV camera convention (Y-down)');
-        console.log('  B: Set Blender/OpenGL camera convention (Y-up)');
+        console.log('  B: Set OpenGL camera convention (Y-up)');
         console.log('  W: Set rotation center to world origin (0,0,0)');
         
         // Create permanent shortcuts UI section
@@ -2195,7 +2195,7 @@ class PLYVisualizer {
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">📷 Camera Conventions</div>
             <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4; margin-bottom: 8px;">
                 <div><span id="opencv-camera" style="color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline;">OpenCV (Y↓) [C]</span></div>
-                <div><span id="blender-camera" style="color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline;">Blender/OpenGL (Y↑) [B]</span></div>
+                <div><span id="opengl-camera" style="color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: underline;">OpenGL (Y↑) [B]</span></div>
                 <div><span style="color: var(--vscode-foreground);">World Origin [W]</span></div>
             </div>
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">🖱️ Mouse Interactions</div>
@@ -4493,10 +4493,10 @@ class PLYVisualizer {
         this.showCameraConventionFeedback('OpenCV');
     }
 
-    private setBlenderOpenGLCameraConvention(): void {
-        console.log('📷 Setting camera to Blender/OpenGL convention (Y-up, Z-backward)');
+    private setOpenGLCameraConvention(): void {
+        console.log('📷 Setting camera to OpenGL convention (Y-up, Z-backward)');
         
-        // Blender/OpenGL convention: Y-up, Z-backward
+        // OpenGL convention: Y-up, Z-backward
         // Camera looks along -Z axis, Y points up (standard Three.js)
         
         // Store current target position
@@ -4522,14 +4522,14 @@ class PLYVisualizer {
         // Update controls
         this.controls.update();
         
-        // Update axes helper to reflect Blender/OpenGL convention
-        this.updateAxesForCameraConvention('blender');
+        // Update axes helper to reflect OpenGL convention
+        this.updateAxesForCameraConvention('opengl');
         
         // Show feedback
-        this.showCameraConventionFeedback('Blender/OpenGL');
+        this.showCameraConventionFeedback('OpenGL');
     }
 
-    private updateAxesForCameraConvention(convention: 'opencv' | 'blender'): void {
+    private updateAxesForCameraConvention(convention: 'opencv' | 'opengl'): void {
         // Update the axes helper orientation to match the camera convention
         const axesGroup = (this as any).axesGroup;
         if (axesGroup) {
@@ -4544,7 +4544,7 @@ class PLYVisualizer {
         const origin = new THREE.Vector3(0, 0, 0);
         const upVector = convention === 'OpenCV' ? new THREE.Vector3(0, -1, 0) : new THREE.Vector3(0, 1, 0);
         const length = 2;
-        const color = convention === 'OpenCV' ? 0xff0000 : 0x00ff00; // Red for OpenCV, Green for Blender
+        const color = convention === 'OpenCV' ? 0xff0000 : 0x00ff00; // Red for OpenCV, Green for OpenGL
         
         const arrowHelper = new THREE.ArrowHelper(upVector, origin, length, color, length * 0.2, length * 0.1);
         this.scene.add(arrowHelper);
@@ -5983,9 +5983,9 @@ class PLYVisualizer {
             console.warn(`⚠️ Some points (${maxDepth.toFixed(3)}) are farther than camera far plane (100000) - may be clipped!`);
         }
         
-        // Convert from OpenCV convention (Y-down, Z-forward) to Blender/OpenGL/Three.js convention (Y-up, Z-backward)
+        // Convert from OpenCV convention (Y-down, Z-forward) to OpenGL/Three.js convention (Y-up, Z-backward)
         // Multiply Y and Z coordinates by -1
-        console.log('🔄 Converting coordinates from OpenCV to Blender/OpenGL/Three.js convention (Y↑, Z←)');
+        console.log('🔄 Converting coordinates from OpenCV to OpenGL/Three.js convention (Y↑, Z←)');
         for (let i = 0; i < points.length; i += 3) {
             // X stays the same (i+0)
             points[i + 1] = -points[i + 1]; // Y coordinate: flip from down to up
@@ -6835,7 +6835,7 @@ class PLYVisualizer {
             let z = result.vertices[vertexIndex + 2];
 
             // Skip invalid points (NaN, 0, ±Infinity)
-            // In Blender convention, negative Z values are valid (pointing backward into scene)
+            // In OpenGL convention, negative Z values are valid (pointing backward into scene)
             if (z >= 0 || isNaN(x) || isNaN(y) || isNaN(z) || !isFinite(x) || !isFinite(y) || !isFinite(z)) {
                 colors[colorIndex++] = 0.5;
                 colors[colorIndex++] = 0.5; 
@@ -6843,7 +6843,7 @@ class PLYVisualizer {
                 continue;
             }
 
-            // Convert back from Blender/OpenGL convention to OpenCV convention for color lookup
+            // Convert back from OpenGL convention to OpenCV convention for color lookup
             // (Undo the Y and Z flip that was applied in depthToPointCloud)
             y = -y; // Flip Y back: Y-up → Y-down
             z = -z; // Flip Z back: Z-backward → Z-forward (now positive, valid in OpenCV)
@@ -7016,7 +7016,7 @@ class PLYVisualizer {
         
         // Add comments including transformation info
         content += `comment Generated from ${plyData.fileName || 'point cloud'}\n`;
-        content += `comment Coordinate system: Blender/OpenGL (Y-up, Z-backward)\n`;
+        content += `comment Coordinate system: OpenGL (Y-up, Z-backward)\n`;
         if (plyData.comments.length > 0) {
             plyData.comments.forEach(comment => {
                 content += `comment ${comment}\n`;
