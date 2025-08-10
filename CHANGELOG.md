@@ -3,7 +3,9 @@
 ## [1.1.0] - 2025-07-23
 Add support for obj files
 Add experimental Arcball camera rotation 
-
+Add experimental pose estimation support
+Improve support for ply mesh files
+Fix 
 
 ## [1.0.0] - 2025-07-23
 Improve Readme

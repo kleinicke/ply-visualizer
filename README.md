@@ -7,10 +7,13 @@ A Visual Studio Code extension for visualizing PLY (Polygon File Format) files w
 - **Visualize Point Clouds**: Navigate in colored or uncolored point clouds 
 - **Fast Loading of Big Point Clouds**: Even point clouds with 5 Million Points load in around a second.
 - **Compare Multiple Point Clouds**: Multiple point clouds can be loaded in the same view and activated and deactivated independently.
-- **Multiple Formats**: Support for both ASCII and binary PLY formats, XYZ pointclouds, and OBJ wireframes
+- **Multiple Formats**: Support for both ASCII and binary PLY formats, XYZ pointclouds, OBJ wireframes and pose estimations in json files.
 - **Rotation of points**: Apply Rotation Matrix for single point clouds
 
 ![example-view](assets/example.png)
+
+Interpret depth/disparity images as point cloud.
+![tifPC](https://github.com/kleinicke/ply-visualizer/releases/download/v1.0.0/disp2pc.gif)
 
 Load two point clouds and switch between them imediatly pressing shift and click
 ![load-two](https://github.com/kleinicke/ply-visualizer/releases/download/v0.0.14/load2.gif)
@@ -19,7 +22,7 @@ Load two point clouds and switch between them imediatly pressing shift and click
 
 - **Vertex Properties**:
   - Position (x, y, z)
-  - Colors (red, green, blue, alpha)
+  - Colors (red, green, blue)
   - Normals (nx, ny, nz)
 - **Face Properties**:
   - Triangle and polygon faces
@@ -29,6 +32,7 @@ Load two point clouds and switch between them imediatly pressing shift and click
   - Binary PLY format (little-endian and big-endian)
   - XYZ point cloud format
   - OBJ wireframe format (points, vertices and line segments)
+  - Bodypose json format (keypoints and connections)
 
 ## Known Issues and Missing Features
 - **Wrong direction of Rotation**: When rotating the point cloud the direction is inversed. It's unclear how to fix this.
@@ -37,7 +41,6 @@ Load two point clouds and switch between them imediatly pressing shift and click
 - **Visualizing gaussian splats**: Add gaussian splat support
 - **Add eye dome lighting**: Improve percenption of uncolored point clouds
 - **Drag and Drop**: Add more pc to a given pc using drag and drop instead of adding them in an extra window
-- **Support Obj files**: In Obj files point clouds and shapes can be stored. Add support for them.
 
 ### OBJ Wireframe Format Example
 ```
