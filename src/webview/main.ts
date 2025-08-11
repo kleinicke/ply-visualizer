@@ -1380,7 +1380,7 @@ class PLYVisualizer {
 
     private updateCameraControlsPanel(): void {
         const controlsPanel = document.getElementById('camera-controls-panel');
-        if (controlsPanel && this.plyFiles.length > 0) {
+        if (controlsPanel) {
             // Show simple camera position and rotation instead of complex matrix
             const pos = this.camera.position;
             
@@ -3049,9 +3049,9 @@ class PLYVisualizer {
                         </div>
                     </div>
                     <div class="point-size-control">
-                        <label for="size-${i}">Joint Size:</label>
-                        <input type="range" id="size-${i}" min="0.1" max="20.0" step="0.1" value="${sizeVal}" class="size-slider">
-                        <span class="size-value">${sizeVal.toFixed(1)}</span>
+                        <label for="size-${i}">Joint Radius (m):</label>
+                        <input type="range" id="size-${i}" min="0.001" max="0.1" step="0.001" value="${sizeVal}" class="size-slider">
+                        <span class="size-value">${sizeVal.toFixed(3)}</span>
                     </div>
                     <div class="color-control">
                         <label for="color-${i}">Color:</label>
@@ -3213,7 +3213,7 @@ class PLYVisualizer {
             const sizeSlider = document.getElementById(`size-${i}`) as HTMLInputElement;
             const isPose = i >= this.plyFiles.length;
             const isObjFile = !isPose && (this.plyFiles[i] as any).isObjFile;
-            if (sizeSlider && (isPose || this.plyFiles[i].faceCount === 0 || isObjFile)) {
+                if (sizeSlider && (isPose || this.plyFiles[i].faceCount === 0 || isObjFile)) {
                 sizeSlider.addEventListener('input', (e) => {
                     const newSize = parseFloat((e.target as HTMLInputElement).value);
                     this.updatePointSize(i, newSize);
@@ -3221,7 +3221,7 @@ class PLYVisualizer {
                     // Update the displayed value
                     const sizeValue = document.querySelector(`#size-${i} + .size-value`) as HTMLElement;
                     if (sizeValue) {
-                        sizeValue.textContent = (isPose || isObjFile) ? newSize.toFixed(1) : newSize.toFixed(5);
+                            sizeValue.textContent = (isPose || isObjFile) ? newSize.toFixed(3) : newSize.toFixed(5);
                     }
                 });
             }
@@ -3231,24 +3231,34 @@ class PLYVisualizer {
             if (colorSelector) {
                 colorSelector.addEventListener('change', () => {
                     const value = colorSelector.value;
-                    
-                    if (i >= 0 && i < this.individualColorModes.length) {
-                        this.individualColorModes[i] = value;
-                        
-                        // Recreate material with new color mode
-                        if (i < this.plyFiles.length && i < this.meshes.length) {
-                            const oldMaterial = this.meshes[i].material;
-                            const newMaterial = this.createMaterialForFile(this.plyFiles[i], i);
-                            this.meshes[i].material = newMaterial;
-                            
-                            // Dispose of old material to prevent memory leaks
-                            if (oldMaterial) {
-                                if (Array.isArray(oldMaterial)) {
-                                    oldMaterial.forEach(mat => mat.dispose());
-                                } else {
-                                    oldMaterial.dispose();
+                    this.individualColorModes[i] = value;
+                    const isPose = i >= this.plyFiles.length;
+                    if (isPose) {
+                        // Update pose group material color
+                        const poseIndex = i - this.plyFiles.length;
+                        const group = this.poseGroups[poseIndex];
+                        if (group) {
+                            const colorIdx = value === 'assigned' ? (i % this.fileColors.length) : parseInt(value);
+                            const color = isNaN(colorIdx) ? this.fileColors[i % this.fileColors.length] : this.fileColors[colorIdx];
+                            group.traverse(obj => {
+                                if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
+                                    const material = obj.material as THREE.MeshBasicMaterial;
+                                    material.color.setRGB(color[0], color[1], color[2]);
+                                    material.needsUpdate = true;
+                                } else if ((obj as any).isLineSegments && obj instanceof THREE.LineSegments) {
+                                    const material = obj.material as THREE.LineBasicMaterial;
+                                    material.color.setRGB(color[0], color[1], color[2]);
+                                    material.needsUpdate = true;
                                 }
-                            }
+                            });
+                        }
+                    } else if (i < this.meshes.length) {
+                        // Recreate material for point clouds/OBJ
+                        const oldMaterial = this.meshes[i].material as any;
+                        const newMaterial = this.createMaterialForFile(this.plyFiles[i], i);
+                        (this.meshes[i] as any).material = newMaterial;
+                        if (oldMaterial) {
+                            if (Array.isArray(oldMaterial)) { oldMaterial.forEach((m: any) => m.dispose()); } else { oldMaterial.dispose(); }
                         }
                     }
                 });
@@ -3346,19 +3356,21 @@ class PLYVisualizer {
 
     private toggleFileVisibility(fileIndex: number): void {
         if (fileIndex < 0) return;
+        // Determine desired visibility from checkbox state
+        const checkboxEl = document.getElementById(`file-${fileIndex}`) as HTMLInputElement | null;
+        const desiredVisible = checkboxEl ? !!checkboxEl.checked : !(this.fileVisibility[fileIndex] ?? true);
+        this.fileVisibility[fileIndex] = desiredVisible;
+
         // If it's a mesh/pointcloud entry
         if (fileIndex < this.meshes.length && this.meshes[fileIndex]) {
-            this.fileVisibility[fileIndex] = !this.fileVisibility[fileIndex];
-            this.meshes[fileIndex].visible = this.fileVisibility[fileIndex];
+            this.meshes[fileIndex].visible = desiredVisible;
             return;
         }
         // Pose entries are appended after meshes
         const poseIndex = fileIndex - this.plyFiles.length;
         if (poseIndex >= 0 && poseIndex < this.poseGroups.length) {
-            const vis = !(this.fileVisibility[fileIndex] ?? true);
-            this.fileVisibility[fileIndex] = vis;
             const group = this.poseGroups[poseIndex];
-            if (group) group.visible = vis;
+            if (group) group.visible = desiredVisible;
         }
     }
     
@@ -7172,23 +7184,29 @@ class PLYVisualizer {
     }
 
     private isTifDerivedFile(data: PlyData): boolean {
-        return data.comments.some(comment => comment.includes('Converted from TIF depth image'));
+        const comments = (data as any)?.comments;
+        if (!Array.isArray(comments)) return false;
+        return comments.some((comment: string) => typeof comment === 'string' && comment.includes('Converted from TIF depth image'));
     }
 
     private getTifSetting(data: PlyData, setting: 'camera' | 'depth'): string {
-        for (const comment of data.comments) {
+        const comments = (data as any)?.comments;
+        if (!Array.isArray(comments)) return '';
+        for (const comment of comments) {
             if (setting === 'camera' && comment.startsWith('Camera: ')) {
                 return comment.replace('Camera: ', '').toLowerCase();
             }
-            if (setting === 'depth' && comment.startsWith('Depth type: ')) {
-                return comment.replace('Depth type: ', '').toLowerCase();
+            if (setting === 'depth' && comment.startsWith('Depth: ')) {
+                return comment.replace('Depth: ', '').toLowerCase();
             }
         }
         return '';
     }
 
     private getTifFocalLength(data: PlyData): number {
-        for (const comment of data.comments) {
+        const comments = (data as any)?.comments;
+        if (!Array.isArray(comments)) return 500;
+        for (const comment of comments) {
             if (comment.startsWith('Focal length: ')) {
                 const match = comment.match(/(\d+(?:\.\d+)?)px/);
                 return match ? parseFloat(match[1]) : 500;
@@ -7198,7 +7216,9 @@ class PLYVisualizer {
     }
 
     private getTifBaseline(data: PlyData): number {
-        for (const comment of data.comments) {
+        const comments = (data as any)?.comments;
+        if (!Array.isArray(comments)) return 50;
+        for (const comment of comments) {
             if (comment.startsWith('Baseline: ')) {
                 const match = comment.match(/(\d+(?:\.\d+)?)mm/);
                 return match ? parseFloat(match[1]) : 50;
@@ -7643,45 +7663,89 @@ class PLYVisualizer {
         const fileName: string = message.fileName || 'pose.json';
         const data = message.data;
         try {
-            const pose = this.normalizePose(data);
-            const group = this.buildPoseGroup(pose);
-            this.scene.add(group);
-            // Track pose group and meta
-            this.poseGroups.push(group);
-            this.poseMeta.push({ jointCount: pose.joints.length, edgeCount: pose.edges.length, fileName });
-            // Initialize UI state slots aligned after plyFiles
-            const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
-            this.fileVisibility[unifiedIndex] = true;
-            this.pointSizes[unifiedIndex] = 5.0;
-            this.individualColorModes[unifiedIndex] = 'assigned';
-            // Initialize transformation matrix for this pose
-            this.transformationMatrices.push(new THREE.Matrix4());
-            this.applyTransformationMatrix(unifiedIndex);
-            // Update UI
-            this.updateFileList();
-            this.updateFileStats();
-            this.fitCameraToAllObjects();
+            // If Halpe meta with multiple instances, add each instance as a separate pose
+            if (data && data.meta_info && Array.isArray(data.instance_info) && data.instance_info.length > 1) {
+                for (let i = 0; i < data.instance_info.length; i++) {
+                    const single = { ...data, instance_info: [data.instance_info[i]] };
+                    const pose = this.normalizePose(single);
+                    const group = this.buildPoseGroup(pose);
+                    this.scene.add(group);
+                    this.poseGroups.push(group);
+                    this.poseMeta.push({ jointCount: pose.joints.length, edgeCount: pose.edges.length, fileName: `${fileName} [${i+1}/${data.instance_info.length}]` });
+                    const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
+                    this.fileVisibility[unifiedIndex] = true;
+                    this.pointSizes[unifiedIndex] = 0.02; // default 2 cm joint radius
+                    this.individualColorModes[unifiedIndex] = 'assigned';
+                    this.transformationMatrices.push(new THREE.Matrix4());
+                    this.applyTransformationMatrix(unifiedIndex);
+                }
+                this.updateFileList();
+                this.updateFileStats();
+                this.fitCameraToAllObjects();
+                // Hide loading overlay for pose JSONs
+                document.getElementById('loading')?.classList.add('hidden');
+            } else {
+                const pose = this.normalizePose(data);
+                const group = this.buildPoseGroup(pose);
+                this.scene.add(group);
+                // Track pose group and meta
+                this.poseGroups.push(group);
+                this.poseMeta.push({ jointCount: pose.joints.length, edgeCount: pose.edges.length, fileName });
+                // Initialize UI state slots aligned after plyFiles
+                const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
+                this.fileVisibility[unifiedIndex] = true;
+                this.pointSizes[unifiedIndex] = 0.02; // default 2 cm joint radius
+                this.individualColorModes[unifiedIndex] = 'assigned';
+                // Initialize transformation matrix for this pose
+                this.transformationMatrices.push(new THREE.Matrix4());
+                this.applyTransformationMatrix(unifiedIndex);
+                // Update UI
+                this.updateFileList();
+                this.updateFileStats();
+                this.fitCameraToAllObjects();
+                // Hide loading overlay for pose JSONs
+                document.getElementById('loading')?.classList.add('hidden');
+            }
         } catch (err) {
             this.showError('Pose parse error: ' + (err instanceof Error ? err.message : String(err)));
         }
     }
 
-    private normalizePose(raw: any): { joints: Array<{ x: number; y: number; z: number; score?: number }>; edges: Array<[number, number]> } {
+    private normalizePose(raw: any): { joints: Array<{ x: number; y: number; z: number; score?: number; valid?: boolean }>; edges: Array<[number, number]> } {
         // If already in generic shape
         if (raw && Array.isArray(raw.joints) && Array.isArray(raw.edges)) {
-            const joints = raw.joints.map((j: any) => ({ x: +j.x, y: +j.y, z: j.z != null ? +j.z : 0, score: j.score }));
+            const joints = raw.joints.map((j: any) => {
+                const hasX = j?.x !== null && j?.x !== undefined;
+                const hasY = j?.y !== null && j?.y !== undefined;
+                const hasZ = j?.z !== null && j?.z !== undefined;
+                const x = hasX ? Number(j.x) : NaN;
+                const y = hasY ? Number(j.y) : NaN;
+                const z = hasZ ? Number(j.z) : NaN;
+                const valid = hasX && hasY && hasZ && isFinite(x) && isFinite(y) && isFinite(z);
+                return { x: valid ? x : 0, y: valid ? y : 0, z: valid ? z : 0, score: j.score, valid };
+            });
             const edges = raw.edges.map((e: any) => [e[0] | 0, e[1] | 0] as [number, number]);
             return { joints, edges };
         }
 
         // Human3.6M-like: positions_3d + skeleton.connections (and optional confidence array)
         if (raw && Array.isArray(raw.positions_3d)) {
-            const joints = raw.positions_3d.map((p: any, idx: number) => ({
-                x: +p[0] || 0,
-                y: +p[1] || 0,
-                z: +p[2] || 0,
-                score: Array.isArray(raw.confidence) && typeof raw.confidence[idx] === 'number' ? +raw.confidence[idx] : undefined
-            }));
+            const joints = raw.positions_3d.map((p: any, idx: number) => {
+                const hasX = Array.isArray(p) && p.length > 0 && p[0] !== null && p[0] !== undefined;
+                const hasY = Array.isArray(p) && p.length > 1 && p[1] !== null && p[1] !== undefined;
+                const hasZ = Array.isArray(p) && p.length > 2 && p[2] !== null && p[2] !== undefined;
+                const x = hasX ? Number(p[0]) : NaN;
+                const y = hasY ? Number(p[1]) : NaN;
+                const z = hasZ ? Number(p[2]) : NaN;
+                const valid = hasX && hasY && hasZ && isFinite(x) && isFinite(y) && isFinite(z);
+                return {
+                    x: valid ? x : 0,
+                    y: valid ? y : 0,
+                    z: valid ? z : 0,
+                    score: Array.isArray(raw.confidence) && typeof raw.confidence[idx] === 'number' ? +raw.confidence[idx] : undefined,
+                    valid
+                };
+            });
             let edges: Array<[number, number]> = [];
             if (raw.skeleton && Array.isArray(raw.skeleton.connections)) {
                 edges = raw.skeleton.connections.map((e: any) => [e[0] | 0, e[1] | 0] as [number, number]);
@@ -7693,19 +7757,55 @@ class PLYVisualizer {
             return { joints, edges };
         }
 
-        // OpenPose / Halpe style: people[0].pose_keypoints_3d or _2d
+        // Halpe meta format: meta_info + instance_info array
+        if (raw && raw.meta_info && Array.isArray(raw.instance_info)) {
+            // Use skeleton_links when available
+            const links: Array<[number, number]> = Array.isArray(raw.meta_info.skeleton_links)
+                ? raw.meta_info.skeleton_links.map((e: any) => [e[0] | 0, e[1] | 0] as [number, number])
+                : [];
+
+            // If multiple instances, we only normalize the first here; caller will split if needed
+            const inst = raw.instance_info[0];
+            const rawKpts: any[] = Array.isArray(inst?.keypoints) ? inst.keypoints : [];
+            const joints: Array<{ x: number; y: number; z: number; score?: number; valid?: boolean }> = rawKpts.map((p: any, idx: number) => {
+                const hasX = Array.isArray(p) && p.length > 0 && p[0] !== null && p[0] !== undefined;
+                const hasY = Array.isArray(p) && p.length > 1 && p[1] !== null && p[1] !== undefined;
+                const hasZ = Array.isArray(p) && p.length > 2 && p[2] !== null && p[2] !== undefined;
+                const x = hasX ? Number(p[0]) : NaN;
+                const y = hasY ? Number(p[1]) : NaN;
+                const z = hasZ ? Number(p[2]) : NaN;
+                const isValid = hasX && hasY && hasZ && isFinite(x) && isFinite(y) && isFinite(z);
+                const score = Array.isArray(inst.keypoint_scores) && typeof inst.keypoint_scores[idx] === 'number'
+                    ? Number(inst.keypoint_scores[idx])
+                    : undefined;
+                return { x: isValid ? x : 0, y: isValid ? y : 0, z: isValid ? z : 0, score, valid: isValid };
+            });
+
+            // Filter edges to valid joint indices
+            const edges = (links.length > 0 ? links : this.autoConnectKnn(joints, 2)).filter(([a, b]) =>
+                a >= 0 && a < joints.length && b >= 0 && b < joints.length
+            );
+            return { joints, edges };
+        }
+
+        // OpenPose / Halpe flat arrays: people[0].pose_keypoints_3d or _2d
         if (raw && Array.isArray(raw.people) && raw.people.length > 0) {
             const p = raw.people[0];
             const arr = p.pose_keypoints_3d || p.pose_keypoints_2d;
             if (Array.isArray(arr)) {
                 const step = p.pose_keypoints_3d ? 4 : 3; // x,y,z,(c?) or x,y,c
-                const joints: Array<{ x: number; y: number; z: number; score?: number }> = [];
+            const joints: Array<{ x: number; y: number; z: number; score?: number; valid?: boolean }> = [];
                 for (let i = 0; i + (step - 1) < arr.length; i += step) {
-                    const x = +arr[i];
-                    const y = +arr[i + 1];
-                    const z = step === 4 ? +arr[i + 2] : 0;
-                    const c = step === 4 ? +arr[i + 3] : +arr[i + 2];
-                    joints.push({ x, y, z, score: isFinite(c) ? c : undefined });
+                    const hasX = arr[i] !== null && arr[i] !== undefined;
+                    const hasY = arr[i + 1] !== null && arr[i + 1] !== undefined;
+                    const hasZ = step === 4 ? (arr[i + 2] !== null && arr[i + 2] !== undefined) : true;
+                    const x = hasX ? Number(arr[i]) : NaN;
+                    const y = hasY ? Number(arr[i + 1]) : NaN;
+                    const z = step === 4 ? (hasZ ? Number(arr[i + 2]) : NaN) : 0;
+                    const cRaw = step === 4 ? arr[i + 3] : arr[i + 2];
+                    const c = Number(cRaw);
+                    const valid = hasX && hasY && (step === 4 ? hasZ : true) && isFinite(x) && isFinite(y) && (step === 4 ? isFinite(z) : true);
+                    joints.push({ x: valid ? x : 0, y: valid ? y : 0, z: valid ? z : 0, score: isFinite(c) ? c : undefined, valid });
                 }
                 let edges: Array<[number, number]> = [];
                 if (Array.isArray((raw as any).connections)) {
@@ -7721,13 +7821,18 @@ class PLYVisualizer {
         if (raw && Array.isArray(raw.keypoints)) {
             const arr = raw.keypoints;
             const step = arr.length % 4 === 0 ? 4 : 3;
-            const joints: Array<{ x: number; y: number; z: number; score?: number }> = [];
+            const joints: Array<{ x: number; y: number; z: number; score?: number; valid?: boolean }> = [];
             for (let i = 0; i + (step - 1) < arr.length; i += step) {
-                const x = +arr[i];
-                const y = +arr[i + 1];
-                const z = step === 4 ? +arr[i + 2] : 0;
-                const c = step === 4 ? +arr[i + 3] : +arr[i + 2];
-                joints.push({ x, y, z, score: isFinite(c) ? c : undefined });
+                const hasX = arr[i] !== null && arr[i] !== undefined;
+                const hasY = arr[i + 1] !== null && arr[i + 1] !== undefined;
+                const hasZ = step === 4 ? (arr[i + 2] !== null && arr[i + 2] !== undefined) : true;
+                const x = hasX ? Number(arr[i]) : NaN;
+                const y = hasY ? Number(arr[i + 1]) : NaN;
+                const z = step === 4 ? (hasZ ? Number(arr[i + 2]) : NaN) : 0;
+                const cRaw = step === 4 ? arr[i + 3] : arr[i + 2];
+                const c = Number(cRaw);
+                const valid = hasX && hasY && (step === 4 ? hasZ : true) && isFinite(x) && isFinite(y) && (step === 4 ? isFinite(z) : true);
+                joints.push({ x: valid ? x : 0, y: valid ? y : 0, z: valid ? z : 0, score: isFinite(c) ? c : undefined, valid });
             }
             const edges = Array.isArray((raw as any).connections)
                 ? (raw as any).connections.map((e: any) => [e[0] | 0, e[1] | 0] as [number, number])
@@ -7737,14 +7842,35 @@ class PLYVisualizer {
 
         // Generic arrays
         if (raw && Array.isArray(raw.points)) {
-            const joints = raw.points.map((p: any) => ({ x: +p[0] || +p.x || 0, y: +p[1] || +p.y || 0, z: +p[2] || +p.z || 0 }));
+            const joints = raw.points.map((p: any) => {
+                const rx = (Array.isArray(p) ? p[0] : p?.x);
+                const ry = (Array.isArray(p) ? p[1] : p?.y);
+                const rz = (Array.isArray(p) ? p[2] : p?.z);
+                const hasX = rx !== null && rx !== undefined;
+                const hasY = ry !== null && ry !== undefined;
+                const hasZ = rz !== null && rz !== undefined;
+                const x = hasX ? Number(rx) : NaN;
+                const y = hasY ? Number(ry) : NaN;
+                const z = hasZ ? Number(rz) : NaN;
+                const valid = hasX && hasY && hasZ && isFinite(x) && isFinite(y) && isFinite(z);
+                return { x: valid ? x : 0, y: valid ? y : 0, z: valid ? z : 0, valid };
+            });
             const edges = Array.isArray(raw.connections) ? raw.connections.map((e: any) => [e[0]|0, e[1]|0] as [number, number]) : this.autoConnectKnn(joints, 2);
             return { joints, edges };
         }
 
         // Last resort: array of [x,y,(z)]
         if (Array.isArray(raw) && raw.length && Array.isArray(raw[0])) {
-            const joints = raw.map((p: any[]) => ({ x: +p[0], y: +p[1], z: p.length > 2 ? +p[2] : 0 }));
+            const joints = raw.map((p: any[]) => {
+                const hasX = Array.isArray(p) && p.length > 0 && p[0] !== null && p[0] !== undefined;
+                const hasY = Array.isArray(p) && p.length > 1 && p[1] !== null && p[1] !== undefined;
+                const hasZ = Array.isArray(p) && p.length > 2 && p[2] !== null && p[2] !== undefined;
+                const x = hasX ? Number(p[0]) : NaN;
+                const y = hasY ? Number(p[1]) : NaN;
+                const z = hasZ ? Number(p[2]) : NaN;
+                const valid = hasX && hasY && (hasZ ? isFinite(z) : true) && isFinite(x) && isFinite(y);
+                return { x: valid ? x : 0, y: valid ? y : 0, z: valid ? (isFinite(z) ? z : 0) : 0, valid };
+            });
             const edges = this.autoConnectKnn(joints, 2);
             return { joints, edges };
         }
@@ -7782,37 +7908,63 @@ class PLYVisualizer {
     private buildPoseGroup(pose: { joints: Array<{ x: number; y: number; z: number; score?: number }>; edges: Array<[number, number]> }): THREE.Group {
         const group = new THREE.Group();
         const unifiedIndex = this.plyFiles.length + this.poseGroups.length;
-        // Default pose color: red
-        const baseColor = new THREE.Color(1, 0, 0);
+        // Default pose color: use assigned color for this index
+        const colorMode = this.individualColorModes[unifiedIndex] ?? 'assigned';
+        let baseRGB: [number, number, number];
+        if (colorMode === 'assigned') {
+            baseRGB = this.fileColors[unifiedIndex % this.fileColors.length];
+        } else {
+            const colorIndex = parseInt(colorMode as string);
+            if (!isNaN(colorIndex) && colorIndex >= 0 && colorIndex < this.fileColors.length) {
+                baseRGB = this.fileColors[colorIndex];
+            } else {
+                baseRGB = this.fileColors[unifiedIndex % this.fileColors.length];
+            }
+        }
+        const baseColor = new THREE.Color(baseRGB[0], baseRGB[1], baseRGB[2]);
 
-        // Joints as instanced spheres
-        const radius = this.pointSizes[unifiedIndex] ?? 5.0;
+        // Joints as instanced spheres (only for valid joints)
+        const radius = this.pointSizes[unifiedIndex] ?? 0.02; // 2 cm default
         const sphereGeo = new THREE.SphereGeometry(1, 12, 12);
         const mat = new THREE.MeshBasicMaterial({ color: baseColor, transparent: true, opacity: 0.95 });
-        const inst = new THREE.InstancedMesh(sphereGeo, mat, pose.joints.length);
-        const dummy = new THREE.Object3D();
+        const validJointIndices: number[] = [];
         for (let i = 0; i < pose.joints.length; i++) {
-            const p = pose.joints[i];
+            const p = pose.joints[i] as any;
+            if (p && p.valid === true) validJointIndices.push(i);
+        }
+        const inst = new THREE.InstancedMesh(sphereGeo, mat, validJointIndices.length);
+        const dummy = new THREE.Object3D();
+        for (let k = 0; k < validJointIndices.length; k++) {
+            const p = pose.joints[validJointIndices[k]];
             dummy.position.set(p.x, p.y, p.z);
             dummy.scale.setScalar(radius);
             dummy.updateMatrix();
-            inst.setMatrixAt(i, dummy.matrix);
+            inst.setMatrixAt(k, dummy.matrix);
         }
         inst.instanceMatrix.needsUpdate = true;
         group.add(inst);
 
-        // Edges as line segments
+        // Edges as line segments (skip invalid joints)
         if (pose.edges.length > 0) {
-            const positions = new Float32Array(pose.edges.length * 2 * 3);
-            let idx = 0;
+            const tempPositions: number[] = [];
             for (const [a, b] of pose.edges) {
-                const pa = pose.joints[a];
-                const pb = pose.joints[b];
-                positions[idx++] = pa.x; positions[idx++] = pa.y; positions[idx++] = pa.z;
-                positions[idx++] = pb.x; positions[idx++] = pb.y; positions[idx++] = pb.z;
+                const pa = pose.joints[a] as any;
+                const pb = pose.joints[b] as any;
+                if (!(pa && pb)) continue;
+                if (pa.valid !== true || pb.valid !== true) continue;
+                // Also skip edges where endpoint equals origin due to sanitized NaN
+                const aIsOrigin = pa.x === 0 && pa.y === 0 && pa.z === 0;
+                const bIsOrigin = pb.x === 0 && pb.y === 0 && pb.z === 0;
+                if (aIsOrigin || bIsOrigin) continue;
+                tempPositions.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
             }
             const lineGeo = new THREE.BufferGeometry();
-            lineGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const positions = new Float32Array(tempPositions);
+            if (positions.length > 0) {
+                lineGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            } else {
+                lineGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+            }
             const lineMat = new THREE.LineBasicMaterial({ color: baseColor, transparent: true, opacity: 0.8 });
             const lines = new THREE.LineSegments(lineGeo, lineMat);
             group.add(lines);

@@ -104,6 +104,31 @@ end_header
         }
     });
 
+    test('JSON sanitizer should parse Halpe NaN-containing file', async function() {
+        this.timeout(6000);
+        const halpePath = path.join(__dirname, '../../../testfiles/hpe_3d_full 4.json');
+        if (!fs.existsSync(halpePath)) {
+            console.warn('Halpe test file not found, skipping');
+            return;
+        }
+        const raw = fs.readFileSync(halpePath, 'utf8');
+        let parsed: any;
+        try {
+            parsed = JSON.parse(raw);
+            // If this succeeds, great; but typically NaN will cause failure
+        } catch {
+            const sanitized = raw
+                .replace(/\bNaN\b/g, 'null')
+                .replace(/\bInfinity\b/g, 'null')
+                .replace(/\b-Infinity\b/g, 'null');
+            parsed = JSON.parse(sanitized);
+        }
+        // Basic assertions on structure
+        assert.ok(parsed && parsed.meta_info && Array.isArray(parsed.instance_info), 'Parsed Halpe structure');
+        const first = parsed.instance_info[0];
+        assert.ok(Array.isArray(first.keypoints), 'Keypoints present');
+    });
+
     test('Should process point cloud data through parser pipeline', async function() {
         this.timeout(6000);
         

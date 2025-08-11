@@ -126,7 +126,20 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     try {
                         const jsonBytes = await vscode.workspace.fs.readFile(document.uri);
                         const jsonText = Buffer.from(jsonBytes).toString('utf-8');
-                        const parsed = JSON.parse(jsonText);
+
+                        // Try standard parse first
+                        let parsed: any;
+                        try {
+                            parsed = JSON.parse(jsonText);
+                        } catch (e) {
+                            // Fallback: sanitize non-standard tokens (NaN, Infinity) often found in pose dumps
+                            const sanitizedText = jsonText
+                                .replace(/\bNaN\b/g, 'null')
+                                .replace(/\bInfinity\b/g, 'null')
+                                .replace(/\b-Infinity\b/g, 'null');
+                            parsed = JSON.parse(sanitizedText);
+                        }
+
                         webviewPanel.webview.postMessage({
                             type: 'poseData',
                             fileName: path.basename(document.uri.fsPath),
@@ -608,7 +621,17 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         try {
                             const jsonBytes = await vscode.workspace.fs.readFile(files[i]);
                             const jsonText = Buffer.from(jsonBytes).toString('utf-8');
-                            const parsed = JSON.parse(jsonText);
+                            // Try standard parse first, then sanitize fallback
+                            let parsed: any;
+                            try {
+                                parsed = JSON.parse(jsonText);
+                            } catch (e) {
+                                const sanitizedText = jsonText
+                                    .replace(/\bNaN\b/g, 'null')
+                                    .replace(/\bInfinity\b/g, 'null')
+                                    .replace(/\b-Infinity\b/g, 'null');
+                                parsed = JSON.parse(sanitizedText);
+                            }
                             webviewPanel.webview.postMessage({
                                 type: 'poseData',
                                 fileName: fileName,

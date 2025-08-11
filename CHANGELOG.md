@@ -1,13 +1,14 @@
 # Change Log
 
-## [1.1.0] - 2025-07-23
+## [1.1.0] - 2025-08-11
 Add support for obj files
 Add experimental Arcball camera rotation 
 Add experimental pose estimation support
 Improve support for ply mesh files
-Fix 
+Fix gamma correction issues
+Add button toggling fixes
 
-## [1.0.0] - 2025-07-23
+## [1.0.0] - 2025-08-04
 Improve Readme
 Add some tests
 
