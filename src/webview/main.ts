@@ -484,7 +484,30 @@ class PLYVisualizer {
 
     // Pose entries managed like files but stored as Object3D groups
     private poseGroups: THREE.Group[] = [];
-    private poseMeta: { jointCount: number; edgeCount: number; fileName: string }[] = [];
+    private poseMeta: { 
+        jointCount: number; 
+        edgeCount: number; 
+        fileName: string;
+        invalidJoints?: number;
+        // Dataset extras (Halpe or similar)
+        jointColors?: [number, number, number][]; // normalized 0-1
+        linkColors?: [number, number, number][];  // normalized 0-1
+        keypointNames?: string[];
+        skeletonLinks?: Array<[number, number]>;
+        jointScores?: number[];
+        jointUncertainties?: Array<[number, number, number]>;
+    }[] = [];
+    // Per-pose feature toggles
+    private poseUseDatasetColors: boolean[] = [];
+    private poseShowLabels: boolean[] = [];
+    private poseScaleByScore: boolean[] = [];
+    private poseScaleByUncertainty: boolean[] = [];
+    private poseConvention: ('opencv'|'opengl')[] = [];
+    private poseMinScoreThreshold: number[] = [];
+    private poseMaxUncertaintyThreshold: number[] = [];
+    private poseLabelsGroups: (THREE.Group | null)[] = [];
+    private poseJoints: Array<Array<{ x:number; y:number; z:number; valid?: boolean }>> = [];
+    private poseEdges: Array<Array<[number, number]>> = [];
     
     // Rotation matrices
     private cameraMatrix: THREE.Matrix4 = new THREE.Matrix4(); // Current camera position and rotation
@@ -3015,7 +3038,44 @@ class PLYVisualizer {
                         <label for="file-${i}" class="file-name">${meta.fileName || `Pose ${p + 1}`}</label>
                         <button class="remove-file" data-file-index="${i}" title="Remove object">✕</button>
                     </div>
-                    <div class="file-info">${meta.jointCount} joints, ${meta.edgeCount} edges</div>
+                    <div class="file-info">${meta.jointCount} joints, ${meta.edgeCount} edges${meta.invalidJoints ? `, ${meta.invalidJoints} invalid` : ''}</div>
+                    <div class="panel-section" style="margin-top:6px;">
+                        <div class="control-buttons">
+                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
+                                <input type="checkbox" id="pose-dataset-colors-${i}" ${this.poseUseDatasetColors[i] ? 'checked' : ''}>
+                                Use dataset colors
+                            </label>
+                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
+                                <input type="checkbox" id="pose-show-labels-${i}" ${this.poseShowLabels[i] ? 'checked' : ''}>
+                                Show labels
+                            </label>
+                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
+                                <input type="checkbox" id="pose-scale-score-${i}" ${this.poseScaleByScore[i] ? 'checked' : ''}>
+                                Scale by score
+                            </label>
+                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
+                                <input type="checkbox" id="pose-scale-uncertainty-${i}" ${this.poseScaleByUncertainty[i] ? 'checked' : ''}>
+                                Scale by uncertainty
+                            </label>
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <span style="font-size:10px;">Pose Convention:</span>
+                                <select id="pose-conv-${i}" style="font-size:10px;">
+                                    <option value="opengl" ${this.poseConvention[i] === 'opengl' ? 'selected' : ''}>OpenGL</option>
+                                    <option value="opencv" ${this.poseConvention[i] === 'opencv' ? 'selected' : ''}>OpenCV</option>
+                                </select>
+                            </div>
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <span style="font-size:10px;">Min score:</span>
+                                <input type="range" id="pose-minscore-${i}" min="0" max="1" step="0.01" value="${(this.poseMinScoreThreshold[i] ?? 0).toFixed(2)}" style="flex:1;">
+                                <span id="pose-minscore-val-${i}" style="font-size:10px;">${(this.poseMinScoreThreshold[i] ?? 0).toFixed(2)}</span>
+                            </div>
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <span style="font-size:10px;">Max uncertainty:</span>
+                                <input type="range" id="pose-maxunc-${i}" min="0" max="1" step="0.01" value="${(this.poseMaxUncertaintyThreshold[i] ?? 1).toFixed(2)}" style="flex:1;">
+                                <span id="pose-maxunc-val-${i}" style="font-size:10px;">${(this.poseMaxUncertaintyThreshold[i] ?? 1).toFixed(2)}</span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="transform-section">
                         <button class="transform-toggle" data-file-index="${i}">
                             <span class="toggle-icon">▶</span> Transform
@@ -3209,11 +3269,69 @@ class PLYVisualizer {
                 });
             }
             
+            // Pose controls listeners
+            const datasetColorsCb = document.getElementById(`pose-dataset-colors-${i}`) as HTMLInputElement;
+            if (datasetColorsCb) {
+                datasetColorsCb.addEventListener('change', () => {
+                    this.poseUseDatasetColors[i] = !!datasetColorsCb.checked;
+                    this.updatePoseAppearance(i);
+                });
+            }
+            const showLabelsCb = document.getElementById(`pose-show-labels-${i}`) as HTMLInputElement;
+            if (showLabelsCb) {
+                showLabelsCb.addEventListener('change', () => {
+                    this.poseShowLabels[i] = !!showLabelsCb.checked;
+                    this.updatePoseLabels(i);
+                });
+            }
+            const scaleScoreCb = document.getElementById(`pose-scale-score-${i}`) as HTMLInputElement;
+            if (scaleScoreCb) {
+                scaleScoreCb.addEventListener('change', () => {
+                    this.poseScaleByScore[i] = !!scaleScoreCb.checked;
+                    this.updatePoseScaling(i);
+                });
+            }
+            const scaleUncCb = document.getElementById(`pose-scale-uncertainty-${i}`) as HTMLInputElement;
+            if (scaleUncCb) {
+                scaleUncCb.addEventListener('change', () => {
+                    this.poseScaleByUncertainty[i] = !!scaleUncCb.checked;
+                    this.updatePoseScaling(i);
+                });
+            }
+            const poseConvSel = document.getElementById(`pose-conv-${i}`) as HTMLSelectElement;
+            if (poseConvSel) {
+                poseConvSel.addEventListener('change', () => {
+                    const val = poseConvSel.value === 'opencv' ? 'opencv' : 'opengl';
+                    this.applyPoseConvention(i, val);
+                });
+            }
+
+            const minScoreSlider = document.getElementById(`pose-minscore-${i}`) as HTMLInputElement;
+            const minScoreVal = document.getElementById(`pose-minscore-val-${i}`) as HTMLElement;
+            if (minScoreSlider && minScoreVal) {
+                minScoreSlider.addEventListener('input', () => {
+                    const v = Math.max(0, Math.min(1, parseFloat(minScoreSlider.value)));
+                    this.poseMinScoreThreshold[i] = v;
+                    minScoreVal.textContent = v.toFixed(2);
+                    this.applyPoseFilters(i);
+                });
+            }
+            const maxUncSlider = document.getElementById(`pose-maxunc-${i}`) as HTMLInputElement;
+            const maxUncVal = document.getElementById(`pose-maxunc-val-${i}`) as HTMLElement;
+            if (maxUncSlider && maxUncVal) {
+                maxUncSlider.addEventListener('input', () => {
+                    const v = Math.max(0, Math.min(1, parseFloat(maxUncSlider.value)));
+                    this.poseMaxUncertaintyThreshold[i] = v;
+                    maxUncVal.textContent = v.toFixed(2);
+                    this.applyPoseFilters(i);
+                });
+            }
+            
             // Add size slider listeners for point clouds and OBJ files
             const sizeSlider = document.getElementById(`size-${i}`) as HTMLInputElement;
             const isPose = i >= this.plyFiles.length;
             const isObjFile = !isPose && (this.plyFiles[i] as any).isObjFile;
-                if (sizeSlider && (isPose || this.plyFiles[i].faceCount === 0 || isObjFile)) {
+            if (sizeSlider && (isPose || this.plyFiles[i].faceCount === 0 || isObjFile)) {
                 sizeSlider.addEventListener('input', (e) => {
                     const newSize = parseFloat((e.target as HTMLInputElement).value);
                     this.updatePointSize(i, newSize);
@@ -3231,7 +3349,7 @@ class PLYVisualizer {
             if (colorSelector) {
                 colorSelector.addEventListener('change', () => {
                     const value = colorSelector.value;
-                    this.individualColorModes[i] = value;
+                        this.individualColorModes[i] = value;
                     const isPose = i >= this.plyFiles.length;
                     if (isPose) {
                         // Update pose group material color
@@ -3255,9 +3373,9 @@ class PLYVisualizer {
                     } else if (i < this.meshes.length) {
                         // Recreate material for point clouds/OBJ
                         const oldMaterial = this.meshes[i].material as any;
-                        const newMaterial = this.createMaterialForFile(this.plyFiles[i], i);
+                            const newMaterial = this.createMaterialForFile(this.plyFiles[i], i);
                         (this.meshes[i] as any).material = newMaterial;
-                        if (oldMaterial) {
+                            if (oldMaterial) {
                             if (Array.isArray(oldMaterial)) { oldMaterial.forEach((m: any) => m.dispose()); } else { oldMaterial.dispose(); }
                         }
                     }
@@ -3371,6 +3489,8 @@ class PLYVisualizer {
         if (poseIndex >= 0 && poseIndex < this.poseGroups.length) {
             const group = this.poseGroups[poseIndex];
             if (group) group.visible = desiredVisible;
+            const labels = this.poseLabelsGroups[poseIndex];
+            if (labels) labels.visible = desiredVisible;
         }
     }
     
@@ -4895,6 +5015,226 @@ class PLYVisualizer {
             options += `<option value="${i}" ${isSelected ? 'selected' : ''}>${this.getColorName(i)}</option>`;
         }
         return options;
+    }
+
+    // ===== Pose feature updaters =====
+    private updatePoseAppearance(fileIndex: number): void {
+        const poseIndex = fileIndex - this.plyFiles.length;
+        if (poseIndex < 0 || poseIndex >= this.poseGroups.length) return;
+        const group = this.poseGroups[poseIndex];
+        const meta = this.poseMeta[poseIndex];
+        const useDataset = this.poseUseDatasetColors[fileIndex];
+        const paletteColor = this.fileColors[fileIndex % this.fileColors.length];
+        group.traverse(obj => {
+            if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
+                const material = obj.material as THREE.MeshBasicMaterial;
+                if (useDataset && meta.jointColors && meta.jointColors.length > 0) {
+                    // Apply per-instance colors
+                    const count = obj.count;
+                    const colors = new Float32Array(count * 3);
+                    for (let k = 0; k < count; k++) {
+                        const c = meta.jointColors[k % meta.jointColors.length];
+                        colors[k*3] = c[0]; colors[k*3+1] = c[1]; colors[k*3+2] = c[2];
+                    }
+                    obj.instanceColor = new THREE.InstancedBufferAttribute(colors, 3);
+                    if (obj.instanceColor) { (obj.instanceColor as any).needsUpdate = true; }
+                    material.vertexColors = true;
+                    material.needsUpdate = true;
+                } else {
+                    // Use single color
+                    obj.instanceColor = null;
+                    material.vertexColors = false;
+                    material.color.setRGB(paletteColor[0], paletteColor[1], paletteColor[2]);
+                    material.needsUpdate = true;
+                }
+            } else if ((obj as any).isLineSegments && obj instanceof THREE.LineSegments) {
+                const material = obj.material as THREE.LineBasicMaterial;
+                if (useDataset && meta.linkColors && meta.linkColors.length > 0) {
+                    // Build a new color buffer matching current positions
+                    const posAttr = (obj.geometry.getAttribute('position') as THREE.BufferAttribute);
+                    const segCount = posAttr.count / 2;
+                    const colors = new Float32Array(posAttr.count * 3);
+                    for (let s = 0; s < segCount; s++) {
+                        const lc = meta.linkColors[s % meta.linkColors.length];
+                        // two vertices per segment
+                        colors[(2*s)*3] = lc[0]; colors[(2*s)*3+1] = lc[1]; colors[(2*s)*3+2] = lc[2];
+                        colors[(2*s+1)*3] = lc[0]; colors[(2*s+1)*3+1] = lc[1]; colors[(2*s+1)*3+2] = lc[2];
+                    }
+                    // Remove old color attribute first to avoid interleaved conflicts
+                    if (obj.geometry.getAttribute('color')) {
+                        obj.geometry.deleteAttribute('color');
+                    }
+                    obj.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                    material.vertexColors = true;
+                    material.needsUpdate = true;
+                } else {
+                    // Remove per-vertex colors and set solid color
+                    if (obj.geometry.getAttribute('color')) {
+                        obj.geometry.deleteAttribute('color');
+                    }
+                    material.vertexColors = false;
+                    material.color.setRGB(paletteColor[0], paletteColor[1], paletteColor[2]);
+                    material.needsUpdate = true;
+                }
+            }
+        });
+    }
+
+    private updatePoseLabels(fileIndex: number): void {
+        const poseIndex = fileIndex - this.plyFiles.length;
+        if (poseIndex < 0 || poseIndex >= this.poseGroups.length) return;
+        const show = this.poseShowLabels[fileIndex];
+        const group = this.poseGroups[poseIndex];
+        const joints = this.poseJoints[poseIndex] || [];
+        const validMap: number[] = ((group as any).userData?.validJointIndices) || [];
+        // Remove existing labels
+        const existing = this.poseLabelsGroups[poseIndex];
+        if (existing) { this.scene.remove(existing); this.poseLabelsGroups[poseIndex] = null; }
+        if (!show) return;
+        // Build a new labels group using simple Sprites
+        const labelsGroup = new THREE.Group();
+        const meta = this.poseMeta[poseIndex];
+        const names = meta.keypointNames || [];
+        const count = validMap.length > 0 ? validMap.length : joints.length;
+        const makeLabel = (text: string): THREE.Sprite => {
+            const canvas = document.createElement('canvas');
+            const size = 256;
+            canvas.width = size; canvas.height = size;
+            const ctx = canvas.getContext('2d')!;
+            ctx.clearRect(0,0,size,size);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '48px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, size/2, size/2);
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+            const sprite = new THREE.Sprite(material);
+            sprite.scale.set(0.1, 0.1, 1); // 10cm label size
+            return sprite;
+        };
+        for (let k = 0; k < count; k++) {
+            const originalIndex = (validMap.length === count) ? validMap[k] : k;
+            const j = joints[originalIndex];
+            if (!j || j.valid !== true) continue;
+            const label = makeLabel(names[originalIndex] || `${originalIndex}`);
+            label.position.set(j.x, j.y + (this.pointSizes[fileIndex] ?? 0.02) * 1.5, j.z);
+            labelsGroup.add(label);
+        }
+        this.scene.add(labelsGroup);
+        this.poseLabelsGroups[poseIndex] = labelsGroup;
+    }
+
+    private updatePoseScaling(fileIndex: number): void {
+        const poseIndex = fileIndex - this.plyFiles.length;
+        if (poseIndex < 0 || poseIndex >= this.poseGroups.length) return;
+        const group = this.poseGroups[poseIndex];
+        const baseRadius = this.pointSizes[fileIndex] ?? 0.02;
+        const scaleByScore = this.poseScaleByScore[fileIndex];
+        const scaleByUnc = this.poseScaleByUncertainty[fileIndex];
+        // Fetch scores/uncertainties if available
+        const meta = this.poseMeta[poseIndex];
+        // Traverse instances and update scales
+        group.traverse(obj => {
+            if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
+                const count = obj.count;
+                const dummy = new THREE.Object3D();
+                for (let k = 0; k < count; k++) {
+                    obj.getMatrixAt(k, dummy.matrix);
+                    dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+                    let factor = 1.0;
+                    if (scaleByScore && meta.jointScores && meta.jointScores[k] != null && isFinite(meta.jointScores[k]!)) {
+                        const s = Math.max(0.01, Math.min(1.0, meta.jointScores[k]!));
+                        factor *= (0.5 + 0.5 * s); // 0.5x .. 1x
+                    }
+                    if (scaleByUnc && meta.jointUncertainties && meta.jointUncertainties[k]) {
+                        const u = meta.jointUncertainties[k];
+                        const mag = Math.sqrt(u[0]*u[0] + u[1]*u[1] + u[2]*u[2]);
+                        const mapped = 1.0 / (1.0 + mag); // higher uncertainty → smaller
+                        factor *= (0.5 + 0.5 * mapped);
+                    }
+                    dummy.scale.setScalar(baseRadius * factor);
+                    dummy.updateMatrix();
+                    obj.setMatrixAt(k, dummy.matrix);
+                }
+                obj.instanceMatrix.needsUpdate = true;
+            }
+        });
+    }
+
+    private applyPoseConvention(fileIndex: number, conv: 'opengl'|'opencv'): void {
+        const poseIndex = fileIndex - this.plyFiles.length;
+        if (poseIndex < 0 || poseIndex >= this.poseGroups.length) return;
+        const group = this.poseGroups[poseIndex];
+        const prev = this.poseConvention[fileIndex] || 'opengl';
+        if (prev === conv) return; // already applied
+        // Toggle flip each time we switch; inverse = same flip
+        const mat = new THREE.Matrix4().set(1,0,0,0, 0,-1,0,0, 0,0,-1,0, 0,0,0,1);
+        group.applyMatrix4(mat);
+        group.updateMatrixWorld(true);
+        this.poseConvention[fileIndex] = conv;
+    }
+
+    private applyPoseFilters(fileIndex: number): void {
+        const poseIndex = fileIndex - this.plyFiles.length;
+        if (poseIndex < 0 || poseIndex >= this.poseGroups.length) return;
+        const group = this.poseGroups[poseIndex];
+        const meta = this.poseMeta[poseIndex];
+        const minScore = this.poseMinScoreThreshold[fileIndex] ?? 0;
+        const maxUnc = this.poseMaxUncertaintyThreshold[fileIndex] ?? 1;
+        // Compute uncertainty magnitude per joint if available
+        const uncMag = (meta.jointUncertainties || []).map(u => Math.sqrt(u[0]*u[0] + u[1]*u[1] + u[2]*u[2]));
+        group.traverse(obj => {
+                if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
+                const count = obj.count;
+                const dummy = new THREE.Object3D();
+                    // Map instance index back to original joint index
+                    const validMap: number[] = ((group as any).userData?.validJointIndices) || [];
+                for (let k = 0; k < count; k++) {
+                    obj.getMatrixAt(k, dummy.matrix);
+                    dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+                    // Determine visibility by thresholds
+                    let visible = true;
+                        const originalIndex = (validMap.length === count) ? validMap[k] : k;
+                        if (meta.jointScores && meta.jointScores[originalIndex] != null && isFinite(meta.jointScores[originalIndex]!)) {
+                            if (meta.jointScores[originalIndex]! < minScore) visible = false;
+                        }
+                        if (uncMag && uncMag[originalIndex] != null && isFinite(uncMag[originalIndex]!)) {
+                            if (uncMag[originalIndex]! > maxUnc) visible = false;
+                        }
+                    const targetScale = visible ? (this.pointSizes[fileIndex] ?? 0.02) : 0;
+                    dummy.scale.setScalar(targetScale);
+                    dummy.updateMatrix();
+                    obj.setMatrixAt(k, dummy.matrix);
+                }
+                obj.instanceMatrix.needsUpdate = true;
+            } else if ((obj as any).isLineSegments && obj instanceof THREE.LineSegments) {
+                // Rebuild edges to drop hidden joints based on thresholds
+                const validMap: number[] = ((group as any).userData?.validJointIndices) || [];
+                const joints = this.poseJoints[poseIndex] || [];
+                const edges = this.poseEdges[poseIndex] || [];
+                const hidden = new Set<number>();
+                // Determine hidden joints via thresholds
+                const uncMagArr = (meta.jointUncertainties || []).map(u => Math.sqrt(u[0]*u[0] + u[1]*u[1] + u[2]*u[2]));
+                for (let k = 0; k < joints.length; k++) {
+                    const scoreOk = !(meta.jointScores && meta.jointScores[k] != null && isFinite(meta.jointScores[k]!) && meta.jointScores[k]! < minScore);
+                    const uncOk = !(uncMagArr && uncMagArr[k] != null && isFinite(uncMagArr[k]!) && uncMagArr[k]! > maxUnc);
+                    const visible = scoreOk && uncOk && joints[k] && joints[k].valid === true;
+                    if (!visible) hidden.add(k);
+                }
+                const tempPositions: number[] = [];
+                for (const [a, b] of edges) {
+                    if (hidden.has(a) || hidden.has(b)) continue;
+                    const pa = joints[a]; const pb = joints[b];
+                    if (!pa || !pb) continue;
+                    tempPositions.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
+                }
+                const newGeo = new THREE.BufferGeometry();
+                newGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(tempPositions), 3));
+                obj.geometry.dispose();
+                obj.geometry = newGeo;
+            }
+        });
     }
 
     private soloPointCloud(fileIndex: number): void {
@@ -7671,11 +8011,44 @@ class PLYVisualizer {
                     const group = this.buildPoseGroup(pose);
                     this.scene.add(group);
                     this.poseGroups.push(group);
-                    this.poseMeta.push({ jointCount: pose.joints.length, edgeCount: pose.edges.length, fileName: `${fileName} [${i+1}/${data.instance_info.length}]` });
+                    this.poseJoints.push(pose.joints as any);
+                    this.poseEdges.push(pose.edges);
+                    const invalidJoints = pose.joints.filter((j: any) => j.valid !== true).length;
+                    const extras = (data as any).__poseExtras || {};
+                    // Extract scores/uncertainties when available
+                    let jointScores: number[] | undefined;
+                    let jointUnc: Array<[number, number, number]> | undefined;
+                    try {
+                        const instInfo = data.instance_info[i];
+                        if (instInfo?.keypoint_scores && Array.isArray(instInfo.keypoint_scores)) {
+                            jointScores = instInfo.keypoint_scores.slice();
+                        }
+                        if (instInfo?.keypoint_uncertainties && Array.isArray(instInfo.keypoint_uncertainties)) {
+                            jointUnc = instInfo.keypoint_uncertainties.slice();
+                        }
+                    } catch {}
+                    this.poseMeta.push({ 
+                        jointCount: pose.joints.length, 
+                        edgeCount: pose.edges.length, 
+                        fileName: `${fileName} [${i+1}/${data.instance_info.length}]`,
+                        invalidJoints,
+                        jointColors: extras.jointColors || [],
+                        linkColors: extras.linkColors || [],
+                        keypointNames: extras.keypointNames ? Object.values(extras.keypointNames) : undefined,
+                        skeletonLinks: extras.skeletonLinks || [],
+                        jointScores,
+                        jointUncertainties: jointUnc
+                    });
                     const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
                     this.fileVisibility[unifiedIndex] = true;
                     this.pointSizes[unifiedIndex] = 0.02; // default 2 cm joint radius
                     this.individualColorModes[unifiedIndex] = 'assigned';
+                    // Per-pose defaults
+                    this.poseUseDatasetColors[unifiedIndex] = false;
+                    this.poseShowLabels[unifiedIndex] = false;
+                    this.poseScaleByScore[unifiedIndex] = false;
+                    this.poseScaleByUncertainty[unifiedIndex] = false;
+                    this.poseConvention[unifiedIndex] = 'opengl';
                     this.transformationMatrices.push(new THREE.Matrix4());
                     this.applyTransformationMatrix(unifiedIndex);
                 }
@@ -7685,24 +8058,69 @@ class PLYVisualizer {
                 // Hide loading overlay for pose JSONs
                 document.getElementById('loading')?.classList.add('hidden');
             } else {
-                const pose = this.normalizePose(data);
-                const group = this.buildPoseGroup(pose);
-                this.scene.add(group);
-                // Track pose group and meta
-                this.poseGroups.push(group);
-                this.poseMeta.push({ jointCount: pose.joints.length, edgeCount: pose.edges.length, fileName });
-                // Initialize UI state slots aligned after plyFiles
-                const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
-                this.fileVisibility[unifiedIndex] = true;
+            const pose = this.normalizePose(data);
+            const group = this.buildPoseGroup(pose);
+            this.scene.add(group);
+            // Track pose group and meta
+            this.poseGroups.push(group);
+                this.poseJoints.push(pose.joints as any);
+                this.poseEdges.push(pose.edges);
+                const invalidJoints = pose.joints.filter((j: any) => j.valid !== true).length;
+                const extras = (data as any).__poseExtras || {};
+                // Extract scores/uncertainties for non-Halpe formats
+                let jointScores: number[] | undefined;
+                let jointUnc: Array<[number, number, number]> | undefined;
+                try {
+                    // Human3.6M-style confidence
+                    if (Array.isArray((data as any).confidence)) {
+                        jointScores = (data as any).confidence.slice();
+                    }
+                    // OpenPose-like: people[].pose_keypoints_3d/_2d
+                    if (Array.isArray((data as any).people) && (data as any).people.length > 0) {
+                        const p = (data as any).people[0];
+                        const arr = p.pose_keypoints_3d || p.pose_keypoints_2d;
+                        if (Array.isArray(arr)) {
+                            const step = p.pose_keypoints_3d ? 4 : 3; // x,y,z,(c) or x,y,(c)
+                            const scores: number[] = [];
+                            for (let idx = 0; idx + (step - 1) < arr.length; idx += step) {
+                                const cRaw = step === 4 ? arr[idx + 3] : arr[idx + 2];
+                                const c = Number(cRaw);
+                                scores.push(isFinite(c) ? c : 0);
+                            }
+                            jointScores = scores;
+                        }
+                    }
+                } catch {}
+                this.poseMeta.push({ 
+                    jointCount: pose.joints.length, 
+                    edgeCount: pose.edges.length, 
+                    fileName,
+                    invalidJoints,
+                    jointColors: extras.jointColors || [],
+                    linkColors: extras.linkColors || [],
+                    keypointNames: extras.keypointNames ? Object.values(extras.keypointNames) : undefined,
+                    skeletonLinks: extras.skeletonLinks || [],
+                    jointScores,
+                    jointUncertainties: jointUnc
+                });
+            // Initialize UI state slots aligned after plyFiles
+            const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
+            this.fileVisibility[unifiedIndex] = true;
                 this.pointSizes[unifiedIndex] = 0.02; // default 2 cm joint radius
-                this.individualColorModes[unifiedIndex] = 'assigned';
-                // Initialize transformation matrix for this pose
-                this.transformationMatrices.push(new THREE.Matrix4());
-                this.applyTransformationMatrix(unifiedIndex);
-                // Update UI
-                this.updateFileList();
-                this.updateFileStats();
-                this.fitCameraToAllObjects();
+            this.individualColorModes[unifiedIndex] = 'assigned';
+                // Per-pose defaults
+                this.poseUseDatasetColors[unifiedIndex] = false;
+                this.poseShowLabels[unifiedIndex] = false;
+                this.poseScaleByScore[unifiedIndex] = false;
+                this.poseScaleByUncertainty[unifiedIndex] = false;
+                this.poseConvention[unifiedIndex] = 'opengl';
+            // Initialize transformation matrix for this pose
+            this.transformationMatrices.push(new THREE.Matrix4());
+            this.applyTransformationMatrix(unifiedIndex);
+            // Update UI
+            this.updateFileList();
+            this.updateFileStats();
+            this.fitCameraToAllObjects();
                 // Hide loading overlay for pose JSONs
                 document.getElementById('loading')?.classList.add('hidden');
             }
@@ -7785,6 +8203,15 @@ class PLYVisualizer {
             const edges = (links.length > 0 ? links : this.autoConnectKnn(joints, 2)).filter(([a, b]) =>
                 a >= 0 && a < joints.length && b >= 0 && b < joints.length
             );
+            // Attach dataset extras to the last meta entry provisionally (will be moved per-pose)
+            const toColor = (arr: any): [number, number, number][] => {
+                if (!arr || !Array.isArray(arr.__ndarray__)) return [];
+                return arr.__ndarray__.map((rgb: number[]) => [rgb[0]/255, rgb[1]/255, rgb[2]/255]);
+            };
+            const jointColors = toColor(raw.meta_info.keypoint_colors);
+            const linkColors = toColor(raw.meta_info.skeleton_link_colors);
+            // Store on a temporary field of raw to pass through
+            (raw as any).__poseExtras = { jointColors, linkColors, keypointNames: raw.meta_info.keypoint_id2name, skeletonLinks: links };
             return { joints, edges };
         }
 
@@ -7943,6 +8370,10 @@ class PLYVisualizer {
         }
         inst.instanceMatrix.needsUpdate = true;
         group.add(inst);
+        // Store mapping and references for later updates
+        (group as any).userData = (group as any).userData || {};
+        (group as any).userData.validJointIndices = validJointIndices.slice();
+        (group as any).userData.instancedMesh = inst;
 
         // Edges as line segments (skip invalid joints)
         if (pose.edges.length > 0) {
@@ -7961,13 +8392,14 @@ class PLYVisualizer {
             const lineGeo = new THREE.BufferGeometry();
             const positions = new Float32Array(tempPositions);
             if (positions.length > 0) {
-                lineGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            lineGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             } else {
                 lineGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
             }
             const lineMat = new THREE.LineBasicMaterial({ color: baseColor, transparent: true, opacity: 0.8 });
             const lines = new THREE.LineSegments(lineGeo, lineMat);
             group.add(lines);
+            (group as any).userData.lineSegments = lines;
         }
 
         return group;
