@@ -43,6 +43,27 @@
           {
             "filenamePattern": "*.tiff"
           },
+            {
+              "filenamePattern": "*.png"
+            },
+            {
+              "filenamePattern": "*.exr"
+            },
+            {
+              "filenamePattern": "*.pfm"
+            },
+            {
+              "filenamePattern": "*.npy"
+            },
+            {
+              "filenamePattern": "*.npz"
+            },
+            {
+              "filenamePattern": "*.mat"
+            },
+            {
+              "filenamePattern": "*.h5"
+            },
           {
             "filenamePattern": "*.obj"
           }
@@ -121,6 +142,7 @@
   },
   "dependencies": {
     "geotiff": "^2.1.3",
+    "fflate": "^0.8.2",
     "three": "^0.178.0"
   }
 }

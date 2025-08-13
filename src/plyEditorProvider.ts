@@ -33,17 +33,18 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         // Check file type
         const filePath = document.uri.fsPath.toLowerCase();
         const isTifFile = filePath.endsWith('.tif') || filePath.endsWith('.tiff');
+        const isDepthImage = isTifFile || filePath.endsWith('.png') || filePath.endsWith('.exr') || filePath.endsWith('.pfm') || filePath.endsWith('.npy') || filePath.endsWith('.npz') || filePath.endsWith('.mat') || filePath.endsWith('.h5');
         const isObjFile = filePath.endsWith('.obj');
         const isJsonFile = filePath.endsWith('.json');
         
         // Show UI immediately before any file processing
         webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
         
-        // Send immediate message to show loading state
+                // Send immediate message to show loading state
         webviewPanel.webview.postMessage({
             type: 'startLoading',
             fileName: path.basename(document.uri.fsPath),
-            isTifFile: isTifFile,
+                    isTifFile: isTifFile,
             isObjFile: isObjFile
         });
 
@@ -53,27 +54,27 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 const loadStartTime = performance.now();
                 const wallStart = new Date().toISOString();
                 
-                if (isTifFile) {
-                    // Handle TIF file for depth conversion
+                if (isDepthImage) {
+                    // Handle Depth/Disparity files for point cloud conversion
                     webviewPanel.webview.postMessage({
                         type: 'timingUpdate',
-                        message: '🚀 Extension: Starting TIF file processing for depth conversion...',
+                        message: '🚀 Extension: Starting depth file processing for point cloud conversion...',
                         timestamp: loadStartTime
                     });
                     
-                    // Read TIF file and send for webview processing
-                    const tifData = await vscode.workspace.fs.readFile(document.uri);
+                    // Read file and send for webview processing
+                    const depthData = await vscode.workspace.fs.readFile(document.uri);
                     const fileReadTime = performance.now();
-                    webviewPanel.webview.postMessage({ type: 'timing', phase: 'read', kind: 'tif', ms: +(fileReadTime - loadStartTime).toFixed(1) });
+                    webviewPanel.webview.postMessage({ type: 'timing', phase: 'read', kind: 'depth', ms: +(fileReadTime - loadStartTime).toFixed(1) });
                     
-                    // Send TIF data to webview for conversion
+                    // Send data to webview for conversion
                     webviewPanel.webview.postMessage({
-                        type: 'tifData',
+                        type: 'depthData',
                         fileName: path.basename(document.uri.fsPath),
-                        data: tifData.buffer.slice(tifData.byteOffset, tifData.byteOffset + tifData.byteLength)
+                        data: depthData.buffer.slice(depthData.byteOffset, depthData.byteOffset + depthData.byteLength)
                     });
                     
-                    return; // Exit early for TIF files
+                    return; // Exit early for depth files
                 }
 
                 if (isObjFile) {
@@ -514,19 +515,15 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     console.log(`🚀 ULTIMATE: Processing add file ${fileName} (${fileExtension})`);
                     
                     // Handle different file types
-                    if (fileExtension === '.tif' || fileExtension === '.tiff') {
-                        // Handle TIF files for depth conversion
-                        const tifData = await vscode.workspace.fs.readFile(files[i]);
-                        
-                        // Send TIF data to webview for conversion
+                    if (['.tif','.tiff','.png','.exr','.pfm','.npy','.npz','.mat','.h5'].includes(fileExtension)) {
+                        const depthData = await vscode.workspace.fs.readFile(files[i]);
                         webviewPanel.webview.postMessage({
-                            type: 'tifData',
+                            type: 'depthData',
                             fileName: fileName,
-                            data: tifData.buffer.slice(tifData.byteOffset, tifData.byteOffset + tifData.byteLength),
-                            isAddFile: true // Flag to indicate this is from "Add Point Cloud"
+                            data: depthData.buffer.slice(depthData.byteOffset, depthData.byteOffset + depthData.byteLength),
+                            isAddFile: true
                         });
-                        
-                        console.log(`🎯 TIF Add File: ${fileName} sent for processing`);
+                        console.log(`🎯 Depth Add File: ${fileName} sent for processing`);
                         continue;
                     }
                     
