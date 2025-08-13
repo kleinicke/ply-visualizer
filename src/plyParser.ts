@@ -156,7 +156,7 @@ export class PlyParser {
         const dataParseStartTime = performance.now();
         if (result.format === 'ascii') {
             log(`📝 Parser: Starting ASCII data parsing (${result.vertexCount} vertices)...`);
-            this.parseAsciiDataOptimized(data, dataStartPos, result, vertexProperties, faceProperties, log);
+            this.parseAsciiDataStreaming(data, dataStartPos, result, vertexProperties, faceProperties, log);
         } else {
             log(`🔢 Parser: Starting binary data parsing (${result.vertexCount} vertices)...`);
             const binaryParseStartTime = performance.now();
@@ -250,6 +250,163 @@ export class PlyParser {
                 }
             }
         }
+    }
+
+    private parseAsciiDataStreaming(
+        data: Uint8Array,
+        startPos: number,
+        result: PlyData,
+        vertexProperties: Array<{ name: string; type: string }>,
+        faceProperties: Array<{ name: string; type: string }>,
+        log: (message: string) => void = console.log
+    ): void {
+        // Pre-allocate typed arrays to avoid massive object graphs
+        const useColors = result.hasColors;
+        const useNormals = result.hasNormals;
+        const vertexCount = result.vertexCount;
+        const faceCount = result.faceCount;
+
+        const positions = new Float32Array(vertexCount * 3);
+        const colors = useColors ? new Uint8Array(vertexCount * 3) : null;
+        const normals = useNormals ? new Float32Array(vertexCount * 3) : null;
+
+        // Build fast property index map
+        const propIndex = new Map<string, number>();
+        vertexProperties.forEach((p, i) => propIndex.set(p.name, i));
+        const xIdx = propIndex.get('x');
+        const yIdx = propIndex.get('y');
+        const zIdx = propIndex.get('z');
+        const rIdx = useColors ? propIndex.get('red') : undefined;
+        const gIdx = useColors ? propIndex.get('green') : undefined;
+        const bIdx = useColors ? propIndex.get('blue') : undefined;
+        const nxIdx = useNormals ? propIndex.get('nx') : undefined;
+        const nyIdx = useNormals ? propIndex.get('ny') : undefined;
+        const nzIdx = useNormals ? propIndex.get('nz') : undefined;
+
+        // Stream-decode ASCII payload to avoid gigantic intermediate strings
+        const decoder = new TextDecoder('utf-8');
+        const chunkSize = 8 * 1024 * 1024; // 8 MB chunks
+        let pos = startPos;
+        let carry = '';
+        let verticesParsed = 0;
+        let facesParsed = 0;
+
+        // Pre-allocate faces if needed
+        if (faceCount > 0) {
+            result.faces = new Array(faceCount);
+        }
+
+        while (pos < data.length && (verticesParsed < vertexCount || facesParsed < faceCount)) {
+            const end = Math.min(pos + chunkSize, data.length);
+            // stream=true when not at the end to keep decoder state across boundaries
+            const chunkText = decoder.decode(data.subarray(pos, end), { stream: end < data.length });
+            pos = end;
+
+            let combined = carry + chunkText;
+            let lines = combined.split(/\r?\n/);
+            // keep the last partial line in carry if not at the end
+            if (end < data.length) {
+                carry = lines.pop() || '';
+            } else {
+                carry = '';
+            }
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) { continue; }
+
+                if (verticesParsed < vertexCount) {
+                    // Parse vertex line
+                    const values = line.split(/\s+/);
+                    const base = verticesParsed * 3;
+
+                    if (xIdx !== undefined) positions[base] = parseFloat(values[xIdx]);
+                    if (yIdx !== undefined) positions[base + 1] = parseFloat(values[yIdx]);
+                    if (zIdx !== undefined) positions[base + 2] = parseFloat(values[zIdx]);
+
+                    if (colors && rIdx !== undefined && gIdx !== undefined && bIdx !== undefined) {
+                        colors[base] = (values[rIdx] !== undefined ? parseFloat(values[rIdx]) : 0) as number;
+                        colors[base + 1] = (values[gIdx] !== undefined ? parseFloat(values[gIdx]) : 0) as number;
+                        colors[base + 2] = (values[bIdx] !== undefined ? parseFloat(values[bIdx]) : 0) as number;
+                    }
+
+                    if (normals && nxIdx !== undefined && nyIdx !== undefined && nzIdx !== undefined) {
+                        normals[base] = (values[nxIdx] !== undefined ? parseFloat(values[nxIdx]) : 0);
+                        normals[base + 1] = (values[nyIdx] !== undefined ? parseFloat(values[nyIdx]) : 0);
+                        normals[base + 2] = (values[nzIdx] !== undefined ? parseFloat(values[nzIdx]) : 0);
+                    }
+
+                    verticesParsed++;
+
+                    if (verticesParsed % 1000000 === 0) {
+                        log(`📊 Parser: Parsed ${verticesParsed} / ${vertexCount} ASCII vertices`);
+                    }
+                    continue;
+                }
+
+                if (faceCount > 0 && facesParsed < faceCount) {
+                    const tokens = line.split(/\s+/);
+                    const vCount = parseInt(tokens[0], 10);
+                    const indices = new Array(vCount);
+                    for (let j = 0; j < vCount; j++) {
+                        indices[j] = parseInt(tokens[1 + j], 10);
+                    }
+                    result.faces[facesParsed] = { indices };
+                    facesParsed++;
+                    continue;
+                }
+
+                // Extra lines after declared counts are ignored
+            }
+        }
+
+        // If any remaining carry exists at EOF, process it
+        if (carry && (verticesParsed < vertexCount || facesParsed < faceCount)) {
+            const line = carry.trim();
+            if (line) {
+                if (verticesParsed < vertexCount) {
+                    const values = line.split(/\s+/);
+                    const base = verticesParsed * 3;
+                    if (xIdx !== undefined) positions[base] = parseFloat(values[xIdx]);
+                    if (yIdx !== undefined) positions[base + 1] = parseFloat(values[yIdx]);
+                    if (zIdx !== undefined) positions[base + 2] = parseFloat(values[zIdx]);
+                    if (colors && rIdx !== undefined && gIdx !== undefined && bIdx !== undefined) {
+                        colors[base] = (values[rIdx] !== undefined ? parseFloat(values[rIdx]) : 0) as number;
+                        colors[base + 1] = (values[gIdx] !== undefined ? parseFloat(values[gIdx]) : 0) as number;
+                        colors[base + 2] = (values[bIdx] !== undefined ? parseFloat(values[bIdx]) : 0) as number;
+                    }
+                    if (normals && nxIdx !== undefined && nyIdx !== undefined && nzIdx !== undefined) {
+                        normals[base] = (values[nxIdx] !== undefined ? parseFloat(values[nxIdx]) : 0);
+                        normals[base + 1] = (values[nyIdx] !== undefined ? parseFloat(values[nyIdx]) : 0);
+                        normals[base + 2] = (values[nzIdx] !== undefined ? parseFloat(values[nzIdx]) : 0);
+                    }
+                    verticesParsed++;
+                } else if (faceCount > 0 && facesParsed < faceCount) {
+                    const tokens = line.split(/\s+/);
+                    const vCount = parseInt(tokens[0], 10);
+                    const indices = new Array(vCount);
+                    for (let j = 0; j < vCount; j++) {
+                        indices[j] = parseInt(tokens[1 + j], 10);
+                    }
+                    result.faces[facesParsed] = { indices };
+                    facesParsed++;
+                }
+            }
+        }
+
+        if (verticesParsed !== vertexCount) {
+            log(`⚠️ Parser: Expected ${vertexCount} vertices, parsed ${verticesParsed}`);
+        }
+        if (faceCount > 0 && facesParsed !== faceCount) {
+            log(`⚠️ Parser: Expected ${faceCount} faces, parsed ${facesParsed}`);
+        }
+
+        // Store typed arrays on result for zero-copy downstream
+        (result as any).positionsArray = positions;
+        (result as any).colorsArray = colors;
+        (result as any).normalsArray = normals;
+        (result as any).useTypedArrays = true;
+        result.vertices = [];
     }
 
     private parseBinaryDataOptimized(
