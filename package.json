@@ -96,12 +96,17 @@
       "explorer/context": [
         {
           "command": "plyViewer.openFile",
-          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .txt || resourceExtname == .obj",
+          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .pfm || resourceExtname == .png || resourceExtname == .exr || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .mat || resourceExtname == .h5 || resourceExtname == .tif || resourceExtname == .tiff",
           "group": "navigation"
         },
         {
           "command": "plyViewer.convertTifToPointCloud",
           "when": "resourceExtname == .tif || resourceExtname == .tiff",
+          "group": "navigation"
+        },
+        {
+          "command": "plyViewer.convertDepthToPointCloud",
+          "when": "resourceExtname == .pfm || resourceExtname == .png || resourceExtname == .exr || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .mat || resourceExtname == .h5",
           "group": "navigation"
         },
         {

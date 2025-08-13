@@ -131,6 +131,120 @@ Notes:
 - NPZ: “No .npy arrays found” → Include `depth.npy` with a 2D float array.
 - TIFF: “Regular image (not single-channel depth/disparity)” → Use single-band depth/disparity TIFF.
 
+## Supported formats at a glance
+
+### 3D formats (point clouds and meshes)
+
+| Format | Status | What loads | Notes |
+| --- | --- | --- | --- |
+| PLY (ASCII/Binary) | Supported | Points and meshes | Colors and normals if present. Mesh rendering available. |
+| XYZ | Supported | Points | Optional per-vertex RGB if provided. |
+| OBJ | Supported | Meshes | Basic MTL parsing; textures limited. “Wireframe” is a render mode. |
+| KITTI BIN (Velodyne) | Planned | Points | Common lidar binary format; not yet implemented. |
+| PCD (Point Cloud Data) | Planned | Points | ASCII/Binary; planned. |
+| OFF | Planned | Meshes | Planned for mesh workflows. |
+| STL | Planned | Meshes | Planned for CAD mesh workflows. |
+
+| ASC (ASCII point cloud) | Maybe planned | Points | GIS/surveying; xyz plus optional intensity/classification. |
+| ICS/ICP | Maybe planned | Points | Robotics/scanning; ASCII xyz (often with normals). |
+| LAS (uncompressed) | Planned | Points | LiDAR standard; start here (no compression). |
+| LAZ (compressed LAS) | Maybe planned | Points | Needs wasm decoder (LAZperf/plasio); larger bundle. |
+| E57 | Maybe planned | Points/scans | Complex reader; likely needs wasm/native; defer. |
+| glTF/GLB | Planned | Meshes/points | Good ROI via Three.js GLTFLoader. |
+| COLLADA (.dae) | Maybe planned | Meshes | Available loader; lower demand. |
+| X3D/VRML | Maybe planned | Meshes | Legacy/web 3D; lower demand. |
+| 3MF | Maybe planned | Meshes | Manufacturing format; optional. |
+| FBX | Maybe planned | Meshes | Large/complex loader; only if requested. |
+| VOX (MagicaVoxel) | Maybe planned | Voxels → points | Could sample to points; not native voxel rendering. |
+| VDB (OpenVDB) | Maybe planned | Sparse voxels | Likely out-of-scope in webview; defer. |
+| VTK/VTP/VTU | Maybe planned | Meshes/points | Scientific viz; potential later. |
+| NetCDF | Maybe planned | Grids/fields | Scientific data with spatial components; defer. |
+
+Other tools commonly support combinations like OBJ/OFF/PCD/PLY/STL/XYZ; we’ll expand based on requests.
+
+#### 3D format details
+
+- PLY:
+  - Points: x y z [red green blue] [nx ny nz]
+  - Meshes: faces with indices; colors/normals supported when present
+  - ASCII or binary (little/big endian)
+- XYZ / ASC:
+  - Line-based: `x y z [r g b] [intensity] [classification] ...`
+  - Unknown extra columns are ignored; if an intensity column is found it can be mapped to grayscale
+  - Comments/blank lines are skipped
+- OBJ (.obj + optional .mtl):
+  - Geometry: v/vt/vn, f (faces); we render meshes, and can display wireframe as a render mode
+  - MTL materials are parsed; textures are limited
+- KITTI BIN:
+  - Binary little-endian; each point: 4 float32 values: x, y, z, reflectance
+  - File size must be divisible by 16 bytes
+- OFF (planned):
+  - ASCII; header `OFF`, then counts and vertex/face lists
+- PCD (planned):
+  - Header with FIELDS, SIZE, TYPE, COUNT, WIDTH, HEIGHT, DATA (ascii|binary)
+  - Fields typically include x y z [rgb|intensity]
+- STL (planned):
+  - ASCII or binary triangles; unitless; meshes only
+- glTF/GLB (planned):
+  - Modern meshes; optional point support via extensions; will use GLTFLoader
+- COLLADA/DAE, X3D/VRML, 3MF, FBX (maybe planned):
+  - Mesh-centric workflows; added based on demand
+- LAS/LAZ, E57 (maybe planned):
+  - LiDAR/scan standards; LAZ/E57 require heavier decoders (likely wasm)
+
+### Depth/disparity formats (depth → point cloud)
+
+| Format | Status | Typical data | Notes |
+| --- | --- | --- | --- |
+| TIFF (single-band) | Supported | Depth or disparity | Float → meters; int → use sidecar for units/kind. |
+| PNG 16-bit (grayscale) | Supported | Depth or disparity | Use sidecar for units (mm→m) or disparity fx/baseline. |
+| EXR (float) | Supported | Z-depth or range depth | Defaults to Z-depth; use sidecar `kind:"depth"` to force range. |
+| PFM (Pf) | Supported | Float depth or disparity | Single-channel only; disparity needs fx/baseline. |
+| NPY (2D float) | Supported | Depth | Shape (H,W) C-order. |
+| NPZ (with .npy) | Supported | Depth | Prefers `depth.npy`; first array otherwise. |
+| MAT v5 | Planned | Depth or disparity | Not yet supported; save as NPY/NPZ for now. |
+| HDF5 (.h5) | Planned | Depth or disparity | Not yet supported; save as NPY/NPZ/MAT. |
+| ROS bag | Planned | 16UC1/32FC1 depth | Would map to depth readers; future. |
+| ARKit/HEIC with depth | Planned | Depth/disparity | Future via AVDepthData parsing. |
+| COLMAP depth maps | Planned | Float depth | Future support for SfM/MVS outputs. |
+| DPT (OpenCV depth) | Maybe planned | Depth | Niche; add if requested. |
+| Raw binary depth (+ sidecar) | Maybe planned | Depth/disparity | Sidecar to specify width/height/dtype/endianness/kind/units/fx/cx/baseline. |
+| Multi-frame depth sequences | Maybe planned | Temporal depth | Folder/NPZ stack; UI to select frames. |
+
+#### Depth format details
+
+- TIFF (single-band):
+  - Float sample → meters; Integer sample → use sidecar for units (e.g., mm) or disparity
+  - Single channel expected; intrinsics via UI or sidecar
+- PNG 16-bit (grayscale):
+  - Prefer true 16-bit single-channel; if 8-bit, values are quantized
+  - Sidecar controls units/scale (mm→m) or disparity conversion (fx/baseline)
+- EXR (float):
+  - Single-channel or RGBA float; we use the R channel
+  - Defaults to Z-depth (optical axis); set `{"kind":"depth"}` in sidecar for range depth
+- PFM (Pf):
+  - Header lines: `Pf`, then `width height`, then `scale` (negative = little-endian)
+  - Single-channel float32; scanlines stored bottom-to-top (handled internally)
+  - Middlebury disparity PFMs: set sidecar `{"kind":"disparity","fx":...,"baseline":...}`
+- NPY / NPZ:
+  - NPY: 2D C-order float32/float64 array with shape (H, W)
+  - NPZ: archive with one or more NPY arrays; `depth.npy` preferred, otherwise first array used
+- MAT v5 / HDF5 (planned):
+  - Expect a 2D float array; we’ll auto-detect common keys (depth/disp/Z)
+- Raw binary depth (+ sidecar) (maybe planned):
+  - Sidecar schema example:
+    ```json
+    {
+      "width": 640, "height": 480,
+      "dtype": "uint16", "endianness": "little",
+      "kind": "depth", "unit": "millimeter", "scale": 1000,
+      "fx": 525.0, "fy": 525.0, "cx": 319.5, "cy": 239.5,
+      "baseline": 0.054
+    }
+    ```
+
+
+
 ## Feature Requests and Issues
 
 If you have use cases that would be helpful for others or find problems, feel free to suggest them on the [GitHub repository](https://github.com/kleinicke/ply-visualizer/issues). If you know how to fix bugs or how to implement certain features, feel free to contribute.

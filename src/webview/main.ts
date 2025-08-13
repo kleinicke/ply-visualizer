@@ -6636,14 +6636,21 @@ class PLYVisualizer {
             const cx = image.width / 2 - 0.5;
             const cy = image.height / 2 - 0.5;
 
-            // Override depth kind based on UI selection
+            // Override depth kind based on UI selection (safe fallback)
             const meta: any = { ...baseMeta };
             if (cameraParams.depthType === 'disparity') {
-                meta.kind = 'disparity';
-                meta.baseline = (cameraParams.baseline ?? 0) / 1000.0; // mm -> m
+                const fxOk = !!cameraParams.focalLength && cameraParams.focalLength > 0;
+                const blOk = !!cameraParams.baseline && cameraParams.baseline > 0;
+                if (fxOk && blOk) {
+                    meta.kind = 'disparity';
+                    meta.baseline = (cameraParams.baseline as number) / 1000.0; // mm -> m
+                } else {
+                    console.warn('Disparity selected but baseline/focal missing; keeping original kind:', baseMeta.kind);
+                }
             } else if (cameraParams.depthType === 'orthogonal') {
                 meta.kind = 'z';
-            } else {
+            } else if (cameraParams.depthType === 'euclidean') {
+                // Use range depth
                 meta.kind = 'depth';
             }
 

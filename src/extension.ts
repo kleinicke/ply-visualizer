@@ -30,6 +30,30 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // Register generic depth conversion command (PFM/PNG/EXR/NPY/NPZ/MAT/H5)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('plyViewer.convertDepthToPointCloud', async (uri: vscode.Uri) => {
+            try {
+                await vscode.window.withProgress(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: 'Opening depth image for Point Cloud Conversion',
+                        cancellable: false
+                    },
+                    async (progress) => {
+                        progress.report({ message: 'Loading depth file...' });
+                        await vscode.commands.executeCommand('vscode.openWith', uri, 'plyViewer.plyEditor');
+                        progress.report({ message: 'Analyzing depth file...' });
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    }
+                );
+                vscode.window.showInformationMessage('Depth file opened. Camera parameters will be requested after analyzing the image.');
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to open depth for conversion: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        })
+    );
+
     // Register command for opening multiple files
     context.subscriptions.push(
         vscode.commands.registerCommand('plyViewer.openMultipleFiles', async () => {
