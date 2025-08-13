@@ -66,6 +66,71 @@ usemtl red
 - Wireframes render in red by default and overlay existing point clouds
 - Can be added to existing visualizations using "Add Point Cloud" button
 
+## Depth/Disparity import: supported formats and requirements
+
+The viewer can convert depth/disparity images to point clouds. Each format has minimal requirements so the geometry is unambiguous:
+
+- PNG 16-bit (`.png`):
+  - Single-channel 16-bit grayscale preferred; values represent depth or disparity.
+  - If values are millimeters or scaled, provide a sidecar JSON (same folder, same stem + `.json`) with:
+    - `{"kind":"depth","unit":"millimeter","scale":1000}` to convert mm→m; or `{"kind":"disparity","fx":...,"baseline":...}` for disparity.
+  - Without sidecar, values are treated as meters and projected with a pinhole model using focal length from the UI dialog.
+
+- EXR (`.exr`):
+  - Single-channel float or RGBA float; the R channel is used.
+  - Treated as Z-depth (distance along optical axis) in meters by default.
+  - If it encodes range depth, add sidecar: `{"kind":"depth"}`.
+
+- PFM (`.pfm`):
+  - Single-channel float PFM (header `Pf`). The reader assumes values are in meters.
+  - The file must be 2D (H×W). Multichannel `PF` is not supported for depth.
+
+- NPY (`.npy`):
+  - 2D float32/float64 C-order array with shape (H, W). Fortran order is not supported.
+  - Values are interpreted as meters by default. Use sidecar to declare `kind` or units if needed.
+
+- NPZ (`.npz`):
+  - Must contain at least one `.npy` array with shape (H, W), float32/float64.
+  - If multiple arrays exist, a key named `depth.npy` is preferred, otherwise the first array is used.
+
+- TIFF (`.tif`, `.tiff`):
+  - Single-band image. Float sample formats are treated as metric depth. Integer formats are treated as disparity or scaled depth (use sidecar to disambiguate units/kind).
+  - If disparity, provide `{"kind":"disparity","fx":...,"baseline":...}`; baseline in meters.
+
+- MAT v5 (`.mat`):
+  - Must contain a 2D matrix (H×W) named one of `depth`, `D`, `Z`, `disp`, `disparity`.
+  - Values assumed meters unless declared in a sidecar.
+
+- HDF5 (`.h5`):
+  - Not supported yet. Save as `.npy`/`.npz`/`.mat`. Opening will show a message explaining this.
+
+Sidecar JSON example (optional but recommended when units/kind are ambiguous):
+
+```json
+{
+  "kind": "depth",        
+  "unit": "millimeter",   
+  "scale": 1000,           
+  "fx": 525.0, "fy": 525.0, "cx": 319.5, "cy": 239.5,
+  "baseline": 0.054,       
+  "cameraModel": "pinhole",
+  "convention": "opencv"
+}
+```
+
+Notes:
+- If intrinsics are missing in the sidecar, the UI prompts for focal length and model (pinhole/fisheye). The principal point defaults to the image center.
+- Disparity conversion uses `depth = fx * baseline / disparity`.
+- Z-depth vs range-depth: EXR defaults to Z-depth; others default to range-depth unless `kind:"z"` is provided.
+
+### Errors and how to fix them
+- PNG: “Expected single-channel grayscale image” → Save as grayscale; if values are in mm, add sidecar with `unit`/`scale`.
+- EXR: “Failed to parse EXR” or “No float channel found” → Export a float EXR with a depth pass; ensure R holds depth.
+- PFM: “Invalid PFM header” or “Unsupported PFM dims” → Use `Pf` (single-channel) with `(width height)` on the second line and a scale on the third.
+- NPY: “Only float32/float64 and 2D (H, W) arrays supported” → Save as C-order float 2D array.
+- NPZ: “No .npy arrays found” → Include `depth.npy` with a 2D float array.
+- TIFF: “Regular image (not single-channel depth/disparity)” → Use single-band depth/disparity TIFF.
+
 ## Feature Requests and Issues
 
 If you have use cases that would be helpful for others or find problems, feel free to suggest them on the [GitHub repository](https://github.com/kleinicke/ply-visualizer/issues). If you know how to fix bugs or how to implement certain features, feel free to contribute.

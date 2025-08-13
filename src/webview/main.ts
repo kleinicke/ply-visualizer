@@ -47,6 +47,8 @@ interface TifConversionResult {
     vertices: Float32Array;
     colors?: Float32Array;
     pointCount: number;
+    width?: number;
+    height?: number;
 }
 
 /**
@@ -2877,11 +2879,11 @@ class PLYVisualizer {
                     </div>
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
                     
-                    ${this.isTifDerivedFile(data) ? `
-                    <!-- TIF Settings (First) -->
+                    ${this.isDepthDerivedFile(data) ? `
+                    <!-- Depth Settings (First) -->
                     <div class="tif-controls" style="margin-top: 8px;">
                         <button class="tif-settings-toggle" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%;">
-                            <span class="toggle-icon">▶</span> TIF Settings
+                            <span class="toggle-icon">▶</span> ${this.getDepthSettingsLabel(data)}
                         </button>
                         <div class="tif-settings-panel" id="tif-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
                             <div class="tif-group" style="margin-bottom: 8px;">
@@ -3384,7 +3386,7 @@ class PLYVisualizer {
             }
 
             // TIF settings toggle and controls
-            if (this.isTifDerivedFile(this.plyFiles[i])) {
+            if (this.isDepthDerivedFile(this.plyFiles[i])) {
                 const tifToggleBtn = document.querySelector(`.tif-settings-toggle[data-file-index="${i}"]`);
                 const tifPanel = document.getElementById(`tif-panel-${i}`);
                 if (tifToggleBtn && tifPanel) {
@@ -6104,78 +6106,67 @@ class PLYVisualizer {
     private async handleTifData(message: any): Promise<void> {
         try {
             console.log('Received TIF data for processing:', message.fileName);
-            
-            // Generate unique request ID for this TIF file
-            const requestId = `tif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            
-            // Store TIF data in the map
+
+            const isTif = /\.(tif|tiff)$/i.test(message.fileName);
+
+            // Generate unique request ID for this depth file
+            const requestId = `depth_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+            // Store depth data in the map
             this.pendingTifFiles.set(requestId, {
                 data: message.data,
                 fileName: message.fileName,
                 isAddFile: message.isAddFile || false,
                 requestId: requestId
             });
-            
-            // First, analyze the TIF to determine if it's a depth image or regular image
-            const tiff = await GeoTIFF.fromArrayBuffer(message.data);
-            const image = await tiff.getImage();
-            
-            const width = image.getWidth();
-            const height = image.getHeight();
-            const samplesPerPixel = image.getSamplesPerPixel();
-            const sampleFormat = image.getSampleFormat ? image.getSampleFormat() : null;
-            const bitsPerSample = image.getBitsPerSample();
-            
-            console.log(`TIF Analysis: ${width}x${height}, samples: ${samplesPerPixel}, format: ${sampleFormat}, bits: ${bitsPerSample}`);
-            
-            // Determine if this is a depth image or regular image
-            const isDepthImage = this.isDepthTifImage(samplesPerPixel, sampleFormat, bitsPerSample);
-            
-            console.log(`🔍 TIF image classification: ${isDepthImage ? 'DEPTH/DISPARITY IMAGE' : 'REGULAR IMAGE'}`);
-            
-            if (isDepthImage) {
-                console.log('Detected depth TIF image - checking for saved camera parameters...');
-                
-                // Check for saved camera parameters in localStorage
-                const savedParams = this.loadSavedCameraParams();
-                
-                console.log(`🔍 Debug - localStorage key exists: ${!!localStorage.getItem('plyVisualizerCameraParams')}`);
-                console.log(`🔍 Debug - savedParams: ${savedParams ? JSON.stringify(savedParams) : 'null'}`);
-                console.log(`🔍 Debug - First TIF file: ${this.plyFiles.length === 0 ? 'YES' : 'NO'}`);
-                console.log(`🔍 Debug - requestId: ${requestId}`);
-                
-                if (savedParams) {
-                    console.log('✅ Using saved camera parameters:', savedParams);
-                    this.showStatus(`Using saved settings: ${savedParams.cameraModel} camera, focal length ${savedParams.focalLength}px, ${savedParams.depthType} depth...`);
-                    
-                    // Use saved parameters directly
-                    await this.processTifWithParams(requestId, savedParams);
-                } else {
-                    console.log('❓ No saved parameters found - requesting camera parameters from user');
-                    
-                    // Request camera parameters from the extension for depth conversion
-                    this.vscode.postMessage({
-                        type: 'requestCameraParams',
-                        fileName: message.fileName,
-                        requestId: requestId
-                    });
-                    
-                    this.showStatus('Waiting for camera parameters...');
+
+            if (isTif) {
+                // Analyze only for real TIF/TIFF files
+                const tiff = await GeoTIFF.fromArrayBuffer(message.data);
+                const image = await tiff.getImage();
+
+                const width = image.getWidth();
+                const height = image.getHeight();
+                const samplesPerPixel = image.getSamplesPerPixel();
+                const sampleFormat = image.getSampleFormat ? image.getSampleFormat() : null;
+                const bitsPerSample = image.getBitsPerSample();
+
+                console.log(`TIF Analysis: ${width}x${height}, samples: ${samplesPerPixel}, format: ${sampleFormat}, bits: ${bitsPerSample}`);
+
+                const isDepthImage = this.isDepthTifImage(samplesPerPixel, sampleFormat, bitsPerSample);
+                console.log(`🔍 TIF image classification: ${isDepthImage ? 'DEPTH/DISPARITY IMAGE' : 'REGULAR IMAGE'}`);
+
+                if (!isDepthImage) {
+                    const bitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 'unknown';
+                    const formatDesc = sampleFormat === 3 ? 'float' : sampleFormat === 1 ? 'uint' : sampleFormat === 2 ? 'int' : 'unknown';
+                    console.log('Detected regular TIF image - not suitable for point cloud conversion');
+                    this.showError(`This TIF file appears to be a regular image (${samplesPerPixel} channel(s), ${bitDepth}-bit ${formatDesc}) rather than a depth/disparity image. Please use a single-channel depth TIF (floating-point) or disparity TIF (integer or floating-point) for point cloud conversion.`);
+                    this.pendingTifFiles.delete(requestId);
+                    return;
                 }
-            } else {
-                const bitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 'unknown';
-                const formatDesc = sampleFormat === 3 ? 'float' : sampleFormat === 1 ? 'uint' : sampleFormat === 2 ? 'int' : 'unknown';
-                
-                console.log('Detected regular TIF image - not suitable for point cloud conversion');
-                this.showError(`This TIF file appears to be a regular image (${samplesPerPixel} channel(s), ${bitDepth}-bit ${formatDesc}) rather than a depth/disparity image. Please use a single-channel depth TIF (floating-point) or disparity TIF (integer or floating-point) for point cloud conversion.`);
-                
-                // Remove from pending files since we won't process this
-                this.pendingTifFiles.delete(requestId);
             }
-            
+
+            // For both TIF-depth and non-TIF depth formats, request or use saved camera params
+            const savedParams = this.loadSavedCameraParams();
+            if (savedParams) {
+                console.log('✅ Using saved camera parameters:', savedParams);
+                this.showStatus(`Using saved settings: ${savedParams.cameraModel} camera, focal length ${savedParams.focalLength}px, ${savedParams.depthType} depth...`);
+                await this.processTifWithParams(requestId, savedParams);
+            } else {
+                console.log('❓ No saved parameters found - requesting camera parameters from user');
+                this.vscode.postMessage({
+                    type: 'requestCameraParams',
+                    fileName: message.fileName,
+                    requestId: requestId
+                });
+                this.showStatus('Waiting for camera parameters...');
+            }
+
         } catch (error) {
-            console.error('Error handling TIF data:', error);
-            this.showError(`Failed to process TIF data: ${error instanceof Error ? error.message : String(error)}`);
+            console.error('Error handling depth data:', error);
+            const isTif = /\.(tif|tiff)$/i.test(message.fileName);
+            const label = isTif ? 'TIF' : 'depth';
+            this.showError(`Failed to process ${label} data: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -6408,23 +6399,29 @@ class PLYVisualizer {
         this.originalTifFileName = tifFileData.fileName;
         this.currentCameraParams = cameraParams;
 
-        // Process the TIF data
+        // Process the depth data (TIF or other formats)
         const result = await this.processTifToPointCloud(tifFileData.data, cameraParams);
-        
-        // Store TIF dimensions for color validation
-        const tiff = await GeoTIFF.fromArrayBuffer(tifFileData.data);
-        const image = await tiff.getImage();
-        this.tifDimensions = {
-            width: image.getWidth(),
-            height: image.getHeight()
-        };
+
+        // If and only if this is a TIFF, read dimensions via GeoTIFF for color validation
+        const isTif = /\.(tif|tiff)$/i.test(tifFileData.fileName);
+        if (isTif) {
+            const tiff = await GeoTIFF.fromArrayBuffer(tifFileData.data);
+            const image = await tiff.getImage();
+            this.tifDimensions = {
+                width: image.getWidth(),
+                height: image.getHeight()
+            };
+        } else {
+            // Use projector-reported dimensions when available
+            this.tifDimensions = (result.width && result.height) ? { width: result.width, height: result.height } : null as any;
+        }
 
         // Store TIF data for this specific file (will be updated with fileIndex after adding to plyFiles)
         const tempTifData = {
             originalData: tifFileData.data,
             cameraParams: cameraParams,
             fileName: tifFileData.fileName,
-            tifDimensions: this.tifDimensions
+            tifDimensions: this.tifDimensions || { width: result.pointCount > 0 ? Math.sqrt(result.pointCount) : 0, height: result.pointCount > 0 ? Math.sqrt(result.pointCount) : 0 }
         };
         
         // Create PLY data structure
@@ -6434,7 +6431,7 @@ class PLYVisualizer {
             format: 'binary_little_endian',
             version: '1.0',
             comments: [
-            `Converted from TIF depth image: ${tifFileData.fileName}`, 
+            `${isTif ? 'Converted from TIF depth image' : 'Converted from depth image'}: ${tifFileData.fileName}`, 
             `Camera: ${cameraParams.cameraModel}`, 
             `Depth type: ${cameraParams.depthType}`,
             `Focal length: ${cameraParams.focalLength}px`,
@@ -6444,7 +6441,11 @@ class PLYVisualizer {
             faceCount: 0,
             hasColors: !!result.colors,
             hasNormals: false,
-            fileName: tifFileData.fileName.replace(/\.(tif|tiff)$/i, '_pointcloud.ply'),
+            fileName: ((): string => {
+                if (isTif) return tifFileData.fileName.replace(/\.(tif|tiff)$/i, '_pointcloud.ply');
+                if (/\.[^/.]+$/.test(tifFileData.fileName)) return tifFileData.fileName.replace(/\.[^/.]+$/, '_pointcloud.ply');
+                return tifFileData.fileName + '_pointcloud.ply';
+            })(),
             fileIndex: this.plyFiles.length
         };
 
@@ -6625,16 +6626,26 @@ class PLYVisualizer {
     private async processTifToPointCloud(tifData: ArrayBuffer, cameraParams: CameraParams): Promise<TifConversionResult> {
         const { registerDefaultReaders, readDepth } = await import('./depth/DepthRegistry');
         const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
-        const { findReader } = await import('./depth/DepthRegistry');
         try {
             registerDefaultReaders();
             const filename = this.originalTifFileName || 'image.tif';
-            const { image, meta } = await readDepth(filename, tifData);
+            const { image, meta: baseMeta } = await readDepth(filename, tifData);
             // Fill intrinsics from UI cameraParams if not present
             const fx = cameraParams.focalLength;
             const fy = cameraParams.focalLength;
             const cx = image.width / 2 - 0.5;
             const cy = image.height / 2 - 0.5;
+
+            // Override depth kind based on UI selection
+            const meta: any = { ...baseMeta };
+            if (cameraParams.depthType === 'disparity') {
+                meta.kind = 'disparity';
+                meta.baseline = (cameraParams.baseline ?? 0) / 1000.0; // mm -> m
+            } else if (cameraParams.depthType === 'orthogonal') {
+                meta.kind = 'z';
+            } else {
+                meta.kind = 'depth';
+            }
 
             const norm = normalizeDepth(image, {
                 ...meta,
@@ -7473,6 +7484,19 @@ class PLYVisualizer {
         const comments = (data as any)?.comments;
         if (!Array.isArray(comments)) return false;
         return comments.some((comment: string) => typeof comment === 'string' && comment.includes('Converted from TIF depth image'));
+    }
+
+    private isDepthDerivedFile(data: PlyData): boolean {
+        const comments = (data as any)?.comments;
+        if (!Array.isArray(comments)) return false;
+        return comments.some((comment: string) => typeof comment === 'string' && (comment.includes('Converted from depth image') || comment.includes('Converted from TIF depth image')));
+    }
+
+    private getDepthSettingsLabel(data: PlyData): string {
+        const comments = (data as any)?.comments;
+        if (!Array.isArray(comments)) return 'Depth Settings';
+        const fromTif = comments.some((c: string) => typeof c === 'string' && c.includes('Converted from TIF depth image'));
+        return fromTif ? 'TIF Settings' : 'Depth Settings';
     }
 
     private getTifSetting(data: PlyData, setting: 'camera' | 'depth'): string {

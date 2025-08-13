@@ -18,12 +18,21 @@ export function registerDefaultReaders(): void {
   const { ExrReader } = require('./readers/ExrReader');
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { NpyReader } = require('./readers/NpyReader');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { NpzReader } = require('./readers/NpzReader');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { MatReader } = require('./readers/MatReader');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { Hdf5Reader } = require('./readers/Hdf5Reader');
 
   registerReader(new TiffReader());
   registerReader(new Png16Reader());
   registerReader(new PfmReader());
   registerReader(new ExrReader());
   registerReader(new NpyReader());
+  registerReader(new NpzReader());
+  registerReader(new MatReader());
+  registerReader(new Hdf5Reader());
 }
 
 export function findReader(filename: string, mimeType?: string): DepthReader | undefined {

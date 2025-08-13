@@ -4,6 +4,8 @@ export interface PointCloudResult {
   vertices: Float32Array;
   colors?: Float32Array;
   pointCount: number;
+  width?: number;
+  height?: number;
 }
 
 export function projectToPointCloud(
@@ -90,6 +92,8 @@ export function projectToPointCloud(
     vertices,
     colors: colors.length ? new Float32Array(colors) : undefined,
     pointCount: points.length / 3,
+    width,
+    height,
   };
 }
 
