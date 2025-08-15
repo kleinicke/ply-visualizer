@@ -295,6 +295,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         const geotiffPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'geotiff.min.js');
         const geotiffUri = webview.asWebviewUri(geotiffPathOnDisk).toString();
 
+        // Add h5wasm library for HDF5 support
+        const h5wasmPathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', 'h5wasm', 'dist', 'iife', 'h5wasm.js');
+        const h5wasmUri = webview.asWebviewUri(h5wasmPathOnDisk).toString();
+
         // Use a nonce to only allow specific scripts to be run
         const nonce = getNonce();
 
@@ -480,6 +484,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 </div>
                 
                 <script nonce="${nonce}" src="${geotiffUri}"></script>
+                <script nonce="${nonce}" src="${h5wasmUri}"></script>
                 <!-- Load bundled webview script with Three.js -->
                 <script nonce="${nonce}" src="${scriptUri}"></script>
             </body>
