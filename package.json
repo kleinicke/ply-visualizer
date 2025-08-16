@@ -48,6 +48,12 @@
           },
           {
             "filenamePattern": "*.pfm"
+          },
+          {
+            "filenamePattern": "*.npy"
+          },
+          {
+            "filenamePattern": "*.npz"
           }
         ]
       }
@@ -77,6 +83,11 @@
         "command": "plyViewer.convertDepthToPointCloud",
         "title": "Convert PFM to Point Cloud",
         "category": "PLY Visualizer"
+      },
+      {
+        "command": "plyViewer.convertNpyToPointCloud",
+        "title": "Convert NPY/NPZ to Point Cloud",
+        "category": "PLY Visualizer"
       }
     ],
     "menus": {
@@ -94,6 +105,11 @@
         {
           "command": "plyViewer.convertDepthToPointCloud", 
           "when": "resourceExtname == .pfm",
+          "group": "navigation"
+        },
+        {
+          "command": "plyViewer.convertNpyToPointCloud",
+          "when": "resourceExtname == .npy || resourceExtname == .npz",
           "group": "navigation"
         },
         {

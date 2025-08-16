@@ -34,7 +34,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         const filePath = document.uri.fsPath.toLowerCase();
         const isTifFile = filePath.endsWith('.tif') || filePath.endsWith('.tiff');
         const isPfmFile = filePath.endsWith('.pfm');
-        const isDepthFile = isTifFile || isPfmFile;
+        const isNpyFile = filePath.endsWith('.npy') || filePath.endsWith('.npz');
+        const isDepthFile = isTifFile || isPfmFile || isNpyFile;
         const isObjFile = filePath.endsWith('.obj');
         const isJsonFile = filePath.endsWith('.json');
         
@@ -47,6 +48,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             fileName: path.basename(document.uri.fsPath),
             isTifFile: isTifFile,
             isPfmFile: isPfmFile,
+            isNpyFile: isNpyFile,
             isDepthFile: isDepthFile,
             isObjFile: isObjFile
         });
@@ -58,8 +60,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 const wallStart = new Date().toISOString();
                 
                 if (isDepthFile) {
-                    // Handle depth files (TIF, PFM) for point cloud conversion
-                    const fileType = isPfmFile ? 'PFM' : 'TIF';
+                    // Handle depth files (TIF, PFM, NPY, NPZ) for point cloud conversion
+                    const fileType = isPfmFile ? 'PFM' : isNpyFile ? 'NPY' : 'TIF';
                     webviewPanel.webview.postMessage({
                         type: 'timingUpdate',
                         message: `🚀 Extension: Starting ${fileType} file processing for depth conversion...`,
@@ -501,7 +503,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             canSelectMany: true,
             filters: {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'Point Cloud & Pose Files': ['ply', 'xyz', 'obj', 'tif', 'tiff', 'pfm', 'json'],
+                'Point Cloud & Pose Files': ['ply', 'xyz', 'obj', 'tif', 'tiff', 'pfm', 'npy', 'npz', 'json'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'PLY Files': ['ply'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -509,7 +511,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'OBJ Wireframes': ['obj'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'Depth Images': ['tif', 'tiff', 'pfm'],
+                'Depth Images': ['tif', 'tiff', 'pfm', 'npy', 'npz'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'Pose JSON': ['json']
             },
@@ -525,7 +527,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     console.log(`🚀 ULTIMATE: Processing add file ${fileName} (${fileExtension})`);
                     
                     // Handle different file types
-                    if (fileExtension === '.tif' || fileExtension === '.tiff' || fileExtension === '.pfm') {
+                    if (fileExtension === '.tif' || fileExtension === '.tiff' || fileExtension === '.pfm' || fileExtension === '.npy' || fileExtension === '.npz') {
                         // Handle depth files for conversion
                         const depthData = await vscode.workspace.fs.readFile(files[i]);
                         
@@ -657,7 +659,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     }
 
                     // Unsupported file type
-                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .tif, .tiff, .pfm, .json`);
+                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .tif, .tiff, .pfm, .npy, .npz, .json`);
                     
                 } catch (error) {
                     console.error(`Failed to load file ${files[i].fsPath}:`, error);

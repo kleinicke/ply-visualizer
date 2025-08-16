@@ -20,6 +20,11 @@ export interface DepthMetadata {
   cameraModel?: CameraModel;
   convention?: 'opencv' | 'opengl';
   depthClamp?: { min?: number; max?: number };
+  // NPZ-specific metadata
+  availableArrays?: { [key: string]: { shape: number[], dtype: string } };
+  requiresConfiguration?: boolean;
+  selectedArray?: string;
+  selectedChannel?: number;
 }
 
 export interface DepthReaderResult {

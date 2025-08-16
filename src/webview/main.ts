@@ -6421,6 +6421,7 @@ class PLYVisualizer {
 
             const isTif = /\.(tif|tiff)$/i.test(message.fileName);
             const isPfm = /\.pfm$/i.test(message.fileName);
+            const isNpy = /\.(npy|npz)$/i.test(message.fileName);
 
             if (isTif) {
                 // For TIF files, check if it's a depth image
@@ -6441,9 +6442,12 @@ class PLYVisualizer {
                     this.pendingTifFiles.delete(requestId);
                     return;
                 }
+            } else if (isNpy) {
+                // NPY files are assumed to be depth data - no additional validation needed
+                console.log('Detected NPY/NPZ file - treating as depth data');
             }
 
-            // For both TIF-depth and PFM formats, use saved default settings initially
+            // For TIF-depth, PFM, and NPY formats, use saved default settings initially
             const defaultSettings: CameraParams = {
                 cameraModel: this.defaultDepthSettings.cameraModel,
                 focalLength: this.defaultDepthSettings.focalLength,
@@ -6458,7 +6462,8 @@ class PLYVisualizer {
         } catch (error) {
             console.error('Error handling depth data:', error);
             const isTif = /\.(tif|tiff)$/i.test(message.fileName);
-            const label = isTif ? 'TIF' : 'depth';
+            const isNpy = /\.(npy|npz)$/i.test(message.fileName);
+            const label = isTif ? 'TIF' : isNpy ? 'NPY' : 'depth';
             this.showError(`Failed to process ${label} data: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
@@ -6483,7 +6488,8 @@ class PLYVisualizer {
 
         const isPfm = /\.pfm$/i.test(depthFileData.fileName);
         const isTif = /\.(tif|tiff)$/i.test(depthFileData.fileName);
-        const fileType = isPfm ? 'PFM' : 'TIF';
+        const isNpy = /\.(npy|npz)$/i.test(depthFileData.fileName);
+        const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : 'TIF';
 
         // Create PLY data structure with vertices converted from typed arrays
         const vertices: PlyVertex[] = [];
@@ -8085,7 +8091,8 @@ class PLYVisualizer {
             }
 
             const isPfm = /\.pfm$/i.test(depthData.fileName);
-            const fileType = isPfm ? 'PFM' : 'TIF';
+            const isNpy = /\.(npy|npz)$/i.test(depthData.fileName);
+            const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : 'TIF';
             this.showStatus(`Reprocessing ${fileType} with new settings...`);
 
             // Process the depth data with new parameters using the new system

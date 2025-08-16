@@ -12,9 +12,12 @@ export function registerDefaultReaders(): void {
   const { PfmReader } = require('./readers/PfmReader');
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { TifReader } = require('./readers/TifReader');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { NpyReader } = require('./readers/NpyReader');
 
   registerReader(new PfmReader());
   registerReader(new TifReader());
+  registerReader(new NpyReader());
 }
 
 export function findReader(filename: string, mimeType?: string): DepthReader | undefined {
