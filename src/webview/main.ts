@@ -41,6 +41,7 @@ interface CameraParams {
     focalLength: number;
     depthType: 'euclidean' | 'orthogonal' | 'disparity';
     baseline?: number; // Required for disparity mode
+    convention?: 'opengl' | 'opencv'; // Coordinate convention
 }
 
 interface TifConversionResult {
@@ -557,6 +558,14 @@ class PLYVisualizer {
     private useLinearColorSpace: boolean = true; // Default: toggle is inactive; renderer still outputs sRGB
     private axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
     // Color space handling: always output sRGB, optionally convert source sRGB colors to linear before shading
+
+    // Default depth settings for new files
+    private defaultDepthSettings: CameraParams = {
+        focalLength: 1000,
+        cameraModel: 'pinhole',
+        depthType: 'euclidean',
+        convention: 'opengl'
+    };
     private convertSrgbToLinear: boolean = true; // Default: remove gamma from source colors
     private srgbToLinearLUT: Float32Array | null = null;
     private lastGeometryMs: number = 0;
@@ -596,6 +605,12 @@ class PLYVisualizer {
             this.initThreeJS();
             this.setupEventListeners();
             this.setupMessageHandler();
+            
+            // Request default depth settings from extension
+            console.log('📤 Requesting default depth settings from extension...');
+            this.vscode.postMessage({
+                type: 'requestDefaultDepthSettings'
+            });
         } catch (error) {
             this.showError(`Failed to initialize PLY Visualizer: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -2255,7 +2270,25 @@ class PLYVisualizer {
             }
         });
 
+        // Depth control handlers are now handled per-file in updateFileList
+
         // Global color mode toggle (removed - now handled per file)
+    }
+
+    private getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
+        const cameraModelSelect = document.getElementById(`camera-model-${fileIndex}`) as HTMLSelectElement;
+        const focalLengthInput = document.getElementById(`focal-length-${fileIndex}`) as HTMLInputElement;
+        const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
+        const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
+        const conventionSelect = document.getElementById(`convention-${fileIndex}`) as HTMLSelectElement;
+
+        return {
+            cameraModel: (cameraModelSelect?.value as 'pinhole' | 'fisheye') || 'pinhole',
+            focalLength: parseFloat(focalLengthInput?.value || '1000'),
+            depthType: (depthTypeSelect?.value as 'euclidean' | 'orthogonal' | 'disparity') || 'euclidean',
+            baseline: depthTypeSelect?.value === 'disparity' ? parseFloat(baselineInput?.value || '120') : undefined,
+            convention: (conventionSelect?.value as 'opengl' | 'opencv') || 'opengl'
+        };
     }
 
     private rebuildAllPlyMaterials(): void {
@@ -2502,7 +2535,7 @@ class PLYVisualizer {
                     this.handleTimingMessage(message);
                     break;
                 case 'startLoading':
-                    this.showImmediateLoading(message.fileName);
+                    this.showImmediateLoading(message);
                     break;
                 case 'timingUpdate':
                     // Allow timing updates, suppress other spam
@@ -2576,6 +2609,9 @@ class PLYVisualizer {
                 case 'tifData':
                     this.handleTifData(message);
                     break;
+                case 'depthData':
+                    this.handleDepthData(message);
+                    break;
                 case 'objData':
                     this.handleObjData(message);
                     break;
@@ -2596,6 +2632,9 @@ class PLYVisualizer {
                     break;
                 case 'colorImageData':
                     this.handleColorImageData(message);
+                    break;
+                case 'defaultDepthSettings':
+                    this.handleDefaultDepthSettings(message);
                     break;
                 case 'mtlData':
                     this.handleMtlData(message);
@@ -2877,10 +2916,10 @@ class PLYVisualizer {
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
                     
                     ${this.isTifDerivedFile(data) ? `
-                    <!-- TIF Settings (First) -->
+                    <!-- Depth Settings (First) -->
                     <div class="tif-controls" style="margin-top: 8px;">
                         <button class="tif-settings-toggle" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%;">
-                            <span class="toggle-icon">▶</span> TIF Settings
+                            <span class="toggle-icon">▶</span> Depth Settings
                         </button>
                         <div class="tif-settings-panel" id="tif-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
                             <div class="tif-group" style="margin-bottom: 8px;">
@@ -2907,6 +2946,13 @@ class PLYVisualizer {
                                 <input type="number" id="baseline-${i}" value="${this.getTifBaseline(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                             </div>
                             <div class="tif-group" style="margin-bottom: 8px;">
+                                <label for="convention-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Coordinate Convention:</label>
+                                <select id="convention-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
+                                    <option value="opengl" ${this.getDepthConvention(data) === 'opengl' ? 'selected' : ''}>OpenGL (Y-up, Z-backward)</option>
+                                    <option value="opencv" ${this.getDepthConvention(data) === 'opencv' ? 'selected' : ''}>OpenCV (Y-down, Z-forward)</option>
+                                </select>
+                            </div>
+                            <div class="tif-group" style="margin-bottom: 8px;">
                                 <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Color Image (optional):</label>
                                 <button class="select-color-image" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px; text-align: left;">📁 Select Color Image...</button>
                                 ${this.getStoredColorImageName(i) ? `<div style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-top: 2px; display: flex; align-items: center; gap: 4px;">📷 Current: ${this.getStoredColorImageName(i)} <button class="remove-color-image" data-file-index="${i}" style="font-size: 8px; padding: 1px 4px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer;">✕</button></div>` : ''}
@@ -2915,6 +2961,9 @@ class PLYVisualizer {
                                 <div style="display: flex; gap: 4px;">
                                     <button class="apply-tif-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">Apply Settings</button>
                                     <button class="save-ply-file" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">💾 Save PLY</button>
+                                </div>
+                                <div style="display: flex; gap: 4px; margin-top: 4px;">
+                                    <button class="use-as-default-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">⭐ Use as Default</button>
                                 </div>
                             </div>
                         </div>
@@ -3413,6 +3462,14 @@ class PLYVisualizer {
                 if (applyTifBtn) {
                     applyTifBtn.addEventListener('click', async () => {
                         await this.applyTifSettings(i);
+                    });
+                }
+
+                // Use as Default settings button
+                const useAsDefaultBtn = document.querySelector(`.use-as-default-settings[data-file-index="${i}"]`);
+                if (useAsDefaultBtn) {
+                    useAsDefaultBtn.addEventListener('click', async () => {
+                        await this.useAsDefaultSettings(i);
                     });
                 }
 
@@ -3984,7 +4041,8 @@ class PLYVisualizer {
         this.updateFileList();
     }
 
-    private showImmediateLoading(fileName: string): void {
+    private showImmediateLoading(message: any): void {
+        const fileName = message.fileName;
         const uiStartTime = performance.now();
         console.log(`Load: UI start ${fileName} at ${uiStartTime.toFixed(1)}ms`);
         
@@ -4013,6 +4071,8 @@ class PLYVisualizer {
         if (viewerContainerEl) {
             viewerContainerEl.style.visibility = 'visible';
         }
+        
+        // Keep the Files tab active for all files (depth controls are in Files tab)
         
         // Update file stats with placeholder
         this.updateFileStatsImmediate(fileName);
@@ -6133,34 +6193,20 @@ class PLYVisualizer {
             console.log(`🔍 TIF image classification: ${isDepthImage ? 'DEPTH/DISPARITY IMAGE' : 'REGULAR IMAGE'}`);
             
             if (isDepthImage) {
-                console.log('Detected depth TIF image - checking for saved camera parameters...');
+                console.log('Detected depth TIF image - using UI settings...');
                 
-                // Check for saved camera parameters in localStorage
-                const savedParams = this.loadSavedCameraParams();
+                // Use default settings for initial processing
+                const defaultSettings: CameraParams = {
+                    cameraModel: 'pinhole',
+                    focalLength: 1000,
+                    depthType: 'euclidean',
+                    convention: 'opengl'
+                };
+                console.log('✅ Using default depth settings for TIF:', defaultSettings);
+                this.showStatus(`Converting TIF depth image: ${defaultSettings.cameraModel} camera, focal length ${defaultSettings.focalLength}px, ${defaultSettings.depthType} depth, ${defaultSettings.convention} convention...`);
                 
-                console.log(`🔍 Debug - localStorage key exists: ${!!localStorage.getItem('plyVisualizerCameraParams')}`);
-                console.log(`🔍 Debug - savedParams: ${savedParams ? JSON.stringify(savedParams) : 'null'}`);
-                console.log(`🔍 Debug - First TIF file: ${this.plyFiles.length === 0 ? 'YES' : 'NO'}`);
-                console.log(`🔍 Debug - requestId: ${requestId}`);
-                
-                if (savedParams) {
-                    console.log('✅ Using saved camera parameters:', savedParams);
-                    this.showStatus(`Using saved settings: ${savedParams.cameraModel} camera, focal length ${savedParams.focalLength}px, ${savedParams.depthType} depth...`);
-                    
-                    // Use saved parameters directly
-                    await this.processTifWithParams(requestId, savedParams);
-                } else {
-                    console.log('❓ No saved parameters found - requesting camera parameters from user');
-                    
-                    // Request camera parameters from the extension for depth conversion
-                    this.vscode.postMessage({
-                        type: 'requestCameraParams',
-                        fileName: message.fileName,
-                        requestId: requestId
-                    });
-                    
-                    this.showStatus('Waiting for camera parameters...');
-                }
+                // Process the TIF file with default settings
+                await this.processDepthWithParams(requestId, defaultSettings);
             } else {
                 const bitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 'unknown';
                 const formatDesc = sampleFormat === 3 ? 'float' : sampleFormat === 1 ? 'uint' : sampleFormat === 2 ? 'int' : 'unknown';
@@ -6175,6 +6221,197 @@ class PLYVisualizer {
         } catch (error) {
             console.error('Error handling TIF data:', error);
             this.showError(`Failed to process TIF data: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handleDepthData(message: any): Promise<void> {
+        try {
+            console.log('Received depth data for processing:', message.fileName);
+            
+            // Generate unique request ID for this depth file
+            const requestId = `depth_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            
+            // Store depth data in the map
+            this.pendingTifFiles.set(requestId, {
+                data: message.data,
+                fileName: message.fileName,
+                isAddFile: message.isAddFile || false,
+                requestId: requestId
+            });
+
+            const isTif = /\.(tif|tiff)$/i.test(message.fileName);
+            const isPfm = /\.pfm$/i.test(message.fileName);
+
+            if (isTif) {
+                // For TIF files, check if it's a depth image
+                const tiff = await GeoTIFF.fromArrayBuffer(message.data);
+                const image = await tiff.getImage();
+                
+                const samplesPerPixel = image.getSamplesPerPixel();
+                const sampleFormat = image.getSampleFormat ? image.getSampleFormat() : null;
+                const bitsPerSample = image.getBitsPerSample();
+                
+                const isDepthImage = this.isDepthTifImage(samplesPerPixel, sampleFormat, bitsPerSample);
+                
+                if (!isDepthImage) {
+                    const bitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 'unknown';
+                    const formatDesc = sampleFormat === 3 ? 'float' : sampleFormat === 1 ? 'uint' : sampleFormat === 2 ? 'int' : 'unknown';
+                    console.log('Detected regular TIF image - not suitable for point cloud conversion');
+                    this.showError(`This TIF file appears to be a regular image (${samplesPerPixel} channel(s), ${bitDepth}-bit ${formatDesc}) rather than a depth/disparity image. Please use a single-channel depth TIF (floating-point) or disparity TIF (integer or floating-point) for point cloud conversion.`);
+                    this.pendingTifFiles.delete(requestId);
+                    return;
+                }
+            }
+
+            // For both TIF-depth and PFM formats, use default settings initially
+            const defaultSettings: CameraParams = {
+                cameraModel: 'pinhole',
+                focalLength: 1000,
+                depthType: 'euclidean',
+                convention: 'opengl'
+            };
+            console.log('✅ Using default depth settings:', defaultSettings);
+            this.showStatus(`Converting depth image: ${defaultSettings.cameraModel} camera, focal length ${defaultSettings.focalLength}px, ${defaultSettings.depthType} depth, ${defaultSettings.convention} convention...`);
+            await this.processDepthWithParams(requestId, defaultSettings);
+
+        } catch (error) {
+            console.error('Error handling depth data:', error);
+            const isTif = /\.(tif|tiff)$/i.test(message.fileName);
+            const label = isTif ? 'TIF' : 'depth';
+            this.showError(`Failed to process ${label} data: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async processDepthWithParams(requestId: string, cameraParams: CameraParams): Promise<void> {
+        const depthFileData = this.pendingTifFiles.get(requestId);
+        if (!depthFileData) {
+            console.error('Depth file data not found for requestId:', requestId);
+            return;
+        }
+
+        console.log('Processing depth with camera params:', cameraParams);
+        this.showStatus('Converting depth image to point cloud...');
+
+        // Store original data for re-processing
+        this.originalTifData = depthFileData.data;
+        this.originalTifFileName = depthFileData.fileName;
+        this.currentCameraParams = cameraParams;
+
+        // Process the depth data using the new depth processing system
+        const result = await this.processDepthToPointCloud(depthFileData.data, depthFileData.fileName, cameraParams);
+
+        const isPfm = /\.pfm$/i.test(depthFileData.fileName);
+        const isTif = /\.(tif|tiff)$/i.test(depthFileData.fileName);
+        const fileType = isPfm ? 'PFM' : 'TIF';
+
+        // Create PLY data structure with vertices converted from typed arrays
+        const vertices: PlyVertex[] = [];
+        for (let i = 0; i < result.pointCount; i++) {
+            const vertex: PlyVertex = {
+                x: result.vertices[i * 3],
+                y: result.vertices[i * 3 + 1],
+                z: result.vertices[i * 3 + 2]
+            };
+            if (result.colors) {
+                vertex.red = Math.round(result.colors[i * 3] * 255);
+                vertex.green = Math.round(result.colors[i * 3 + 1] * 255);
+                vertex.blue = Math.round(result.colors[i * 3 + 2] * 255);
+            }
+            vertices.push(vertex);
+        }
+
+        const plyData: PlyData = {
+            vertices: vertices,
+            faces: [],
+            vertexCount: result.pointCount,
+            hasColors: !!result.colors,
+            hasNormals: false,
+            faceCount: 0,
+            fileName: depthFileData.fileName,
+            fileIndex: depthFileData.isAddFile ? this.plyFiles.length : 0,
+            format: 'binary_little_endian',
+            version: '1.0',
+            comments: [
+                `Converted from ${fileType} depth image: ${depthFileData.fileName}`, 
+                `Camera: ${cameraParams.cameraModel}`, 
+                `Depth type: ${cameraParams.depthType}`,
+                `Focal length: ${cameraParams.focalLength}px`,
+                ...(cameraParams.baseline ? [`Baseline: ${cameraParams.baseline}mm`] : [])
+            ]
+        };
+
+        console.log(`${fileType} to PLY conversion complete: ${result.pointCount} points`);
+
+        // Add to scene
+        if (depthFileData.isAddFile) {
+            this.addNewFiles([plyData]);
+        } else {
+            await this.displayFiles([plyData]);
+        }
+
+        // Cache the depth file data for later reprocessing (using the file index)
+        const fileIndex = plyData.fileIndex || 0;
+        this.fileTifData.set(fileIndex, {
+            originalData: depthFileData.data,
+            fileName: depthFileData.fileName,
+            cameraParams: cameraParams,
+            tifDimensions: {
+                width: (result as any).width || 0,
+                height: (result as any).height || 0
+            }
+        });
+
+        // Clean up
+        this.pendingTifFiles.delete(requestId);
+        this.showStatus(`${fileType} to point cloud conversion complete: ${result.pointCount} points`);
+    }
+
+    private async processDepthToPointCloud(depthData: ArrayBuffer, fileName: string, cameraParams: CameraParams): Promise<TifConversionResult> {
+        const { registerDefaultReaders, readDepth } = await import('./depth/DepthRegistry');
+        const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
+        try {
+            registerDefaultReaders();
+            
+            const { image, meta: baseMeta } = await readDepth(fileName, depthData);
+            
+            // Set up camera parameters
+            const fx = cameraParams.focalLength;
+            const fy = cameraParams.focalLength;
+            const cx = image.width / 2 - 0.5;
+            const cy = image.height / 2 - 0.5;
+
+            // Override depth kind based on UI selection
+            const meta: any = { ...baseMeta };
+            if (cameraParams.depthType === 'disparity') {
+                const fxOk = !!cameraParams.focalLength && cameraParams.focalLength > 0;
+                const blOk = !!cameraParams.baseline && cameraParams.baseline > 0;
+                if (fxOk && blOk) {
+                    meta.kind = 'disparity';
+                    meta.baseline = cameraParams.baseline! / 1000; // Convert mm to meters
+                } else {
+                    console.warn('Disparity selected but baseline/focal missing; keeping original kind:', baseMeta.kind);
+                }
+            } else if (cameraParams.depthType === 'orthogonal') {
+                meta.kind = 'z';
+            } else if (cameraParams.depthType === 'euclidean') {
+                meta.kind = 'depth';
+            }
+
+            const norm = normalizeDepth(image, {
+                ...meta,
+                fx, fy, cx, cy,
+                baseline: meta.baseline
+            });
+
+            const result = projectToPointCloud(norm, {
+                kind: meta.kind,
+                fx, fy, cx, cy,
+                cameraModel: cameraParams.cameraModel,
+                convention: cameraParams.convention || 'opengl' // Use selected convention, default to OpenGL
+            });
+            return result as unknown as TifConversionResult;
+        } catch (error) {
+            throw new Error(`Failed to process depth file: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -6356,15 +6593,16 @@ class PLYVisualizer {
                 cameraModel: message.cameraModel,
                 focalLength: message.focalLength,
                 depthType: message.depthType || 'euclidean', // Default to euclidean for backward compatibility
-                baseline: message.baseline
+                baseline: message.baseline,
+                convention: message.convention || 'opengl' // Default to OpenGL convention
             };
 
             // Save camera parameters for future use
             this.saveCameraParams(cameraParams);
             console.log('✅ Camera parameters saved for future TIF files');
             
-            // Process the TIF file
-            await this.processTifWithParams(requestId, cameraParams);
+            // Process the depth file (could be TIF or PFM)
+            await this.processDepthWithParams(requestId, cameraParams);
             
         } catch (error) {
             console.error('Error processing TIF with camera params:', error);
@@ -7526,12 +7764,19 @@ class PLYVisualizer {
     private isTifDerivedFile(data: PlyData): boolean {
         const comments = (data as any)?.comments;
         if (!Array.isArray(comments)) return false;
-        return comments.some((comment: string) => typeof comment === 'string' && comment.includes('Converted from TIF depth image'));
+        return comments.some((comment: string) => 
+            typeof comment === 'string' && 
+            (comment.includes('Converted from TIF depth image') || comment.includes('Converted from PFM depth image'))
+        );
     }
 
     private getTifSetting(data: PlyData, setting: 'camera' | 'depth'): string {
         const comments = (data as any)?.comments;
-        if (!Array.isArray(comments)) return '';
+        if (!Array.isArray(comments)) {
+            if (setting === 'camera') return this.defaultDepthSettings.cameraModel;
+            if (setting === 'depth') return this.defaultDepthSettings.depthType;
+            return '';
+        }
         for (const comment of comments) {
             if (setting === 'camera' && comment.startsWith('Camera: ')) {
                 return comment.replace('Camera: ', '').toLowerCase();
@@ -7540,31 +7785,51 @@ class PLYVisualizer {
                 return comment.replace('Depth: ', '').toLowerCase();
             }
         }
+        // Return default settings if no setting found in comments
+        if (setting === 'camera') return this.defaultDepthSettings.cameraModel;
+        if (setting === 'depth') return this.defaultDepthSettings.depthType;
         return '';
     }
 
     private getTifFocalLength(data: PlyData): number {
         const comments = (data as any)?.comments;
-        if (!Array.isArray(comments)) return 500;
+        if (!Array.isArray(comments)) return this.defaultDepthSettings.focalLength;
         for (const comment of comments) {
             if (comment.startsWith('Focal length: ')) {
                 const match = comment.match(/(\d+(?:\.\d+)?)px/);
-                return match ? parseFloat(match[1]) : 500;
+                return match ? parseFloat(match[1]) : this.defaultDepthSettings.focalLength;
             }
         }
-        return 500; // Default focal length
+        return this.defaultDepthSettings.focalLength; // Use default focal length
     }
 
     private getTifBaseline(data: PlyData): number {
         const comments = (data as any)?.comments;
-        if (!Array.isArray(comments)) return 50;
+        if (!Array.isArray(comments)) return this.defaultDepthSettings.baseline || 50;
         for (const comment of comments) {
             if (comment.startsWith('Baseline: ')) {
                 const match = comment.match(/(\d+(?:\.\d+)?)mm/);
-                return match ? parseFloat(match[1]) : 50;
+                return match ? parseFloat(match[1]) : this.defaultDepthSettings.baseline || 50;
             }
         }
-        return 50; // Default baseline for disparity
+        return this.defaultDepthSettings.baseline || 50; // Use default baseline
+    }
+
+    private getDepthConvention(data: PlyData): 'opengl' | 'opencv' {
+        // Check if this file was processed with a specific convention
+        const comments = (data as any)?.comments;
+        if (Array.isArray(comments)) {
+            for (const comment of comments) {
+                if (comment.includes('Convention: ')) {
+                    const convention = comment.replace('Convention: ', '').toLowerCase();
+                    if (convention === 'opencv' || convention === 'opengl') {
+                        return convention as 'opengl' | 'opencv';
+                    }
+                }
+            }
+        }
+        // Use default convention from settings
+        return this.defaultDepthSettings.convention || 'opengl';
     }
 
     private getStoredColorImageName(fileIndex: number): string | null {
@@ -7600,22 +7865,8 @@ class PLYVisualizer {
 
     private async applyTifSettings(fileIndex: number): Promise<void> {
         try {
-            // Get the current values from the form
-            const cameraModelSelect = document.getElementById(`camera-model-${fileIndex}`) as HTMLSelectElement;
-            const focalLengthInput = document.getElementById(`focal-length-${fileIndex}`) as HTMLInputElement;
-            const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
-            const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
-
-            if (!cameraModelSelect || !focalLengthInput || !depthTypeSelect) {
-                throw new Error('TIF settings form elements not found');
-            }
-
-            const newCameraParams: CameraParams = {
-                cameraModel: cameraModelSelect.value as 'pinhole' | 'fisheye',
-                focalLength: parseFloat(focalLengthInput.value),
-                depthType: depthTypeSelect.value as 'euclidean' | 'orthogonal' | 'disparity',
-                baseline: depthTypeSelect.value === 'disparity' ? parseFloat(baselineInput.value) : undefined
-            };
+            // Get the current values from the form using the helper method
+            const newCameraParams = this.getDepthSettingsFromFileUI(fileIndex);
 
             // Validate parameters
             if (!newCameraParams.focalLength || newCameraParams.focalLength <= 0) {
@@ -7625,21 +7876,23 @@ class PLYVisualizer {
                 throw new Error('Baseline must be a positive number for disparity mode');
             }
 
-            // Check if we have cached TIF data for this file
-            const tifData = this.fileTifData.get(fileIndex);
-            if (!tifData) {
-                throw new Error('No cached TIF data found for this file. Please reload the TIF file.');
+            // Check if we have cached depth data for this file
+            const depthData = this.fileTifData.get(fileIndex);
+            if (!depthData) {
+                throw new Error('No cached depth data found for this file. Please reload the depth file.');
             }
 
-            this.showStatus('Reprocessing TIF with new settings...');
+            const isPfm = /\.pfm$/i.test(depthData.fileName);
+            const fileType = isPfm ? 'PFM' : 'TIF';
+            this.showStatus(`Reprocessing ${fileType} with new settings...`);
 
-            // Process the TIF data with new parameters
-            const result = await this.processTifToPointCloud(tifData.originalData, newCameraParams);
+            // Process the depth data with new parameters using the new system
+            const result = await this.processDepthToPointCloud(depthData.originalData, depthData.fileName, newCameraParams);
             
-            // If there's a stored color image, reapply it
-            if (tifData.colorImageData) {
-                console.log(`🎨 Reapplying stored color image: ${tifData.colorImageName}`);
-                await this.applyColorToTifResult(result, tifData.colorImageData, { cameraParams: newCameraParams });
+            // If there's a stored color image, reapply it (only for TIF files)
+            if (!isPfm && depthData.colorImageData) {
+                console.log(`🎨 Reapplying stored color image: ${depthData.colorImageName}`);
+                await this.applyColorToTifResult(result, depthData.colorImageData, { cameraParams: newCameraParams });
             }
             
             // Update the PLY data
@@ -7648,7 +7901,7 @@ class PLYVisualizer {
             plyData.vertexCount = result.pointCount;
             plyData.hasColors = !!result.colors;
             plyData.comments = [
-                `Converted from TIF depth image: ${tifData.fileName}`,
+                `Converted from ${fileType} depth image: ${depthData.fileName}`,
                 `Camera: ${newCameraParams.cameraModel}`,
                 `Depth type: ${newCameraParams.depthType}`,
                 `Focal length: ${newCameraParams.focalLength}px`,
@@ -7656,7 +7909,7 @@ class PLYVisualizer {
             ];
 
             // Update cached parameters
-            tifData.cameraParams = newCameraParams;
+            depthData.cameraParams = newCameraParams;
 
             // Update the mesh with new data
             const oldMaterial = this.meshes[fileIndex].material;
@@ -7667,7 +7920,7 @@ class PLYVisualizer {
             if (this.meshes[fileIndex] instanceof THREE.Points && newMaterial instanceof THREE.PointsMaterial) {
                 const currentPointSize = this.pointSizes[fileIndex] || 0.001;
                 newMaterial.size = currentPointSize;
-                console.log(`🔧 Applied point size ${currentPointSize} to updated TIF material for file ${fileIndex}`);
+                console.log(`🔧 Applied point size ${currentPointSize} to updated ${fileType} material for file ${fileIndex}`);
             }
             
             // Update geometry
@@ -7721,15 +7974,109 @@ class PLYVisualizer {
 
             // Update UI
             this.updateFileStats();
-            this.showStatus('TIF settings applied successfully!');
+            this.showStatus(`${fileType} settings applied successfully!`);
 
         } catch (error) {
-            console.error('Error applying TIF settings:', error);
-            this.showError(`Failed to apply TIF settings: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`Error applying depth settings:`, error);
+            this.showError(`Failed to apply depth settings: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
+    private handleDefaultDepthSettings(message: any): void {
+        console.log('📥 Received default depth settings message:', message);
+        if (message.settings) {
+            // Update default settings from extension storage
+            this.defaultDepthSettings = {
+                focalLength: message.settings.focalLength || 1000,
+                cameraModel: message.settings.cameraModel || 'pinhole',
+                depthType: message.settings.depthType || 'euclidean',
+                baseline: message.settings.baseline,
+                convention: message.settings.convention || 'opengl'
+            };
+            console.log('✅ Loaded default depth settings from extension:', this.defaultDepthSettings);
+            this.updateDefaultButtonState();
+        } else {
+            console.log('⚠️ No settings in default depth settings message');
+        }
+    }
 
+    private updateDefaultButtonState(): void {
+        // Update all "Use as Default" buttons to reflect current state
+        const buttons = document.querySelectorAll('.use-as-default-settings');
+        buttons.forEach((button, index) => {
+            this.updateSingleDefaultButtonState(index);
+        });
+    }
+
+    private updateSingleDefaultButtonState(fileIndex: number): void {
+        const button = document.querySelector(`.use-as-default-settings[data-file-index="${fileIndex}"]`) as HTMLButtonElement;
+        if (!button) return;
+
+        try {
+            // Get current form values
+            const currentParams = this.getDepthSettingsFromFileUI(fileIndex);
+            
+            // Check if current settings match defaults
+            const isDefault = (
+                currentParams.focalLength === this.defaultDepthSettings.focalLength &&
+                currentParams.cameraModel === this.defaultDepthSettings.cameraModel &&
+                currentParams.depthType === this.defaultDepthSettings.depthType &&
+                currentParams.convention === this.defaultDepthSettings.convention &&
+                (currentParams.baseline || undefined) === (this.defaultDepthSettings.baseline || undefined)
+            );
+
+            if (isDefault) {
+                // Current settings are already default - make button blue
+                button.style.background = 'var(--vscode-button-background)';
+                button.style.color = 'var(--vscode-button-foreground)';
+                button.innerHTML = '✓ Current Default';
+            } else {
+                // Current settings differ from default - normal secondary style
+                button.style.background = 'var(--vscode-button-secondaryBackground)';
+                button.style.color = 'var(--vscode-button-secondaryForeground)';
+                button.innerHTML = '⭐ Use as Default';
+            }
+        } catch (error) {
+            // If we can't get form values, just show normal state
+            button.style.background = 'var(--vscode-button-secondaryBackground)';
+            button.style.color = 'var(--vscode-button-secondaryForeground)';
+            button.innerHTML = '⭐ Use as Default';
+        }
+    }
+
+    private async useAsDefaultSettings(fileIndex: number): Promise<void> {
+        try {
+            // Get the current values from the form
+            const currentParams = this.getDepthSettingsFromFileUI(fileIndex);
+            
+            // Store as default settings for future files
+            this.defaultDepthSettings = {
+                focalLength: currentParams.focalLength,
+                cameraModel: currentParams.cameraModel,
+                depthType: currentParams.depthType,
+                baseline: currentParams.baseline,
+                convention: currentParams.convention || 'opengl'
+            };
+            
+            // Save to extension global state for persistence across webview instances
+            this.vscode.postMessage({
+                type: 'saveDefaultDepthSettings',
+                settings: this.defaultDepthSettings
+            });
+            
+            // Show confirmation message with more detail
+            this.showStatus(`✅ Default settings saved: ${currentParams.cameraModel}, f=${currentParams.focalLength}px, ${currentParams.depthType}, ${currentParams.convention}`);
+            
+            // Update button state immediately
+            this.updateDefaultButtonState();
+            
+            console.log('🎯 Default depth settings updated:', this.defaultDepthSettings);
+            
+        } catch (error) {
+            console.error('Error saving default settings:', error);
+            this.showError(`Failed to save default settings: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
 
     private async applyColorToTifResult(result: TifConversionResult, imageData: ImageData, tifData: any): Promise<void> {
         const colorData = imageData.data;

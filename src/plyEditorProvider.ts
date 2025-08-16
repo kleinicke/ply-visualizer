@@ -33,6 +33,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         // Check file type
         const filePath = document.uri.fsPath.toLowerCase();
         const isTifFile = filePath.endsWith('.tif') || filePath.endsWith('.tiff');
+        const isPfmFile = filePath.endsWith('.pfm');
+        const isDepthFile = isTifFile || isPfmFile;
         const isObjFile = filePath.endsWith('.obj');
         const isJsonFile = filePath.endsWith('.json');
         
@@ -44,6 +46,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             type: 'startLoading',
             fileName: path.basename(document.uri.fsPath),
             isTifFile: isTifFile,
+            isPfmFile: isPfmFile,
+            isDepthFile: isDepthFile,
             isObjFile: isObjFile
         });
 
@@ -53,27 +57,28 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 const loadStartTime = performance.now();
                 const wallStart = new Date().toISOString();
                 
-                if (isTifFile) {
-                    // Handle TIF file for depth conversion
+                if (isDepthFile) {
+                    // Handle depth files (TIF, PFM) for point cloud conversion
+                    const fileType = isPfmFile ? 'PFM' : 'TIF';
                     webviewPanel.webview.postMessage({
                         type: 'timingUpdate',
-                        message: '🚀 Extension: Starting TIF file processing for depth conversion...',
+                        message: `🚀 Extension: Starting ${fileType} file processing for depth conversion...`,
                         timestamp: loadStartTime
                     });
                     
-                    // Read TIF file and send for webview processing
-                    const tifData = await vscode.workspace.fs.readFile(document.uri);
+                    // Read depth file and send for webview processing
+                    const depthData = await vscode.workspace.fs.readFile(document.uri);
                     const fileReadTime = performance.now();
-                    webviewPanel.webview.postMessage({ type: 'timing', phase: 'read', kind: 'tif', ms: +(fileReadTime - loadStartTime).toFixed(1) });
+                    webviewPanel.webview.postMessage({ type: 'timing', phase: 'read', kind: 'depth', ms: +(fileReadTime - loadStartTime).toFixed(1) });
                     
-                    // Send TIF data to webview for conversion
+                    // Send depth data to webview for conversion
                     webviewPanel.webview.postMessage({
-                        type: 'tifData',
+                        type: 'depthData',
                         fileName: path.basename(document.uri.fsPath),
-                        data: tifData.buffer.slice(tifData.byteOffset, tifData.byteOffset + tifData.byteLength)
+                        data: depthData.buffer.slice(depthData.byteOffset, depthData.byteOffset + depthData.byteLength)
                     });
                     
-                    return; // Exit early for TIF files
+                    return; // Exit early for depth files
                 }
 
                 if (isObjFile) {
@@ -275,6 +280,12 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     case 'loadMtl':
                         await this.handleLoadMtl(webviewPanel, message);
                         break;
+                    case 'saveDefaultDepthSettings':
+                        await this.handleSaveDefaultDepthSettings(message);
+                        break;
+                    case 'requestDefaultDepthSettings':
+                        await this.handleRequestDefaultDepthSettings(webviewPanel);
+                        break;
                 }
             }
         );
@@ -326,7 +337,6 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         <button class="tab-button active" data-tab="files">Files</button>
                         <button class="tab-button" data-tab="camera">Camera</button>
                         <button class="tab-button" data-tab="controls">Controls</button>
-
                         <button class="tab-button" data-tab="info">Info</button>
                     </div>
                     
@@ -490,7 +500,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             canSelectMany: true,
             filters: {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'Point Cloud & Pose Files': ['ply', 'xyz', 'obj', 'tif', 'tiff', 'json'],
+                'Point Cloud & Pose Files': ['ply', 'xyz', 'obj', 'tif', 'tiff', 'pfm', 'json'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'PLY Files': ['ply'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -498,7 +508,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'OBJ Wireframes': ['obj'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'TIF Depth Images': ['tif', 'tiff'],
+                'Depth Images': ['tif', 'tiff', 'pfm'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'Pose JSON': ['json']
             },
@@ -514,19 +524,19 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     console.log(`🚀 ULTIMATE: Processing add file ${fileName} (${fileExtension})`);
                     
                     // Handle different file types
-                    if (fileExtension === '.tif' || fileExtension === '.tiff') {
-                        // Handle TIF files for depth conversion
-                        const tifData = await vscode.workspace.fs.readFile(files[i]);
+                    if (fileExtension === '.tif' || fileExtension === '.tiff' || fileExtension === '.pfm') {
+                        // Handle depth files for conversion
+                        const depthData = await vscode.workspace.fs.readFile(files[i]);
                         
-                        // Send TIF data to webview for conversion
+                        // Send depth data to webview for conversion
                         webviewPanel.webview.postMessage({
-                            type: 'tifData',
+                            type: 'depthData',
                             fileName: fileName,
-                            data: tifData.buffer.slice(tifData.byteOffset, tifData.byteOffset + tifData.byteLength),
+                            data: depthData.buffer.slice(depthData.byteOffset, depthData.byteOffset + depthData.byteLength),
                             isAddFile: true // Flag to indicate this is from "Add Point Cloud"
                         });
                         
-                        console.log(`🎯 TIF Add File: ${fileName} sent for processing`);
+                        console.log(`🎯 Depth Add File: ${fileName} sent for processing`);
                         continue;
                     }
                     
@@ -646,7 +656,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     }
 
                     // Unsupported file type
-                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .tif, .tiff, .json`);
+                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .tif, .tiff, .pfm, .json`);
                     
                 } catch (error) {
                     console.error(`Failed to load file ${files[i].fsPath}:`, error);
@@ -1107,6 +1117,26 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
             const focalLength = parseFloat(focalLengthInput);
 
+            // Show coordinate convention selection dialog
+            const convention = await vscode.window.showQuickPick(
+                [
+                    { label: 'OpenGL Convention (Y-up, Z-backward)', description: 'Standard 3D graphics convention (default)', value: 'opengl' },
+                    { label: 'OpenCV Convention (Y-down, Z-forward)', description: 'Computer vision convention', value: 'opencv' }
+                ],
+                {
+                    placeHolder: 'Select coordinate convention for the resulting point cloud',
+                    ignoreFocusOut: true
+                }
+            );
+
+            if (!convention) {
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
+                });
+                return;
+            }
+
             // Show baseline input dialog if disparity is selected
             let baseline: number | undefined;
             if (depthType.value === 'disparity') {
@@ -1141,6 +1171,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 focalLength: focalLength,
                 depthType: depthType.value,
                 baseline: baseline,
+                convention: convention.value,
                 requestId: message.requestId
             });
 
@@ -1403,6 +1434,48 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         } catch (error) {
             // Silently fail - no error messages for auto-loading as requested
             console.log(`ℹ️ No MTL file found for ${path.basename(objUri.fsPath)}`);
+        }
+    }
+
+    private async handleSaveDefaultDepthSettings(message: any): Promise<void> {
+        try {
+            // Save default settings to extension global state
+            await this.context.globalState.update('defaultDepthSettings', message.settings);
+            console.log('Saved default depth settings to global state:', message.settings);
+        } catch (error) {
+            console.error('Failed to save default depth settings:', error);
+        }
+    }
+
+    private async handleRequestDefaultDepthSettings(webviewPanel: vscode.WebviewPanel): Promise<void> {
+        try {
+            // Load default settings from extension global state
+            const savedSettings = this.context.globalState.get('defaultDepthSettings');
+            
+            // Send settings back to webview
+            webviewPanel.webview.postMessage({
+                type: 'defaultDepthSettings',
+                settings: savedSettings || {
+                    focalLength: 1000,
+                    cameraModel: 'pinhole',
+                    depthType: 'euclidean',
+                    convention: 'opengl'
+                }
+            });
+            
+            console.log('Sent default depth settings to webview:', savedSettings);
+        } catch (error) {
+            console.error('Failed to load default depth settings:', error);
+            // Send default fallback settings
+            webviewPanel.webview.postMessage({
+                type: 'defaultDepthSettings',
+                settings: {
+                    focalLength: 1000,
+                    cameraModel: 'pinhole',
+                    depthType: 'euclidean',
+                    convention: 'opengl'
+                }
+            });
         }
     }
 

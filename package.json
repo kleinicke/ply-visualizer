@@ -45,6 +45,9 @@
           },
           {
             "filenamePattern": "*.obj"
+          },
+          {
+            "filenamePattern": "*.pfm"
           }
         ]
       }
@@ -69,6 +72,11 @@
         "command": "plyViewer.loadJsonAsPose",
         "title": "Load JSON as 3D Pose",
         "category": "PLY Visualizer"
+      },
+      {
+        "command": "plyViewer.convertDepthToPointCloud",
+        "title": "Convert PFM to Point Cloud",
+        "category": "PLY Visualizer"
       }
     ],
     "menus": {
@@ -81,6 +89,11 @@
         {
           "command": "plyViewer.convertTifToPointCloud",
           "when": "resourceExtname == .tif || resourceExtname == .tiff",
+          "group": "navigation"
+        },
+        {
+          "command": "plyViewer.convertDepthToPointCloud", 
+          "when": "resourceExtname == .pfm",
           "group": "navigation"
         },
         {
