@@ -3454,7 +3454,29 @@ class PLYVisualizer {
                 if (depthTypeSelect && baselineGroup) {
                     depthTypeSelect.addEventListener('change', () => {
                         baselineGroup.style.display = depthTypeSelect.value === 'disparity' ? '' : 'none';
+                        this.updateSingleDefaultButtonState(i);
                     });
+                }
+
+                // Update button state when any depth setting changes
+                const focalLengthInput = document.getElementById(`focal-length-${i}`) as HTMLInputElement;
+                if (focalLengthInput) {
+                    focalLengthInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
+                }
+
+                const cameraModelSelect = document.getElementById(`camera-model-${i}`) as HTMLSelectElement;
+                if (cameraModelSelect) {
+                    cameraModelSelect.addEventListener('change', () => this.updateSingleDefaultButtonState(i));
+                }
+
+                const baselineInput = document.getElementById(`baseline-${i}`) as HTMLInputElement;
+                if (baselineInput) {
+                    baselineInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
+                }
+
+                const conventionSelect = document.getElementById(`convention-${i}`) as HTMLSelectElement;
+                if (conventionSelect) {
+                    conventionSelect.addEventListener('change', () => this.updateSingleDefaultButtonState(i));
                 }
 
                 // Apply TIF settings button
@@ -6195,14 +6217,15 @@ class PLYVisualizer {
             if (isDepthImage) {
                 console.log('Detected depth TIF image - using UI settings...');
                 
-                // Use default settings for initial processing
+                // Use saved default settings for initial processing
                 const defaultSettings: CameraParams = {
-                    cameraModel: 'pinhole',
-                    focalLength: 1000,
-                    depthType: 'euclidean',
-                    convention: 'opengl'
+                    cameraModel: this.defaultDepthSettings.cameraModel,
+                    focalLength: this.defaultDepthSettings.focalLength,
+                    depthType: this.defaultDepthSettings.depthType,
+                    baseline: this.defaultDepthSettings.baseline,
+                    convention: this.defaultDepthSettings.convention || 'opengl'
                 };
-                console.log('✅ Using default depth settings for TIF:', defaultSettings);
+                console.log('✅ Using saved default depth settings for TIF:', defaultSettings);
                 this.showStatus(`Converting TIF depth image: ${defaultSettings.cameraModel} camera, focal length ${defaultSettings.focalLength}px, ${defaultSettings.depthType} depth, ${defaultSettings.convention} convention...`);
                 
                 // Process the TIF file with default settings
@@ -6263,14 +6286,15 @@ class PLYVisualizer {
                 }
             }
 
-            // For both TIF-depth and PFM formats, use default settings initially
+            // For both TIF-depth and PFM formats, use saved default settings initially
             const defaultSettings: CameraParams = {
-                cameraModel: 'pinhole',
-                focalLength: 1000,
-                depthType: 'euclidean',
-                convention: 'opengl'
+                cameraModel: this.defaultDepthSettings.cameraModel,
+                focalLength: this.defaultDepthSettings.focalLength,
+                depthType: this.defaultDepthSettings.depthType,
+                baseline: this.defaultDepthSettings.baseline,
+                convention: this.defaultDepthSettings.convention || 'opengl'
             };
-            console.log('✅ Using default depth settings:', defaultSettings);
+            console.log('✅ Using saved default depth settings:', defaultSettings);
             this.showStatus(`Converting depth image: ${defaultSettings.cameraModel} camera, focal length ${defaultSettings.focalLength}px, ${defaultSettings.depthType} depth, ${defaultSettings.convention} convention...`);
             await this.processDepthWithParams(requestId, defaultSettings);
 
@@ -6370,6 +6394,12 @@ class PLYVisualizer {
         const { registerDefaultReaders, readDepth } = await import('./depth/DepthRegistry');
         const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
         try {
+            // DEBUG: Log what parameters we received
+            console.log(`🔬 PROCESS DEPTH DEBUG for ${fileName}:`);
+            console.log('  Received cameraParams:', cameraParams);
+            console.log('  depthType specifically:', cameraParams.depthType);
+            console.log('  baseline specifically:', cameraParams.baseline);
+            
             registerDefaultReaders();
             
             const { image, meta: baseMeta } = await readDepth(fileName, depthData);
@@ -6382,20 +6412,29 @@ class PLYVisualizer {
 
             // Override depth kind based on UI selection
             const meta: any = { ...baseMeta };
+            console.log(`  📋 Original baseMeta.kind: ${baseMeta.kind}`);
+            console.log(`  ⚙️ Checking depthType: ${cameraParams.depthType}`);
+            
             if (cameraParams.depthType === 'disparity') {
                 const fxOk = !!cameraParams.focalLength && cameraParams.focalLength > 0;
                 const blOk = !!cameraParams.baseline && cameraParams.baseline > 0;
+                console.log(`  🔍 Disparity checks: fxOk=${fxOk} (${cameraParams.focalLength}), blOk=${blOk} (${cameraParams.baseline})`);
                 if (fxOk && blOk) {
                     meta.kind = 'disparity';
                     meta.baseline = cameraParams.baseline! / 1000; // Convert mm to meters
+                    console.log(`  ✅ Set meta.kind to 'disparity', baseline=${meta.baseline}m`);
                 } else {
                     console.warn('Disparity selected but baseline/focal missing; keeping original kind:', baseMeta.kind);
                 }
             } else if (cameraParams.depthType === 'orthogonal') {
                 meta.kind = 'z';
+                console.log(`  ✅ Set meta.kind to 'z' (orthogonal)`);
             } else if (cameraParams.depthType === 'euclidean') {
                 meta.kind = 'depth';
+                console.log(`  ✅ Set meta.kind to 'depth' (euclidean)`);
             }
+            
+            console.log(`  📋 Final meta.kind: ${meta.kind}`);
 
             const norm = normalizeDepth(image, {
                 ...meta,
@@ -7867,6 +7906,12 @@ class PLYVisualizer {
         try {
             // Get the current values from the form using the helper method
             const newCameraParams = this.getDepthSettingsFromFileUI(fileIndex);
+            
+            // DEBUG: Log what we read from the form
+            console.log(`🔍 APPLY SETTINGS DEBUG for file ${fileIndex}:`);
+            console.log('  Form read values:', newCameraParams);
+            console.log('  depthType specifically:', newCameraParams.depthType);
+            console.log('  baseline specifically:', newCameraParams.baseline);
 
             // Validate parameters
             if (!newCameraParams.focalLength || newCameraParams.focalLength <= 0) {
@@ -7994,10 +8039,60 @@ class PLYVisualizer {
                 convention: message.settings.convention || 'opengl'
             };
             console.log('✅ Loaded default depth settings from extension:', this.defaultDepthSettings);
+            
+            // Update any existing depth file forms to use new defaults
+            this.refreshDepthFileFormsWithDefaults();
             this.updateDefaultButtonState();
         } else {
             console.log('⚠️ No settings in default depth settings message');
         }
+    }
+
+    private refreshDepthFileFormsWithDefaults(): void {
+        // Update existing depth file forms to use the new default settings
+        for (let i = 0; i < this.plyFiles.length; i++) {
+            const data = this.plyFiles[i];
+            if (this.isTifDerivedFile(data)) {
+                console.log(`🔄 Refreshing depth form ${i} with new defaults`);
+                this.updateDepthFormWithDefaults(i);
+            }
+        }
+    }
+
+    private updateDepthFormWithDefaults(fileIndex: number): void {
+        // Update form fields to show default values
+        const focalLengthInput = document.getElementById(`focal-length-${fileIndex}`) as HTMLInputElement;
+        if (focalLengthInput) {
+            focalLengthInput.value = this.defaultDepthSettings.focalLength.toString();
+        }
+
+        const cameraModelSelect = document.getElementById(`camera-model-${fileIndex}`) as HTMLSelectElement;
+        if (cameraModelSelect) {
+            cameraModelSelect.value = this.defaultDepthSettings.cameraModel;
+        }
+
+        const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
+        if (depthTypeSelect) {
+            depthTypeSelect.value = this.defaultDepthSettings.depthType;
+            
+            // Update baseline visibility based on depth type
+            const baselineGroup = document.getElementById(`baseline-group-${fileIndex}`);
+            if (baselineGroup) {
+                baselineGroup.style.display = this.defaultDepthSettings.depthType === 'disparity' ? '' : 'none';
+            }
+        }
+
+        const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
+        if (baselineInput && this.defaultDepthSettings.baseline !== undefined) {
+            baselineInput.value = this.defaultDepthSettings.baseline.toString();
+        }
+
+        const conventionSelect = document.getElementById(`convention-${fileIndex}`) as HTMLSelectElement;
+        if (conventionSelect) {
+            conventionSelect.value = this.defaultDepthSettings.convention || 'opengl';
+        }
+
+        console.log(`✅ Updated depth form ${fileIndex} with defaults:`, this.defaultDepthSettings);
     }
 
     private updateDefaultButtonState(): void {
@@ -8016,14 +8111,25 @@ class PLYVisualizer {
             // Get current form values
             const currentParams = this.getDepthSettingsFromFileUI(fileIndex);
             
+            // Debug logging
+            console.log(`🔍 Button state check for file ${fileIndex}:`);
+            console.log('  Current params:', currentParams);
+            console.log('  Default settings:', this.defaultDepthSettings);
+            
             // Check if current settings match defaults
-            const isDefault = (
-                currentParams.focalLength === this.defaultDepthSettings.focalLength &&
-                currentParams.cameraModel === this.defaultDepthSettings.cameraModel &&
-                currentParams.depthType === this.defaultDepthSettings.depthType &&
-                currentParams.convention === this.defaultDepthSettings.convention &&
-                (currentParams.baseline || undefined) === (this.defaultDepthSettings.baseline || undefined)
-            );
+            const focalMatch = currentParams.focalLength === this.defaultDepthSettings.focalLength;
+            const cameraMatch = currentParams.cameraModel === this.defaultDepthSettings.cameraModel;
+            const depthMatch = currentParams.depthType === this.defaultDepthSettings.depthType;
+            const conventionMatch = currentParams.convention === this.defaultDepthSettings.convention;
+            const baselineMatch = (currentParams.baseline || undefined) === (this.defaultDepthSettings.baseline || undefined);
+            
+            console.log(`  Focal match: ${focalMatch} (${currentParams.focalLength} === ${this.defaultDepthSettings.focalLength})`);
+            console.log(`  Camera match: ${cameraMatch} (${currentParams.cameraModel} === ${this.defaultDepthSettings.cameraModel})`);
+            console.log(`  Depth match: ${depthMatch} (${currentParams.depthType} === ${this.defaultDepthSettings.depthType})`);
+            console.log(`  Convention match: ${conventionMatch} (${currentParams.convention} === ${this.defaultDepthSettings.convention})`);
+            console.log(`  Baseline match: ${baselineMatch} (${currentParams.baseline} === ${this.defaultDepthSettings.baseline})`);
+            
+            const isDefault = focalMatch && cameraMatch && depthMatch && conventionMatch && baselineMatch;
 
             if (isDefault) {
                 // Current settings are already default - make button blue

@@ -1052,14 +1052,76 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
     private async handleCameraParametersRequest(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
         try {
+            // Load saved default settings
+            const savedSettings = this.context.globalState.get('defaultDepthSettings') as any;
+            const defaults = savedSettings || {
+                focalLength: 1000,
+                cameraModel: 'pinhole',
+                depthType: 'euclidean',
+                convention: 'opengl',
+                baseline: 50
+            };
+
+            console.log('🎯 Using default settings for camera parameters dialog:', defaults);
+
+            // Show option to use defaults directly or customize
+            const useDefaults = await vscode.window.showQuickPick(
+                [
+                    { 
+                        label: '⚡ Use Default Settings', 
+                        description: `${defaults.cameraModel}, f=${defaults.focalLength}px, ${defaults.depthType}, ${defaults.convention}${defaults.baseline ? `, baseline=${defaults.baseline}mm` : ''}`, 
+                        value: 'defaults' 
+                    },
+                    { 
+                        label: '⚙️ Customize Settings', 
+                        description: 'Choose settings manually', 
+                        value: 'customize' 
+                    }
+                ],
+                {
+                    placeHolder: 'Convert depth image to point cloud',
+                    ignoreFocusOut: true
+                }
+            );
+
+            if (!useDefaults) {
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
+                });
+                return;
+            }
+
+            if (useDefaults.value === 'defaults') {
+                // Use saved defaults without showing additional dialogs
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParams',
+                    cameraModel: defaults.cameraModel,
+                    focalLength: defaults.focalLength,
+                    depthType: defaults.depthType,
+                    baseline: defaults.baseline,
+                    convention: defaults.convention,
+                    requestId: message.requestId
+                });
+                return;
+            }
+
             // Show camera model selection dialog
             const cameraModel = await vscode.window.showQuickPick(
                 [
-                    { label: 'Pinhole Camera', description: 'Standard perspective projection model', value: 'pinhole' },
-                    { label: 'Fisheye Camera', description: 'Wide-angle fisheye projection model', value: 'fisheye' }
+                    { 
+                        label: 'Pinhole Camera', 
+                        description: defaults.cameraModel === 'pinhole' ? 'Standard perspective projection model (Default)' : 'Standard perspective projection model', 
+                        value: 'pinhole' 
+                    },
+                    { 
+                        label: 'Fisheye Camera', 
+                        description: defaults.cameraModel === 'fisheye' ? 'Wide-angle fisheye projection model (Default)' : 'Wide-angle fisheye projection model', 
+                        value: 'fisheye' 
+                    }
                 ],
                 {
-                    placeHolder: 'Select camera model used to capture the depth image',
+                    placeHolder: `Select camera model used to capture the depth image (Default: ${defaults.cameraModel})`,
                     ignoreFocusOut: true
                 }
             );
@@ -1075,12 +1137,24 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             // Show depth type selection dialog
             const depthType = await vscode.window.showQuickPick(
                 [
-                    { label: 'Euclidean Depth', description: 'Metric depth values (distance from camera center)', value: 'euclidean' },
-                    { label: 'Orthogonal Depth', description: 'Z-buffer depth values (Z-coordinate)', value: 'orthogonal' },
-                    { label: 'Disparity', description: 'Disparity values (requires baseline parameter)', value: 'disparity' }
+                    { 
+                        label: 'Euclidean Depth', 
+                        description: defaults.depthType === 'euclidean' ? 'Metric depth values (distance from camera center) (Default)' : 'Metric depth values (distance from camera center)', 
+                        value: 'euclidean' 
+                    },
+                    { 
+                        label: 'Orthogonal Depth', 
+                        description: defaults.depthType === 'orthogonal' ? 'Z-buffer depth values (Z-coordinate) (Default)' : 'Z-buffer depth values (Z-coordinate)', 
+                        value: 'orthogonal' 
+                    },
+                    { 
+                        label: 'Disparity', 
+                        description: defaults.depthType === 'disparity' ? 'Disparity values (requires baseline parameter) (Default)' : 'Disparity values (requires baseline parameter)', 
+                        value: 'disparity' 
+                    }
                 ],
                 {
-                    placeHolder: 'Select the type of depth data in your image',
+                    placeHolder: `Select the type of depth data in your image (Default: ${defaults.depthType})`,
                     ignoreFocusOut: true
                 }
             );
@@ -1095,8 +1169,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
             // Show focal length input dialog
             const focalLengthInput = await vscode.window.showInputBox({
-                prompt: 'Enter the focal length in pixels (e.g., 1000)',
-                placeHolder: '1000',
+                prompt: `Enter the focal length in pixels (Default: ${defaults.focalLength})`,
+                placeHolder: defaults.focalLength.toString(),
+                value: defaults.focalLength.toString(),
                 validateInput: (value: string) => {
                     const num = parseFloat(value);
                     if (isNaN(num) || num <= 0) {
@@ -1120,11 +1195,19 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             // Show coordinate convention selection dialog
             const convention = await vscode.window.showQuickPick(
                 [
-                    { label: 'OpenGL Convention (Y-up, Z-backward)', description: 'Standard 3D graphics convention (default)', value: 'opengl' },
-                    { label: 'OpenCV Convention (Y-down, Z-forward)', description: 'Computer vision convention', value: 'opencv' }
+                    { 
+                        label: 'OpenGL Convention (Y-up, Z-backward)', 
+                        description: defaults.convention === 'opengl' ? 'Standard 3D graphics convention (Default)' : 'Standard 3D graphics convention', 
+                        value: 'opengl' 
+                    },
+                    { 
+                        label: 'OpenCV Convention (Y-down, Z-forward)', 
+                        description: defaults.convention === 'opencv' ? 'Computer vision convention (Default)' : 'Computer vision convention', 
+                        value: 'opencv' 
+                    }
                 ],
                 {
-                    placeHolder: 'Select coordinate convention for the resulting point cloud',
+                    placeHolder: `Select coordinate convention for the resulting point cloud (Default: ${defaults.convention})`,
                     ignoreFocusOut: true
                 }
             );
@@ -1140,9 +1223,11 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             // Show baseline input dialog if disparity is selected
             let baseline: number | undefined;
             if (depthType.value === 'disparity') {
+                const defaultBaseline = defaults.baseline || 50;
                 const baselineInput = await vscode.window.showInputBox({
-                    prompt: 'Enter the baseline in millimeters (e.g., 120.0)',
-                    placeHolder: '120.0',
+                    prompt: `Enter the baseline in millimeters (Default: ${defaultBaseline})`,
+                    placeHolder: defaultBaseline.toString(),
+                    value: defaultBaseline.toString(),
                     validateInput: (value: string) => {
                         const num = parseFloat(value);
                         if (isNaN(num) || num <= 0) {
