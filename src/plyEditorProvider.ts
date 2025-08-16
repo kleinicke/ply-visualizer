@@ -369,6 +369,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                                     <button id="fit-camera" class="control-button">Fit to View <span class="button-shortcut">F</span></button>
                                     <button id="reset-camera" class="control-button">Reset Camera <span class="button-shortcut">R</span></button>
                                     <button id="toggle-axes" class="control-button">Toggle Axes <span class="button-shortcut">A</span></button>
+                                    <button id="toggle-cameras" class="control-button active">Show Cameras</button>
                                     <button id="set-rotation-origin" class="control-button">Set Rotation Center to Origin <span class="button-shortcut">W</span></button>
                                 </div>
                             </div>

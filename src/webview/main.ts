@@ -510,6 +510,11 @@ class PLYVisualizer {
     private poseJoints: Array<Array<{ x:number; y:number; z:number; valid?: boolean }>> = [];
     private poseEdges: Array<Array<[number, number]>> = [];
     
+    // Camera visualization
+    private cameraGroups: THREE.Group[] = [];
+    private cameraNames: string[] = [];
+    private cameraVisibility: boolean = true;
+    
     // Rotation matrices
     private cameraMatrix: THREE.Matrix4 = new THREE.Matrix4(); // Current camera position and rotation
     private transformationMatrices: THREE.Matrix4[] = []; // Individual transformation matrices for each point cloud
@@ -1296,11 +1301,44 @@ class PLYVisualizer {
     }
 
     private applyTransformationMatrix(fileIndex: number): void {
-        if (fileIndex >= 0 && fileIndex < this.meshes.length && fileIndex < this.transformationMatrices.length) {
+        if (fileIndex < 0 || fileIndex >= this.transformationMatrices.length) return;
+        
+        const matrix = this.transformationMatrices[fileIndex];
+        
+        // Handle PLY/mesh files
+        if (fileIndex < this.meshes.length) {
             const mesh = this.meshes[fileIndex];
-            const matrix = this.transformationMatrices[fileIndex];
-            mesh.matrix.copy(matrix);
-            mesh.matrixAutoUpdate = false; // Disable auto-update to use our custom matrix
+            if (mesh) {
+                mesh.matrix.copy(matrix);
+                mesh.matrixAutoUpdate = false;
+            }
+            return;
+        }
+        
+        // Handle poses
+        const poseIndex = fileIndex - this.plyFiles.length;
+        if (poseIndex >= 0 && poseIndex < this.poseGroups.length) {
+            const group = this.poseGroups[poseIndex];
+            if (group) {
+                group.matrix.copy(matrix);
+                group.matrixAutoUpdate = false;
+            }
+            return;
+        }
+        
+        // Handle cameras
+        const cameraIndex = fileIndex - this.plyFiles.length - this.poseGroups.length;
+        if (cameraIndex >= 0 && cameraIndex < this.cameraGroups.length) {
+            const group = this.cameraGroups[cameraIndex];
+            if (group) {
+                // Apply transformation matrix to camera profile group
+                group.matrix.copy(matrix);
+                group.matrixAutoUpdate = false;
+                
+                // Apply scaling only to visual elements, not position
+                const size = this.pointSizes[fileIndex] ?? 1.0;
+                this.applyCameraScale(cameraIndex, size);
+            }
         }
     }
 
@@ -2091,6 +2129,14 @@ class PLYVisualizer {
             });
         }
 
+        const toggleCamerasBtn = document.getElementById('toggle-cameras');
+        if (toggleCamerasBtn) {
+            toggleCamerasBtn.addEventListener('click', () => {
+                this.toggleCameraVisibility();
+                this.updateCameraButtonState();
+            });
+        }
+
         const setRotationOriginBtn = document.getElementById('set-rotation-origin');
         if (setRotationOriginBtn) {
             setRotationOriginBtn.addEventListener('click', () => {
@@ -2826,11 +2872,12 @@ class PLYVisualizer {
     }
 
     private fitCameraToAllObjects(): void {
-        if (this.meshes.length === 0 && this.poseGroups.length === 0) {return;}
+        if (this.meshes.length === 0 && this.poseGroups.length === 0 && this.cameraGroups.length === 0) {return;}
 
         const box = new THREE.Box3();
         for (const obj of this.meshes) { box.expandByObject(obj); }
         for (const group of this.poseGroups) { box.expandByObject(group); }
+        for (const group of this.cameraGroups) { box.expandByObject(group); }
 
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
@@ -2852,7 +2899,7 @@ class PLYVisualizer {
         const statsDiv = document.getElementById('file-stats');
         if (!statsDiv) {return;}
         
-        if (this.plyFiles.length === 0 && this.poseGroups.length === 0) {
+        if (this.plyFiles.length === 0 && this.poseGroups.length === 0 && this.cameraGroups.length === 0) {
             statsDiv.innerHTML = '<div>No objects loaded</div>';
             // Also clear camera matrix panel
             const cameraPanel = document.getElementById('camera-matrix-panel');
@@ -2860,7 +2907,7 @@ class PLYVisualizer {
             return;
         }
         
-        if (this.plyFiles.length + this.poseGroups.length === 1 && this.plyFiles.length === 1) {
+        if (this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length === 1 && this.plyFiles.length === 1) {
             // Single file view
             const data = this.plyFiles[0];
             const renderingMode = data.faceCount === 0 ? 'Points' : 'Mesh';
@@ -2877,10 +2924,10 @@ class PLYVisualizer {
             // Multiple files view
             const totalVertices = this.plyFiles.reduce((sum: number, data: PlyData) => sum + data.vertexCount, 0);
             const totalFaces = this.plyFiles.reduce((sum: number, data: PlyData) => sum + data.faceCount, 0);
-            const totalObjects = this.plyFiles.length + this.poseGroups.length;
+            const totalObjects = this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length;
             
             statsDiv.innerHTML = `
-                <div><strong>Total Objects:</strong> ${totalObjects} (Pointclouds: ${this.plyFiles.length}, Poses: ${this.poseGroups.length})</div>
+                <div><strong>Total Objects:</strong> ${totalObjects} (Pointclouds: ${this.plyFiles.length}, Poses: ${this.poseGroups.length}, Cameras: ${this.cameraGroups.length})</div>
                 <div><strong>Total Vertices:</strong> ${totalVertices.toLocaleString()}</div>
                 <div><strong>Total Faces:</strong> ${totalFaces.toLocaleString()}</div>
             `;
@@ -2895,7 +2942,7 @@ class PLYVisualizer {
         const fileListDiv = document.getElementById('file-list');
         if (!fileListDiv) return;
 
-        if (this.plyFiles.length === 0 && this.poseGroups.length === 0) {
+        if (this.plyFiles.length === 0 && this.poseGroups.length === 0 && this.cameraGroups.length === 0) {
             fileListDiv.innerHTML = '<div class="no-files">No objects loaded</div>';
             return;
         }
@@ -3191,10 +3238,82 @@ class PLYVisualizer {
             `;
         }
         
+        // Render camera profiles (like poses)
+        for (let c = 0; c < this.cameraGroups.length; c++) {
+            const i = this.plyFiles.length + this.poseGroups.length + c; // Unified index
+            const cameraProfileName = this.cameraNames[c];
+            const color = this.fileColors[i % this.fileColors.length];
+            const colorHex = `#${Math.round(color[0] * 255).toString(16).padStart(2, '0')}${Math.round(color[1] * 255).toString(16).padStart(2, '0')}${Math.round(color[2] * 255).toString(16).padStart(2, '0')}`;
+            const colorIndicator = `<span class="color-indicator" style="background-color: ${colorHex}"></span>`;
+            const visible = this.fileVisibility[i] ?? true;
+            const sizeVal = this.pointSizes[i] ?? 1.0;
+            
+            // Count cameras in the profile
+            const group = this.cameraGroups[c];
+            const cameraCount = group.children.length;
+            
+            // Transformation matrix UI
+            const cameraMatrixArr = this.getTransformationMatrixAsArray(i);
+            let cameraMatrixStr = '';
+            for (let r = 0; r < 4; ++r) {
+                const row = cameraMatrixArr.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
+                cameraMatrixStr += row.join(' ') + '\n';
+            }
+
+            html += `
+                <div class="file-item">
+                    <div class="file-item-main">
+                        <input type="checkbox" id="file-${i}" ${visible ? 'checked' : ''}>
+                        ${colorIndicator}
+                        <label for="file-${i}" class="file-name">📷 ${cameraProfileName}</label>
+                        <button class="remove-file" data-file-index="${i}" title="Remove camera profile">✕</button>
+                    </div>
+                    <div class="file-info">${cameraCount} cameras</div>
+                    <div class="panel-section" style="margin-top:6px;">
+                        <div class="control-buttons">
+                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
+                                <input type="checkbox" id="camera-show-labels-${i}">
+                                Show labels
+                            </label>
+                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
+                                <input type="checkbox" id="camera-show-coords-${i}">
+                                Show coordinates
+                            </label>
+                        </div>
+                    </div>
+                    <div class="size-control">
+                        <label for="size-${i}">Scale:</label>
+                        <input type="range" id="size-${i}" min="0.1" max="5.0" step="0.1" value="${sizeVal}">
+                        <span id="size-value-${i}">${sizeVal.toFixed(1)}</span>
+                    </div>
+                    <!-- Transform Panel (First) -->
+                    <div class="transformation-panel" style="margin-top:8px;">
+                        <div class="panel-header" style="display:flex;align-items:center;margin-bottom:4px;">
+                            <button class="toggle-panel transformation-toggle" data-file-index="${i}" style="background:none;border:none;color:var(--vscode-foreground);cursor:pointer;display:flex;align-items:center;gap:4px;padding:2px;font-size:10px;">
+                                <span class="toggle-icon">▶</span> Transform Matrix
+                            </button>
+                        </div>
+                        <div id="transformation-panel-${i}" class="transformation-content" style="display:none;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:8px;margin-top:4px;">
+                            
+                            <div class="transform-group">
+                                <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
+                                <textarea id="matrix-${i}" rows="4" cols="50" style="width:100%;font-size:9px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${cameraMatrixStr.trim()}</textarea>
+                                <div class="transform-buttons" style="margin-top:4px;">
+                                    <button class="apply-matrix" data-file-index="${i}">Apply Matrix</button>
+                                    <button class="invert-matrix" data-file-index="${i}">Invert</button>
+                                    <button class="reset-matrix" data-file-index="${i}">Reset</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
         fileListDiv.innerHTML = html;
         
         // Add event listeners after setting innerHTML
-        const totalEntries = this.plyFiles.length + this.poseGroups.length;
+        const totalEntries = this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length;
         for (let i = 0; i < totalEntries; i++) {
             const checkbox = document.getElementById(`file-${i}`);
             if (checkbox) {
@@ -3216,25 +3335,31 @@ class PLYVisualizer {
                 });
             }
             
-            // Transform toggle logic with improved UI
+            // Transform toggle logic with improved UI (handle both point clouds and cameras)
             const transformBtn = document.querySelector(`.transform-toggle[data-file-index="${i}"]`);
+            const transformationBtn = document.querySelector(`.transformation-toggle[data-file-index="${i}"]`);
             const transformPanel = document.getElementById(`transform-panel-${i}`);
-            if (transformBtn && transformPanel) {
+            const transformationPanel = document.getElementById(`transformation-panel-${i}`);
+            
+            const activeBtn = transformBtn || transformationBtn;
+            const activePanel = transformPanel || transformationPanel;
+            
+            if (activeBtn && activePanel) {
                 // Always hide by default and set triangle to side
-                transformPanel.style.display = 'none';
-                const toggleIcon = transformBtn.querySelector('.toggle-icon');
+                activePanel.style.display = 'none';
+                const toggleIcon = activeBtn.querySelector('.toggle-icon');
                 if (toggleIcon) toggleIcon.textContent = '▶';
                 
-                transformBtn.addEventListener('click', () => {
-                    const isVisible = transformPanel.style.display !== 'none';
-                    transformPanel.style.display = isVisible ? 'none' : 'block';
+                activeBtn.addEventListener('click', () => {
+                    const isVisible = activePanel.style.display !== 'none';
+                    activePanel.style.display = isVisible ? 'none' : 'block';
                     if (toggleIcon) toggleIcon.textContent = isVisible ? '▶' : '▼';
                 });
             }
             
             // Apply matrix logic with improved parsing
             const applyBtn = document.querySelector(`.apply-matrix[data-file-index="${i}"]`);
-            if (applyBtn && transformPanel) {
+            if (applyBtn && activePanel) {
                 applyBtn.addEventListener('click', () => {
                     const textarea = document.getElementById(`matrix-${i}`) as HTMLTextAreaElement;
                     if (textarea) {
@@ -3394,11 +3519,29 @@ class PLYVisualizer {
                 });
             }
             
+            // Camera profile controls listeners
+            const cameraLabelCb = document.getElementById(`camera-show-labels-${i}`) as HTMLInputElement;
+            if (cameraLabelCb) {
+                cameraLabelCb.addEventListener('change', () => {
+                    const cameraProfileIndex = i - this.plyFiles.length - this.poseGroups.length;
+                    this.toggleCameraProfileLabels(cameraProfileIndex, cameraLabelCb.checked);
+                });
+            }
+            
+            const cameraCoordsCb = document.getElementById(`camera-show-coords-${i}`) as HTMLInputElement;
+            if (cameraCoordsCb) {
+                cameraCoordsCb.addEventListener('change', () => {
+                    const cameraProfileIndex = i - this.plyFiles.length - this.poseGroups.length;
+                    this.toggleCameraProfileCoordinates(cameraProfileIndex, cameraCoordsCb.checked);
+                });
+            }
+            
             // Add size slider listeners for point clouds and OBJ files
             const sizeSlider = document.getElementById(`size-${i}`) as HTMLInputElement;
-            const isPose = i >= this.plyFiles.length;
-            const isObjFile = !isPose && (this.plyFiles[i] as any).isObjFile;
-            if (sizeSlider && (isPose || this.plyFiles[i].faceCount === 0 || isObjFile)) {
+            const isPose = i >= this.plyFiles.length && i < this.plyFiles.length + this.poseGroups.length;
+            const isCamera = i >= this.plyFiles.length + this.poseGroups.length;
+            const isObjFile = !isPose && !isCamera && (this.plyFiles[i] as any).isObjFile;
+            if (sizeSlider && (isPose || isCamera || this.plyFiles[i]?.faceCount === 0 || isObjFile)) {
                 sizeSlider.addEventListener('input', (e) => {
                     const newSize = parseFloat((e.target as HTMLInputElement).value);
                     this.updatePointSize(i, newSize);
@@ -3588,6 +3731,14 @@ class PLYVisualizer {
             if (group) group.visible = desiredVisible;
             const labels = this.poseLabelsGroups[poseIndex];
             if (labels) labels.visible = desiredVisible;
+            return;
+        }
+        
+        // Camera entries are appended after poses
+        const cameraIndex = fileIndex - this.plyFiles.length - this.poseGroups.length;
+        if (cameraIndex >= 0 && cameraIndex < this.cameraGroups.length) {
+            const group = this.cameraGroups[cameraIndex];
+            if (group) group.visible = desiredVisible;
         }
     }
     
@@ -5031,11 +5182,15 @@ class PLYVisualizer {
             console.log(`🎚️ Updating point size for file ${fileIndex}: ${oldSize} → ${newSize}`);
             this.pointSizes[fileIndex] = newSize;
             
-            const isPose = fileIndex >= this.plyFiles.length;
-            const data = !isPose ? this.plyFiles[fileIndex] : undefined as any;
+            const isPose = fileIndex >= this.plyFiles.length && fileIndex < this.plyFiles.length + this.poseGroups.length;
+            const isCamera = fileIndex >= this.plyFiles.length + this.poseGroups.length;
+            const data = !isPose && !isCamera ? this.plyFiles[fileIndex] : undefined as any;
             const isObjFile = data ? (data as any).isObjFile : false;
             
-            if (isPose) {
+            if (isCamera) {
+                // Handle camera scaling by applying transformation matrix with scale
+                this.applyTransformationMatrix(fileIndex);
+            } else if (isPose) {
                 // Update instanced sphere scale in pose group if stored using PointsMaterial size semantics is different.
                 const poseIndex = fileIndex - this.plyFiles.length;
                 const group = this.poseGroups[poseIndex];
@@ -8458,6 +8613,12 @@ class PLYVisualizer {
         const fileName: string = message.fileName || 'pose.json';
         const data = message.data;
         try {
+            // Check if this is a camera profile JSON
+            if (data && data.cameras && typeof data.cameras === 'object') {
+                this.handleCameraProfile(data, fileName);
+                return;
+            }
+            
             // If Halpe meta with multiple instances, add each instance as a separate pose
             if (data && data.meta_info && Array.isArray(data.instance_info) && data.instance_info.length > 1) {
                 for (let i = 0; i < data.instance_info.length; i++) {
@@ -8582,6 +8743,311 @@ class PLYVisualizer {
         } catch (err) {
             this.showError('Pose parse error: ' + (err instanceof Error ? err.message : String(err)));
         }
+    }
+
+    // ========== Camera Profile handling ==========
+    private handleCameraProfile(data: any, fileName: string): void {
+        try {
+            const cameras = data.cameras;
+            const cameraNames = Object.keys(cameras);
+            
+            console.log(`Loading camera profile with ${cameraNames.length} cameras:`, cameraNames);
+            
+            // Create a single group to contain all cameras
+            const cameraProfileGroup = new THREE.Group();
+            cameraProfileGroup.name = `camera_profile_${fileName}`;
+            
+            let cameraCount = 0;
+            for (const cameraName of cameraNames) {
+                const camera = cameras[cameraName];
+                if (camera.local_extrinsics && camera.local_extrinsics.params) {
+                    const params = camera.local_extrinsics.params;
+                    if (params.location && params.rotation_quaternion) {
+                        const cameraViz = this.createCameraVisualization(cameraName, params.location, params.rotation_quaternion);
+                        cameraProfileGroup.add(cameraViz);
+                        cameraCount++;
+                    }
+                }
+            }
+            
+            if (cameraCount > 0) {
+                this.scene.add(cameraProfileGroup);
+                this.cameraGroups.push(cameraProfileGroup);
+                this.cameraNames.push(fileName); // Store filename instead of individual camera names
+                
+                // Initialize as single file entry (like poses)
+                const unifiedIndex = this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length - 1;
+                this.fileVisibility[unifiedIndex] = true;
+                this.pointSizes[unifiedIndex] = 1.0; // Default camera scale
+                this.individualColorModes[unifiedIndex] = 'assigned';
+                
+                // Initialize transformation matrix for camera profile
+                this.transformationMatrices.push(new THREE.Matrix4());
+                this.applyTransformationMatrix(unifiedIndex);
+            }
+            
+            // Update UI
+            this.updateFileList();
+            this.updateFileStats();
+            this.fitCameraToAllObjects();
+            
+            // Hide loading overlay
+            document.getElementById('loading')?.classList.add('hidden');
+            
+            console.log(`Successfully loaded camera profile with ${cameraCount} cameras from ${fileName}`);
+        } catch (err) {
+            this.showError('Camera profile parse error: ' + (err instanceof Error ? err.message : String(err)));
+        }
+    }
+
+    private createCameraVisualization(cameraName: string, location: number[], rotationQuaternion: number[]): THREE.Group {
+        const group = new THREE.Group();
+        group.name = `camera_${cameraName}`;
+        
+        // Set camera position
+        const position = new THREE.Vector3(location[0], location[1], location[2]);
+        group.position.copy(position);
+        
+        // Set camera rotation from quaternion (x, y, z, w format from JSON)
+        const quaternion = new THREE.Quaternion(rotationQuaternion[0], rotationQuaternion[1], rotationQuaternion[2], rotationQuaternion[3]);
+        group.setRotationFromQuaternion(quaternion);
+        
+        // Create camera body (triangle shape)
+        const cameraBody = this.createCameraBodyGeometry();
+        group.add(cameraBody);
+        
+        // Create direction line
+        const directionLine = this.createDirectionArrow();
+        group.add(directionLine);
+        
+        // Create text label
+        const textLabel = this.createCameraLabel(cameraName);
+        textLabel.name = 'cameraLabel';
+        textLabel.visible = false; // Hide labels by default
+        group.add(textLabel);
+        
+        // Store original position for coordinate label
+        (group as any).originalPosition = { x: location[0], y: location[1], z: location[2] };
+        
+        return group;
+    }
+
+    private createCameraBodyGeometry(): THREE.Mesh {
+        // Create a 4-sided pyramid shape 
+        const size = 0.02; // 2cm base size
+        const height = size * 1.5;
+        
+        const geometry = new THREE.ConeGeometry(size, height, 4); // 4 sides for square pyramid
+        const material = new THREE.MeshBasicMaterial({ 
+            color: 0x4CAF50, // Green color for cameras
+            transparent: true,
+            opacity: 0.9
+        });
+        
+        const mesh = new THREE.Mesh(geometry, material);
+        // Orient pyramid to point in camera direction (-Z) and position so tip is at origin
+        mesh.rotation.x = Math.PI / 2;
+        mesh.position.z = height / 2; // Move cone so tip is at origin (0,0,0)
+        
+        return mesh;
+    }
+
+    private createDirectionArrow(): THREE.Line {
+        // Simple line showing camera direction
+        const lineLength = 0.05; // 5cm direction line
+        
+        const geometry = new THREE.BufferGeometry();
+        const pyramidHeight = 0.03; // Pyramid height (size * 1.5 where size = 0.02)
+        const positions = new Float32Array([
+            0, 0, pyramidHeight,          // Start at pyramid base surface
+            0, 0, pyramidHeight - lineLength // Extend in camera direction (-Z)
+        ]);
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        
+        const material = new THREE.LineBasicMaterial({ 
+            color: 0x4CAF50, // Same green as triangle
+            linewidth: 2
+        });
+        
+        const line = new THREE.Line(geometry, material);
+        line.name = 'directionLine'; // Add name for identification
+        return line;
+    }
+
+    private createCameraLabel(cameraName: string): THREE.Sprite {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d')!;
+        
+        // Use higher resolution for crisp text
+        const pixelRatio = 3; // 3x resolution for sharp text
+        const baseFontSize = 28;
+        const fontSize = baseFontSize * pixelRatio;
+        
+        // Set font first to measure text accurately
+        context.font = `Bold ${fontSize}px Arial`;
+        const textMetrics = context.measureText(cameraName);
+        
+        // Make canvas size fit the text with padding (high resolution)
+        const padding = 20 * pixelRatio;
+        canvas.width = Math.max(textMetrics.width + padding * 2, 200 * pixelRatio);
+        canvas.height = 48 * pixelRatio;
+        
+        // Set font again after canvas resize and configure for high quality
+        context.font = `Bold ${fontSize}px Arial`;
+        context.fillStyle = 'white';
+        context.strokeStyle = 'black';
+        context.lineWidth = 3 * pixelRatio;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        
+        // Enable anti-aliasing for smooth text
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = 'high';
+        
+        // Clear background
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw text with outline (centered)
+        const x = canvas.width / 2;
+        const y = canvas.height / 2;
+        
+        context.strokeText(cameraName, x, y);
+        context.fillText(cameraName, x, y);
+        
+        // Create sprite from high-resolution canvas
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.generateMipmaps = true;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        
+        const material = new THREE.SpriteMaterial({ map: texture });
+        const sprite = new THREE.Sprite(material);
+        
+        // Position label above camera (closer)
+        sprite.position.set(0, 0.04, 0);
+        
+        // Scale proportionally to canvas aspect ratio, accounting for pixel ratio
+        const aspectRatio = canvas.width / canvas.height;
+        const baseScale = 0.002; // Much smaller base size relative to pyramid
+        sprite.scale.set(baseScale * aspectRatio, baseScale, 1);
+        
+        return sprite;
+    }
+
+    private toggleCameraVisibility(): void {
+        this.cameraVisibility = !this.cameraVisibility;
+        this.cameraGroups.forEach(group => {
+            group.visible = this.cameraVisibility;
+        });
+    }
+
+    private updateCameraButtonState(): void {
+        const toggleBtn = document.getElementById('toggle-cameras');
+        if (!toggleBtn) return;
+        
+        if (this.cameraVisibility) {
+            toggleBtn.classList.add('active');
+            toggleBtn.innerHTML = 'Show Cameras';
+        } else {
+            toggleBtn.classList.remove('active');
+            toggleBtn.innerHTML = 'Show Cameras';
+        }
+    }
+
+    private toggleCameraProfileLabels(cameraProfileIndex: number, showLabels: boolean): void {
+        if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) return;
+        
+        const profileGroup = this.cameraGroups[cameraProfileIndex];
+        // Iterate through all cameras in the profile
+        profileGroup.children.forEach(child => {
+            if (child instanceof THREE.Group && child.name.startsWith('camera_')) {
+                const label = child.getObjectByName('cameraLabel');
+                if (label) {
+                    label.visible = showLabels;
+                }
+            }
+        });
+    }
+
+    private toggleCameraProfileCoordinates(cameraProfileIndex: number, showCoords: boolean): void {
+        if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) return;
+        
+        const profileGroup = this.cameraGroups[cameraProfileIndex];
+        // Iterate through all cameras in the profile
+        profileGroup.children.forEach(child => {
+            if (child instanceof THREE.Group && child.name.startsWith('camera_')) {
+                if (showCoords) {
+                    // Create or update coordinate label
+                    const originalPos = (child as any).originalPosition;
+                    if (originalPos) {
+                        const coordText = `(${originalPos.x.toFixed(3)}, ${originalPos.y.toFixed(3)}, ${originalPos.z.toFixed(3)})`;
+                        let coordLabel = child.getObjectByName('coordinateLabel') as THREE.Sprite;
+                        
+                        if (!coordLabel) {
+                            coordLabel = this.createCameraLabel(coordText);
+                            coordLabel.name = 'coordinateLabel';
+                            coordLabel.position.set(0, -0.03, 0); // Position below camera base
+                            child.add(coordLabel);
+                        } else {
+                            // Update existing label text
+                            const newLabel = this.createCameraLabel(coordText);
+                            coordLabel.material = newLabel.material;
+                        }
+                        coordLabel.visible = true;
+                    }
+                } else {
+                    // Hide coordinate label
+                    const coordLabel = child.getObjectByName('coordinateLabel');
+                    if (coordLabel) {
+                        coordLabel.visible = false;
+                    }
+                }
+            }
+        });
+    }
+
+    private applyCameraScale(cameraProfileIndex: number, scale: number): void {
+        if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) return;
+        
+        const profileGroup = this.cameraGroups[cameraProfileIndex];
+        // Apply scale to each individual camera's visual elements
+        profileGroup.children.forEach(child => {
+            if (child instanceof THREE.Group && child.name.startsWith('camera_')) {
+                // Scale all visual elements including text labels
+                child.children.forEach(visualElement => {
+                    // Reset scale to 1.0 first to prevent accumulation
+                    visualElement.scale.setScalar(1.0);
+                    
+                    if (visualElement.name === 'cameraLabel') {
+                        // Scale text labels proportionally but keep them much smaller than pyramid
+                        const textScale = Math.min(scale, scale * 0.6); // Text stays 60% of pyramid scale max
+                        visualElement.scale.setScalar(textScale);
+                        // Adjust position to scale with pyramid
+                        visualElement.position.set(0, 0.04 * scale, 0);
+                    } else if (visualElement.name === 'coordinateLabel') {
+                        // Scale coordinate labels proportionally
+                        const textScale = Math.min(scale, scale * 0.6);
+                        visualElement.scale.setScalar(textScale);
+                        // Position coordinate label at pyramid base surface
+                        visualElement.position.set(0, -0.03 * scale, 0);
+                    } else if (visualElement.name === 'directionLine') {
+                        // For direction line, recreate geometry with scaled length
+                        const line = visualElement as THREE.Line;
+                        const lineLength = 0.05 * scale; // Scale the line length
+                        const pyramidHeight = 0.03 * scale; // Scaled pyramid height
+                        const positions = new Float32Array([
+                            0, 0, pyramidHeight,          // Start at pyramid base surface
+                            0, 0, pyramidHeight - lineLength // Extend in camera direction (-Z) with scaled length
+                        ]);
+                        line.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                        line.geometry.attributes.position.needsUpdate = true;
+                    } else {
+                        // Scale pyramid normally
+                        visualElement.scale.setScalar(scale);
+                    }
+                });
+            }
+        });
     }
 
     private normalizePose(raw: any): { joints: Array<{ x: number; y: number; z: number; score?: number; valid?: boolean }>; edges: Array<[number, number]> } {
