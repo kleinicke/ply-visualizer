@@ -1355,6 +1355,24 @@ class PLYVisualizer {
         return matrix;
     }
 
+    private parseSpaceSeparatedValues(input: string): number[] {
+        if (!input.trim()) {
+            return [];
+        }
+        
+        // Remove brackets, parentheses, and normalize whitespace/separators
+        let cleaned = input
+            .replace(/[\[\](){}]/g, '') // Remove brackets/parentheses
+            .replace(/[,;]/g, ' ')      // Replace commas/semicolons with spaces
+            .replace(/\s+/g, ' ')       // Normalize multiple spaces to single
+            .trim();
+        
+        // Split by spaces and parse numbers
+        return cleaned.split(' ')
+            .map(s => parseFloat(s))
+            .filter(n => !isNaN(n));
+    }
+
     private multiplyTransformationMatrices(fileIndex: number, matrix: THREE.Matrix4): void {
         if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
             this.transformationMatrices[fileIndex].multiply(matrix);
@@ -5546,19 +5564,20 @@ class PLYVisualizer {
         dialog.innerHTML = `
             <h3 style="margin-top:0;">Add Translation</h3>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Translation Amount:</label>
-                <input type="number" id="translation-amount" value="1" step="0.1" style="width:100%;padding:5px;">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Direction:</label>
-                <div style="display:flex;gap:10px;margin-top:5px;">
-                    <button id="translate-x" style="flex:1;padding:8px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;">X Axis</button>
-                    <button id="translate-y" style="flex:1;padding:8px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;">Y Axis</button>
-                    <button id="translate-z" style="flex:1;padding:8px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;">Z Axis</button>
+                <label style="display:block;margin-bottom:5px;font-weight:bold;">Enter translation vector (X Y Z):</label>
+                <div style="font-size:11px;color:#666;margin-bottom:8px;">
+                    Format: X Y Z (space-separated)<br>
+                    Commas, brackets, and line breaks are automatically handled<br>
+                    Example: 1 0 0 (move 1 unit along X-axis)
                 </div>
+                <textarea id="translation-input" 
+                    placeholder="1 0 0" 
+                    style="width:100%;height:80px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
+                >1 0 0</textarea>
             </div>
             <div style="text-align:right;">
                 <button id="cancel-translation" style="margin-right:10px;padding:8px 15px;">Cancel</button>
+                <button id="apply-translation" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
             </div>
         `;
         
@@ -5570,35 +5589,26 @@ class PLYVisualizer {
         };
         
         const cancelBtn = dialog.querySelector('#cancel-translation');
+        const applyBtn = dialog.querySelector('#apply-translation');
         
         if (cancelBtn) {
             cancelBtn.addEventListener('click', closeModal);
         }
         
-        // Translation direction buttons
-        const translateXBtn = dialog.querySelector('#translate-x');
-        const translateYBtn = dialog.querySelector('#translate-y');
-        const translateZBtn = dialog.querySelector('#translate-z');
-        
-        const applyTranslation = (x: number, y: number, z: number) => {
-            const amount = parseFloat((dialog.querySelector('#translation-amount') as HTMLInputElement).value);
-            if (!isNaN(amount)) {
-                this.addTranslationToMatrix(fileIndex, x * amount, y * amount, z * amount);
-                this.updateMatrixTextarea(fileIndex);
-            }
-            closeModal();
-        };
-        
-        if (translateXBtn) {
-            translateXBtn.addEventListener('click', () => applyTranslation(1, 0, 0));
-        }
-        
-        if (translateYBtn) {
-            translateYBtn.addEventListener('click', () => applyTranslation(0, 1, 0));
-        }
-        
-        if (translateZBtn) {
-            translateZBtn.addEventListener('click', () => applyTranslation(0, 0, 1));
+        if (applyBtn) {
+            applyBtn.addEventListener('click', () => {
+                const input = (dialog.querySelector('#translation-input') as HTMLTextAreaElement).value;
+                const values = this.parseSpaceSeparatedValues(input);
+                
+                if (values.length === 3) {
+                    const [x, y, z] = values;
+                    this.addTranslationToMatrix(fileIndex, x, y, z);
+                    this.updateMatrixTextarea(fileIndex);
+                    closeModal();
+                } else {
+                    alert('Please enter exactly 3 numbers for translation (X Y Z)');
+                }
+            });
         }
         
         // Close on background click
@@ -5645,20 +5655,16 @@ class PLYVisualizer {
         dialog.innerHTML = `
             <h3 style="margin-top:0;">Add Quaternion Rotation</h3>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Quaternion X:</label>
-                <input type="number" id="quaternion-x" value="0" step="0.1" style="width:100%;padding:5px;">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Quaternion Y:</label>
-                <input type="number" id="quaternion-y" value="0" step="0.1" style="width:100%;padding:5px;">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Quaternion Z:</label>
-                <input type="number" id="quaternion-z" value="0" step="0.1" style="width:100%;padding:5px;">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Quaternion W:</label>
-                <input type="number" id="quaternion-w" value="1" step="0.1" style="width:100%;padding:5px;">
+                <label style="display:block;margin-bottom:5px;font-weight:bold;">Enter quaternion values (X Y Z W):</label>
+                <div style="font-size:11px;color:#666;margin-bottom:8px;">
+                    Format: X Y Z W (space-separated)<br>
+                    Commas, brackets, and line breaks are automatically handled<br>
+                    Example: 0 0 0 1 (identity quaternion)
+                </div>
+                <textarea id="quaternion-input" 
+                    placeholder="0 0 0 1" 
+                    style="width:100%;height:80px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
+                >0 0 0 1</textarea>
             </div>
             <div style="text-align:right;">
                 <button id="cancel-quaternion" style="margin-right:10px;padding:8px 15px;">Cancel</button>
@@ -5682,18 +5688,18 @@ class PLYVisualizer {
         
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
-                const x = parseFloat((dialog.querySelector('#quaternion-x') as HTMLInputElement).value);
-                const y = parseFloat((dialog.querySelector('#quaternion-y') as HTMLInputElement).value);
-                const z = parseFloat((dialog.querySelector('#quaternion-z') as HTMLInputElement).value);
-                const w = parseFloat((dialog.querySelector('#quaternion-w') as HTMLInputElement).value);
+                const input = (dialog.querySelector('#quaternion-input') as HTMLTextAreaElement).value;
+                const values = this.parseSpaceSeparatedValues(input);
                 
-                if (!isNaN(x) && !isNaN(y) && !isNaN(z) && !isNaN(w)) {
+                if (values.length === 4) {
+                    const [x, y, z, w] = values;
                     const quaternionMatrix = this.createQuaternionMatrix(x, y, z, w);
                     this.multiplyTransformationMatrices(fileIndex, quaternionMatrix);
                     this.updateMatrixTextarea(fileIndex);
+                    closeModal();
+                } else {
+                    alert('Please enter exactly 4 numbers for the quaternion (X Y Z W)');
                 }
-                
-                closeModal();
             });
         }
         
@@ -5741,20 +5747,16 @@ class PLYVisualizer {
         dialog.innerHTML = `
             <h3 style="margin-top:0;">Add Angle-Axis Rotation</h3>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Axis X:</label>
-                <input type="number" id="axis-x" value="0" step="0.1" style="width:100%;padding:5px;">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Axis Y:</label>
-                <input type="number" id="axis-y" value="1" step="0.1" style="width:100%;padding:5px;">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Axis Z:</label>
-                <input type="number" id="axis-z" value="0" step="0.1" style="width:100%;padding:5px;">
-            </div>
-            <div style="margin-bottom: 20px;">
-                <label style="display:block;margin-bottom:5px;">Angle (degrees):</label>
-                <input type="number" id="angle-degrees" value="90" step="1" min="0" max="360" style="width:100%;padding:5px;">
+                <label style="display:block;margin-bottom:5px;font-weight:bold;">Enter axis and angle (X Y Z angle):</label>
+                <div style="font-size:11px;color:#666;margin-bottom:8px;">
+                    Format: X Y Z angle (space-separated, angle in degrees)<br>
+                    Commas, brackets, and line breaks are automatically handled<br>
+                    Example: 0 1 0 90 (90° rotation around Y-axis)
+                </div>
+                <textarea id="angle-axis-input" 
+                    placeholder="0 1 0 90" 
+                    style="width:100%;height:80px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
+                >0 1 0 90</textarea>
             </div>
             <div style="text-align:right;">
                 <button id="cancel-angle-axis" style="margin-right:10px;padding:8px 15px;">Cancel</button>
@@ -5778,20 +5780,20 @@ class PLYVisualizer {
         
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
-                const axisX = parseFloat((dialog.querySelector('#axis-x') as HTMLInputElement).value);
-                const axisY = parseFloat((dialog.querySelector('#axis-y') as HTMLInputElement).value);
-                const axisZ = parseFloat((dialog.querySelector('#axis-z') as HTMLInputElement).value);
-                const angleDegrees = parseFloat((dialog.querySelector('#angle-degrees') as HTMLInputElement).value);
+                const input = (dialog.querySelector('#angle-axis-input') as HTMLTextAreaElement).value;
+                const values = this.parseSpaceSeparatedValues(input);
                 
-                if (!isNaN(axisX) && !isNaN(axisY) && !isNaN(axisZ) && !isNaN(angleDegrees)) {
+                if (values.length === 4) {
+                    const [axisX, axisY, axisZ, angleDegrees] = values;
                     const axis = new THREE.Vector3(axisX, axisY, axisZ);
                     const angle = (angleDegrees * Math.PI) / 180; // Convert to radians
                     const angleAxisMatrix = this.createAngleAxisMatrix(axis, angle);
                     this.multiplyTransformationMatrices(fileIndex, angleAxisMatrix);
                     this.updateMatrixTextarea(fileIndex);
+                    closeModal();
+                } else {
+                    alert('Please enter exactly 4 numbers for axis and angle (X Y Z angle in degrees)');
                 }
-                
-                closeModal();
             });
         }
         
