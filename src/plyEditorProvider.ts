@@ -60,6 +60,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             isStlFile: isStlFile
         });
 
+        // Proactively send default depth settings before any depth processing
+        // to ensure the webview uses the latest saved defaults during initial conversion
+        await this.handleRequestDefaultDepthSettings(webviewPanel);
+
         // Load and parse file asynchronously (don't await - let UI show first)
         setImmediate(async () => {
             try {
