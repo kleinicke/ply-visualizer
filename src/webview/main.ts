@@ -7373,6 +7373,7 @@ class PLYVisualizer {
         
         const points: number[] = [];
         const colors: number[] = [];
+        const logDepths: number[] = [];
         
         // Track depth statistics for debugging disappearing point clouds
         let minDepth = Infinity;
@@ -7427,9 +7428,10 @@ class PLYVisualizer {
                         );
                     }
                     
-                    // Add color based on depth (grayscale visualization)
-                    const normalizedDepth = Math.min(depth / 10, 1); // Scale depth for visualization
-                    colors.push(normalizedDepth, normalizedDepth, normalizedDepth);
+                    // Track depth for color mapping
+                    minDepth = Math.min(minDepth, depth);
+                    maxDepth = Math.max(maxDepth, depth);
+                    logDepths.push(Math.log(depth));
                 }
             }
         } else {
@@ -7499,13 +7501,30 @@ class PLYVisualizer {
                         dirZ * depth
                     );
                     
-                    // Add color based on depth (grayscale visualization)
-                    const normalizedDepth = Math.min(depth / 10, 1); // Scale depth for visualization
-                    colors.push(normalizedDepth, normalizedDepth, normalizedDepth);
+                    // Track depth for color mapping
+                    minDepth = Math.min(minDepth, depth);
+                    maxDepth = Math.max(maxDepth, depth);
+                    logDepths.push(Math.log(depth));
                 }
             }
         }
         
+        // Compute log-normalized, gamma-corrected grayscale colors
+        if (logDepths.length > 0) {
+            const logMin = Math.log(minDepth);
+            const logMax = Math.log(maxDepth);
+            const denom = logMax - logMin;
+            const invDenom = denom > 0 ? 1 / denom : 0;
+            const gamma = 2.2; // standard display gamma
+            const minGray = 0.2; // lift darkest values to 0.2
+            for (let i = 0; i < logDepths.length; i++) {
+                const s = denom > 0 ? (logDepths[i] - logMin) * invDenom : 1.0;
+                const g = Math.pow(s, 1 / gamma);
+                const mapped = minGray + (1 - minGray) * g;
+                colors.push(mapped, mapped, mapped);
+            }
+        }
+
         console.log(`Generated ${points.length / 3} points from ${width}x${height} depth image`);
         console.log(`📊 Depth statistics: min=${minDepth.toFixed(3)}, max=${maxDepth.toFixed(3)}, valid=${validPointCount}, skipped=${skippedPoints}`);
         console.log(`🎥 Camera range: near=${0.001}, far=${1000000}`);

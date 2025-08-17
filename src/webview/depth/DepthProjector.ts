@@ -1,4 +1,4 @@
-import { CameraModel, DepthImage, DepthMetadata } from './types';
+import { CameraModel, DepthImage, DepthMetadata } from "./types";
 
 export interface PointCloudResult {
   vertices: Float32Array;
@@ -10,17 +10,23 @@ export interface PointCloudResult {
 
 export function projectToPointCloud(
   image: DepthImage,
-  meta: Required<Pick<DepthMetadata, 'fx' | 'fy' | 'cx' | 'cy' | 'cameraModel'>> & Partial<DepthMetadata>
+  meta: Required<
+    Pick<DepthMetadata, "fx" | "fy" | "cx" | "cy" | "cameraModel">
+  > &
+    Partial<DepthMetadata>
 ): PointCloudResult {
   const { width, height, data } = image;
   const { fx, fy, cx, cy, cameraModel } = meta;
 
   const points: number[] = [];
   const colors: number[] = [];
+  const logDepths: number[] = [];
+  let minDepth = Infinity;
+  let maxDepth = -Infinity;
 
-  const isZDepth = meta.kind === 'z';
+  const isZDepth = meta.kind === "z";
 
-  if (cameraModel === 'fisheye') {
+  if (cameraModel === "fisheye") {
     // Equidistant fisheye model
     for (let v = 0; v < height; v++) {
       for (let u = 0; u < width; u++) {
@@ -44,8 +50,10 @@ export function projectToPointCloud(
           points.push(xNorm * depth, yNorm * depth, zNorm * depth);
         }
 
-        const nd = Math.min(depth / 10, 1);
-        colors.push(nd, nd, nd);
+        // Track depth range and store log-depth for later normalized color mapping
+        minDepth = Math.min(minDepth, depth);
+        maxDepth = Math.max(maxDepth, depth);
+        logDepths.push(Math.log(depth));
       }
     }
   } else {
@@ -58,11 +66,13 @@ export function projectToPointCloud(
 
         if (isZDepth) {
           const Z = val;
-          const X = (u - cx) / fx * Z;
-          const Y = (v - cy) / fy * Z;
+          const X = ((u - cx) / fx) * Z;
+          const Y = ((v - cy) / fy) * Z;
           points.push(X, Y, Z);
-          const nd = Math.min(Z / 10, 1);
-          colors.push(nd, nd, nd);
+          // Track depth range and store log-depth for later normalized color mapping
+          minDepth = Math.min(minDepth, Z);
+          maxDepth = Math.max(maxDepth, Z);
+          logDepths.push(Math.log(Z));
         } else {
           const X = (u - cx) / fx;
           const Y = (v - cy) / fy;
@@ -73,15 +83,33 @@ export function projectToPointCloud(
           const dirZ = Z / norm;
           const depth = val;
           points.push(dirX * depth, dirY * depth, dirZ * depth);
-          const nd = Math.min(depth / 10, 1);
-          colors.push(nd, nd, nd);
+          // Track depth range and store log-depth for later normalized color mapping
+          minDepth = Math.min(minDepth, depth);
+          maxDepth = Math.max(maxDepth, depth);
+          logDepths.push(Math.log(depth));
         }
       }
     }
   }
 
+  // Compute log-normalized, gamma-corrected grayscale colors
+  if (logDepths.length > 0) {
+    const logMin = Math.log(minDepth);
+    const logMax = Math.log(maxDepth);
+    const denom = logMax - logMin;
+    const invDenom = denom > 0 ? 1 / denom : 0;
+    const gamma = 1.0; //2.2; // standard display gamma
+    const minGray = 0.2; // lift darkest values to 0.2
+    for (let i = 0; i < logDepths.length; i++) {
+      const s = denom > 0 ? (logDepths[i] - logMin) * invDenom : 1.0;
+      const g = Math.pow(s, 1 / gamma);
+      const mapped = minGray + (1 - minGray) * g;
+      colors.push(mapped, mapped, mapped);
+    }
+  }
+
   let vertices = new Float32Array(points);
-  if (meta.convention === 'opengl') {
+  if (meta.convention === "opengl") {
     for (let i = 0; i < vertices.length; i += 3) {
       vertices[i + 1] = -vertices[i + 1];
       vertices[i + 2] = -vertices[i + 2];
@@ -104,13 +132,17 @@ export function normalizeDepth(
   const data = new Float32Array(image.data); // copy for safe transform
 
   // Apply unit/scale to convert to meters when kind is depth/z
-  if ((meta.kind === 'depth' || meta.kind === 'z') && (meta.unit || meta.scale)) {
-    const scale = (meta.unit === 'millimeter' ? 1 / 1000 : 1) * (meta.scale ?? 1);
+  if (
+    (meta.kind === "depth" || meta.kind === "z") &&
+    (meta.unit || meta.scale)
+  ) {
+    const scale =
+      (meta.unit === "millimeter" ? 1 / 1000 : 1) * (meta.scale ?? 1);
     for (let i = 0; i < data.length; i++) data[i] = data[i] * scale;
   }
 
   // Convert disparity/inv_depth to depth in meters if possible
-  if (meta.kind === 'disparity') {
+  if (meta.kind === "disparity") {
     const fx = meta.fx ?? 0;
     const baseline = meta.baseline ?? 0;
     const eps = 1e-8;
@@ -119,17 +151,18 @@ export function normalizeDepth(
         const d = data[i];
         data[i] = d > eps ? (fx * baseline) / d : NaN;
       }
-      meta.kind = 'depth';
-      meta.unit = 'meter';
+      meta.kind = "depth";
+      meta.unit = "meter";
     }
-  } else if (meta.kind === 'inv_depth') {
-    const scale = (meta.unit === 'millimeter' ? 1 / 1000 : 1) * (meta.scale ?? 1);
+  } else if (meta.kind === "inv_depth") {
+    const scale =
+      (meta.unit === "millimeter" ? 1 / 1000 : 1) * (meta.scale ?? 1);
     for (let i = 0; i < data.length; i++) {
       const id = data[i] * scale;
       data[i] = id > 0 ? 1.0 / id : NaN;
     }
-    meta.kind = 'depth';
-    meta.unit = 'meter';
+    meta.kind = "depth";
+    meta.unit = "meter";
   }
 
   if (meta.depthClamp) {
