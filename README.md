@@ -4,11 +4,12 @@ A Visual Studio Code extension for visualizing PLY (Polygon File Format) files w
 
 ## Features
 
-- **Visualize Point Clouds**: Navigate in colored or uncolored point clouds 
+- **Visualize Point Clouds**: Navigate in colored or uncolored point clouds
 - **Fast Loading of Big Point Clouds**: Even point clouds with 5 Million Points load in around a second.
 - **Compare Multiple Point Clouds**: Multiple point clouds can be loaded in the same view and activated and deactivated independently.
 - **Multiple Formats**: Support for both ASCII and binary PLY formats, XYZ pointclouds, OBJ wireframes and pose estimations in json files.
 - **Rotation of points**: Apply Rotation Matrix for single point clouds
+- **Depth to point cloud conversion**: Can convert on the fly depth images to point clouds. It has support for tiff, png, pfm, npy and npz files.
 
 ![example-view](assets/example.png)
 
@@ -35,6 +36,7 @@ Load two point clouds and switch between them imediatly pressing shift and click
   - Bodypose json format (keypoints and connections)
 
 ## Known Issues and Missing Features
+
 - **Wrong direction of Rotation**: When rotating the point cloud the direction is inversed. It's unclear how to fix this.
 - **Bad use case knowledge for Shapes**: It was mainly tested for point clouds, since the author mainly works with point clouds.
 - **Visualize Depth Image**: Interpret a depth image directly as a point cloud
@@ -43,6 +45,7 @@ Load two point clouds and switch between them imediatly pressing shift and click
 - **Drag and Drop**: Add more pc to a given pc using drag and drop instead of adding them in an extra window
 
 ### OBJ Wireframe Format Example
+
 ```
 # Vertices
 v 0.0 0.0 0.0
@@ -60,6 +63,7 @@ usemtl red
 ```
 
 **OBJ Support:**
+
 - Vertices (`v` elements) are parsed and rendered as points
 - Line segments (`l` elements) create wireframe connections
 - MTL material files are recognized but colors are currently ignored
@@ -69,6 +73,3 @@ usemtl red
 ## Feature Requests and Issues
 
 If you have use cases that would be helpful for others or find problems, feel free to suggest them on the [GitHub repository](https://github.com/kleinicke/ply-visualizer/issues). If you know how to fix bugs or how to implement certain features, feel free to contribute.
-
-
-

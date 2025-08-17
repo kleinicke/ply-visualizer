@@ -1,7 +1,7 @@
 {
   "name": "ply-visualizer",
-  "displayName": "PLY Pointcloud Visualizer",
-  "description": "A 3D visualizer for PLY (Polygon File Format) and XYZ point cloud files using Three.js",
+  "displayName": "PLY 3D Point Cloud Visualizer",
+  "description": "A 3D visualizer for PLY (Polygon File Format) using Three.js. Also supports xyz, obj and depth to point cloud conversions.",
   "version": "1.1.2",
   "publisher": "kleinicke",
   "icon": "icon.png",
@@ -18,11 +18,28 @@
   "keywords": [
     "ply",
     "xyz",
+    "obj",
+    "tif",
+    "tiff",
+    "pfm",
+    "npy",
+    "npz",
+    "png",
+    "json",
     "3d",
     "point cloud",
+    "pointcloud",
     "mesh",
+    "depth",
+    "disparity",
     "visualization",
-    "three.js"
+    "viewer",
+    "three.js",
+    "camera",
+    "pose",
+    "depth image",
+    "depth map",
+    "computer vision"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -38,25 +55,7 @@
             "filenamePattern": "*.xyz"
           },
           {
-            "filenamePattern": "*.tif"
-          },
-          {
-            "filenamePattern": "*.tiff"
-          },
-          {
             "filenamePattern": "*.obj"
-          },
-          {
-            "filenamePattern": "*.pfm"
-          },
-          {
-            "filenamePattern": "*.npy"
-          },
-          {
-            "filenamePattern": "*.npz"
-          },
-          {
-            "filenamePattern": "*.png"
           }
         ]
       }
@@ -111,7 +110,7 @@
           "group": "navigation"
         },
         {
-          "command": "plyViewer.convertDepthToPointCloud", 
+          "command": "plyViewer.convertDepthToPointCloud",
           "when": "resourceExtname == .pfm",
           "group": "navigation"
         },
