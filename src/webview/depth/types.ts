@@ -25,6 +25,9 @@ export interface DepthMetadata {
   requiresConfiguration?: boolean;
   selectedArray?: string;
   selectedChannel?: number;
+  // PNG-specific metadata
+  invalidValue?: number; // Value representing invalid pixels (default: 0)
+  bitDepth?: number; // 8-bit or 16-bit PNG
 }
 
 export interface DepthReaderResult {

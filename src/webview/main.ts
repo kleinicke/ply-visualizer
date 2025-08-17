@@ -42,6 +42,7 @@ interface CameraParams {
     depthType: 'euclidean' | 'orthogonal' | 'disparity';
     baseline?: number; // Required for disparity mode
     convention?: 'opengl' | 'opencv'; // Coordinate convention
+    scaleFactor?: number; // For PNG files: divisor to convert raw values to meters (1000 for mm)
 }
 
 interface TifConversionResult {
@@ -569,7 +570,8 @@ class PLYVisualizer {
         focalLength: 1000,
         cameraModel: 'pinhole',
         depthType: 'euclidean',
-        convention: 'opengl'
+        convention: 'opengl',
+        scaleFactor: 1000 // Default for PNG files
     };
     private convertSrgbToLinear: boolean = true; // Default: remove gamma from source colors
     private srgbToLinearLUT: Float32Array | null = null;
@@ -2345,13 +2347,15 @@ class PLYVisualizer {
         const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
         const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
         const conventionSelect = document.getElementById(`convention-${fileIndex}`) as HTMLSelectElement;
+        const scaleFactorInput = document.getElementById(`scale-factor-${fileIndex}`) as HTMLInputElement;
 
         return {
             cameraModel: (cameraModelSelect?.value as 'pinhole' | 'fisheye') || 'pinhole',
             focalLength: parseFloat(focalLengthInput?.value || '1000'),
             depthType: (depthTypeSelect?.value as 'euclidean' | 'orthogonal' | 'disparity') || 'euclidean',
             baseline: depthTypeSelect?.value === 'disparity' ? parseFloat(baselineInput?.value || '120') : undefined,
-            convention: (conventionSelect?.value as 'opengl' | 'opencv') || 'opengl'
+            convention: (conventionSelect?.value as 'opengl' | 'opencv') || 'opengl',
+            scaleFactor: scaleFactorInput ? parseFloat(scaleFactorInput.value || '1000') || 1000 : undefined
         };
     }
 
@@ -3010,6 +3014,13 @@ class PLYVisualizer {
                                 <label for="baseline-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Baseline (mm):</label>
                                 <input type="number" id="baseline-${i}" value="${this.getTifBaseline(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                             </div>
+                            ${this.isPngDerivedFile(data) ? `
+                            <div class="tif-group" style="margin-bottom: 8px;">
+                                <label for="scale-factor-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Scale Factor:</label>
+                                <input type="number" id="scale-factor-${i}" value="${this.getPngScaleFactor(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="1000 for mm, 256 for disparity">
+                                <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">The depth/disparity is divided to get the applied value in meters/disparities</div>
+                            </div>
+                            ` : ''}
                             <div class="tif-group" style="margin-bottom: 8px;">
                                 <label for="convention-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Coordinate Convention:</label>
                                 <select id="convention-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
@@ -3623,6 +3634,10 @@ class PLYVisualizer {
                 const focalLengthInput = document.getElementById(`focal-length-${i}`) as HTMLInputElement;
                 if (focalLengthInput) {
                     focalLengthInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
+                    // Prevent scroll wheel from changing value but allow page scrolling
+                    focalLengthInput.addEventListener('wheel', (e) => {
+                        (e.target as HTMLInputElement).blur();
+                    });
                 }
 
                 const cameraModelSelect = document.getElementById(`camera-model-${i}`) as HTMLSelectElement;
@@ -3633,6 +3648,19 @@ class PLYVisualizer {
                 const baselineInput = document.getElementById(`baseline-${i}`) as HTMLInputElement;
                 if (baselineInput) {
                     baselineInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
+                    // Prevent scroll wheel from changing value but allow page scrolling
+                    baselineInput.addEventListener('wheel', (e) => {
+                        (e.target as HTMLInputElement).blur();
+                    });
+                }
+
+                const scaleFactorInput = document.getElementById(`scale-factor-${i}`) as HTMLInputElement;
+                if (scaleFactorInput) {
+                    scaleFactorInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
+                    // Prevent scroll wheel from changing value but allow page scrolling
+                    scaleFactorInput.addEventListener('wheel', (e) => {
+                        (e.target as HTMLInputElement).blur();
+                    });
                 }
 
                 const conventionSelect = document.getElementById(`convention-${i}`) as HTMLSelectElement;
@@ -6422,6 +6450,7 @@ class PLYVisualizer {
             const isTif = /\.(tif|tiff)$/i.test(message.fileName);
             const isPfm = /\.pfm$/i.test(message.fileName);
             const isNpy = /\.(npy|npz)$/i.test(message.fileName);
+            const isPng = /\.png$/i.test(message.fileName);
 
             if (isTif) {
                 // For TIF files, check if it's a depth image
@@ -6445,25 +6474,32 @@ class PLYVisualizer {
             } else if (isNpy) {
                 // NPY files are assumed to be depth data - no additional validation needed
                 console.log('Detected NPY/NPZ file - treating as depth data');
+            } else if (isPng) {
+                // PNG files are assumed to be depth data - need scale factor
+                console.log('Detected PNG file - treating as depth data');
             }
 
-            // For TIF-depth, PFM, and NPY formats, use saved default settings initially
+            // For all depth file types (TIF, PFM, NPY, PNG), use saved default settings initially
             const defaultSettings: CameraParams = {
                 cameraModel: this.defaultDepthSettings.cameraModel,
                 focalLength: this.defaultDepthSettings.focalLength,
                 depthType: this.defaultDepthSettings.depthType,
                 baseline: this.defaultDepthSettings.baseline,
-                convention: this.defaultDepthSettings.convention || 'opengl'
+                convention: this.defaultDepthSettings.convention || 'opengl',
+                scaleFactor: isPng ? (this.defaultDepthSettings.scaleFactor || 1000) : undefined
             };
             console.log('✅ Using saved default depth settings:', defaultSettings);
-            this.showStatus(`Converting depth image: ${defaultSettings.cameraModel} camera, focal length ${defaultSettings.focalLength}px, ${defaultSettings.depthType} depth, ${defaultSettings.convention} convention...`);
+            const fileTypeLabel = isPng ? 'PNG' : isPfm ? 'PFM' : isNpy ? 'NPY' : 'TIF';
+            const scaleInfo = isPng ? `, scale factor ${defaultSettings.scaleFactor}` : '';
+            this.showStatus(`Converting ${fileTypeLabel} depth image: ${defaultSettings.cameraModel} camera, focal length ${defaultSettings.focalLength}px, ${defaultSettings.depthType} depth${scaleInfo}...`);
             await this.processDepthWithParams(requestId, defaultSettings);
 
         } catch (error) {
             console.error('Error handling depth data:', error);
             const isTif = /\.(tif|tiff)$/i.test(message.fileName);
             const isNpy = /\.(npy|npz)$/i.test(message.fileName);
-            const label = isTif ? 'TIF' : isNpy ? 'NPY' : 'depth';
+            const isPng = /\.png$/i.test(message.fileName);
+            const label = isTif ? 'TIF' : isNpy ? 'NPY' : isPng ? 'PNG' : 'depth';
             this.showError(`Failed to process ${label} data: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
@@ -6489,7 +6525,8 @@ class PLYVisualizer {
         const isPfm = /\.pfm$/i.test(depthFileData.fileName);
         const isTif = /\.(tif|tiff)$/i.test(depthFileData.fileName);
         const isNpy = /\.(npy|npz)$/i.test(depthFileData.fileName);
-        const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : 'TIF';
+        const isPng = /\.png$/i.test(depthFileData.fileName);
+        const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : isPng ? 'PNG' : 'TIF';
 
         // Create PLY data structure with vertices converted from typed arrays
         const vertices: PlyVertex[] = [];
@@ -6523,7 +6560,8 @@ class PLYVisualizer {
                 `Camera: ${cameraParams.cameraModel}`, 
                 `Depth type: ${cameraParams.depthType}`,
                 `Focal length: ${cameraParams.focalLength}px`,
-                ...(cameraParams.baseline ? [`Baseline: ${cameraParams.baseline}mm`] : [])
+                ...(cameraParams.baseline ? [`Baseline: ${cameraParams.baseline}mm`] : []),
+                ...(cameraParams.scaleFactor ? [`Scale factor: scale=${cameraParams.scaleFactor}`] : [])
             ]
         };
 
@@ -6564,6 +6602,21 @@ class PLYVisualizer {
             console.log('  baseline specifically:', cameraParams.baseline);
             
             registerDefaultReaders();
+            
+            // Configure PNG reader with scale factor if processing PNG file
+            if (/\.png$/i.test(fileName) && cameraParams.scaleFactor) {
+                const { PngReader } = await import('./depth/readers/PngReader');
+                const pngReader = new PngReader();
+                pngReader.setConfig({
+                    scaleFactor: cameraParams.scaleFactor,
+                    invalidValue: 0
+                });
+                
+                // Re-register the configured PNG reader
+                const { registerReader } = await import('./depth/DepthRegistry');
+                registerReader(pngReader);
+                console.log(`🎯 Configured PNG reader with scale factor: ${cameraParams.scaleFactor}`);
+            }
             
             const { image, meta: baseMeta } = await readDepth(fileName, depthData);
             
@@ -7968,8 +8021,34 @@ class PLYVisualizer {
         if (!Array.isArray(comments)) return false;
         return comments.some((comment: string) => 
             typeof comment === 'string' && 
-            (comment.includes('Converted from TIF depth image') || comment.includes('Converted from PFM depth image'))
+            (comment.includes('Converted from TIF depth image') || 
+             comment.includes('Converted from PFM depth image') ||
+             comment.includes('Converted from PNG depth image') ||
+             comment.includes('Converted from NPY depth image'))
         );
+    }
+
+    private isPngDerivedFile(data: PlyData): boolean {
+        const comments = (data as any)?.comments;
+        if (!Array.isArray(comments)) return false;
+        return comments.some((comment: string) => 
+            typeof comment === 'string' && comment.includes('Converted from PNG depth image')
+        );
+    }
+
+    private getPngScaleFactor(data: PlyData): number {
+        const comments = (data as any)?.comments;
+        if (!Array.isArray(comments)) return 1000; // Default
+        
+        for (const comment of comments) {
+            if (typeof comment === 'string' && comment.includes('scale=')) {
+                const match = comment.match(/scale=(\d+(?:\.\d+)?)/);
+                if (match) {
+                    return parseFloat(match[1]);
+                }
+            }
+        }
+        return 1000; // Default to millimeters
     }
 
     private getTifSetting(data: PlyData, setting: 'camera' | 'depth'): string {
@@ -8083,6 +8162,9 @@ class PLYVisualizer {
             if (newCameraParams.depthType === 'disparity' && (!newCameraParams.baseline || newCameraParams.baseline <= 0)) {
                 throw new Error('Baseline must be a positive number for disparity mode');
             }
+            if (newCameraParams.scaleFactor !== undefined && (!newCameraParams.scaleFactor || newCameraParams.scaleFactor <= 0)) {
+                throw new Error('Scale factor must be a positive number for PNG files');
+            }
 
             // Check if we have cached depth data for this file
             const depthData = this.fileTifData.get(fileIndex);
@@ -8092,7 +8174,8 @@ class PLYVisualizer {
 
             const isPfm = /\.pfm$/i.test(depthData.fileName);
             const isNpy = /\.(npy|npz)$/i.test(depthData.fileName);
-            const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : 'TIF';
+            const isPng = /\.png$/i.test(depthData.fileName);
+            const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : isPng ? 'PNG' : 'TIF';
             this.showStatus(`Reprocessing ${fileType} with new settings...`);
 
             // Process the depth data with new parameters using the new system
@@ -8200,7 +8283,8 @@ class PLYVisualizer {
                 cameraModel: message.settings.cameraModel || 'pinhole',
                 depthType: message.settings.depthType || 'euclidean',
                 baseline: message.settings.baseline,
-                convention: message.settings.convention || 'opengl'
+                convention: message.settings.convention || 'opengl',
+                scaleFactor: message.settings.scaleFactor || 1000
             };
             console.log('✅ Loaded default depth settings from extension:', this.defaultDepthSettings);
             
@@ -8286,14 +8370,20 @@ class PLYVisualizer {
             const depthMatch = currentParams.depthType === this.defaultDepthSettings.depthType;
             const conventionMatch = currentParams.convention === this.defaultDepthSettings.convention;
             const baselineMatch = (currentParams.baseline || undefined) === (this.defaultDepthSettings.baseline || undefined);
+            // Handle scale factor comparison more carefully (only for PNG files)
+            const currentScale = currentParams.scaleFactor;
+            const defaultScale = this.defaultDepthSettings.scaleFactor;
+            const scaleFactorMatch = currentScale === undefined && defaultScale === undefined ? true : 
+                                   currentScale !== undefined && defaultScale !== undefined ? currentScale === defaultScale : false;
             
             console.log(`  Focal match: ${focalMatch} (${currentParams.focalLength} === ${this.defaultDepthSettings.focalLength})`);
             console.log(`  Camera match: ${cameraMatch} (${currentParams.cameraModel} === ${this.defaultDepthSettings.cameraModel})`);
             console.log(`  Depth match: ${depthMatch} (${currentParams.depthType} === ${this.defaultDepthSettings.depthType})`);
             console.log(`  Convention match: ${conventionMatch} (${currentParams.convention} === ${this.defaultDepthSettings.convention})`);
             console.log(`  Baseline match: ${baselineMatch} (${currentParams.baseline} === ${this.defaultDepthSettings.baseline})`);
+            console.log(`  Scale factor match: ${scaleFactorMatch} (current: ${currentScale}, default: ${defaultScale})`);
             
-            const isDefault = focalMatch && cameraMatch && depthMatch && conventionMatch && baselineMatch;
+            const isDefault = focalMatch && cameraMatch && depthMatch && conventionMatch && baselineMatch && scaleFactorMatch;
 
             if (isDefault) {
                 // Current settings are already default - make button blue
@@ -8325,7 +8415,8 @@ class PLYVisualizer {
                 cameraModel: currentParams.cameraModel,
                 depthType: currentParams.depthType,
                 baseline: currentParams.baseline,
-                convention: currentParams.convention || 'opengl'
+                convention: currentParams.convention || 'opengl',
+                scaleFactor: currentParams.scaleFactor
             };
             
             // Save to extension global state for persistence across webview instances

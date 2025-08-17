@@ -35,7 +35,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         const isTifFile = filePath.endsWith('.tif') || filePath.endsWith('.tiff');
         const isPfmFile = filePath.endsWith('.pfm');
         const isNpyFile = filePath.endsWith('.npy') || filePath.endsWith('.npz');
-        const isDepthFile = isTifFile || isPfmFile || isNpyFile;
+        const isPngFile = filePath.endsWith('.png');
+        const isDepthFile = isTifFile || isPfmFile || isNpyFile || isPngFile;
         const isObjFile = filePath.endsWith('.obj');
         const isJsonFile = filePath.endsWith('.json');
         
@@ -49,6 +50,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             isTifFile: isTifFile,
             isPfmFile: isPfmFile,
             isNpyFile: isNpyFile,
+            isPngFile: isPngFile,
             isDepthFile: isDepthFile,
             isObjFile: isObjFile
         });
@@ -60,8 +62,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 const wallStart = new Date().toISOString();
                 
                 if (isDepthFile) {
-                    // Handle depth files (TIF, PFM, NPY, NPZ) for point cloud conversion
-                    const fileType = isPfmFile ? 'PFM' : isNpyFile ? 'NPY' : 'TIF';
+                    // Handle depth files (TIF, PFM, NPY, NPZ, PNG) for point cloud conversion
+                    const fileType = isPfmFile ? 'PFM' : isNpyFile ? 'NPY' : isPngFile ? 'PNG' : 'TIF';
                     webviewPanel.webview.postMessage({
                         type: 'timingUpdate',
                         message: `🚀 Extension: Starting ${fileType} file processing for depth conversion...`,
@@ -271,6 +273,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     case 'requestCameraParams':
                         // Request camera parameters for TIF conversion
                         await this.handleCameraParametersRequest(webviewPanel, message);
+                        break;
+                    case 'requestCameraParamsWithScale':
+                        // Request camera parameters with scale factor for PNG conversion
+                        await this.handleCameraParametersWithScaleRequest(webviewPanel, message);
                         break;
                     case 'savePlyFile':
                         // Handle PLY file save request
@@ -503,7 +509,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             canSelectMany: true,
             filters: {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'Point Cloud & Pose Files': ['ply', 'xyz', 'obj', 'tif', 'tiff', 'pfm', 'npy', 'npz', 'json'],
+                'Point Cloud & Pose Files': ['ply', 'xyz', 'obj', 'tif', 'tiff', 'pfm', 'npy', 'npz', 'png', 'json'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'PLY Files': ['ply'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -511,7 +517,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'OBJ Wireframes': ['obj'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'Depth Images': ['tif', 'tiff', 'pfm', 'npy', 'npz'],
+                'Depth Images': ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'Pose JSON': ['json']
             },
@@ -527,7 +533,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     console.log(`🚀 ULTIMATE: Processing add file ${fileName} (${fileExtension})`);
                     
                     // Handle different file types
-                    if (fileExtension === '.tif' || fileExtension === '.tiff' || fileExtension === '.pfm' || fileExtension === '.npy' || fileExtension === '.npz') {
+                    if (fileExtension === '.tif' || fileExtension === '.tiff' || fileExtension === '.pfm' || fileExtension === '.npy' || fileExtension === '.npz' || fileExtension === '.png') {
                         // Handle depth files for conversion
                         const depthData = await vscode.workspace.fs.readFile(files[i]);
                         
@@ -659,7 +665,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     }
 
                     // Unsupported file type
-                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .tif, .tiff, .pfm, .npy, .npz, .json`);
+                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .tif, .tiff, .pfm, .npy, .npz, .png, .json`);
                     
                 } catch (error) {
                     console.error(`Failed to load file ${files[i].fsPath}:`, error);
@@ -1062,7 +1068,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 cameraModel: 'pinhole',
                 depthType: 'euclidean',
                 convention: 'opengl',
-                baseline: 50
+                baseline: 50,
+                scaleFactor: 1000
             };
 
             console.log('🎯 Using default settings for camera parameters dialog:', defaults);
@@ -1259,6 +1266,190 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 focalLength: focalLength,
                 depthType: depthType.value,
                 baseline: baseline,
+                convention: convention.value,
+                requestId: message.requestId
+            });
+
+        } catch (error) {
+            webviewPanel.webview.postMessage({
+                type: 'cameraParamsError',
+                error: error instanceof Error ? error.message : String(error),
+                requestId: message.requestId
+            });
+        }
+    }
+
+    private async handleCameraParametersWithScaleRequest(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
+        try {
+            // Load saved default settings
+            const savedSettings = this.context.globalState.get('defaultDepthSettings') as any;
+            const defaults = savedSettings || {
+                focalLength: 1000,
+                cameraModel: 'pinhole',
+                depthType: 'euclidean',
+                convention: 'opengl',
+                baseline: 50,
+                scaleFactor: 1000 // Default for PNG: millimeters to meters
+            };
+
+            console.log('🎯 Using default settings for PNG camera parameters dialog:', defaults);
+
+            // Show option to use defaults directly or customize
+            const useDefaults = await vscode.window.showQuickPick(
+                [
+                    { 
+                        label: '⚡ Use Default Settings', 
+                        description: `${defaults.cameraModel}, f=${defaults.focalLength}px, scale=${defaults.scaleFactor} (${defaults.scaleFactor === 1000 ? 'mm→m' : defaults.scaleFactor === 256 ? 'disp÷256' : 'custom'})`, 
+                        value: 'defaults' 
+                    },
+                    { 
+                        label: '⚙️ Customize Settings', 
+                        description: 'Choose settings manually', 
+                        value: 'customize' 
+                    }
+                ],
+                {
+                    placeHolder: 'Convert PNG depth image to point cloud',
+                    ignoreFocusOut: true
+                }
+            );
+
+            if (!useDefaults) {
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
+                });
+                return;
+            }
+
+            if (useDefaults.value === 'defaults') {
+                // Use saved defaults without showing additional dialogs
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParams',
+                    cameraModel: defaults.cameraModel,
+                    focalLength: defaults.focalLength,
+                    depthType: defaults.depthType,
+                    baseline: defaults.baseline,
+                    convention: defaults.convention,
+                    scaleFactor: defaults.scaleFactor,
+                    requestId: message.requestId
+                });
+                return;
+            }
+
+            // Show camera model selection dialog
+            const cameraModel = await vscode.window.showQuickPick(
+                [
+                    { 
+                        label: 'Pinhole Camera', 
+                        description: defaults.cameraModel === 'pinhole' ? 'Standard perspective projection model (Default)' : 'Standard perspective projection model', 
+                        value: 'pinhole' 
+                    },
+                    { 
+                        label: 'Fisheye Camera', 
+                        description: defaults.cameraModel === 'fisheye' ? 'Wide-angle fisheye projection model (Default)' : 'Wide-angle fisheye projection model', 
+                        value: 'fisheye' 
+                    }
+                ],
+                {
+                    placeHolder: `Select camera model used to capture the depth image (Default: ${defaults.cameraModel})`,
+                    ignoreFocusOut: true
+                }
+            );
+
+            if (!cameraModel) {
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
+                });
+                return;
+            }
+
+            // Show scale factor input dialog
+            const scaleFactorInput = await vscode.window.showInputBox({
+                prompt: `Scale factor: depth/disparity is divided to get applied value in meters/disparities (Default: ${defaults.scaleFactor})`,
+                placeHolder: `${defaults.scaleFactor} (1000 for mm, 256 for disparity, 1 for meters)`,
+                value: defaults.scaleFactor.toString(),
+                validateInput: (value: string) => {
+                    const num = parseFloat(value);
+                    if (isNaN(num) || num <= 0) {
+                        return 'Please enter a valid positive number for scale factor';
+                    }
+                    return null;
+                },
+                ignoreFocusOut: true
+            });
+
+            if (!scaleFactorInput) {
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
+                });
+                return;
+            }
+
+            const scaleFactor = parseFloat(scaleFactorInput);
+
+            // Show focal length input dialog
+            const focalLengthInput = await vscode.window.showInputBox({
+                prompt: `Enter the focal length in pixels (Default: ${defaults.focalLength})`,
+                placeHolder: defaults.focalLength.toString(),
+                value: defaults.focalLength.toString(),
+                validateInput: (value: string) => {
+                    const num = parseFloat(value);
+                    if (isNaN(num) || num <= 0) {
+                        return 'Please enter a valid positive number for focal length';
+                    }
+                    return null;
+                },
+                ignoreFocusOut: true
+            });
+
+            if (!focalLengthInput) {
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
+                });
+                return;
+            }
+
+            const focalLength = parseFloat(focalLengthInput);
+
+            // Show coordinate convention selection dialog
+            const convention = await vscode.window.showQuickPick(
+                [
+                    { 
+                        label: 'OpenGL Convention (Y-up, Z-backward)', 
+                        description: defaults.convention === 'opengl' ? 'Standard 3D graphics convention (Default)' : 'Standard 3D graphics convention', 
+                        value: 'opengl' 
+                    },
+                    { 
+                        label: 'OpenCV Convention (Y-down, Z-forward)', 
+                        description: defaults.convention === 'opencv' ? 'Computer vision convention (Default)' : 'Computer vision convention', 
+                        value: 'opencv' 
+                    }
+                ],
+                {
+                    placeHolder: `Select coordinate convention for the resulting point cloud (Default: ${defaults.convention})`,
+                    ignoreFocusOut: true
+                }
+            );
+
+            if (!convention) {
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
+                });
+                return;
+            }
+
+            // Send camera parameters to webview
+            webviewPanel.webview.postMessage({
+                type: 'cameraParams',
+                cameraModel: cameraModel.value,
+                focalLength: focalLength,
+                depthType: 'euclidean', // Default for PNG
+                scaleFactor: scaleFactor,
                 convention: convention.value,
                 requestId: message.requestId
             });

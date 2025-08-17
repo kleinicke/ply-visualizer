@@ -14,10 +14,13 @@ export function registerDefaultReaders(): void {
   const { TifReader } = require('./readers/TifReader');
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { NpyReader } = require('./readers/NpyReader');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { PngReader } = require('./readers/PngReader');
 
   registerReader(new PfmReader());
   registerReader(new TifReader());
   registerReader(new NpyReader());
+  registerReader(new PngReader());
 }
 
 export function findReader(filename: string, mimeType?: string): DepthReader | undefined {

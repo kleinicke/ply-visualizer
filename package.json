@@ -54,6 +54,9 @@
           },
           {
             "filenamePattern": "*.npz"
+          },
+          {
+            "filenamePattern": "*.png"
           }
         ]
       }
@@ -88,6 +91,11 @@
         "command": "plyViewer.convertNpyToPointCloud",
         "title": "Convert NPY/NPZ to Point Cloud",
         "category": "PLY Visualizer"
+      },
+      {
+        "command": "plyViewer.convertPngToPointCloud",
+        "title": "Convert PNG Depth to Point Cloud",
+        "category": "PLY Visualizer"
       }
     ],
     "menus": {
@@ -115,6 +123,11 @@
         {
           "command": "plyViewer.loadJsonAsPose",
           "when": "resourceExtname == .json",
+          "group": "navigation"
+        },
+        {
+          "command": "plyViewer.convertPngToPointCloud",
+          "when": "resourceExtname == .png",
           "group": "navigation"
         }
       ]
