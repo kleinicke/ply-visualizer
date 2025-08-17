@@ -2683,6 +2683,9 @@ class PLYVisualizer {
                 case 'objData':
                     this.handleObjData(message);
                     break;
+                case 'stlData':
+                    this.handleStlData(message);
+                    break;
                 case 'xyzData':
                     this.handleXyzData(message);
                     break;
@@ -6756,6 +6759,156 @@ class PLYVisualizer {
         } catch (error) {
             console.error('Error handling OBJ data:', error);
             this.showError(`Failed to process OBJ file: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handleStlData(message: any): Promise<void> {
+        try {
+            console.log(`Load: recv STL ${message.fileName}`);
+            this.showStatus(`STL: processing ${message.fileName}`);
+            
+            const stlData = message.data;
+            const hasColors = stlData.hasColors;
+            
+            console.log(`STL: ${stlData.triangleCount} triangles, format=${stlData.format}, colors=${hasColors}`);
+            
+            // Handle empty STL files
+            if (stlData.triangleCount === 0 || !stlData.triangles || stlData.triangles.length === 0) {
+                console.log('STL: Empty mesh detected');
+                this.showStatus(`STL: Empty mesh loaded (${message.fileName})`);
+                
+                // Create minimal PLY data for empty mesh
+                const plyData: PlyData = {
+                    vertices: [],
+                    faces: [],
+                    format: stlData.format === 'binary' ? 'binary_little_endian' : 'ascii',
+                    version: '1.0',
+                    comments: [
+                        `Empty STL mesh: ${message.fileName}`,
+                        `Original format: ${stlData.format}`,
+                        ...(stlData.header ? [`Header: ${stlData.header}`] : [])
+                    ],
+                    vertexCount: 0,
+                    faceCount: 0,
+                    hasColors: false,
+                    hasNormals: false,
+                    fileName: message.fileName.replace(/\.stl$/i, '_empty.ply'),
+                    fileIndex: this.plyFiles.length
+                };
+                
+                // Add to visualization (even empty files should be tracked)
+                if (message.isAddFile) {
+                    this.addNewFiles([plyData]);
+                } else {
+                    await this.displayFiles([plyData]);
+                }
+                
+                return;
+            }
+            
+            // Convert STL triangles to PLY vertices and faces
+            const vertices: PlyVertex[] = [];
+            const faces: PlyFace[] = [];
+            const vertexMap = new Map<string, number>(); // For deduplication
+            
+            let vertexIndex = 0;
+            
+            for (let i = 0; i < stlData.triangles.length; i++) {
+                const triangle = stlData.triangles[i];
+                const faceIndices: number[] = [];
+                
+                // Process each vertex of the triangle
+                for (let j = 0; j < 3; j++) {
+                    const vertex = triangle.vertices[j];
+                    const key = `${vertex.x},${vertex.y},${vertex.z}`;
+                    
+                    let vIndex = vertexMap.get(key);
+                    if (vIndex === undefined) {
+                        // New vertex
+                        vIndex = vertexIndex++;
+                        vertexMap.set(key, vIndex);
+                        
+                        const plyVertex: PlyVertex = {
+                            x: vertex.x,
+                            y: vertex.y,
+                            z: vertex.z,
+                            nx: triangle.normal.x,
+                            ny: triangle.normal.y,
+                            nz: triangle.normal.z
+                        };
+                        
+                        // Add color if available
+                        if (hasColors && triangle.color) {
+                            plyVertex.red = triangle.color.red;
+                            plyVertex.green = triangle.color.green;
+                            plyVertex.blue = triangle.color.blue;
+                        } else {
+                            // Default gray color
+                            plyVertex.red = 180;
+                            plyVertex.green = 180;
+                            plyVertex.blue = 180;
+                        }
+                        
+                        vertices.push(plyVertex);
+                    }
+                    
+                    faceIndices.push(vIndex);
+                }
+                
+                // Add the face
+                faces.push({
+                    indices: faceIndices
+                });
+            }
+            
+            // Create PLY data structure
+            const plyData: PlyData = {
+                vertices,
+                faces,
+                format: stlData.format === 'binary' ? 'binary_little_endian' : 'ascii',
+                version: '1.0',
+                comments: [
+                    `Converted from STL file: ${message.fileName}`,
+                    `Original format: ${stlData.format}`,
+                    `Triangle count: ${stlData.triangleCount}`,
+                    ...(stlData.header ? [`Header: ${stlData.header}`] : [])
+                ],
+                vertexCount: vertices.length,
+                faceCount: faces.length,
+                hasColors: true,
+                hasNormals: true,
+                fileName: message.fileName.replace(/\.stl$/i, '_mesh.ply'),
+                fileIndex: this.plyFiles.length
+            };
+            
+            // Store STL-specific data for enhanced rendering
+            (plyData as any).stlData = stlData;
+            (plyData as any).isStlFile = true;
+            (plyData as any).stlFormat = stlData.format;
+            (plyData as any).stlTriangleCount = stlData.triangleCount;
+            
+            // Add to visualization
+            if (message.isAddFile) {
+                this.addNewFiles([plyData]);
+            } else {
+                await this.displayFiles([plyData]);
+            }
+            
+            // Status message
+            const statusParts = [
+                `${vertices.length.toLocaleString()} vertices`,
+                `${faces.length.toLocaleString()} triangles`,
+                `${stlData.format} format`
+            ];
+            if (hasColors) {
+                statusParts.push('with colors');
+            }
+            
+            this.showStatus(`STL mesh loaded: ${statusParts.join(', ')}`);
+            
+        } catch (error) {
+            console.error('Error handling STL data:', error);
+            this.showError(`Failed to process STL file: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

@@ -1,7 +1,7 @@
 {
   "name": "ply-visualizer",
   "displayName": "PLY 3D Point Cloud Visualizer",
-  "description": "A 3D visualizer for PLY (Polygon File Format) using Three.js. Also supports xyz, obj and depth to point cloud conversions.",
+  "description": "A 3D visualizer for PLY (Polygon File Format) using Three.js. Also supports xyz, obj, stl and depth to point cloud conversions.",
   "version": "1.1.2",
   "publisher": "kleinicke",
   "icon": "icon.png",
@@ -19,6 +19,7 @@
     "ply",
     "xyz",
     "obj",
+    "stl",
     "tif",
     "tiff",
     "pfm",
@@ -30,6 +31,7 @@
     "point cloud",
     "pointcloud",
     "mesh",
+    "stereolithography",
     "depth",
     "disparity",
     "visualization",
@@ -56,6 +58,9 @@
           },
           {
             "filenamePattern": "*.obj"
+          },
+          {
+            "filenamePattern": "*.stl"
           }
         ]
       }
@@ -101,7 +106,7 @@
       "explorer/context": [
         {
           "command": "plyViewer.openFile",
-          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .txt || resourceExtname == .obj",
+          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl",
           "group": "navigation"
         },
         {
@@ -140,7 +145,8 @@
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
     "test:ui": "npm run compile && node ./out/test/ui-test-runner.js",
-    "test:all": "npm run test && npm run test:ui"
+    "test:all": "npm run test && npm run test:ui",
+    "test:stl": "node test-stl.js"
   },
   "devDependencies": {
     "@types/glob": "^8.0.0",

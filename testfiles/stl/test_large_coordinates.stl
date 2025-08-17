@@ -1,0 +1,16 @@
+solid large_coordinates
+  facet normal 0.0 0.0 1.0
+    outer loop
+      vertex 1000000.0 2000000.0 3000000.0
+      vertex 1000001.0 2000000.0 3000000.0
+      vertex 1000000.5 2000000.866 3000000.0
+    endloop
+  endfacet
+  facet normal 0.0 0.0 -1.0
+    outer loop
+      vertex -999999.0 -1999999.0 -2999999.0
+      vertex -999998.5 -1999999.866 -2999999.0
+      vertex -999998.0 -1999999.0 -2999999.0
+    endloop
+  endfacet
+endsolid large_coordinates

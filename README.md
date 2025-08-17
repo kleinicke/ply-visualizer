@@ -1,13 +1,15 @@
 # PLY Pointcloud Visualizer
 
-A Visual Studio Code extension for visualizing PLY (Polygon File Format) files with interactive 3D visualization using Three.js. It's currently mainly developed for point cloud visualization, but should work in the future equally well for any objects.
+A Visual Studio Code extension for visualizing PLY (Polygon File Format) files with interactive 3D visualization using Three.js.
+Multiple 3d formats for points and shapes and depth and disparity images are also supported.
+The depth and disparity images are converted on the fly into point clouds.
 
 ## Features
 
 - **Visualize Point Clouds**: Navigate in colored or uncolored point clouds
 - **Fast Loading of Big Point Clouds**: Even point clouds with 5 Million Points load in around a second.
 - **Compare Multiple Point Clouds**: Multiple point clouds can be loaded in the same view and activated and deactivated independently.
-- **Multiple Formats**: Support for both ASCII and binary PLY formats, XYZ pointclouds, OBJ wireframes and pose estimations in json files.
+- **Multiple Formats**: Support for both ASCII and binary PLY formats, XYZ pointclouds, OBJ wireframes, stl and pose estimations in json files.
 - **Rotation of points**: Apply Rotation Matrix for single point clouds
 - **Depth to point cloud conversion**: Can convert on the fly depth images to point clouds. It has support for tiff, png, pfm, npy and npz files.
 

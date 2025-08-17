@@ -3,6 +3,7 @@ import * as path from 'path';
 import { PlyParser } from './plyParser';
 import { ObjParser } from './objParser';
 import { MtlParser } from './mtlParser';
+import { StlParser } from './stlParser';
 
 export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private static readonly viewType = 'plyViewer.plyEditor';
@@ -38,6 +39,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         const isPngFile = filePath.endsWith('.png');
         const isDepthFile = isTifFile || isPfmFile || isNpyFile || isPngFile;
         const isObjFile = filePath.endsWith('.obj');
+        const isStlFile = filePath.endsWith('.stl');
         const isJsonFile = filePath.endsWith('.json');
         
         // Show UI immediately before any file processing
@@ -52,7 +54,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             isNpyFile: isNpyFile,
             isPngFile: isPngFile,
             isDepthFile: isDepthFile,
-            isObjFile: isObjFile
+            isObjFile: isObjFile,
+            isStlFile: isStlFile
         });
 
         // Load and parse file asynchronously (don't await - let UI show first)
@@ -129,6 +132,49 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     await this.tryAutoLoadMtl(webviewPanel, document.uri, parsedData, 0);
                     
                     return; // Exit early for OBJ files
+                }
+
+                if (isStlFile) {
+                    // Handle STL file
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: Starting STL file processing...',
+                        timestamp: loadStartTime
+                    });
+                    
+                    const stlData = await vscode.workspace.fs.readFile(document.uri);
+                    const fileReadTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `📁 Extension: STL file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
+                        timestamp: fileReadTime
+                    });
+                    
+                    const stlParser = new StlParser();
+                    const timingCallback = (message: string) => {
+                        webviewPanel.webview.postMessage({
+                            type: 'timingUpdate',
+                            message: message,
+                            timestamp: performance.now()
+                        });
+                    };
+                    
+                    const parsedData = await stlParser.parse(stlData, timingCallback);
+                    const parseTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `🎯 Extension: STL parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
+                        timestamp: parseTime
+                    });
+                    
+                    // Send parsed STL data to webview
+                    webviewPanel.webview.postMessage({
+                        type: 'stlData',
+                        fileName: path.basename(document.uri.fsPath),
+                        data: parsedData
+                    });
+                    
+                    return; // Exit early for STL files
                 }
                 // Handle JSON pose files
                 if (isJsonFile) {
@@ -635,6 +681,23 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         continue;
                     }
                     
+                    // Handle STL files
+                    if (fileExtension === '.stl') {
+                        const stlData = await vscode.workspace.fs.readFile(files[i]);
+                        const stlParser = new StlParser();
+                        const parsedData = await stlParser.parse(stlData);
+                        
+                        webviewPanel.webview.postMessage({
+                            type: 'stlData',
+                            fileName: fileName,
+                            data: parsedData,
+                            isAddFile: true
+                        });
+                        
+                        console.log(`🎯 STL Add File: ${fileName} sent for processing`);
+                        continue;
+                    }
+                    
                     // Handle JSON pose files
                     if (fileExtension === '.json') {
                         try {
@@ -665,7 +728,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     }
 
                     // Unsupported file type
-                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .tif, .tiff, .pfm, .npy, .npz, .png, .json`);
+                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .stl, .tif, .tiff, .pfm, .npy, .npz, .png, .json`);
                     
                 } catch (error) {
                     console.error(`Failed to load file ${files[i].fsPath}:`, error);

@@ -4,6 +4,7 @@
 
 Add support for pfm depth/disparity predictions
 Add support for npy/npz depth/disparity predictions
+Add support for stl files
 Add support for some camera position profiles
 Add support for some body pose estimations
 
