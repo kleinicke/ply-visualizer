@@ -51,6 +51,13 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // Register command for EXR to Point Cloud conversion
+    context.subscriptions.push(
+        vscode.commands.registerCommand('plyViewer.convertExrToPointCloud', async (uri: vscode.Uri) => {
+            await handleDepthToPointCloudConversion(uri, 'EXR');
+        })
+    );
+
     // Register command for opening multiple files
     context.subscriptions.push(
         vscode.commands.registerCommand('plyViewer.openMultipleFiles', async () => {
@@ -75,7 +82,7 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('PLY Visualizer extension is now active!');
 }
 
-async function handleDepthToPointCloudConversion(uri: vscode.Uri, fileType: 'TIF' | 'PFM' | 'NPY' | 'PNG'): Promise<void> {
+async function handleDepthToPointCloudConversion(uri: vscode.Uri, fileType: 'TIF' | 'PFM' | 'NPY' | 'PNG' | 'EXR'): Promise<void> {
     try {
         // Show progress and open the depth file for conversion
         // Camera parameters will be requested by the webview after analysis

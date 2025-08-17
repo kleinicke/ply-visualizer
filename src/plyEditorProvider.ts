@@ -37,7 +37,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         const isPfmFile = filePath.endsWith('.pfm');
         const isNpyFile = filePath.endsWith('.npy') || filePath.endsWith('.npz');
         const isPngFile = filePath.endsWith('.png');
-        const isDepthFile = isTifFile || isPfmFile || isNpyFile || isPngFile;
+        const isExrFile = filePath.endsWith('.exr');
+        const isDepthFile = isTifFile || isPfmFile || isNpyFile || isPngFile || isExrFile;
         const isObjFile = filePath.endsWith('.obj');
         const isStlFile = filePath.endsWith('.stl');
         const isJsonFile = filePath.endsWith('.json');
@@ -53,6 +54,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             isPfmFile: isPfmFile,
             isNpyFile: isNpyFile,
             isPngFile: isPngFile,
+            isExrFile: isExrFile,
             isDepthFile: isDepthFile,
             isObjFile: isObjFile,
             isStlFile: isStlFile
@@ -65,8 +67,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 const wallStart = new Date().toISOString();
                 
                 if (isDepthFile) {
-                    // Handle depth files (TIF, PFM, NPY, NPZ, PNG) for point cloud conversion
-                    const fileType = isPfmFile ? 'PFM' : isNpyFile ? 'NPY' : isPngFile ? 'PNG' : 'TIF';
+                    // Handle depth files (TIF, PFM, NPY, NPZ, PNG, EXR) for point cloud conversion
+                    const fileType = isPfmFile ? 'PFM' : isNpyFile ? 'NPY' : isPngFile ? 'PNG' : isExrFile ? 'EXR' : 'TIF';
                     webviewPanel.webview.postMessage({
                         type: 'timingUpdate',
                         message: `🚀 Extension: Starting ${fileType} file processing for depth conversion...`,
@@ -555,7 +557,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             canSelectMany: true,
             filters: {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'Point Cloud & Pose Files': ['ply', 'xyz', 'obj', 'tif', 'tiff', 'pfm', 'npy', 'npz', 'png', 'json'],
+                'Point Cloud & Pose Files': ['ply', 'xyz', 'obj', 'tif', 'tiff', 'pfm', 'npy', 'npz', 'png', 'exr', 'json'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'PLY Files': ['ply'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -563,7 +565,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'OBJ Wireframes': ['obj'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'Depth Images': ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png'],
+                'Depth Images': ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png', 'exr'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'Pose JSON': ['json']
             },
@@ -579,7 +581,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     console.log(`🚀 ULTIMATE: Processing add file ${fileName} (${fileExtension})`);
                     
                     // Handle different file types
-                    if (fileExtension === '.tif' || fileExtension === '.tiff' || fileExtension === '.pfm' || fileExtension === '.npy' || fileExtension === '.npz' || fileExtension === '.png') {
+                    if (fileExtension === '.tif' || fileExtension === '.tiff' || fileExtension === '.pfm' || fileExtension === '.npy' || fileExtension === '.npz' || fileExtension === '.png' || fileExtension === '.exr') {
                         // Handle depth files for conversion
                         const depthData = await vscode.workspace.fs.readFile(files[i]);
                         
@@ -728,7 +730,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     }
 
                     // Unsupported file type
-                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .stl, .tif, .tiff, .pfm, .npy, .npz, .png, .json`);
+                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .stl, .tif, .tiff, .pfm, .npy, .npz, .png, .exr, .json`);
                     
                 } catch (error) {
                     console.error(`Failed to load file ${files[i].fsPath}:`, error);
