@@ -79,9 +79,9 @@ end_header
 
     test('Should open real test files from testfiles folder', async () => {
         const testFiles = [
-            '../../../testfiles/test_ascii.ply',
-            '../../../testfiles/test_binary.ply',
-            '../../../testfiles/test_poses.xyz'
+            '../../../testfiles/ply/test_ascii.ply',
+            '../../../testfiles/ply/test_binary.ply',
+            '../../../testfiles/ply/test_poses.xyz'
         ];
 
         for (const relativeFilePath of testFiles) {

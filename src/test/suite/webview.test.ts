@@ -133,7 +133,7 @@ end_header
         this.timeout(6000);
         
         // Test the actual data pipeline that the webview uses
-        const testFilePath = path.join(__dirname, '../../../testfiles/test_ascii.ply');
+        const testFilePath = path.join(__dirname, '../../../testfiles/ply/test_ascii.ply');
         if (fs.existsSync(testFilePath)) {
             const parser = new PlyParser();
             const fileData = fs.readFileSync(testFilePath);
@@ -174,7 +174,7 @@ end_header
     test('Should process binary PLY with optimized loading', async function() {
         this.timeout(10000);
         
-        const testFilePath = path.join(__dirname, '../../../testfiles/test_binary.ply');
+        const testFilePath = path.join(__dirname, '../../../testfiles/ply/test_binary.ply');
         if (fs.existsSync(testFilePath)) {
             const parser = new PlyParser();
             const fileData = fs.readFileSync(testFilePath);
@@ -303,7 +303,7 @@ end_header
     test('Should measure memory usage with large point clouds', async function() {
         this.timeout(8000);
         
-        const testFilePath = path.join(__dirname, '../../../testfiles/test_binary.ply');
+        const testFilePath = path.join(__dirname, '../../../testfiles/ply/test_binary.ply');
         if (fs.existsSync(testFilePath)) {
             
             // Measure memory before

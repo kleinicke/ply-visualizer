@@ -89,7 +89,7 @@ end_header
         this.timeout(4000);
         
         // Test the data format that gets sent to the webview
-        const testFilePath = path.join(__dirname, '../../../testfiles/test_ascii.ply');
+        const testFilePath = path.join(__dirname, '../../../testfiles/ply/test_ascii.ply');
         if (fs.existsSync(testFilePath)) {
             const { PlyParser } = await import('../../plyParser');
             const parser = new PlyParser();

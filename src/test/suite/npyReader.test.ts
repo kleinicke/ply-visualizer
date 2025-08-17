@@ -235,7 +235,7 @@ describe('NPY Reader Test Suite', function() {
 
     test('should validate NPY file format requirements', async function() {
         // This test verifies our understanding of the NPY format
-        const testFilePath = path.resolve(__dirname, '../../../testfiles/test_depth_small.npy');
+        const testFilePath = path.resolve(__dirname, '../../../testfiles/np/test_depth_small.npy');
         
         if (!fs.existsSync(testFilePath)) {
             console.log('⚠️  test_depth_small.npy not found, skipping format validation');

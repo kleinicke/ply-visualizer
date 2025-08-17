@@ -164,7 +164,7 @@ property float z
     });
 
     test('Should parse real ASCII PLY file from testfiles', async () => {
-        const testFilePath = path.join(__dirname, '../../../testfiles/test_ascii.ply');
+        const testFilePath = path.join(__dirname, '../../../testfiles/ply/test_ascii.ply');
         if (fs.existsSync(testFilePath)) {
             const data = fs.readFileSync(testFilePath);
             const result = await parser.parse(data);
@@ -182,7 +182,7 @@ property float z
     });
 
     test('Should parse real binary PLY file from testfiles', async () => {
-        const testFilePath = path.join(__dirname, '../../../testfiles/test_binary.ply');
+        const testFilePath = path.join(__dirname, '../../../testfiles/ply/test_binary.ply');
         if (fs.existsSync(testFilePath)) {
             const data = fs.readFileSync(testFilePath);
             const result = await parser.parse(data);

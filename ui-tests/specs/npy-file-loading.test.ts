@@ -42,6 +42,14 @@ describe('NPY File Loading UI Tests', function() {
         
         await testfilesFolder.expand();
         
+        // Look for testfiles/np folder
+        const npFolder = await testfilesFolder.findChildItem('np');
+        if (!npFolder) {
+            throw new Error('testfiles/np folder not found in explorer');
+        }
+        
+        await npFolder.expand();
+        
         // Check for NPY test files
         const expectedFiles = [
             'test_depth.npy',
@@ -51,7 +59,7 @@ describe('NPY File Loading UI Tests', function() {
         ];
         
         for (const fileName of expectedFiles) {
-            const file = await testfilesFolder.findChildItem(fileName);
+            const file = await npFolder.findChildItem(fileName);
             if (!file) {
                 throw new Error(`NPY test file ${fileName} not found in explorer`);
             }
@@ -69,9 +77,14 @@ describe('NPY File Loading UI Tests', function() {
         }
         
         await testfilesFolder.expand();
+        const npFolder = await testfilesFolder.findChildItem('np');
+        if (!npFolder) {
+            throw new Error('np folder not found');
+        }
+        await npFolder.expand();
         
         // Open test_depth_small.npy (smaller file for faster testing)
-        const npyFile = await testfilesFolder.findChildItem('test_depth_small.npy');
+        const npyFile = await npFolder.findChildItem('test_depth_small.npy');
         if (!npyFile) {
             throw new Error('test_depth_small.npy not found');
         }
@@ -186,9 +199,14 @@ describe('NPY File Loading UI Tests', function() {
         }
         
         await testfilesFolder.expand();
+        const npFolder = await testfilesFolder.findChildItem('np');
+        if (!npFolder) {
+            throw new Error('np folder not found');
+        }
+        await npFolder.expand();
         
         // Open test_depth_with_params.npz
-        const npzFile = await testfilesFolder.findChildItem('test_depth_with_params.npz');
+        const npzFile = await npFolder.findChildItem('test_depth_with_params.npz');
         if (!npzFile) {
             throw new Error('test_depth_with_params.npz not found');
         }
@@ -228,9 +246,14 @@ describe('NPY File Loading UI Tests', function() {
         }
         
         await testfilesFolder.expand();
+        const npFolder = await testfilesFolder.findChildItem('np');
+        if (!npFolder) {
+            throw new Error('np folder not found');
+        }
+        await npFolder.expand();
         
         // Right-click on NPY file
-        const npyFile = await testfilesFolder.findChildItem('test_disparity.npy');
+        const npyFile = await npFolder.findChildItem('test_disparity.npy');
         if (!npyFile) {
             throw new Error('test_disparity.npy not found');
         }

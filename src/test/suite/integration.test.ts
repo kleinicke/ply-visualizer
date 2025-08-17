@@ -9,9 +9,9 @@ suite('Integration Test Suite - Real File Loading', () => {
         this.timeout(10000); // Longer timeout for file processing
         
         const testFiles = [
-            '../../../testfiles/test_ascii.ply',
-            '../../../testfiles/test_binary.ply',
-            '../../../testfiles/test_poses.xyz'
+            '../../../testfiles/ply/test_ascii.ply',
+            '../../../testfiles/ply/test_binary.ply',
+            '../../../testfiles/ply/test_poses.xyz'
         ];
 
         for (const relativeFilePath of testFiles) {
@@ -88,7 +88,7 @@ suite('Integration Test Suite - Real File Loading', () => {
     test('Should create webview and process point cloud data', async function() {
         this.timeout(8000);
         
-        const testFilePath = path.join(__dirname, '../../../testfiles/test_ascii.ply');
+        const testFilePath = path.join(__dirname, '../../../testfiles/ply/test_ascii.ply');
         if (fs.existsSync(testFilePath)) {
             
             // Create a minimal test PLY file to ensure predictable behavior
@@ -139,7 +139,7 @@ end_header
     test('Should validate file size and performance with large files', async function() {
         this.timeout(15000);
         
-        const largeFilePath = path.join(__dirname, '../../../testfiles/test_binary.ply');
+        const largeFilePath = path.join(__dirname, '../../../testfiles/ply/test_binary.ply');
         if (fs.existsSync(largeFilePath)) {
             const stats = fs.statSync(largeFilePath);
             console.log(`Testing large file: ${stats.size} bytes`);
@@ -197,8 +197,8 @@ end_header
         
         // Test that we can read and parse file metadata without full webview loading
         const testFiles = [
-            { path: '../../../testfiles/test_ascii.ply', expectedFormat: 'ascii' },
-            { path: '../../../testfiles/test_binary.ply', expectedFormat: 'binary' },
+            { path: '../../../testfiles/ply/test_ascii.ply', expectedFormat: 'ascii' },
+            { path: '../../../testfiles/ply/test_binary.ply', expectedFormat: 'binary' },
             { path: '../../../testfiles/test_poses.xyz', expectedFormat: 'xyz' }
         ];
 
