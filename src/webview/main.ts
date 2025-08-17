@@ -9014,7 +9014,12 @@ class PLYVisualizer {
                 if (camera.local_extrinsics && camera.local_extrinsics.params) {
                     const params = camera.local_extrinsics.params;
                     if (params.location && params.rotation_quaternion) {
-                        const cameraViz = this.createCameraVisualization(cameraName, params.location, params.rotation_quaternion);
+                        const cameraViz = this.createCameraVisualization(
+                            cameraName,
+                            params.location,
+                            params.rotation_quaternion,
+                            camera.local_extrinsics.type
+                        );
                         cameraProfileGroup.add(cameraViz);
                         cameraCount++;
                     }
@@ -9051,7 +9056,7 @@ class PLYVisualizer {
         }
     }
 
-    private createCameraVisualization(cameraName: string, location: number[], rotationQuaternion: number[]): THREE.Group {
+    private createCameraVisualization(cameraName: string, location: number[], rotationQuaternion: number[], rotationType?: string): THREE.Group {
         const group = new THREE.Group();
         group.name = `camera_${cameraName}`;
         
@@ -9059,8 +9064,19 @@ class PLYVisualizer {
         const position = new THREE.Vector3(location[0], location[1], location[2]);
         group.position.copy(position);
         
-        // Set camera rotation from quaternion (x, y, z, w format from JSON)
-        const quaternion = new THREE.Quaternion(rotationQuaternion[0], rotationQuaternion[1], rotationQuaternion[2], rotationQuaternion[3]);
+        // Set camera rotation from quaternion. Respect type if provided.
+        // blender_quaternion is typically [w, x, y, z]
+        let qx = rotationQuaternion[0];
+        let qy = rotationQuaternion[1];
+        let qz = rotationQuaternion[2];
+        let qw = rotationQuaternion[3];
+        if (rotationType && rotationType.toLowerCase().includes('blender')) {
+            qw = rotationQuaternion[0];
+            qx = rotationQuaternion[1];
+            qy = rotationQuaternion[2];
+            qz = rotationQuaternion[3];
+        }
+        const quaternion = new THREE.Quaternion(qx, qy, qz, qw).normalize();
         group.setRotationFromQuaternion(quaternion);
         
         // Create camera body (triangle shape)
@@ -9089,16 +9105,21 @@ class PLYVisualizer {
         const height = size * 1.5;
         
         const geometry = new THREE.ConeGeometry(size, height, 4); // 4 sides for square pyramid
+        // Align one face flat to the axes (avoid 45° appearance) by rotating the base square
+        geometry.rotateY(Math.PI / 4);
         const material = new THREE.MeshBasicMaterial({ 
             color: 0x4CAF50, // Green color for cameras
             transparent: true,
             opacity: 0.9
         });
         
+        // Translate geometry so the tip (originally at +Y * height/2) sits at the local origin.
+        // This ensures scaling does not move the tip from the origin.
+        geometry.translate(0, -height / 2, 0);
+        
         const mesh = new THREE.Mesh(geometry, material);
-        // Orient pyramid to point in camera direction (-Z) and position so tip is at origin
-        mesh.rotation.x = Math.PI / 2;
-        mesh.position.z = height / 2; // Move cone so tip is at origin (0,0,0)
+        // Orient pyramid to extend forward along +Z with tip anchored at origin
+        mesh.rotation.x = -Math.PI / 2;
         
         return mesh;
     }
@@ -9108,10 +9129,10 @@ class PLYVisualizer {
         const lineLength = 0.05; // 5cm direction line
         
         const geometry = new THREE.BufferGeometry();
-        const pyramidHeight = 0.03; // Pyramid height (size * 1.5 where size = 0.02)
+        // Start at camera origin (tip) and extend forward
         const positions = new Float32Array([
-            0, 0, pyramidHeight,          // Start at pyramid base surface
-            0, 0, pyramidHeight - lineLength // Extend in camera direction (-Z)
+            0, 0, 0,
+            0, 0, lineLength
         ]);
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         
@@ -9179,8 +9200,14 @@ class PLYVisualizer {
         
         // Scale proportionally to canvas aspect ratio, accounting for pixel ratio
         const aspectRatio = canvas.width / canvas.height;
-        const baseScale = 0.002; // Much smaller base size relative to pyramid
-        sprite.scale.set(baseScale * aspectRatio, baseScale, 1);
+        // Match label height roughly to the pyramid height at base scale
+        const pyramidHeight = 0.03; // must stay in sync with createCameraBodyGeometry
+        const baseScaleY = pyramidHeight; // label height ~= pyramid height
+        const baseScaleX = baseScaleY * aspectRatio;
+        sprite.scale.set(baseScaleX, baseScaleY, 1);
+        // Preserve original scale for proper proportional scaling later
+        (sprite as any).userData = (sprite as any).userData || {};
+        (sprite as any).userData.baseScale = { x: baseScaleX, y: baseScaleY };
         
         return sprite;
     }
@@ -9270,25 +9297,29 @@ class PLYVisualizer {
                     visualElement.scale.setScalar(1.0);
                     
                     if (visualElement.name === 'cameraLabel') {
-                        // Scale text labels proportionally but keep them much smaller than pyramid
-                        const textScale = Math.min(scale, scale * 0.6); // Text stays 60% of pyramid scale max
-                        visualElement.scale.setScalar(textScale);
+                        // Preserve aspect ratio and scale relative to original base scale
+                        const base = (visualElement as any).userData?.baseScale;
+                        if (base) {
+                            visualElement.scale.set(base.x * scale, base.y * scale, 1);
+                        }
                         // Adjust position to scale with pyramid
                         visualElement.position.set(0, 0.04 * scale, 0);
                     } else if (visualElement.name === 'coordinateLabel') {
-                        // Scale coordinate labels proportionally
-                        const textScale = Math.min(scale, scale * 0.6);
-                        visualElement.scale.setScalar(textScale);
-                        // Position coordinate label at pyramid base surface
-                        visualElement.position.set(0, -0.03 * scale, 0);
+                        // Preserve aspect ratio and scale relative to original base scale, but smaller than name label
+                        const base = (visualElement as any).userData?.baseScale;
+                        if (base) {
+                            const shrink = 0.6; // make coordinates label smaller
+                            visualElement.scale.set(base.x * scale * shrink, base.y * scale * shrink, 1);
+                        }
+                        // Position coordinate label slightly below base
+                        visualElement.position.set(0, -0.035 * scale, 0);
                     } else if (visualElement.name === 'directionLine') {
                         // For direction line, recreate geometry with scaled length
                         const line = visualElement as THREE.Line;
                         const lineLength = 0.05 * scale; // Scale the line length
-                        const pyramidHeight = 0.03 * scale; // Scaled pyramid height
                         const positions = new Float32Array([
-                            0, 0, pyramidHeight,          // Start at pyramid base surface
-                            0, 0, pyramidHeight - lineLength // Extend in camera direction (-Z) with scaled length
+                            0, 0, 0,          // Start at camera origin (tip)
+                            0, 0, lineLength  // Extend forward with scaled length
                         ]);
                         line.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
                         line.geometry.attributes.position.needsUpdate = true;
