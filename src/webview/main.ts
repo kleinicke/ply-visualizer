@@ -476,12 +476,14 @@ class PLYVisualizer {
     private sequenceWildcard: string = '';
     private sequenceIndex = 0;
     private sequenceTargetIndex = 0;
+    private sequenceDidInitialFit = false;
     private sequenceTimer: number | null = null;
     private sequenceFps = 2; // ~2 frames per second
     private isSequencePlaying = false;
     private sequenceCache = new Map<number, THREE.Object3D>();
     private sequenceCacheOrder: number[] = [];
-    private maxSequenceCache = 3;
+    private maxSequenceCache = 6; // keep more frames when navigating back
+    private sequenceInFlight: { index: number; requestId: string } | null = null;
     private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
     private appliedMtlColors: (number | null)[] = []; // Store applied MTL hex colors for each file
     private appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
@@ -2113,9 +2115,15 @@ class PLYVisualizer {
         // Sequence controls (overlay)
         const playBtn = document.getElementById('seq-play');
         const pauseBtn = document.getElementById('seq-pause');
+        const stopBtn = document.getElementById('seq-stop');
+        const prevBtn = document.getElementById('seq-prev');
+        const nextBtn = document.getElementById('seq-next');
         const slider = document.getElementById('seq-slider') as HTMLInputElement | null;
         if (playBtn) playBtn.addEventListener('click', () => this.playSequence());
         if (pauseBtn) pauseBtn.addEventListener('click', () => this.pauseSequence());
+        if (stopBtn) stopBtn.addEventListener('click', () => this.stopSequence());
+        if (prevBtn) prevBtn.addEventListener('click', () => this.stepSequence(-1));
+        if (nextBtn) nextBtn.addEventListener('click', () => this.stepSequence(1));
         if (slider) slider.addEventListener('input', () => this.seekSequence(parseInt(slider.value, 10) || 0));
 
         // Tab navigation
@@ -2133,14 +2141,14 @@ class PLYVisualizer {
         const fitCameraBtn = document.getElementById('fit-camera');
         if (fitCameraBtn) {
             fitCameraBtn.addEventListener('click', () => {
-                this.fitCameraToAllObjects();
+                if (!this.sequenceMode) this.fitCameraToAllObjects();
             });
         }
 
         const resetCameraBtn = document.getElementById('reset-camera');
         if (resetCameraBtn) {
             resetCameraBtn.addEventListener('click', () => {
-                this.resetCameraToDefault();
+                if (!this.sequenceMode) this.resetCameraToDefault();
             });
         }
 
@@ -2276,11 +2284,15 @@ class PLYVisualizer {
                     e.preventDefault();
                     break;
                 case 'f':
-                    this.fitCameraToAllObjects();
+                    if (!this.sequenceMode) {
+                        this.fitCameraToAllObjects();
+                    }
                     e.preventDefault();
                     break;
                 case 'r':
-                    this.resetCameraToDefault();
+                    if (!this.sequenceMode) {
+                        this.resetCameraToDefault();
+                    }
                     e.preventDefault();
                     break;
                 case 'a':
@@ -2368,6 +2380,7 @@ class PLYVisualizer {
         this.sequenceWildcard = wildcard;
         this.sequenceIndex = 0;
         this.sequenceTargetIndex = 0;
+        this.sequenceDidInitialFit = false;
         this.isSequencePlaying = false;
         this.sequenceCache.clear();
         this.sequenceCacheOrder = [];
@@ -2414,6 +2427,19 @@ class PLYVisualizer {
             window.clearInterval(this.sequenceTimer as unknown as number);
             this.sequenceTimer = null;
         }
+    }
+    private stopSequence(): void {
+        this.pauseSequence();
+        // Invalidate in-flight request so late results are ignored
+        this.sequenceInFlight = null;
+    }
+
+    private stepSequence(delta: number): void {
+        if (!this.sequenceFiles.length) return;
+        this.pauseSequence(); // do not auto-play when stepping
+        const count = this.sequenceFiles.length;
+        const next = (this.sequenceIndex + delta + count) % count;
+        this.seekSequence(next);
     }
 
     private seekSequence(index: number): void {
@@ -2505,8 +2531,13 @@ class PLYVisualizer {
             this.swapSequenceObject(cached, index);
             return;
         }
-        // Request from extension
-        this.vscode.postMessage({ type: 'sequence:requestFile', path: filePath, index });
+        // If a request is in-flight and for a different index, let it finish but ignore on arrival
+        const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        this.sequenceInFlight = { index, requestId };
+        // Request from extension with requestId for matching
+        this.vscode.postMessage({ type: 'sequence:requestFile', path: filePath, index, requestId });
+        // Show a lightweight loading hint
+        try { (document.getElementById('loading') as HTMLElement)?.classList.remove('hidden'); } catch {}
     }
 
     private useSequenceObject(obj: THREE.Object3D, index: number): void {
@@ -2559,20 +2590,33 @@ class PLYVisualizer {
         // Remove current
         const current = this.sequenceCache.get(this.sequenceIndex);
         if (current && current !== obj) {
+            current.visible = false;
             this.scene.remove(current);
         }
         // Add new
         if (!obj.parent) this.scene.add(obj);
+        obj.visible = true;
+        // Hide axes when new object is added to rule out looking-only-at-axes confusion
+        try { (this as any).axesGroup.visible = true; } catch {}
         this.sequenceIndex = index;
         // Make points clearly visible in sequence mode
         this.ensureSequenceVisibility(obj);
-        // Fit camera to the current object
-        this.fitCameraToObject(obj);
+        // Fit camera only once on the first visible frame
+        if (!this.sequenceDidInitialFit) {
+            this.fitCameraToObject(obj);
+            this.sequenceDidInitialFit = true;
+        }
         this.updateSequenceUI();
         this.updateFileList();
+        // Hide loading if it was shown
+        try { (document.getElementById('loading') as HTMLElement)?.classList.add('hidden'); } catch {}
         // Preload next
         const next = (index + 1) % this.sequenceFiles.length;
-        if (!this.sequenceCache.get(next)) this.vscode.postMessage({ type: 'sequence:requestFile', path: this.sequenceFiles[next], index: next });
+        const nextPath = this.sequenceFiles[next] || '';
+        const isDepth = /\.(tif|tiff|pfm|npy|npz|png|exr)$/i.test(nextPath);
+        if (!isDepth && !this.sequenceCache.get(next)) {
+            this.vscode.postMessage({ type: 'sequence:requestFile', path: nextPath, index: next });
+        }
     }
 
     private ensureSequenceVisibility(obj: THREE.Object3D): void {
@@ -3049,22 +3093,22 @@ class PLYVisualizer {
 
     private async displayFiles(dataArray: PlyData[]): Promise<void> {
         // concise summary printed separately
-        
-        // Add new files to the existing array
+        // In sequence mode: do not auto-fit camera or heavy UI work
+        if (this.sequenceMode) {
+            this.addNewFiles(dataArray);
+            this.updateFileList();
+            try { (document.getElementById('loading') as HTMLElement)?.classList.add('hidden'); } catch {}
+            return;
+        }
+
+        // Normal mode
         this.addNewFiles(dataArray);
-        
-        // Update UI
         this.updateFileStats();
         this.updateFileList();
         this.updateCameraControlsPanel();
-        
-        // Fit camera to show all objects
         this.fitCameraToAllObjects();
-        
-        // Hide loading indicator and clear any errors
-        document.getElementById('loading')?.classList.add('hidden');
+        (document.getElementById('loading') as HTMLElement)?.classList.add('hidden');
         this.clearError();
-        // Update absolute total time based on UI start
         const absStart = (window as any).absoluteStartTime || performance.now();
         this.lastAbsoluteMs = performance.now() - absStart;
     }

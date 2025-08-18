@@ -8,6 +8,7 @@ import { StlParser } from './stlParser';
 export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private static readonly viewType = 'plyViewer.plyEditor';
     private activePanels = new Set<vscode.WebviewPanel>();
+    private pathToPanel = new Map<string, vscode.WebviewPanel>();
 
     constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -25,7 +26,11 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         token: vscode.CancellationToken
     ): Promise<void> {
         this.activePanels.add(webviewPanel);
-        webviewPanel.onDidDispose(() => this.activePanels.delete(webviewPanel));
+        this.pathToPanel.set(document.uri.fsPath, webviewPanel);
+        webviewPanel.onDidDispose(() => {
+            this.activePanels.delete(webviewPanel);
+            this.pathToPanel.delete(document.uri.fsPath);
+        });
         webviewPanel.webview.options = {
             enableScripts: true,
             localResourceRoots: [
@@ -372,6 +377,17 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         }
     }
 
+    // Start sequence in the specific panel for a given file path (ensures correct target)
+    public startSequenceFor(targetFsPath: string, filePaths: string[], wildcard: string): void {
+        const panel = this.pathToPanel.get(targetFsPath);
+        if (panel) {
+            panel.webview.postMessage({ type: 'sequence:init', files: filePaths, wildcard });
+            return;
+        }
+        // Fallback: use last known active panel if mapping not present
+        this.startSequence(filePaths, wildcard);
+    }
+
 
 
     private getHtmlForWebview(webview: vscode.Webview): string {
@@ -572,6 +588,9 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         <input id="seq-wildcard" type="text" readonly placeholder="Wildcard" class="seq-wildcard" />
                         <button id="seq-play" class="seq-btn">▶</button>
                         <button id="seq-pause" class="seq-btn">⏸</button>
+                        <button id="seq-stop" class="seq-btn">⏹</button>
+                        <button id="seq-prev" class="seq-btn">◀</button>
+                        <button id="seq-next" class="seq-btn">▶</button>
                         <input id="seq-slider" type="range" min="0" max="0" value="0" class="seq-slider" />
                         <span id="seq-label" class="seq-label">0 / 0</span>
                     </div>
@@ -833,7 +852,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         }
     }
 
-    private async handleSequenceRequestFile(webviewPanel: vscode.WebviewPanel, message: { path: string; index: number }): Promise<void> {
+    private async handleSequenceRequestFile(webviewPanel: vscode.WebviewPanel, message: { path: string; index: number; requestId?: string }): Promise<void> {
         const fileUri = vscode.Uri.file(message.path);
         const fileName = path.basename(fileUri.fsPath);
         const ext = path.extname(fileUri.fsPath).toLowerCase();
@@ -856,6 +875,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     webviewPanel.webview.postMessage({
                         type: 'sequence:file:ultimate',
                         index: message.index,
+                        requestId: message.requestId,
                         fileName: fileName,
                         rawBinaryData,
                         vertexCount: header.headerInfo.vertexCount,
@@ -872,37 +892,37 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     });
                 } else {
                     const parsed = await parser.parse(bytes);
-                    webviewPanel.webview.postMessage({ type: 'sequence:file:ply', index: message.index, fileName, data: parsed });
+                    webviewPanel.webview.postMessage({ type: 'sequence:file:ply', index: message.index, requestId: message.requestId, fileName, data: parsed });
                 }
                 return;
             }
             if (ext === '.xyz') {
                 const xyz = await vscode.workspace.fs.readFile(fileUri);
-                webviewPanel.webview.postMessage({ type: 'sequence:file:xyz', index: message.index, fileName, data: xyz.buffer.slice(xyz.byteOffset, xyz.byteOffset + xyz.byteLength) });
+                webviewPanel.webview.postMessage({ type: 'sequence:file:xyz', index: message.index, requestId: message.requestId, fileName, data: xyz.buffer.slice(xyz.byteOffset, xyz.byteOffset + xyz.byteLength) });
                 return;
             }
             if (ext === '.obj') {
                 const objBytes = await vscode.workspace.fs.readFile(fileUri);
                 const objParser = new ObjParser();
                 const parsed = await objParser.parse(objBytes);
-                webviewPanel.webview.postMessage({ type: 'sequence:file:obj', index: message.index, fileName, data: parsed });
+                webviewPanel.webview.postMessage({ type: 'sequence:file:obj', index: message.index, requestId: message.requestId, fileName, data: parsed });
                 return;
             }
             if (ext === '.stl') {
                 const stlBytes = await vscode.workspace.fs.readFile(fileUri);
                 const stlParser = new StlParser();
                 const parsed = await stlParser.parse(stlBytes);
-                webviewPanel.webview.postMessage({ type: 'sequence:file:stl', index: message.index, fileName, data: parsed });
+                webviewPanel.webview.postMessage({ type: 'sequence:file:stl', index: message.index, requestId: message.requestId, fileName, data: parsed });
                 return;
             }
             if (ext === '.tif' || ext === '.tiff' || ext === '.pfm' || ext === '.npy' || ext === '.npz' || ext === '.png' || ext === '.exr') {
                 const depthBytes = await vscode.workspace.fs.readFile(fileUri);
-                webviewPanel.webview.postMessage({ type: 'sequence:file:depth', index: message.index, fileName, data: depthBytes.buffer.slice(depthBytes.byteOffset, depthBytes.byteOffset + depthBytes.byteLength) });
+                webviewPanel.webview.postMessage({ type: 'sequence:file:depth', index: message.index, requestId: message.requestId, fileName, data: depthBytes.buffer.slice(depthBytes.byteOffset, depthBytes.byteOffset + depthBytes.byteLength) });
                 return;
             }
-            webviewPanel.webview.postMessage({ type: 'sequence:file:error', index: message.index, fileName, error: `Unsupported file type: ${ext}` });
+            webviewPanel.webview.postMessage({ type: 'sequence:file:error', index: message.index, requestId: message.requestId, fileName, error: `Unsupported file type: ${ext}` });
         } catch (err) {
-            webviewPanel.webview.postMessage({ type: 'sequence:file:error', index: message.index, fileName, error: err instanceof Error ? err.message : String(err) });
+            webviewPanel.webview.postMessage({ type: 'sequence:file:error', index: message.index, requestId: message.requestId, fileName, error: err instanceof Error ? err.message : String(err) });
         }
     }
 

@@ -106,12 +106,12 @@ export function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
-                // Open a new editor targeting the first file to host the sequence UI
-                const first = vscode.Uri.file(matched[0]);
-                await vscode.commands.executeCommand('vscode.openWith', first, 'plyViewer.plyEditor');
-
-                // Start the sequence in the active panel and background-load frames
-                provider.startSequence(matched, wildcard);
+                // Use the currently active custom editor if possible; otherwise open the first file
+                const active = vscode.window.activeTextEditor?.document.uri;
+                const host = active && (active.scheme === 'file') ? active : vscode.Uri.file(matched[0]);
+                await vscode.commands.executeCommand('vscode.openWith', host, 'plyViewer.plyEditor');
+                // Start the sequence in the panel hosting that file
+                provider.startSequenceFor(host.fsPath, matched, wildcard);
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to start sequence: ${error instanceof Error ? error.message : String(error)}`);
             }
