@@ -14,6 +14,24 @@ body {
     height: 100vh;
 }
 
+/* Sequence overlay */
+.sequence-overlay {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    right: 10px;
+    z-index: 110;
+    background: var(--vscode-editorWidget-background);
+    border: 1px solid var(--vscode-editorWidget-border);
+    border-radius: 6px;
+    padding: 8px;
+}
+.seq-row { display: flex; align-items: center; gap: 8px; }
+.seq-wildcard { flex: 2; padding: 6px; border: 1px solid var(--vscode-input-border); background: var(--vscode-input-background); color: var(--vscode-input-foreground); }
+.seq-btn { padding: 4px 8px; border: 1px solid var(--vscode-button-border); background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-radius: 3px; cursor: pointer; }
+.seq-slider { flex: 4; }
+.seq-label { min-width: 70px; text-align: right; font-size: 11px; }
+
 #three-canvas {
     display: block;
     width: 100%;

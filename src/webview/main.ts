@@ -469,6 +469,19 @@ class PLYVisualizer {
     private fileVisibility: boolean[] = [];
     private useOriginalColors = true; // Default to original colors
     private pointSizes: number[] = []; // Individual point sizes for each point cloud
+
+    // Sequence mode state
+    private sequenceMode = false;
+    private sequenceFiles: string[] = [];
+    private sequenceWildcard: string = '';
+    private sequenceIndex = 0;
+    private sequenceTargetIndex = 0;
+    private sequenceTimer: number | null = null;
+    private sequenceFps = 2; // ~2 frames per second
+    private isSequencePlaying = false;
+    private sequenceCache = new Map<number, THREE.Object3D>();
+    private sequenceCacheOrder: number[] = [];
+    private maxSequenceCache = 3;
     private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
     private appliedMtlColors: (number | null)[] = []; // Store applied MTL hex colors for each file
     private appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
@@ -2097,6 +2110,14 @@ class PLYVisualizer {
             });
         }
 
+        // Sequence controls (overlay)
+        const playBtn = document.getElementById('seq-play');
+        const pauseBtn = document.getElementById('seq-pause');
+        const slider = document.getElementById('seq-slider') as HTMLInputElement | null;
+        if (playBtn) playBtn.addEventListener('click', () => this.playSequence());
+        if (pauseBtn) pauseBtn.addEventListener('click', () => this.pauseSequence());
+        if (slider) slider.addEventListener('input', () => this.seekSequence(parseInt(slider.value, 10) || 0));
+
         // Tab navigation
         const tabButtons = document.querySelectorAll('.tab-button');
         tabButtons.forEach(button => {
@@ -2339,6 +2360,255 @@ class PLYVisualizer {
         // Depth control handlers are now handled per-file in updateFileList
 
         // Global color mode toggle (removed - now handled per file)
+    }
+
+    private initializeSequence(files: string[], wildcard: string): void {
+        this.sequenceMode = true;
+        this.sequenceFiles = files;
+        this.sequenceWildcard = wildcard;
+        this.sequenceIndex = 0;
+        this.sequenceTargetIndex = 0;
+        this.isSequencePlaying = false;
+        this.sequenceCache.clear();
+        this.sequenceCacheOrder = [];
+        // Show overlay
+        document.getElementById('sequence-overlay')?.classList.remove('hidden');
+        const wildcardInput = document.getElementById('seq-wildcard') as HTMLInputElement | null;
+        if (wildcardInput) wildcardInput.value = wildcard;
+        this.updateSequenceUI();
+        // Clear any existing meshes from normal mode
+        for (const obj of this.meshes) this.scene.remove(obj);
+        this.meshes = [];
+        this.plyFiles = [];
+        // Load first frame
+        if (files.length > 0) this.loadSequenceFrame(0);
+        this.updateFileList();
+    }
+
+    private updateSequenceUI(): void {
+        const slider = document.getElementById('seq-slider') as HTMLInputElement | null;
+        const label = document.getElementById('seq-label') as HTMLElement | null;
+        if (slider) {
+            slider.max = Math.max(0, this.sequenceFiles.length - 1).toString();
+            slider.value = Math.min(this.sequenceIndex, this.sequenceFiles.length ? this.sequenceFiles.length - 1 : 0).toString();
+        }
+        if (label) {
+            label.textContent = `${this.sequenceFiles.length ? this.sequenceIndex + 1 : 0} / ${this.sequenceFiles.length}`;
+        }
+    }
+
+    private playSequence(): void {
+        if (!this.sequenceFiles.length) return;
+        if (this.isSequencePlaying) return;
+        this.isSequencePlaying = true;
+        const intervalMs = Math.max(50, Math.floor(1000 / this.sequenceFps));
+        this.sequenceTimer = window.setInterval(() => {
+            const nextIndex = (this.sequenceIndex + 1) % this.sequenceFiles.length;
+            this.seekSequence(nextIndex);
+        }, intervalMs) as unknown as number;
+    }
+
+    private pauseSequence(): void {
+        this.isSequencePlaying = false;
+        if (this.sequenceTimer !== null) {
+            window.clearInterval(this.sequenceTimer as unknown as number);
+            this.sequenceTimer = null;
+        }
+    }
+
+    private seekSequence(index: number): void {
+        if (!this.sequenceFiles.length) return;
+        const clamped = Math.max(0, Math.min(index, this.sequenceFiles.length - 1));
+        this.sequenceTargetIndex = clamped;
+        this.loadSequenceFrame(clamped);
+    }
+
+    private async sequenceHandleUltimate(message: any): Promise<void> {
+        const plyMsg = { ...message, type: 'ultimateRawBinaryData', messageType: 'addFiles' };
+        const startFilesLen = this.plyFiles.length;
+        await this.handleUltimateRawBinaryData(plyMsg);
+        const created = this.meshes[this.meshes.length - 1];
+        if (created) {
+            if (message.index === this.sequenceTargetIndex) this.useSequenceObject(created, message.index);
+            else this.cacheSequenceOnly(created, message.index);
+        }
+        this.trimNormalModeArraysFrom(startFilesLen);
+    }
+
+    private async sequenceHandlePly(message: any): Promise<void> {
+        const startFilesLen = this.plyFiles.length;
+        await this.displayFiles([message.data]);
+        const created = this.meshes[this.meshes.length - 1];
+        if (created) {
+            if (message.index === this.sequenceTargetIndex) this.useSequenceObject(created, message.index);
+            else this.cacheSequenceOnly(created, message.index);
+        }
+        this.trimNormalModeArraysFrom(startFilesLen);
+    }
+
+    private async sequenceHandleXyz(message: any): Promise<void> {
+        const startFilesLen = this.plyFiles.length;
+        await this.handleXyzData({ type: 'xyzData', fileName: message.fileName, data: message.data, isAddFile: true });
+        const created = this.meshes[this.meshes.length - 1];
+        if (created) {
+            if (message.index === this.sequenceTargetIndex) this.useSequenceObject(created, message.index);
+            else this.cacheSequenceOnly(created, message.index);
+        }
+        this.trimNormalModeArraysFrom(startFilesLen);
+    }
+
+    private async sequenceHandleObj(message: any): Promise<void> {
+        const startFilesLen = this.plyFiles.length;
+        await this.handleObjData({ type: 'objData', fileName: message.fileName, data: message.data, isAddFile: true });
+        const created = this.meshes[this.meshes.length - 1];
+        if (created) {
+            if (message.index === this.sequenceTargetIndex) this.useSequenceObject(created, message.index);
+            else this.cacheSequenceOnly(created, message.index);
+        }
+        this.trimNormalModeArraysFrom(startFilesLen);
+    }
+
+    private async sequenceHandleStl(message: any): Promise<void> {
+        const startFilesLen = this.plyFiles.length;
+        await this.handleStlData({ type: 'stlData', fileName: message.fileName, data: message.data, isAddFile: true });
+        const created = this.meshes[this.meshes.length - 1];
+        if (created) {
+            if (message.index === this.sequenceTargetIndex) this.useSequenceObject(created, message.index);
+            else this.cacheSequenceOnly(created, message.index);
+        }
+        this.trimNormalModeArraysFrom(startFilesLen);
+    }
+
+    private async sequenceHandleDepth(message: any): Promise<void> {
+        const startFilesLen = this.plyFiles.length;
+        await this.handleDepthData({ type: 'depthData', fileName: message.fileName, data: message.data, isAddFile: true });
+        const created = this.meshes[this.meshes.length - 1];
+        if (created) this.useSequenceObject(created, message.index);
+        this.trimNormalModeArraysFrom(startFilesLen);
+    }
+
+    private trimNormalModeArraysFrom(startIndex: number): void {
+        if (this.plyFiles.length > startIndex) this.plyFiles.splice(startIndex);
+        if (this.multiMaterialGroups.length > startIndex) this.multiMaterialGroups.splice(startIndex);
+        if (this.materialMeshes.length > startIndex) this.materialMeshes.splice(startIndex);
+        if (this.fileVisibility.length > startIndex) this.fileVisibility.splice(startIndex);
+        if (this.pointSizes.length > startIndex) this.pointSizes.splice(startIndex);
+        if (this.individualColorModes.length > startIndex) this.individualColorModes.splice(startIndex);
+    }
+
+    private async loadSequenceFrame(index: number): Promise<void> {
+        const filePath = this.sequenceFiles[index];
+        if (!filePath) return;
+        // If cached, display immediately
+        const cached = this.sequenceCache.get(index);
+        if (cached) {
+            this.swapSequenceObject(cached, index);
+            return;
+        }
+        // Request from extension
+        this.vscode.postMessage({ type: 'sequence:requestFile', path: filePath, index });
+    }
+
+    private useSequenceObject(obj: THREE.Object3D, index: number): void {
+        // Cache management
+        if (!this.sequenceCache.has(index)) {
+            this.sequenceCache.set(index, obj);
+            this.sequenceCacheOrder.push(index);
+            // Evict if over capacity
+            while (this.sequenceCacheOrder.length > this.maxSequenceCache) {
+                const evictIndex = this.sequenceCacheOrder.shift()!;
+                if (evictIndex !== this.sequenceIndex) {
+                    const evictObj = this.sequenceCache.get(evictIndex);
+                    if (evictObj) {
+                        this.scene.remove(evictObj);
+                        if ((evictObj as any).geometry) (evictObj as any).geometry.dispose?.();
+                        if ((evictObj as any).material) {
+                            const mat = (evictObj as any).material;
+                            if (Array.isArray(mat)) mat.forEach(m => m.dispose?.()); else mat.dispose?.();
+                        }
+                    }
+                    this.sequenceCache.delete(evictIndex);
+                }
+            }
+        }
+        this.swapSequenceObject(obj, index);
+    }
+
+    private cacheSequenceOnly(obj: THREE.Object3D, index: number): void {
+        if (obj.parent) this.scene.remove(obj);
+        if (!this.sequenceCache.has(index)) {
+            this.sequenceCache.set(index, obj);
+            this.sequenceCacheOrder.push(index);
+            while (this.sequenceCacheOrder.length > this.maxSequenceCache) {
+                const evictIndex = this.sequenceCacheOrder.shift()!;
+                const evictObj = this.sequenceCache.get(evictIndex);
+                if (evictObj) {
+                    this.scene.remove(evictObj);
+                    if ((evictObj as any).geometry) (evictObj as any).geometry.dispose?.();
+                    if ((evictObj as any).material) {
+                        const mat = (evictObj as any).material;
+                        if (Array.isArray(mat)) mat.forEach(m => m.dispose?.()); else mat.dispose?.();
+                    }
+                }
+                this.sequenceCache.delete(evictIndex);
+            }
+        }
+    }
+
+    private swapSequenceObject(obj: THREE.Object3D, index: number): void {
+        // Remove current
+        const current = this.sequenceCache.get(this.sequenceIndex);
+        if (current && current !== obj) {
+            this.scene.remove(current);
+        }
+        // Add new
+        if (!obj.parent) this.scene.add(obj);
+        this.sequenceIndex = index;
+        // Make points clearly visible in sequence mode
+        this.ensureSequenceVisibility(obj);
+        // Fit camera to the current object
+        this.fitCameraToObject(obj);
+        this.updateSequenceUI();
+        this.updateFileList();
+        // Preload next
+        const next = (index + 1) % this.sequenceFiles.length;
+        if (!this.sequenceCache.get(next)) this.vscode.postMessage({ type: 'sequence:requestFile', path: this.sequenceFiles[next], index: next });
+    }
+
+    private ensureSequenceVisibility(obj: THREE.Object3D): void {
+        if ((obj as any).isPoints && (obj as any).material && (obj as any).material instanceof THREE.PointsMaterial) {
+            const mat = (obj as any).material as THREE.PointsMaterial;
+            // Use a sensible on-screen size for sequence mode; avoid tiny defaults
+            if (!mat.size || mat.size < 0.5) {
+                mat.size = 2.5;
+            }
+            // Use screen-space size for clarity regardless of distance
+            mat.sizeAttenuation = false;
+            mat.needsUpdate = true;
+        }
+    }
+
+    private fitCameraToObject(obj: THREE.Object3D): void {
+        const box = new THREE.Box3().setFromObject(obj);
+        if (!box.isEmpty()) {
+            const size = box.getSize(new THREE.Vector3());
+            const center = box.getCenter(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = this.camera.fov * (Math.PI / 180);
+            const distance = (maxDim / 2) / Math.tan(fov / 2) * 1.5;
+
+            // Move camera along its current direction to the new distance
+            const dir = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
+            this.camera.position.copy(center.clone().sub(dir.multiplyScalar(distance)));
+            this.camera.near = Math.max(0.001, distance / 1000);
+            this.camera.far = distance * 1000;
+            this.camera.updateProjectionMatrix();
+
+            // Update controls target if present
+            if (this.controls && (this.controls as any).target) {
+                (this.controls as any).target.copy(center);
+            }
+        }
     }
 
     private getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
@@ -2657,6 +2927,32 @@ class PLYVisualizer {
                         this.showError('Failed to add files: ' + (error instanceof Error ? error.message : String(error)));
                     }
                     break;
+                case 'sequence:init':
+                    try {
+                        this.initializeSequence(message.files as string[], message.wildcard as string);
+                    } catch (error) {
+                        console.error('Error starting sequence:', error);
+                        this.showError('Failed to start sequence: ' + (error instanceof Error ? error.message : String(error)));
+                    }
+                    break;
+                case 'sequence:file:ultimate':
+                    await this.sequenceHandleUltimate(message);
+                    break;
+                case 'sequence:file:ply':
+                    await this.sequenceHandlePly(message);
+                    break;
+                case 'sequence:file:xyz':
+                    await this.sequenceHandleXyz(message);
+                    break;
+                case 'sequence:file:obj':
+                    await this.sequenceHandleObj(message);
+                    break;
+                case 'sequence:file:stl':
+                    await this.sequenceHandleStl(message);
+                    break;
+                case 'sequence:file:depth':
+                    await this.sequenceHandleDepth(message);
+                    break;
                 case 'fileRemoved':
                     try {
                         this.removeFileByIndex(message.fileIndex);
@@ -2955,6 +3251,23 @@ class PLYVisualizer {
         }
 
         let html = '';
+        // In sequence mode, show only the current frame information
+        if (this.sequenceMode && this.sequenceFiles.length > 0) {
+            const name = this.sequenceFiles[this.sequenceIndex]?.split(/[\\/]/).pop() || `Frame ${this.sequenceIndex + 1}`;
+            html += `
+                <div class="file-item">
+                    <div class="file-item-main">
+                        <input type="checkbox" id="file-0" checked disabled>
+                        <span class="color-indicator" style="background-color: #888"></span>
+                        <label for="file-0" class="file-name">${name}</label>
+                    </div>
+                    <div class="file-info">Frame ${this.sequenceIndex + 1} of ${this.sequenceFiles.length}</div>
+                </div>
+            `;
+            fileListDiv.innerHTML = html;
+            return;
+        }
+
         // Render point clouds and meshes
         for (let i = 0; i < this.plyFiles.length; i++) {
             const data = this.plyFiles[i];
@@ -4643,7 +4956,12 @@ class PLYVisualizer {
                     this.meshes.push(mesh);
                 }
             }
-            this.fileVisibility.push(true);
+            // If sequence mode is active, only the current frame stays visible to avoid overloading the scene
+            const isSeqMode = this.sequenceFiles.length > 0;
+            const shouldBeVisible = !isSeqMode || (data.fileIndex === this.sequenceIndex);
+            this.fileVisibility.push(shouldBeVisible);
+            const lastObject = this.meshes[this.meshes.length - 1];
+            if (lastObject) lastObject.visible = shouldBeVisible;
             const isObjFile3 = (data as any).isObjFile;
             this.pointSizes.push(isObjFile3 ? 5.0 : 0.001); // Default point size for good visibility
             this.appliedMtlColors.push(null); // No MTL color applied initially
@@ -4750,7 +5068,7 @@ class PLYVisualizer {
         
         // Parse raw binary data directly in webview
         const rawData = new Uint8Array(message.rawBinaryData);
-        const dataView = new DataView(rawData.buffer);
+        const dataView = new DataView(rawData.buffer, rawData.byteOffset, rawData.byteLength);
         const propertyOffsets = new Map(message.propertyOffsets);
         const vertexStride = message.vertexStride;
         const vertexCount = message.vertexCount;

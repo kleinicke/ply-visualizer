@@ -7,6 +7,7 @@ import { StlParser } from './stlParser';
 
 export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private static readonly viewType = 'plyViewer.plyEditor';
+    private activePanels = new Set<vscode.WebviewPanel>();
 
     constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -23,6 +24,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         webviewPanel: vscode.WebviewPanel,
         token: vscode.CancellationToken
     ): Promise<void> {
+        this.activePanels.add(webviewPanel);
+        webviewPanel.onDidDispose(() => this.activePanels.delete(webviewPanel));
         webviewPanel.webview.options = {
             enableScripts: true,
             localResourceRoots: [
@@ -346,9 +349,27 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     case 'requestDefaultDepthSettings':
                         await this.handleRequestDefaultDepthSettings(webviewPanel);
                         break;
+                    case 'sequence:requestFile':
+                        await this.handleSequenceRequestFile(webviewPanel, message);
+                        break;
+                    case 'addFileFromPath':
+                        await this.handleAddFileFromPath(webviewPanel, message.path as string);
+                        break;
                 }
             }
         );
+    }
+
+    // Start sequence playback in current active webview with background loading hint
+    public startSequence(filePaths: string[], wildcard: string): void {
+        for (const panel of this.activePanels) {
+            panel.webview.postMessage({
+                type: 'sequence:init',
+                files: filePaths,
+                wildcard: wildcard
+            });
+            break;
+        }
     }
 
 
@@ -545,6 +566,17 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     </div>
                 </div>
                 
+                <!-- Sequence Overlay (hidden by default) -->
+                <div id="sequence-overlay" class="sequence-overlay hidden">
+                    <div class="seq-row">
+                        <input id="seq-wildcard" type="text" readonly placeholder="Wildcard" class="seq-wildcard" />
+                        <button id="seq-play" class="seq-btn">▶</button>
+                        <button id="seq-pause" class="seq-btn">⏸</button>
+                        <input id="seq-slider" type="range" min="0" max="0" value="0" class="seq-slider" />
+                        <span id="seq-label" class="seq-label">0 / 0</span>
+                    </div>
+                </div>
+
                 <div id="viewer-container">
                     <canvas id="three-canvas"></canvas>
                 </div>
@@ -741,6 +773,136 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     vscode.window.showErrorMessage(`Failed to load file ${files[i].fsPath}: ${error}`);
                 }
             }
+        }
+    }
+
+    private async handleAddFileFromPath(webviewPanel: vscode.WebviewPanel, filePathStr: string): Promise<void> {
+        try {
+            const fileUri = vscode.Uri.file(filePathStr);
+            const fileName = path.basename(fileUri.fsPath);
+            const ext = path.extname(fileUri.fsPath).toLowerCase();
+
+            if (ext === '.tif' || ext === '.tiff' || ext === '.pfm' || ext === '.npy' || ext === '.npz' || ext === '.png' || ext === '.exr') {
+                const depthData = await vscode.workspace.fs.readFile(fileUri);
+                webviewPanel.webview.postMessage({
+                    type: 'depthData', fileName, data: depthData.buffer.slice(depthData.byteOffset, depthData.byteOffset + depthData.byteLength), isAddFile: true
+                });
+                return;
+            }
+            if (ext === '.ply') {
+                const plyData = await vscode.workspace.fs.readFile(fileUri);
+                const parser = new PlyParser();
+                const decoder = new TextDecoder('utf-8');
+                const headerPreview = decoder.decode(plyData.slice(0, 1024));
+                const isBinary = headerPreview.includes('binary_little_endian') || headerPreview.includes('binary_big_endian');
+                if (isBinary) {
+                    const headerResult = await parser.parseHeaderOnly(plyData);
+                    headerResult.headerInfo.fileName = fileName;
+                    await this.sendUltimateRawBinary(webviewPanel, headerResult.headerInfo, headerResult, plyData, 'addFiles');
+                } else {
+                    const parsedData = await parser.parse(plyData);
+                    parsedData.fileName = fileName;
+                    await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'addFiles');
+                }
+                return;
+            }
+            if (ext === '.xyz') {
+                const xyzData = await vscode.workspace.fs.readFile(fileUri);
+                webviewPanel.webview.postMessage({
+                    type: 'xyzData', fileName, data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength), isAddFile: true
+                });
+                return;
+            }
+            if (ext === '.obj') {
+                const objData = await vscode.workspace.fs.readFile(fileUri);
+                const objParser = new ObjParser();
+                const parsedData = await objParser.parse(objData);
+                webviewPanel.webview.postMessage({ type: 'objData', fileName, data: parsedData, isAddFile: true });
+                await this.tryAutoLoadMtl(webviewPanel, fileUri, parsedData, 0);
+                return;
+            }
+            if (ext === '.stl') {
+                const stlData = await vscode.workspace.fs.readFile(fileUri);
+                const stlParser = new StlParser();
+                const parsedData = await stlParser.parse(stlData);
+                webviewPanel.webview.postMessage({ type: 'stlData', fileName, data: parsedData, isAddFile: true });
+                return;
+            }
+        } catch (error) {
+            vscode.window.showErrorMessage(`Failed to add file from path: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handleSequenceRequestFile(webviewPanel: vscode.WebviewPanel, message: { path: string; index: number }): Promise<void> {
+        const fileUri = vscode.Uri.file(message.path);
+        const fileName = path.basename(fileUri.fsPath);
+        const ext = path.extname(fileUri.fsPath).toLowerCase();
+        try {
+            if (ext === '.ply') {
+                const bytes = await vscode.workspace.fs.readFile(fileUri);
+                const parser = new PlyParser();
+                const decoder = new TextDecoder('utf-8');
+                const headerPreview = decoder.decode(bytes.slice(0, 1024));
+                const isBinary = headerPreview.includes('binary_little_endian') || headerPreview.includes('binary_big_endian');
+                if (isBinary) {
+                    const header = await parser.parseHeaderOnly(bytes);
+                    header.headerInfo.fileName = fileName;
+                    // Mirror original transfer semantics to avoid DataView bounds issues
+                    const binaryVertexData = bytes.slice(header.binaryDataStart);
+                    const rawBinaryData = binaryVertexData.buffer.slice(
+                        binaryVertexData.byteOffset,
+                        binaryVertexData.byteOffset + binaryVertexData.byteLength
+                    );
+                    webviewPanel.webview.postMessage({
+                        type: 'sequence:file:ultimate',
+                        index: message.index,
+                        fileName: fileName,
+                        rawBinaryData,
+                        vertexCount: header.headerInfo.vertexCount,
+                        faceCount: header.headerInfo.faceCount,
+                        hasColors: header.headerInfo.hasColors,
+                        hasNormals: header.headerInfo.hasNormals,
+                        format: header.headerInfo.format,
+                        comments: header.headerInfo.comments,
+                        vertexStride: header.vertexStride,
+                        propertyOffsets: Array.from(header.propertyOffsets.entries()),
+                        littleEndian: header.headerInfo.format === 'binary_little_endian',
+                        faceCountType: header.faceCountType,
+                        faceIndexType: header.faceIndexType
+                    });
+                } else {
+                    const parsed = await parser.parse(bytes);
+                    webviewPanel.webview.postMessage({ type: 'sequence:file:ply', index: message.index, fileName, data: parsed });
+                }
+                return;
+            }
+            if (ext === '.xyz') {
+                const xyz = await vscode.workspace.fs.readFile(fileUri);
+                webviewPanel.webview.postMessage({ type: 'sequence:file:xyz', index: message.index, fileName, data: xyz.buffer.slice(xyz.byteOffset, xyz.byteOffset + xyz.byteLength) });
+                return;
+            }
+            if (ext === '.obj') {
+                const objBytes = await vscode.workspace.fs.readFile(fileUri);
+                const objParser = new ObjParser();
+                const parsed = await objParser.parse(objBytes);
+                webviewPanel.webview.postMessage({ type: 'sequence:file:obj', index: message.index, fileName, data: parsed });
+                return;
+            }
+            if (ext === '.stl') {
+                const stlBytes = await vscode.workspace.fs.readFile(fileUri);
+                const stlParser = new StlParser();
+                const parsed = await stlParser.parse(stlBytes);
+                webviewPanel.webview.postMessage({ type: 'sequence:file:stl', index: message.index, fileName, data: parsed });
+                return;
+            }
+            if (ext === '.tif' || ext === '.tiff' || ext === '.pfm' || ext === '.npy' || ext === '.npz' || ext === '.png' || ext === '.exr') {
+                const depthBytes = await vscode.workspace.fs.readFile(fileUri);
+                webviewPanel.webview.postMessage({ type: 'sequence:file:depth', index: message.index, fileName, data: depthBytes.buffer.slice(depthBytes.byteOffset, depthBytes.byteOffset + depthBytes.byteLength) });
+                return;
+            }
+            webviewPanel.webview.postMessage({ type: 'sequence:file:error', index: message.index, fileName, error: `Unsupported file type: ${ext}` });
+        } catch (err) {
+            webviewPanel.webview.postMessage({ type: 'sequence:file:error', index: message.index, fileName, error: err instanceof Error ? err.message : String(err) });
         }
     }
 

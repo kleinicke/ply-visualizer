@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
 import { PlyEditorProvider } from './plyEditorProvider';
+import { glob } from 'glob';
 
 export function activate(context: vscode.ExtensionContext) {
     // Register the PLY editor provider
+    const provider = new PlyEditorProvider(context);
     context.subscriptions.push(
         vscode.window.registerCustomEditorProvider(
             'plyViewer.plyEditor',
-            new PlyEditorProvider(context),
+            provider,
             {
                 webviewOptions: {
                     retainContextWhenHidden: true,
@@ -63,6 +65,56 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('plyViewer.openMultipleFiles', async () => {
             // Avoid blocking tests by not awaiting the file picker
             setImmediate(() => { void handleOpenMultipleFiles(); });
+        })
+    );
+
+    // Register command for playing a point cloud sequence via wildcard
+    context.subscriptions.push(
+        vscode.commands.registerCommand('plyViewer.playPointCloudSequence', async () => {
+            try {
+                const wildcard = await vscode.window.showInputBox({
+                    prompt: 'Enter a file wildcard (e.g., /path/to/frames_*.ply)',
+                    placeHolder: '/absolute/path/prefix_*.{ply,xyz,obj}',
+                    ignoreFocusOut: true
+                });
+                if (!wildcard) {
+                    return;
+                }
+
+                // Resolve wildcard to absolute file paths (non-blocking UI progress)
+                const matched = await vscode.window.withProgress<string[]>(
+                    {
+                        location: vscode.ProgressLocation.Notification,
+                        title: 'Scanning files for sequence…',
+                        cancellable: false
+                    },
+                    async () => {
+                        // Callback API wrapped in a Promise to obtain a clean string[]
+                        const files = await new Promise<string[]>((resolve, reject) => {
+                            glob(wildcard, { nodir: true } as any, (err: Error | null, matches: string[]) => {
+                                if (err) return reject(err);
+                                resolve(matches);
+                            });
+                        });
+                        files.sort((a: string, b: string) => a.localeCompare(b, undefined, { numeric: true }));
+                        return files;
+                    }
+                );
+
+                if (!matched || matched.length === 0) {
+                    vscode.window.showWarningMessage('No files matched the provided wildcard.');
+                    return;
+                }
+
+                // Open a new editor targeting the first file to host the sequence UI
+                const first = vscode.Uri.file(matched[0]);
+                await vscode.commands.executeCommand('vscode.openWith', first, 'plyViewer.plyEditor');
+
+                // Start the sequence in the active panel and background-load frames
+                provider.startSequence(matched, wildcard);
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to start sequence: ${error instanceof Error ? error.message : String(error)}`);
+            }
         })
     );
 

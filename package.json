@@ -78,6 +78,11 @@
         "category": "PLY Visualizer"
       },
       {
+        "command": "plyViewer.playPointCloudSequence",
+        "title": "Play Point Cloud Sequence (Wildcard)",
+        "category": "PLY Visualizer"
+      },
+      {
         "command": "plyViewer.convertTifToPointCloud",
         "title": "Convert TIFF to Point Cloud",
         "category": "PLY Visualizer"
