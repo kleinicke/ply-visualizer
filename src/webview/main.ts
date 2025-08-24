@@ -464,6 +464,7 @@ class PLYVisualizer {
     // Unified file management
     private plyFiles: PlyData[] = [];
     private meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
+    private normalsVisualizers: (THREE.LineSegments | null)[] = [];
     private multiMaterialGroups: (THREE.Group | null)[] = []; // Multi-material Groups for OBJ files
     private materialMeshes: (THREE.Object3D[] | null)[] = []; // Sub-meshes for multi-material OBJ files
     private fileVisibility: boolean[] = [];
@@ -2160,6 +2161,13 @@ class PLYVisualizer {
             });
         }
 
+        const toggleNormalsBtn = document.getElementById('toggle-normals');
+        if (toggleNormalsBtn) {
+            toggleNormalsBtn.addEventListener('click', () => {
+                this.toggleNormalsVisibility();
+            });
+        }
+
         const toggleCamerasBtn = document.getElementById('toggle-cameras');
         if (toggleCamerasBtn) {
             toggleCamerasBtn.addEventListener('click', () => {
@@ -2297,6 +2305,10 @@ class PLYVisualizer {
                     break;
                 case 'a':
                     this.toggleAxesVisibility();
+                    e.preventDefault();
+                    break;
+                case 'n':
+                    this.toggleNormalsVisibility();
                     e.preventDefault();
                     break;
                 case 'c':
@@ -2726,6 +2738,14 @@ class PLYVisualizer {
 
         // When permanently visible, keep axes shown regardless of idle timeout in setupAxesVisibility
         // When turned off, allow setupAxesVisibility handlers to hide them after interactions
+    }
+
+    private toggleNormalsVisibility(): void {
+        this.normalsVisualizers.forEach(normals => {
+            if (normals) {
+                normals.visible = !normals.visible;
+            }
+        });
     }
 
     private updateAxesButtonState(): void {
@@ -7703,87 +7723,121 @@ class PLYVisualizer {
             this.showStatus(`XYZ: processing ${message.fileName} (${message.variant})`);
             
             // Parse XYZ variant data
-            const data = new Uint8Array(message.data);
-            const decoder = new TextDecoder('utf-8');
-            const text = decoder.decode(data);
-            const lines = text.split('\n').filter(line => line.trim() !== '');
-            
-            const vertices: PlyVertex[] = [];
-            let hasColors = false;
-            let hasNormals = false;
-            
-            // Determine format
-            if (message.variant === 'xyzn') {
-                hasNormals = true;
-            } else if (message.variant === 'xyzrgb') {
-                hasColors = true;
-            }
-            
-            for (const line of lines) {
-                const parts = line.trim().split(/\s+/);
-                if (parts.length < 3) continue;
-                
-                const vertex: PlyVertex = {
-                    x: parseFloat(parts[0]),
-                    y: parseFloat(parts[1]),
-                    z: parseFloat(parts[2])
-                };
-                
-                if (message.variant === 'xyzn' && parts.length >= 6) {
-                    vertex.nx = parseFloat(parts[3]);
-                    vertex.ny = parseFloat(parts[4]);
-                    vertex.nz = parseFloat(parts[5]);
-                } else if (message.variant === 'xyzrgb' && parts.length >= 6) {
-                    // RGB values in XYZRGB are typically floats 0.0-1.0, convert to 0-255
-                    const r = parseFloat(parts[3]);
-                    const g = parseFloat(parts[4]);
-                    const b = parseFloat(parts[5]);
-                    
-                    // Auto-detect if values are 0-1 (float) or 0-255 (int)
-                    if (r <= 1.0 && g <= 1.0 && b <= 1.0) {
-                        vertex.red = Math.round(r * 255);
-                        vertex.green = Math.round(g * 255);
-                        vertex.blue = Math.round(b * 255);
-                    } else {
-                        vertex.red = Math.round(Math.min(255, Math.max(0, r)));
-                        vertex.green = Math.round(Math.min(255, Math.max(0, g)));
-                        vertex.blue = Math.round(Math.min(255, Math.max(0, b)));
-                    }
-                }
-                
-                vertices.push(vertex);
-            }
-            
-            // Convert to PLY format for rendering
-            const plyData: PlyData = {
-                vertices,
-                faces: [],
-                format: 'ascii',
-                version: '1.0',
-                comments: [
-                    `Converted from ${message.variant.toUpperCase()}: ${message.fileName}`,
-                    `Format variant: ${message.variant}`
-                ],
-                vertexCount: vertices.length,
-                faceCount: 0,
-                hasColors,
-                hasNormals,
-                fileName: message.fileName
-            };
+            const plyData = this.parseXyzVariantData(message.data, message.variant, message.fileName);
 
             if (message.isAddFile) {
                 this.addNewFiles([plyData]);
             } else {
                 await this.displayFiles([plyData]);
             }
+
+            if (plyData.hasNormals) {
+                const normalsVisualizer = this.createNormalsVisualizer(plyData);
+                this.scene.add(normalsVisualizer);
+                this.normalsVisualizers.push(normalsVisualizer);
+            }
             
-            this.showStatus(`${message.variant.toUpperCase()}: loaded ${vertices.length} points from ${message.fileName}`);
+            this.showStatus(`${message.variant.toUpperCase()}: loaded ${plyData.vertexCount} points from ${message.fileName}`);
             
         } catch (error) {
             console.error('Error handling XYZ variant data:', error);
             this.showError(`${message.variant.toUpperCase()} processing failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
+
+    private parseXyzVariantData(data: ArrayBuffer, variant: string, fileName: string): PlyData {
+        const decoder = new TextDecoder('utf-8');
+        const text = decoder.decode(data);
+        const lines = text.split('\n').filter(line => line.trim() !== '');
+        
+        const vertices: PlyVertex[] = [];
+        let hasColors = false;
+        let hasNormals = false;
+        
+        if (variant === 'xyzn') {
+            hasNormals = true;
+        } else if (variant === 'xyzrgb') {
+            hasColors = true;
+        }
+        
+        for (const line of lines) {
+            const parts = line.trim().split(/\s+/);
+            if (parts.length < 3) continue;
+            
+            const vertex: PlyVertex = {
+                x: parseFloat(parts[0]),
+                y: parseFloat(parts[1]),
+                z: parseFloat(parts[2])
+            };
+            
+            if (variant === 'xyzn' && parts.length >= 6) {
+                vertex.nx = parseFloat(parts[3]);
+                vertex.ny = parseFloat(parts[4]);
+                vertex.nz = parseFloat(parts[5]);
+            } else if (variant === 'xyzrgb' && parts.length >= 6) {
+                const r = parseFloat(parts[3]);
+                const g = parseFloat(parts[4]);
+                const b = parseFloat(parts[5]);
+                
+                if (r <= 1.0 && g <= 1.0 && b <= 1.0) {
+                    vertex.red = Math.round(r * 255);
+                    vertex.green = Math.round(g * 255);
+                    vertex.blue = Math.round(b * 255);
+                } else {
+                    vertex.red = Math.round(Math.min(255, Math.max(0, r)));
+                    vertex.green = Math.round(Math.min(255, Math.max(0, g)));
+                    vertex.blue = Math.round(Math.min(255, Math.max(0, b)));
+                }
+            }
+            
+            vertices.push(vertex);
+        }
+        
+        return {
+            vertices,
+            faces: [],
+            format: 'ascii',
+            version: '1.0',
+            comments: [
+                `Converted from ${variant.toUpperCase()}: ${fileName}`,
+                `Format variant: ${variant}`
+            ],
+            vertexCount: vertices.length,
+            faceCount: 0,
+            hasColors,
+            hasNormals,
+            fileName: fileName
+        };
+    }
+
+    private createNormalsVisualizer(data: PlyData): THREE.LineSegments {
+        const normalsGeometry = new THREE.BufferGeometry();
+        const lines = [];
+        const normalLength = 0.1; // Controls how long the normal lines are
+        const normalColor = new THREE.Color(0x00ffff); // Cyan color for visibility
+
+        for (const p of data.vertices) {
+            if (p.nx === undefined || p.ny === undefined || p.nz === undefined) continue;
+
+            const start = new THREE.Vector3(p.x, p.y, p.z);
+            const end = new THREE.Vector3(
+                p.x + p.nx * normalLength,
+                p.y + p.ny * normalLength,
+                p.z + p.nz * normalLength
+            );
+            lines.push(start, end);
+        }
+
+        normalsGeometry.setFromPoints(lines);
+
+        const normalsMaterial = new THREE.LineBasicMaterial({ color: normalColor });
+
+        const normalsVisualizer = new THREE.LineSegments(normalsGeometry, normalsMaterial);
+        normalsVisualizer.name = "Normals";
+        return normalsVisualizer;
+    }
+
+
 
     private async handleColorImageData(message: any): Promise<void> {
         try {

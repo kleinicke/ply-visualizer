@@ -125,20 +125,30 @@ export class OffParser {
                 z: parseFloat(parts[2])
             };
 
-            // Parse colors if present (COFF or CNOFF)
-            if (hasColors && parts.length >= 6) {
-                vertex.red = Math.round(Math.min(255, Math.max(0, parseFloat(parts[3]))));
-                vertex.green = Math.round(Math.min(255, Math.max(0, parseFloat(parts[4]))));
-                vertex.blue = Math.round(Math.min(255, Math.max(0, parseFloat(parts[5]))));
-            }
-
-            // Parse normals if present (NOFF or CNOFF)
-            if (hasNormals) {
-                const normalOffset = hasColors ? 6 : 3;
-                if (parts.length >= normalOffset + 3) {
-                    vertex.nx = parseFloat(parts[normalOffset]);
-                    vertex.ny = parseFloat(parts[normalOffset + 1]);
-                    vertex.nz = parseFloat(parts[normalOffset + 2]);
+            // Parse normals and colors based on format
+            if (hasNormals && !hasColors) {
+                // NOFF: x y z nx ny nz
+                if (parts.length >= 6) {
+                    vertex.nx = parseFloat(parts[3]);
+                    vertex.ny = parseFloat(parts[4]);
+                    vertex.nz = parseFloat(parts[5]);
+                }
+            } else if (hasNormals && hasColors) {
+                // CNOFF: x y z nx ny nz r g b [a]
+                if (parts.length >= 9) {
+                    vertex.nx = parseFloat(parts[3]);
+                    vertex.ny = parseFloat(parts[4]);
+                    vertex.nz = parseFloat(parts[5]);
+                    vertex.red = Math.round(Math.min(255, Math.max(0, parseFloat(parts[6]))));
+                    vertex.green = Math.round(Math.min(255, Math.max(0, parseFloat(parts[7]))));
+                    vertex.blue = Math.round(Math.min(255, Math.max(0, parseFloat(parts[8]))));
+                }
+            } else if (hasColors && !hasNormals) {
+                // COFF: x y z r g b
+                if (parts.length >= 6) {
+                    vertex.red = Math.round(Math.min(255, Math.max(0, parseFloat(parts[3]))));
+                    vertex.green = Math.round(Math.min(255, Math.max(0, parseFloat(parts[4]))));
+                    vertex.blue = Math.round(Math.min(255, Math.max(0, parseFloat(parts[5]))));
                 }
             }
 

@@ -119,7 +119,7 @@ export class GltfParser {
                     if (!positionAccessor || positionAccessor.type !== 'VEC3') continue;
 
                     // Get positions
-                    const positions = this.getAccessorData(gltfJson, positionAccessorIndex, binaryData);
+                    const positions = this.getAccessorData(gltfJson, positionAccessorIndex, binaryData, timingCallback);
                     if (!positions) {
                         console.warn('GLTF: Could not load position data - missing external buffers');
                         continue;
@@ -128,14 +128,14 @@ export class GltfParser {
                     // Get colors if available
                     let colors: Float32Array | Uint16Array | Uint32Array | null = null;
                     if (primitive.attributes.COLOR_0 !== undefined) {
-                        colors = this.getAccessorData(gltfJson, primitive.attributes.COLOR_0, binaryData);
+                        colors = this.getAccessorData(gltfJson, primitive.attributes.COLOR_0, binaryData, timingCallback);
                         if (colors) hasColors = true;
                     }
 
                     // Get normals if available
                     let normals: Float32Array | Uint16Array | Uint32Array | null = null;
                     if (primitive.attributes.NORMAL !== undefined) {
-                        normals = this.getAccessorData(gltfJson, primitive.attributes.NORMAL, binaryData);
+                        normals = this.getAccessorData(gltfJson, primitive.attributes.NORMAL, binaryData, timingCallback);
                         if (normals) hasNormals = true;
                     }
 
@@ -165,7 +165,7 @@ export class GltfParser {
 
                     // Get indices if available
                     if (primitive.indices !== undefined) {
-                        const indices = this.getAccessorData(gltfJson, primitive.indices, binaryData);
+                        const indices = this.getAccessorData(gltfJson, primitive.indices, binaryData, timingCallback);
                         if (indices) {
                             for (let i = 0; i < indices.length; i += 3) {
                                 faces.push({
@@ -200,7 +200,7 @@ export class GltfParser {
         };
     }
 
-    private getAccessorData(gltfJson: any, accessorIndex: number, binaryData: Uint8Array | null): Float32Array | Uint16Array | Uint32Array | null {
+    private getAccessorData(gltfJson: any, accessorIndex: number, binaryData: Uint8Array | null, timingCallback?: (message: string) => void): Float32Array | Uint16Array | Uint32Array | null {
         const accessor = gltfJson.accessors[accessorIndex];
         if (!accessor) {
             console.warn(`GLTF: Accessor ${accessorIndex} not found`);
@@ -225,13 +225,34 @@ export class GltfParser {
 
         const buffer = gltfJson.buffers[bufferView.buffer];
 
-        // For GLB, use binary data; for GLTF, would need to load external buffer (not implemented)
-        if (!binaryData && buffer.uri) {
+        let bufferData: Uint8Array | null = binaryData;
+
+        // Handle inline base64 data URIs
+        if (!bufferData && buffer.uri && buffer.uri.startsWith('data:')) {
+            try {
+                const base64Match = buffer.uri.match(/^data:[^;]+;base64,(.*)$/);
+                if (base64Match) {
+                    const base64Data = base64Match[1];
+                    const binaryString = atob(base64Data);
+                    bufferData = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                        bufferData[i] = binaryString.charCodeAt(i);
+                    }
+                    timingCallback?.(`📦 GLTF: Decoded ${bufferData.length} bytes from base64 data URI`);
+                }
+            } catch (error) {
+                console.warn('GLTF: Failed to decode base64 buffer data:', error);
+                return null;
+            }
+        }
+
+        // For GLTF with external buffer files (not implemented)
+        if (!bufferData && buffer.uri && !buffer.uri.startsWith('data:')) {
             console.warn('GLTF: External buffer references not supported in GLTF parser');
             return null;
         }
 
-        if (!binaryData) {
+        if (!bufferData) {
             console.warn('GLTF: No binary data available for buffer access');
             return null;
         }
@@ -253,7 +274,7 @@ export class GltfParser {
         }
 
         const totalComponents = count * componentsPerElement;
-        const dataView = new DataView(binaryData.buffer, binaryData.byteOffset + byteOffset);
+        const dataView = new DataView(bufferData.buffer, bufferData.byteOffset + byteOffset);
 
         switch (componentType) {
             case 5120: // BYTE
