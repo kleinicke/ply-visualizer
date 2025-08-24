@@ -5,6 +5,10 @@
 Add support for pfm depth/disparity predictions
 Add support for npy/npz depth/disparity predictions
 Add support for stl files
+Add support for pcd files (Point Cloud Data format)
+Add support for pts files (Point Cloud format)
+Add support for off files (Object File Format)
+Add support for gltf/glb files (3D model formats)
 Add support for some camera position profiles
 Add support for some body pose estimations
 

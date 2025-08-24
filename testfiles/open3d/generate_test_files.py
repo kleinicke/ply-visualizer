@@ -56,6 +56,21 @@ def create_sample_mesh():
     
     return mesh
 
+def create_mtl_file(mtl_path, mesh):
+    """Create a basic MTL file for OBJ with average vertex color"""
+    if not mesh.has_vertex_colors():
+        return
+    
+    # Calculate average color from vertex colors
+    colors = np.asarray(mesh.vertex_colors)
+    avg_color = np.mean(colors, axis=0)
+    
+    with open(mtl_path, 'w') as f:
+        f.write("# Generated MTL file\n")
+        f.write("newmtl material0\n")
+        f.write(f"Kd {avg_color[0]:.6f} {avg_color[1]:.6f} {avg_color[2]:.6f}\n")
+        f.write("illum 1\n")
+
 def generate_point_cloud_files(pcd, output_dir):
     """Generate point cloud files in all supported formats"""
     formats = {
@@ -97,6 +112,15 @@ def generate_mesh_files(mesh, output_dir):
             success = o3d.io.write_triangle_mesh(filepath, mesh)
             if success:
                 print(f"✓ Created {filename}")
+                # Create MTL file manually when creating OBJ
+                if format_name == 'obj':
+                    mtl_path = filepath.replace('.obj', '.mtl')
+                    if os.path.exists(mtl_path):
+                        print(f"✓ Created {os.path.basename(mtl_path)} (material file)")
+                    else:
+                        # Create basic MTL file with vertex colors
+                        create_mtl_file(mtl_path, mesh)
+                        print(f"✓ Created {os.path.basename(mtl_path)} (generated material file)")
             else:
                 print(f"✗ Failed to create {filename}")
         except Exception as e:
