@@ -130,8 +130,17 @@ end_header
             const supportedPatterns = editor.selector.map((s: any) => s.filenamePattern);
             assert.ok(supportedPatterns.includes('*.ply'));
             assert.ok(supportedPatterns.includes('*.xyz'));
-            assert.ok(supportedPatterns.includes('*.tif'));
-            assert.ok(supportedPatterns.includes('*.tiff'));
+            assert.ok(supportedPatterns.includes('*.obj'));
+            assert.ok(supportedPatterns.includes('*.stl'));
+            assert.ok(supportedPatterns.includes('*.pcd'));
+            assert.ok(supportedPatterns.includes('*.pts'));
+            assert.ok(supportedPatterns.includes('*.off'));
+            assert.ok(supportedPatterns.includes('*.gltf'));
+            assert.ok(supportedPatterns.includes('*.glb'));
+            assert.ok(supportedPatterns.includes('*.xyzn'));
+            assert.ok(supportedPatterns.includes('*.xyzrgb'));
+            
+            // Note: TIF/TIFF files are handled through conversion commands, not direct opening
         }
     });
 

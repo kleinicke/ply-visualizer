@@ -4,6 +4,10 @@ import { PlyParser } from './plyParser';
 import { ObjParser } from './objParser';
 import { MtlParser } from './mtlParser';
 import { StlParser } from './stlParser';
+import { PcdParser } from './pcdParser';
+import { PtsParser } from './ptsParser';
+import { OffParser } from './offParser';
+import { GltfParser } from './gltfParser';
 
 export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private static readonly viewType = 'plyViewer.plyEditor';
@@ -49,6 +53,11 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         const isDepthFile = isTifFile || isPfmFile || isNpyFile || isPngFile || isExrFile;
         const isObjFile = filePath.endsWith('.obj');
         const isStlFile = filePath.endsWith('.stl');
+        const isPcdFile = filePath.endsWith('.pcd');
+        const isPtsFile = filePath.endsWith('.pts');
+        const isOffFile = filePath.endsWith('.off');
+        const isGltfFile = filePath.endsWith('.gltf') || filePath.endsWith('.glb');
+        const isXyzVariant = filePath.endsWith('.xyzn') || filePath.endsWith('.xyzrgb');
         const isJsonFile = filePath.endsWith('.json');
         
         // Show UI immediately before any file processing
@@ -65,7 +74,12 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             isExrFile: isExrFile,
             isDepthFile: isDepthFile,
             isObjFile: isObjFile,
-            isStlFile: isStlFile
+            isStlFile: isStlFile,
+            isPcdFile: isPcdFile,
+            isPtsFile: isPtsFile,
+            isOffFile: isOffFile,
+            isGltfFile: isGltfFile,
+            isXyzVariant: isXyzVariant
         });
 
         // Proactively send default depth settings before any depth processing
@@ -190,6 +204,206 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     
                     return; // Exit early for STL files
                 }
+
+                if (isPcdFile) {
+                    // Handle PCD file
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: Starting PCD file processing...',
+                        timestamp: loadStartTime
+                    });
+                    
+                    const pcdData = await vscode.workspace.fs.readFile(document.uri);
+                    const fileReadTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `📁 Extension: PCD file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
+                        timestamp: fileReadTime
+                    });
+                    
+                    const pcdParser = new PcdParser();
+                    const timingCallback = (message: string) => {
+                        webviewPanel.webview.postMessage({
+                            type: 'timingUpdate',
+                            message: message,
+                            timestamp: performance.now()
+                        });
+                    };
+                    
+                    const parsedData = await pcdParser.parse(pcdData, timingCallback);
+                    const parseTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `🎯 Extension: PCD parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
+                        timestamp: parseTime
+                    });
+                    
+                    // Send parsed PCD data to webview
+                    webviewPanel.webview.postMessage({
+                        type: 'pcdData',
+                        fileName: path.basename(document.uri.fsPath),
+                        data: parsedData
+                    });
+                    
+                    return; // Exit early for PCD files
+                }
+
+                if (isPtsFile) {
+                    // Handle PTS file
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: Starting PTS file processing...',
+                        timestamp: loadStartTime
+                    });
+                    
+                    const ptsData = await vscode.workspace.fs.readFile(document.uri);
+                    const fileReadTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `📁 Extension: PTS file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
+                        timestamp: fileReadTime
+                    });
+                    
+                    const ptsParser = new PtsParser();
+                    const timingCallback = (message: string) => {
+                        webviewPanel.webview.postMessage({
+                            type: 'timingUpdate',
+                            message: message,
+                            timestamp: performance.now()
+                        });
+                    };
+                    
+                    const parsedData = await ptsParser.parse(ptsData, timingCallback);
+                    const parseTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `🎯 Extension: PTS parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
+                        timestamp: parseTime
+                    });
+                    
+                    // Send parsed PTS data to webview
+                    webviewPanel.webview.postMessage({
+                        type: 'ptsData',
+                        fileName: path.basename(document.uri.fsPath),
+                        data: parsedData
+                    });
+                    
+                    return; // Exit early for PTS files
+                }
+
+                if (isOffFile) {
+                    // Handle OFF file
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: Starting OFF file processing...',
+                        timestamp: loadStartTime
+                    });
+                    
+                    const offData = await vscode.workspace.fs.readFile(document.uri);
+                    const fileReadTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `📁 Extension: OFF file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
+                        timestamp: fileReadTime
+                    });
+                    
+                    const offParser = new OffParser();
+                    const timingCallback = (message: string) => {
+                        webviewPanel.webview.postMessage({
+                            type: 'timingUpdate',
+                            message: message,
+                            timestamp: performance.now()
+                        });
+                    };
+                    
+                    const parsedData = await offParser.parse(offData, timingCallback);
+                    const parseTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `🎯 Extension: OFF parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
+                        timestamp: parseTime
+                    });
+                    
+                    // Send parsed OFF data to webview
+                    webviewPanel.webview.postMessage({
+                        type: 'offData',
+                        fileName: path.basename(document.uri.fsPath),
+                        data: parsedData
+                    });
+                    
+                    return; // Exit early for OFF files
+                }
+
+                if (isGltfFile) {
+                    // Handle GLTF/GLB file
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: Starting GLTF/GLB file processing...',
+                        timestamp: loadStartTime
+                    });
+                    
+                    const gltfData = await vscode.workspace.fs.readFile(document.uri);
+                    const fileReadTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `📁 Extension: GLTF/GLB file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
+                        timestamp: fileReadTime
+                    });
+                    
+                    const gltfParser = new GltfParser();
+                    const timingCallback = (message: string) => {
+                        webviewPanel.webview.postMessage({
+                            type: 'timingUpdate',
+                            message: message,
+                            timestamp: performance.now()
+                        });
+                    };
+                    
+                    const parsedData = await gltfParser.parse(gltfData, timingCallback);
+                    const parseTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `🎯 Extension: GLTF/GLB parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
+                        timestamp: parseTime
+                    });
+                    
+                    // Send parsed GLTF/GLB data to webview
+                    webviewPanel.webview.postMessage({
+                        type: 'gltfData',
+                        fileName: path.basename(document.uri.fsPath),
+                        data: parsedData
+                    });
+                    
+                    return; // Exit early for GLTF/GLB files
+                }
+
+                if (isXyzVariant) {
+                    // Handle XYZN/XYZRGB variants - send to webview for processing
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: '🚀 Extension: Starting XYZ variant file processing...',
+                        timestamp: loadStartTime
+                    });
+                    
+                    const xyzData = await vscode.workspace.fs.readFile(document.uri);
+                    const fileReadTime = performance.now();
+                    webviewPanel.webview.postMessage({
+                        type: 'timingUpdate',
+                        message: `📁 Extension: XYZ variant file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
+                        timestamp: fileReadTime
+                    });
+                    
+                    // Send XYZ variant data to webview for parsing
+                    webviewPanel.webview.postMessage({
+                        type: 'xyzVariantData',
+                        fileName: path.basename(document.uri.fsPath),
+                        data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength),
+                        variant: filePath.endsWith('.xyzn') ? 'xyzn' : 'xyzrgb'
+                    });
+                    
+                    return; // Exit early for XYZ variant files
+                }
+
                 // Handle JSON pose files
                 if (isJsonFile) {
                     try {
@@ -612,13 +826,23 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             canSelectMany: true,
             filters: {
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'Point Cloud & Pose Files': ['ply', 'xyz', 'obj', 'tif', 'tiff', 'pfm', 'npy', 'npz', 'png', 'exr', 'json'],
+                'Point Cloud & Pose Files': ['ply', 'xyz', 'xyzn', 'xyzrgb', 'obj', 'stl', 'pcd', 'pts', 'off', 'gltf', 'glb', 'tif', 'tiff', 'pfm', 'npy', 'npz', 'png', 'exr', 'json'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'PLY Files': ['ply'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'XYZ Files': ['xyz'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
-                'OBJ Wireframes': ['obj'],
+                'OBJ Files': ['obj'],
+                // eslint-disable-next-line @typescript-eslint/naming-convention
+                'STL Files': ['stl'],
+                // eslint-disable-next-line @typescript-eslint/naming-convention
+                'PCD Files': ['pcd'],
+                // eslint-disable-next-line @typescript-eslint/naming-convention
+                'PTS Files': ['pts'],
+                // eslint-disable-next-line @typescript-eslint/naming-convention
+                'OFF Files': ['off'],
+                // eslint-disable-next-line @typescript-eslint/naming-convention
+                'GLTF Files': ['gltf', 'glb'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'Depth Images': ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png', 'exr'],
                 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -784,8 +1008,92 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                         continue;
                     }
 
+                    // Handle PCD files
+                    if (fileExtension === '.pcd') {
+                        const pcdData = await vscode.workspace.fs.readFile(files[i]);
+                        const pcdParser = new PcdParser();
+                        const parsedData = await pcdParser.parse(pcdData);
+                        
+                        webviewPanel.webview.postMessage({
+                            type: 'pcdData',
+                            fileName: fileName,
+                            data: parsedData,
+                            isAddFile: true
+                        });
+                        
+                        console.log(`🎯 PCD Add File: ${fileName} sent for processing`);
+                        continue;
+                    }
+
+                    // Handle PTS files
+                    if (fileExtension === '.pts') {
+                        const ptsData = await vscode.workspace.fs.readFile(files[i]);
+                        const ptsParser = new PtsParser();
+                        const parsedData = await ptsParser.parse(ptsData);
+                        
+                        webviewPanel.webview.postMessage({
+                            type: 'ptsData',
+                            fileName: fileName,
+                            data: parsedData,
+                            isAddFile: true
+                        });
+                        
+                        console.log(`🎯 PTS Add File: ${fileName} sent for processing`);
+                        continue;
+                    }
+
+                    // Handle OFF files
+                    if (fileExtension === '.off') {
+                        const offData = await vscode.workspace.fs.readFile(files[i]);
+                        const offParser = new OffParser();
+                        const parsedData = await offParser.parse(offData);
+                        
+                        webviewPanel.webview.postMessage({
+                            type: 'offData',
+                            fileName: fileName,
+                            data: parsedData,
+                            isAddFile: true
+                        });
+                        
+                        console.log(`🎯 OFF Add File: ${fileName} sent for processing`);
+                        continue;
+                    }
+
+                    // Handle GLTF/GLB files
+                    if (fileExtension === '.gltf' || fileExtension === '.glb') {
+                        const gltfData = await vscode.workspace.fs.readFile(files[i]);
+                        const gltfParser = new GltfParser();
+                        const parsedData = await gltfParser.parse(gltfData);
+                        
+                        webviewPanel.webview.postMessage({
+                            type: 'gltfData',
+                            fileName: fileName,
+                            data: parsedData,
+                            isAddFile: true
+                        });
+                        
+                        console.log(`🎯 GLTF/GLB Add File: ${fileName} sent for processing`);
+                        continue;
+                    }
+
+                    // Handle XYZN/XYZRGB variants
+                    if (fileExtension === '.xyzn' || fileExtension === '.xyzrgb') {
+                        const xyzData = await vscode.workspace.fs.readFile(files[i]);
+                        
+                        webviewPanel.webview.postMessage({
+                            type: 'xyzVariantData',
+                            fileName: fileName,
+                            data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength),
+                            variant: fileExtension.substring(1), // Remove the dot
+                            isAddFile: true
+                        });
+                        
+                        console.log(`🎯 XYZ Variant Add File: ${fileName} sent for processing`);
+                        continue;
+                    }
+
                     // Unsupported file type
-                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .obj, .stl, .tif, .tiff, .pfm, .npy, .npz, .png, .exr, .json`);
+                    vscode.window.showWarningMessage(`Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .xyzn, .xyzrgb, .obj, .stl, .pcd, .pts, .off, .gltf, .glb, .tif, .tiff, .pfm, .npy, .npz, .png, .exr, .json`);
                     
                 } catch (error) {
                     console.error(`Failed to load file ${files[i].fsPath}:`, error);
@@ -845,6 +1153,42 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 const stlParser = new StlParser();
                 const parsedData = await stlParser.parse(stlData);
                 webviewPanel.webview.postMessage({ type: 'stlData', fileName, data: parsedData, isAddFile: true });
+                return;
+            }
+            if (ext === '.pcd') {
+                const pcdData = await vscode.workspace.fs.readFile(fileUri);
+                const pcdParser = new PcdParser();
+                const parsedData = await pcdParser.parse(pcdData);
+                webviewPanel.webview.postMessage({ type: 'pcdData', fileName, data: parsedData, isAddFile: true });
+                return;
+            }
+            if (ext === '.pts') {
+                const ptsData = await vscode.workspace.fs.readFile(fileUri);
+                const ptsParser = new PtsParser();
+                const parsedData = await ptsParser.parse(ptsData);
+                webviewPanel.webview.postMessage({ type: 'ptsData', fileName, data: parsedData, isAddFile: true });
+                return;
+            }
+            if (ext === '.off') {
+                const offData = await vscode.workspace.fs.readFile(fileUri);
+                const offParser = new OffParser();
+                const parsedData = await offParser.parse(offData);
+                webviewPanel.webview.postMessage({ type: 'offData', fileName, data: parsedData, isAddFile: true });
+                return;
+            }
+            if (ext === '.gltf' || ext === '.glb') {
+                const gltfData = await vscode.workspace.fs.readFile(fileUri);
+                const gltfParser = new GltfParser();
+                const parsedData = await gltfParser.parse(gltfData);
+                webviewPanel.webview.postMessage({ type: 'gltfData', fileName, data: parsedData, isAddFile: true });
+                return;
+            }
+            if (ext === '.xyzn' || ext === '.xyzrgb') {
+                const xyzData = await vscode.workspace.fs.readFile(fileUri);
+                webviewPanel.webview.postMessage({
+                    type: 'xyzVariantData', fileName, data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength), 
+                    variant: ext.substring(1), isAddFile: true
+                });
                 return;
             }
         } catch (error) {
@@ -913,6 +1257,39 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 const stlParser = new StlParser();
                 const parsed = await stlParser.parse(stlBytes);
                 webviewPanel.webview.postMessage({ type: 'sequence:file:stl', index: message.index, requestId: message.requestId, fileName, data: parsed });
+                return;
+            }
+            if (ext === '.pcd') {
+                const pcdBytes = await vscode.workspace.fs.readFile(fileUri);
+                const pcdParser = new PcdParser();
+                const parsed = await pcdParser.parse(pcdBytes);
+                webviewPanel.webview.postMessage({ type: 'sequence:file:pcd', index: message.index, requestId: message.requestId, fileName, data: parsed });
+                return;
+            }
+            if (ext === '.pts') {
+                const ptsBytes = await vscode.workspace.fs.readFile(fileUri);
+                const ptsParser = new PtsParser();
+                const parsed = await ptsParser.parse(ptsBytes);
+                webviewPanel.webview.postMessage({ type: 'sequence:file:pts', index: message.index, requestId: message.requestId, fileName, data: parsed });
+                return;
+            }
+            if (ext === '.off') {
+                const offBytes = await vscode.workspace.fs.readFile(fileUri);
+                const offParser = new OffParser();
+                const parsed = await offParser.parse(offBytes);
+                webviewPanel.webview.postMessage({ type: 'sequence:file:off', index: message.index, requestId: message.requestId, fileName, data: parsed });
+                return;
+            }
+            if (ext === '.gltf' || ext === '.glb') {
+                const gltfBytes = await vscode.workspace.fs.readFile(fileUri);
+                const gltfParser = new GltfParser();
+                const parsed = await gltfParser.parse(gltfBytes);
+                webviewPanel.webview.postMessage({ type: 'sequence:file:gltf', index: message.index, requestId: message.requestId, fileName, data: parsed });
+                return;
+            }
+            if (ext === '.xyzn' || ext === '.xyzrgb') {
+                const xyzBytes = await vscode.workspace.fs.readFile(fileUri);
+                webviewPanel.webview.postMessage({ type: 'sequence:file:xyzvariant', index: message.index, requestId: message.requestId, fileName, data: xyzBytes.buffer.slice(xyzBytes.byteOffset, xyzBytes.byteOffset + xyzBytes.byteLength), variant: ext.substring(1) });
                 return;
             }
             if (ext === '.tif' || ext === '.tiff' || ext === '.pfm' || ext === '.npy' || ext === '.npz' || ext === '.png' || ext === '.exr') {

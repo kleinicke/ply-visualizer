@@ -3029,6 +3029,21 @@ class PLYVisualizer {
                 case 'xyzData':
                     this.handleXyzData(message);
                     break;
+                case 'pcdData':
+                    this.handlePcdData(message);
+                    break;
+                case 'ptsData':
+                    this.handlePtsData(message);
+                    break;
+                case 'offData':
+                    this.handleOffData(message);
+                    break;
+                case 'gltfData':
+                    this.handleGltfData(message);
+                    break;
+                case 'xyzVariantData':
+                    this.handleXyzVariantData(message);
+                    break;
                 case 'cameraParams':
                     this.handleCameraParams(message);
                     break;
@@ -7514,6 +7529,259 @@ class PLYVisualizer {
                 this.showError(`Failed to save PLY file: ${message.error || 'Unknown error'}`);
                 console.error('PLY save error:', message.error);
             }
+        }
+    }
+
+    private async handlePcdData(message: any): Promise<void> {
+        try {
+            console.log(`Load: recv PCD ${message.fileName}`);
+            this.showStatus(`PCD: processing ${message.fileName}`);
+            
+            const pcdData = message.data;
+            console.log(`PCD: ${pcdData.vertexCount} points, format=${pcdData.format}, colors=${pcdData.hasColors}, normals=${pcdData.hasNormals}`);
+            
+            // Convert PCD data to PLY format for rendering
+            const plyData: PlyData = {
+                vertices: pcdData.vertices,
+                faces: [], // PCD files are point clouds, no faces
+                format: pcdData.format === 'binary' ? 'binary_little_endian' : 'ascii',
+                version: '1.0',
+                comments: [
+                    `Converted from PCD: ${message.fileName}`,
+                    `Original format: ${pcdData.format}`,
+                    `Width: ${pcdData.width}, Height: ${pcdData.height}`,
+                    `Fields: ${pcdData.fields?.join(', ') || 'unknown'}`,
+                    ...pcdData.comments
+                ],
+                vertexCount: pcdData.vertexCount,
+                faceCount: 0,
+                hasColors: pcdData.hasColors,
+                hasNormals: pcdData.hasNormals,
+                fileName: message.fileName
+            };
+
+            if (message.isAddFile) {
+                this.addNewFiles([plyData]);
+            } else {
+                await this.displayFiles([plyData]);
+            }
+            
+            this.showStatus(`PCD: loaded ${pcdData.vertexCount} points from ${message.fileName}`);
+            
+        } catch (error) {
+            console.error('Error handling PCD data:', error);
+            this.showError(`PCD processing failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handlePtsData(message: any): Promise<void> {
+        try {
+            console.log(`Load: recv PTS ${message.fileName}`);
+            this.showStatus(`PTS: processing ${message.fileName}`);
+            
+            const ptsData = message.data;
+            console.log(`PTS: ${ptsData.vertexCount} points, format=${ptsData.detectedFormat}, colors=${ptsData.hasColors}, normals=${ptsData.hasNormals}, intensity=${ptsData.hasIntensity}`);
+            
+            // Convert PTS data to PLY format for rendering
+            const plyData: PlyData = {
+                vertices: ptsData.vertices,
+                faces: [], // PTS files are point clouds, no faces
+                format: 'ascii',
+                version: '1.0',
+                comments: [
+                    `Converted from PTS: ${message.fileName}`,
+                    `Detected format: ${ptsData.detectedFormat}`,
+                    ...ptsData.comments
+                ],
+                vertexCount: ptsData.vertexCount,
+                faceCount: 0,
+                hasColors: ptsData.hasColors,
+                hasNormals: ptsData.hasNormals,
+                fileName: message.fileName
+            };
+
+            if (message.isAddFile) {
+                this.addNewFiles([plyData]);
+            } else {
+                await this.displayFiles([plyData]);
+            }
+            
+            this.showStatus(`PTS: loaded ${ptsData.vertexCount} points from ${message.fileName}`);
+            
+        } catch (error) {
+            console.error('Error handling PTS data:', error);
+            this.showError(`PTS processing failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handleOffData(message: any): Promise<void> {
+        try {
+            console.log(`Load: recv OFF ${message.fileName}`);
+            this.showStatus(`OFF: processing ${message.fileName}`);
+            
+            const offData = message.data;
+            console.log(`OFF: ${offData.vertexCount} vertices, ${offData.faceCount} faces, variant=${offData.offVariant}, colors=${offData.hasColors}, normals=${offData.hasNormals}`);
+            
+            // Convert OFF data to PLY format for rendering
+            const plyData: PlyData = {
+                vertices: offData.vertices,
+                faces: offData.faces,
+                format: 'ascii',
+                version: '1.0',
+                comments: [
+                    `Converted from OFF: ${message.fileName}`,
+                    `OFF variant: ${offData.offVariant}`,
+                    ...offData.comments
+                ],
+                vertexCount: offData.vertexCount,
+                faceCount: offData.faceCount,
+                hasColors: offData.hasColors,
+                hasNormals: offData.hasNormals,
+                fileName: message.fileName
+            };
+
+            if (message.isAddFile) {
+                this.addNewFiles([plyData]);
+            } else {
+                await this.displayFiles([plyData]);
+            }
+            
+            const meshType = offData.faceCount > 0 ? 'mesh' : 'point cloud';
+            this.showStatus(`OFF: loaded ${offData.vertexCount} vertices, ${offData.faceCount} faces as ${meshType} from ${message.fileName}`);
+            
+        } catch (error) {
+            console.error('Error handling OFF data:', error);
+            this.showError(`OFF processing failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handleGltfData(message: any): Promise<void> {
+        try {
+            console.log(`Load: recv GLTF/GLB ${message.fileName}`);
+            this.showStatus(`GLTF: processing ${message.fileName}`);
+            
+            const gltfData = message.data;
+            console.log(`GLTF: ${gltfData.vertexCount} vertices, ${gltfData.faceCount} faces, ${gltfData.meshCount} meshes, ${gltfData.materialCount} materials, colors=${gltfData.hasColors}, normals=${gltfData.hasNormals}`);
+            
+            // Convert GLTF data to PLY format for rendering
+            const plyData: PlyData = {
+                vertices: gltfData.vertices,
+                faces: gltfData.faces,
+                format: 'ascii',
+                version: '1.0',
+                comments: [
+                    `Converted from GLTF/GLB: ${message.fileName}`,
+                    `Format: ${gltfData.format}`,
+                    `Meshes: ${gltfData.meshCount}, Materials: ${gltfData.materialCount}`,
+                    ...gltfData.comments
+                ],
+                vertexCount: gltfData.vertexCount,
+                faceCount: gltfData.faceCount,
+                hasColors: gltfData.hasColors,
+                hasNormals: gltfData.hasNormals,
+                fileName: message.fileName
+            };
+
+            if (message.isAddFile) {
+                this.addNewFiles([plyData]);
+            } else {
+                await this.displayFiles([plyData]);
+            }
+            
+            const meshType = gltfData.faceCount > 0 ? 'mesh' : 'point cloud';
+            this.showStatus(`GLTF: loaded ${gltfData.vertexCount} vertices, ${gltfData.faceCount} faces as ${meshType} from ${message.fileName}`);
+            
+        } catch (error) {
+            console.error('Error handling GLTF data:', error);
+            this.showError(`GLTF processing failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async handleXyzVariantData(message: any): Promise<void> {
+        try {
+            console.log(`Load: recv XYZ variant (${message.variant}) ${message.fileName}`);
+            this.showStatus(`XYZ: processing ${message.fileName} (${message.variant})`);
+            
+            // Parse XYZ variant data
+            const data = new Uint8Array(message.data);
+            const decoder = new TextDecoder('utf-8');
+            const text = decoder.decode(data);
+            const lines = text.split('\n').filter(line => line.trim() !== '');
+            
+            const vertices: PlyVertex[] = [];
+            let hasColors = false;
+            let hasNormals = false;
+            
+            // Determine format
+            if (message.variant === 'xyzn') {
+                hasNormals = true;
+            } else if (message.variant === 'xyzrgb') {
+                hasColors = true;
+            }
+            
+            for (const line of lines) {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length < 3) continue;
+                
+                const vertex: PlyVertex = {
+                    x: parseFloat(parts[0]),
+                    y: parseFloat(parts[1]),
+                    z: parseFloat(parts[2])
+                };
+                
+                if (message.variant === 'xyzn' && parts.length >= 6) {
+                    vertex.nx = parseFloat(parts[3]);
+                    vertex.ny = parseFloat(parts[4]);
+                    vertex.nz = parseFloat(parts[5]);
+                } else if (message.variant === 'xyzrgb' && parts.length >= 6) {
+                    // RGB values in XYZRGB are typically floats 0.0-1.0, convert to 0-255
+                    const r = parseFloat(parts[3]);
+                    const g = parseFloat(parts[4]);
+                    const b = parseFloat(parts[5]);
+                    
+                    // Auto-detect if values are 0-1 (float) or 0-255 (int)
+                    if (r <= 1.0 && g <= 1.0 && b <= 1.0) {
+                        vertex.red = Math.round(r * 255);
+                        vertex.green = Math.round(g * 255);
+                        vertex.blue = Math.round(b * 255);
+                    } else {
+                        vertex.red = Math.round(Math.min(255, Math.max(0, r)));
+                        vertex.green = Math.round(Math.min(255, Math.max(0, g)));
+                        vertex.blue = Math.round(Math.min(255, Math.max(0, b)));
+                    }
+                }
+                
+                vertices.push(vertex);
+            }
+            
+            // Convert to PLY format for rendering
+            const plyData: PlyData = {
+                vertices,
+                faces: [],
+                format: 'ascii',
+                version: '1.0',
+                comments: [
+                    `Converted from ${message.variant.toUpperCase()}: ${message.fileName}`,
+                    `Format variant: ${message.variant}`
+                ],
+                vertexCount: vertices.length,
+                faceCount: 0,
+                hasColors,
+                hasNormals,
+                fileName: message.fileName
+            };
+
+            if (message.isAddFile) {
+                this.addNewFiles([plyData]);
+            } else {
+                await this.displayFiles([plyData]);
+            }
+            
+            this.showStatus(`${message.variant.toUpperCase()}: loaded ${vertices.length} points from ${message.fileName}`);
+            
+        } catch (error) {
+            console.error('Error handling XYZ variant data:', error);
+            this.showError(`${message.variant.toUpperCase()} processing failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

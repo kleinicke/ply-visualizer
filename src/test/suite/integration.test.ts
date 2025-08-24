@@ -184,9 +184,18 @@ end_header
             
             const patterns = customEditors.selector.map((s: any) => s.filenamePattern);
             assert.ok(patterns.includes('*.ply'), 'Should support PLY files');
-            assert.ok(patterns.includes('*.xyz'), 'Should support XYZ files'); 
-            assert.ok(patterns.includes('*.tif'), 'Should support TIF files');
-            assert.ok(patterns.includes('*.tiff'), 'Should support TIFF files');
+            assert.ok(patterns.includes('*.xyz'), 'Should support XYZ files');
+            assert.ok(patterns.includes('*.obj'), 'Should support OBJ files');
+            assert.ok(patterns.includes('*.stl'), 'Should support STL files');
+            assert.ok(patterns.includes('*.pcd'), 'Should support PCD files');
+            assert.ok(patterns.includes('*.pts'), 'Should support PTS files');
+            assert.ok(patterns.includes('*.off'), 'Should support OFF files');
+            assert.ok(patterns.includes('*.gltf'), 'Should support GLTF files');
+            assert.ok(patterns.includes('*.glb'), 'Should support GLB files');
+            assert.ok(patterns.includes('*.xyzn'), 'Should support XYZN files');
+            assert.ok(patterns.includes('*.xyzrgb'), 'Should support XYZRGB files');
+            
+            // Note: TIF files are handled through conversion commands, not direct opening
             
             console.log('Verified file type associations:', patterns);
         }
