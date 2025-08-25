@@ -22,15 +22,21 @@ Interpret depth/disparity images as point cloud.
 Load two point clouds and switch between them imediatly pressing shift and click
 ![load-two](https://github.com/kleinicke/ply-visualizer/releases/download/v0.0.14/load2.gif)
 
-## Known Issues and Missing Features
+## Roadmap
 
-- **Wrong direction of Rotation**: When rotating the point cloud the direction is inversed. It's unclear how to fix this.
-- **Bad use case knowledge for Shapes**: It was mainly tested for point clouds, since the author mainly works with point clouds.
+- **Wrong direction of Rotation**: When rotating the point cloud the direction is inverted. It's unclear how to fix this.
 - **Visualizing gaussian splats**: Add gaussian splat support
-- **Add eye dome lighting**: Improve percenption of uncolored point clouds
+- **Add eye dome lighting**: Improve perception of uncolored point clouds
 - **Drag and Drop**: Add more pc to a given pc using drag and drop instead of adding them in an extra window
 - **Add exr files support**: Exr files can contain float depth images or complete point clouds
-- **Measure distance** Add option to measure the distance between points
+- **Add FBX files support**: FBX files can contain meshes or animations
+- **Measure distance**: Add option to measure the distance between points
+- **Add buttons for meshes**: Easily active wireframe, mesh, points and normals
+- **Create website**: Create a website with the same functionality as this extension
+- **Dataset support**: Add images from middleburry stereo and eth3d as example images
+- **Improve depth parameter support**: allow more parameter to be used like disp offset and center points
+- **Automatic usage of calib files**: calibration files next to the depth images can contain all required parameter for a depth to pc conversion. Automatically use those
+- **Improve npz file interpretation**: These files can have different structures. Offer some options to visualize them
 
 ## Feature Requests and Issues
 

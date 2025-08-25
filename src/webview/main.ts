@@ -468,6 +468,8 @@ class PLYVisualizer {
     private multiMaterialGroups: (THREE.Group | null)[] = []; // Multi-material Groups for OBJ files
     private materialMeshes: (THREE.Object3D[] | null)[] = []; // Sub-meshes for multi-material OBJ files
     private fileVisibility: boolean[] = [];
+    private pointsVisibility: boolean[] = []; // Individual points visibility for each file
+    private normalsVisibility: boolean[] = []; // Individual normals visibility for each file
     private useOriginalColors = true; // Default to original colors
     private pointSizes: number[] = []; // Individual point sizes for each point cloud
 
@@ -2307,10 +2309,6 @@ class PLYVisualizer {
                     this.toggleAxesVisibility();
                     e.preventDefault();
                     break;
-                case 'n':
-                    this.toggleNormalsVisibility();
-                    e.preventDefault();
-                    break;
                 case 'c':
                     this.setOpenCVCameraConvention();
                     e.preventDefault();
@@ -2744,6 +2742,70 @@ class PLYVisualizer {
         this.normalsVisualizers.forEach(normals => {
             if (normals) {
                 normals.visible = !normals.visible;
+            }
+        });
+    }
+    
+    private togglePointsVisibility(fileIndex: number): void {
+        if (fileIndex < 0 || fileIndex >= this.meshes.length) return;
+        
+        // Initialize visibility state if not set
+        if (this.pointsVisibility[fileIndex] === undefined) {
+            this.pointsVisibility[fileIndex] = true;
+        }
+        
+        // Toggle the visibility state
+        this.pointsVisibility[fileIndex] = !this.pointsVisibility[fileIndex];
+        
+        // Apply to the actual mesh
+        if (this.meshes[fileIndex]) {
+            this.meshes[fileIndex].visible = this.pointsVisibility[fileIndex];
+        }
+    }
+    
+    private toggleFileNormalsVisibility(fileIndex: number): void {
+        if (fileIndex < 0 || fileIndex >= this.normalsVisualizers.length) return;
+        
+        // Initialize visibility state if not set
+        if (this.normalsVisibility[fileIndex] === undefined) {
+            this.normalsVisibility[fileIndex] = true;
+        }
+        
+        // Toggle the visibility state
+        this.normalsVisibility[fileIndex] = !this.normalsVisibility[fileIndex];
+        
+        // Apply to the actual normals visualizer
+        if (this.normalsVisualizers[fileIndex]) {
+            this.normalsVisualizers[fileIndex]!.visible = this.normalsVisibility[fileIndex];
+        }
+    }
+    
+    private updatePointsNormalsButtonStates(): void {
+        // Update points toggle button states
+        const pointsButtons = document.querySelectorAll('.points-toggle-btn');
+        pointsButtons.forEach(button => {
+            const fileIndex = parseInt(button.getAttribute('data-file-index') || '0');
+            const isVisible = this.pointsVisibility[fileIndex] !== false; // Default to true
+            
+            const baseStyle = 'flex: 1; padding: 4px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;';
+            if (isVisible) {
+                button.setAttribute('style', baseStyle + ' background: var(--vscode-button-background); color: var(--vscode-button-foreground);');
+            } else {
+                button.setAttribute('style', baseStyle + ' background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);');
+            }
+        });
+        
+        // Update normals toggle button states
+        const normalsButtons = document.querySelectorAll('.normals-toggle-btn');
+        normalsButtons.forEach(button => {
+            const fileIndex = parseInt(button.getAttribute('data-file-index') || '0');
+            const isVisible = this.normalsVisibility[fileIndex] !== false; // Default to true
+            
+            const baseStyle = 'flex: 1; padding: 4px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;';
+            if (isVisible) {
+                button.setAttribute('style', baseStyle + ' background: var(--vscode-button-background); color: var(--vscode-button-foreground);');
+            } else {
+                button.setAttribute('style', baseStyle + ' background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);');
             }
         });
     }
@@ -3478,6 +3540,20 @@ class PLYVisualizer {
                     </div>
                     
                     ${(data.faceCount === 0 || (data as any).isObjFile) ? `
+                    <!-- Points/Normals Toggle Controls (Above Point Size) -->
+                    <div class="visibility-controls" style="margin-top: 4px; margin-bottom: 6px;">
+                        <div style="display: flex; gap: 4px;">
+                            <button class="points-toggle-btn" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
+                                👁️ Points
+                            </button>
+                            ${data.hasNormals ? `
+                            <button class="normals-toggle-btn" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
+                                📐 Normals
+                            </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                    
                     <!-- Point/Line Size Control (Third) -->
                     <div class="point-size-control">
                         <label for="size-${i}">${(data as any).isObjFile ? 'Point Size:' : 'Max Point Size:'}</label>
@@ -4133,6 +4209,30 @@ class PLYVisualizer {
                 this.toggleObjRenderMode(fileIndex, mode);
             });
         });
+        
+        // Add points/normals toggle button listeners
+        const pointsToggleButtons = fileListDiv.querySelectorAll('.points-toggle-btn');
+        pointsToggleButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                this.togglePointsVisibility(fileIndex);
+                this.updatePointsNormalsButtonStates();
+            });
+        });
+        
+        const normalsToggleButtons = fileListDiv.querySelectorAll('.normals-toggle-btn');
+        normalsToggleButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                this.toggleFileNormalsVisibility(fileIndex);
+                this.updatePointsNormalsButtonStates();
+            });
+        });
+        
+        // Update button states after file list is refreshed
+        this.updatePointsNormalsButtonStates();
     }
 
     private toggleFileVisibility(fileIndex: number): void {
@@ -4145,6 +4245,12 @@ class PLYVisualizer {
         // If it's a mesh/pointcloud entry
         if (fileIndex < this.meshes.length && this.meshes[fileIndex]) {
             this.meshes[fileIndex].visible = desiredVisible;
+            
+            // Also toggle normals visualizer if it exists
+            if (fileIndex < this.normalsVisualizers.length && this.normalsVisualizers[fileIndex]) {
+                this.normalsVisualizers[fileIndex]!.visible = desiredVisible;
+            }
+            
             return;
         }
         // Pose entries are appended after meshes
@@ -4786,6 +4892,10 @@ class PLYVisualizer {
             
             // Add to data array
             this.plyFiles.push(data);
+            
+            // Initialize visibility states (both points and normals default to visible)
+            this.pointsVisibility.push(true);
+            this.normalsVisibility.push(true);
             
             // Initialize color mode before creating material
             const initialColorMode = this.useOriginalColors ? 'original' : 'assigned';
@@ -7733,8 +7843,19 @@ class PLYVisualizer {
 
             if (plyData.hasNormals) {
                 const normalsVisualizer = this.createNormalsVisualizer(plyData);
+                
+                // Set initial visibility based on stored state (default true)
+                const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
+                const initialVisible = this.normalsVisibility[fileIndex] !== false;
+                normalsVisualizer.visible = initialVisible;
+                
                 this.scene.add(normalsVisualizer);
-                this.normalsVisualizers.push(normalsVisualizer);
+                
+                // Ensure the array has the correct size and place the visualizer at the right index
+                while (this.normalsVisualizers.length <= fileIndex) {
+                    this.normalsVisualizers.push(null);
+                }
+                this.normalsVisualizers[fileIndex] = normalsVisualizer;
             }
             
             this.showStatus(`${message.variant.toUpperCase()}: loaded ${plyData.vertexCount} points from ${message.fileName}`);

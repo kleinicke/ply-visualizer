@@ -1,6 +1,8 @@
 # Change Log
 
-## [1.2.0]
+## [1.3.0]
+
+## [1.2.0] - 2025-08-25
 
 Add support for pfm depth/disparity predictions
 Add support for npy/npz depth/disparity predictions
@@ -11,6 +13,7 @@ Add support for off files (Object File Format)
 Add support for gltf/glb files (3D model formats)
 Add support for some camera position profiles
 Add support for some body pose estimations
+Easier application of translation, quaternion or angle axis.
 
 ## [1.1.0] - 2025-08-11
 
