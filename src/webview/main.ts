@@ -2799,6 +2799,12 @@ class PLYVisualizer {
         const normalsButtons = document.querySelectorAll('.normals-toggle-btn');
         normalsButtons.forEach(button => {
             const fileIndex = parseInt(button.getAttribute('data-file-index') || '0');
+            
+            // Skip disabled buttons (files without normals)
+            if (button.hasAttribute('disabled') || button.classList.contains('disabled')) {
+                return;
+            }
+            
             const isVisible = this.normalsVisibility[fileIndex] !== false; // Default to true
             
             const baseStyle = 'flex: 1; padding: 4px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;';
@@ -3550,7 +3556,11 @@ class PLYVisualizer {
                             <button class="normals-toggle-btn" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
                                 📐 Normals
                             </button>
-                            ` : ''}
+                            ` : `
+                            <button class="normals-toggle-btn disabled" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: not-allowed; font-size: 10px; opacity: 0.5;" disabled>
+                                📐 Normals
+                            </button>
+                            `}
                         </div>
                     </div>
                     
@@ -4225,6 +4235,12 @@ class PLYVisualizer {
         normalsToggleButtons.forEach(button => {
             button.addEventListener('click', (e) => {
                 const target = e.target as HTMLElement;
+                
+                // Ignore clicks on disabled buttons
+                if (target.hasAttribute('disabled') || target.classList.contains('disabled')) {
+                    return;
+                }
+                
                 const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
                 this.toggleFileNormalsVisibility(fileIndex);
                 this.updatePointsNormalsButtonStates();
@@ -5417,6 +5433,24 @@ class PLYVisualizer {
         } else if (message.messageType === 'addFiles') {
             this.addNewFiles([plyData]);
         }
+        
+        // Create normals visualizer if PLY has normals (this was missing!)
+        if (plyData.hasNormals) {
+            const normalsVisualizer = this.createNormalsVisualizer(plyData);
+            
+            // Set initial visibility based on stored state (default true)
+            const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
+            const initialVisible = this.normalsVisibility[fileIndex] !== false;
+            normalsVisualizer.visible = initialVisible;
+            
+            this.scene.add(normalsVisualizer);
+            
+            // Ensure the array has the correct size and place the visualizer at the right index
+            while (this.normalsVisualizers.length <= fileIndex) {
+                this.normalsVisualizers.push(null);
+            }
+            this.normalsVisualizers[fileIndex] = normalsVisualizer;
+        }
         const displayTime = performance.now() - displayStartTime;
         
         // Comprehensive timing analysis
@@ -5472,6 +5506,24 @@ class PLYVisualizer {
             await this.displayFiles([plyData]);
         } else if (message.messageType === 'addFiles') {
             this.addNewFiles([plyData]);
+        }
+        
+        // Create normals visualizer if PLY has normals (TypedArray path)
+        if (plyData.hasNormals) {
+            const normalsVisualizer = this.createNormalsVisualizer(plyData);
+            
+            // Set initial visibility based on stored state (default true)
+            const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
+            const initialVisible = this.normalsVisibility[fileIndex] !== false;
+            normalsVisualizer.visible = initialVisible;
+            
+            this.scene.add(normalsVisualizer);
+            
+            // Ensure the array has the correct size and place the visualizer at the right index
+            while (this.normalsVisualizers.length <= fileIndex) {
+                this.normalsVisualizers.push(null);
+            }
+            this.normalsVisualizers[fileIndex] = normalsVisualizer;
         }
     }
 
@@ -5558,6 +5610,24 @@ class PLYVisualizer {
             this.addNewFiles([plyData]);
         } else {
             await this.displayFiles([plyData]);
+        }
+        
+        // Create normals visualizer if PLY has normals (Binary PLY path)
+        if (plyData.hasNormals) {
+            const normalsVisualizer = this.createNormalsVisualizer(plyData);
+            
+            // Set initial visibility based on stored state (default true)
+            const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
+            const initialVisible = this.normalsVisibility[fileIndex] !== false;
+            normalsVisualizer.visible = initialVisible;
+            
+            this.scene.add(normalsVisualizer);
+            
+            // Ensure the array has the correct size and place the visualizer at the right index
+            while (this.normalsVisualizers.length <= fileIndex) {
+                this.normalsVisualizers.push(null);
+            }
+            this.normalsVisualizers[fileIndex] = normalsVisualizer;
         }
         
         // Complete timing analysis
@@ -5700,6 +5770,24 @@ class PLYVisualizer {
             await this.displayFiles([plyData]);
         } else if (message.messageType === 'addFiles') {
             this.addNewFiles([plyData]);
+        }
+        
+        // Create normals visualizer if PLY has normals (Chunked PLY path)
+        if (plyData.hasNormals) {
+            const normalsVisualizer = this.createNormalsVisualizer(plyData);
+            
+            // Set initial visibility based on stored state (default true)
+            const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
+            const initialVisible = this.normalsVisibility[fileIndex] !== false;
+            normalsVisualizer.visible = initialVisible;
+            
+            this.scene.add(normalsVisualizer);
+            
+            // Ensure the array has the correct size and place the visualizer at the right index
+            while (this.normalsVisualizers.length <= fileIndex) {
+                this.normalsVisualizers.push(null);
+            }
+            this.normalsVisualizers[fileIndex] = normalsVisualizer;
         }
         const processTime = performance.now() - processStartTime;
         
@@ -7695,6 +7783,24 @@ class PLYVisualizer {
             } else {
                 await this.displayFiles([plyData]);
             }
+
+            // Create normals visualizer if PCD has normals
+            if (plyData.hasNormals) {
+                const normalsVisualizer = this.createNormalsVisualizer(plyData);
+                
+                // Set initial visibility based on stored state (default true)
+                const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
+                const initialVisible = this.normalsVisibility[fileIndex] !== false;
+                normalsVisualizer.visible = initialVisible;
+                
+                this.scene.add(normalsVisualizer);
+                
+                // Ensure the array has the correct size and place the visualizer at the right index
+                while (this.normalsVisualizers.length <= fileIndex) {
+                    this.normalsVisualizers.push(null);
+                }
+                this.normalsVisualizers[fileIndex] = normalsVisualizer;
+            }
             
             this.showStatus(`PCD: loaded ${pcdData.vertexCount} points from ${message.fileName}`);
             
@@ -7735,6 +7841,24 @@ class PLYVisualizer {
             } else {
                 await this.displayFiles([plyData]);
             }
+
+            // Create normals visualizer if PTS has normals
+            if (plyData.hasNormals) {
+                const normalsVisualizer = this.createNormalsVisualizer(plyData);
+                
+                // Set initial visibility based on stored state (default true)
+                const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
+                const initialVisible = this.normalsVisibility[fileIndex] !== false;
+                normalsVisualizer.visible = initialVisible;
+                
+                this.scene.add(normalsVisualizer);
+                
+                // Ensure the array has the correct size and place the visualizer at the right index
+                while (this.normalsVisualizers.length <= fileIndex) {
+                    this.normalsVisualizers.push(null);
+                }
+                this.normalsVisualizers[fileIndex] = normalsVisualizer;
+            }
             
             this.showStatus(`PTS: loaded ${ptsData.vertexCount} points from ${message.fileName}`);
             
@@ -7774,6 +7898,24 @@ class PLYVisualizer {
                 this.addNewFiles([plyData]);
             } else {
                 await this.displayFiles([plyData]);
+            }
+
+            // Create normals visualizer if OFF has normals (for both meshes and point clouds)
+            if (plyData.hasNormals) {
+                const normalsVisualizer = this.createNormalsVisualizer(plyData);
+                
+                // Set initial visibility based on stored state (default true)
+                const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
+                const initialVisible = this.normalsVisibility[fileIndex] !== false;
+                normalsVisualizer.visible = initialVisible;
+                
+                this.scene.add(normalsVisualizer);
+                
+                // Ensure the array has the correct size and place the visualizer at the right index
+                while (this.normalsVisualizers.length <= fileIndex) {
+                    this.normalsVisualizers.push(null);
+                }
+                this.normalsVisualizers[fileIndex] = normalsVisualizer;
             }
             
             const meshType = offData.faceCount > 0 ? 'mesh' : 'point cloud';
