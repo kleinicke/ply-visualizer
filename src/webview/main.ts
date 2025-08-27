@@ -3625,20 +3625,6 @@ class PLYVisualizer {
                             📄 ${this.appliedMtlNames[i]} applied
                         </div>
                         ` : ''}
-                        <!-- Wireframe/Solid Toggle (for OBJ files with faces or lines) -->
-                        ${((data as any).objData && ((data as any).objData.faceCount > 0 || (data as any).objData.lineCount > 0)) || data.faceCount > 0 ? `
-                        <div class="render-mode-control" style="margin-top: 4px;">
-                            <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Render Mode:</label>
-                            <div style="display: flex; gap: 2px;">
-                                <button class="render-mode-btn solid-btn" data-file-index="${i}" data-mode="solid" style="flex: 1; padding: 4px 8px; background: ${(data as any).objRenderType === 'mesh' ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)'}; color: ${(data as any).objRenderType === 'mesh' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)'}; border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
-                                    🔲 Solid
-                                </button>
-                                <button class="render-mode-btn wireframe-btn" data-file-index="${i}" data-mode="wireframe" style="flex: 1; padding: 4px 8px; background: ${(data as any).objRenderType === 'wireframe' ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)'}; color: ${(data as any).objRenderType === 'wireframe' ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)'}; border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
-                                    📐 Wireframe
-                                </button>
-                            </div>
-                        </div>
-                        ` : ''}
                     </div>
                     ` : ''}
                     
