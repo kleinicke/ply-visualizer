@@ -3594,8 +3594,23 @@ class PLYVisualizer {
                     <!-- Point/Line Size Control -->
                     <div class="point-size-control" style="margin-top: 4px;">
                         <label for="size-${i}" style="font-size: 11px;">Point Size:</label>
-                        <input type="range" id="size-${i}" min="0.1" max="20.0" step="0.1" value="${this.pointSizes[i] || 2.0}" class="size-slider" style="width: 100%;">
-                        <span class="size-value" style="font-size: 10px;">${(this.pointSizes[i] || 2.0).toFixed(1)}</span>
+                        ${(() => {
+                            const isObjFile = (data as any).isObjFile;
+                            const currentSize = this.pointSizes[i];
+                            
+                            if (isObjFile) {
+                                // OBJ files: larger range for wireframes/points
+                                const sizeValue = currentSize || 5.0;
+                                return `<input type="range" id="size-${i}" min="0.5" max="20.0" step="0.5" value="${sizeValue}" class="size-slider" style="width: 100%;">
+                                <span class="size-value" style="font-size: 10px;">${sizeValue.toFixed(1)}</span>`;
+                            } else {
+                                // Point clouds and meshes: fine-grained control for small values
+                                const sizeValue = currentSize || 0.001;
+                                return `<input type="range" id="size-${i}" min="0.0001" max="0.1" step="0.0001" value="${sizeValue}" class="size-slider" style="width: 100%;">
+                                <span class="size-value" style="font-size: 10px;">${sizeValue.toFixed(4)}</span>`;
+                            }
+                        })()
+                        }
                     </div>
                     
                     ${((data as any).isObjWireframe || (data as any).isObjFile) ? `
@@ -4055,7 +4070,7 @@ class PLYVisualizer {
             const isPose = i >= this.plyFiles.length && i < this.plyFiles.length + this.poseGroups.length;
             const isCamera = i >= this.plyFiles.length + this.poseGroups.length;
             const isObjFile = !isPose && !isCamera && (this.plyFiles[i] as any).isObjFile;
-            if (sizeSlider && (isPose || isCamera || this.plyFiles[i]?.faceCount === 0 || isObjFile)) {
+            if (sizeSlider) {
                 sizeSlider.addEventListener('input', (e) => {
                     const newSize = parseFloat((e.target as HTMLInputElement).value);
                     this.updatePointSize(i, newSize);
@@ -4063,7 +4078,13 @@ class PLYVisualizer {
                     // Update the displayed value
                     const sizeValue = document.querySelector(`#size-${i} + .size-value`) as HTMLElement;
                     if (sizeValue) {
-                            sizeValue.textContent = (isPose || isObjFile) ? newSize.toFixed(3) : newSize.toFixed(5);
+                        if (isPose) {
+                            sizeValue.textContent = newSize.toFixed(3); // Joint radius precision
+                        } else if (isObjFile || isCamera) {
+                            sizeValue.textContent = newSize.toFixed(1); // OBJ/camera precision
+                        } else {
+                            sizeValue.textContent = newSize.toFixed(4); // Point cloud precision
+                        }
                     }
                 });
             }
@@ -6136,13 +6157,40 @@ class PLYVisualizer {
                     }
                 }
             } else {
-                // Handle regular point clouds (PLY files)
+                // Handle regular point clouds and mesh files (PLY, STL, etc.)
                 const mesh = this.meshes[fileIndex];
+                const data = this.plyFiles[fileIndex];
+                
                 if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
+                    // Point cloud files
                     mesh.material.size = newSize;
-                    console.log(`✅ Point size applied to material for file ${fileIndex}: ${newSize}`);
+                    console.log(`✅ Point size applied to point cloud for file ${fileIndex}: ${newSize}`);
+                } else if (mesh instanceof THREE.Mesh && data && data.faceCount > 0) {
+                    // Triangle mesh files (STL, PLY with faces) - create a point representation
+                    // Check if we already have a points overlay for this mesh
+                    let pointsOverlay = (mesh as any).__pointsOverlay;
+                    
+                    if (!pointsOverlay && mesh.geometry) {
+                        // Create a points overlay using the same geometry
+                        const pointsMaterial = new THREE.PointsMaterial({ 
+                            color: 0xffffff, 
+                            size: newSize,
+                            sizeAttenuation: true
+                        });
+                        pointsOverlay = new THREE.Points(mesh.geometry, pointsMaterial);
+                        pointsOverlay.visible = false; // Hidden by default
+                        (mesh as any).__pointsOverlay = pointsOverlay;
+                        mesh.add(pointsOverlay);
+                    }
+                    
+                    if (pointsOverlay && pointsOverlay.material instanceof THREE.PointsMaterial) {
+                        pointsOverlay.material.size = newSize;
+                        // For meshes, we'll show the points overlay when point size is adjusted
+                        pointsOverlay.visible = newSize > 0.5; // Show points when size is meaningful
+                        console.log(`✅ Point size applied to mesh overlay for file ${fileIndex}: ${newSize}`);
+                    }
                 } else {
-                    console.warn(`⚠️ Could not apply point size for file ${fileIndex}: mesh is not Points or material is not PointsMaterial`);
+                    console.warn(`⚠️ Could not apply point size for file ${fileIndex}: unsupported mesh type`);
                     console.log(`Mesh type: ${mesh?.constructor.name}, Material type: ${mesh?.material?.constructor.name}`);
                 }
             }
