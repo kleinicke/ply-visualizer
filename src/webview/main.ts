@@ -3287,7 +3287,7 @@ class PLYVisualizer {
             // Initialize point size if not set
             if (!this.pointSizes[fileIndex]) {
                 const isObjFile = (data as any).isObjFile;
-                this.pointSizes[fileIndex] = isObjFile ? 5.0 : 0.001;  // Default point size for better visibility
+                this.pointSizes[fileIndex] = 0.001;  // Universal default point size
             }
             
             material.size = this.pointSizes[fileIndex];
@@ -3598,17 +3598,10 @@ class PLYVisualizer {
                             const isObjFile = (data as any).isObjFile;
                             const currentSize = this.pointSizes[i];
                             
-                            if (isObjFile) {
-                                // OBJ files: larger range for wireframes/points
-                                const sizeValue = currentSize || 5.0;
-                                return `<input type="range" id="size-${i}" min="0.5" max="20.0" step="0.5" value="${sizeValue}" class="size-slider" style="width: 100%;">
-                                <span class="size-value" style="font-size: 10px;">${sizeValue.toFixed(1)}</span>`;
-                            } else {
-                                // Point clouds and meshes: fine-grained control for small values
-                                const sizeValue = currentSize || 0.001;
-                                return `<input type="range" id="size-${i}" min="0.0001" max="0.1" step="0.0001" value="${sizeValue}" class="size-slider" style="width: 100%;">
-                                <span class="size-value" style="font-size: 10px;">${sizeValue.toFixed(4)}</span>`;
-                            }
+                            // Universal point size slider for all file types
+                            const sizeValue = currentSize || 0.001;
+                            return `<input type="range" id="size-${i}" min="0.0001" max="0.1" step="0.0001" value="${sizeValue}" class="size-slider" style="width: 100%;">
+                            <span class="size-value" style="font-size: 10px;">${sizeValue.toFixed(4)}</span>`;
                         })()
                         }
                     </div>
@@ -3650,7 +3643,7 @@ class PLYVisualizer {
             const colorHex = `#${Math.round(color[0] * 255).toString(16).padStart(2, '0')}${Math.round(color[1] * 255).toString(16).padStart(2, '0')}${Math.round(color[2] * 255).toString(16).padStart(2, '0')}`;
             const colorIndicator = `<span class="color-indicator" style="background-color: ${colorHex}"></span>`;
             const visible = this.fileVisibility[i] ?? true;
-            const sizeVal = this.pointSizes[i] ?? 5.0;
+            const sizeVal = this.pointSizes[i] ?? 0.02;
             // Transformation matrix UI content for pose
             const poseMatrixArr = this.getTransformationMatrixAsArray(i);
             let poseMatrixStr = '';
@@ -4381,6 +4374,19 @@ class PLYVisualizer {
         this.updateMeshVisibilityAndMaterial(fileIndex);
     }
     
+    private togglePointsRendering(fileIndex: number): void {
+        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
+        
+        // Toggle points visibility state
+        if (this.pointsVisible.length <= fileIndex) {
+            this.pointsVisible[fileIndex] = true;
+        } else {
+            this.pointsVisible[fileIndex] = !this.pointsVisible[fileIndex];
+        }
+        
+        this.updateMeshVisibilityAndMaterial(fileIndex);
+    }
+    
     private updateMeshVisibilityAndMaterial(fileIndex: number): void {
         const mesh = this.meshes[fileIndex];
         if (!mesh) return;
@@ -4430,12 +4436,12 @@ class PLYVisualizer {
         const mesh = this.meshes[fileIndex];
         if (!mesh || mesh.type === 'Points') return; // Skip if it's already a point cloud
         
-        const shouldShowVertexPoints = pointsVisible && fileVisible && !solidVisible && !wireframeVisible;
+        const shouldShowVertexPoints = pointsVisible && fileVisible;
         let vertexPointsObject = this.vertexPointsObjects[fileIndex];
         
         if (shouldShowVertexPoints && !vertexPointsObject) {
             // Create vertex points object
-            vertexPointsObject = this.createVertexPointsFromMesh(mesh);
+            vertexPointsObject = this.createVertexPointsFromMesh(mesh, fileIndex);
             if (vertexPointsObject) {
                 this.vertexPointsObjects[fileIndex] = vertexPointsObject;
                 this.scene.add(vertexPointsObject);
@@ -4444,10 +4450,14 @@ class PLYVisualizer {
         
         if (vertexPointsObject) {
             vertexPointsObject.visible = shouldShowVertexPoints;
+            // Update point size from slider
+            if (vertexPointsObject.material instanceof THREE.PointsMaterial) {
+                vertexPointsObject.material.size = this.pointSizes[fileIndex] || 1.0;
+            }
         }
     }
     
-    private createVertexPointsFromMesh(mesh: THREE.Object3D): THREE.Points | null {
+    private createVertexPointsFromMesh(mesh: THREE.Object3D, fileIndex: number): THREE.Points | null {
         let geometry: THREE.BufferGeometry | null = null;
         
         // Extract geometry from mesh
@@ -4473,11 +4483,13 @@ class PLYVisualizer {
             pointsGeometry.setAttribute('color', geometry.attributes.color);
         }
         
-        // Create point material
+        // Create point material with current point size
+        const currentPointSize = this.pointSizes[fileIndex] || 1.0;
         const pointsMaterial = new THREE.PointsMaterial({
-            size: 0.05,
+            size: currentPointSize,
             vertexColors: geometry.attributes.color ? true : false,
             color: geometry.attributes.color ? undefined : 0x888888,
+            sizeAttenuation: true
         });
         
         const points = new THREE.Points(pointsGeometry, pointsMaterial);
@@ -4485,19 +4497,6 @@ class PLYVisualizer {
         return points;
     }
     
-    private togglePointsRendering(fileIndex: number): void {
-        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
-        
-        // Toggle points visibility state
-        if (this.pointsVisible.length <= fileIndex) {
-            this.pointsVisible[fileIndex] = true;
-        } else {
-            this.pointsVisible[fileIndex] = !this.pointsVisible[fileIndex];
-        }
-        
-        // Update visibility using the unified function
-        this.updateMeshVisibilityAndMaterial(fileIndex);
-    }
     
     private toggleNormalsRendering(fileIndex: number): void {
         if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
@@ -5241,10 +5240,19 @@ class PLYVisualizer {
             // Add to data array
             this.plyFiles.push(data);
             
-            // Initialize visibility states (mesh defaults to visible, wireframe/normals to inactive)
-            this.solidVisible.push(true);
+            // Initialize visibility states based on file type
+            if (data.faceCount > 0) {
+                // Mesh file (STL, PLY with faces, OBJ) - show mesh surface only
+                this.solidVisible.push(true);
+                this.pointsVisible.push(false); // Don't show mesh vertices as points
+            } else {
+                // Point cloud file (PLY, XYZ, PTS) - show points only  
+                this.solidVisible.push(false);  // No mesh surface exists
+                this.pointsVisible.push(true);  // Show actual point data
+            }
+            
+            // Wireframe and normals always start disabled
             this.wireframeVisible.push(false);
-            this.pointsVisible.push(true);
             this.normalsVisible.push(false);
             
             // Initialize vertex points object (null initially, created on demand)
@@ -5505,7 +5513,7 @@ class PLYVisualizer {
             const lastObject = this.meshes[this.meshes.length - 1];
             if (lastObject) lastObject.visible = shouldBeVisible;
             const isObjFile3 = (data as any).isObjFile;
-            this.pointSizes.push(isObjFile3 ? 5.0 : 0.001); // Default point size for good visibility
+            this.pointSizes.push(0.001); // Universal default point size
             this.appliedMtlColors.push(null); // No MTL color applied initially
             this.appliedMtlNames.push(null); // No MTL material applied initially
             this.appliedMtlData.push(null); // No MTL data applied initially
@@ -6175,10 +6183,18 @@ class PLYVisualizer {
                         pointsOverlay.visible = newSize > 0.5; // Show points when size is meaningful
                         console.log(`✅ Point size applied to mesh overlay for file ${fileIndex}: ${newSize}`);
                     }
+                    
                 } else {
                     console.warn(`⚠️ Could not apply point size for file ${fileIndex}: unsupported mesh type`);
                     console.log(`Mesh type: ${mesh?.constructor.name}, Material type: ${mesh?.material?.constructor.name}`);
                 }
+            }
+            
+            // Always update vertex points object if it exists (used by render modes for ALL file types)
+            const vertexPointsObject = this.vertexPointsObjects[fileIndex];
+            if (vertexPointsObject && vertexPointsObject.material instanceof THREE.PointsMaterial) {
+                vertexPointsObject.material.size = newSize;
+                console.log(`✅ Point size applied to vertex points for file ${fileIndex}: ${newSize}`);
             }
         } else {
             console.error(`❌ Invalid fileIndex ${fileIndex} for pointSizes array of length ${this.pointSizes.length}`);
@@ -10335,7 +10351,7 @@ class PLYVisualizer {
                     });
                     const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
                     this.fileVisibility[unifiedIndex] = true;
-                    this.pointSizes[unifiedIndex] = 0.02; // default 2 cm joint radius
+                    this.pointSizes[unifiedIndex] = 0.02; // 20x larger for 2cm joint radius
                     this.individualColorModes[unifiedIndex] = 'assigned';
                     // Per-pose defaults
                     this.poseUseDatasetColors[unifiedIndex] = false;
@@ -10400,7 +10416,7 @@ class PLYVisualizer {
             // Initialize UI state slots aligned after plyFiles
             const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
             this.fileVisibility[unifiedIndex] = true;
-                this.pointSizes[unifiedIndex] = 0.02; // default 2 cm joint radius
+                this.pointSizes[unifiedIndex] = 0.02; // 20x larger for 2cm joint radius
             this.individualColorModes[unifiedIndex] = 'assigned';
                 // Per-pose defaults
                 this.poseUseDatasetColors[unifiedIndex] = false;
@@ -10461,7 +10477,7 @@ class PLYVisualizer {
                 // Initialize as single file entry (like poses)
                 const unifiedIndex = this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length - 1;
                 this.fileVisibility[unifiedIndex] = true;
-                this.pointSizes[unifiedIndex] = 1.0; // Default camera scale
+                this.pointSizes[unifiedIndex] = 1.0; // Default camera scale (different from point size)
                 this.individualColorModes[unifiedIndex] = 'assigned';
                 
                 // Initialize transformation matrix for camera profile

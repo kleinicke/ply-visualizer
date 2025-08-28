@@ -1,8 +1,10 @@
-# PLY Pointcloud Visualizer
+# 3D Point Cloud Visualizer (PLY, ...)
 
-A Visual Studio Code extension for visualizing PLY (Polygon File Format) files with interactive 3D visualization using Three.js.
+A Visual Studio Code extension for visualizing Point Cloud files like PLY (Polygon File Format) with interactive 3D visualization using Three.js.
 Multiple 3d formats for points and shapes and depth and disparity images are also supported.
 The depth and disparity images are converted on the fly into point clouds.
+
+Frequently new features will be added. You can simply request features that support your workflow or new file formats on [github](https://github.com/kleinicke/ply-visualizer/issues).
 
 ## Features
 
@@ -25,15 +27,13 @@ Load two point clouds and switch between them imediatly pressing shift and click
 ## Roadmap
 
 - **Wrong direction of Rotation**: When rotating the point cloud the direction is inverted. It's unclear how to fix this.
-- **Visualizing gaussian splats**: Add gaussian splat support
 - **Add eye dome lighting**: Improve perception of uncolored point clouds
 - **Drag and Drop**: Add more pc to a given pc using drag and drop instead of adding them in an extra window
-- **Add exr files support**: Exr files can contain float depth images or complete point clouds
-- **Add FBX files support**: FBX files can contain meshes or animations
+- **Add new file formats**: Body pose json files for 3d body pose, FBX files can contain meshes or animations, Exr files can contain float depth images or complete point clouds, gaussian splats
 - **Measure distance**: Add option to measure the distance between points
 - **Add buttons for meshes**: Easily active wireframe, mesh, points and normals
 - **Create website**: Create a website with the same functionality as this extension
-- **Dataset support**: Add images from middleburry stereo and eth3d as example images
+- **Dataset support**: Add images from Middlebury stereo and Eth3d as example images
 - **Improve depth parameter support**: allow more parameter to be used like disp offset and center points
 - **Automatic usage of calib files**: calibration files next to the depth images can contain all required parameter for a depth to pc conversion. Automatically use those
 - **Improve npz file interpretation**: These files can have different structures. Offer some options to visualize them
