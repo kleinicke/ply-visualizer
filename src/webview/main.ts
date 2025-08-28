@@ -3286,8 +3286,7 @@ class PLYVisualizer {
             
             // Initialize point size if not set
             if (!this.pointSizes[fileIndex]) {
-                const isObjFile = (data as any).isObjFile;
-                this.pointSizes[fileIndex] = 0.001;  // Universal default point size
+                this.pointSizes[fileIndex] = 0.001;  // Universal default for all file types
             }
             
             material.size = this.pointSizes[fileIndex];
@@ -3555,17 +3554,19 @@ class PLYVisualizer {
                     <div class="rendering-controls" style="margin-top: 4px; margin-bottom: 6px;">
                         ${(() => {
                             const hasFaces = data.faceCount > 0;
+                            const hasLines = (data as any).objData && (data as any).objData.lineCount > 0;
+                            const hasGeometry = hasFaces || hasLines; // Either faces or lines enable mesh/wireframe modes
                             const hasNormalsData = data.hasNormals || hasFaces; // Faces can generate normals
                             const buttons = [];
                             
                             // Debug logging
-                            console.log(`File ${i}: ${data.fileName}, faceCount=${data.faceCount}, hasNormals=${data.hasNormals}, hasFaces=${hasFaces}, hasNormalsData=${hasNormalsData}`);
+                            console.log(`File ${i}: ${data.fileName}, faceCount=${data.faceCount}, lineCount=${(data as any).objData?.lineCount || 0}, hasNormals=${data.hasNormals}, hasFaces=${hasFaces}, hasLines=${hasLines}, hasGeometry=${hasGeometry}`);
                             
                             // Always show points button
                             buttons.push(`<button class="render-mode-btn points-btn" data-file-index="${i}" data-mode="points" style="padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;">👁️ Points</button>`);
                             
-                            // Show mesh/wireframe buttons only if there are faces
-                            if (hasFaces) {
+                            // Show mesh/wireframe buttons if there are faces OR lines (OBJ wireframes)
+                            if (hasGeometry) {
                                 buttons.push(`<button class="render-mode-btn mesh-btn" data-file-index="${i}" data-mode="mesh" style="padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;">🔷 Mesh</button>`);
                                 buttons.push(`<button class="render-mode-btn wireframe-btn" data-file-index="${i}" data-mode="wireframe" style="padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;">📐 Wireframe</button>`);
                             }
@@ -4059,10 +4060,10 @@ class PLYVisualizer {
                     if (sizeValue) {
                         if (isPose) {
                             sizeValue.textContent = newSize.toFixed(3); // Joint radius precision
-                        } else if (isObjFile || isCamera) {
-                            sizeValue.textContent = newSize.toFixed(1); // OBJ/camera precision
+                        } else if (isCamera) {
+                            sizeValue.textContent = newSize.toFixed(1); // Camera scale precision
                         } else {
-                            sizeValue.textContent = newSize.toFixed(4); // Point cloud precision
+                            sizeValue.textContent = newSize.toFixed(4); // Universal point size precision
                         }
                     }
                 });
@@ -4351,12 +4352,15 @@ class PLYVisualizer {
     private toggleSolidRendering(fileIndex: number): void {
         if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
         
-        // Toggle solid visibility state
-        if (this.solidVisible.length <= fileIndex) {
-            this.solidVisible[fileIndex] = true;
-        } else {
-            this.solidVisible[fileIndex] = !this.solidVisible[fileIndex];
+        // Ensure array is properly sized with default values
+        while (this.solidVisible.length <= fileIndex) {
+            const data = this.plyFiles[this.solidVisible.length];
+            const defaultValue = data && data.faceCount > 0; // Default true for meshes, false for point clouds
+            this.solidVisible.push(defaultValue);
         }
+        
+        // Toggle solid visibility state
+        this.solidVisible[fileIndex] = !this.solidVisible[fileIndex];
         
         this.updateMeshVisibilityAndMaterial(fileIndex);
     }
@@ -4364,12 +4368,13 @@ class PLYVisualizer {
     private toggleWireframeRendering(fileIndex: number): void {
         if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
         
-        // Toggle wireframe visibility state
-        if (this.wireframeVisible.length <= fileIndex) {
-            this.wireframeVisible[fileIndex] = true;
-        } else {
-            this.wireframeVisible[fileIndex] = !this.wireframeVisible[fileIndex];
+        // Ensure array is properly sized with default values
+        while (this.wireframeVisible.length <= fileIndex) {
+            this.wireframeVisible.push(false); // Wireframe always defaults to false
         }
+        
+        // Toggle wireframe visibility state
+        this.wireframeVisible[fileIndex] = !this.wireframeVisible[fileIndex];
         
         this.updateMeshVisibilityAndMaterial(fileIndex);
     }
@@ -4377,34 +4382,50 @@ class PLYVisualizer {
     private togglePointsRendering(fileIndex: number): void {
         if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
         
-        // Toggle points visibility state
-        if (this.pointsVisible.length <= fileIndex) {
-            this.pointsVisible[fileIndex] = true;
-        } else {
-            this.pointsVisible[fileIndex] = !this.pointsVisible[fileIndex];
+        // Ensure array is properly sized with default values
+        while (this.pointsVisible.length <= fileIndex) {
+            const data = this.plyFiles[this.pointsVisible.length];
+            const defaultValue = !data || data.faceCount === 0; // Default true for point clouds, false for meshes
+            this.pointsVisible.push(defaultValue);
         }
+        
+        // Toggle points visibility state
+        this.pointsVisible[fileIndex] = !this.pointsVisible[fileIndex];
         
         this.updateMeshVisibilityAndMaterial(fileIndex);
     }
     
     private updateMeshVisibilityAndMaterial(fileIndex: number): void {
         const mesh = this.meshes[fileIndex];
-        if (!mesh) return;
+        const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
+        
+        // Handle either regular mesh or multi-material OBJ group
+        const target = multiMaterialGroup || mesh;
+        if (!target) {
+            console.log(`No mesh or multi-material group found for file ${fileIndex}`);
+            return;
+        }
         
         const solidVisible = this.solidVisible[fileIndex] ?? true;
         const wireframeVisible = this.wireframeVisible[fileIndex] ?? false;
         const pointsVisible = this.pointsVisible[fileIndex] ?? true;
         const fileVisible = this.fileVisibility[fileIndex] ?? true;
         
-        // For point clouds, only points toggle and file visibility matter
-        if (mesh.type === 'Points') {
+        // Set visibility for the target (mesh or multi-material group)
+        if (mesh && mesh.type === 'Points') {
+            // Point cloud case
             mesh.visible = pointsVisible && fileVisible;
         } else {
-            // For triangle meshes: mesh is visible if (solid OR wireframe) AND file are active
-            mesh.visible = (solidVisible || wireframeVisible) && fileVisible;
+            // Triangle mesh or multi-material group case
+            target.visible = (solidVisible || wireframeVisible) && fileVisible;
             
             // Handle vertex points visualization for triangle meshes
-            this.updateVertexPointsVisualization(fileIndex, pointsVisible, solidVisible, wireframeVisible, fileVisible);
+            if (mesh) { // Only for regular meshes, not multi-material groups
+                this.updateVertexPointsVisualization(fileIndex, pointsVisible, solidVisible, wireframeVisible, fileVisible);
+            } else if (multiMaterialGroup) {
+                // Handle points for multi-material OBJ groups independently
+                this.updateMultiMaterialPointsVisualization(fileIndex, pointsVisible, fileVisible);
+            }
         }
         
         // Handle different rendering combinations:
@@ -4413,18 +4434,33 @@ class PLYVisualizer {
         // 3. Both active: show solid mesh (mesh takes precedence)
         // 4. Neither active: mesh is hidden (handled by visibility check above)
         
-        if (mesh.material) {
+        // Update materials for wireframe mode
+        if (multiMaterialGroup) {
+            // Handle multi-material OBJ groups
+            const subMeshes = this.materialMeshes[fileIndex];
+            if (subMeshes) {
+                subMeshes.forEach(subMesh => {
+                    if (subMesh instanceof THREE.Mesh && subMesh.material) {
+                        const material = subMesh.material as THREE.Material;
+                        if (material instanceof THREE.MeshBasicMaterial || material instanceof THREE.MeshLambertMaterial) {
+                            material.wireframe = wireframeVisible && !solidVisible;
+                            material.opacity = 1.0;
+                            material.transparent = false;
+                        }
+                    }
+                });
+            }
+        } else if (mesh && mesh.material) {
+            // Handle regular single mesh
             if (Array.isArray(mesh.material)) {
                 mesh.material.forEach(material => {
                     if (material instanceof THREE.MeshBasicMaterial || material instanceof THREE.MeshLambertMaterial) {
-                        // Wireframe mode when wireframe is active and solid is not
                         material.wireframe = wireframeVisible && !solidVisible;
                         material.opacity = 1.0;
                         material.transparent = false;
                     }
                 });
             } else if (mesh.material instanceof THREE.MeshBasicMaterial || mesh.material instanceof THREE.MeshLambertMaterial) {
-                // Same logic for single material
                 mesh.material.wireframe = wireframeVisible && !solidVisible;
                 mesh.material.opacity = 1.0;
                 mesh.material.transparent = false;
@@ -4497,16 +4533,34 @@ class PLYVisualizer {
         return points;
     }
     
+    private updateMultiMaterialPointsVisualization(fileIndex: number, pointsVisible: boolean, fileVisible: boolean): void {
+        const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
+        const subMeshes = this.materialMeshes[fileIndex];
+        
+        if (!multiMaterialGroup || !subMeshes) {
+            return;
+        }
+        
+        const shouldShowPoints = pointsVisible && fileVisible;
+        
+        // Update visibility for all point objects in the multi-material group
+        for (const subMesh of subMeshes) {
+            if ((subMesh as any).isPoints && subMesh instanceof THREE.Points) {
+                subMesh.visible = shouldShowPoints;
+            }
+        }
+    }
     
     private toggleNormalsRendering(fileIndex: number): void {
         if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
         
-        // Toggle normals visibility state
-        if (this.normalsVisible.length <= fileIndex) {
-            this.normalsVisible[fileIndex] = true;
-        } else {
-            this.normalsVisible[fileIndex] = !this.normalsVisible[fileIndex];
+        // Ensure array is properly sized with default values
+        while (this.normalsVisible.length <= fileIndex) {
+            this.normalsVisible.push(false); // Normals always default to false
         }
+        
+        // Toggle normals visibility state
+        this.normalsVisible[fileIndex] = !this.normalsVisible[fileIndex];
         
         // Check if we have a normals visualizer, if not try to create one
         let normalsVisualizer = this.normalsVisualizers[fileIndex];
@@ -4809,8 +4863,8 @@ class PLYVisualizer {
                 
                 const pointMaterial = new THREE.PointsMaterial({ 
                     color: 0xff0000, // Default red - will be colored by MTL
-                    size: this.pointSizes[fileIndex] || 5.0, // Use stored point size
-                    sizeAttenuation: false
+                    size: this.pointSizes[fileIndex] || 0.001, // Use stored point size (world units)
+                    sizeAttenuation: true // Use world-space sizing like other file types
                 });
                 
                 const points = new THREE.Points(pointGeometry, pointMaterial);
@@ -5009,8 +5063,8 @@ class PLYVisualizer {
                 
                 const pointMaterial = new THREE.PointsMaterial({ 
                     color: 0xff0000, // Default red - will be colored by MTL
-                    size: this.pointSizes[fileIndex] || 5.0, // Use stored point size
-                    sizeAttenuation: false
+                    size: this.pointSizes[fileIndex] || 0.001, // Use stored point size (world units)
+                    sizeAttenuation: true // Use world-space sizing like other file types
                 });
                 
                 const points = new THREE.Points(pointGeometry, pointMaterial);
@@ -5241,10 +5295,21 @@ class PLYVisualizer {
             this.plyFiles.push(data);
             
             // Initialize visibility states based on file type
+            const isObjFile = (data as any).isObjFile;
+            const objData = (data as any).objData;
+            const isMultiMaterial = isObjFile && objData && objData.materialGroups && objData.materialGroups.length > 1;
+            
             if (data.faceCount > 0) {
-                // Mesh file (STL, PLY with faces, OBJ) - show mesh surface only
+                // Mesh file (STL, PLY with faces, OBJ)
                 this.solidVisible.push(true);
-                this.pointsVisible.push(false); // Don't show mesh vertices as points
+                
+                if (isMultiMaterial) {
+                    // Multi-material OBJ - points represent distinct geometric elements
+                    this.pointsVisible.push(true); // Show points by default
+                } else {
+                    // Single-material mesh - points are just mesh vertices
+                    this.pointsVisible.push(false); // Don't show mesh vertices as points
+                }
             } else {
                 // Point cloud file (PLY, XYZ, PTS) - show points only  
                 this.solidVisible.push(false);  // No mesh surface exists
@@ -5411,8 +5476,8 @@ class PLYVisualizer {
                                 
                                 const pointMaterial = new THREE.PointsMaterial({ 
                                     color: 0xff0000, // Default red - will be colored by MTL
-                                    size: this.pointSizes[data.fileIndex] || 5.0, // Use stored point size
-                                    sizeAttenuation: false // Keep constant size regardless of distance
+                                    size: this.pointSizes[data.fileIndex] || 0.001, // Use stored point size (world units)
+                                    sizeAttenuation: true // Use world-space sizing like other file types
                                 });
                                 
                                 const points = new THREE.Points(pointGeometry, pointMaterial);
@@ -5513,7 +5578,8 @@ class PLYVisualizer {
             const lastObject = this.meshes[this.meshes.length - 1];
             if (lastObject) lastObject.visible = shouldBeVisible;
             const isObjFile3 = (data as any).isObjFile;
-            this.pointSizes.push(0.001); // Universal default point size
+            // Universal default point size for all file types (now that all use world-space sizing)
+            this.pointSizes.push(0.001);
             this.appliedMtlColors.push(null); // No MTL color applied initially
             this.appliedMtlNames.push(null); // No MTL material applied initially
             this.appliedMtlData.push(null); // No MTL data applied initially
@@ -7630,7 +7696,7 @@ class PLYVisualizer {
                 faceCount: faces.length,
                 hasColors: true,
                 hasNormals: objData.hasNormals,
-                fileName: message.fileName.replace(/\.obj$/i, hasFaces ? '_mesh.ply' : '_wireframe.ply'),
+                fileName: message.fileName, // Keep original OBJ filename
                 fileIndex: this.plyFiles.length
             };
             
