@@ -42,3 +42,4 @@ test/**
 out/test/**
 *.py
 testfiles/**
+dataset/**

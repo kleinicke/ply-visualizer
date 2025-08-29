@@ -2,6 +2,8 @@
 
 ## [1.3.0]
 
+Add easier selection of material
+
 ## [1.2.0] - 2025-08-25
 
 Add support for pfm depth/disparity predictions

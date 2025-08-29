@@ -1,5 +1,6 @@
 *.ply
 *.xyz
+*.exr
 .vscode
 .vscode-test
 node_modules
@@ -7,3 +8,4 @@ out
 *.vsix
 package-lock.json
 testfiles/new_formats/**
+dataset/
