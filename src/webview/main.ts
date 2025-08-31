@@ -5835,16 +5835,24 @@ class PLYVisualizer {
         dialog.innerHTML = `
             <h3 style="margin-top:0;">Modify Camera Position</h3>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">X Position:</label>
-                <input type="number" id="camera-pos-x" value="${currentPos.x.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
+                <label style="display:block;margin-bottom:5px;">Position (X Y Z):</label>
+                <textarea id="camera-position-input" 
+                    placeholder="${currentPos.x.toFixed(3)} ${currentPos.y.toFixed(3)} ${currentPos.z.toFixed(3)}" 
+                    style="width:100%;height:60px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
+                >${currentPos.x.toFixed(3)} ${currentPos.y.toFixed(3)} ${currentPos.z.toFixed(3)}</textarea>
             </div>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Y Position:</label>
-                <input type="number" id="camera-pos-y" value="${currentPos.y.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Z Position:</label>
-                <input type="number" id="camera-pos-z" value="${currentPos.z.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
+                <label style="display:block;margin-bottom:8px;">Keep constant when changing:</label>
+                <div style="display:flex;gap:15px;align-items:center;">
+                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                        <input type="radio" name="position-constraint" value="rotation" style="margin:0;">
+                        <span>Rotation (angle)</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                        <input type="radio" name="position-constraint" value="center" checked style="margin:0;">
+                        <span>Rotation center</span>
+                    </label>
+                </div>
             </div>
             <div style="text-align:right;">
                 <button id="set-all-pos-zero" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set All to 0</button>
@@ -5870,39 +5878,49 @@ class PLYVisualizer {
         
         if (setAllZeroBtn) {
             setAllZeroBtn.addEventListener('click', () => {
-                (dialog.querySelector('#camera-pos-x') as HTMLInputElement).value = '0';
-                (dialog.querySelector('#camera-pos-y') as HTMLInputElement).value = '0';
-                (dialog.querySelector('#camera-pos-z') as HTMLInputElement).value = '0';
+                (dialog.querySelector('#camera-position-input') as HTMLTextAreaElement).value = '0 0 0';
             });
         }
         
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
-                const x = parseFloat((dialog.querySelector('#camera-pos-x') as HTMLInputElement).value);
-                const y = parseFloat((dialog.querySelector('#camera-pos-y') as HTMLInputElement).value);
-                const z = parseFloat((dialog.querySelector('#camera-pos-z') as HTMLInputElement).value);
+                const input = (dialog.querySelector('#camera-position-input') as HTMLTextAreaElement).value;
+                const constraint = (dialog.querySelector('input[name="position-constraint"]:checked') as HTMLInputElement).value;
+                const values = this.parseSpaceSeparatedValues(input);
                 
-                if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-                    // Store current camera orientation
+                if (values.length === 3) {
+                    const [x, y, z] = values;
+                    
+                    // Store current camera state
                     const currentQuaternion = this.camera.quaternion.clone();
                     const currentTarget = this.controls.target.clone();
                     
                     // Update position
                     this.camera.position.set(x, y, z);
                     
-                    // Restore orientation
-                    this.camera.quaternion.copy(currentQuaternion);
-                    
-                    // Update controls target to maintain proper orientation
-                    const direction = new THREE.Vector3(0, 0, -1);
-                    direction.applyQuaternion(currentQuaternion);
-                    this.controls.target.copy(this.camera.position.clone().add(direction));
+                    // Apply constraint logic
+                    if (constraint === 'rotation') {
+                        // Keep rotation (angle) - restore quaternion
+                        this.camera.quaternion.copy(currentQuaternion);
+                        
+                        // Update target based on new position and preserved rotation
+                        const direction = new THREE.Vector3(0, 0, -1);
+                        direction.applyQuaternion(currentQuaternion);
+                        this.controls.target.copy(this.camera.position.clone().add(direction));
+                    } else {
+                        // Keep rotation center (target) - restore target (default behavior)
+                        this.controls.target.copy(currentTarget);
+                        
+                        // Adjust camera rotation to look at the preserved target
+                        this.camera.lookAt(currentTarget);
+                    }
                     
                     this.controls.update();
                     this.updateCameraControlsPanel();
+                    closeModal();
+                } else {
+                    alert('Please enter exactly 3 numbers for position (X Y Z)');
                 }
-                
-                closeModal();
             });
         }
         
@@ -5957,16 +5975,24 @@ class PLYVisualizer {
         dialog.innerHTML = `
             <h3 style="margin-top:0;">Modify Camera Rotation</h3>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">X Rotation (degrees):</label>
-                <input type="number" id="camera-rot-x" value="${rotX.toFixed(1)}" step="1" style="width:100%;padding:5px;">
+                <label style="display:block;margin-bottom:5px;">Rotation (X Y Z degrees):</label>
+                <textarea id="camera-rotation-input" 
+                    placeholder="${rotX.toFixed(1)} ${rotY.toFixed(1)} ${rotZ.toFixed(1)}" 
+                    style="width:100%;height:60px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
+                >${rotX.toFixed(1)} ${rotY.toFixed(1)} ${rotZ.toFixed(1)}</textarea>
             </div>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Y Rotation (degrees):</label>
-                <input type="number" id="camera-rot-y" value="${rotY.toFixed(1)}" step="1" style="width:100%;padding:5px;">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Z Rotation (degrees):</label>
-                <input type="number" id="camera-rot-z" value="${rotZ.toFixed(1)}" step="1" style="width:100%;padding:5px;">
+                <label style="display:block;margin-bottom:8px;">Keep constant when changing:</label>
+                <div style="display:flex;gap:15px;align-items:center;">
+                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                        <input type="radio" name="rotation-constraint" value="position" style="margin:0;">
+                        <span>Position</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                        <input type="radio" name="rotation-constraint" value="center" checked style="margin:0;">
+                        <span>Rotation center</span>
+                    </label>
+                </div>
             </div>
             <div style="text-align:right;">
                 <button id="set-all-rot-zero" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set All to 0</button>
@@ -5992,22 +6018,22 @@ class PLYVisualizer {
         
         if (setAllZeroBtn) {
             setAllZeroBtn.addEventListener('click', () => {
-                (dialog.querySelector('#camera-rot-x') as HTMLInputElement).value = '0';
-                (dialog.querySelector('#camera-rot-y') as HTMLInputElement).value = '0';
-                (dialog.querySelector('#camera-rot-z') as HTMLInputElement).value = '0';
+                (dialog.querySelector('#camera-rotation-input') as HTMLTextAreaElement).value = '0 0 0';
             });
         }
         
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
-                const x = parseFloat((dialog.querySelector('#camera-rot-x') as HTMLInputElement).value);
-                const y = parseFloat((dialog.querySelector('#camera-rot-y') as HTMLInputElement).value);
-                const z = parseFloat((dialog.querySelector('#camera-rot-z') as HTMLInputElement).value);
+                const input = (dialog.querySelector('#camera-rotation-input') as HTMLTextAreaElement).value;
+                const constraint = (dialog.querySelector('input[name="rotation-constraint"]:checked') as HTMLInputElement).value;
+                const values = this.parseSpaceSeparatedValues(input);
                 
-                if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-                    // Store current camera distance from target for orbit controls
-                    const target = this.controls.target.clone();
-                    const distance = this.camera.position.distanceTo(target);
+                if (values.length === 3) {
+                    const [x, y, z] = values;
+                    
+                    // Store current camera state
+                    const currentPosition = this.camera.position.clone();
+                    const currentTarget = this.controls.target.clone();
                     
                     // Create quaternion from Euler angles
                     const euler = new THREE.Euler(
@@ -6019,27 +6045,39 @@ class PLYVisualizer {
                     const quaternion = new THREE.Quaternion();
                     quaternion.setFromEuler(euler);
                     
-                    // Apply rotation by positioning camera relative to target
-                    // Start with a forward vector and apply rotation
-                    const direction = new THREE.Vector3(0, 0, distance);
-                    direction.applyQuaternion(quaternion);
-                    
-                    // Position camera at target + rotated direction vector
-                    this.camera.position.copy(target).add(direction);
-                    
-                    // Set up vector based on rotation (extract up vector from quaternion)
-                    const up = new THREE.Vector3(0, 1, 0);
-                    up.applyQuaternion(quaternion);
-                    this.camera.up.copy(up);
-                    
-                    // Make camera look at target
-                    this.camera.lookAt(target);
+                    // Apply constraint logic
+                    if (constraint === 'position') {
+                        // Keep position - restore position and apply rotation directly
+                        this.camera.position.copy(currentPosition);
+                        this.camera.quaternion.copy(quaternion);
+                        
+                        // Update target based on new rotation and preserved position
+                        const direction = new THREE.Vector3(0, 0, -1);
+                        direction.applyQuaternion(quaternion);
+                        this.controls.target.copy(this.camera.position.clone().add(direction));
+                    } else {
+                        // Keep rotation center - restore target and adjust position (default behavior)
+                        const distance = currentPosition.distanceTo(currentTarget);
+                        this.controls.target.copy(currentTarget);
+                        
+                        // Position camera relative to preserved target
+                        const direction = new THREE.Vector3(0, 0, distance);
+                        direction.applyQuaternion(quaternion);
+                        this.camera.position.copy(currentTarget).add(direction);
+                        
+                        // Set up vector and look at target
+                        const up = new THREE.Vector3(0, 1, 0);
+                        up.applyQuaternion(quaternion);
+                        this.camera.up.copy(up);
+                        this.camera.lookAt(currentTarget);
+                    }
                     
                     this.controls.update();
                     this.updateCameraControlsPanel();
+                    closeModal();
+                } else {
+                    alert('Please enter exactly 3 numbers for rotation (X Y Z degrees)');
                 }
-                
-                closeModal();
             });
         }
         
@@ -6090,16 +6128,24 @@ class PLYVisualizer {
         dialog.innerHTML = `
             <h3 style="margin-top:0;">Modify Rotation Center</h3>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">X Coordinate:</label>
-                <input type="number" id="rotation-center-x" value="${target.x.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
+                <label style="display:block;margin-bottom:5px;">Center (X Y Z):</label>
+                <textarea id="rotation-center-input" 
+                    placeholder="${target.x.toFixed(3)} ${target.y.toFixed(3)} ${target.z.toFixed(3)}" 
+                    style="width:100%;height:60px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
+                >${target.x.toFixed(3)} ${target.y.toFixed(3)} ${target.z.toFixed(3)}</textarea>
             </div>
             <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Y Coordinate:</label>
-                <input type="number" id="rotation-center-y" value="${target.y.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Z Coordinate:</label>
-                <input type="number" id="rotation-center-z" value="${target.z.toFixed(3)}" step="0.1" style="width:100%;padding:5px;">
+                <label style="display:block;margin-bottom:8px;">Keep constant when changing:</label>
+                <div style="display:flex;gap:15px;align-items:center;">
+                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                        <input type="radio" name="center-constraint" value="position" checked style="margin:0;">
+                        <span>Position</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+                        <input type="radio" name="center-constraint" value="rotation" style="margin:0;">
+                        <span>Rotation (angle)</span>
+                    </label>
+                </div>
             </div>
             <div style="text-align:right;">
                 <button id="set-center-origin" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set to Origin (0,0,0)</button>
@@ -6122,9 +6168,7 @@ class PLYVisualizer {
         
         if (setOriginBtn) {
             setOriginBtn.addEventListener('click', () => {
-                (dialog.querySelector('#rotation-center-x') as HTMLInputElement).value = '0';
-                (dialog.querySelector('#rotation-center-y') as HTMLInputElement).value = '0';
-                (dialog.querySelector('#rotation-center-z') as HTMLInputElement).value = '0';
+                (dialog.querySelector('#rotation-center-input') as HTMLTextAreaElement).value = '0 0 0';
             });
         }
         
@@ -6134,15 +6178,38 @@ class PLYVisualizer {
         
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
-                const x = parseFloat((dialog.querySelector('#rotation-center-x') as HTMLInputElement).value);
-                const y = parseFloat((dialog.querySelector('#rotation-center-y') as HTMLInputElement).value);
-                const z = parseFloat((dialog.querySelector('#rotation-center-z') as HTMLInputElement).value);
+                const input = (dialog.querySelector('#rotation-center-input') as HTMLTextAreaElement).value;
+                const constraint = (dialog.querySelector('input[name="center-constraint"]:checked') as HTMLInputElement).value;
+                const values = this.parseSpaceSeparatedValues(input);
                 
-                if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                if (values.length === 3) {
+                    const [x, y, z] = values;
+                    
+                    // Store current camera state
+                    const currentPosition = this.camera.position.clone();
+                    const currentQuaternion = this.camera.quaternion.clone();
+                    const currentTarget = this.controls.target.clone();
+                    
                     // Set the new rotation center
                     this.controls.target.set(x, y, z);
                     
-                        // Update controls and camera panel
+                    // Apply constraint logic
+                    if (constraint === 'rotation') {
+                        // Keep rotation - restore quaternion and adjust position to maintain distance from new center
+                        const distance = currentPosition.distanceTo(currentTarget);
+                        this.camera.quaternion.copy(currentQuaternion);
+                        
+                        // Position camera at distance from new center in same direction as rotation
+                        const direction = new THREE.Vector3(0, 0, distance);
+                        direction.applyQuaternion(currentQuaternion);
+                        this.camera.position.copy(this.controls.target).add(direction);
+                    } else {
+                        // Keep position - restore position and adjust rotation to look at new center (default behavior)
+                        this.camera.position.copy(currentPosition);
+                        this.camera.lookAt(this.controls.target);
+                    }
+                    
+                    // Update controls and camera panel
                     this.controls.update();
                     this.updateCameraControlsPanel();
                     
@@ -6153,9 +6220,10 @@ class PLYVisualizer {
                     
                     console.log(`🎯 Rotation center set to: (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`);
                     this.updateRotationOriginButtonState();
+                    closeModal();
+                } else {
+                    alert('Please enter exactly 3 numbers for center (X Y Z)');
                 }
-                
-                closeModal();
             });
         }
         
