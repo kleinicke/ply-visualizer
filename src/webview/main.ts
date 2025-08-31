@@ -2789,6 +2789,7 @@ class PLYVisualizer {
                             <span class="toggle-icon">▶</span> Depth Settings
                         </button>
                         <div class="tif-settings-panel" id="tif-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
+                            <div id="image-size-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Image Size: Width: -, Height: -</div>
                             <div class="tif-group" style="margin-bottom: 8px;">
                                 <label for="camera-model-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Camera Model:</label>
                                 <select id="camera-model-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
@@ -8169,7 +8170,7 @@ class PLYVisualizer {
         );
     }
 
-    private getPngpngScaleFactor(data: PlyData): number {
+    private getPngScaleFactor(data: PlyData): number {
         const comments = (data as any)?.comments;
         if (!Array.isArray(comments)) return 1000; // Default
         
@@ -8539,6 +8540,13 @@ class PLYVisualizer {
         if (cyInput) {
             cyInput.value = computedCy.toString();
             console.log(`📐 Updated cy field for file ${fileIndex}: ${computedCy} (from ${dimensions.width}×${dimensions.height})`);
+        }
+        
+        // Update image size display
+        const imageSizeDiv = document.getElementById(`image-size-${fileIndex}`);
+        if (imageSizeDiv) {
+            imageSizeDiv.textContent = `Image Size: Width: ${dimensions.width}, Height: ${dimensions.height}`;
+            console.log(`📐 Updated image size display for file ${fileIndex}: ${dimensions.width}×${dimensions.height}`);
         }
         
         // Update button state since form values changed
