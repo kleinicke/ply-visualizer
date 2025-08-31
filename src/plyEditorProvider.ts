@@ -1697,7 +1697,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 depthType: savedSettings.depthType || 'euclidean',
                 convention: savedSettings.convention || 'opengl',
                 baseline: savedSettings.baseline || 50,
-                scaleFactor: savedSettings.scaleFactor || 1000
+                pngScaleFactor: savedSettings.pngScaleFactor || 1000
                 // Explicitly exclude cx and cy
             } : {
                 focalLength: 1000,
@@ -1705,7 +1705,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 depthType: 'euclidean',
                 convention: 'opengl',
                 baseline: 50,
-                scaleFactor: 1000
+                pngScaleFactor: 1000
             };
 
             console.log('🎯 Using default settings for camera parameters dialog:', defaults);
@@ -1925,7 +1925,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 depthType: savedSettings.depthType || 'euclidean',
                 convention: savedSettings.convention || 'opengl',
                 baseline: savedSettings.baseline || 50,
-                scaleFactor: savedSettings.scaleFactor || 1000
+                pngScaleFactor: savedSettings.pngScaleFactor || 1000
                 // Explicitly exclude cx and cy
             } : {
                 focalLength: 1000,
@@ -1933,7 +1933,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 depthType: 'euclidean',
                 convention: 'opengl',
                 baseline: 50,
-                scaleFactor: 1000 // Default for PNG: millimeters to meters
+                pngScaleFactor: 1000 // Default for PNG: millimeters to meters
             };
 
             console.log('🎯 Using default settings for PNG camera parameters dialog:', defaults);
@@ -1943,7 +1943,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 [
                     { 
                         label: '⚡ Use Default Settings', 
-                        description: `${defaults.cameraModel}, f=${defaults.focalLength}px, scale=${defaults.scaleFactor} (${defaults.scaleFactor === 1000 ? 'mm→m' : defaults.scaleFactor === 256 ? 'disp÷256' : 'custom'})`, 
+                        description: `${defaults.cameraModel}, f=${defaults.focalLength}px, scale=${defaults.pngScaleFactor} (${defaults.pngScaleFactor === 1000 ? 'mm→m' : defaults.pngScaleFactor === 256 ? 'disp÷256' : 'custom'})`, 
                         value: 'defaults' 
                     },
                     { 
@@ -1975,7 +1975,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                     depthType: defaults.depthType,
                     baseline: defaults.baseline,
                     convention: defaults.convention,
-                    scaleFactor: defaults.scaleFactor,
+                    pngScaleFactor: defaults.pngScaleFactor,
                     requestId: message.requestId
                 });
                 return;
@@ -2010,10 +2010,10 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             }
 
             // Show scale factor input dialog
-            const scaleFactorInput = await vscode.window.showInputBox({
-                prompt: `Scale factor: depth/disparity is divided to get applied value in meters/disparities (Default: ${defaults.scaleFactor})`,
-                placeHolder: `${defaults.scaleFactor} (1000 for mm, 256 for disparity, 1 for meters)`,
-                value: defaults.scaleFactor.toString(),
+            const pngScaleFactorInput = await vscode.window.showInputBox({
+                prompt: `Scale factor: depth/disparity is divided to get applied value in meters/disparities (Default: ${defaults.pngScaleFactor})`,
+                placeHolder: `${defaults.pngScaleFactor} (1000 for mm, 256 for disparity, 1 for meters)`,
+                value: defaults.pngScaleFactor.toString(),
                 validateInput: (value: string) => {
                     const num = parseFloat(value);
                     if (isNaN(num) || num <= 0) {
@@ -2024,7 +2024,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 ignoreFocusOut: true
             });
 
-            if (!scaleFactorInput) {
+            if (!pngScaleFactorInput) {
                 webviewPanel.webview.postMessage({
                     type: 'cameraParamsCancelled',
                     requestId: message.requestId
@@ -2032,7 +2032,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 return;
             }
 
-            const scaleFactor = parseFloat(scaleFactorInput);
+            const pngScaleFactor = parseFloat(pngScaleFactorInput);
 
             // Show focal length input dialog
             const focalLengthInput = await vscode.window.showInputBox({
@@ -2093,7 +2093,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 cameraModel: cameraModel.value,
                 focalLength: focalLength,
                 depthType: 'euclidean', // Default for PNG
-                scaleFactor: scaleFactor,
+                pngScaleFactor: pngScaleFactor,
                 convention: convention.value,
                 requestId: message.requestId
             });
@@ -2382,7 +2382,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 depthType: savedSettings.depthType,
                 baseline: savedSettings.baseline,
                 convention: savedSettings.convention,
-                scaleFactor: savedSettings.scaleFactor
+                pngScaleFactor: savedSettings.pngScaleFactor
                 // Explicitly exclude cx and cy
             } : {
                 focalLength: 1000,

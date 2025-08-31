@@ -38,7 +38,7 @@ export interface CameraParams {
   depthType: "euclidean" | "orthogonal" | "disparity";
   baseline?: number; // Required for disparity mode
   convention?: "opengl" | "opencv"; // Coordinate convention
-  scaleFactor?: number; // For PNG files: divisor to convert raw values to meters (1000 for mm)
+  pngScaleFactor?: number; // For PNG files: divisor to convert raw values to meters (1000 for mm)
 }
 
 export interface TifConversionResult {

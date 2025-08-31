@@ -1,13 +1,13 @@
 import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata, DepthKind } from '../types';
 
 export interface PngDepthConfig {
-    scaleFactor: number; // Depth/disparity is divided to get applied value in meters/disparities (1000 for mm, 256 for disparity, 1 for meters)
+    pngScaleFactor: number; // Depth/disparity is divided to get applied value in meters/disparities (1000 for mm, 256 for disparity, 1 for meters)
     invalidValue?: number; // Value representing invalid pixels (default: 0)
 }
 
 export class PngReader implements DepthReader {
     private config: PngDepthConfig = {
-        scaleFactor: 1000, // Default: millimeters to meters
+        pngScaleFactor: 1000, // Default: millimeters to meters
         invalidValue: 0
     };
 
@@ -141,7 +141,7 @@ export class PngReader implements DepthReader {
             }
 
             // Apply scale factor to convert to meters
-            const depthValue = rawValue / this.config.scaleFactor;
+            const depthValue = rawValue / this.config.pngScaleFactor;
             depthData[i] = depthValue;
         }
 
@@ -170,7 +170,7 @@ export class PngReader implements DepthReader {
             }
 
             // Apply scale factor to convert to meters
-            const depthValue = rawValue / this.config.scaleFactor;
+            const depthValue = rawValue / this.config.pngScaleFactor;
             depthData[i] = depthValue;
         }
 
@@ -184,8 +184,8 @@ export class PngReader implements DepthReader {
     private createMetadata(): DepthMetadata {
         return {
             kind: 'depth', // Always treat as depth values after scaling
-            unit: 'meter', // We convert to meters using scaleFactor
-            scale: this.config.scaleFactor,
+            unit: 'meter', // We convert to meters using pngScaleFactor
+            scale: this.config.pngScaleFactor,
             requiresConfiguration: true, // PNG depth images often need configuration
             invalidValue: this.config.invalidValue
         };
@@ -202,7 +202,7 @@ export class PngReader implements DepthReader {
 // Enhanced version that would use a proper 16-bit PNG library
 export class Enhanced16BitPngReader implements DepthReader {
     private config: PngDepthConfig = {
-        scaleFactor: 1000, // Default: millimeters to meters
+        pngScaleFactor: 1000, // Default: millimeters to meters
         invalidValue: 0
     };
 
