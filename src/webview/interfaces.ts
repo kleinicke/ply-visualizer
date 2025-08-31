@@ -33,6 +33,8 @@ export interface PlyData {
 export interface CameraParams {
   cameraModel: "pinhole" | "fisheye";
   focalLength: number;
+  cx: number; // Principal point x-coordinate (pixels)
+  cy: number; // Principal point y-coordinate (pixels)
   depthType: "euclidean" | "orthogonal" | "disparity";
   baseline?: number; // Required for disparity mode
   convention?: "opengl" | "opencv"; // Coordinate convention

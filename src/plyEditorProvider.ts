@@ -1689,9 +1689,17 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
     private async handleCameraParametersRequest(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
         try {
-            // Load saved default settings
+            // Load saved default settings (filter out cx/cy as they should be auto-calculated per image)
             const savedSettings = this.context.globalState.get('defaultDepthSettings') as any;
-            const defaults = savedSettings || {
+            const defaults = savedSettings ? {
+                focalLength: savedSettings.focalLength || 1000,
+                cameraModel: savedSettings.cameraModel || 'pinhole',
+                depthType: savedSettings.depthType || 'euclidean',
+                convention: savedSettings.convention || 'opengl',
+                baseline: savedSettings.baseline || 50,
+                scaleFactor: savedSettings.scaleFactor || 1000
+                // Explicitly exclude cx and cy
+            } : {
                 focalLength: 1000,
                 cameraModel: 'pinhole',
                 depthType: 'euclidean',
@@ -1909,9 +1917,17 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
     private async handleCameraParametersWithScaleRequest(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
         try {
-            // Load saved default settings
+            // Load saved default settings (filter out cx/cy as they should be auto-calculated per image)
             const savedSettings = this.context.globalState.get('defaultDepthSettings') as any;
-            const defaults = savedSettings || {
+            const defaults = savedSettings ? {
+                focalLength: savedSettings.focalLength || 1000,
+                cameraModel: savedSettings.cameraModel || 'pinhole',
+                depthType: savedSettings.depthType || 'euclidean',
+                convention: savedSettings.convention || 'opengl',
+                baseline: savedSettings.baseline || 50,
+                scaleFactor: savedSettings.scaleFactor || 1000
+                // Explicitly exclude cx and cy
+            } : {
                 focalLength: 1000,
                 cameraModel: 'pinhole',
                 depthType: 'euclidean',
@@ -2357,20 +2373,31 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private async handleRequestDefaultDepthSettings(webviewPanel: vscode.WebviewPanel): Promise<void> {
         try {
             // Load default settings from extension global state
-            const savedSettings = this.context.globalState.get('defaultDepthSettings');
+            const savedSettings = this.context.globalState.get('defaultDepthSettings') as any;
+            
+            // Filter out cx/cy from saved settings as they should be auto-calculated per image
+            const filteredSettings = savedSettings ? {
+                focalLength: savedSettings.focalLength,
+                cameraModel: savedSettings.cameraModel,
+                depthType: savedSettings.depthType,
+                baseline: savedSettings.baseline,
+                convention: savedSettings.convention,
+                scaleFactor: savedSettings.scaleFactor
+                // Explicitly exclude cx and cy
+            } : {
+                focalLength: 1000,
+                cameraModel: 'pinhole',
+                depthType: 'euclidean',
+                convention: 'opengl'
+            };
             
             // Send settings back to webview
             webviewPanel.webview.postMessage({
                 type: 'defaultDepthSettings',
-                settings: savedSettings || {
-                    focalLength: 1000,
-                    cameraModel: 'pinhole',
-                    depthType: 'euclidean',
-                    convention: 'opengl'
-                }
+                settings: filteredSettings
             });
             
-            console.log('Sent default depth settings to webview:', savedSettings);
+            console.log('Sent default depth settings to webview:', filteredSettings);
         } catch (error) {
             console.error('Failed to load default depth settings:', error);
             // Send default fallback settings
