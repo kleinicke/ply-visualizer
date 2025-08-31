@@ -1692,7 +1692,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             // Load saved default settings (filter out cx/cy as they should be auto-calculated per image)
             const savedSettings = this.context.globalState.get('defaultDepthSettings') as any;
             const defaults = savedSettings ? {
-                focalLength: savedSettings.focalLength || 1000,
+                fx: savedSettings.fx || 1000,
+                fy: savedSettings.fy,
                 cameraModel: savedSettings.cameraModel || 'pinhole',
                 depthType: savedSettings.depthType || 'euclidean',
                 convention: savedSettings.convention || 'opengl',
@@ -1700,7 +1701,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 pngScaleFactor: savedSettings.pngScaleFactor || 1000
                 // Explicitly exclude cx and cy
             } : {
-                focalLength: 1000,
+                fx: 1000,
+                fy: undefined,
                 cameraModel: 'pinhole',
                 depthType: 'euclidean',
                 convention: 'opengl',
@@ -1715,7 +1717,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 [
                     { 
                         label: '⚡ Use Default Settings', 
-                        description: `${defaults.cameraModel}, f=${defaults.focalLength}px, ${defaults.depthType}, ${defaults.convention}${defaults.baseline ? `, baseline=${defaults.baseline}mm` : ''}`, 
+                        description: `${defaults.cameraModel}, fx=${defaults.fx}px${defaults.fy ? `, fy=${defaults.fy}px` : ''}, ${defaults.depthType}, ${defaults.convention}${defaults.baseline ? `, baseline=${defaults.baseline}mm` : ''}`, 
                         value: 'defaults' 
                     },
                     { 
@@ -1743,7 +1745,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 webviewPanel.webview.postMessage({
                     type: 'cameraParams',
                     cameraModel: defaults.cameraModel,
-                    focalLength: defaults.focalLength,
+                    fx: defaults.fx,
+                    fy: defaults.fy,
                     depthType: defaults.depthType,
                     baseline: defaults.baseline,
                     convention: defaults.convention,
@@ -1814,21 +1817,21 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             }
 
             // Show focal length input dialog
-            const focalLengthInput = await vscode.window.showInputBox({
-                prompt: `Enter the focal length in pixels (Default: ${defaults.focalLength})`,
-                placeHolder: defaults.focalLength.toString(),
-                value: defaults.focalLength.toString(),
+            const fxInput = await vscode.window.showInputBox({
+                prompt: `Enter fx (focal length x) in pixels (Default: ${defaults.fx})`,
+                placeHolder: defaults.fx.toString(),
+                value: defaults.fx.toString(),
                 validateInput: (value: string) => {
                     const num = parseFloat(value);
                     if (isNaN(num) || num <= 0) {
-                        return 'Please enter a valid positive number for focal length';
+                        return 'Please enter a valid positive number for fx';
                     }
                     return null;
                 },
                 ignoreFocusOut: true
             });
 
-            if (!focalLengthInput) {
+            if (!fxInput) {
                 webviewPanel.webview.postMessage({
                     type: 'cameraParamsCancelled',
                     requestId: message.requestId
@@ -1836,7 +1839,33 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 return;
             }
 
-            const focalLength = parseFloat(focalLengthInput);
+            const fx = parseFloat(fxInput);
+
+            // Show fy input dialog (optional)
+            const fyInput = await vscode.window.showInputBox({
+                prompt: `Enter fy (focal length y) in pixels (Default: same as fx = ${fx})`,
+                placeHolder: 'Leave empty to use same as fx',
+                value: defaults.fy?.toString() || '',
+                validateInput: (value: string) => {
+                    if (value.trim() === '') return null; // Empty is OK
+                    const num = parseFloat(value);
+                    if (isNaN(num) || num <= 0) {
+                        return 'Please enter a valid positive number for fy, or leave empty';
+                    }
+                    return null;
+                },
+                ignoreFocusOut: true
+            });
+
+            if (fyInput === undefined) { // User cancelled
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
+                });
+                return;
+            }
+
+            const fy = fyInput.trim() === '' ? undefined : parseFloat(fyInput);
 
             // Show coordinate convention selection dialog
             const convention = await vscode.window.showQuickPick(
@@ -1899,7 +1928,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             webviewPanel.webview.postMessage({
                 type: 'cameraParams',
                 cameraModel: cameraModel.value,
-                focalLength: focalLength,
+                fx: fx,
+                fy: fy,
                 depthType: depthType.value,
                 baseline: baseline,
                 convention: convention.value,
@@ -1920,7 +1950,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             // Load saved default settings (filter out cx/cy as they should be auto-calculated per image)
             const savedSettings = this.context.globalState.get('defaultDepthSettings') as any;
             const defaults = savedSettings ? {
-                focalLength: savedSettings.focalLength || 1000,
+                fx: savedSettings.fx || 1000,
+                fy: savedSettings.fy,
                 cameraModel: savedSettings.cameraModel || 'pinhole',
                 depthType: savedSettings.depthType || 'euclidean',
                 convention: savedSettings.convention || 'opengl',
@@ -1928,7 +1959,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 pngScaleFactor: savedSettings.pngScaleFactor || 1000
                 // Explicitly exclude cx and cy
             } : {
-                focalLength: 1000,
+                fx: 1000,
+                fy: undefined,
                 cameraModel: 'pinhole',
                 depthType: 'euclidean',
                 convention: 'opengl',
@@ -1943,7 +1975,7 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 [
                     { 
                         label: '⚡ Use Default Settings', 
-                        description: `${defaults.cameraModel}, f=${defaults.focalLength}px, scale=${defaults.pngScaleFactor} (${defaults.pngScaleFactor === 1000 ? 'mm→m' : defaults.pngScaleFactor === 256 ? 'disp÷256' : 'custom'})`, 
+                        description: `${defaults.cameraModel}, fx=${defaults.fx}px${defaults.fy ? `, fy=${defaults.fy}px` : ''}, scale=${defaults.pngScaleFactor} (${defaults.pngScaleFactor === 1000 ? 'mm→m' : defaults.pngScaleFactor === 256 ? 'disp÷256' : 'custom'})`, 
                         value: 'defaults' 
                     },
                     { 
@@ -1971,7 +2003,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 webviewPanel.webview.postMessage({
                     type: 'cameraParams',
                     cameraModel: defaults.cameraModel,
-                    focalLength: defaults.focalLength,
+                    fx: defaults.fx,
+                    fy: defaults.fy,
                     depthType: defaults.depthType,
                     baseline: defaults.baseline,
                     convention: defaults.convention,
@@ -2035,21 +2068,21 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             const pngScaleFactor = parseFloat(pngScaleFactorInput);
 
             // Show focal length input dialog
-            const focalLengthInput = await vscode.window.showInputBox({
-                prompt: `Enter the focal length in pixels (Default: ${defaults.focalLength})`,
-                placeHolder: defaults.focalLength.toString(),
-                value: defaults.focalLength.toString(),
+            const fxInput = await vscode.window.showInputBox({
+                prompt: `Enter fx (focal length x) in pixels (Default: ${defaults.fx})`,
+                placeHolder: defaults.fx.toString(),
+                value: defaults.fx.toString(),
                 validateInput: (value: string) => {
                     const num = parseFloat(value);
                     if (isNaN(num) || num <= 0) {
-                        return 'Please enter a valid positive number for focal length';
+                        return 'Please enter a valid positive number for fx';
                     }
                     return null;
                 },
                 ignoreFocusOut: true
             });
 
-            if (!focalLengthInput) {
+            if (!fxInput) {
                 webviewPanel.webview.postMessage({
                     type: 'cameraParamsCancelled',
                     requestId: message.requestId
@@ -2057,7 +2090,33 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 return;
             }
 
-            const focalLength = parseFloat(focalLengthInput);
+            const fx = parseFloat(fxInput);
+
+            // Show fy input dialog (optional)
+            const fyInput = await vscode.window.showInputBox({
+                prompt: `Enter fy (focal length y) in pixels (Default: same as fx = ${fx})`,
+                placeHolder: 'Leave empty to use same as fx',
+                value: defaults.fy?.toString() || '',
+                validateInput: (value: string) => {
+                    if (value.trim() === '') return null; // Empty is OK
+                    const num = parseFloat(value);
+                    if (isNaN(num) || num <= 0) {
+                        return 'Please enter a valid positive number for fy, or leave empty';
+                    }
+                    return null;
+                },
+                ignoreFocusOut: true
+            });
+
+            if (fyInput === undefined) { // User cancelled
+                webviewPanel.webview.postMessage({
+                    type: 'cameraParamsCancelled',
+                    requestId: message.requestId
+                });
+                return;
+            }
+
+            const fy = fyInput.trim() === '' ? undefined : parseFloat(fyInput);
 
             // Show coordinate convention selection dialog
             const convention = await vscode.window.showQuickPick(
@@ -2091,7 +2150,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             webviewPanel.webview.postMessage({
                 type: 'cameraParams',
                 cameraModel: cameraModel.value,
-                focalLength: focalLength,
+                fx: fx,
+                fy: fy,
                 depthType: 'euclidean', // Default for PNG
                 pngScaleFactor: pngScaleFactor,
                 convention: convention.value,
@@ -2377,7 +2437,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             
             // Filter out cx/cy from saved settings as they should be auto-calculated per image
             const filteredSettings = savedSettings ? {
-                focalLength: savedSettings.focalLength,
+                fx: savedSettings.fx || 1000,
+                fy: savedSettings.fy,
                 cameraModel: savedSettings.cameraModel,
                 depthType: savedSettings.depthType,
                 baseline: savedSettings.baseline,
@@ -2385,7 +2446,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
                 pngScaleFactor: savedSettings.pngScaleFactor
                 // Explicitly exclude cx and cy
             } : {
-                focalLength: 1000,
+                fx: 1000,
+                fy: undefined,
                 cameraModel: 'pinhole',
                 depthType: 'euclidean',
                 convention: 'opengl'
@@ -2404,7 +2466,8 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             webviewPanel.webview.postMessage({
                 type: 'defaultDepthSettings',
                 settings: {
-                    focalLength: 1000,
+                    fx: 1000,
+                fy: undefined,
                     cameraModel: 'pinhole',
                     depthType: 'euclidean',
                     convention: 'opengl'

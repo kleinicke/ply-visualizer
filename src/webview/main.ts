@@ -156,7 +156,8 @@ class PLYVisualizer {
 
     // Default depth settings for new files
     private defaultDepthSettings: CameraParams = {
-        focalLength: 1000,
+        fx: 1000,
+        fy: undefined, // Optional, defaults to fx if not provided
         cx: 320, // Will be auto-calculated per image, not saved as default
         cy: 240, // Will be auto-calculated per image, not saved as default
         cameraModel: 'pinhole',
@@ -2018,7 +2019,8 @@ class PLYVisualizer {
 
     private getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
         const cameraModelSelect = document.getElementById(`camera-model-${fileIndex}`) as HTMLSelectElement;
-        const focalLengthInput = document.getElementById(`focal-length-${fileIndex}`) as HTMLInputElement;
+        const fxInput = document.getElementById(`fx-${fileIndex}`) as HTMLInputElement;
+        const fyInput = document.getElementById(`fy-${fileIndex}`) as HTMLInputElement;
         const cxInput = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement;
         const cyInput = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
         const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
@@ -2028,13 +2030,18 @@ class PLYVisualizer {
 
         const cx = parseFloat(cxInput?.value || '320');
         const cy = parseFloat(cyInput?.value || '240');
+        const fx = parseFloat(fxInput?.value || '1000');
+        const fyValue = fyInput?.value?.trim();
+        const fy = fyValue && fyValue !== '' ? parseFloat(fyValue) : undefined;
         
-        // Log the principle point values read from form
+        // Log the focal length and principle point values read from form
+        console.log(`📐 Reading focal lengths from form for file ${fileIndex}: fx = ${fx}, fy = ${fy || 'same as fx'}`);
         console.log(`📐 Reading principle point from form for file ${fileIndex}: cx = ${cx}, cy = ${cy}`);
         
         return {
             cameraModel: (cameraModelSelect?.value as 'pinhole' | 'fisheye') || 'pinhole',
-            focalLength: parseFloat(focalLengthInput?.value || '1000'),
+            fx: fx,
+            fy: fy,
             cx: cx,
             cy: cy,
             depthType: (depthTypeSelect?.value as 'euclidean' | 'orthogonal' | 'disparity') || 'euclidean',
@@ -2798,8 +2805,17 @@ class PLYVisualizer {
                                 </select>
                             </div>
                             <div class="tif-group" style="margin-bottom: 8px;">
-                                <label for="focal-length-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Focal Length (px):</label>
-                                <input type="number" id="focal-length-${i}" value="${this.getTifFocalLength(data)}" min="1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Focal Length (px):</label>
+                                <div style="display: flex; gap: 4px;">
+                                    <div style="flex: 1;">
+                                        <label for="fx-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">fx:</label>
+                                        <input type="number" id="fx-${i}" value="${this.getTifFx(data)}" min="1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                    </div>
+                                    <div style="flex: 1;">
+                                        <label for="fy-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">fy:</label>
+                                        <input type="number" id="fy-${i}" value="${this.getTifFy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Same as fx">
+                                    </div>
+                                </div>
                             </div>
                             <div class="tif-group" style="margin-bottom: 8px;">
                                 <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Principle Point (px):</label>
@@ -3480,11 +3496,19 @@ class PLYVisualizer {
                 }
 
                 // Update button state when any depth setting changes
-                const focalLengthInput = document.getElementById(`focal-length-${i}`) as HTMLInputElement;
-                if (focalLengthInput) {
-                    focalLengthInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
+                const fxInput = document.getElementById(`fx-${i}`) as HTMLInputElement;
+                const fyInput = document.getElementById(`fy-${i}`) as HTMLInputElement;
+                if (fxInput) {
+                    fxInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
                     // Prevent scroll wheel from changing value but allow page scrolling
-                    focalLengthInput.addEventListener('wheel', (e) => {
+                    fxInput.addEventListener('wheel', (e) => {
+                        (e.target as HTMLInputElement).blur();
+                    });
+                }
+                if (fyInput) {
+                    fyInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
+                    // Prevent scroll wheel from changing value but allow page scrolling
+                    fyInput.addEventListener('wheel', (e) => {
                         (e.target as HTMLInputElement).blur();
                     });
                 }
@@ -6327,7 +6351,8 @@ class PLYVisualizer {
                 // Use saved default settings for initial processing
                 const defaultSettings: CameraParams = {
                     cameraModel: this.defaultDepthSettings.cameraModel,
-                    focalLength: this.defaultDepthSettings.focalLength,
+                    fx: this.defaultDepthSettings.fx,
+                    fy: this.defaultDepthSettings.fy,
                     cx: (image.width - 1) / 2, // Auto-calculate cx from image dimensions
                     cy: (image.height - 1) / 2, // Auto-calculate cy from image dimensions
                     depthType: this.defaultDepthSettings.depthType,
@@ -6335,7 +6360,8 @@ class PLYVisualizer {
                     convention: this.defaultDepthSettings.convention || 'opengl'
                 };
                 console.log('✅ Using saved default depth settings for TIF:', defaultSettings);
-                this.showStatus(`Converting TIF depth image: ${defaultSettings.cameraModel} camera, focal length ${defaultSettings.focalLength}px, ${defaultSettings.depthType} depth, ${defaultSettings.convention} convention...`);
+                const fyInfo = defaultSettings.fy ? ` / fy=${defaultSettings.fy}` : '';
+                this.showStatus(`Converting TIF depth image: ${defaultSettings.cameraModel} camera, fx=${defaultSettings.fx}${fyInfo}px, ${defaultSettings.depthType} depth, ${defaultSettings.convention} convention...`);
                 
                 // Process the TIF file with default settings
                 await this.processDepthWithParams(requestId, defaultSettings);
@@ -6407,7 +6433,8 @@ class PLYVisualizer {
             // This will be done in processDepthWithParams after reading the actual image
             const defaultSettings: CameraParams = {
                 cameraModel: this.defaultDepthSettings.cameraModel,
-                focalLength: this.defaultDepthSettings.focalLength,
+                fx: this.defaultDepthSettings.fx,
+                fy: this.defaultDepthSettings.fy,
                 cx: 0, // Temporary placeholder, will be updated after reading image dimensions
                 cy: 0, // Temporary placeholder, will be updated after reading image dimensions  
                 depthType: this.defaultDepthSettings.depthType,
@@ -6418,7 +6445,8 @@ class PLYVisualizer {
             console.log('✅ Using saved default depth settings:', defaultSettings);
             const fileTypeLabel = isPng ? 'PNG' : isPfm ? 'PFM' : isNpy ? 'NPY' : 'TIF';
             const scaleInfo = isPng ? `, scale factor ${defaultSettings.pngScaleFactor}` : '';
-            this.showStatus(`Converting ${fileTypeLabel} depth image: ${defaultSettings.cameraModel} camera, focal length ${defaultSettings.focalLength}px, ${defaultSettings.depthType} depth${scaleInfo}...`);
+            const fyInfo = defaultSettings.fy ? ` / fy=${defaultSettings.fy}` : '';
+            this.showStatus(`Converting ${fileTypeLabel} depth image: ${defaultSettings.cameraModel} camera, fx=${defaultSettings.fx}${fyInfo}px, ${defaultSettings.depthType} depth${scaleInfo}...`);
             await this.processDepthWithParams(requestId, defaultSettings);
 
         } catch (error) {
@@ -6486,7 +6514,7 @@ class PLYVisualizer {
                 `Converted from ${fileType} depth image: ${depthFileData.fileName}`, 
                 `Camera: ${cameraParams.cameraModel}`, 
                 `Depth type: ${cameraParams.depthType}`,
-                `Focal length: ${cameraParams.focalLength}px`,
+                `fx: ${cameraParams.fx}px${cameraParams.fy ? `, fy: ${cameraParams.fy}px` : ''}`,
                 ...(cameraParams.baseline ? [`Baseline: ${cameraParams.baseline}mm`] : []),
                 ...(cameraParams.pngScaleFactor ? [`Scale factor: scale=${cameraParams.pngScaleFactor}`] : [])
             ]
@@ -6583,8 +6611,8 @@ class PLYVisualizer {
             console.log(`   🎯 Camera parameters are the source of truth for principle point`);
             
             // Set up camera parameters (use values from camera parameters, which may have been updated)
-            const fx = cameraParams.focalLength;
-            const fy = cameraParams.focalLength;
+            const fx = cameraParams.fx;
+            const fy = cameraParams.fy || cameraParams.fx; // Use fx if fy is not provided
             const cx = cameraParams.cx; // Use camera parameter value (updated if needed)
             const cy = cameraParams.cy; // Use camera parameter value (updated if needed)
 
@@ -6594,9 +6622,9 @@ class PLYVisualizer {
             console.log(`  ⚙️ Checking depthType: ${cameraParams.depthType}`);
             
             if (cameraParams.depthType === 'disparity') {
-                const fxOk = !!cameraParams.focalLength && cameraParams.focalLength > 0;
+                const fxOk = !!cameraParams.fx && cameraParams.fx > 0;
                 const blOk = !!cameraParams.baseline && cameraParams.baseline > 0;
-                console.log(`  🔍 Disparity checks: fxOk=${fxOk} (${cameraParams.focalLength}), blOk=${blOk} (${cameraParams.baseline})`);
+                console.log(`  🔍 Disparity checks: fxOk=${fxOk} (${cameraParams.fx}), blOk=${blOk} (${cameraParams.baseline})`);
                 if (fxOk && blOk) {
                     meta.kind = 'disparity';
                     meta.baseline = cameraParams.baseline! / 1000; // Convert mm to meters
@@ -6958,7 +6986,8 @@ class PLYVisualizer {
             
             const cameraParams: CameraParams = {
                 cameraModel: message.cameraModel,
-                focalLength: message.focalLength,
+                fx: message.fx,
+                fy: message.fy,
                 cx: message.cx || 320, // Default if not provided
                 cy: message.cy || 240, // Default if not provided
                 depthType: message.depthType || 'euclidean', // Default to euclidean for backward compatibility
@@ -7675,7 +7704,8 @@ class PLYVisualizer {
             const height = image.getHeight();
             const rasters = await image.readRasters();
             
-            console.log(`Processing TIF: ${width}x${height}, camera: ${cameraParams.cameraModel}, focal: ${cameraParams.focalLength}`);
+            const fyInfo = cameraParams.fy ? `, fy: ${cameraParams.fy}` : '';
+            console.log(`Processing TIF: ${width}x${height}, camera: ${cameraParams.cameraModel}, fx: ${cameraParams.fx}${fyInfo}`);
             
             // Extract depth data - handle different data types properly
             const rawDepthData = rasters[0];
@@ -7724,8 +7754,8 @@ class PLYVisualizer {
             
             // Calculate camera intrinsics (principal point at image center)
             // For 0-based pixel indexing, center is at (width/2 - 0.5, height/2 - 0.5)
-            const fx = cameraParams.focalLength;
-            const fy = cameraParams.focalLength;
+            const fx = cameraParams.fx;
+            const fy = cameraParams.fy || cameraParams.fx; // Use fx if fy is not provided
             const cx = width / 2 - 0.5;
             const cy = height / 2 - 0.5;
             
@@ -8206,16 +8236,33 @@ class PLYVisualizer {
         return '';
     }
 
-    private getTifFocalLength(data: PlyData): number {
+    private getTifFx(data: PlyData): number {
         const comments = (data as any)?.comments;
-        if (!Array.isArray(comments)) return this.defaultDepthSettings.focalLength;
+        if (!Array.isArray(comments)) return this.defaultDepthSettings.fx;
         for (const comment of comments) {
+            if (comment.startsWith('fx: ')) {
+                const match = comment.match(/(\d+(?:\.\d+)?)px/);
+                return match ? parseFloat(match[1]) : this.defaultDepthSettings.fx;
+            }
+            // Legacy support for 'Focal length:' format
             if (comment.startsWith('Focal length: ')) {
                 const match = comment.match(/(\d+(?:\.\d+)?)px/);
-                return match ? parseFloat(match[1]) : this.defaultDepthSettings.focalLength;
+                return match ? parseFloat(match[1]) : this.defaultDepthSettings.fx;
             }
         }
-        return this.defaultDepthSettings.focalLength; // Use default focal length
+        return this.defaultDepthSettings.fx;
+    }
+
+    private getTifFy(data: PlyData): string {
+        const comments = (data as any)?.comments;
+        if (!Array.isArray(comments)) return this.defaultDepthSettings.fy?.toString() || '';
+        for (const comment of comments) {
+            if (comment.startsWith('fy: ')) {
+                const match = comment.match(/(\d+(?:\.\d+)?)px/);
+                return match ? match[1] : (this.defaultDepthSettings.fy?.toString() || '');
+            }
+        }
+        return this.defaultDepthSettings.fy?.toString() || '';
     }
 
     private getTifBaseline(data: PlyData): number {
@@ -8316,8 +8363,8 @@ class PLYVisualizer {
             console.log('  baseline specifically:', newCameraParams.baseline);
 
             // Validate parameters
-            if (!newCameraParams.focalLength || newCameraParams.focalLength <= 0) {
-                throw new Error('Focal length must be a positive number');
+            if (!newCameraParams.fx || newCameraParams.fx <= 0) {
+                throw new Error('fx (focal length x) must be a positive number');
             }
             if (newCameraParams.depthType === 'disparity' && (!newCameraParams.baseline || newCameraParams.baseline <= 0)) {
                 throw new Error('Baseline must be a positive number for disparity mode');
@@ -8356,7 +8403,7 @@ class PLYVisualizer {
                 `Converted from ${fileType} depth image: ${depthData.fileName}`,
                 `Camera: ${newCameraParams.cameraModel}`,
                 `Depth type: ${newCameraParams.depthType}`,
-                `Focal length: ${newCameraParams.focalLength}px`,
+                `fx: ${newCameraParams.fx}px${newCameraParams.fy ? `, fy: ${newCameraParams.fy}px` : ''}`,
                 ...(newCameraParams.baseline ? [`Baseline: ${newCameraParams.baseline}mm`] : [])
             ];
 
@@ -8439,7 +8486,8 @@ class PLYVisualizer {
         if (message.settings) {
             // Update default settings from extension storage (exclude cx and cy as they are auto-calculated per image)
             this.defaultDepthSettings = {
-                focalLength: message.settings.focalLength || 1000,
+                fx: message.settings.fx || 1000,
+                fy: message.settings.fy,
                 cx: this.defaultDepthSettings.cx, // Keep existing cx, don't load from storage
                 cy: this.defaultDepthSettings.cy, // Keep existing cy, don't load from storage
                 cameraModel: message.settings.cameraModel || 'pinhole',
@@ -8471,9 +8519,13 @@ class PLYVisualizer {
 
     private updateDepthFormWithDefaults(fileIndex: number): void {
         // Update form fields to show default values (but preserve cx/cy if they exist from image dimensions)
-        const focalLengthInput = document.getElementById(`focal-length-${fileIndex}`) as HTMLInputElement;
-        if (focalLengthInput) {
-            focalLengthInput.value = this.defaultDepthSettings.focalLength.toString();
+        const fxInput = document.getElementById(`fx-${fileIndex}`) as HTMLInputElement;
+        const fyInput = document.getElementById(`fy-${fileIndex}`) as HTMLInputElement;
+        if (fxInput) {
+            fxInput.value = this.defaultDepthSettings.fx.toString();
+        }
+        if (fyInput && this.defaultDepthSettings.fy !== undefined) {
+            fyInput.value = this.defaultDepthSettings.fy.toString();
         }
 
         // Preserve cx/cy values if they were auto-calculated from TIF dimensions
@@ -8575,7 +8627,8 @@ class PLYVisualizer {
             console.log('  Default settings:', this.defaultDepthSettings);
             
             // Check if current settings match defaults
-            const focalMatch = currentParams.focalLength === this.defaultDepthSettings.focalLength;
+            const fxMatch = currentParams.fx === this.defaultDepthSettings.fx;
+            const fyMatch = (currentParams.fy === undefined && this.defaultDepthSettings.fy === undefined) || currentParams.fy === this.defaultDepthSettings.fy;
             const cameraMatch = currentParams.cameraModel === this.defaultDepthSettings.cameraModel;
             const depthMatch = currentParams.depthType === this.defaultDepthSettings.depthType;
             const conventionMatch = currentParams.convention === this.defaultDepthSettings.convention;
@@ -8586,14 +8639,15 @@ class PLYVisualizer {
             const pngScaleFactorMatch = currentScale === undefined && defaultScale === undefined ? true : 
                                    currentScale !== undefined && defaultScale !== undefined ? currentScale === defaultScale : false;
             
-            console.log(`  Focal match: ${focalMatch} (${currentParams.focalLength} === ${this.defaultDepthSettings.focalLength})`);
+            console.log(`  fx match: ${fxMatch} (${currentParams.fx} === ${this.defaultDepthSettings.fx})`);
+            console.log(`  fy match: ${fyMatch} (${currentParams.fy} === ${this.defaultDepthSettings.fy})`);
             console.log(`  Camera match: ${cameraMatch} (${currentParams.cameraModel} === ${this.defaultDepthSettings.cameraModel})`);
             console.log(`  Depth match: ${depthMatch} (${currentParams.depthType} === ${this.defaultDepthSettings.depthType})`);
             console.log(`  Convention match: ${conventionMatch} (${currentParams.convention} === ${this.defaultDepthSettings.convention})`);
             console.log(`  Baseline match: ${baselineMatch} (${currentParams.baseline} === ${this.defaultDepthSettings.baseline})`);
             console.log(`  Scale factor match: ${pngScaleFactorMatch} (current: ${currentScale}, default: ${defaultScale})`);
             
-            const isDefault = focalMatch && cameraMatch && depthMatch && conventionMatch && baselineMatch && pngScaleFactorMatch;
+            const isDefault = fxMatch && fyMatch && cameraMatch && depthMatch && conventionMatch && baselineMatch && pngScaleFactorMatch;
 
             if (isDefault) {
                 // Current settings are already default - make button blue
@@ -8621,7 +8675,8 @@ class PLYVisualizer {
             
             // Store as default settings for future files (exclude cx and cy as they are auto-calculated per image)
             this.defaultDepthSettings = {
-                focalLength: currentParams.focalLength,
+                fx: currentParams.fx,
+                fy: currentParams.fy,
                 cx: this.defaultDepthSettings.cx, // Keep existing cx, don't update from form
                 cy: this.defaultDepthSettings.cy, // Keep existing cy, don't update from form
                 cameraModel: currentParams.cameraModel,
@@ -8638,7 +8693,8 @@ class PLYVisualizer {
             });
             
             // Show confirmation message with more detail
-            this.showStatus(`✅ Default settings saved: ${currentParams.cameraModel}, f=${currentParams.focalLength}px, ${currentParams.depthType}, ${currentParams.convention}`);
+            const fyInfo = currentParams.fy ? `, fy=${currentParams.fy}` : '';
+            this.showStatus(`✅ Default settings saved: ${currentParams.cameraModel}, fx=${currentParams.fx}${fyInfo}px, ${currentParams.depthType}, ${currentParams.convention}`);
             
             // Update button state immediately
             this.updateDefaultButtonState();
@@ -8684,8 +8740,8 @@ class PLYVisualizer {
             let u, v;
             if (tifData.cameraParams.cameraModel === 'fisheye') {
                 // Fisheye projection
-                const fx = tifData.cameraParams.focalLength;
-                const fy = fx;
+                const fx = tifData.cameraParams.fx;
+                const fy = tifData.cameraParams.fy || tifData.cameraParams.fx;
                 const cx = width / 2 - 0.5;
                 const cy = height / 2 - 0.5;
                 
@@ -8698,8 +8754,8 @@ class PLYVisualizer {
                 v = Math.round(cy + rFish * Math.sin(phi));
             } else {
                 // Pinhole projection
-                const fx = tifData.cameraParams.focalLength;
-                const fy = fx;
+                const fx = tifData.cameraParams.fx;
+                const fy = tifData.cameraParams.fy || tifData.cameraParams.fx;
                 const cx = width / 2 - 0.5;
                 const cy = height / 2 - 0.5;
                 

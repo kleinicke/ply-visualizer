@@ -11,12 +11,13 @@ export interface PointCloudResult {
 export function projectToPointCloud(
   image: DepthImage,
   meta: Required<
-    Pick<DepthMetadata, "fx" | "fy" | "cx" | "cy" | "cameraModel">
+    Pick<DepthMetadata, "fx" | "cx" | "cy" | "cameraModel">
   > &
     Partial<DepthMetadata>
 ): PointCloudResult {
   const { width, height, data } = image;
-  const { fx, fy, cx, cy, cameraModel } = meta;
+  const { fx, cx, cy, cameraModel } = meta;
+  const fy = meta.fy || fx; // Use fx if fy is not provided
 
   const points: number[] = [];
   const colors: number[] = [];
