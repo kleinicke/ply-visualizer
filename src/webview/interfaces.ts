@@ -36,9 +36,11 @@ export interface CameraParams {
   fy?: number; // Focal length in y direction (pixels) - optional, defaults to fx if not provided
   cx: number; // Principal point x-coordinate (pixels)
   cy: number; // Principal point y-coordinate (pixels)
-  depthType: "euclidean" | "orthogonal" | "disparity";
+  depthType: "euclidean" | "orthogonal" | "disparity" | "inverse_depth";
   baseline?: number; // Required for disparity mode
   disparityOffset?: number; // Offset added to disparity values (default 0, not saved to defaults)
+  depthScale?: number; // Scale factor for depth values (for depth from mono networks)
+  depthBias?: number; // Bias offset for depth values (for depth from mono networks)
   convention?: "opengl" | "opencv"; // Coordinate convention
   pngScaleFactor?: number; // For PNG files: divisor to convert raw values to meters (1000 for mm)
 }

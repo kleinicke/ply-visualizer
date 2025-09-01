@@ -163,7 +163,9 @@ class PLYVisualizer {
         cameraModel: 'pinhole',
         depthType: 'euclidean',
         convention: 'opengl',
-        pngScaleFactor: 1000 // Default for PNG files
+        pngScaleFactor: 1000, // Default for PNG files
+        depthScale: 1.0, // Default scale factor for mono depth networks
+        depthBias: 0.0 // Default bias for mono depth networks
     };
     private convertSrgbToLinear: boolean = true; // Default: remove gamma from source colors
     private srgbToLinearLUT: Float32Array | null = null;
@@ -2027,6 +2029,8 @@ class PLYVisualizer {
         const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
         const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
         const disparityOffsetInput = document.getElementById(`disparity-offset-${fileIndex}`) as HTMLInputElement;
+        const depthScaleInput = document.getElementById(`depth-scale-${fileIndex}`) as HTMLInputElement;
+        const depthBiasInput = document.getElementById(`depth-bias-${fileIndex}`) as HTMLInputElement;
         const conventionSelect = document.getElementById(`convention-${fileIndex}`) as HTMLSelectElement;
         const pngScaleFactorInput = document.getElementById(`png-scale-factor-${fileIndex}`) as HTMLInputElement;
 
@@ -2046,9 +2050,11 @@ class PLYVisualizer {
             fy: fy,
             cx: cx,
             cy: cy,
-            depthType: (depthTypeSelect?.value as 'euclidean' | 'orthogonal' | 'disparity') || 'euclidean',
+            depthType: (depthTypeSelect?.value as 'euclidean' | 'orthogonal' | 'disparity' | 'inverse_depth') || 'euclidean',
             baseline: depthTypeSelect?.value === 'disparity' ? parseFloat(baselineInput?.value || '120') : undefined,
             disparityOffset: depthTypeSelect?.value === 'disparity' ? parseFloat(disparityOffsetInput?.value || '0') : undefined,
+            depthScale: depthScaleInput?.value ? parseFloat(depthScaleInput.value) : undefined,
+            depthBias: depthBiasInput?.value ? parseFloat(depthBiasInput.value) : undefined,
             convention: (conventionSelect?.value as 'opengl' | 'opencv') || 'opengl',
             pngScaleFactor: pngScaleFactorInput ? parseFloat(pngScaleFactorInput.value || '1000') || 1000 : undefined
         };
@@ -2840,6 +2846,7 @@ class PLYVisualizer {
                                     <option value="euclidean" ${this.getTifSetting(data, 'depth').includes('euclidean') ? 'selected' : ''}>Euclidean</option>
                                     <option value="orthogonal" ${this.getTifSetting(data, 'depth').includes('orthogonal') ? 'selected' : ''}>Orthogonal</option>
                                     <option value="disparity" ${this.getTifSetting(data, 'depth').includes('disparity') ? 'selected' : ''}>Disparity</option>
+                                    <option value="inverse_depth" ${this.getTifSetting(data, 'depth').includes('inverse_depth') ? 'selected' : ''}>Inverse Depth</option>
                                 </select>
                             </div>
                             <div class="tif-group" id="baseline-group-${i}" style="margin-bottom: 8px; ${this.getTifSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
@@ -2849,6 +2856,19 @@ class PLYVisualizer {
                             <div class="tif-group" id="disparity-offset-group-${i}" style="margin-bottom: 8px; ${this.getTifSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
                                 <label for="disparity-offset-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Disparity Offset:</label>
                                 <input type="number" id="disparity-offset-${i}" value="0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Offset added to disparity values">
+                            </div>
+                            <div class="tif-group" style="margin-bottom: 8px;">
+                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 4px;">Depth from Mono Parameters:</label>
+                                <div style="display: flex; gap: 6px;">
+                                    <div style="flex: 1;">
+                                        <label for="depth-scale-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Scale:</label>
+                                        <input type="number" id="depth-scale-${i}" value="1.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Scale factor">
+                                    </div>
+                                    <div style="flex: 1;">
+                                        <label for="depth-bias-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Bias:</label>
+                                        <input type="number" id="depth-bias-${i}" value="0.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Bias offset">
+                                    </div>
+                                </div>
                             </div>
                             ${this.isPngDerivedFile(data) ? `
                             <div class="tif-group" style="margin-bottom: 8px;">
@@ -3551,6 +3571,24 @@ class PLYVisualizer {
                     baselineInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
                     // Prevent scroll wheel from changing value but allow page scrolling
                     baselineInput.addEventListener('wheel', (e) => {
+                        (e.target as HTMLInputElement).blur();
+                    });
+                }
+
+                const depthScaleInput = document.getElementById(`depth-scale-${i}`) as HTMLInputElement;
+                if (depthScaleInput) {
+                    depthScaleInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
+                    // Prevent scroll wheel from changing value but allow page scrolling
+                    depthScaleInput.addEventListener('wheel', (e) => {
+                        (e.target as HTMLInputElement).blur();
+                    });
+                }
+
+                const depthBiasInput = document.getElementById(`depth-bias-${i}`) as HTMLInputElement;
+                if (depthBiasInput) {
+                    depthBiasInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
+                    // Prevent scroll wheel from changing value but allow page scrolling
+                    depthBiasInput.addEventListener('wheel', (e) => {
                         (e.target as HTMLInputElement).blur();
                     });
                 }
@@ -6649,6 +6687,9 @@ class PLYVisualizer {
             } else if (cameraParams.depthType === 'euclidean') {
                 meta.kind = 'depth';
                 console.log(`  ✅ Set meta.kind to 'depth' (euclidean)`);
+            } else if (cameraParams.depthType === 'inverse_depth') {
+                meta.kind = 'inverse_depth';
+                console.log(`  ✅ Set meta.kind to 'inverse_depth'`);
             }
             
             console.log(`  📋 Final meta.kind: ${meta.kind}`);
@@ -6656,7 +6697,9 @@ class PLYVisualizer {
             const norm = normalizeDepth(image, {
                 ...meta,
                 fx, fy, cx, cy,
-                baseline: meta.baseline
+                baseline: meta.baseline,
+                depthScale: cameraParams.depthScale,
+                depthBias: cameraParams.depthBias
             });
 
             const result = projectToPointCloud(norm, {
@@ -7806,7 +7849,7 @@ class PLYVisualizer {
         cx: number,
         cy: number,
         cameraModel: 'pinhole' | 'fisheye',
-        depthType: 'euclidean' | 'orthogonal' | 'disparity' = 'euclidean',
+        depthType: 'euclidean' | 'orthogonal' | 'disparity' | 'inverse_depth' = 'euclidean',
         baseline?: number,
         disparityOffset?: number
     ): TifConversionResult {
@@ -8508,7 +8551,9 @@ class PLYVisualizer {
                 depthType: message.settings.depthType || 'euclidean',
                 baseline: message.settings.baseline,
                 convention: message.settings.convention || 'opengl',
-                pngScaleFactor: message.settings.pngScaleFactor || 1000
+                pngScaleFactor: message.settings.pngScaleFactor || 1000,
+                depthScale: message.settings.depthScale !== undefined ? message.settings.depthScale : 1.0,
+                depthBias: message.settings.depthBias !== undefined ? message.settings.depthBias : 0.0
             };
             console.log('✅ Loaded default depth settings from extension:', this.defaultDepthSettings);
             
@@ -8592,6 +8637,16 @@ class PLYVisualizer {
             conventionSelect.value = this.defaultDepthSettings.convention || 'opengl';
         }
 
+        const depthScaleInput = document.getElementById(`depth-scale-${fileIndex}`) as HTMLInputElement;
+        if (depthScaleInput && this.defaultDepthSettings.depthScale !== undefined) {
+            depthScaleInput.value = this.defaultDepthSettings.depthScale.toString();
+        }
+
+        const depthBiasInput = document.getElementById(`depth-bias-${fileIndex}`) as HTMLInputElement;
+        if (depthBiasInput && this.defaultDepthSettings.depthBias !== undefined) {
+            depthBiasInput.value = this.defaultDepthSettings.depthBias.toString();
+        }
+
         console.log(`✅ Updated depth form ${fileIndex} with defaults:`, this.defaultDepthSettings);
     }
 
@@ -8652,6 +8707,8 @@ class PLYVisualizer {
             const depthMatch = currentParams.depthType === this.defaultDepthSettings.depthType;
             const conventionMatch = currentParams.convention === this.defaultDepthSettings.convention;
             const baselineMatch = (currentParams.baseline || undefined) === (this.defaultDepthSettings.baseline || undefined);
+            const depthScaleMatch = (currentParams.depthScale !== undefined ? currentParams.depthScale : 1.0) === (this.defaultDepthSettings.depthScale !== undefined ? this.defaultDepthSettings.depthScale : 1.0);
+            const depthBiasMatch = (currentParams.depthBias !== undefined ? currentParams.depthBias : 0.0) === (this.defaultDepthSettings.depthBias !== undefined ? this.defaultDepthSettings.depthBias : 0.0);
             // Handle scale factor comparison more carefully (only for PNG files)
             const currentScale = currentParams.pngScaleFactor;
             const defaultScale = this.defaultDepthSettings.pngScaleFactor;
@@ -8664,9 +8721,11 @@ class PLYVisualizer {
             console.log(`  Depth match: ${depthMatch} (${currentParams.depthType} === ${this.defaultDepthSettings.depthType})`);
             console.log(`  Convention match: ${conventionMatch} (${currentParams.convention} === ${this.defaultDepthSettings.convention})`);
             console.log(`  Baseline match: ${baselineMatch} (${currentParams.baseline} === ${this.defaultDepthSettings.baseline})`);
+            console.log(`  Depth scale match: ${depthScaleMatch} (${currentParams.depthScale} === ${this.defaultDepthSettings.depthScale})`);
+            console.log(`  Depth bias match: ${depthBiasMatch} (${currentParams.depthBias} === ${this.defaultDepthSettings.depthBias})`);
             console.log(`  Scale factor match: ${pngScaleFactorMatch} (current: ${currentScale}, default: ${defaultScale})`);
             
-            const isDefault = fxMatch && fyMatch && cameraMatch && depthMatch && conventionMatch && baselineMatch && pngScaleFactorMatch;
+            const isDefault = fxMatch && fyMatch && cameraMatch && depthMatch && conventionMatch && baselineMatch && depthScaleMatch && depthBiasMatch && pngScaleFactorMatch;
 
             if (isDefault) {
                 // Current settings are already default - make button blue
@@ -8702,7 +8761,9 @@ class PLYVisualizer {
                 depthType: currentParams.depthType,
                 baseline: currentParams.baseline,
                 convention: currentParams.convention || 'opengl',
-                pngScaleFactor: currentParams.pngScaleFactor
+                pngScaleFactor: currentParams.pngScaleFactor,
+                depthScale: currentParams.depthScale,
+                depthBias: currentParams.depthBias
             };
             
             // Save to extension global state for persistence across webview instances

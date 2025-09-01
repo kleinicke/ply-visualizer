@@ -3,6 +3,7 @@
 ## [1.3.0]
 
 Add easier selection of material
+Add support for fx, fy, cx, cy, disp offset, bias and scale and inverse depth support for depth images
 
 ## [1.2.0] - 2025-08-25
 

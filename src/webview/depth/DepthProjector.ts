@@ -142,6 +142,17 @@ export function normalizeDepth(
     for (let i = 0; i < data.length; i++) data[i] = data[i] * scale;
   }
 
+  // Apply depth scale and bias for mono depth networks (before type-specific conversions)
+  if (meta.depthScale !== undefined || meta.depthBias !== undefined) {
+    const scale = meta.depthScale ?? 1.0;
+    const bias = meta.depthBias ?? 0.0;
+    for (let i = 0; i < data.length; i++) {
+      if (isFinite(data[i])) {
+        data[i] = data[i] * scale + bias;
+      }
+    }
+  }
+
   // Convert disparity/inv_depth to depth in meters if possible
   if (meta.kind === "disparity") {
     const fx = meta.fx ?? 0;
@@ -157,7 +168,7 @@ export function normalizeDepth(
       meta.kind = "depth";
       meta.unit = "meter";
     }
-  } else if (meta.kind === "inv_depth") {
+  } else if (meta.kind === "inverse_depth") {
     const scale =
       (meta.unit === "millimeter" ? 1 / 1000 : 1) * (meta.scale ?? 1);
     for (let i = 0; i < data.length; i++) {

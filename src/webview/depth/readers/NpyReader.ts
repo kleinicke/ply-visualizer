@@ -394,7 +394,7 @@ export class NpyReader implements DepthReader {
         if (selectedArray.toLowerCase().includes('disparity')) {
             kind = 'disparity';
         } else if (selectedArray.toLowerCase().includes('inv')) {
-            kind = 'inv_depth';
+            kind = 'inverse_depth';
         }
         
         const meta: DepthMetadata = { 

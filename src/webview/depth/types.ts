@@ -1,6 +1,6 @@
 export type CameraModel = 'pinhole' | 'fisheye';
 
-export type DepthKind = 'depth' | 'disparity' | 'inv_depth' | 'z';
+export type DepthKind = 'depth' | 'disparity' | 'inverse_depth' | 'z';
 
 export interface DepthImage {
   width: number;
@@ -12,12 +12,14 @@ export interface DepthImage {
 }
 
 export interface DepthMetadata {
-  kind: DepthKind; // 'depth' (range), 'z' (optical axis), 'disparity', 'inv_depth'
+  kind: DepthKind; // 'depth' (range), 'z' (optical axis), 'disparity', 'inverse_depth'
   unit?: 'meter' | 'millimeter';
   scale?: number; // multiplier to convert values to meters when kind === 'depth'|'z'
   fx?: number; fy?: number; cx?: number; cy?: number;
   baseline?: number; // meters, for disparity
   disparityOffset?: number; // offset added to disparity values (default 0)
+  depthScale?: number; // scale factor for depth values (for depth from mono networks)
+  depthBias?: number; // bias offset for depth values (for depth from mono networks)
   cameraModel?: CameraModel;
   convention?: 'opencv' | 'opengl';
   depthClamp?: { min?: number; max?: number };
