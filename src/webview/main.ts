@@ -2025,6 +2025,7 @@ class PLYVisualizer {
         const cyInput = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
         const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
         const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
+        const disparityOffsetInput = document.getElementById(`disparity-offset-${fileIndex}`) as HTMLInputElement;
         const conventionSelect = document.getElementById(`convention-${fileIndex}`) as HTMLSelectElement;
         const pngScaleFactorInput = document.getElementById(`png-scale-factor-${fileIndex}`) as HTMLInputElement;
 
@@ -2046,6 +2047,7 @@ class PLYVisualizer {
             cy: cy,
             depthType: (depthTypeSelect?.value as 'euclidean' | 'orthogonal' | 'disparity') || 'euclidean',
             baseline: depthTypeSelect?.value === 'disparity' ? parseFloat(baselineInput?.value || '120') : undefined,
+            disparityOffset: depthTypeSelect?.value === 'disparity' ? parseFloat(disparityOffsetInput?.value || '0') : undefined,
             convention: (conventionSelect?.value as 'opengl' | 'opencv') || 'opengl',
             pngScaleFactor: pngScaleFactorInput ? parseFloat(pngScaleFactorInput.value || '1000') || 1000 : undefined
         };
@@ -2843,6 +2845,10 @@ class PLYVisualizer {
                                 <label for="baseline-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Baseline (mm):</label>
                                 <input type="number" id="baseline-${i}" value="${this.getTifBaseline(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                             </div>
+                            <div class="tif-group" id="disparity-offset-group-${i}" style="margin-bottom: 8px; ${this.getTifSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
+                                <label for="disparity-offset-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Disparity Offset:</label>
+                                <input type="number" id="disparity-offset-${i}" value="0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Offset added to disparity values">
+                            </div>
                             ${this.isPngDerivedFile(data) ? `
                             <div class="tif-group" style="margin-bottom: 8px;">
                                 <label for="png-scale-factor-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Scale Factor:</label>
@@ -3485,12 +3491,15 @@ class PLYVisualizer {
                     });
                 }
 
-                // Depth type change handler for baseline visibility
+                // Depth type change handler for baseline and disparity offset visibility
                 const depthTypeSelect = document.getElementById(`depth-type-${i}`) as HTMLSelectElement;
                 const baselineGroup = document.getElementById(`baseline-group-${i}`);
-                if (depthTypeSelect && baselineGroup) {
+                const disparityOffsetGroup = document.getElementById(`disparity-offset-group-${i}`);
+                if (depthTypeSelect && baselineGroup && disparityOffsetGroup) {
                     depthTypeSelect.addEventListener('change', () => {
-                        baselineGroup.style.display = depthTypeSelect.value === 'disparity' ? '' : 'none';
+                        const isDisparity = depthTypeSelect.value === 'disparity';
+                        baselineGroup.style.display = isDisparity ? '' : 'none';
+                        disparityOffsetGroup.style.display = isDisparity ? '' : 'none';
                         this.updateSingleDefaultButtonState(i);
                     });
                 }
@@ -6628,7 +6637,8 @@ class PLYVisualizer {
                 if (fxOk && blOk) {
                     meta.kind = 'disparity';
                     meta.baseline = cameraParams.baseline! / 1000; // Convert mm to meters
-                    console.log(`  ✅ Set meta.kind to 'disparity', baseline=${meta.baseline}m`);
+                    meta.disparityOffset = cameraParams.disparityOffset || 0; // Default to 0
+                    console.log(`  ✅ Set meta.kind to 'disparity', baseline=${meta.baseline}m, offset=${meta.disparityOffset}`);
                 } else {
                     console.warn('Disparity selected but baseline/focal missing; keeping original kind:', baseMeta.kind);
                 }
@@ -7770,7 +7780,8 @@ class PLYVisualizer {
                 cy,
                 cameraParams.cameraModel,
                 cameraParams.depthType,
-                cameraParams.baseline
+                cameraParams.baseline,
+                cameraParams.disparityOffset
             );
             
             return result;
@@ -7795,7 +7806,8 @@ class PLYVisualizer {
         cy: number,
         cameraModel: 'pinhole' | 'fisheye',
         depthType: 'euclidean' | 'orthogonal' | 'disparity' = 'euclidean',
-        baseline?: number
+        baseline?: number,
+        disparityOffset?: number
     ): TifConversionResult {
         
         const points: number[] = [];
@@ -7883,8 +7895,9 @@ class PLYVisualizer {
                         }
                         
                         const originalDisparity = depth;
-                        // Convert disparity to depth: depth = baseline * focal_length / disparity
-                        depth = (baseline * fx) / depth;
+                        // Convert disparity to depth: Z = baseline * fx / (disparity + disparityOffset)
+                        const dWithOffset = depth + (disparityOffset || 0);
+                        depth = (baseline * fx) / dWithOffset;
                         
                         // Log conversion for debugging (only for first few pixels)
                         if (v === 0 && u < 5) {
@@ -8556,10 +8569,15 @@ class PLYVisualizer {
         if (depthTypeSelect) {
             depthTypeSelect.value = this.defaultDepthSettings.depthType;
             
-            // Update baseline visibility based on depth type
+            // Update baseline and disparity offset visibility based on depth type
             const baselineGroup = document.getElementById(`baseline-group-${fileIndex}`);
+            const disparityOffsetGroup = document.getElementById(`disparity-offset-group-${fileIndex}`);
+            const isDisparity = this.defaultDepthSettings.depthType === 'disparity';
             if (baselineGroup) {
-                baselineGroup.style.display = this.defaultDepthSettings.depthType === 'disparity' ? '' : 'none';
+                baselineGroup.style.display = isDisparity ? '' : 'none';
+            }
+            if (disparityOffsetGroup) {
+                disparityOffsetGroup.style.display = isDisparity ? '' : 'none';
             }
         }
 

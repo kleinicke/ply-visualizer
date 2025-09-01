@@ -146,11 +146,13 @@ export function normalizeDepth(
   if (meta.kind === "disparity") {
     const fx = meta.fx ?? 0;
     const baseline = meta.baseline ?? 0;
+    const disparityOffset = meta.disparityOffset ?? 0;
     const eps = 1e-8;
     if (fx > 0 && baseline > 0) {
       for (let i = 0; i < data.length; i++) {
         const d = data[i];
-        data[i] = d > eps ? (fx * baseline) / d : NaN;
+        const dWithOffset = d + disparityOffset;
+        data[i] = dWithOffset > eps ? (fx * baseline) / dWithOffset : NaN;
       }
       meta.kind = "depth";
       meta.unit = "meter";

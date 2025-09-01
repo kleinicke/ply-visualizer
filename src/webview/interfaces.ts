@@ -38,6 +38,7 @@ export interface CameraParams {
   cy: number; // Principal point y-coordinate (pixels)
   depthType: "euclidean" | "orthogonal" | "disparity";
   baseline?: number; // Required for disparity mode
+  disparityOffset?: number; // Offset added to disparity values (default 0, not saved to defaults)
   convention?: "opengl" | "opencv"; // Coordinate convention
   pngScaleFactor?: number; // For PNG files: divisor to convert raw values to meters (1000 for mm)
 }

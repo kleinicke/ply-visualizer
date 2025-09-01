@@ -17,6 +17,7 @@ export interface DepthMetadata {
   scale?: number; // multiplier to convert values to meters when kind === 'depth'|'z'
   fx?: number; fy?: number; cx?: number; cy?: number;
   baseline?: number; // meters, for disparity
+  disparityOffset?: number; // offset added to disparity values (default 0)
   cameraModel?: CameraModel;
   convention?: 'opencv' | 'opengl';
   depthClamp?: { min?: number; max?: number };
