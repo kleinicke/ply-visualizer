@@ -2006,8 +2006,9 @@ class PLYVisualizer {
             // Move camera along its current direction to the new distance
             const dir = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
             this.camera.position.copy(center.clone().sub(dir.multiplyScalar(distance)));
-            this.camera.near = Math.max(0.001, distance / 1000);
-            this.camera.far = distance * 1000;
+            // Conservative clipping planes for massive point clouds
+            this.camera.near = Math.max(0.001, Math.min(0.1, distance / 10000));
+            this.camera.far = Math.max(distance * 100, 1000000);
             this.camera.updateProjectionMatrix();
 
             // Update controls target if present
