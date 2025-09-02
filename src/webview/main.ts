@@ -6579,8 +6579,8 @@ class PointCloudVisualizer {
             height: (result as any).height || 0
         };
         
-        // Log TIF dimensions when storing
-        console.log(`📐 Storing TIF data for file ${fileIndex}:`);
+        // Log depth image dimensions when storing
+        console.log(`📐 Storing depth data for file ${fileIndex} (${fileType}):`);
         console.log(`   Dimensions: ${dimensions.width} × ${dimensions.height}`);
         console.log(`   Computed principle point would be: cx = ${(dimensions.width-1)/2}, cy = ${(dimensions.height-1)/2}`);
         
@@ -7638,29 +7638,25 @@ class PointCloudVisualizer {
             const blob = new Blob([message.data], { type: message.mimeType || 'image/png' });
             const file = new File([blob], message.fileName, { type: message.mimeType || 'image/png' });
             
+            // Get depth data first to access dimensions
+            const fileIndex = message.fileIndex;
+            const depthData = this.fileDepthData.get(fileIndex);
+            if (!depthData) {
+                throw new Error('No cached depth data found for this file');
+            }
+
             // Load and validate the color image
-            const imageData = await this.loadAndValidateColorImage(file);
+            const imageData = await this.loadAndValidateColorImage(file, depthData.depthDimensions);
             
             if (!imageData) {
                 return; // Error already shown in loadAndValidateColorImage
             }
 
-            const fileIndex = message.fileIndex;
-            const depthData = this.fileDepthData.get(fileIndex);
-            if (!depthData) {
-                throw new Error('No cached TIF data found for this file');
-            }
-
-            // Validate dimensions match TIF
-            if (imageData.width !== depthData.depthDimensions.width || imageData.height !== depthData.depthDimensions.height) {
-                throw new Error(`Color image dimensions (${imageData.width}x${imageData.height}) do not match TIF dimensions (${depthData.depthDimensions.width}x${depthData.depthDimensions.height})`);
-            }
-
-            // Store color image data and name in TIF data for future reprocessing
+            // Store color image data and name in depth data for future reprocessing
             depthData.colorImageData = imageData;
             depthData.colorImageName = message.fileName;
 
-            // Reprocess TIF with color data
+            // Reprocess depth image with color data
             const result = await this.processDepthToPointCloud(depthData.originalData, depthData.fileName, depthData.cameraParams);
             await this.applyColorToDepthResult(result, imageData, depthData);
 
@@ -7678,7 +7674,7 @@ class PointCloudVisualizer {
             if (this.meshes[fileIndex] instanceof THREE.Points && newMaterial instanceof THREE.PointsMaterial) {
                 const currentPointSize = this.pointSizes[fileIndex] || 0.001;
                 newMaterial.size = currentPointSize;
-                console.log(`🔧 Applied point size ${currentPointSize} to color-updated TIF material for file ${fileIndex}`);
+                console.log(`🔧 Applied point size ${currentPointSize} to color-updated depth material for file ${fileIndex}`);
             }
             
             // Update geometry with colors
@@ -7728,9 +7724,11 @@ class PointCloudVisualizer {
                 }
             }
 
-            // Update UI
+            // Update UI (preserve depth panel states)
+            const openPanelStates = this.captureDepthPanelStates();
             this.updateFileStats();
             this.updateFileList();
+            this.restoreDepthPanelStates(openPanelStates);
             this.showStatus(`Color image "${message.fileName}" applied successfully!`);
 
         } catch (error) {
@@ -7761,6 +7759,7 @@ class PointCloudVisualizer {
         const points: number[] = [];
         const colors: number[] = [];
         const logDepths: number[] = [];
+        const pixelCoords: number[] = []; // Store original (u,v) coordinates for each point
         
         // Track depth statistics for debugging disappearing point clouds
         let minDepth = Infinity;
@@ -7814,6 +7813,9 @@ class PointCloudVisualizer {
                             z_norm * depth
                         );
                     }
+                    
+                    // Store original pixel coordinates (i,j) for this point
+                    pixelCoords.push(i, j);
                     
                     // Track depth for color mapping
                     minDepth = Math.min(minDepth, depth);
@@ -7889,6 +7891,9 @@ class PointCloudVisualizer {
                         dirZ * depth
                     );
                     
+                    // Store original pixel coordinates (u,v) for this point
+                    pixelCoords.push(u, v);
+                    
                     // Track depth for color mapping
                     minDepth = Math.min(minDepth, depth);
                     maxDepth = Math.max(maxDepth, depth);
@@ -7937,6 +7942,7 @@ class PointCloudVisualizer {
         return {
             vertices: new Float32Array(points),
             colors: new Float32Array(colors),
+            pixelCoords: new Float32Array(pixelCoords),
             pointCount: points.length / 3
         };
     }
@@ -7980,13 +7986,15 @@ class PointCloudVisualizer {
     /**
      * Load and validate color image dimensions
      */
-    private async loadAndValidateColorImage(file: File): Promise<ImageData | null> {
+    private async loadAndValidateColorImage(file: File, depthDimensions?: { width: number; height: number }): Promise<ImageData | null> {
         return new Promise((resolve) => {
-            if (!this.depthDimensions) {
-                this.showColorMappingStatus('No TIF dimensions available for validation', 'error');
+            if (!depthDimensions && !this.depthDimensions) {
+                this.showColorMappingStatus('No depth image dimensions available for validation', 'error');
                 resolve(null);
                 return;
             }
+            
+            const dimensions = depthDimensions || this.depthDimensions!;
 
             const img = new Image();
             const canvas = document.createElement('canvas');
@@ -7994,9 +8002,9 @@ class PointCloudVisualizer {
 
             img.onload = () => {
                 // Validate dimensions
-                if (img.width !== this.depthDimensions!.width || img.height !== this.depthDimensions!.height) {
+                if (img.width !== dimensions.width || img.height !== dimensions.height) {
                     this.showColorMappingStatus(
-                        `Image dimensions (${img.width}×${img.height}) don't match depth image (${this.depthDimensions!.width}×${this.depthDimensions!.height})`,
+                        `Image dimensions (${img.width}×${img.height}) don't match depth image (${dimensions.width}×${dimensions.height})`,
                         'error'
                     );
                     resolve(null);
@@ -8020,7 +8028,11 @@ class PointCloudVisualizer {
             // Handle different file types
             console.log(`Loading color image: ${file.name}, type: ${file.type}, size: ${file.size} bytes`);
             
-            if (file.type.startsWith('image/') && !file.type.includes('tiff') && !file.type.includes('tif')) {
+            if (file.name.toLowerCase().endsWith('.ppm')) {
+                // Handle PPM files
+                console.log('Loading as PPM file');
+                this.loadPpmImage(file, dimensions, resolve);
+            } else if (file.type.startsWith('image/') && !file.type.includes('tiff') && !file.type.includes('tif')) {
                 // Regular image files (PNG, JPEG, etc.) - not TIF
                 console.log('Loading as regular image file');
                 img.src = URL.createObjectURL(file);
@@ -8039,9 +8051,9 @@ class PointCloudVisualizer {
                         const width = image.getWidth();
                         const height = image.getHeight();
                         
-                        if (width !== this.depthDimensions!.width || height !== this.depthDimensions!.height) {
+                        if (width !== dimensions.width || height !== dimensions.height) {
                             this.showColorMappingStatus(
-                                `TIF dimensions (${width}×${height}) don't match depth image (${this.depthDimensions!.width}×${this.depthDimensions!.height})`,
+                                `TIF dimensions (${width}×${height}) don't match depth image (${dimensions.width}×${dimensions.height})`,
                                 'error'
                             );
                             resolve(null);
@@ -8110,6 +8122,100 @@ class PointCloudVisualizer {
                 statusElement.className = 'status-text';
             }, 5000);
         }
+    }
+
+    /**
+     * Load PPM image file and convert to ImageData
+     */
+    private loadPpmImage(file: File, dimensions: { width: number; height: number }, resolve: (value: ImageData | null) => void): void {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target!.result as string;
+                const imageData = this.parsePpmImage(text, dimensions);
+                resolve(imageData);
+            } catch (error) {
+                console.error('Error parsing PPM file:', error);
+                this.showColorMappingStatus('Failed to parse PPM file: ' + (error instanceof Error ? error.message : String(error)), 'error');
+                resolve(null);
+            }
+        };
+        
+        reader.onerror = () => {
+            this.showColorMappingStatus('Failed to read PPM file', 'error');
+            resolve(null);
+        };
+        
+        reader.readAsText(file);
+    }
+
+    /**
+     * Parse PPM image format (P3 - ASCII RGB)
+     */
+    private parsePpmImage(text: string, expectedDimensions: { width: number; height: number }): ImageData {
+        const lines = text.split('\n').map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+        
+        if (lines.length < 4) {
+            throw new Error('Invalid PPM format: insufficient data');
+        }
+        
+        // Check magic number
+        if (lines[0] !== 'P3') {
+            throw new Error('Unsupported PPM format: only P3 (ASCII RGB) is supported');
+        }
+        
+        // Parse dimensions
+        const dimensions = lines[1].split(/\s+/).map(Number);
+        if (dimensions.length !== 2) {
+            throw new Error('Invalid PPM format: invalid dimensions line');
+        }
+        
+        const [width, height] = dimensions;
+        
+        // Validate dimensions match depth image
+        if (width !== expectedDimensions.width || height !== expectedDimensions.height) {
+            throw new Error(`PPM dimensions (${width}×${height}) don't match depth image (${expectedDimensions.width}×${expectedDimensions.height})`);
+        }
+        
+        // Parse max value
+        const maxVal = parseInt(lines[2]);
+        if (isNaN(maxVal) || maxVal <= 0) {
+            throw new Error('Invalid PPM format: invalid maximum value');
+        }
+        
+        // Parse RGB data
+        const rgbValues = [];
+        for (let i = 3; i < lines.length; i++) {
+            const values = lines[i].split(/\s+/).map(Number);
+            rgbValues.push(...values);
+        }
+        
+        // Validate RGB data length
+        const expectedPixels = width * height * 3;
+        if (rgbValues.length !== expectedPixels) {
+            throw new Error(`Invalid PPM format: expected ${expectedPixels} RGB values, got ${rgbValues.length}`);
+        }
+        
+        // Create ImageData
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d')!;
+        const imageData = ctx.createImageData(width, height);
+        
+        // Convert PPM data to ImageData format
+        for (let i = 0; i < rgbValues.length; i += 3) {
+            const pixelIndex = (i / 3) * 4;
+            const r = Math.round((rgbValues[i] / maxVal) * 255);
+            const g = Math.round((rgbValues[i + 1] / maxVal) * 255);
+            const b = Math.round((rgbValues[i + 2] / maxVal) * 255);
+            
+            imageData.data[pixelIndex] = r;
+            imageData.data[pixelIndex + 1] = g;
+            imageData.data[pixelIndex + 2] = b;
+            imageData.data[pixelIndex + 3] = 255; // Alpha
+        }
+        
+        console.log(`✅ Successfully parsed PPM image: ${width}×${height}, maxVal: ${maxVal}`);
+        return imageData;
     }
 
     /**
@@ -8349,9 +8455,13 @@ class PointCloudVisualizer {
             // Process the depth data with new parameters using the new system
             const result = await this.processDepthToPointCloud(depthData.originalData, depthData.fileName, newCameraParams);
             
-            // If there's a stored color image, reapply it (only for TIF files)
-            if (!isPfm && depthData.colorImageData) {
+            // Update the stored camera parameters with the processed values (cx/cy might have been updated)
+            depthData.cameraParams = newCameraParams;
+            
+            // If there's a stored color image, reapply it (works for all depth formats)
+            if (depthData.colorImageData) {
                 console.log(`🎨 Reapplying stored color image: ${depthData.colorImageName}`);
+                console.log(`🎯 Using updated camera params: cx=${newCameraParams.cx}, cy=${newCameraParams.cy}`);
                 await this.applyColorToDepthResult(result, depthData.colorImageData, { cameraParams: newCameraParams });
             }
             
@@ -8700,64 +8810,91 @@ class PointCloudVisualizer {
         const colors = new Float32Array(result.pointCount * 3);
         let colorIndex = 0;
 
-        for (let i = 0; i < result.pointCount; i++) {
-            const vertexIndex = i * 3;
-            let x = result.vertices[vertexIndex];
-            let y = result.vertices[vertexIndex + 1];
-            let z = result.vertices[vertexIndex + 2];
+        // Use stored pixel coordinates instead of reprojecting 3D points
+        if (result.pixelCoords && result.pixelCoords.length === result.pointCount * 2) {
+            console.log('🎨 Using stored pixel coordinates for color mapping');
+            
+            for (let i = 0; i < result.pointCount; i++) {
+                const pixelIndex = i * 2;
+                const u = Math.round(result.pixelCoords[pixelIndex]);
+                const v = Math.round(result.pixelCoords[pixelIndex + 1]);
 
-            // Skip invalid points (NaN, 0, ±Infinity)
-            // In OpenGL convention, negative Z values are valid (pointing backward into scene)
-            if (z >= 0 || isNaN(x) || isNaN(y) || isNaN(z) || !isFinite(x) || !isFinite(y) || !isFinite(z)) {
-                colors[colorIndex++] = 0.5;
-                colors[colorIndex++] = 0.5; 
-                colors[colorIndex++] = 0.5;
-                continue;
+                // Check bounds and get color from original 2D pixel position
+                if (u >= 0 && u < width && v >= 0 && v < height) {
+                    const colorPixelIndex = (v * width + u) * 4;
+                    colors[colorIndex++] = colorData[colorPixelIndex] / 255.0;     // R
+                    colors[colorIndex++] = colorData[colorPixelIndex + 1] / 255.0; // G
+                    colors[colorIndex++] = colorData[colorPixelIndex + 2] / 255.0; // B
+                } else {
+                    // Default gray for out-of-bounds (shouldn't happen with stored coords)
+                    colors[colorIndex++] = 0.5;
+                    colors[colorIndex++] = 0.5;
+                    colors[colorIndex++] = 0.5;
+                }
             }
+        } else {
+            // Fallback: use the old 3D-to-2D reprojection method (for backwards compatibility)
+            console.log('⚠️ Falling back to 3D-to-2D reprojection for color mapping');
+            
+            for (let i = 0; i < result.pointCount; i++) {
+                const vertexIndex = i * 3;
+                let x = result.vertices[vertexIndex];
+                let y = result.vertices[vertexIndex + 1];
+                let z = result.vertices[vertexIndex + 2];
 
-            // Convert back from OpenGL convention to OpenCV convention for color lookup
-            // (Undo the Y and Z flip that was applied in depthToPointCloud)
-            y = -y; // Flip Y back: Y-up → Y-down
-            z = -z; // Flip Z back: Z-backward → Z-forward (now positive, valid in OpenCV)
+                // Skip invalid points (NaN, 0, ±Infinity)
+                // In OpenGL convention, negative Z values are valid (pointing backward into scene)
+                if (z >= 0 || isNaN(x) || isNaN(y) || isNaN(z) || !isFinite(x) || !isFinite(y) || !isFinite(z)) {
+                    colors[colorIndex++] = 0.5;
+                    colors[colorIndex++] = 0.5; 
+                    colors[colorIndex++] = 0.5;
+                    continue;
+                }
 
-            // Project 3D point to image coordinates (using original OpenCV coordinates)
-            let u, v;
-            if (depthData.cameraParams.cameraModel === 'fisheye') {
-                // Fisheye projection
-                const fx = depthData.cameraParams.fx;
-                const fy = depthData.cameraParams.fy || depthData.cameraParams.fx;
-                const cx = width / 2 - 0.5;
-                const cy = height / 2 - 0.5;
-                
-                const r = Math.sqrt(x * x + y * y);
-                const theta = Math.atan2(r, z);
-                const phi = Math.atan2(y, x);
-                
-                const rFish = fx * theta;
-                u = Math.round(cx + rFish * Math.cos(phi));
-                v = Math.round(cy + rFish * Math.sin(phi));
-            } else {
-                // Pinhole projection
-                const fx = depthData.cameraParams.fx;
-                const fy = depthData.cameraParams.fy || depthData.cameraParams.fx;
-                const cx = width / 2 - 0.5;
-                const cy = height / 2 - 0.5;
-                
-                u = Math.round(fx * (x / z) + cx);
-                v = Math.round(fy * (y / z) + cy);
-            }
+                // Convert back from OpenGL convention to OpenCV convention for color lookup
+                // (Undo the Y and Z flip that was applied in depthToPointCloud)
+                y = -y; // Flip Y back: Y-up → Y-down
+                z = -z; // Flip Z back: Z-backward → Z-forward (now positive, valid in OpenCV)
 
-            // Check bounds and get color
-            if (u >= 0 && u < width && v >= 0 && v < height) {
-                const pixelIndex = (v * width + u) * 4;
-                colors[colorIndex++] = colorData[pixelIndex] / 255.0;     // R
-                colors[colorIndex++] = colorData[pixelIndex + 1] / 255.0; // G
-                colors[colorIndex++] = colorData[pixelIndex + 2] / 255.0; // B
-            } else {
-                // Default gray for out-of-bounds
-                colors[colorIndex++] = 0.5;
-                colors[colorIndex++] = 0.5;
-                colors[colorIndex++] = 0.5;
+                // Project 3D point to image coordinates (using original OpenCV coordinates)
+                let u, v;
+                if (depthData.cameraParams.cameraModel === 'fisheye') {
+                    // Fisheye projection - use the actual camera parameters that were used for depth processing
+                    const fx = depthData.cameraParams.fx;
+                    const fy = depthData.cameraParams.fy || depthData.cameraParams.fx;
+                    const cx = depthData.cameraParams.cx;
+                    const cy = depthData.cameraParams.cy;
+                    
+                    const r = Math.sqrt(x * x + y * y);
+                    const theta = Math.atan2(r, z);
+                    const phi = Math.atan2(y, x);
+                    
+                    const rFish = fx * theta;
+                    u = Math.round(cx + rFish * Math.cos(phi));
+                    v = Math.round(cy + rFish * Math.sin(phi));
+                } else {
+                    // Pinhole projection - use the actual camera parameters that were used for depth processing
+                    const fx = depthData.cameraParams.fx;
+                    const fy = depthData.cameraParams.fy || depthData.cameraParams.fx;
+                    const cx = depthData.cameraParams.cx;
+                    const cy = depthData.cameraParams.cy;
+                    
+                    u = Math.round(fx * (x / z) + cx);
+                    v = Math.round(fy * (y / z) + cy);
+                }
+
+                // Check bounds and get color
+                if (u >= 0 && u < width && v >= 0 && v < height) {
+                    const pixelIndex = (v * width + u) * 4;
+                    colors[colorIndex++] = colorData[pixelIndex] / 255.0;     // R
+                    colors[colorIndex++] = colorData[pixelIndex + 1] / 255.0; // G
+                    colors[colorIndex++] = colorData[pixelIndex + 2] / 255.0; // B
+                } else {
+                    // Default gray for out-of-bounds
+                    colors[colorIndex++] = 0.5;
+                    colors[colorIndex++] = 0.5;
+                    colors[colorIndex++] = 0.5;
+                }
             }
         }
 
@@ -8777,7 +8914,7 @@ class PointCloudVisualizer {
             delete depthData.colorImageData;
             delete depthData.colorImageName;
 
-            // Reprocess TIF without color data (will use default grayscale colors)
+            // Reprocess depth image without color data (will use default grayscale colors)
             const result = await this.processDepthToPointCloud(depthData.originalData, depthData.fileName, depthData.cameraParams);
 
             // Update the PLY data
@@ -8832,9 +8969,11 @@ class PointCloudVisualizer {
                 }
             }
 
-            // Update UI
+            // Update UI (preserve depth panel states)
+            const openPanelStates = this.captureDepthPanelStates();
             this.updateFileStats();
             this.updateFileList();
+            this.restoreDepthPanelStates(openPanelStates);
             this.showStatus('Color image removed - reverted to default depth-based colors');
 
         } catch (error) {
@@ -9851,6 +9990,145 @@ class PointCloudVisualizer {
             console.error('Error handling MTL data:', error);
             this.showError(`Failed to apply MTL material: ${error instanceof Error ? error.message : String(error)}`);
         }
+    }
+
+    /**
+     * Capture the current open/closed state of depth settings panels and form values
+     */
+    private captureDepthPanelStates(): Map<number, {panelOpen: boolean, formValues: any}> {
+        const states = new Map<number, {panelOpen: boolean, formValues: any}>();
+        
+        // Look for all depth settings panels and capture their display state
+        const panels = document.querySelectorAll('[id^="tif-panel-"]');
+        panels.forEach(panel => {
+            const id = panel.id;
+            const match = id.match(/tif-panel-(\d+)/);
+            if (match) {
+                const fileIndex = parseInt(match[1]);
+                const displayStyle = (panel as HTMLElement).style.display;
+                const isVisible = displayStyle === 'block' || (displayStyle === '' && (panel as HTMLElement).offsetHeight > 0);
+                
+                // Capture current form values
+                const formValues = this.captureDepthFormValues(fileIndex);
+                
+                states.set(fileIndex, {
+                    panelOpen: isVisible,
+                    formValues: formValues
+                });
+                
+                console.log(`📋 Captured state for file ${fileIndex}: ${isVisible ? 'open' : 'closed'}, fx=${formValues.fx}, cx=${formValues.cx}`);
+            }
+        });
+        
+        return states;
+    }
+    
+    /**
+     * Capture current form values for a depth settings panel
+     */
+    private captureDepthFormValues(fileIndex: number): any {
+        const getValue = (id: string) => {
+            const element = document.getElementById(id) as HTMLInputElement | HTMLSelectElement;
+            return element ? element.value : null;
+        };
+        
+        return {
+            fx: getValue(`fx-${fileIndex}`),
+            fy: getValue(`fy-${fileIndex}`),
+            cx: getValue(`cx-${fileIndex}`),
+            cy: getValue(`cy-${fileIndex}`),
+            cameraModel: getValue(`camera-model-${fileIndex}`),
+            depthType: getValue(`depth-type-${fileIndex}`),
+            baseline: getValue(`baseline-${fileIndex}`),
+            disparityOffset: getValue(`disparity-offset-${fileIndex}`),
+            convention: getValue(`convention-${fileIndex}`),
+            pngScaleFactor: getValue(`png-scale-factor-${fileIndex}`),
+            depthScale: getValue(`depth-scale-${fileIndex}`),
+            depthBias: getValue(`depth-bias-${fileIndex}`)
+        };
+    }
+
+    /**
+     * Restore the open/closed state of depth settings panels and form values
+     */
+    private restoreDepthPanelStates(states: Map<number, {panelOpen: boolean, formValues: any}>): void {
+        // Wait a bit for the DOM to be updated
+        setTimeout(() => {
+            // First, restore panel visibility states and form values
+            states.forEach((state, fileIndex) => {
+                const panel = document.getElementById(`tif-panel-${fileIndex}`);
+                const toggleButton = document.querySelector(`[data-file-index="${fileIndex}"].tif-settings-toggle`) as HTMLElement;
+                
+                if (panel && toggleButton) {
+                    console.log(`🔄 Restoring state for file ${fileIndex}: ${state.panelOpen ? 'open' : 'closed'}`);
+                    
+                    // Restore panel visibility
+                    if (state.panelOpen) {
+                        (panel as HTMLElement).style.display = 'block';
+                        const icon = toggleButton.querySelector('.toggle-icon');
+                        if (icon) icon.textContent = '▼';
+                    } else {
+                        (panel as HTMLElement).style.display = 'none';
+                        const icon = toggleButton.querySelector('.toggle-icon');
+                        if (icon) icon.textContent = '▶';
+                    }
+                    
+                    // Restore form values
+                    this.restoreDepthFormValues(fileIndex, state.formValues);
+                } else {
+                    console.warn(`⚠️ Could not find panel or toggle button for file ${fileIndex}`);
+                }
+            });
+            
+            // For any depth files not captured in states (edge case), restore dimensions
+            this.fileDepthData.forEach((depthData, fileIndex) => {
+                if (!states.has(fileIndex)) {
+                    const panel = document.getElementById(`tif-panel-${fileIndex}`);
+                    if (panel) {
+                        console.log(`📐 Restoring dimensions for uncaptured file ${fileIndex}: ${depthData.depthDimensions.width}×${depthData.depthDimensions.height}`);
+                        this.updatePrinciplePointFields(fileIndex, depthData.depthDimensions);
+                    }
+                }
+            });
+        }, 10);
+    }
+    
+    /**
+     * Restore form values for a depth settings panel
+     */
+    private restoreDepthFormValues(fileIndex: number, formValues: any): void {
+        const setValue = (id: string, value: string | null) => {
+            if (value !== null) {
+                const element = document.getElementById(id) as HTMLInputElement | HTMLSelectElement;
+                if (element) element.value = value;
+            }
+        };
+        
+        // Restore all captured form values
+        setValue(`fx-${fileIndex}`, formValues.fx);
+        setValue(`fy-${fileIndex}`, formValues.fy);
+        setValue(`cx-${fileIndex}`, formValues.cx);
+        setValue(`cy-${fileIndex}`, formValues.cy);
+        setValue(`camera-model-${fileIndex}`, formValues.cameraModel);
+        setValue(`depth-type-${fileIndex}`, formValues.depthType);
+        setValue(`baseline-${fileIndex}`, formValues.baseline);
+        setValue(`disparity-offset-${fileIndex}`, formValues.disparityOffset);
+        setValue(`convention-${fileIndex}`, formValues.convention);
+        setValue(`png-scale-factor-${fileIndex}`, formValues.pngScaleFactor);
+        setValue(`depth-scale-${fileIndex}`, formValues.depthScale);
+        setValue(`depth-bias-${fileIndex}`, formValues.depthBias);
+        
+        // Also ensure dimensions are displayed correctly
+        const depthData = this.fileDepthData.get(fileIndex);
+        if (depthData) {
+            const imageSizeDiv = document.getElementById(`image-size-${fileIndex}`);
+            if (imageSizeDiv) {
+                imageSizeDiv.textContent = `Image Size: Width: ${depthData.depthDimensions.width}, Height: ${depthData.depthDimensions.height}`;
+                console.log(`📐 Restored image size display for file ${fileIndex}: ${depthData.depthDimensions.width}×${depthData.depthDimensions.height}`);
+            }
+        }
+        
+        console.log(`📝 Restored form values for file ${fileIndex}: fx=${formValues.fx}, cx=${formValues.cx}`);
     }
 }
 
