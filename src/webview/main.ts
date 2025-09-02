@@ -7618,7 +7618,9 @@ class PointCloudVisualizer {
                 positions[i3 + 1] = vertex.y;
                 positions[i3 + 2] = vertex.z;
             }
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const positionAttribute = new THREE.BufferAttribute(positions, 3);
+            geometry.setAttribute('position', positionAttribute);
+            positionAttribute.needsUpdate = true;
             
             // Create color array
             const colors = new Float32Array(plyData.vertices.length * 3);
@@ -7642,8 +7644,15 @@ class PointCloudVisualizer {
                     colors[i3 + 2] = ((v.blue || 0) & 255) / 255;
                 }
             }
-            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            const colorAttribute = new THREE.BufferAttribute(colors, 3);
+            geometry.setAttribute('color', colorAttribute);
+            colorAttribute.needsUpdate = true;
+            
+            // Invalidate old bounding box and force recomputation  
+            geometry.boundingBox = null;
+            geometry.boundingSphere = null;
             geometry.computeBoundingBox();
+            geometry.computeBoundingSphere();
             
             // Dispose old material
             if (oldMaterial) {
@@ -8434,7 +8443,10 @@ class PointCloudVisualizer {
                 positions[i3 + 1] = vertex.y;
                 positions[i3 + 2] = vertex.z;
             }
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const positionAttribute = new THREE.BufferAttribute(positions, 3);
+            geometry.setAttribute('position', positionAttribute);
+            // CRITICAL FIX: Mark position attribute as needing update
+            positionAttribute.needsUpdate = true;
             
             if (plyData.hasColors) {
                 // Create color array
@@ -8459,9 +8471,16 @@ class PointCloudVisualizer {
                     colors[i3 + 2] = ((v.blue || 0) & 255) / 255;
                 }
             }
-                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                const colorAttribute = new THREE.BufferAttribute(colors, 3);
+                geometry.setAttribute('color', colorAttribute);
+                colorAttribute.needsUpdate = true;
             }
+            
+            // CRITICAL FIX: Invalidate old bounding box and force recomputation
+            geometry.boundingBox = null;
+            geometry.boundingSphere = null;
             geometry.computeBoundingBox();
+            geometry.computeBoundingSphere();
             
             // Dispose old material
             if (oldMaterial) {
@@ -8875,7 +8894,9 @@ class PointCloudVisualizer {
                 positions[i3 + 1] = vertex.y;
                 positions[i3 + 2] = vertex.z;
             }
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const positionAttribute = new THREE.BufferAttribute(positions, 3);
+            geometry.setAttribute('position', positionAttribute);
+            positionAttribute.needsUpdate = true;
             
             if (plyData.hasColors) {
                 // Create color array with default grayscale colors
@@ -8886,9 +8907,16 @@ class PointCloudVisualizer {
                     colors[i3 + 1] = (vertex.green || 0) / 255;
                     colors[i3 + 2] = (vertex.blue || 0) / 255;
                 }
-                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+                const colorAttribute = new THREE.BufferAttribute(colors, 3);
+                geometry.setAttribute('color', colorAttribute);
+                colorAttribute.needsUpdate = true;
             }
+            
+            // Invalidate old bounding box and force recomputation  
+            geometry.boundingBox = null;
+            geometry.boundingSphere = null;
             geometry.computeBoundingBox();
+            geometry.computeBoundingSphere();
             
             // Dispose old material
             if (oldMaterial) {
