@@ -45,7 +45,7 @@ export interface CameraParams {
   pngScaleFactor?: number; // For PNG files: divisor to convert raw values to meters (1000 for mm)
 }
 
-export interface TifConversionResult {
+export interface DepthConversionResult {
   vertices: Float32Array;
   colors?: Float32Array;
   pointCount: number;

@@ -6,7 +6,7 @@ import {
     PlyFace,
     PlyData,
     CameraParams,
-    TifConversionResult
+    DepthConversionResult
 } from './interfaces';
 import { CustomArcballControls, TurntableControls } from './controls';
 
@@ -15,10 +15,10 @@ declare const GeoTIFF: any;
 
 
 /**
- * Modern PLY Visualizer with unified file management and TIF processing
+ * Modern point cloud visualizer with unified file management and Depth image processing
  */
 
-class PLYVisualizer {
+class PointCloudVisualizer {
     private vscode = acquireVsCodeApi();
     private scene!: THREE.Scene;
     private camera!: THREE.PerspectiveCamera;
@@ -64,11 +64,11 @@ class PLYVisualizer {
     private appliedMtlData: (any | null)[] = []; // Store applied MTL data for each file
     
     // Per-file TIF data storage for reprocessing
-    private fileTifData: Map<number, {
+    private fileDepthData: Map<number, {
         originalData: ArrayBuffer;
         cameraParams: CameraParams;
         fileName: string;
-        tifDimensions: { width: number; height: number };
+        depthDimensions: { width: number; height: number };
         colorImageData?: ImageData;
         colorImageName?: string;
     }> = new Map();
@@ -145,10 +145,10 @@ class PLYVisualizer {
     }> = new Map();
     
     // TIF conversion tracking
-    private originalTifData: ArrayBuffer | null = null;
+    private originaldepthData: ArrayBuffer | null = null;
     private originalTifFileName: string | null = null;
     private currentCameraParams: CameraParams | null = null;
-    private tifDimensions: { width: number; height: number } | null = null;
+    private depthDimensions: { width: number; height: number } | null = null;
     private currentColorImageData: ImageData | null = null;
     private useLinearColorSpace: boolean = true; // Default: toggle is inactive; renderer still outputs sRGB
     private axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
@@ -2454,8 +2454,8 @@ class PLYVisualizer {
                 case 'largeFileComplete':
                     await this.handleLargeFileComplete(message);
                     break;
-                case 'tifData':
-                    this.handleTifData(message);
+                case 'depthData':
+                    this.handledepthData(message);
                     break;
                 case 'depthData':
                     this.handleDepthData(message);
@@ -2798,7 +2798,7 @@ class PLYVisualizer {
                     </div>
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
                     
-                    ${this.isTifDerivedFile(data) ? `
+                    ${this.isDepthDerivedFile(data) ? `
                     <!-- Depth Settings (First) -->
                     <div class="tif-controls" style="margin-top: 8px;">
                         <button class="tif-settings-toggle" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%;">
@@ -2809,8 +2809,8 @@ class PLYVisualizer {
                             <div class="tif-group" style="margin-bottom: 8px;">
                                 <label for="camera-model-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Camera Model:</label>
                                 <select id="camera-model-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    <option value="pinhole" ${this.getTifSetting(data, 'camera').includes('pinhole') ? 'selected' : ''}>Pinhole</option>
-                                    <option value="fisheye" ${this.getTifSetting(data, 'camera').includes('fisheye') ? 'selected' : ''}>Fisheye</option>
+                                    <option value="pinhole" ${this.getDepthSetting(data, 'camera').includes('pinhole') ? 'selected' : ''}>Pinhole</option>
+                                    <option value="fisheye" ${this.getDepthSetting(data, 'camera').includes('fisheye') ? 'selected' : ''}>Fisheye</option>
                                 </select>
                             </div>
                             <div class="tif-group" style="margin-bottom: 8px;">
@@ -2818,11 +2818,11 @@ class PLYVisualizer {
                                 <div style="display: flex; gap: 4px;">
                                     <div style="flex: 1;">
                                         <label for="fx-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">fx:</label>
-                                        <input type="number" id="fx-${i}" value="${this.getTifFx(data)}" min="1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                        <input type="number" id="fx-${i}" value="${this.getDepthFx(data)}" min="1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                                     </div>
                                     <div style="flex: 1;">
                                         <label for="fy-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">fy:</label>
-                                        <input type="number" id="fy-${i}" value="${this.getTifFy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Same as fx">
+                                        <input type="number" id="fy-${i}" value="${this.getDepthFy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Same as fx">
                                     </div>
                                 </div>
                             </div>
@@ -2831,11 +2831,11 @@ class PLYVisualizer {
                                 <div style="display: flex; gap: 4px;">
                                     <div style="flex: 1;">
                                         <label for="cx-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cx:</label>
-                                        <input type="number" id="cx-${i}" value="${this.getTifCx(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                        <input type="number" id="cx-${i}" value="${this.getDepthCx(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                                     </div>
                                     <div style="flex: 1;">
                                         <label for="cy-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cy:</label>
-                                        <input type="number" id="cy-${i}" value="${this.getTifCy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                        <input type="number" id="cy-${i}" value="${this.getDepthCy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                                     </div>
                                 </div>
                                 <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Auto-calculated as (width-1)/2 and (height-1)/2</div>
@@ -2843,17 +2843,17 @@ class PLYVisualizer {
                             <div class="tif-group" style="margin-bottom: 8px;">
                                 <label for="depth-type-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Depth Type:</label>
                                 <select id="depth-type-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    <option value="euclidean" ${this.getTifSetting(data, 'depth').includes('euclidean') ? 'selected' : ''}>Euclidean</option>
-                                    <option value="orthogonal" ${this.getTifSetting(data, 'depth').includes('orthogonal') ? 'selected' : ''}>Orthogonal</option>
-                                    <option value="disparity" ${this.getTifSetting(data, 'depth').includes('disparity') ? 'selected' : ''}>Disparity</option>
-                                    <option value="inverse_depth" ${this.getTifSetting(data, 'depth').includes('inverse_depth') ? 'selected' : ''}>Inverse Depth</option>
+                                    <option value="euclidean" ${this.getDepthSetting(data, 'depth').includes('euclidean') ? 'selected' : ''}>Euclidean</option>
+                                    <option value="orthogonal" ${this.getDepthSetting(data, 'depth').includes('orthogonal') ? 'selected' : ''}>Orthogonal</option>
+                                    <option value="disparity" ${this.getDepthSetting(data, 'depth').includes('disparity') ? 'selected' : ''}>Disparity</option>
+                                    <option value="inverse_depth" ${this.getDepthSetting(data, 'depth').includes('inverse_depth') ? 'selected' : ''}>Inverse Depth</option>
                                 </select>
                             </div>
-                            <div class="tif-group" id="baseline-group-${i}" style="margin-bottom: 8px; ${this.getTifSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
+                            <div class="tif-group" id="baseline-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
                                 <label for="baseline-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Baseline (mm):</label>
-                                <input type="number" id="baseline-${i}" value="${this.getTifBaseline(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                <input type="number" id="baseline-${i}" value="${this.getDepthBaseline(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                             </div>
-                            <div class="tif-group" id="disparity-offset-group-${i}" style="margin-bottom: 8px; ${this.getTifSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
+                            <div class="tif-group" id="disparity-offset-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
                                 <label for="disparity-offset-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Disparity Offset:</label>
                                 <input type="number" id="disparity-offset-${i}" value="0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Offset added to disparity values">
                             </div>
@@ -3496,7 +3496,7 @@ class PLYVisualizer {
             }
 
             // TIF settings toggle and controls
-            if (this.isTifDerivedFile(this.plyFiles[i])) {
+            if (this.isDepthDerivedFile(this.plyFiles[i])) {
                 const tifToggleBtn = document.querySelector(`.tif-settings-toggle[data-file-index="${i}"]`);
                 const tifPanel = document.getElementById(`tif-panel-${i}`);
                 if (tifToggleBtn && tifPanel) {
@@ -3611,7 +3611,7 @@ class PLYVisualizer {
                 const applyTifBtn = document.querySelector(`.apply-tif-settings[data-file-index="${i}"]`);
                 if (applyTifBtn) {
                     applyTifBtn.addEventListener('click', async () => {
-                        await this.applyTifSettings(i);
+                        await this.applyDepthSettings(i);
                     });
                 }
 
@@ -3643,7 +3643,7 @@ class PLYVisualizer {
                 const removeColorBtn = document.querySelector(`.remove-color-image[data-file-index="${i}"]`);
                 if (removeColorBtn) {
                     removeColorBtn.addEventListener('click', async () => {
-                        await this.removeColorImageFromTif(i);
+                        await this.removeColorImageFromDepth(i);
                     });
                 }
             }
@@ -4599,18 +4599,18 @@ class PLYVisualizer {
         this.materialMeshes.splice(fileIndex, 1); // Remove sub-meshes for this file
         
         // Remove TIF data if it exists for this file
-        this.fileTifData.delete(fileIndex);
+        this.fileDepthData.delete(fileIndex);
         
         // Update TIF data indices for remaining files (shift down)
-        const newTifData = new Map<number, any>();
-        for (const [key, value] of this.fileTifData) {
+        const newdepthData = new Map<number, any>();
+        for (const [key, value] of this.fileDepthData) {
             if (key > fileIndex) {
-                newTifData.set(key - 1, value);
+                newdepthData.set(key - 1, value);
             } else if (key < fileIndex) {
-                newTifData.set(key, value);
+                newdepthData.set(key, value);
             }
         }
-        this.fileTifData = newTifData;
+        this.fileDepthData = newdepthData;
 
         // Reassign file indices
         for (let i = 0; i < this.plyFiles.length; i++) {
@@ -6361,7 +6361,7 @@ class PLYVisualizer {
         document.addEventListener('keydown', handleKeydown);
     }
 
-    private async handleTifData(message: any): Promise<void> {
+    private async handledepthData(message: any): Promise<void> {
         try {
             console.log('Received TIF data for processing:', message.fileName);
             
@@ -6518,7 +6518,7 @@ class PLYVisualizer {
         this.showStatus('Converting depth image to point cloud...');
 
         // Store original data for re-processing
-        this.originalTifData = depthFileData.data;
+        this.originaldepthData = depthFileData.data;
         this.originalTifFileName = depthFileData.fileName;
         this.currentCameraParams = cameraParams;
 
@@ -6589,11 +6589,11 @@ class PLYVisualizer {
         console.log(`   Dimensions: ${dimensions.width} × ${dimensions.height}`);
         console.log(`   Computed principle point would be: cx = ${(dimensions.width-1)/2}, cy = ${(dimensions.height-1)/2}`);
         
-        this.fileTifData.set(fileIndex, {
+        this.fileDepthData.set(fileIndex, {
             originalData: depthFileData.data,
             fileName: depthFileData.fileName,
             cameraParams: cameraParams,
-            tifDimensions: dimensions
+            depthDimensions: dimensions
         });
 
         // Update the cx/cy form fields with the actual computed values
@@ -6604,7 +6604,7 @@ class PLYVisualizer {
         this.showStatus(`${fileType} to point cloud conversion complete: ${result.pointCount} points`);
     }
 
-    private async processDepthToPointCloud(depthData: ArrayBuffer, fileName: string, cameraParams: CameraParams): Promise<TifConversionResult> {
+    private async processDepthToPointCloud(depthData: ArrayBuffer, fileName: string, cameraParams: CameraParams): Promise<DepthConversionResult> {
         const { registerDefaultReaders, readDepth } = await import('./depth/DepthRegistry');
         const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
         try {
@@ -6708,7 +6708,7 @@ class PLYVisualizer {
                 cameraModel: cameraParams.cameraModel,
                 convention: cameraParams.convention || 'opengl' // Use selected convention, default to OpenGL
             });
-            return result as unknown as TifConversionResult;
+            return result as unknown as DepthConversionResult;
         } catch (error) {
             throw new Error(`Failed to process depth file: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -7087,9 +7087,9 @@ class PLYVisualizer {
         console.log('Camera parameter selection cancelled');
         if (requestId && this.pendingTifFiles.has(requestId)) {
             // Remove only the specific cancelled TIF file
-            const tifData = this.pendingTifFiles.get(requestId);
+            const depthData = this.pendingTifFiles.get(requestId);
             this.pendingTifFiles.delete(requestId);
-            this.showError(`TIF conversion cancelled for ${tifData?.fileName || 'file'}`);
+            this.showError(`TIF conversion cancelled for ${depthData?.fileName || 'file'}`);
         } else {
             // Fallback: clear all pending TIF files
             this.pendingTifFiles.clear();
@@ -7101,9 +7101,9 @@ class PLYVisualizer {
         console.error('Camera parameter error:', error);
         if (requestId && this.pendingTifFiles.has(requestId)) {
             // Remove only the specific TIF file with error
-            const tifData = this.pendingTifFiles.get(requestId);
+            const depthData = this.pendingTifFiles.get(requestId);
             this.pendingTifFiles.delete(requestId);
-            this.showError(`Camera parameter error for ${tifData?.fileName || 'file'}: ${error}`);
+            this.showError(`Camera parameter error for ${depthData?.fileName || 'file'}: ${error}`);
         } else {
             // Fallback: clear all pending TIF files
             this.pendingTifFiles.clear();
@@ -7651,27 +7651,27 @@ class PLYVisualizer {
             }
 
             const fileIndex = message.fileIndex;
-            const tifData = this.fileTifData.get(fileIndex);
-            if (!tifData) {
+            const depthData = this.fileDepthData.get(fileIndex);
+            if (!depthData) {
                 throw new Error('No cached TIF data found for this file');
             }
 
             // Validate dimensions match TIF
-            if (imageData.width !== tifData.tifDimensions.width || imageData.height !== tifData.tifDimensions.height) {
-                throw new Error(`Color image dimensions (${imageData.width}x${imageData.height}) do not match TIF dimensions (${tifData.tifDimensions.width}x${tifData.tifDimensions.height})`);
+            if (imageData.width !== depthData.depthDimensions.width || imageData.height !== depthData.depthDimensions.height) {
+                throw new Error(`Color image dimensions (${imageData.width}x${imageData.height}) do not match TIF dimensions (${depthData.depthDimensions.width}x${depthData.depthDimensions.height})`);
             }
 
             // Store color image data and name in TIF data for future reprocessing
-            tifData.colorImageData = imageData;
-            tifData.colorImageName = message.fileName;
+            depthData.colorImageData = imageData;
+            depthData.colorImageName = message.fileName;
 
             // Reprocess TIF with color data
-            const result = await this.processTifToPointCloud(tifData.originalData, tifData.cameraParams);
-            await this.applyColorToTifResult(result, imageData, tifData);
+            const result = await this.processTifToPointCloud(depthData.originalData, depthData.cameraParams);
+            await this.applyColorToDepthResult(result, imageData, depthData);
 
             // Update the PLY data
             const plyData = this.plyFiles[fileIndex];
-            plyData.vertices = this.convertTifResultToVertices(result);
+            plyData.vertices = this.convertDepthResultToVertices(result);
             plyData.hasColors = true;
 
             // Update the mesh with colored data
@@ -7745,16 +7745,16 @@ class PLYVisualizer {
     }
 
     /**
-     * Process TIF file data and convert to point cloud
+     * Process Depth image file data and convert to point cloud
      */
-    private async processTifToPointCloud(tifData: ArrayBuffer, cameraParams: CameraParams): Promise<TifConversionResult> {
+    private async processTifToPointCloud(tifData: ArrayBuffer, cameraParams: CameraParams): Promise<DepthConversionResult> {
         try {
             // Load TIF using GeoTIFF
             const tiff = await GeoTIFF.fromArrayBuffer(tifData);
             const image = await tiff.getImage();
             
             // Get image dimensions and data
-            const width = image.getWidth();
+            const width = image.getWidth();S
             const height = image.getHeight();
             const rasters = await image.readRasters();
             
@@ -7852,7 +7852,7 @@ class PLYVisualizer {
         depthType: 'euclidean' | 'orthogonal' | 'disparity' | 'inverse_depth' = 'euclidean',
         baseline?: number,
         disparityOffset?: number
-    ): TifConversionResult {
+    ): DepthConversionResult {
         
         const points: number[] = [];
         const colors: number[] = [];
@@ -8040,7 +8040,7 @@ class PLYVisualizer {
     /**
      * Convert TIF processing result to PLY vertex format
      */
-    private convertTifResultToVertices(result: TifConversionResult): PlyVertex[] {
+    private convertDepthResultToVertices(result: DepthConversionResult): PlyVertex[] {
         const vertices: PlyVertex[] = [];
         
         for (let i = 0; i < result.pointCount; i++) {
@@ -8078,7 +8078,7 @@ class PLYVisualizer {
      */
     private async loadAndValidateColorImage(file: File): Promise<ImageData | null> {
         return new Promise((resolve) => {
-            if (!this.tifDimensions) {
+            if (!this.depthDimensions) {
                 this.showColorMappingStatus('No TIF dimensions available for validation', 'error');
                 resolve(null);
                 return;
@@ -8090,9 +8090,9 @@ class PLYVisualizer {
 
             img.onload = () => {
                 // Validate dimensions
-                if (img.width !== this.tifDimensions!.width || img.height !== this.tifDimensions!.height) {
+                if (img.width !== this.depthDimensions!.width || img.height !== this.depthDimensions!.height) {
                     this.showColorMappingStatus(
-                        `Image dimensions (${img.width}×${img.height}) don't match depth image (${this.tifDimensions!.width}×${this.tifDimensions!.height})`,
+                        `Image dimensions (${img.width}×${img.height}) don't match depth image (${this.depthDimensions!.width}×${this.depthDimensions!.height})`,
                         'error'
                     );
                     resolve(null);
@@ -8135,9 +8135,9 @@ class PLYVisualizer {
                         const width = image.getWidth();
                         const height = image.getHeight();
                         
-                        if (width !== this.tifDimensions!.width || height !== this.tifDimensions!.height) {
+                        if (width !== this.depthDimensions!.width || height !== this.depthDimensions!.height) {
                             this.showColorMappingStatus(
-                                `TIF dimensions (${width}×${height}) don't match depth image (${this.tifDimensions!.width}×${this.tifDimensions!.height})`,
+                                `TIF dimensions (${width}×${height}) don't match depth image (${this.depthDimensions!.width}×${this.depthDimensions!.height})`,
                                 'error'
                             );
                             resolve(null);
@@ -8237,7 +8237,7 @@ class PLYVisualizer {
         return true;
     }
 
-    private isTifDerivedFile(data: PlyData): boolean {
+    private isDepthDerivedFile(data: PlyData): boolean {
         const comments = (data as any)?.comments;
         if (!Array.isArray(comments)) return false;
         return comments.some((comment: string) => 
@@ -8272,7 +8272,7 @@ class PLYVisualizer {
         return 1000; // Default to millimeters
     }
 
-    private getTifSetting(data: PlyData, setting: 'camera' | 'depth'): string {
+    private getDepthSetting(data: PlyData, setting: 'camera' | 'depth'): string {
         const comments = (data as any)?.comments;
         if (!Array.isArray(comments)) {
             if (setting === 'camera') return this.defaultDepthSettings.cameraModel;
@@ -8293,7 +8293,7 @@ class PLYVisualizer {
         return '';
     }
 
-    private getTifFx(data: PlyData): number {
+    private getDepthFx(data: PlyData): number {
         const comments = (data as any)?.comments;
         if (!Array.isArray(comments)) return this.defaultDepthSettings.fx;
         for (const comment of comments) {
@@ -8310,7 +8310,7 @@ class PLYVisualizer {
         return this.defaultDepthSettings.fx;
     }
 
-    private getTifFy(data: PlyData): string {
+    private getDepthFy(data: PlyData): string {
         const comments = (data as any)?.comments;
         if (!Array.isArray(comments)) return this.defaultDepthSettings.fy?.toString() || '';
         for (const comment of comments) {
@@ -8322,7 +8322,7 @@ class PLYVisualizer {
         return this.defaultDepthSettings.fy?.toString() || '';
     }
 
-    private getTifBaseline(data: PlyData): number {
+    private getDepthBaseline(data: PlyData): number {
         const comments = (data as any)?.comments;
         if (!Array.isArray(comments)) return this.defaultDepthSettings.baseline || 50;
         for (const comment of comments) {
@@ -8334,9 +8334,9 @@ class PLYVisualizer {
         return this.defaultDepthSettings.baseline || 50; // Use default baseline
     }
 
-    private getTifCx(data: PlyData): number {
+    private getDepthCx(data: PlyData): number {
         // Auto-calculate cx as (width - 1) / 2
-        const dimensions = (data as any)?.tifDimensions;
+        const dimensions = (data as any)?.depthDimensions;
         if (dimensions && dimensions.width) {
             const cx = (dimensions.width - 1) / 2;
             console.log(`📐 Image dimensions: ${dimensions.width}×${dimensions.height}, computed cx = ${cx}`);
@@ -8347,9 +8347,9 @@ class PLYVisualizer {
         return 320; // Default for 640px wide image
     }
 
-    private getTifCy(data: PlyData): number {
+    private getDepthCy(data: PlyData): number {
         // Auto-calculate cy as (height - 1) / 2
-        const dimensions = (data as any)?.tifDimensions;
+        const dimensions = (data as any)?.depthDimensions;
         if (dimensions && dimensions.height) {
             const cy = (dimensions.height - 1) / 2;
             console.log(`📐 Image dimensions: ${dimensions.width}×${dimensions.height}, computed cy = ${cy}`);
@@ -8378,8 +8378,8 @@ class PLYVisualizer {
     }
 
     private getStoredColorImageName(fileIndex: number): string | null {
-        const tifData = this.fileTifData.get(fileIndex);
-        return tifData?.colorImageName || null;
+        const depthData = this.fileDepthData.get(fileIndex);
+        return depthData?.colorImageName || null;
     }
 
     private parseMatrixInput(input: string): number[] | null {
@@ -8408,7 +8408,7 @@ class PLYVisualizer {
         }
     }
 
-    private async applyTifSettings(fileIndex: number): Promise<void> {
+    private async applyDepthSettings(fileIndex: number): Promise<void> {
         try {
             // Get the current values from the form using the helper method
             const newCameraParams = this.getDepthSettingsFromFileUI(fileIndex);
@@ -8431,7 +8431,7 @@ class PLYVisualizer {
             }
 
             // Check if we have cached depth data for this file
-            const depthData = this.fileTifData.get(fileIndex);
+            const depthData = this.fileDepthData.get(fileIndex);
             if (!depthData) {
                 throw new Error('No cached depth data found for this file. Please reload the depth file.');
             }
@@ -8448,12 +8448,12 @@ class PLYVisualizer {
             // If there's a stored color image, reapply it (only for TIF files)
             if (!isPfm && depthData.colorImageData) {
                 console.log(`🎨 Reapplying stored color image: ${depthData.colorImageName}`);
-                await this.applyColorToTifResult(result, depthData.colorImageData, { cameraParams: newCameraParams });
+                await this.applyColorToDepthResult(result, depthData.colorImageData, { cameraParams: newCameraParams });
             }
             
             // Update the PLY data
             const plyData = this.plyFiles[fileIndex];
-            plyData.vertices = this.convertTifResultToVertices(result);
+            plyData.vertices = this.convertDepthResultToVertices(result);
             plyData.vertexCount = result.pointCount;
             plyData.hasColors = !!result.colors;
             plyData.comments = [
@@ -8569,7 +8569,7 @@ class PLYVisualizer {
         // Update existing depth file forms to use the new default settings
         for (let i = 0; i < this.plyFiles.length; i++) {
             const data = this.plyFiles[i];
-            if (this.isTifDerivedFile(data)) {
+            if (this.isDepthDerivedFile(data)) {
                 console.log(`🔄 Refreshing depth form ${i} with new defaults`);
                 this.updateDepthFormWithDefaults(i);
             }
@@ -8587,21 +8587,21 @@ class PLYVisualizer {
             fyInput.value = this.defaultDepthSettings.fy.toString();
         }
 
-        // Preserve cx/cy values if they were auto-calculated from TIF dimensions
+        // Preserve cx/cy values if they were auto-calculated from Depth dimensions
         const cxInput = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement;
         const cyInput = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
-        const tifData = this.fileTifData.get(fileIndex);
+        const depthData = this.fileDepthData.get(fileIndex);
         
-        if (cxInput && tifData?.tifDimensions) {
+        if (cxInput && depthData?.depthDimensions) {
             // Keep the computed cx value based on actual image dimensions
-            const computedCx = (tifData.tifDimensions.width - 1) / 2;
+            const computedCx = (depthData.depthDimensions.width - 1) / 2;
             cxInput.value = computedCx.toString();
             console.log(`📐 Preserving computed cx = ${computedCx} for file ${fileIndex} (not overriding with defaults)`);
         }
         
-        if (cyInput && tifData?.tifDimensions) {
+        if (cyInput && depthData?.depthDimensions) {
             // Keep the computed cy value based on actual image dimensions  
-            const computedCy = (tifData.tifDimensions.height - 1) / 2;
+            const computedCy = (depthData.depthDimensions.height - 1) / 2;
             cyInput.value = computedCy.toString();
             console.log(`📐 Preserving computed cy = ${computedCy} for file ${fileIndex} (not overriding with defaults)`);
         }
@@ -8787,7 +8787,7 @@ class PLYVisualizer {
         }
     }
 
-    private async applyColorToTifResult(result: TifConversionResult, imageData: ImageData, tifData: any): Promise<void> {
+    private async applyColorToDepthResult(result: DepthConversionResult, imageData: ImageData, depthData: any): Promise<void> {
         const colorData = imageData.data;
         const width = imageData.width;
         const height = imageData.height;
@@ -8818,10 +8818,10 @@ class PLYVisualizer {
 
             // Project 3D point to image coordinates (using original OpenCV coordinates)
             let u, v;
-            if (tifData.cameraParams.cameraModel === 'fisheye') {
+            if (depthData.cameraParams.cameraModel === 'fisheye') {
                 // Fisheye projection
-                const fx = tifData.cameraParams.fx;
-                const fy = tifData.cameraParams.fy || tifData.cameraParams.fx;
+                const fx = depthData.cameraParams.fx;
+                const fy = depthData.cameraParams.fy || depthData.cameraParams.fx;
                 const cx = width / 2 - 0.5;
                 const cy = height / 2 - 0.5;
                 
@@ -8834,8 +8834,8 @@ class PLYVisualizer {
                 v = Math.round(cy + rFish * Math.sin(phi));
             } else {
                 // Pinhole projection
-                const fx = tifData.cameraParams.fx;
-                const fy = tifData.cameraParams.fy || tifData.cameraParams.fx;
+                const fx = depthData.cameraParams.fx;
+                const fy = depthData.cameraParams.fy || depthData.cameraParams.fx;
                 const cx = width / 2 - 0.5;
                 const cy = height / 2 - 0.5;
                 
@@ -8860,25 +8860,25 @@ class PLYVisualizer {
         result.colors = colors;
     }
 
-    private async removeColorImageFromTif(fileIndex: number): Promise<void> {
+    private async removeColorImageFromDepth(fileIndex: number): Promise<void> {
         try {
-            const tifData = this.fileTifData.get(fileIndex);
-            if (!tifData) {
-                throw new Error('No cached TIF data found for this file');
+            const depthData = this.fileDepthData.get(fileIndex);
+            if (!depthData) {
+                throw new Error('No cached Depth data found for this file');
             }
 
             this.showStatus('Removing color image and reverting to default colors...');
 
             // Remove stored color image data
-            delete tifData.colorImageData;
-            delete tifData.colorImageName;
+            delete depthData.colorImageData;
+            delete depthData.colorImageName;
 
             // Reprocess TIF without color data (will use default grayscale colors)
-            const result = await this.processTifToPointCloud(tifData.originalData, tifData.cameraParams);
+            const result = await this.processTifToPointCloud(depthData.originalData, depthData.cameraParams);
 
             // Update the PLY data
             const plyData = this.plyFiles[fileIndex];
-            plyData.vertices = this.convertTifResultToVertices(result);
+            plyData.vertices = this.convertDepthResultToVertices(result);
             plyData.hasColors = !!result.colors;
 
             // Update the mesh with default colors
@@ -8890,7 +8890,7 @@ class PLYVisualizer {
             if (this.meshes[fileIndex] instanceof THREE.Points && newMaterial instanceof THREE.PointsMaterial) {
                 const currentPointSize = this.pointSizes[fileIndex] || 0.001;
                 newMaterial.size = currentPointSize;
-                console.log(`🔧 Applied point size ${currentPointSize} to default-color TIF material for file ${fileIndex}`);
+                console.log(`🔧 Applied point size ${currentPointSize} to default-color Depth material for file ${fileIndex}`);
             }
             
             // Update geometry
@@ -9952,7 +9952,7 @@ class PLYVisualizer {
 
 // Initialize when DOM is ready
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => new PLYVisualizer());
+    document.addEventListener('DOMContentLoaded', () => new PointCloudVisualizer());
 } else {
-    new PLYVisualizer();
+    new PointCloudVisualizer();
 }
