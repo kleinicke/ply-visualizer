@@ -63,7 +63,7 @@ class PointCloudVisualizer {
     private appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
     private appliedMtlData: (any | null)[] = []; // Store applied MTL data for each file
     
-    // Per-file TIF data storage for reprocessing
+    // Per-file Depth data storage for reprocessing
     private fileDepthData: Map<number, {
         originalData: ArrayBuffer;
         cameraParams: CameraParams;
@@ -136,19 +136,18 @@ class PointCloudVisualizer {
         lastChunkTime: number;
     }> = new Map();
     
-    // TIF processing state - support multiple pending TIF files
-    private pendingTifFiles: Map<string, {
+    // Depth processing state - support multiple pending Depth files
+    private pendingDepthFiles: Map<string, {
         data: ArrayBuffer;
         fileName: string;
         isAddFile: boolean;
         requestId: string;
     }> = new Map();
     
-    // TIF conversion tracking
-    private originalTifFileName: string | null = null;
+    // Depth conversion tracking
+    private originalDepthFileName: string | null = null;
     private currentCameraParams: CameraParams | null = null;
     private depthDimensions: { width: number; height: number } | null = null;
-    private currentColorImageData: ImageData | null = null;
     private useLinearColorSpace: boolean = true; // Default: toggle is inactive; renderer still outputs sRGB
     private axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
     // Color space handling: always output sRGB, optionally convert source sRGB colors to linear before shading
@@ -229,7 +228,7 @@ class PointCloudVisualizer {
             75,
             container.clientWidth / container.clientHeight,
             0.001,
-            1000000  // Further increased far plane for disparity TIF files
+            1000000  // Further increased far plane for disparity files
         );
         this.camera.position.set(1, 1, 1);
         
@@ -756,7 +755,7 @@ class PointCloudVisualizer {
             this.updateCameraMatrix();
             this.updateCameraControlsPanel();
             
-            // Debug: Check if any TIF-derived point clouds are being culled
+            // Debug: Check if any Depth-derived point clouds are being culled
             // Only log every 60 frames to avoid spam
             this.frameCount++;
             if (this.frameCount % 60 === 0) {
@@ -1435,7 +1434,7 @@ class PointCloudVisualizer {
 
         geometry.computeBoundingBox();
         
-        // Debug bounding box for disparity TIF files (may help with disappearing issue)
+        // Debug bounding box for disparity Depth files (may help with disappearing issue)
         if (geometry.boundingBox) {
             const box = geometry.boundingBox;
             const size = box.getSize(new THREE.Vector3());
@@ -2796,20 +2795,20 @@ class PointCloudVisualizer {
                     
                     ${this.isDepthDerivedFile(data) ? `
                     <!-- Depth Settings (First) -->
-                    <div class="tif-controls" style="margin-top: 8px;">
-                        <button class="tif-settings-toggle" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%;">
+                    <div class="depth-controls" style="margin-top: 8px;">
+                        <button class="depth-settings-toggle" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%;">
                             <span class="toggle-icon">▶</span> Depth Settings
                         </button>
-                        <div class="tif-settings-panel" id="tif-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
+                        <div class="depth-settings-panel" id="depth-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
                             <div id="image-size-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Image Size: Width: -, Height: -</div>
-                            <div class="tif-group" style="margin-bottom: 8px;">
+                            <div class="depth-group" style="margin-bottom: 8px;">
                                 <label for="camera-model-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Camera Model:</label>
                                 <select id="camera-model-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
                                     <option value="pinhole" ${this.getDepthSetting(data, 'camera').includes('pinhole') ? 'selected' : ''}>Pinhole</option>
                                     <option value="fisheye" ${this.getDepthSetting(data, 'camera').includes('fisheye') ? 'selected' : ''}>Fisheye</option>
                                 </select>
                             </div>
-                            <div class="tif-group" style="margin-bottom: 8px;">
+                            <div class="depth-group" style="margin-bottom: 8px;">
                                 <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Focal Length (px):</label>
                                 <div style="display: flex; gap: 4px;">
                                     <div style="flex: 1;">
@@ -2822,7 +2821,7 @@ class PointCloudVisualizer {
                                     </div>
                                 </div>
                             </div>
-                            <div class="tif-group" style="margin-bottom: 8px;">
+                            <div class="depth-group" style="margin-bottom: 8px;">
                                 <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Principle Point (px):</label>
                                 <div style="display: flex; gap: 4px;">
                                     <div style="flex: 1;">
@@ -2836,7 +2835,7 @@ class PointCloudVisualizer {
                                 </div>
                                 <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Auto-calculated as (width-1)/2 and (height-1)/2</div>
                             </div>
-                            <div class="tif-group" style="margin-bottom: 8px;">
+                            <div class="depth-group" style="margin-bottom: 8px;">
                                 <label for="depth-type-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Depth Type:</label>
                                 <select id="depth-type-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
                                     <option value="euclidean" ${this.getDepthSetting(data, 'depth').includes('euclidean') ? 'selected' : ''}>Euclidean</option>
@@ -2845,15 +2844,15 @@ class PointCloudVisualizer {
                                     <option value="inverse_depth" ${this.getDepthSetting(data, 'depth').includes('inverse_depth') ? 'selected' : ''}>Inverse Depth</option>
                                 </select>
                             </div>
-                            <div class="tif-group" id="baseline-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
+                            <div class="depth-group" id="baseline-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
                                 <label for="baseline-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Baseline (mm):</label>
                                 <input type="number" id="baseline-${i}" value="${this.getDepthBaseline(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                             </div>
-                            <div class="tif-group" id="disparity-offset-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
+                            <div class="depth-group" id="disparity-offset-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
                                 <label for="disparity-offset-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Disparity Offset:</label>
                                 <input type="number" id="disparity-offset-${i}" value="0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Offset added to disparity values">
                             </div>
-                            <div class="tif-group" style="margin-bottom: 8px;">
+                            <div class="depth-group" style="margin-bottom: 8px;">
                                 <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 4px;">Depth from Mono Parameters:</label>
                                 <div style="display: flex; gap: 6px;">
                                     <div style="flex: 1;">
@@ -2867,27 +2866,27 @@ class PointCloudVisualizer {
                                 </div>
                             </div>
                             ${this.isPngDerivedFile(data) ? `
-                            <div class="tif-group" style="margin-bottom: 8px;">
+                            <div class="depth-group" style="margin-bottom: 8px;">
                                 <label for="png-scale-factor-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Scale Factor:</label>
                                 <input type="number" id="png-scale-factor-${i}" value="${this.getPngScaleFactor(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="1000 for mm, 256 for disparity">
                                 <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">The depth/disparity is divided to get the applied value in meters/disparities</div>
                             </div>
                             ` : ''}
-                            <div class="tif-group" style="margin-bottom: 8px;">
+                            <div class="depth-group" style="margin-bottom: 8px;">
                                 <label for="convention-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Coordinate Convention:</label>
                                 <select id="convention-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
                                     <option value="opengl" ${this.getDepthConvention(data) === 'opengl' ? 'selected' : ''}>OpenGL (Y-up, Z-backward)</option>
                                     <option value="opencv" ${this.getDepthConvention(data) === 'opencv' ? 'selected' : ''}>OpenCV (Y-down, Z-forward)</option>
                                 </select>
                             </div>
-                            <div class="tif-group" style="margin-bottom: 8px;">
+                            <div class="depth-group" style="margin-bottom: 8px;">
                                 <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Color Image (optional):</label>
                                 <button class="select-color-image" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px; text-align: left;">📁 Select Color Image...</button>
                                 ${this.getStoredColorImageName(i) ? `<div style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-top: 2px; display: flex; align-items: center; gap: 4px;">📷 Current: ${this.getStoredColorImageName(i)} <button class="remove-color-image" data-file-index="${i}" style="font-size: 8px; padding: 1px 4px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer;">✕</button></div>` : ''}
                             </div>
-                            <div class="tif-group" style="margin-bottom: 8px;">
+                            <div class="depth-group" style="margin-bottom: 8px;">
                                 <div style="display: flex; gap: 4px;">
-                                    <button class="apply-tif-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">Apply Settings</button>
+                                    <button class="apply-depth-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">Apply Settings</button>
                                     <button class="save-ply-file" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">💾 Save PLY</button>
                                 </div>
                                 <div style="display: flex; gap: 4px; margin-top: 4px;">
@@ -3491,19 +3490,19 @@ class PointCloudVisualizer {
                 });
             }
 
-            // TIF settings toggle and controls
+            // Depth settings toggle and controls
             if (this.isDepthDerivedFile(this.plyFiles[i])) {
-                const tifToggleBtn = document.querySelector(`.tif-settings-toggle[data-file-index="${i}"]`);
-                const tifPanel = document.getElementById(`tif-panel-${i}`);
-                if (tifToggleBtn && tifPanel) {
+                const depthToggleBtn = document.querySelector(`.depth-settings-toggle[data-file-index="${i}"]`);
+                const depthPanel = document.getElementById(`depth-panel-${i}`);
+                if (depthToggleBtn && depthPanel) {
                     // Hide by default
-                    tifPanel.style.display = 'none';
-                    const toggleIcon = tifToggleBtn.querySelector('.toggle-icon');
+                    depthPanel.style.display = 'none';
+                    const toggleIcon = depthToggleBtn.querySelector('.toggle-icon');
                     if (toggleIcon) toggleIcon.textContent = '▶';
                     
-                    tifToggleBtn.addEventListener('click', () => {
-                        const isVisible = tifPanel.style.display !== 'none';
-                        tifPanel.style.display = isVisible ? 'none' : 'block';
+                    depthToggleBtn.addEventListener('click', () => {
+                        const isVisible = depthPanel.style.display !== 'none';
+                        depthPanel.style.display = isVisible ? 'none' : 'block';
                         if (toggleIcon) toggleIcon.textContent = isVisible ? '▶' : '▼';
                     });
                 }
@@ -3603,10 +3602,10 @@ class PointCloudVisualizer {
                     conventionSelect.addEventListener('change', () => this.updateSingleDefaultButtonState(i));
                 }
 
-                // Apply TIF settings button
-                const applyTifBtn = document.querySelector(`.apply-tif-settings[data-file-index="${i}"]`);
-                if (applyTifBtn) {
-                    applyTifBtn.addEventListener('click', async () => {
+                // Apply Deptn settings button
+                const applyDepthBtn = document.querySelector(`.apply-depth-settings[data-file-index="${i}"]`);
+                if (applyDepthBtn) {
+                    applyDepthBtn.addEventListener('click', async () => {
                         await this.applyDepthSettings(i);
                     });
                 }
@@ -3631,7 +3630,7 @@ class PointCloudVisualizer {
                 const selectColorImageBtn = document.querySelector(`.select-color-image[data-file-index="${i}"]`);
                 if (selectColorImageBtn) {
                     selectColorImageBtn.addEventListener('click', () => {
-                        this.requestColorImageForTif(i);
+                        this.requestColorImageForDepth(i);
                     });
                 }
 
@@ -4220,7 +4219,7 @@ class PointCloudVisualizer {
         });
     }
 
-    private requestColorImageForTif(fileIndex: number): void {
+    private requestColorImageForDepth(fileIndex: number): void {
         this.vscode.postMessage({
             type: 'selectColorImage',
             fileIndex: fileIndex
@@ -4594,10 +4593,10 @@ class PointCloudVisualizer {
         this.multiMaterialGroups.splice(fileIndex, 1); // Remove multi-material group for this file
         this.materialMeshes.splice(fileIndex, 1); // Remove sub-meshes for this file
         
-        // Remove TIF data if it exists for this file
+        // Remove Depth data if it exists for this file
         this.fileDepthData.delete(fileIndex);
         
-        // Update TIF data indices for remaining files (shift down)
+        // Update Depth data indices for remaining files (shift down)
         const newdepthData = new Map<number, any>();
         for (const [key, value] of this.fileDepthData) {
             if (key > fileIndex) {
@@ -6357,75 +6356,6 @@ class PointCloudVisualizer {
         document.addEventListener('keydown', handleKeydown);
     }
 
-    private async handledepthData(message: any): Promise<void> {
-        try {
-            console.log('Received TIF data for processing:', message.fileName);
-            
-            // Generate unique request ID for this TIF file
-            const requestId = `tif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            
-            // Store TIF data in the map
-            this.pendingTifFiles.set(requestId, {
-                data: message.data,
-                fileName: message.fileName,
-                isAddFile: message.isAddFile || false,
-                requestId: requestId
-            });
-            
-            // First, analyze the TIF to determine if it's a depth image or regular image
-            const tiff = await GeoTIFF.fromArrayBuffer(message.data);
-            const image = await tiff.getImage();
-            
-            const width = image.getWidth();
-            const height = image.getHeight();
-            const samplesPerPixel = image.getSamplesPerPixel();
-            const sampleFormat = image.getSampleFormat ? image.getSampleFormat() : null;
-            const bitsPerSample = image.getBitsPerSample();
-            
-            console.log(`TIF Analysis: ${width}x${height}, samples: ${samplesPerPixel}, format: ${sampleFormat}, bits: ${bitsPerSample}`);
-            
-            // Determine if this is a depth image or regular image
-            const isDepthImage = this.isDepthTifImage(samplesPerPixel, sampleFormat, bitsPerSample);
-            
-            console.log(`🔍 TIF image classification: ${isDepthImage ? 'DEPTH/DISPARITY IMAGE' : 'REGULAR IMAGE'}`);
-            
-            if (isDepthImage) {
-                console.log('Detected depth TIF image - using UI settings...');
-                
-                // Use saved default settings for initial processing
-                const defaultSettings: CameraParams = {
-                    cameraModel: this.defaultDepthSettings.cameraModel,
-                    fx: this.defaultDepthSettings.fx,
-                    fy: this.defaultDepthSettings.fy,
-                    cx: (image.width - 1) / 2, // Auto-calculate cx from image dimensions
-                    cy: (image.height - 1) / 2, // Auto-calculate cy from image dimensions
-                    depthType: this.defaultDepthSettings.depthType,
-                    baseline: this.defaultDepthSettings.baseline,
-                    convention: this.defaultDepthSettings.convention || 'opengl'
-                };
-                console.log('✅ Using saved default depth settings for TIF:', defaultSettings);
-                const fyInfo = defaultSettings.fy ? ` / fy=${defaultSettings.fy}` : '';
-                this.showStatus(`Converting TIF depth image: ${defaultSettings.cameraModel} camera, fx=${defaultSettings.fx}${fyInfo}px, ${defaultSettings.depthType} depth, ${defaultSettings.convention} convention...`);
-                
-                // Process the TIF file with default settings
-                await this.processDepthWithParams(requestId, defaultSettings);
-            } else {
-                const bitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 'unknown';
-                const formatDesc = sampleFormat === 3 ? 'float' : sampleFormat === 1 ? 'uint' : sampleFormat === 2 ? 'int' : 'unknown';
-                
-                console.log('Detected regular TIF image - not suitable for point cloud conversion');
-                this.showError(`This TIF file appears to be a regular image (${samplesPerPixel} channel(s), ${bitDepth}-bit ${formatDesc}) rather than a depth/disparity image. Please use a single-channel depth TIF (floating-point) or disparity TIF (integer or floating-point) for point cloud conversion.`);
-                
-                // Remove from pending files since we won't process this
-                this.pendingTifFiles.delete(requestId);
-            }
-            
-        } catch (error) {
-            console.error('Error handling TIF data:', error);
-            this.showError(`Failed to process TIF data: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
-
     private async handleDepthData(message: any): Promise<void> {
         try {
             console.log('Received depth data for processing:', message.fileName);
@@ -6434,7 +6364,7 @@ class PointCloudVisualizer {
             const requestId = `depth_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             
             // Store depth data in the map
-            this.pendingTifFiles.set(requestId, {
+            this.pendingDepthFiles.set(requestId, {
                 data: message.data,
                 fileName: message.fileName,
                 isAddFile: message.isAddFile || false,
@@ -6462,7 +6392,7 @@ class PointCloudVisualizer {
                     const formatDesc = sampleFormat === 3 ? 'float' : sampleFormat === 1 ? 'uint' : sampleFormat === 2 ? 'int' : 'unknown';
                     console.log('Detected regular TIF image - not suitable for point cloud conversion');
                     this.showError(`This TIF file appears to be a regular image (${samplesPerPixel} channel(s), ${bitDepth}-bit ${formatDesc}) rather than a depth/disparity image. Please use a single-channel depth TIF (floating-point) or disparity TIF (integer or floating-point) for point cloud conversion.`);
-                    this.pendingTifFiles.delete(requestId);
+                    this.pendingDepthFiles.delete(requestId);
                     return;
                 }
             } else if (isNpy) {
@@ -6504,7 +6434,7 @@ class PointCloudVisualizer {
     }
 
     private async processDepthWithParams(requestId: string, cameraParams: CameraParams): Promise<void> {
-        const depthFileData = this.pendingTifFiles.get(requestId);
+        const depthFileData = this.pendingDepthFiles.get(requestId);
         if (!depthFileData) {
             console.error('Depth file data not found for requestId:', requestId);
             return;
@@ -6514,7 +6444,7 @@ class PointCloudVisualizer {
         this.showStatus('Converting depth image to point cloud...');
 
         // Store original data for re-processing
-        this.originalTifFileName = depthFileData.fileName;
+        this.originalDepthFileName = depthFileData.fileName;
         this.currentCameraParams = cameraParams;
 
         // Process the depth data using the new depth processing system
@@ -6595,7 +6525,7 @@ class PointCloudVisualizer {
         this.updatePrinciplePointFields(fileIndex, dimensions);
 
         // Clean up
-        this.pendingTifFiles.delete(requestId);
+        this.pendingDepthFiles.delete(requestId);
         this.showStatus(`${fileType} to point cloud conversion complete: ${result.pointCount} points`);
     }
 
@@ -7027,11 +6957,11 @@ class PointCloudVisualizer {
     private async handleCameraParams(message: any): Promise<void> {
         try {
             const requestId = message.requestId;
-            if (!requestId || !this.pendingTifFiles.has(requestId)) {
-                throw new Error('No TIF data available for processing');
+            if (!requestId || !this.pendingDepthFiles.has(requestId)) {
+                throw new Error('No Deptn data available for processing');
             }
 
-            console.log('Processing TIF with camera params:', message);
+            console.log('Processing Depth with camera params:', message);
             
             const cameraParams: CameraParams = {
                 cameraModel: message.cameraModel,
@@ -7046,14 +6976,14 @@ class PointCloudVisualizer {
 
             // Save camera parameters for future use
             this.saveCameraParams(cameraParams);
-            console.log('✅ Camera parameters saved for future TIF files');
+            console.log('✅ Camera parameters saved for future Depth files');
             
             // Process the depth file (could be TIF or PFM)
             await this.processDepthWithParams(requestId, cameraParams);
             
         } catch (error) {
-            console.error('Error processing TIF with camera params:', error);
-            this.showError(`TIF conversion failed: ${error instanceof Error ? error.message : String(error)}`);
+            console.error('Error processing Depth with camera params:', error);
+            this.showError(`Depth conversion failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -7080,28 +7010,28 @@ class PointCloudVisualizer {
 
     private handleCameraParamsCancelled(requestId?: string): void {
         console.log('Camera parameter selection cancelled');
-        if (requestId && this.pendingTifFiles.has(requestId)) {
-            // Remove only the specific cancelled TIF file
-            const depthData = this.pendingTifFiles.get(requestId);
-            this.pendingTifFiles.delete(requestId);
-            this.showError(`TIF conversion cancelled for ${depthData?.fileName || 'file'}`);
+        if (requestId && this.pendingDepthFiles.has(requestId)) {
+            // Remove only the specific cancelled Depth file
+            const depthData = this.pendingDepthFiles.get(requestId);
+            this.pendingDepthFiles.delete(requestId);
+            this.showError(`Depth conversion cancelled for ${depthData?.fileName || 'file'}`);
         } else {
-            // Fallback: clear all pending TIF files
-            this.pendingTifFiles.clear();
-            this.showError('TIF conversion cancelled by user');
+            // Fallback: clear all pending Depth files
+            this.pendingDepthFiles.clear();
+            this.showError('Depth conversion cancelled by user');
         }
     }
 
     private handleCameraParamsError(error: string, requestId?: string): void {
         console.error('Camera parameter error:', error);
-        if (requestId && this.pendingTifFiles.has(requestId)) {
-            // Remove only the specific TIF file with error
-            const depthData = this.pendingTifFiles.get(requestId);
-            this.pendingTifFiles.delete(requestId);
+        if (requestId && this.pendingDepthFiles.has(requestId)) {
+            // Remove only the specific Deptj file with error
+            const depthData = this.pendingDepthFiles.get(requestId);
+            this.pendingDepthFiles.delete(requestId);
             this.showError(`Camera parameter error for ${depthData?.fileName || 'file'}: ${error}`);
         } else {
-            // Fallback: clear all pending TIF files
-            this.pendingTifFiles.clear();
+            // Fallback: clear all pending Depth files
+            this.pendingDepthFiles.clear();
             this.showError(`Camera parameter error: ${error}`);
         }
     }
@@ -7948,7 +7878,7 @@ class PointCloudVisualizer {
     }
 
     /**
-     * Convert TIF processing result to PLY vertex format
+     * Convert Depth processing result to PLY vertex format
      */
     private convertDepthResultToVertices(result: DepthConversionResult): PlyVertex[] {
         const vertices: PlyVertex[] = [];
@@ -8219,7 +8149,7 @@ class PointCloudVisualizer {
     }
 
     /**
-     * Determine if a TIF image is a depth image suitable for point cloud conversion
+     * Determine if a Depth image is a depth image suitable for point cloud conversion
      * Accepts both floating-point and integer formats (for disparity images)
      */
     private isDepthTifImage(samplesPerPixel: number, sampleFormat: number | null, bitsPerSample: number[]): boolean {
@@ -9999,10 +9929,10 @@ class PointCloudVisualizer {
         const states = new Map<number, {panelOpen: boolean, formValues: any}>();
         
         // Look for all depth settings panels and capture their display state
-        const panels = document.querySelectorAll('[id^="tif-panel-"]');
+        const panels = document.querySelectorAll('[id^="depth-panel-"]');
         panels.forEach(panel => {
             const id = panel.id;
-            const match = id.match(/tif-panel-(\d+)/);
+            const match = id.match(/depth-panel-(\d+)/);
             if (match) {
                 const fileIndex = parseInt(match[1]);
                 const displayStyle = (panel as HTMLElement).style.display;
@@ -10056,8 +9986,8 @@ class PointCloudVisualizer {
         setTimeout(() => {
             // First, restore panel visibility states and form values
             states.forEach((state, fileIndex) => {
-                const panel = document.getElementById(`tif-panel-${fileIndex}`);
-                const toggleButton = document.querySelector(`[data-file-index="${fileIndex}"].tif-settings-toggle`) as HTMLElement;
+                const panel = document.getElementById(`depth-panel-${fileIndex}`);
+                const toggleButton = document.querySelector(`[data-file-index="${fileIndex}"].depth-settings-toggle`) as HTMLElement;
                 
                 if (panel && toggleButton) {
                     console.log(`🔄 Restoring state for file ${fileIndex}: ${state.panelOpen ? 'open' : 'closed'}`);
@@ -10083,7 +10013,7 @@ class PointCloudVisualizer {
             // For any depth files not captured in states (edge case), restore dimensions
             this.fileDepthData.forEach((depthData, fileIndex) => {
                 if (!states.has(fileIndex)) {
-                    const panel = document.getElementById(`tif-panel-${fileIndex}`);
+                    const panel = document.getElementById(`depth-panel-${fileIndex}`);
                     if (panel) {
                         console.log(`📐 Restoring dimensions for uncaptured file ${fileIndex}: ${depthData.depthDimensions.width}×${depthData.depthDimensions.height}`);
                         this.updatePrinciplePointFields(fileIndex, depthData.depthDimensions);
