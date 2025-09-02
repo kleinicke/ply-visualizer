@@ -145,7 +145,6 @@ class PointCloudVisualizer {
     }> = new Map();
     
     // TIF conversion tracking
-    private originaldepthData: ArrayBuffer | null = null;
     private originalTifFileName: string | null = null;
     private currentCameraParams: CameraParams | null = null;
     private depthDimensions: { width: number; height: number } | null = null;
@@ -2453,9 +2452,6 @@ class PointCloudVisualizer {
                     break;
                 case 'largeFileComplete':
                     await this.handleLargeFileComplete(message);
-                    break;
-                case 'depthData':
-                    this.handledepthData(message);
                     break;
                 case 'depthData':
                     this.handleDepthData(message);
@@ -6518,7 +6514,6 @@ class PointCloudVisualizer {
         this.showStatus('Converting depth image to point cloud...');
 
         // Store original data for re-processing
-        this.originaldepthData = depthFileData.data;
         this.originalTifFileName = depthFileData.fileName;
         this.currentCameraParams = cameraParams;
 
@@ -7666,7 +7661,7 @@ class PointCloudVisualizer {
             depthData.colorImageName = message.fileName;
 
             // Reprocess TIF with color data
-            const result = await this.processTifToPointCloud(depthData.originalData, depthData.cameraParams);
+            const result = await this.processDepthToPointCloud(depthData.originalData, depthData.fileName, depthData.cameraParams);
             await this.applyColorToDepthResult(result, imageData, depthData);
 
             // Update the PLY data
@@ -7744,97 +7739,6 @@ class PointCloudVisualizer {
         }
     }
 
-    /**
-     * Process Depth image file data and convert to point cloud
-     */
-    private async processTifToPointCloud(tifData: ArrayBuffer, cameraParams: CameraParams): Promise<DepthConversionResult> {
-        try {
-            // Load TIF using GeoTIFF
-            const tiff = await GeoTIFF.fromArrayBuffer(tifData);
-            const image = await tiff.getImage();
-            
-            // Get image dimensions and data
-            const width = image.getWidth();S
-            const height = image.getHeight();
-            const rasters = await image.readRasters();
-            
-            const fyInfo = cameraParams.fy ? `, fy: ${cameraParams.fy}` : '';
-            console.log(`Processing TIF: ${width}x${height}, camera: ${cameraParams.cameraModel}, fx: ${cameraParams.fx}${fyInfo}`);
-            
-            // Extract depth data - handle different data types properly
-            const rawDepthData = rasters[0];
-            let depthData: Float32Array;
-            
-            console.log(`📊 Raw TIF data: type=${rawDepthData.constructor.name}, length=${rawDepthData.length}, depthType=${cameraParams.depthType}`);
-            
-            if (rawDepthData instanceof Float32Array) {
-                depthData = rawDepthData;
-                console.log('Using original Float32Array depth data');
-            } else if (rawDepthData instanceof Uint16Array) {
-                // Convert uint16 to float32 for processing
-                depthData = new Float32Array(rawDepthData.length);
-                for (let i = 0; i < rawDepthData.length; i++) {
-                    depthData[i] = rawDepthData[i];
-                }
-                console.log('Converted Uint16Array to Float32Array for depth/disparity processing');
-                
-                // Log sample values for debugging disparity conversion
-                if (cameraParams.depthType === 'disparity') {
-                    const sampleValues = Array.from(depthData.slice(0, 10));
-                    console.log(`📈 Sample disparity values: [${sampleValues.join(', ')}]`);
-                }
-            } else if (rawDepthData instanceof Uint8Array) {
-                // Convert uint8 to float32 for processing
-                depthData = new Float32Array(rawDepthData.length);
-                for (let i = 0; i < rawDepthData.length; i++) {
-                    depthData[i] = rawDepthData[i];
-                }
-                console.log('Converted Uint8Array to Float32Array for depth/disparity processing');
-                
-                // Log sample values for debugging disparity conversion
-                if (cameraParams.depthType === 'disparity') {
-                    const sampleValues = Array.from(depthData.slice(0, 10));
-                    console.log(`📈 Sample disparity values: [${sampleValues.join(', ')}]`);
-                }
-            } else {
-                // Fallback: convert whatever we have to Float32Array
-                depthData = new Float32Array(rawDepthData);
-                console.log(`Converted ${rawDepthData.constructor.name} to Float32Array for depth/disparity processing`);
-                
-                // Log sample values for debugging
-                const sampleValues = Array.from(depthData.slice(0, 10));
-                console.log(`📈 Sample values after conversion: [${sampleValues.join(', ')}]`);
-            }
-            
-            // Calculate camera intrinsics (principal point at image center)
-            // For 0-based pixel indexing, center is at (width/2 - 0.5, height/2 - 0.5)
-            const fx = cameraParams.fx;
-            const fy = cameraParams.fy || cameraParams.fx; // Use fx if fy is not provided
-            const cx = width / 2 - 0.5;
-            const cy = height / 2 - 0.5;
-            
-            // Convert depth image to point cloud
-            const result = this.depthToPointCloud(
-                depthData,
-                width,
-                height,
-                fx,
-                fy,
-                cx,
-                cy,
-                cameraParams.cameraModel,
-                cameraParams.depthType,
-                cameraParams.baseline,
-                cameraParams.disparityOffset
-            );
-            
-            return result;
-            
-        } catch (error) {
-            console.error('Error processing TIF:', error);
-            throw new Error(`Failed to process TIF file: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
     
     /**
      * Convert depth image to 3D point cloud
@@ -8874,7 +8778,7 @@ class PointCloudVisualizer {
             delete depthData.colorImageName;
 
             // Reprocess TIF without color data (will use default grayscale colors)
-            const result = await this.processTifToPointCloud(depthData.originalData, depthData.cameraParams);
+            const result = await this.processDepthToPointCloud(depthData.originalData, depthData.fileName, depthData.cameraParams);
 
             // Update the PLY data
             const plyData = this.plyFiles[fileIndex];
