@@ -195,7 +195,7 @@ export class ExrReader implements DepthReader {
         kind: 'depth', // Default to depth
         unit: 'meter',
         scale: 1.0,
-        cameraModel: 'pinhole',
+        cameraModel: 'pinhole-ideal',
         convention: 'opengl',
         availableArrays: {
           [channelName]: { 

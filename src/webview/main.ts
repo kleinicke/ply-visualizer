@@ -8,6 +8,7 @@ import {
     CameraParams,
     DepthConversionResult
 } from './interfaces';
+import { CameraModel } from './depth/types';
 import { CustomArcballControls, TurntableControls } from './controls';
 
 declare const acquireVsCodeApi: () => any;
@@ -158,7 +159,7 @@ class PointCloudVisualizer {
         fy: undefined, // Optional, defaults to fx if not provided
         cx: 320, // Will be auto-calculated per image, not saved as default
         cy: 240, // Will be auto-calculated per image, not saved as default
-        cameraModel: 'pinhole',
+        cameraModel: 'pinhole-ideal',
         depthType: 'euclidean',
         convention: 'opengl',
         pngScaleFactor: 1000, // Default for PNG files
@@ -2043,7 +2044,7 @@ class PointCloudVisualizer {
         console.log(`📐 Reading principle point from form for file ${fileIndex}: cx = ${cx}, cy = ${cy}`);
         
         return {
-            cameraModel: (cameraModelSelect?.value as 'pinhole' | 'fisheye') || 'pinhole',
+            cameraModel: (cameraModelSelect?.value as any) || 'pinhole-ideal',
             fx: fx,
             fy: fy,
             cx: cx,
@@ -2804,8 +2805,11 @@ class PointCloudVisualizer {
                             <div class="depth-group" style="margin-bottom: 8px;">
                                 <label for="camera-model-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Camera Model:</label>
                                 <select id="camera-model-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    <option value="pinhole" ${this.getDepthSetting(data, 'camera').includes('pinhole') ? 'selected' : ''}>Pinhole</option>
-                                    <option value="fisheye" ${this.getDepthSetting(data, 'camera').includes('fisheye') ? 'selected' : ''}>Fisheye</option>
+                                    <option value="pinhole-ideal" ${this.getDepthSetting(data, 'camera').includes('pinhole-ideal') ? 'selected' : ''}>Pinhole Ideal</option>
+                                    <option value="pinhole-opencv" ${this.getDepthSetting(data, 'camera').includes('pinhole-opencv') ? 'selected' : ''}>Pinhole + OpenCV Distortion (test)</option>
+                                    <option value="fisheye-equidistant" ${this.getDepthSetting(data, 'camera').includes('fisheye-equidistant') ? 'selected' : ''}>Fisheye Equidistant</option>
+                                    <option value="fisheye-opencv" ${this.getDepthSetting(data, 'camera').includes('fisheye-opencv') ? 'selected' : ''}>Fisheye + OpenCV Distortion (test)</option>
+                                    <option value="fisheye-kannala-brandt" ${this.getDepthSetting(data, 'camera').includes('fisheye-kannala-brandt') ? 'selected' : ''}>Fisheye Kannala-Brandt (test)</option>
                                 </select>
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
@@ -2834,6 +2838,92 @@ class PointCloudVisualizer {
                                     </div>
                                 </div>
                                 <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Auto-calculated as (width-1)/2 and (height-1)/2</div>
+                            </div>
+                            <div class="depth-group" id="distortion-params-${i}" style="margin-bottom: 8px; display: none;">
+                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Distortion Parameters:</label>
+                                
+                                <!-- Pinhole OpenCV parameters: k1, k2, k3, p1, p2 -->
+                                <div id="pinhole-params-${i}" style="display: none;">
+                                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+                                        <div style="flex: 1;">
+                                            <label for="k1-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k1:</label>
+                                            <input type="number" id="k1-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="k2-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k2:</label>
+                                            <input type="number" id="k2-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="k3-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k3:</label>
+                                            <input type="number" id="k3-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                    </div>
+                                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+                                        <div style="flex: 1;">
+                                            <label for="p1-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">p1:</label>
+                                            <input type="number" id="p1-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="p2-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">p2:</label>
+                                            <input type="number" id="p2-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;"></div>
+                                    </div>
+                                    <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">k1,k2,k3: radial; p1,p2: tangential</div>
+                                </div>
+                                
+                                <!-- Fisheye OpenCV parameters: k1, k2, k3, k4 -->
+                                <div id="fisheye-opencv-params-${i}" style="display: none;">
+                                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+                                        <div style="flex: 1;">
+                                            <label for="k1-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k1:</label>
+                                            <input type="number" id="k1-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="k2-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k2:</label>
+                                            <input type="number" id="k2-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="k3-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k3:</label>
+                                            <input type="number" id="k3-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="k4-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k4:</label>
+                                            <input type="number" id="k4-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                    </div>
+                                    <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">Fisheye radial distortion coefficients</div>
+                                </div>
+                                
+                                <!-- Kannala-Brandt parameters: k1, k2, k3, k4, k5 -->
+                                <div id="kannala-brandt-params-${i}" style="display: none;">
+                                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+                                        <div style="flex: 1;">
+                                            <label for="k1-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k1:</label>
+                                            <input type="number" id="k1-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="k2-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k2:</label>
+                                            <input type="number" id="k2-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="k3-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k3:</label>
+                                            <input type="number" id="k3-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                    </div>
+                                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+                                        <div style="flex: 1;">
+                                            <label for="k4-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k4:</label>
+                                            <input type="number" id="k4-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="k5-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k5:</label>
+                                            <input type="number" id="k5-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
+                                        </div>
+                                        <div style="flex: 1;"></div>
+                                    </div>
+                                    <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">Polynomial fisheye coefficients</div>
+                                </div>
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
                                 <label for="depth-type-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Depth Type:</label>
@@ -3558,8 +3648,74 @@ class PointCloudVisualizer {
 
                 const cameraModelSelect = document.getElementById(`camera-model-${i}`) as HTMLSelectElement;
                 if (cameraModelSelect) {
-                    cameraModelSelect.addEventListener('change', () => this.updateSingleDefaultButtonState(i));
+                    cameraModelSelect.addEventListener('change', () => {
+                        // Show/hide distortion parameters based on camera model selection
+                        const distortionGroup = document.getElementById(`distortion-params-${i}`);
+                        const pinholeParams = document.getElementById(`pinhole-params-${i}`);
+                        const fisheyeOpencvParams = document.getElementById(`fisheye-opencv-params-${i}`);
+                        const kannalaBrandtParams = document.getElementById(`kannala-brandt-params-${i}`);
+                        
+                        if (distortionGroup && pinholeParams && fisheyeOpencvParams && kannalaBrandtParams) {
+                            // Hide all parameter sections first
+                            pinholeParams.style.display = 'none';
+                            fisheyeOpencvParams.style.display = 'none';
+                            kannalaBrandtParams.style.display = 'none';
+                            
+                            // Show appropriate parameter section based on model
+                            if (cameraModelSelect.value === 'pinhole-opencv') {
+                                distortionGroup.style.display = '';
+                                pinholeParams.style.display = '';
+                            } else if (cameraModelSelect.value === 'fisheye-opencv') {
+                                distortionGroup.style.display = '';
+                                fisheyeOpencvParams.style.display = '';
+                            } else if (cameraModelSelect.value === 'fisheye-kannala-brandt') {
+                                distortionGroup.style.display = '';
+                                kannalaBrandtParams.style.display = '';
+                            } else {
+                                distortionGroup.style.display = 'none';
+                            }
+                        }
+                        this.updateSingleDefaultButtonState(i);
+                    });
+                    
+                    // Initialize distortion parameters visibility
+                    const distortionGroup = document.getElementById(`distortion-params-${i}`);
+                    const pinholeParams = document.getElementById(`pinhole-params-${i}`);
+                    const fisheyeOpencvParams = document.getElementById(`fisheye-opencv-params-${i}`);
+                    const kannalaBrandtParams = document.getElementById(`kannala-brandt-params-${i}`);
+                    
+                    if (distortionGroup && pinholeParams && fisheyeOpencvParams && kannalaBrandtParams) {
+                        // Hide all parameter sections first
+                        pinholeParams.style.display = 'none';
+                        fisheyeOpencvParams.style.display = 'none';
+                        kannalaBrandtParams.style.display = 'none';
+                        
+                        // Show appropriate parameter section based on model
+                        if (cameraModelSelect.value === 'pinhole-opencv') {
+                            distortionGroup.style.display = '';
+                            pinholeParams.style.display = '';
+                        } else if (cameraModelSelect.value === 'fisheye-opencv') {
+                            distortionGroup.style.display = '';
+                            fisheyeOpencvParams.style.display = '';
+                        } else if (cameraModelSelect.value === 'fisheye-kannala-brandt') {
+                            distortionGroup.style.display = '';
+                            kannalaBrandtParams.style.display = '';
+                        } else {
+                            distortionGroup.style.display = 'none';
+                        }
+                    }
                 }
+
+                // Add event listeners for all distortion parameters
+                ['k1', 'k2', 'k3', 'k4', 'k5', 'p1', 'p2'].forEach(param => {
+                    const input = document.getElementById(`${param}-${i}`) as HTMLInputElement;
+                    if (input) {
+                        input.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
+                        input.addEventListener('wheel', (e) => {
+                            (e.target as HTMLInputElement).blur();
+                        });
+                    }
+                });
 
                 const baselineInput = document.getElementById(`baseline-${i}`) as HTMLInputElement;
                 if (baselineInput) {
@@ -6631,7 +6787,14 @@ class PointCloudVisualizer {
                 kind: meta.kind,
                 fx, fy, cx, cy,
                 cameraModel: cameraParams.cameraModel,
-                convention: cameraParams.convention || 'opengl' // Use selected convention, default to OpenGL
+                convention: cameraParams.convention || 'opengl', // Use selected convention, default to OpenGL
+                k1: cameraParams.k1 ? parseFloat(cameraParams.k1.toString()) : undefined,
+                k2: cameraParams.k2 ? parseFloat(cameraParams.k2.toString()) : undefined,
+                k3: cameraParams.k3 ? parseFloat(cameraParams.k3.toString()) : undefined,
+                k4: cameraParams.k4 ? parseFloat(cameraParams.k4.toString()) : undefined,
+                k5: cameraParams.k5 ? parseFloat(cameraParams.k5.toString()) : undefined,
+                p1: cameraParams.p1 ? parseFloat(cameraParams.p1.toString()) : undefined,
+                p2: cameraParams.p2 ? parseFloat(cameraParams.p2.toString()) : undefined
             });
             return result as unknown as DepthConversionResult;
         } catch (error) {
@@ -7689,7 +7852,7 @@ class PointCloudVisualizer {
         fy: number,
         cx: number,
         cy: number,
-        cameraModel: 'pinhole' | 'fisheye',
+        cameraModel: CameraModel,
         depthType: 'euclidean' | 'orthogonal' | 'disparity' | 'inverse_depth' = 'euclidean',
         baseline?: number,
         disparityOffset?: number
@@ -7706,7 +7869,7 @@ class PointCloudVisualizer {
         let validPointCount = 0;
         let skippedPoints = 0;
         
-        if (cameraModel === 'fisheye') {
+        if (cameraModel === 'fisheye-equidistant') {
             // Fisheye (equidistant) projection model
             for (let i = 0; i < width; i++) {
                 for (let j = 0; j < height; j++) {
@@ -8510,7 +8673,7 @@ class PointCloudVisualizer {
                 fy: message.settings.fy,
                 cx: this.defaultDepthSettings.cx, // Keep existing cx, don't load from storage
                 cy: this.defaultDepthSettings.cy, // Keep existing cy, don't load from storage
-                cameraModel: message.settings.cameraModel || 'pinhole',
+                cameraModel: message.settings.cameraModel || 'pinhole-ideal',
                 depthType: message.settings.depthType || 'euclidean',
                 baseline: message.settings.baseline,
                 convention: message.settings.convention || 'opengl',
@@ -8807,7 +8970,7 @@ class PointCloudVisualizer {
 
                 // Project 3D point to image coordinates (using original OpenCV coordinates)
                 let u, v;
-                if (depthData.cameraParams.cameraModel === 'fisheye') {
+                if (depthData.cameraParams.cameraModel === 'fisheye-equidistant') {
                     // Fisheye projection - use the actual camera parameters that were used for depth processing
                     const fx = depthData.cameraParams.fx;
                     const fy = depthData.cameraParams.fy || depthData.cameraParams.fx;
@@ -10002,7 +10165,14 @@ class PointCloudVisualizer {
             convention: getValue(`convention-${fileIndex}`),
             pngScaleFactor: getValue(`png-scale-factor-${fileIndex}`),
             depthScale: getValue(`depth-scale-${fileIndex}`),
-            depthBias: getValue(`depth-bias-${fileIndex}`)
+            depthBias: getValue(`depth-bias-${fileIndex}`),
+            k1: getValue(`k1-${fileIndex}`),
+            k2: getValue(`k2-${fileIndex}`),
+            k3: getValue(`k3-${fileIndex}`),
+            k4: getValue(`k4-${fileIndex}`),
+            k5: getValue(`k5-${fileIndex}`),
+            p1: getValue(`p1-${fileIndex}`),
+            p2: getValue(`p2-${fileIndex}`)
         };
     }
 
@@ -10075,6 +10245,40 @@ class PointCloudVisualizer {
         setValue(`png-scale-factor-${fileIndex}`, formValues.pngScaleFactor);
         setValue(`depth-scale-${fileIndex}`, formValues.depthScale);
         setValue(`depth-bias-${fileIndex}`, formValues.depthBias);
+        setValue(`k1-${fileIndex}`, formValues.k1);
+        setValue(`k2-${fileIndex}`, formValues.k2);
+        setValue(`k3-${fileIndex}`, formValues.k3);
+        setValue(`k4-${fileIndex}`, formValues.k4);
+        setValue(`k5-${fileIndex}`, formValues.k5);
+        setValue(`p1-${fileIndex}`, formValues.p1);
+        setValue(`p2-${fileIndex}`, formValues.p2);
+        
+        // Show/hide distortion parameters based on camera model
+        const distortionGroup = document.getElementById(`distortion-params-${fileIndex}`);
+        const pinholeParams = document.getElementById(`pinhole-params-${fileIndex}`);
+        const fisheyeOpencvParams = document.getElementById(`fisheye-opencv-params-${fileIndex}`);
+        const kannalaBrandtParams = document.getElementById(`kannala-brandt-params-${fileIndex}`);
+        
+        if (distortionGroup && pinholeParams && fisheyeOpencvParams && kannalaBrandtParams) {
+            // Hide all parameter sections first
+            pinholeParams.style.display = 'none';
+            fisheyeOpencvParams.style.display = 'none';
+            kannalaBrandtParams.style.display = 'none';
+            
+            // Show appropriate parameter section based on model
+            if (formValues.cameraModel === 'pinhole-opencv') {
+                distortionGroup.style.display = '';
+                pinholeParams.style.display = '';
+            } else if (formValues.cameraModel === 'fisheye-opencv') {
+                distortionGroup.style.display = '';
+                fisheyeOpencvParams.style.display = '';
+            } else if (formValues.cameraModel === 'fisheye-kannala-brandt') {
+                distortionGroup.style.display = '';
+                kannalaBrandtParams.style.display = '';
+            } else {
+                distortionGroup.style.display = 'none';
+            }
+        }
         
         // Also ensure dimensions are displayed correctly
         const depthData = this.fileDepthData.get(fileIndex);

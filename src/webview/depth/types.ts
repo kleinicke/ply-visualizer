@@ -1,4 +1,9 @@
-export type CameraModel = 'pinhole' | 'fisheye';
+export type CameraModel = 
+  | 'pinhole-ideal' 
+  | 'pinhole-opencv' 
+  | 'fisheye-equidistant' 
+  | 'fisheye-opencv' 
+  | 'fisheye-kannala-brandt';
 
 export type DepthKind = 'depth' | 'disparity' | 'inverse_depth' | 'z';
 

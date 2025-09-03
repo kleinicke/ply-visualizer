@@ -31,7 +31,7 @@ export interface PlyData {
 }
 
 export interface CameraParams {
-  cameraModel: "pinhole" | "fisheye";
+  cameraModel: "pinhole-ideal" | "pinhole-opencv" | "fisheye-equidistant" | "fisheye-opencv" | "fisheye-kannala-brandt";
   fx: number; // Focal length in x direction (pixels)
   fy?: number; // Focal length in y direction (pixels) - optional, defaults to fx if not provided
   cx: number; // Principal point x-coordinate (pixels)
@@ -43,6 +43,16 @@ export interface CameraParams {
   depthBias?: number; // Bias offset for depth values (for depth from mono networks)
   convention?: "opengl" | "opencv"; // Coordinate convention
   pngScaleFactor?: number; // For PNG files: divisor to convert raw values to meters (1000 for mm)
+  // Pinhole OpenCV distortion parameters (k1, k2, p1, p2, k3)
+  k1?: number; // Radial distortion coefficient
+  k2?: number; // Radial distortion coefficient  
+  p1?: number; // Tangential distortion coefficient
+  p2?: number; // Tangential distortion coefficient
+  k3?: number; // Radial distortion coefficient
+  // Fisheye OpenCV distortion parameters (k1, k2, k3, k4)
+  k4?: number; // Fisheye radial distortion coefficient
+  // Kannala-Brandt polynomial coefficients (k1, k2, k3, k4, k5)
+  k5?: number; // Kannala-Brandt polynomial coefficient
 }
 
 export interface DepthConversionResult {
