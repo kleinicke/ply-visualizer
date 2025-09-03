@@ -34,8 +34,8 @@ export interface CameraParams {
   cameraModel: "pinhole-ideal" | "pinhole-opencv" | "fisheye-equidistant" | "fisheye-opencv" | "fisheye-kannala-brandt";
   fx: number; // Focal length in x direction (pixels)
   fy?: number; // Focal length in y direction (pixels) - optional, defaults to fx if not provided
-  cx: number; // Principal point x-coordinate (pixels)
-  cy: number; // Principal point y-coordinate (pixels)
+  cx?: number; // Principal point x-coordinate (pixels) - optional, auto-calculated from image dimensions if not provided
+  cy?: number; // Principal point y-coordinate (pixels) - optional, auto-calculated from image dimensions if not provided
   depthType: "euclidean" | "orthogonal" | "disparity" | "inverse_depth";
   baseline?: number; // Required for disparity mode
   disparityOffset?: number; // Offset added to disparity values (default 0, not saved to defaults)

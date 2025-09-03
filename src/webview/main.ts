@@ -157,8 +157,8 @@ class PointCloudVisualizer {
     private defaultDepthSettings: CameraParams = {
         fx: 1000,
         fy: undefined, // Optional, defaults to fx if not provided
-        cx: 320, // Will be auto-calculated per image, not saved as default
-        cy: 240, // Will be auto-calculated per image, not saved as default
+        cx: undefined, // Will be auto-calculated per image based on dimensions
+        cy: undefined, // Will be auto-calculated per image based on dimensions
         cameraModel: 'pinhole-ideal',
         depthType: 'euclidean',
         convention: 'opengl',
@@ -2033,8 +2033,8 @@ class PointCloudVisualizer {
         const conventionSelect = document.getElementById(`convention-${fileIndex}`) as HTMLSelectElement;
         const pngScaleFactorInput = document.getElementById(`png-scale-factor-${fileIndex}`) as HTMLInputElement;
 
-        const cx = parseFloat(cxInput?.value || '320');
-        const cy = parseFloat(cyInput?.value || '240');
+        const cx = cxInput?.value && cxInput.value.trim() !== '' ? parseFloat(cxInput.value) : undefined; // Will be auto-calculated if not provided
+        const cy = cyInput?.value && cyInput.value.trim() !== '' ? parseFloat(cyInput.value) : undefined; // Will be auto-calculated if not provided 
         const fx = parseFloat(fxInput?.value || '1000');
         const fyValue = fyInput?.value?.trim();
         const fy = fyValue && fyValue !== '' ? parseFloat(fyValue) : undefined;
@@ -6761,9 +6761,9 @@ class PointCloudVisualizer {
             const computedCx = (image.width - 1) / 2;
             const computedCy = (image.height - 1) / 2;
             
-            // If cx/cy are placeholder values (0, 320, or 240), replace with computed values
-            const shouldUpdateCx = cameraParams.cx === 0;
-            const shouldUpdateCy = cameraParams.cy === 0;
+            // If cx/cy are not provided, replace with computed values
+            const shouldUpdateCx = cameraParams.cx === undefined;
+            const shouldUpdateCy = cameraParams.cy === undefined;
             
             if (shouldUpdateCx) {
                 cameraParams.cx = computedCx;
@@ -6785,8 +6785,8 @@ class PointCloudVisualizer {
             // Set up camera parameters (use values from camera parameters, which may have been updated)
             const fx = cameraParams.fx;
             const fy = cameraParams.fy || cameraParams.fx; // Use fx if fy is not provided
-            const cx = cameraParams.cx; // Use camera parameter value (updated if needed)
-            const cy = cameraParams.cy; // Use camera parameter value (updated if needed)
+            const cx = cameraParams.cx !== undefined ? cameraParams.cx : (image.width - 1) / 2; // Use provided value or auto-calculate
+            const cy = cameraParams.cy !== undefined ? cameraParams.cy : (image.height - 1) / 2; // Use provided value or auto-calculate
 
             // Override depth kind based on UI selection
             const meta: any = { ...baseMeta };
@@ -7173,8 +7173,8 @@ class PointCloudVisualizer {
                 cameraModel: message.cameraModel,
                 fx: message.fx,
                 fy: message.fy,
-                cx: message.cx || 320, // Default if not provided
-                cy: message.cy || 240, // Default if not provided
+                cx: message.cx, // Will be calculated from image dimensions if not provided
+                cy: message.cy, // Will be calculated from image dimensions if not provided
                 depthType: message.depthType || 'euclidean', // Default to euclidean for backward compatibility
                 baseline: message.baseline,
                 convention: message.convention || 'opengl' // Default to OpenGL convention
@@ -8489,30 +8489,30 @@ class PointCloudVisualizer {
         return this.defaultDepthSettings.baseline || 50; // Use default baseline
     }
 
-    private getDepthCx(data: PlyData): number {
+    private getDepthCx(data: PlyData): string {
         // Auto-calculate cx as (width - 1) / 2
         const dimensions = (data as any)?.depthDimensions;
         if (dimensions && dimensions.width) {
             const cx = (dimensions.width - 1) / 2;
             console.log(`📐 Image dimensions: ${dimensions.width}×${dimensions.height}, computed cx = ${cx}`);
-            return cx;
+            return cx.toString();
         }
-        // If no dimensions available, use a reasonable default
-        console.log('📐 No image dimensions available, using default cx = 320');
-        return 320; // Default for 640px wide image
+        // Return empty string when dimensions aren't available yet (will be auto-calculated)
+        console.log('📐 Image dimensions not yet available, will auto-calculate cx');
+        return ''; // Empty = will be auto-calculated once image is processed
     }
 
-    private getDepthCy(data: PlyData): number {
+    private getDepthCy(data: PlyData): string {
         // Auto-calculate cy as (height - 1) / 2
         const dimensions = (data as any)?.depthDimensions;
         if (dimensions && dimensions.height) {
             const cy = (dimensions.height - 1) / 2;
             console.log(`📐 Image dimensions: ${dimensions.width}×${dimensions.height}, computed cy = ${cy}`);
-            return cy;
+            return cy.toString();
         }
-        // If no dimensions available, use a reasonable default
-        console.log('📐 No image dimensions available, using default cy = 240');
-        return 240; // Default for 480px tall image
+        // Return empty string when dimensions aren't available yet (will be auto-calculated)
+        console.log('📐 Image dimensions not yet available, will auto-calculate cy');
+        return ''; // Empty = will be auto-calculated once image is processed
     }
 
     private getDepthConvention(data: PlyData): 'opengl' | 'opencv' {
@@ -9045,7 +9045,7 @@ class PointCloudVisualizer {
 
     private resetPrinciplePoint(fileIndex: number): void {
         try {
-            // Reset cx and cy to auto-calculated center values
+            // Reset cx and cy to auto-calculated center values based on image dimensions
             const cxElement = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement;
             const cyElement = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
             
@@ -9064,15 +9064,9 @@ class PointCloudVisualizer {
                 
                 this.showStatus(`Reset principle point to center: cx=${computedCx}, cy=${computedCy}`);
             } else {
-                // Fallback to default center values if no dimensions available
-                if (cxElement) {
-                    cxElement.value = '320'; // Default cx
-                }
-                if (cyElement) {
-                    cyElement.value = '240'; // Default cy
-                }
-                
-                this.showStatus('Reset principle point to default center: cx=320, cy=240');
+                // This should not happen for depth-derived files, but handle gracefully
+                console.error(`No depth dimensions found for file ${fileIndex}`);
+                this.showError('Cannot reset principle point: image dimensions not available');
             }
         } catch (error) {
             console.error('Error resetting principle point:', error);
