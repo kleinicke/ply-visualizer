@@ -2803,17 +2803,17 @@ class PointCloudVisualizer {
                         <div class="depth-settings-panel" id="depth-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
                             <div id="image-size-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Image Size: Width: -, Height: -</div>
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label for="camera-model-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Camera Model:</label>
+                                <label for="camera-model-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Camera Model ⭐:</label>
                                 <select id="camera-model-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
                                     <option value="pinhole-ideal" ${this.getDepthSetting(data, 'camera').includes('pinhole-ideal') ? 'selected' : ''}>Pinhole Ideal</option>
-                                    <option value="pinhole-opencv" ${this.getDepthSetting(data, 'camera').includes('pinhole-opencv') ? 'selected' : ''}>Pinhole + OpenCV Distortion (test)</option>
+                                    <option value="pinhole-opencv" ${this.getDepthSetting(data, 'camera').includes('pinhole-opencv') ? 'selected' : ''}>Pinhole + OpenCV Distortion (beta)</option>
                                     <option value="fisheye-equidistant" ${this.getDepthSetting(data, 'camera').includes('fisheye-equidistant') ? 'selected' : ''}>Fisheye Equidistant</option>
-                                    <option value="fisheye-opencv" ${this.getDepthSetting(data, 'camera').includes('fisheye-opencv') ? 'selected' : ''}>Fisheye + OpenCV Distortion (test)</option>
-                                    <option value="fisheye-kannala-brandt" ${this.getDepthSetting(data, 'camera').includes('fisheye-kannala-brandt') ? 'selected' : ''}>Fisheye Kannala-Brandt (test)</option>
+                                    <option value="fisheye-opencv" ${this.getDepthSetting(data, 'camera').includes('fisheye-opencv') ? 'selected' : ''}>Fisheye + OpenCV Distortion (beta)</option>
+                                    <option value="fisheye-kannala-brandt" ${this.getDepthSetting(data, 'camera').includes('fisheye-kannala-brandt') ? 'selected' : ''}>Fisheye Kannala-Brandt (beta)</option>
                                 </select>
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Focal Length (px):</label>
+                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Focal Length (px) ⭐:</label>
                                 <div style="display: flex; gap: 4px;">
                                     <div style="flex: 1;">
                                         <label for="fx-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">fx:</label>
@@ -2827,7 +2827,7 @@ class PointCloudVisualizer {
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
                                 <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Principle Point (px):</label>
-                                <div style="display: flex; gap: 4px;">
+                                <div style="display: flex; gap: 4px; align-items: end;">
                                     <div style="flex: 1;">
                                         <label for="cx-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cx:</label>
                                         <input type="number" id="cx-${i}" value="${this.getDepthCx(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
@@ -2835,6 +2835,9 @@ class PointCloudVisualizer {
                                     <div style="flex: 1;">
                                         <label for="cy-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cy:</label>
                                         <input type="number" id="cy-${i}" value="${this.getDepthCy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                    </div>
+                                    <div style="flex: 0 0 auto;">
+                                        <button class="reset-principle-point" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px;" title="Reset to auto-calculated center">↺</button>
                                     </div>
                                 </div>
                                 <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Auto-calculated as (width-1)/2 and (height-1)/2</div>
@@ -2926,7 +2929,7 @@ class PointCloudVisualizer {
                                 </div>
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label for="depth-type-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Depth Type:</label>
+                                <label for="depth-type-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Depth Type ⭐:</label>
                                 <select id="depth-type-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
                                     <option value="euclidean" ${this.getDepthSetting(data, 'depth').includes('euclidean') ? 'selected' : ''}>Euclidean</option>
                                     <option value="orthogonal" ${this.getDepthSetting(data, 'depth').includes('orthogonal') ? 'selected' : ''}>Orthogonal</option>
@@ -2935,16 +2938,19 @@ class PointCloudVisualizer {
                                 </select>
                             </div>
                             <div class="depth-group" id="baseline-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
-                                <label for="baseline-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Baseline (mm):</label>
+                                <label for="baseline-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Baseline (mm) ⭐:</label>
                                 <input type="number" id="baseline-${i}" value="${this.getDepthBaseline(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                             </div>
                             <div class="depth-group" id="disparity-offset-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
                                 <label for="disparity-offset-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Disparity Offset:</label>
-                                <input type="number" id="disparity-offset-${i}" value="0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Offset added to disparity values">
+                                <div style="display: flex; gap: 4px; align-items: center;">
+                                    <input type="number" id="disparity-offset-${i}" value="0" step="0.1" style="flex: 1; padding: 2px; font-size: 11px;" placeholder="Offset added to disparity values">
+                                    <button class="reset-disparity-offset" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px; flex: 0 0 auto;" title="Reset to 0">↺</button>
+                                </div>
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 4px;">Depth from Mono Parameters:</label>
-                                <div style="display: flex; gap: 6px;">
+                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 4px;">Depth from Mono Parameters ⭐:</label>
+                                <div style="display: flex; gap: 6px; align-items: end;">
                                     <div style="flex: 1;">
                                         <label for="depth-scale-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Scale:</label>
                                         <input type="number" id="depth-scale-${i}" value="1.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Scale factor">
@@ -2953,17 +2959,20 @@ class PointCloudVisualizer {
                                         <label for="depth-bias-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Bias:</label>
                                         <input type="number" id="depth-bias-${i}" value="0.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Bias offset">
                                     </div>
+                                    <div style="flex: 0 0 auto;">
+                                        <button class="reset-mono-params" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px;" title="Reset to Scale=1.0, Bias=0.0">↺</button>
+                                    </div>
                                 </div>
                             </div>
                             ${this.isPngDerivedFile(data) ? `
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label for="png-scale-factor-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Scale Factor:</label>
+                                <label for="png-scale-factor-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Scale Factor ⭐:</label>
                                 <input type="number" id="png-scale-factor-${i}" value="${this.getPngScaleFactor(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="1000 for mm, 256 for disparity">
                                 <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">The depth/disparity is divided to get the applied value in meters/disparities</div>
                             </div>
                             ` : ''}
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label for="convention-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Coordinate Convention:</label>
+                                <label for="convention-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Coordinate Convention ⭐:</label>
                                 <select id="convention-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
                                     <option value="opengl" ${this.getDepthConvention(data) === 'opengl' ? 'selected' : ''}>OpenGL (Y-up, Z-backward)</option>
                                     <option value="opencv" ${this.getDepthConvention(data) === 'opencv' ? 'selected' : ''}>OpenCV (Y-down, Z-forward)</option>
@@ -2977,10 +2986,11 @@ class PointCloudVisualizer {
                             <div class="depth-group" style="margin-bottom: 8px;">
                                 <div style="display: flex; gap: 4px;">
                                     <button class="apply-depth-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">Apply Settings</button>
-                                    <button class="save-ply-file" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">💾 Save PLY</button>
+                                    <button class="save-ply-file" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">💾 Save as PLY</button>
                                 </div>
                                 <div style="display: flex; gap: 4px; margin-top: 4px;">
                                     <button class="use-as-default-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">⭐ Use as Default</button>
+                                    <button class="reset-to-default-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">⭐ Reset to Default</button>
                                 </div>
                             </div>
                         </div>
@@ -3774,6 +3784,14 @@ class PointCloudVisualizer {
                     });
                 }
 
+                // Reset to Default settings button
+                const resetToDefaultBtn = document.querySelector(`.reset-to-default-settings[data-file-index="${i}"]`);
+                if (resetToDefaultBtn) {
+                    resetToDefaultBtn.addEventListener('click', async () => {
+                        await this.resetToDefaultSettings(i);
+                    });
+                }
+
                 // Save PLY file button
                 const savePlyBtn = document.querySelector(`.save-ply-file[data-file-index="${i}"]`);
                 if (savePlyBtn) {
@@ -3795,6 +3813,30 @@ class PointCloudVisualizer {
                 if (removeColorBtn) {
                     removeColorBtn.addEventListener('click', async () => {
                         await this.removeColorImageFromDepth(i);
+                    });
+                }
+
+                // Reset mono parameters button
+                const resetMonoBtn = document.querySelector(`.reset-mono-params[data-file-index="${i}"]`);
+                if (resetMonoBtn) {
+                    resetMonoBtn.addEventListener('click', () => {
+                        this.resetMonoParameters(i);
+                    });
+                }
+
+                // Reset disparity offset button
+                const resetDisparityOffsetBtn = document.querySelector(`.reset-disparity-offset[data-file-index="${i}"]`);
+                if (resetDisparityOffsetBtn) {
+                    resetDisparityOffsetBtn.addEventListener('click', () => {
+                        this.resetDisparityOffset(i);
+                    });
+                }
+
+                // Reset principle point button
+                const resetPrinciplePointBtn = document.querySelector(`.reset-principle-point[data-file-index="${i}"]`);
+                if (resetPrinciplePointBtn) {
+                    resetPrinciplePointBtn.addEventListener('click', () => {
+                        this.resetPrinciplePoint(i);
                     });
                 }
             }
@@ -3861,6 +3903,7 @@ class PointCloudVisualizer {
         // Update button states after file list is refreshed
         this.updatePointsNormalsButtonStates();
         this.updateUniversalRenderButtonStates();
+        this.updateDefaultButtonState();
     }
 
     private toggleFileVisibility(fileIndex: number): void {
@@ -8838,7 +8881,9 @@ class PointCloudVisualizer {
             // Handle scale factor comparison more carefully (only for PNG files)
             const currentScale = currentParams.pngScaleFactor;
             const defaultScale = this.defaultDepthSettings.pngScaleFactor;
-            const pngScaleFactorMatch = currentScale === undefined && defaultScale === undefined ? true : 
+            const isPngFile = fileIndex < this.plyFiles.length && this.isPngDerivedFile(this.plyFiles[fileIndex]);
+            const pngScaleFactorMatch = !isPngFile ? true : // For non-PNG files, scale factor is irrelevant
+                                   currentScale === undefined && defaultScale === undefined ? true : 
                                    currentScale !== undefined && defaultScale !== undefined ? currentScale === defaultScale : false;
             
             console.log(`  fx match: ${fxMatch} (${currentParams.fx} === ${this.defaultDepthSettings.fx})`);
@@ -8849,7 +8894,7 @@ class PointCloudVisualizer {
             console.log(`  Baseline match: ${baselineMatch} (${currentParams.baseline} === ${this.defaultDepthSettings.baseline})`);
             console.log(`  Depth scale match: ${depthScaleMatch} (${currentParams.depthScale} === ${this.defaultDepthSettings.depthScale})`);
             console.log(`  Depth bias match: ${depthBiasMatch} (${currentParams.depthBias} === ${this.defaultDepthSettings.depthBias})`);
-            console.log(`  Scale factor match: ${pngScaleFactorMatch} (current: ${currentScale}, default: ${defaultScale})`);
+            console.log(`  Scale factor match: ${pngScaleFactorMatch} (current: ${currentScale}, default: ${defaultScale}, isPNG: ${isPngFile})`);
             
             const isDefault = fxMatch && fyMatch && cameraMatch && depthMatch && conventionMatch && baselineMatch && depthScaleMatch && depthBiasMatch && pngScaleFactorMatch;
 
@@ -8910,6 +8955,128 @@ class PointCloudVisualizer {
         } catch (error) {
             console.error('Error saving default settings:', error);
             this.showError(`Failed to save default settings: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private async resetToDefaultSettings(fileIndex: number): Promise<void> {
+        try {
+            // Get all the form elements
+            const setValue = (elementId: string, value: any) => {
+                const element = document.getElementById(elementId) as HTMLInputElement | HTMLSelectElement;
+                if (element && value !== undefined && value !== null) {
+                    element.value = value.toString();
+                }
+            };
+
+            // Only reset fields that have stars (default values)
+            setValue(`camera-model-${fileIndex}`, this.defaultDepthSettings.cameraModel);
+            setValue(`fx-${fileIndex}`, this.defaultDepthSettings.fx);
+            
+            // Handle fy field - clear it if default is same as fx, otherwise set the value
+            const fyElement = document.getElementById(`fy-${fileIndex}`) as HTMLInputElement;
+            if (fyElement) {
+                if (this.defaultDepthSettings.fy && this.defaultDepthSettings.fy !== this.defaultDepthSettings.fx) {
+                    fyElement.value = this.defaultDepthSettings.fy.toString();
+                } else {
+                    fyElement.value = ''; // Clear to use "Same as fx"
+                }
+            }
+            
+            setValue(`depth-type-${fileIndex}`, this.defaultDepthSettings.depthType);
+            setValue(`baseline-${fileIndex}`, this.defaultDepthSettings.baseline);
+            setValue(`depth-scale-${fileIndex}`, this.defaultDepthSettings.depthScale);
+            setValue(`depth-bias-${fileIndex}`, this.defaultDepthSettings.depthBias);
+            setValue(`convention-${fileIndex}`, this.defaultDepthSettings.convention);
+            
+            // Handle PNG scale factor only if it exists
+            const pngScaleElement = document.getElementById(`png-scale-factor-${fileIndex}`) as HTMLInputElement;
+            if (pngScaleElement && this.defaultDepthSettings.pngScaleFactor) {
+                pngScaleElement.value = this.defaultDepthSettings.pngScaleFactor.toString();
+            }
+
+            // Update button states
+            this.updateSingleDefaultButtonState(fileIndex);
+            
+            this.showStatus('Reset starred fields to default values');
+        } catch (error) {
+            console.error('Error resetting to default settings:', error);
+            this.showError(`Failed to reset to default settings: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private resetMonoParameters(fileIndex: number): void {
+        try {
+            // Reset scale to 1.0 and bias to 0.0
+            const scaleElement = document.getElementById(`depth-scale-${fileIndex}`) as HTMLInputElement;
+            const biasElement = document.getElementById(`depth-bias-${fileIndex}`) as HTMLInputElement;
+            
+            if (scaleElement) {
+                scaleElement.value = '1.0';
+            }
+            if (biasElement) {
+                biasElement.value = '0.0';
+            }
+            
+            // Update button state since values changed
+            this.updateSingleDefaultButtonState(fileIndex);
+            
+            this.showStatus('Reset mono parameters to Scale=1.0, Bias=0.0');
+        } catch (error) {
+            console.error('Error resetting mono parameters:', error);
+            this.showError(`Failed to reset mono parameters: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private resetDisparityOffset(fileIndex: number): void {
+        try {
+            // Reset disparity offset to 0
+            const offsetElement = document.getElementById(`disparity-offset-${fileIndex}`) as HTMLInputElement;
+            
+            if (offsetElement) {
+                offsetElement.value = '0';
+            }
+            
+            this.showStatus('Reset disparity offset to 0');
+        } catch (error) {
+            console.error('Error resetting disparity offset:', error);
+            this.showError(`Failed to reset disparity offset: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private resetPrinciplePoint(fileIndex: number): void {
+        try {
+            // Reset cx and cy to auto-calculated center values
+            const cxElement = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement;
+            const cyElement = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
+            
+            // Get image dimensions from stored depth data
+            const depthData = this.fileDepthData.get(fileIndex);
+            if (depthData?.depthDimensions) {
+                const computedCx = (depthData.depthDimensions.width - 1) / 2;
+                const computedCy = (depthData.depthDimensions.height - 1) / 2;
+                
+                if (cxElement) {
+                    cxElement.value = computedCx.toString();
+                }
+                if (cyElement) {
+                    cyElement.value = computedCy.toString();
+                }
+                
+                this.showStatus(`Reset principle point to center: cx=${computedCx}, cy=${computedCy}`);
+            } else {
+                // Fallback to default center values if no dimensions available
+                if (cxElement) {
+                    cxElement.value = '320'; // Default cx
+                }
+                if (cyElement) {
+                    cyElement.value = '240'; // Default cy
+                }
+                
+                this.showStatus('Reset principle point to default center: cx=320, cy=240');
+            }
+        } catch (error) {
+            console.error('Error resetting principle point:', error);
+            this.showError(`Failed to reset principle point: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
