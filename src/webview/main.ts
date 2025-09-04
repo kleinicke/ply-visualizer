@@ -9,6 +9,7 @@ import {
     DepthConversionResult
 } from './interfaces';
 import { CameraModel } from './depth/types';
+import { CalibTxtParser } from './depth/CalibTxtParser';
 import { CustomArcballControls, TurntableControls } from './controls';
 
 declare const acquireVsCodeApi: () => any;
@@ -73,6 +74,9 @@ class PointCloudVisualizer {
         colorImageData?: ImageData;
         colorImageName?: string;
     }> = new Map();
+
+    // Calibration data storage for each depth file
+    private calibrationData?: Map<number, any>;
 
     // Pose entries managed like files but stored as Object3D groups
     private poseGroups: THREE.Group[] = [];
@@ -2802,6 +2806,24 @@ class PointCloudVisualizer {
                         </button>
                         <div class="depth-settings-panel" id="depth-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
                             <div id="image-size-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Image Size: Width: -, Height: -</div>
+                            
+                            <!-- Calibration File Loading -->
+                            <div class="depth-group" style="margin-bottom: 8px;">
+                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Load Calibration:</label>
+                                <button class="load-calibration-btn" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
+                                    📁 Load Calibration File
+                                </button>
+                                <div class="calibration-info" id="calibration-info-${i}" style="display: none; margin-top: 4px; padding: 4px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
+                                    <div id="calibration-filename-${i}" style="font-size: 9px; font-weight: bold; margin-bottom: 4px;"></div>
+                                    <div style="display: flex; gap: 4px; align-items: center;">
+                                        <label for="camera-select-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground);">Camera:</label>
+                                        <select id="camera-select-${i}" style="flex: 1; padding: 2px; font-size: 10px;">
+                                            <option value="">Select camera...</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            
                             <div class="depth-group" style="margin-bottom: 8px;">
                                 <label for="camera-model-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Camera Model ⭐:</label>
                                 <select id="camera-model-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
@@ -3604,6 +3626,22 @@ class PointCloudVisualizer {
                         const isVisible = depthPanel.style.display !== 'none';
                         depthPanel.style.display = isVisible ? 'none' : 'block';
                         if (toggleIcon) toggleIcon.textContent = isVisible ? '▶' : '▼';
+                    });
+                }
+
+                // Calibration file loading
+                const loadCalibrationBtn = document.querySelector(`.load-calibration-btn[data-file-index="${i}"]`);
+                if (loadCalibrationBtn) {
+                    loadCalibrationBtn.addEventListener('click', () => {
+                        this.openCalibrationFileDialog(i);
+                    });
+                }
+
+                // Camera selection change handler
+                const cameraSelect = document.getElementById(`camera-select-${i}`) as HTMLSelectElement;
+                if (cameraSelect) {
+                    cameraSelect.addEventListener('change', () => {
+                        this.onCameraSelectionChange(i, cameraSelect.value);
                     });
                 }
 
@@ -6553,6 +6591,207 @@ class PointCloudVisualizer {
             }
         };
         document.addEventListener('keydown', handleKeydown);
+    }
+
+    private openCalibrationFileDialog(fileIndex: number): void {
+        // Create a hidden file input
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.json,.yaml,.yml,.xml,.txt,.ini';
+        fileInput.style.display = 'none';
+        
+        fileInput.addEventListener('change', (e) => {
+            const file = (e.target as HTMLInputElement).files?.[0];
+            if (file) {
+                this.loadCalibrationFile(file, fileIndex);
+            }
+            document.body.removeChild(fileInput);
+        });
+        
+        document.body.appendChild(fileInput);
+        fileInput.click();
+    }
+
+    private async loadCalibrationFile(file: File, fileIndex: number): Promise<void> {
+        try {
+            const text = await file.text();
+            let calibrationData: any;
+
+            if (file.name.toLowerCase().endsWith('.json')) {
+                // JSON format
+                calibrationData = JSON.parse(text);
+            } else if (file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().includes('calib')) {
+                // calib.txt format
+                const calibTxtData = CalibTxtParser.parse(text);
+                CalibTxtParser.validate(calibTxtData);
+                
+                // Convert to compatible format
+                calibrationData = CalibTxtParser.toCameraFormat(calibTxtData);
+                
+                // Store the original calib.txt data for disparity conversion
+                calibrationData._calibTxtData = calibTxtData;
+                
+                console.log('✅ Loaded calib.txt with cameras:', Object.keys(calibrationData.cameras));
+                console.log('📏 Baseline:', calibTxtData.baseline, 'mm');
+                console.log('🔍 Image size:', `${calibTxtData.width}x${calibTxtData.height}`);
+            } else {
+                alert('Supported calibration file formats: JSON (.json) and stereo calibration (.txt, calib.txt).');
+                return;
+            }
+
+            // Display calibration file info and populate camera selection
+            this.displayCalibrationInfo(calibrationData, file.name, fileIndex);
+            
+        } catch (error) {
+            console.error('Error loading calibration file:', error);
+            alert(`Failed to load calibration file: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    private displayCalibrationInfo(calibrationData: any, fileName: string, fileIndex: number): void {
+        const calibrationInfo = document.getElementById(`calibration-info-${fileIndex}`);
+        const calibrationFilename = document.getElementById(`calibration-filename-${fileIndex}`);
+        const cameraSelect = document.getElementById(`camera-select-${fileIndex}`) as HTMLSelectElement;
+        
+        if (!calibrationInfo || !calibrationFilename || !cameraSelect) {
+            console.error('Calibration UI elements not found');
+            return;
+        }
+
+        // Show calibration info panel
+        calibrationInfo.style.display = 'block';
+        calibrationFilename.textContent = `📄 ${fileName}`;
+        
+        // Clear and populate camera selection dropdown
+        cameraSelect.innerHTML = '<option value="">Select camera...</option>';
+        
+        // Store calibration data for this file index
+        if (!this.calibrationData) {
+            this.calibrationData = new Map();
+        }
+        this.calibrationData.set(fileIndex, calibrationData);
+
+        // Extract camera names from calibration data
+        if (calibrationData.cameras && typeof calibrationData.cameras === 'object') {
+            const cameraNames = Object.keys(calibrationData.cameras);
+            cameraNames.forEach(cameraName => {
+                const option = document.createElement('option');
+                option.value = cameraName;
+                option.textContent = cameraName;
+                cameraSelect.appendChild(option);
+            });
+            
+            console.log(`📷 Loaded calibration file with ${cameraNames.length} cameras:`, cameraNames);
+        } else {
+            console.warn('No cameras found in calibration file');
+            alert('No cameras found in the calibration file. Please check the file format.');
+        }
+    }
+
+    private onCameraSelectionChange(fileIndex: number, selectedCamera: string): void {
+        if (!selectedCamera || !this.calibrationData || !this.calibrationData.has(fileIndex)) {
+            return;
+        }
+
+        const calibrationData = this.calibrationData.get(fileIndex);
+        const cameraData = calibrationData.cameras[selectedCamera];
+        
+        if (!cameraData) {
+            console.warn(`Camera "${selectedCamera}" not found in calibration data`);
+            return;
+        }
+
+        // Auto-populate form fields from camera data
+        this.populateFormFromCalibration(cameraData, fileIndex);
+        
+        console.log(`📷 Applied calibration for camera "${selectedCamera}" to file ${fileIndex}`);
+    }
+
+    private populateFormFromCalibration(cameraData: any, fileIndex: number): void {
+        // Get form elements
+        const fxInput = document.getElementById(`fx-${fileIndex}`) as HTMLInputElement;
+        const fyInput = document.getElementById(`fy-${fileIndex}`) as HTMLInputElement;
+        const cxInput = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement;
+        const cyInput = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
+        const cameraModelSelect = document.getElementById(`camera-model-${fileIndex}`) as HTMLSelectElement;
+        const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
+        const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
+
+        // Populate focal lengths
+        if (cameraData.fx !== undefined && fxInput) {
+            fxInput.value = String(cameraData.fx);
+        }
+        if (cameraData.fy !== undefined && fyInput) {
+            fyInput.value = String(cameraData.fy);
+        }
+
+        // Populate principal point
+        if (cameraData.cx !== undefined && cxInput) {
+            cxInput.value = String(cameraData.cx);
+        }
+        if (cameraData.cy !== undefined && cyInput) {
+            cyInput.value = String(cameraData.cy);
+        }
+
+        // Populate baseline if available (from calib.txt files)
+        if (cameraData.baseline !== undefined && baselineInput) {
+            baselineInput.value = String(cameraData.baseline);
+            
+            // If we have a baseline, automatically set depth type to disparity
+            if (depthTypeSelect) {
+                depthTypeSelect.value = 'disparity';
+                
+                // Show baseline and disparity offset groups
+                const baselineGroup = document.getElementById(`baseline-group-${fileIndex}`);
+                const disparityOffsetGroup = document.getElementById(`disparity-offset-group-${fileIndex}`);
+                if (baselineGroup) baselineGroup.style.display = '';
+                if (disparityOffsetGroup) disparityOffsetGroup.style.display = '';
+            }
+        }
+
+        // Set disparity offset (doffs) from calib.txt data if available
+        const calibrationData = this.calibrationData?.get(fileIndex);
+        if (calibrationData && calibrationData._calibTxtData) {
+            const disparityOffsetInput = document.getElementById(`disparity-offset-${fileIndex}`) as HTMLInputElement;
+            if (disparityOffsetInput) {
+                disparityOffsetInput.value = String(calibrationData._calibTxtData.doffs);
+            }
+        }
+
+        // Try to set camera model if available
+        if (cameraData.camera_model && cameraModelSelect) {
+            // Map common camera model names to our options
+            const modelMapping: { [key: string]: string } = {
+                'pinhole': 'pinhole-ideal',
+                'pinhole_ideal': 'pinhole-ideal',
+                'opencv': 'pinhole-opencv',
+                'pinhole_opencv': 'pinhole-opencv',
+                'fisheye': 'fisheye-equidistant',
+                'fisheye_equidistant': 'fisheye-equidistant',
+                'kannala_brandt': 'fisheye-kannala-brandt'
+            };
+            
+            const modelName = modelMapping[cameraData.camera_model.toLowerCase()] || cameraData.camera_model;
+            if (modelName) {
+                // Check if this model exists in our select options
+                const option = Array.from(cameraModelSelect.options).find(opt => opt.value === modelName);
+                if (option) {
+                    cameraModelSelect.value = modelName;
+                }
+            }
+        }
+
+        // Trigger update of default button state
+        this.updateSingleDefaultButtonState(fileIndex);
+        
+        console.log('📐 Camera parameters populated from calibration:', {
+            fx: cameraData.fx,
+            fy: cameraData.fy,
+            cx: cameraData.cx,
+            cy: cameraData.cy,
+            baseline: cameraData.baseline,
+            model: cameraData.camera_model
+        });
     }
 
     private async handleDepthData(message: any): Promise<void> {

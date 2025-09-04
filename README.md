@@ -16,8 +16,6 @@ Frequently new features will be added. You can simply request features that supp
 - **Depth to point cloud conversion**: Can convert on the fly depth images to point clouds. It has support for tiff, png, pfm, npy and npz files
 - **Pose estimations**: Currently in development is support for 3d pose estimations in json files
 
-![example-view](assets/example.png)
-
 Interpret depth/disparity images as point cloud.
 ![tifPC](https://github.com/kleinicke/ply-visualizer/releases/download/v1.0.0/disp2pc.gif)
 
