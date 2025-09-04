@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
-import { PlyEditorProvider } from './plyEditorProvider';
+import { PointCloudEditorProvider } from './pointCloudEditorProvider';
 import { glob } from 'glob';
 
 export function activate(context: vscode.ExtensionContext) {
     // Register the PLY editor provider
-    const provider = new PlyEditorProvider(context);
+    const provider = new PointCloudEditorProvider(context);
     context.subscriptions.push(
         vscode.window.registerCustomEditorProvider(
             'plyViewer.plyEditor',

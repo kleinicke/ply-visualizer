@@ -372,4 +372,4 @@ The PLY Visualizer currently supports a custom JSON format for camera calibratio
 - **Stereo pairs**: Stereo calibration YAML, Kalibr camchain, Middlebury calib.txt
 - **Multi-camera rigs**: COLMAP, Kalibr, Camera JSON
 - **Commercial systems**: RealSense JSON, ZED conf
-- **Research datasets**: KITTI, Middlebury, ETH3D formats
+- **Research datasets**: TUM, KITTI, Middlebury, ETH3D formats

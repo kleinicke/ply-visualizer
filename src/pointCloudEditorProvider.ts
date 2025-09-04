@@ -9,7 +9,7 @@ import { PtsParser } from './ptsParser';
 import { OffParser } from './offParser';
 import { GltfParser } from './gltfParser';
 
-export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
+export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private static readonly viewType = 'plyViewer.plyEditor';
     private activePanels = new Set<vscode.WebviewPanel>();
     private pathToPanel = new Map<string, vscode.WebviewPanel>();
@@ -1303,43 +1303,6 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         }
     }
 
-    private convertTypedArraysToVertices(parsedData: any): void {
-        // Emergency fallback: convert TypedArrays back to vertex objects for chunking
-        const positions = parsedData.positionsArray as Float32Array;
-        const colors = parsedData.colorsArray as Uint8Array | null;
-        const normals = parsedData.normalsArray as Float32Array | null;
-        
-        parsedData.vertices = new Array(parsedData.vertexCount);
-        for (let i = 0; i < parsedData.vertexCount; i++) {
-            const i3 = i * 3;
-            const vertex: any = {
-                x: positions[i3],
-                y: positions[i3 + 1],
-                z: positions[i3 + 2]
-            };
-            
-            if (colors && parsedData.hasColors) {
-                vertex.red = colors[i3];
-                vertex.green = colors[i3 + 1];
-                vertex.blue = colors[i3 + 2];
-            }
-            
-            if (normals && parsedData.hasNormals) {
-                vertex.nx = normals[i3];
-                vertex.ny = normals[i3 + 1];
-                vertex.nz = normals[i3 + 2];
-            }
-            
-            parsedData.vertices[i] = vertex;
-        }
-        
-        // Clean up TypedArray flags
-        delete parsedData.useTypedArrays;
-        delete parsedData.positionsArray;
-        delete parsedData.colorsArray;
-        delete parsedData.normalsArray;
-    }
-
     private async sendUltimateRawBinary(
         webviewPanel: vscode.WebviewPanel,
         parsedData: any,
@@ -1374,35 +1337,6 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
             littleEndian: headerResult.headerInfo.format === 'binary_little_endian',
             faceCountType: headerResult.faceCountType,
             faceIndexType: headerResult.faceIndexType
-        });
-    }
-
-    private async sendDirectTypedArrays(
-        webviewPanel: vscode.WebviewPanel,
-        parsedData: any,
-        messageType: string
-    ): Promise<void> {
-        console.log(`🚀 REVOLUTIONARY: Direct TypedArray streaming for ${parsedData.fileName}`);
-        
-        // Send TypedArrays directly without any conversion or processing
-        webviewPanel.webview.postMessage({
-            type: 'directTypedArrayData',
-            messageType: messageType,
-            fileName: parsedData.fileName,
-            vertexCount: parsedData.vertexCount,
-            faceCount: parsedData.faceCount,
-            hasColors: parsedData.hasColors,
-            hasNormals: parsedData.hasNormals,
-            format: parsedData.format,
-            comments: parsedData.comments,
-            
-            // Direct TypedArray transfer (ArrayBuffer)
-            positionsBuffer: parsedData.positionsArray.buffer,
-            colorsBuffer: parsedData.colorsArray ? parsedData.colorsArray.buffer : null,
-            normalsBuffer: parsedData.normalsArray ? parsedData.normalsArray.buffer : null,
-            
-            // Metadata for direct BufferAttribute creation
-            useDirectBuffers: true
         });
     }
 
@@ -1530,38 +1464,6 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         });
     }
 
-    private estimateJsonSize(plyData: any): number {
-        // Rough estimation of JSON size to avoid expensive JSON.stringify
-        // Each vertex: ~60 bytes (x,y,z,r,g,b + JSON overhead)
-        // Each face: ~30 bytes per face
-        const vertexSize = plyData.hasColors ? 60 : 36; // With/without colors
-        const faceSize = 30;
-        const overhead = 1000; // JSON structure overhead
-        
-        return (plyData.vertexCount * vertexSize) + 
-               (plyData.faceCount * faceSize) + 
-               overhead;
-    }
-
-    private async tryDirectSend(
-        webviewPanel: vscode.WebviewPanel,
-        plyData: any,
-        messageType: string
-    ): Promise<void> {
-        return new Promise((resolve, reject) => {
-            try {
-                webviewPanel.webview.postMessage({
-                    type: messageType,
-                    data: [plyData]
-                });
-                // If we get here, the send was successful
-                resolve();
-            } catch (error) {
-                reject(error);
-            }
-        });
-    }
-
     private async sendLargeFileInChunksOptimized(
         webviewPanel: vscode.WebviewPanel,
         plyData: any,
@@ -1635,56 +1537,6 @@ export class PlyEditorProvider implements vscode.CustomReadonlyEditorProvider {
         
         const totalTime = performance.now() - startTime;
         console.log(`⚡ Ultra-fast transfer complete: ${totalTime.toFixed(1)}ms total, ${firstChunkTime ? (firstChunkTime - startTime).toFixed(1) : 0}ms to first chunk`);
-    }
-
-    private async sendLargeFileInChunks(
-        webviewPanel: vscode.WebviewPanel,
-        plyData: any,
-        messageType: string
-    ): Promise<void> {
-        const CHUNK_SIZE = 500000; // 500k vertices per chunk
-        const totalVertices = plyData.vertexCount;
-        const vertices = plyData.vertices;
-        
-        // Calculate number of chunks
-        const numChunks = Math.ceil(totalVertices / CHUNK_SIZE);
-        
-        // Send start message
-        webviewPanel.webview.postMessage({
-            type: 'startLargeFile',
-            fileName: plyData.fileName,
-            totalVertices: totalVertices,
-            totalChunks: numChunks,
-            hasColors: plyData.hasColors,
-            hasNormals: plyData.hasNormals,
-            faces: plyData.faces, // Send faces once
-            format: plyData.format,
-            comments: plyData.comments
-        });
-
-        // Send vertex data in chunks
-        for (let chunkIndex = 0; chunkIndex < numChunks; chunkIndex++) {
-            const startVertex = chunkIndex * CHUNK_SIZE;
-            const endVertex = Math.min(startVertex + CHUNK_SIZE, totalVertices);
-            const chunkVertices = vertices.slice(startVertex, endVertex);
-            
-            webviewPanel.webview.postMessage({
-                type: 'largeFileChunk',
-                chunkIndex: chunkIndex,
-                totalChunks: numChunks,
-                vertices: chunkVertices,
-                fileName: plyData.fileName
-            });
-            
-            // No artificial delay - let it run at maximum speed
-        }
-        
-        // Send completion message
-        webviewPanel.webview.postMessage({
-            type: 'largeFileComplete',
-            fileName: plyData.fileName,
-            messageType: messageType
-        });
     }
 
     private async handleCameraParametersRequest(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {

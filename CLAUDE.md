@@ -42,7 +42,7 @@ This is a **VS Code extension** that provides 3D visualization for point clouds,
 
 **Extension Host (Node.js)**
 - `src/extension.ts` - Extension activation and command registration
-- `src/plyEditorProvider.ts` - Custom editor provider routing by file extension
+- `src/pointCloudEditorProvider.ts` - Custom editor provider routing by file extension
 - Format-specific parsers:
   - `src/plyParser.ts` - PLY files (ASCII/binary, little/big endian)
   - `src/objParser.ts` - OBJ wireframes with MTL material support
@@ -75,7 +75,7 @@ This is a **VS Code extension** that provides 3D visualization for point clouds,
 - Per-file visibility, colors, point sizes, rendering modes
 - Camera state and control schemes
 
-**Format Detection Pipeline**: `plyEditorProvider.ts` routes files by extension:
+**Format Detection Pipeline**: `pointCloudEditorProvider.ts` routes files by extension:
 1. File extension detection (`.ply`, `.stl`, `.obj`, `.tif`, etc.)
 2. Parser selection and instantiation
 3. Data parsing in extension host
