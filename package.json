@@ -185,10 +185,16 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "webpack",
+    "compile:tests": "tsc",
+    "compile:all": "npm run compile && npm run compile:tests",
     "watch": "webpack --watch",
-    "pretest": "npm run compile && npm run lint",
+    "pretest": "npm run clean && npm run compile:all && npm run lint",
+    "clean": "rm -rf out/",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
+    "test:coverage": "npm run pretest && NODE_V8_COVERAGE=coverage npm run test",
+    "coverage": "npm run test:coverage && npm run coverage:report",
+    "coverage:report": "node --experimental-loader ./analyze-coverage.mjs",
     "test:ui": "npm run compile && node ./out/test/ui-test-runner.js",
     "test:all": "npm run test && npm run test:ui",
     "test:exr": "node test_exr_parsing.js",
@@ -217,5 +223,27 @@
     "geotiff": "^2.1.3",
     "pako": "^2.1.0",
     "three": "^0.178.0"
+  },
+  "nyc": {
+    "include": [
+      "out/**/*.js"
+    ],
+    "exclude": [
+      "out/test/**",
+      "out/webview/**",
+      "node_modules/**"
+    ],
+    "reporter": [
+      "text",
+      "html",
+      "lcov"
+    ],
+    "report-dir": "coverage",
+    "all": true,
+    "check-coverage": true,
+    "lines": 80,
+    "functions": 80,
+    "branches": 80,
+    "statements": 80
   }
 }

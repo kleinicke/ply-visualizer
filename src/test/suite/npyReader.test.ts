@@ -4,7 +4,7 @@ import * as path from 'path';
 
 // Import the NPY reader - we'll need to mock the module resolution
 // since it's designed for the webview context
-describe('NPY Reader Test Suite', function() {
+suite('NPY Reader Test Suite', function() {
     this.timeout(10000);
 
     // Mock the depth reader types for testing

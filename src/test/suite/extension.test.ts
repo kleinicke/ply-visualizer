@@ -176,7 +176,7 @@ end_header
             const packageJSON = ext.packageJSON;
             
             assert.strictEqual(packageJSON.name, 'ply-visualizer');
-            assert.strictEqual(packageJSON.displayName, 'PLY Pointcloud Visualizer');
+            assert.strictEqual(packageJSON.displayName, '3D Point Cloud Visualizer (PLY, ...)');
             assert.strictEqual(packageJSON.publisher, 'kleinicke');
             assert.ok(packageJSON.version, 'Version should be defined');
             assert.ok(packageJSON.description.includes('3D visualizer'), 'Description should mention 3D visualization');

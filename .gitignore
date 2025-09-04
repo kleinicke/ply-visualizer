@@ -9,3 +9,4 @@ out
 package-lock.json
 testfiles/new_formats/**
 dataset/
+coverage/
