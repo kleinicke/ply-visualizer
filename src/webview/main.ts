@@ -8140,10 +8140,14 @@ class PointCloudVisualizer {
         disparityOffset?: number
     ): DepthConversionResult {
         
-        const points: number[] = [];
-        const colors: number[] = [];
-        const logDepths: number[] = [];
-        const pixelCoords: number[] = []; // Store original (u,v) coordinates for each point
+        // Pre-allocate typed arrays for better performance
+        const totalPixels = width * height;
+        const tempPoints = new Float32Array(totalPixels * 3);  // Pre-allocate max size
+        const tempColors = new Float32Array(totalPixels * 3);
+        const tempPixelCoords = new Float32Array(totalPixels * 2);
+        const tempLogDepths = new Float32Array(totalPixels);
+        
+        let pointIndex = 0; // Track actual points added
         
         // Track depth statistics for debugging disappearing point clouds
         let minDepth = Infinity;
@@ -8174,9 +8178,14 @@ class PointCloudVisualizer {
                     const v = j - cy;
                     const r = Math.sqrt(u * u + v * v);
                     
+                    const pointBase = pointIndex * 3;
+                    const pixelBase = pointIndex * 2;
+                    
                     if (r === 0) {
-                        // Handle center point
-                        points.push(0, 0, depth);
+                        // Handle center point with coordinate conversion
+                        tempPoints[pointBase] = 0;
+                        tempPoints[pointBase + 1] = 0;
+                        tempPoints[pointBase + 2] = -depth;  // Apply Z flip immediately
                     } else {
                         // Normalize offset
                         const u_norm = u / r;
@@ -8185,26 +8194,19 @@ class PointCloudVisualizer {
                         // Compute angle for equidistant fisheye
                         const theta = r / fx;
                         
-                        // Create 3D unit vector
-                        const x_norm = u_norm * Math.sin(theta);
-                        const y_norm = v_norm * Math.sin(theta);
-                        const z_norm = Math.cos(theta);
-                        
-                        // Scale by depth
-                        points.push(
-                            x_norm * depth,
-                            y_norm * depth,
-                            z_norm * depth
-                        );
+                        // Create 3D unit vector and scale by depth with coordinate conversion
+                        tempPoints[pointBase] = u_norm * Math.sin(theta) * depth;
+                        tempPoints[pointBase + 1] = -v_norm * Math.sin(theta) * depth;  // Apply Y flip immediately
+                        tempPoints[pointBase + 2] = -Math.cos(theta) * depth;  // Apply Z flip immediately
                     }
                     
                     // Store original pixel coordinates (i,j) for this point
-                    pixelCoords.push(i, j);
+                    tempPixelCoords[pixelBase] = i;
+                    tempPixelCoords[pixelBase + 1] = j;
                     
-                    // Track depth for color mapping
-                    minDepth = Math.min(minDepth, depth);
-                    maxDepth = Math.max(maxDepth, depth);
-                    logDepths.push(Math.log(depth));
+                    // Store log depth for color mapping
+                    tempLogDepths[pointIndex] = Math.log(depth);
+                    pointIndex++;
                 }
             }
         } else {
@@ -8268,41 +8270,46 @@ class PointCloudVisualizer {
                     }
                     // For orthogonal depth, use direction vector as-is (no normalization)
                     
-                    // Scale by depth
-                    points.push(
-                        dirX * depth,
-                        dirY * depth,
-                        dirZ * depth
-                    );
+                    const pointBase = pointIndex * 3;
+                    const pixelBase = pointIndex * 2;
+                    
+                    // Store 3D point directly with coordinate conversion
+                    tempPoints[pointBase] = dirX * depth;
+                    tempPoints[pointBase + 1] = -dirY * depth;  // Apply Y flip immediately
+                    tempPoints[pointBase + 2] = -dirZ * depth;  // Apply Z flip immediately
                     
                     // Store original pixel coordinates (u,v) for this point
-                    pixelCoords.push(u, v);
+                    tempPixelCoords[pixelBase] = u;
+                    tempPixelCoords[pixelBase + 1] = v;
                     
-                    // Track depth for color mapping
-                    minDepth = Math.min(minDepth, depth);
-                    maxDepth = Math.max(maxDepth, depth);
-                    logDepths.push(Math.log(depth));
+                    // Store log depth for color mapping
+                    tempLogDepths[pointIndex] = Math.log(depth);
+                    pointIndex++;
                 }
             }
         }
         
-        // Compute log-normalized, gamma-corrected grayscale colors
-        if (logDepths.length > 0) {
+        // Compute log-normalized, gamma-corrected grayscale colors directly to typed array
+        if (pointIndex > 0) {
             const logMin = Math.log(minDepth);
             const logMax = Math.log(maxDepth);
             const denom = logMax - logMin;
             const invDenom = denom > 0 ? 1 / denom : 0;
             const gamma = 2.2; // standard display gamma
             const minGray = 0.2; // lift darkest values to 0.2
-            for (let i = 0; i < logDepths.length; i++) {
-                const s = denom > 0 ? (logDepths[i] - logMin) * invDenom : 1.0;
+            
+            for (let i = 0; i < pointIndex; i++) {
+                const colorBase = i * 3;
+                const s = denom > 0 ? (tempLogDepths[i] - logMin) * invDenom : 1.0;
                 const g = Math.pow(s, 1 / gamma);
                 const mapped = minGray + (1 - minGray) * g;
-                colors.push(mapped, mapped, mapped);
+                tempColors[colorBase] = mapped;
+                tempColors[colorBase + 1] = mapped;
+                tempColors[colorBase + 2] = mapped;
             }
         }
 
-        console.log(`Generated ${points.length / 3} points from ${width}x${height} depth image`);
+        console.log(`Generated ${pointIndex} points from ${width}x${height} depth image`);
         console.log(`📊 Depth statistics: min=${minDepth.toFixed(3)}, max=${maxDepth.toFixed(3)}, valid=${validPointCount}, skipped=${skippedPoints}`);
         console.log(`🎥 Camera range: near=${0.001}, far=${1000000}`);
         
@@ -8314,20 +8321,19 @@ class PointCloudVisualizer {
             console.warn(`⚠️ Some points (${maxDepth.toFixed(3)}) are farther than camera far plane (100000) - may be clipped!`);
         }
         
-        // Convert from OpenCV convention (Y-down, Z-forward) to OpenGL/Three.js convention (Y-up, Z-backward)
-        // Multiply Y and Z coordinates by -1
-        console.log('🔄 Converting coordinates from OpenCV to OpenGL/Three.js convention (Y↑, Z←)');
-        for (let i = 0; i < points.length; i += 3) {
-            // X stays the same (i+0)
-            points[i + 1] = -points[i + 1]; // Y coordinate: flip from down to up
-            points[i + 2] = -points[i + 2]; // Z coordinate: flip from forward to backward
-        }
+        // Coordinate conversion already applied during processing for better performance
+        console.log('🔄 Coordinates already converted from OpenCV to OpenGL/Three.js convention (Y↑, Z←)');
+        
+        // Create properly sized arrays from the pre-allocated ones
+        const actualVertices = tempPoints.slice(0, pointIndex * 3);
+        const actualColors = tempColors.slice(0, pointIndex * 3);
+        const actualPixelCoords = tempPixelCoords.slice(0, pointIndex * 2);
         
         return {
-            vertices: new Float32Array(points),
-            colors: new Float32Array(colors),
-            pixelCoords: new Float32Array(pixelCoords),
-            pointCount: points.length / 3
+            vertices: actualVertices,
+            colors: actualColors,
+            pixelCoords: actualPixelCoords,
+            pointCount: pointIndex
         };
     }
 

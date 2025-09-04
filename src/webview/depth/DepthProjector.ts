@@ -22,9 +22,13 @@ export function projectToPointCloud(
   const { fx, cx, cy, cameraModel } = meta;
   const fy = meta.fy || fx; // Use fx if fy is not provided
 
-  const points: number[] = [];
-  const colors: number[] = [];
-  const logDepths: number[] = [];
+  // Pre-allocate typed arrays for better performance
+  const totalPixels = width * height;
+  const tempVertices = new Float32Array(totalPixels * 3);
+  const tempColors = new Float32Array(totalPixels * 3);
+  const tempLogDepths = new Float32Array(totalPixels);
+  
+  let pointIndex = 0;
   let minDepth = Infinity;
   let maxDepth = -Infinity;
 
@@ -38,14 +42,18 @@ export function projectToPointCloud(
         const val = data[idx];
         if (!isFinite(val) || val <= 0) continue;
 
+        const pointBase = pointIndex * 3;
+        
         if (isZDepth) {
           const Z = val;
           const X = ((u - cx) / fx) * Z;
           const Y = ((v - cy) / fy) * Z;
-          points.push(X, Y, Z);
+          tempVertices[pointBase] = X;
+          tempVertices[pointBase + 1] = Y;
+          tempVertices[pointBase + 2] = Z;
           minDepth = Math.min(minDepth, Z);
           maxDepth = Math.max(maxDepth, Z);
-          logDepths.push(Math.log(Z));
+          tempLogDepths[pointIndex] = Math.log(Z);
         } else {
           const X = (u - cx) / fx;
           const Y = (v - cy) / fy;
@@ -55,11 +63,14 @@ export function projectToPointCloud(
           const dirY = Y / norm;
           const dirZ = Z / norm;
           const depth = val;
-          points.push(dirX * depth, dirY * depth, dirZ * depth);
+          tempVertices[pointBase] = dirX * depth;
+          tempVertices[pointBase + 1] = dirY * depth;
+          tempVertices[pointBase + 2] = dirZ * depth;
           minDepth = Math.min(minDepth, depth);
           maxDepth = Math.max(maxDepth, depth);
-          logDepths.push(Math.log(depth));
+          tempLogDepths[pointIndex] = Math.log(depth);
         }
+        pointIndex++;
       }
     }
   } else if (cameraModel === "pinhole-opencv") {
@@ -96,25 +107,32 @@ export function projectToPointCloud(
         const xCorrected = xn * radialCorrection + tangentialX;
         const yCorrected = yn * radialCorrection + tangentialY;
 
+        const pointBase = pointIndex * 3;
+        
         if (isZDepth) {
           const Z = val;
           const X = xCorrected * Z;
           const Y = yCorrected * Z;
-          points.push(X, Y, Z);
+          tempVertices[pointBase] = X;
+          tempVertices[pointBase + 1] = Y;
+          tempVertices[pointBase + 2] = Z;
           minDepth = Math.min(minDepth, Z);
           maxDepth = Math.max(maxDepth, Z);
-          logDepths.push(Math.log(Z));
+          tempLogDepths[pointIndex] = Math.log(Z);
         } else {
           const norm = Math.hypot(xCorrected, yCorrected, 1.0);
           const dirX = xCorrected / norm;
           const dirY = yCorrected / norm;
           const dirZ = 1.0 / norm;
           const depth = val;
-          points.push(dirX * depth, dirY * depth, dirZ * depth);
+          tempVertices[pointBase] = dirX * depth;
+          tempVertices[pointBase + 1] = dirY * depth;
+          tempVertices[pointBase + 2] = dirZ * depth;
           minDepth = Math.min(minDepth, depth);
           maxDepth = Math.max(maxDepth, depth);
-          logDepths.push(Math.log(depth));
+          tempLogDepths[pointIndex] = Math.log(depth);
         }
+        pointIndex++;
       }
     }
   } else if (cameraModel === "fisheye-equidistant") {
@@ -128,8 +146,13 @@ export function projectToPointCloud(
         const du = u - cx;
         const dv = v - cy;
         const r = Math.hypot(du, dv);
+        
+        const pointBase = pointIndex * 3;
+        
         if (r === 0) {
-          points.push(0, 0, depth);
+          tempVertices[pointBase] = 0;
+          tempVertices[pointBase + 1] = 0;
+          tempVertices[pointBase + 2] = depth;
         } else {
           const uNorm = du / r;
           const vNorm = dv / r;
@@ -138,13 +161,16 @@ export function projectToPointCloud(
           const yNorm = vNorm * Math.sin(theta);
           const zNorm = Math.cos(theta);
 
-          points.push(xNorm * depth, yNorm * depth, zNorm * depth);
+          tempVertices[pointBase] = xNorm * depth;
+          tempVertices[pointBase + 1] = yNorm * depth;
+          tempVertices[pointBase + 2] = zNorm * depth;
         }
 
         // Track depth range and store log-depth for later normalized color mapping
         minDepth = Math.min(minDepth, depth);
         maxDepth = Math.max(maxDepth, depth);
-        logDepths.push(Math.log(depth));
+        tempLogDepths[pointIndex] = Math.log(depth);
+        pointIndex++;
       }
     }
   } else if (cameraModel === "fisheye-opencv") {
@@ -165,8 +191,12 @@ export function projectToPointCloud(
         const r2 = (du * du + dv * dv) / (fx * fx); // Normalized radius squared
         const r = Math.sqrt(r2);
         
+        const pointBase = pointIndex * 3;
+        
         if (r === 0) {
-          points.push(0, 0, depth);
+          tempVertices[pointBase] = 0;
+          tempVertices[pointBase + 1] = 0;
+          tempVertices[pointBase + 2] = depth;
         } else {
           // Apply fisheye distortion correction
           const r4 = r2 * r2;
@@ -184,12 +214,15 @@ export function projectToPointCloud(
           const yNorm = vNorm * Math.sin(theta);
           const zNorm = Math.cos(theta);
 
-          points.push(xNorm * depth, yNorm * depth, zNorm * depth);
+          tempVertices[pointBase] = xNorm * depth;
+          tempVertices[pointBase + 1] = yNorm * depth;
+          tempVertices[pointBase + 2] = zNorm * depth;
         }
 
         minDepth = Math.min(minDepth, depth);
         maxDepth = Math.max(maxDepth, depth);
-        logDepths.push(Math.log(depth));
+        tempLogDepths[pointIndex] = Math.log(depth);
+        pointIndex++;
       }
     }
   } else if (cameraModel === "fisheye-kannala-brandt") {
@@ -210,8 +243,12 @@ export function projectToPointCloud(
         const dv = v - cy;
         const r = Math.hypot(du, dv);
         
+        const pointBase = pointIndex * 3;
+        
         if (r === 0) {
-          points.push(0, 0, depth);
+          tempVertices[pointBase] = 0;
+          tempVertices[pointBase + 1] = 0;
+          tempVertices[pointBase + 2] = depth;
         } else {
           // Kannala-Brandt: r = k1*θ + k2*θ³ + k3*θ⁵ + k4*θ⁷ + k5*θ⁹
           // We need to solve for θ given r (undistortion)
@@ -240,12 +277,15 @@ export function projectToPointCloud(
           const yNorm = vNorm * Math.sin(theta);
           const zNorm = Math.cos(theta);
 
-          points.push(xNorm * depth, yNorm * depth, zNorm * depth);
+          tempVertices[pointBase] = xNorm * depth;
+          tempVertices[pointBase + 1] = yNorm * depth;
+          tempVertices[pointBase + 2] = zNorm * depth;
         }
 
         minDepth = Math.min(minDepth, depth);
         maxDepth = Math.max(maxDepth, depth);
-        logDepths.push(Math.log(depth));
+        tempLogDepths[pointIndex] = Math.log(depth);
+        pointIndex++;
       }
     }
   } else {
@@ -256,15 +296,19 @@ export function projectToPointCloud(
         const val = data[idx];
         if (!isFinite(val) || val <= 0) continue;
 
+        const pointBase = pointIndex * 3;
+        
         if (isZDepth) {
           const Z = val;
           const X = ((u - cx) / fx) * Z;
           const Y = ((v - cy) / fy) * Z;
-          points.push(X, Y, Z);
+          tempVertices[pointBase] = X;
+          tempVertices[pointBase + 1] = Y;
+          tempVertices[pointBase + 2] = Z;
           // Track depth range and store log-depth for later normalized color mapping
           minDepth = Math.min(minDepth, Z);
           maxDepth = Math.max(maxDepth, Z);
-          logDepths.push(Math.log(Z));
+          tempLogDepths[pointIndex] = Math.log(Z);
         } else {
           const X = (u - cx) / fx;
           const Y = (v - cy) / fy;
@@ -274,44 +318,55 @@ export function projectToPointCloud(
           const dirY = Y / norm;
           const dirZ = Z / norm;
           const depth = val;
-          points.push(dirX * depth, dirY * depth, dirZ * depth);
+          tempVertices[pointBase] = dirX * depth;
+          tempVertices[pointBase + 1] = dirY * depth;
+          tempVertices[pointBase + 2] = dirZ * depth;
           // Track depth range and store log-depth for later normalized color mapping
           minDepth = Math.min(minDepth, depth);
           maxDepth = Math.max(maxDepth, depth);
-          logDepths.push(Math.log(depth));
+          tempLogDepths[pointIndex] = Math.log(depth);
         }
+        pointIndex++;
       }
     }
   }
 
-  // Compute log-normalized, gamma-corrected grayscale colors
-  if (logDepths.length > 0) {
+  // Compute log-normalized, gamma-corrected grayscale colors directly to typed array
+  if (pointIndex > 0) {
     const logMin = Math.log(minDepth);
     const logMax = Math.log(maxDepth);
     const denom = logMax - logMin;
     const invDenom = denom > 0 ? 1 / denom : 0;
     const gamma = 1.0; //2.2; // standard display gamma
     const minGray = 0.2; // lift darkest values to 0.2
-    for (let i = 0; i < logDepths.length; i++) {
-      const s = denom > 0 ? (logDepths[i] - logMin) * invDenom : 1.0;
+    for (let i = 0; i < pointIndex; i++) {
+      const colorBase = i * 3;
+      const s = denom > 0 ? (tempLogDepths[i] - logMin) * invDenom : 1.0;
       const g = Math.pow(s, 1 / gamma);
       const mapped = minGray + (1 - minGray) * g;
-      colors.push(mapped, mapped, mapped);
+      tempColors[colorBase] = mapped;
+      tempColors[colorBase + 1] = mapped;
+      tempColors[colorBase + 2] = mapped;
     }
   }
 
-  let vertices = new Float32Array(points);
+  // Apply coordinate system conversion if needed
   if (meta.convention === "opengl") {
-    for (let i = 0; i < vertices.length; i += 3) {
-      vertices[i + 1] = -vertices[i + 1];
-      vertices[i + 2] = -vertices[i + 2];
+    for (let i = 0; i < pointIndex; i++) {
+      const pointBase = i * 3;
+      tempVertices[pointBase + 1] = -tempVertices[pointBase + 1];
+      tempVertices[pointBase + 2] = -tempVertices[pointBase + 2];
     }
   }
+
+  // Create properly sized arrays from the pre-allocated ones
+  const vertices = tempVertices.slice(0, pointIndex * 3);
+  const colors = pointIndex > 0 ? tempColors.slice(0, pointIndex * 3) : undefined;
 
   return {
     vertices,
-    colors: colors.length ? new Float32Array(colors) : undefined,
-    pointCount: points.length / 3,
+    colors,
+    pointCount: pointIndex,
     width,
     height,
   };
