@@ -86,8 +86,11 @@ suite('Depth Projector Test Suite', () => {
         const z1 = result.vertices[2];
         
         assert.strictEqual(z1, 1.0);
-        assert.strictEqual(x1, (0 - 1.0) * 1.0 / 100.0); // (x - cx) * depth / fx
-        assert.strictEqual(y1, (0 - 1.0) * 1.0 / 100.0); // (y - cy) * depth / fy
+        // Use approximate equality for floating point calculations
+        const expectedX = (0 - 1.0) * 1.0 / 100.0; // (x - cx) * depth / fx
+        const expectedY = (0 - 1.0) * 1.0 / 100.0; // (y - cy) * depth / fy
+        assert.ok(Math.abs(x1 - expectedX) < 0.0001, `X coordinate should be approximately ${expectedX}, got ${x1}`);
+        assert.ok(Math.abs(y1 - expectedY) < 0.0001, `Y coordinate should be approximately ${expectedY}, got ${y1}`);
     });
 
     test('Should validate camera parameters correctly', () => {

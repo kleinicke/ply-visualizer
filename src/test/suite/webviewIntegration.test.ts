@@ -330,9 +330,10 @@ suite('Webview Integration Advanced Test Suite', () => {
     });
 
     test('Should enable performance mode for large datasets', async () => {
+        // Create a dataset that definitely triggers performance mode (>5M vertices)
         const massiveCloud = {
-            vertices: new Float32Array(new Array(15000000).fill(0)), // 5M vertices
-            vertexCount: 5000000,
+            vertices: new Float32Array(new Array(18000000).fill(0)), // 6M vertices
+            vertexCount: 6000000,
             hasColors: false,
             hasNormals: false
         };
