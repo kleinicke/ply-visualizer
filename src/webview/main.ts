@@ -141,6 +141,9 @@ class PointCloudVisualizer {
         lastChunkTime: number;
     }> = new Map();
     
+    // Adaptive decimation tracking
+    private lastCameraDistance: number = 0;
+    
     // Depth processing state - support multiple pending Depth files
     private pendingDepthFiles: Map<string, {
         data: ArrayBuffer;
@@ -183,6 +186,132 @@ class PointCloudVisualizer {
             lut[i] = s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
         }
         this.srgbToLinearLUT = lut;
+    }
+
+    private optimizeForPointCount(material: THREE.PointsMaterial, pointCount: number): void {
+        // Keep original visual quality settings
+        material.transparent = true;
+        material.alphaTest = 0.1;
+        material.depthTest = true;
+        material.depthWrite = true;
+        material.sizeAttenuation = true; // Keep world-space sizing
+        
+        // Force material update
+        material.needsUpdate = true;
+    }
+    
+    private createOptimizedPointCloud(geometry: THREE.BufferGeometry, material: THREE.PointsMaterial): THREE.Points {
+        // Optimize geometry for GPU
+        const positions = geometry.getAttribute('position') as THREE.BufferAttribute;
+        if (positions && positions.count > 50000) {
+            // For very large point clouds, try to reduce vertex data transfer
+            geometry.deleteAttribute('normal'); // Points don't need normals
+            geometry.computeBoundingBox(); // Help with frustum culling
+            geometry.computeBoundingSphere();
+        }
+        
+        const points = new THREE.Points(geometry, material);
+        
+        // Add adaptive decimation for large point clouds
+        if (positions && positions.count > 100000) {
+            (points as any).originalGeometry = geometry.clone(); // Store full geometry
+            (points as any).hasAdaptiveDecimation = true;
+            points.frustumCulled = false;
+        }
+        
+        return points;
+    }
+    
+    private decimateGeometryByDistance(originalGeometry: THREE.BufferGeometry, cameraDistance: number): THREE.BufferGeometry {
+        const positions = originalGeometry.getAttribute('position') as THREE.BufferAttribute;
+        const colors = originalGeometry.getAttribute('color') as THREE.BufferAttribute;
+        
+        let decimationFactor = 1;
+        
+        // Aggressive decimation when zoomed out (high camera distance)
+        if (cameraDistance > 50) decimationFactor = 10;      // Keep every 10th point
+        else if (cameraDistance > 20) decimationFactor = 5;  // Keep every 5th point  
+        else if (cameraDistance > 10) decimationFactor = 3;  // Keep every 3rd point
+        else if (cameraDistance > 5) decimationFactor = 2;   // Keep every 2nd point
+        
+        if (decimationFactor === 1) return originalGeometry;
+        
+        const totalPoints = positions.count;
+        const decimatedCount = Math.floor(totalPoints / decimationFactor);
+        
+        const newPositions = new Float32Array(decimatedCount * 3);
+        const newColors = colors ? new Float32Array(decimatedCount * 3) : null;
+        
+        let writeIndex = 0;
+        for (let i = 0; i < totalPoints; i += decimationFactor) {
+            // Copy position
+            newPositions[writeIndex * 3] = positions.array[i * 3];
+            newPositions[writeIndex * 3 + 1] = positions.array[i * 3 + 1];
+            newPositions[writeIndex * 3 + 2] = positions.array[i * 3 + 2];
+            
+            // Copy color if available
+            if (newColors && colors) {
+                newColors[writeIndex * 3] = colors.array[i * 3];
+                newColors[writeIndex * 3 + 1] = colors.array[i * 3 + 1];
+                newColors[writeIndex * 3 + 2] = colors.array[i * 3 + 2];
+            }
+            
+            writeIndex++;
+        }
+        
+        const newGeometry = new THREE.BufferGeometry();
+        newGeometry.setAttribute('position', new THREE.BufferAttribute(newPositions, 3));
+        if (newColors) {
+            newGeometry.setAttribute('color', new THREE.BufferAttribute(newColors, 3));
+        }
+        
+        return newGeometry;
+    }
+    
+    private updateAdaptiveDecimation(): void {
+        // Calculate average distance to all point clouds
+        let totalDistance = 0;
+        let pointCloudCount = 0;
+        
+        for (let i = 0; i < this.meshes.length; i++) {
+            const mesh = this.meshes[i];
+            if (mesh && (mesh instanceof THREE.Points) && (mesh as any).hasAdaptiveDecimation) {
+                if (mesh.geometry.boundingBox) {
+                    const center = mesh.geometry.boundingBox.getCenter(new THREE.Vector3());
+                    center.applyMatrix4(mesh.matrixWorld);
+                    totalDistance += this.camera.position.distanceTo(center);
+                    pointCloudCount++;
+                }
+            }
+        }
+        
+        if (pointCloudCount === 0) return;
+        
+        const avgDistance = totalDistance / pointCloudCount;
+        
+        // Update geometries if distance changed significantly
+        const distanceThreshold = 2.0; // Only update if camera moved significantly
+        if (Math.abs(avgDistance - this.lastCameraDistance) > distanceThreshold) {
+            console.log(`🔄 Adaptive decimation: distance=${avgDistance.toFixed(1)}`);
+            
+            for (let i = 0; i < this.meshes.length; i++) {
+                const mesh = this.meshes[i];
+                if (mesh && (mesh instanceof THREE.Points) && (mesh as any).hasAdaptiveDecimation) {
+                    const originalGeometry = (mesh as any).originalGeometry;
+                    if (originalGeometry) {
+                        const decimatedGeometry = this.decimateGeometryByDistance(originalGeometry, avgDistance);
+                        
+                        // Update mesh geometry
+                        mesh.geometry.dispose();
+                        mesh.geometry = decimatedGeometry;
+                        
+                        console.log(`📊 File ${i}: ${originalGeometry.getAttribute('position').count} → ${decimatedGeometry.getAttribute('position').count} points`);
+                    }
+                }
+            }
+            
+            this.lastCameraDistance = avgDistance;
+        }
     }
     
     // Predefined colors for different files
@@ -247,13 +376,17 @@ class PointCloudVisualizer {
         
         this.renderer = new THREE.WebGLRenderer({ 
             canvas: canvas,
-            antialias: true,
-            alpha: true
+            antialias: true, // Re-enable antialiasing for quality
+            alpha: true,
+            powerPreference: "high-performance" // Keep discrete GPU preference
         });
         this.renderer.setSize(container.clientWidth, container.clientHeight);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.enabled = true; // Re-enable shadows
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        
+        // Re-enable object sorting for better visual quality
+        this.renderer.sortObjects = true;
         
         // Set initial color space based on preference
         this.updateRendererColorSpace();
@@ -759,6 +892,9 @@ class PointCloudVisualizer {
         if (positionChanged || rotationChanged) {
             this.updateCameraMatrix();
             this.updateCameraControlsPanel();
+            
+            // Apply adaptive decimation based on camera distance
+            this.updateAdaptiveDecimation();
             
             // Debug: Check if any Depth-derived point clouds are being culled
             // Only log every 60 frames to avoid spam
@@ -2638,9 +2774,9 @@ class PointCloudVisualizer {
             material.size = this.pointSizes[fileIndex];
             material.sizeAttenuation = true; // Always use distance-based scaling
             
-            // Improve point rendering quality
-            material.transparent = true;
-            material.alphaTest = 0.1; // Helps with point edge quality
+            // Apply point count-based optimizations
+            const pointCount = data.vertices?.length || 0;
+            this.optimizeForPointCount(material, pointCount);
             
             // debug
             
@@ -4192,7 +4328,12 @@ class PointCloudVisualizer {
             size: currentPointSize,
             vertexColors: geometry.attributes.color ? true : false,
             color: geometry.attributes.color ? undefined : 0x888888,
-            sizeAttenuation: true
+            sizeAttenuation: true,
+            // Restore original quality settings
+            transparent: true,
+            alphaTest: 0.1,
+            depthWrite: true,
+            depthTest: true
         });
         
         const points = new THREE.Points(pointsGeometry, pointsMaterial);
@@ -4654,7 +4795,12 @@ class PointCloudVisualizer {
                                 const pointMaterial = new THREE.PointsMaterial({ 
                                     color: 0xff0000, // Default red - will be colored by MTL
                                     size: this.pointSizes[data.fileIndex] || 0.001, // Use stored point size (world units)
-                                    sizeAttenuation: true // Use world-space sizing like other file types
+                                    sizeAttenuation: true, // Use world-space sizing like other file types
+                                    // Restore original quality settings
+                                    transparent: true,
+                                    alphaTest: 0.1,
+                                    depthWrite: true,
+                                    depthTest: true
                                 });
                                 
                                 const points = new THREE.Points(pointGeometry, pointMaterial);
@@ -4698,8 +4844,8 @@ class PointCloudVisualizer {
                         this.meshes.push(mesh);
                     }
                 } else {
-                    // Fallback to points
-                    const mesh = new THREE.Points(geometry, material);
+                    // Fallback to points - use optimized creation
+                    const mesh = this.createOptimizedPointCloud(geometry, material as THREE.PointsMaterial);
                     this.scene.add(mesh);
                     this.meshes.push(mesh);
                 }
@@ -4741,7 +4887,7 @@ class PointCloudVisualizer {
                     // Create regular mesh for PLY files
                     const shouldShowAsPoints = data.faceCount === 0;
                     const mesh = shouldShowAsPoints ?
-                        new THREE.Points(geometry, material) :
+                        this.createOptimizedPointCloud(geometry, material as THREE.PointsMaterial) :
                         new THREE.Mesh(geometry, material);
                     
                     this.scene.add(mesh);
@@ -5412,7 +5558,12 @@ class PointCloudVisualizer {
                         const pointsMaterial = new THREE.PointsMaterial({ 
                             color: 0xffffff, 
                             size: newSize,
-                            sizeAttenuation: true
+                            sizeAttenuation: true,
+                            // Restore original quality settings
+                            transparent: true,
+                            alphaTest: 0.1,
+                            depthWrite: true,
+                            depthTest: true
                         });
                         pointsOverlay = new THREE.Points(mesh.geometry, pointsMaterial);
                         pointsOverlay.visible = false; // Hidden by default
