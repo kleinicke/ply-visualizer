@@ -35,3 +35,8 @@ export async function readDepth(filename: string, buf: ArrayBuffer): Promise<Dep
   if (!reader) throw new Error(`No depth reader registered for ${filename}`);
   return reader.read(buf);
 }
+
+// For testing purposes - clear all registered readers
+export function clearReaders(): void {
+  readers.length = 0;
+}

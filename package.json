@@ -213,6 +213,7 @@
     "eslint": "^8.28.0",
     "glob": "^8.1.0",
     "mocha": "^10.2.0",
+    "nyc": "^17.1.0",
     "ts-loader": "^9.5.1",
     "typescript": "^4.9.4",
     "vscode-extension-tester": "^8.17.0",
@@ -230,8 +231,8 @@
     ],
     "exclude": [
       "out/test/**",
-      "out/webview/**",
-      "node_modules/**"
+      "node_modules/**",
+      "out/extension.js"
     ],
     "reporter": [
       "text",
