@@ -2641,6 +2641,9 @@ class PointCloudVisualizer {
                 case 'mtlData':
                     this.handleMtlData(message);
                     break;
+                case 'calibrationFileSelected':
+                    this.handleCalibrationFileSelected(message);
+                    break;
                 case 'poseData':
                     try {
                         await (this as any).handlePoseData(message);
@@ -2950,10 +2953,9 @@ class PointCloudVisualizer {
                                     📁 Load Calibration File
                                 </button>
                                 <div class="calibration-info" id="calibration-info-${i}" style="display: none; margin-top: 4px; padding: 4px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
-                                    <div id="calibration-filename-${i}" style="font-size: 9px; font-weight: bold; margin-bottom: 4px;"></div>
-                                    <div style="display: flex; gap: 4px; align-items: center;">
-                                        <label for="camera-select-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground);">Camera:</label>
-                                        <select id="camera-select-${i}" style="flex: 1; padding: 2px; font-size: 10px;">
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <div id="calibration-filename-${i}" style="font-size: 9px; font-weight: bold; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
+                                        <select id="camera-select-${i}" style="flex: 0 0 25%; font-size: 9px; padding: 1px 2px;">
                                             <option value="">Select camera...</option>
                                         </select>
                                     </div>
@@ -2968,6 +2970,15 @@ class PointCloudVisualizer {
                                     <option value="fisheye-equidistant" ${this.getDepthSetting(data, 'camera').includes('fisheye-equidistant') ? 'selected' : ''}>Fisheye Equidistant</option>
                                     <option value="fisheye-opencv" ${this.getDepthSetting(data, 'camera').includes('fisheye-opencv') ? 'selected' : ''}>Fisheye + OpenCV Distortion (beta)</option>
                                     <option value="fisheye-kannala-brandt" ${this.getDepthSetting(data, 'camera').includes('fisheye-kannala-brandt') ? 'selected' : ''}>Fisheye Kannala-Brandt (beta)</option>
+                                </select>
+                            </div>
+                            <div class="depth-group" style="margin-bottom: 8px;">
+                                <label for="depth-type-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Depth Type ⭐:</label>
+                                <select id="depth-type-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
+                                    <option value="euclidean" ${this.getDepthSetting(data, 'depth').includes('euclidean') ? 'selected' : ''}>Euclidean</option>
+                                    <option value="orthogonal" ${this.getDepthSetting(data, 'depth').includes('orthogonal') ? 'selected' : ''}>Orthogonal</option>
+                                    <option value="disparity" ${this.getDepthSetting(data, 'depth').includes('disparity') ? 'selected' : ''}>Disparity</option>
+                                    <option value="inverse_depth" ${this.getDepthSetting(data, 'depth').includes('inverse_depth') ? 'selected' : ''}>Inverse Depth</option>
                                 </select>
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
@@ -3085,15 +3096,6 @@ class PointCloudVisualizer {
                                     </div>
                                     <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">Polynomial fisheye coefficients</div>
                                 </div>
-                            </div>
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <label for="depth-type-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Depth Type ⭐:</label>
-                                <select id="depth-type-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    <option value="euclidean" ${this.getDepthSetting(data, 'depth').includes('euclidean') ? 'selected' : ''}>Euclidean</option>
-                                    <option value="orthogonal" ${this.getDepthSetting(data, 'depth').includes('orthogonal') ? 'selected' : ''}>Orthogonal</option>
-                                    <option value="disparity" ${this.getDepthSetting(data, 'depth').includes('disparity') ? 'selected' : ''}>Disparity</option>
-                                    <option value="inverse_depth" ${this.getDepthSetting(data, 'depth').includes('inverse_depth') ? 'selected' : ''}>Inverse Depth</option>
-                                </select>
                             </div>
                             <div class="depth-group" id="baseline-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
                                 <label for="baseline-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Baseline (mm) ⭐:</label>
@@ -6745,22 +6747,11 @@ class PointCloudVisualizer {
     }
 
     private openCalibrationFileDialog(fileIndex: number): void {
-        // Create a hidden file input
-        const fileInput = document.createElement('input');
-        fileInput.type = 'file';
-        fileInput.accept = '.json,.yaml,.yml,.xml,.txt,.ini';
-        fileInput.style.display = 'none';
-        
-        fileInput.addEventListener('change', (e) => {
-            const file = (e.target as HTMLInputElement).files?.[0];
-            if (file) {
-                this.loadCalibrationFile(file, fileIndex);
-            }
-            document.body.removeChild(fileInput);
+        // Use VS Code's file picker instead of browser's for better directory control
+        this.vscode.postMessage({
+            type: 'selectCalibrationFile',
+            fileIndex: fileIndex
         });
-        
-        document.body.appendChild(fileInput);
-        fileInput.click();
     }
 
     private async loadCalibrationFile(file: File, fileIndex: number): Promise<void> {
@@ -6822,9 +6813,11 @@ class PointCloudVisualizer {
         }
         this.calibrationData.set(fileIndex, calibrationData);
 
-        // Extract camera names from calibration data
+        // Extract camera names from calibration data and automatically select the first one
         if (calibrationData.cameras && typeof calibrationData.cameras === 'object') {
             const cameraNames = Object.keys(calibrationData.cameras);
+            
+            // Populate dropdown with all cameras
             cameraNames.forEach(cameraName => {
                 const option = document.createElement('option');
                 option.value = cameraName;
@@ -6832,7 +6825,21 @@ class PointCloudVisualizer {
                 cameraSelect.appendChild(option);
             });
             
-            console.log(`📷 Loaded calibration file with ${cameraNames.length} cameras:`, cameraNames);
+            if (cameraNames.length > 0) {
+                // Automatically select the first camera
+                const firstCamera = cameraNames[0];
+                cameraSelect.value = firstCamera;
+                
+                // Auto-populate form fields from the first camera
+                const cameraData = calibrationData.cameras[firstCamera];
+                this.populateFormFromCalibration(cameraData, fileIndex);
+                
+                console.log(`📷 Loaded calibration file with ${cameraNames.length} cameras:`, cameraNames);
+                console.log(`✅ Automatically selected first camera: ${firstCamera}`);
+            } else {
+                console.warn('No cameras found in calibration file');
+                alert('No cameras found in the calibration file. Please check the file format.');
+            }
         } else {
             console.warn('No cameras found in calibration file');
             alert('No cameras found in the calibration file. Please check the file format.');
@@ -6856,6 +6863,41 @@ class PointCloudVisualizer {
         this.populateFormFromCalibration(cameraData, fileIndex);
         
         console.log(`📷 Applied calibration for camera "${selectedCamera}" to file ${fileIndex}`);
+    }
+
+    private handleCalibrationFileSelected(message: any): void {
+        try {
+            const fileIndex = message.fileIndex;
+            const fileName = message.fileName;
+            const content = message.content;
+            
+            // Parse the calibration file content based on file type
+            let calibrationData: any;
+            
+            if (fileName.toLowerCase().endsWith('.json')) {
+                // JSON format
+                calibrationData = JSON.parse(content);
+            } else if (fileName.toLowerCase().endsWith('.txt') || fileName.toLowerCase().includes('calib')) {
+                // calib.txt format
+                const calibTxtData = CalibTxtParser.parse(content);
+                calibrationData = CalibTxtParser.toCameraFormat(calibTxtData);
+                calibrationData._calibTxtData = calibTxtData; // Store original data for disparity offset
+                
+                console.log('✅ Loaded calib.txt with cameras:', Object.keys(calibrationData.cameras));
+                console.log('📏 Baseline:', calibTxtData.baseline, 'mm');
+                console.log('🔍 Image size:', `${calibTxtData.width}x${calibTxtData.height}`);
+            } else {
+                alert('Supported calibration file formats: JSON (.json) and stereo calibration (.txt, calib.txt).');
+                return;
+            }
+
+            // Display calibration file info and populate camera selection
+            this.displayCalibrationInfo(calibrationData, fileName, fileIndex);
+            
+        } catch (error) {
+            console.error('Error processing calibration file:', error);
+            alert(`Failed to process calibration file: ${error instanceof Error ? error.message : String(error)}`);
+        }
     }
 
     private populateFormFromCalibration(cameraData: any, fileIndex: number): void {

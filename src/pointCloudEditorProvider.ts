@@ -13,6 +13,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     private static readonly viewType = 'plyViewer.plyEditor';
     private activePanels = new Set<vscode.WebviewPanel>();
     private pathToPanel = new Map<string, vscode.WebviewPanel>();
+    private panelToPath = new Map<vscode.WebviewPanel, string>();
 
     constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -31,9 +32,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     ): Promise<void> {
         this.activePanels.add(webviewPanel);
         this.pathToPanel.set(document.uri.fsPath, webviewPanel);
+        this.panelToPath.set(webviewPanel, document.uri.fsPath);
         webviewPanel.onDidDispose(() => {
             this.activePanels.delete(webviewPanel);
             this.pathToPanel.delete(document.uri.fsPath);
+            this.panelToPath.delete(webviewPanel);
         });
         webviewPanel.webview.options = {
             enableScripts: true,
@@ -568,6 +571,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                     case 'requestDefaultDepthSettings':
                         await this.handleRequestDefaultDepthSettings(webviewPanel);
                         break;
+                    case 'selectCalibrationFile':
+                        await this.handleSelectCalibrationFile(webviewPanel, message);
+                        break;
                     case 'sequence:requestFile':
                         await this.handleSequenceRequestFile(webviewPanel, message);
                         break;
@@ -822,6 +828,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     }
 
     private async handleAddFile(webviewPanel: vscode.WebviewPanel): Promise<void> {
+        // Get current file directory for default location
+        const currentFilePath = this.panelToPath.get(webviewPanel);
+        const defaultUri = currentFilePath ? vscode.Uri.file(path.dirname(currentFilePath)) : undefined;
+        
         const files = await vscode.window.showOpenDialog({
             canSelectMany: true,
             filters: {
@@ -848,7 +858,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                 // eslint-disable-next-line @typescript-eslint/naming-convention
                 'Pose JSON': ['json']
             },
-            title: 'Select point cloud files to add'
+            title: 'Select point cloud files to add',
+            defaultUri: defaultUri
         });
 
         if (files && files.length > 0) {
@@ -1546,7 +1557,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             const defaults = savedSettings ? {
                 fx: savedSettings.fx || 1000,
                 fy: savedSettings.fy,
-                cameraModel: savedSettings.cameraModel || 'pinhole',
+                cameraModel: savedSettings.cameraModel || 'pinhole-ideal',
                 depthType: savedSettings.depthType || 'euclidean',
                 convention: savedSettings.convention || 'opengl',
                 baseline: savedSettings.baseline || 50,
@@ -1555,7 +1566,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             } : {
                 fx: 1000,
                 fy: undefined,
-                cameraModel: 'pinhole',
+                cameraModel: 'pinhole-ideal',
                 depthType: 'euclidean',
                 convention: 'opengl',
                 baseline: 50,
@@ -1612,8 +1623,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                 [
                     { 
                         label: 'Pinhole Camera', 
-                        description: defaults.cameraModel === 'pinhole' ? 'Standard perspective projection model (Default)' : 'Standard perspective projection model', 
-                        value: 'pinhole' 
+                        description: defaults.cameraModel === 'pinhole-ideal' ? 'Standard perspective projection model (Default)' : 'Standard perspective projection model', 
+                        value: 'pinhole-ideal' 
                     },
                     { 
                         label: 'Fisheye Camera', 
@@ -1804,7 +1815,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             const defaults = savedSettings ? {
                 fx: savedSettings.fx || 1000,
                 fy: savedSettings.fy,
-                cameraModel: savedSettings.cameraModel || 'pinhole',
+                cameraModel: savedSettings.cameraModel || 'pinhole-ideal',
                 depthType: savedSettings.depthType || 'euclidean',
                 convention: savedSettings.convention || 'opengl',
                 baseline: savedSettings.baseline || 50,
@@ -1813,7 +1824,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             } : {
                 fx: 1000,
                 fy: undefined,
-                cameraModel: 'pinhole',
+                cameraModel: 'pinhole-ideal',
                 depthType: 'euclidean',
                 convention: 'opengl',
                 baseline: 50,
@@ -1871,8 +1882,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                 [
                     { 
                         label: 'Pinhole Camera', 
-                        description: defaults.cameraModel === 'pinhole' ? 'Standard perspective projection model (Default)' : 'Standard perspective projection model', 
-                        value: 'pinhole' 
+                        description: defaults.cameraModel === 'pinhole-ideal' ? 'Standard perspective projection model (Default)' : 'Standard perspective projection model', 
+                        value: 'pinhole-ideal' 
                     },
                     { 
                         label: 'Fisheye Camera', 
@@ -2082,6 +2093,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         try {
             console.log(`📁 Handling color image selection for file index: ${message.fileIndex}`);
             
+            // Get current file directory for default location
+            const currentFilePath = this.panelToPath.get(webviewPanel);
+            const defaultUri = currentFilePath ? vscode.Uri.file(path.dirname(currentFilePath)) : undefined;
+            
             // Show open dialog for color images
             const files = await vscode.window.showOpenDialog({
                 canSelectMany: false,
@@ -2089,7 +2104,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                     'Image Files': ['png', 'jpg', 'jpeg', 'bmp', 'gif', 'tif', 'tiff'],
                     'All Files': ['*']
                 },
-                title: 'Select color image file'
+                title: 'Select color image file',
+                defaultUri: defaultUri
             });
 
             if (files && files.length > 0) {
@@ -2147,6 +2163,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     private async handleLoadMtl(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
         try {
+            // Get current file directory for default location
+            const currentFilePath = this.panelToPath.get(webviewPanel);
+            const defaultUri = currentFilePath ? vscode.Uri.file(path.dirname(currentFilePath)) : undefined;
+            
             // Show file picker for MTL files
             const files = await vscode.window.showOpenDialog({
                 canSelectMany: false,
@@ -2154,7 +2174,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                     // eslint-disable-next-line @typescript-eslint/naming-convention
                     'MTL Material Files': ['mtl']
                 },
-                title: 'Select MTL material file'
+                title: 'Select MTL material file',
+                defaultUri: defaultUri
             });
 
             if (files && files.length > 0) {
@@ -2300,7 +2321,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             } : {
                 fx: 1000,
                 fy: undefined,
-                cameraModel: 'pinhole',
+                cameraModel: 'pinhole-ideal',
                 depthType: 'euclidean',
                 convention: 'opengl'
             };
@@ -2320,11 +2341,55 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                 settings: {
                     fx: 1000,
                 fy: undefined,
-                    cameraModel: 'pinhole',
+                    cameraModel: 'pinhole-ideal',
                     depthType: 'euclidean',
                     convention: 'opengl'
                 }
             });
+        }
+    }
+
+    private async handleSelectCalibrationFile(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
+        try {
+            console.log(`📁 Handling calibration file selection for file index: ${message.fileIndex}`);
+            
+            // Get current file directory for default location
+            const currentFilePath = this.panelToPath.get(webviewPanel);
+            const defaultUri = currentFilePath ? vscode.Uri.file(path.dirname(currentFilePath)) : undefined;
+            
+            // Show open dialog for calibration files
+            const files = await vscode.window.showOpenDialog({
+                canSelectMany: false,
+                filters: {
+                    'Calibration Files': ['json', 'yaml', 'yml', 'xml', 'txt', 'ini'],
+                    'All Files': ['*']
+                },
+                title: 'Select calibration file',
+                defaultUri: defaultUri
+            });
+
+            if (files && files.length > 0) {
+                const selectedFile = files[0];
+                console.log(`📄 Selected calibration file: ${selectedFile.fsPath}`);
+                
+                // Read the file data
+                const fileData = await vscode.workspace.fs.readFile(selectedFile);
+                const fileName = path.basename(selectedFile.fsPath);
+                const fileContent = Buffer.from(fileData).toString('utf-8');
+                
+                // Send calibration file data to webview
+                webviewPanel.webview.postMessage({
+                    type: 'calibrationFileSelected',
+                    fileIndex: message.fileIndex,
+                    fileName: fileName,
+                    content: fileContent
+                });
+                
+                console.log(`✅ Calibration file ${fileName} sent to webview for file index ${message.fileIndex}`);
+            }
+        } catch (error) {
+            console.error('Error selecting calibration file:', error);
+            vscode.window.showErrorMessage(`Failed to select calibration file: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 

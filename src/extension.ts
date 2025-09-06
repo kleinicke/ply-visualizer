@@ -131,6 +131,35 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // Register command for resetting all extension settings
+    context.subscriptions.push(
+        vscode.commands.registerCommand('plyViewer.resetSettings', async () => {
+            try {
+                const response = await vscode.window.showWarningMessage(
+                    'This will reset all PLY Visualizer settings to default values. This cannot be undone.',
+                    { modal: true },
+                    'Reset Settings',
+                    'Cancel'
+                );
+
+                if (response === 'Reset Settings') {
+                    // Clear all stored settings from globalState
+                    await context.globalState.update('defaultDepthSettings', undefined);
+                    
+                    vscode.window.showInformationMessage(
+                        'PLY Visualizer settings have been reset to defaults. Restart VS Code for a completely fresh start.'
+                    );
+                    
+                    console.log('PLY Visualizer settings reset successfully');
+                }
+            } catch (error) {
+                vscode.window.showErrorMessage(
+                    `Failed to reset settings: ${error instanceof Error ? error.message : String(error)}`
+                );
+            }
+        })
+    );
+
     console.log('PLY Visualizer extension is now active!');
 }
 
