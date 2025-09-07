@@ -353,6 +353,13 @@ class PointCloudVisualizer {
             updatePointSize: (fileIndex, size) => this.updatePointSize(fileIndex, size),
             toggleUniversalRenderMode: (fileIndex, mode) => this.toggleUniversalRenderMode(fileIndex, mode),
             setFileColorValue: (fileIndex, value) => this.setFileColorValue(fileIndex, value),
+            applyMatrixFromTextarea: (fileIndex, textareaValue) => this.transformationManager.applyMatrixFromTextarea(fileIndex, textareaValue),
+            invertTransformationMatrix: (fileIndex) => this.transformationManager.invertTransformationMatrix(fileIndex),
+            resetTransformationMatrix: (fileIndex) => this.transformationManager.resetTransformationMatrix(fileIndex),
+            addRotationToMatrix: (fileIndex, axis, angle) => this.transformationManager.addRotationToMatrix(fileIndex, axis, angle),
+            showTranslationDialog: (fileIndex) => this.showTranslationDialog(fileIndex),
+            showQuaternionDialog: (fileIndex) => this.showQuaternionDialog(fileIndex),
+            showAngleAxisDialog: (fileIndex) => this.showAngleAxisDialog(fileIndex),
             isSequenceMode: () => this.sequenceManager.isSequenceMode(),
             getSequenceLength: () => this.sequenceManager.getSequenceLength(),
             getCurrentSequenceIndex: () => this.sequenceManager.getCurrentSequenceIndex(),
@@ -365,10 +372,18 @@ class PointCloudVisualizer {
             getPoseGroups: () => this.poseGroups,
             getCameraGroups: () => this.cameraGroups,
             getFileCount: () => this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length,
+            getVertexPointsObjects: () => this.vertexPointsObjects,
+            getNormalsVisualizers: () => this.normalsVisualizers,
             getPointSizes: () => this.pointSizes,
             applyCameraScale: (cameraIndex, size) => this.applyCameraScale(cameraIndex, size),
             updateMatrixTextarea: (fileIndex) => this.transformationManager.updateMatrixTextarea(fileIndex),
-            showError: (message) => this.showError(message)
+            showError: (message) => this.showError(message),
+            showAxesTemporarily: () => {
+                const showAxesTemporarily = (this as any).showAxesTemporarily;
+                if (showAxesTemporarily) {
+                    showAxesTemporarily();
+                }
+            }
         });
 
         // Initialize file utilities
@@ -479,6 +494,9 @@ class PointCloudVisualizer {
             orbitControls.addEventListener('start', showAxes);
             orbitControls.addEventListener('end', hideAxesAfterDelay);
         }
+        
+        // Store showAxes function for temporary axes showing
+        (this as any).showAxesTemporarily = showAxes;
         
         // debug: axes visibility init
 
@@ -2452,104 +2470,6 @@ class PointCloudVisualizer {
     
     
     
-    private updateMeshVisibilityAndMaterial(fileIndex: number): void {
-        const mesh = this.meshes[fileIndex];
-        const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
-        
-        // Handle either regular mesh or multi-material OBJ group
-        const target = multiMaterialGroup || mesh;
-        if (!target) {
-            console.log(`No mesh or multi-material group found for file ${fileIndex}`);
-            return;
-        }
-        
-        const solidVisible = this.solidVisible[fileIndex] ?? true;
-        const wireframeVisible = this.wireframeVisible[fileIndex] ?? false;
-        const pointsVisible = this.pointsVisible[fileIndex] ?? true;
-        const fileVisible = this.fileVisibility[fileIndex] ?? true;
-        
-        // Set visibility for the target (mesh or multi-material group)
-        if (mesh && mesh.type === 'Points') {
-            // Point cloud case
-            mesh.visible = pointsVisible && fileVisible;
-        } else {
-            // Triangle mesh or multi-material group case
-            target.visible = (solidVisible || wireframeVisible) && fileVisible;
-            
-            // Handle vertex points visualization for triangle meshes
-            if (mesh) { // Only for regular meshes, not multi-material groups
-                this.updateVertexPointsVisualization(fileIndex, pointsVisible, solidVisible, wireframeVisible, fileVisible);
-            } else if (multiMaterialGroup) {
-                // Handle points for multi-material OBJ groups independently
-                this.updateMultiMaterialPointsVisualization(fileIndex, pointsVisible, fileVisible);
-            }
-        }
-        
-        // Handle different rendering combinations:
-        // 1. Only solid active: show solid mesh
-        // 2. Only wireframe active: show wireframe mesh  
-        // 3. Both active: show solid mesh (mesh takes precedence)
-        // 4. Neither active: mesh is hidden (handled by visibility check above)
-        
-        // Update materials for wireframe mode
-        if (multiMaterialGroup) {
-            // Handle multi-material OBJ groups
-            const subMeshes = this.materialMeshes[fileIndex];
-            if (subMeshes) {
-                subMeshes.forEach(subMesh => {
-                    if (subMesh instanceof THREE.Mesh && subMesh.material) {
-                        const material = subMesh.material as THREE.Material;
-                        if (material instanceof THREE.MeshBasicMaterial || material instanceof THREE.MeshLambertMaterial) {
-                            material.wireframe = wireframeVisible && !solidVisible;
-                            material.opacity = 1.0;
-                            material.transparent = false;
-                        }
-                    }
-                });
-            }
-        } else if (mesh && mesh.material) {
-            // Handle regular single mesh
-            if (Array.isArray(mesh.material)) {
-                mesh.material.forEach(material => {
-                    if (material instanceof THREE.MeshBasicMaterial || material instanceof THREE.MeshLambertMaterial) {
-                        material.wireframe = wireframeVisible && !solidVisible;
-                        material.opacity = 1.0;
-                        material.transparent = false;
-                    }
-                });
-            } else if (mesh.material instanceof THREE.MeshBasicMaterial || mesh.material instanceof THREE.MeshLambertMaterial) {
-                mesh.material.wireframe = wireframeVisible && !solidVisible;
-                mesh.material.opacity = 1.0;
-                mesh.material.transparent = false;
-            }
-        }
-    }
-    
-    private updateVertexPointsVisualization(fileIndex: number, pointsVisible: boolean, solidVisible: boolean, wireframeVisible: boolean, fileVisible: boolean): void {
-        const mesh = this.meshes[fileIndex];
-        if (!mesh || mesh.type === 'Points') return; // Skip if it's already a point cloud
-        
-        const shouldShowVertexPoints = pointsVisible && fileVisible;
-        let vertexPointsObject = this.vertexPointsObjects[fileIndex];
-        
-        if (shouldShowVertexPoints && !vertexPointsObject) {
-            // Create vertex points object
-            vertexPointsObject = this.createVertexPointsFromMesh(mesh, fileIndex);
-            if (vertexPointsObject) {
-                this.vertexPointsObjects[fileIndex] = vertexPointsObject;
-                this.scene.add(vertexPointsObject);
-            }
-        }
-        
-        if (vertexPointsObject) {
-            vertexPointsObject.visible = shouldShowVertexPoints;
-            // Update point size from slider
-            if (vertexPointsObject.material instanceof THREE.PointsMaterial) {
-                vertexPointsObject.material.size = this.pointSizes[fileIndex] || 1.0;
-            }
-        }
-    }
-    
     private createVertexPointsFromMesh(mesh: THREE.Object3D, fileIndex: number): THREE.Points | null {
         let geometry: THREE.BufferGeometry | null = null;
         
@@ -2595,23 +2515,6 @@ class PointCloudVisualizer {
         return points;
     }
     
-    private updateMultiMaterialPointsVisualization(fileIndex: number, pointsVisible: boolean, fileVisible: boolean): void {
-        const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
-        const subMeshes = this.materialMeshes[fileIndex];
-        
-        if (!multiMaterialGroup || !subMeshes) {
-            return;
-        }
-        
-        const shouldShowPoints = pointsVisible && fileVisible;
-        
-        // Update visibility for all point objects in the multi-material group
-        for (const subMesh of subMeshes) {
-            if ((subMesh as any).isPoints && subMesh instanceof THREE.Points) {
-                subMesh.visible = shouldShowPoints;
-            }
-        }
-    }
     
     private toggleNormalsRendering(fileIndex: number): void {
         if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
@@ -3809,8 +3712,8 @@ class PointCloudVisualizer {
                     
                     if (pointsOverlay && pointsOverlay.material instanceof THREE.PointsMaterial) {
                         pointsOverlay.material.size = newSize;
-                        // For meshes, we'll show the points overlay when point size is adjusted
-                        pointsOverlay.visible = newSize > 0.5; // Show points when size is meaningful
+                        // Keep points overlay visible - size shouldn't affect visibility
+                        // Visibility is controlled by render mode buttons, not point size
                         console.log(`✅ Point size applied to mesh overlay for file ${fileIndex}: ${newSize}`);
                     }
                     
@@ -4948,8 +4851,9 @@ class PointCloudVisualizer {
                     this.updateCameraControlsPanel();
                     
                     // Update axes position to show new rotation center
-                    if ((this as any).axesHelper) {
-                        (this as any).axesHelper.position.copy(this.controls.target);
+                    const axesGroup = (this as any).axesGroup;
+                    if (axesGroup) {
+                        axesGroup.position.copy(this.controls.target);
                     }
                     
                     console.log(`🎯 Rotation center set to: (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`);

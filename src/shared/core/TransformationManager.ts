@@ -8,6 +8,10 @@ export interface TransformationManagerCallbacks {
     getCameraGroups: () => THREE.Group[];
     getFileCount: () => number;
     
+    // Related objects that need to be transformed with meshes
+    getVertexPointsObjects: () => (THREE.Points | null)[];
+    getNormalsVisualizers: () => (THREE.LineSegments | null)[];
+    
     // Point size and scaling
     getPointSizes: () => number[];
     applyCameraScale: (cameraIndex: number, size: number) => void;
@@ -15,6 +19,7 @@ export interface TransformationManagerCallbacks {
     // UI updates
     updateMatrixTextarea: (fileIndex: number) => void;
     showError: (message: string) => void;
+    showAxesTemporarily?: () => void;
 }
 
 /**
@@ -89,6 +94,32 @@ export class TransformationManager {
             if (mesh) {
                 mesh.matrix.copy(matrix);
                 mesh.matrixAutoUpdate = false;
+                
+                // Also transform related objects (vertex points and normals)
+                const vertexPointsObjects = this.callbacks.getVertexPointsObjects();
+                const normalsVisualizers = this.callbacks.getNormalsVisualizers();
+                
+                // Transform vertex points object if it exists
+                if (fileIndex < vertexPointsObjects.length && vertexPointsObjects[fileIndex]) {
+                    const vertexPoints = vertexPointsObjects[fileIndex]!;
+                    vertexPoints.matrix.copy(matrix);
+                    vertexPoints.matrixAutoUpdate = false;
+                }
+                
+                // Transform normals visualizer if it exists
+                if (fileIndex < normalsVisualizers.length && normalsVisualizers[fileIndex]) {
+                    const normalsViz = normalsVisualizers[fileIndex]!;
+                    normalsViz.matrix.copy(matrix);
+                    normalsViz.matrixAutoUpdate = false;
+                }
+                
+                // Transform points overlay if it exists (points added directly to scene)
+                const pointsOverlay = (mesh as any).__pointsOverlay;
+                if (pointsOverlay && pointsOverlay.parent && pointsOverlay.parent.type === 'Scene') {
+                    // Only transform if it's added directly to scene, not as mesh child
+                    pointsOverlay.matrix.copy(matrix);
+                    pointsOverlay.matrixAutoUpdate = false;
+                }
             }
             return;
         }
@@ -195,6 +226,11 @@ export class TransformationManager {
     addRotationToMatrix(fileIndex: number, axis: 'x' | 'y' | 'z', angle: number): void {
         const rotationMatrix = MathUtils.createRotationMatrix(axis, angle);
         this.multiplyTransformationMatrices(fileIndex, rotationMatrix);
+        this.callbacks.updateMatrixTextarea(fileIndex);
+        // Show axes temporarily to indicate transformation was applied
+        if (this.callbacks.showAxesTemporarily) {
+            this.callbacks.showAxesTemporarily();
+        }
     }
 
     /**

@@ -8,9 +8,9 @@ export class MathUtils {
     /**
      * Create a rotation matrix around specified axis
      */
-    static createRotationMatrix(axis: 'x' | 'y' | 'z', angle: number): THREE.Matrix4 {
+    static createRotationMatrix(axis: 'x' | 'y' | 'z', radians: number): THREE.Matrix4 {
         const matrix = new THREE.Matrix4();
-        const radians = THREE.MathUtils.degToRad(angle);
+        // const radians = THREE.MathUtils.degToRad(angle);
         
         switch (axis) {
             case 'x':
@@ -90,9 +90,9 @@ export class MathUtils {
                 const index = col * 4 + row; // Three.js uses column-major
                 const value = elements[index];
                 matrixStr += value.toFixed(6);
-                if (col < 3) matrixStr += '  ';
+                if (col < 3) matrixStr += '  '; // Space between columns
             }
-            if (row < 3) matrixStr += '\\n';
+            if (row < 3) matrixStr += '\n'; // Proper newline, not escaped
         }
         return matrixStr;
     }

@@ -33,6 +33,15 @@ export interface UIStateManagerCallbacks {
     // Color operations
     setFileColorValue?: (fileIndex: number, value: string) => void;
     
+    // Transform operations
+    applyMatrixFromTextarea?: (fileIndex: number, textareaValue: string) => void;
+    invertTransformationMatrix?: (fileIndex: number) => void;
+    resetTransformationMatrix?: (fileIndex: number) => void;
+    addRotationToMatrix?: (fileIndex: number, axis: 'x' | 'y' | 'z', angle: number) => void;
+    showTranslationDialog?: (fileIndex: number) => void;
+    showQuaternionDialog?: (fileIndex: number) => void;
+    showAngleAxisDialog?: (fileIndex: number) => void;
+    
     // Sequence manager integration
     isSequenceMode: () => boolean;
     getSequenceLength: () => number;
@@ -567,6 +576,26 @@ export class UIStateManager {
             });
         });
 
+        // Depth settings toggle buttons
+        const depthToggles = fileListDiv.querySelectorAll('.depth-settings-toggle');
+        depthToggles.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                const panel = document.getElementById(`depth-panel-${fileIndex}`);
+                const icon = target.querySelector('.toggle-icon');
+                
+                console.log('Depth settings toggle clicked for file:', fileIndex, 'panel:', panel, 'icon:', icon);
+                
+                if (panel && icon) {
+                    const isHidden = panel.style.display === 'none';
+                    panel.style.display = isHidden ? 'block' : 'none';
+                    icon.textContent = isHidden ? '▼' : '▶';
+                    console.log('Depth panel toggled:', isHidden ? 'opened' : 'closed');
+                }
+            });
+        });
+
         // Render mode buttons (points, mesh, wireframe, normals)
         const renderModeButtons = fileListDiv.querySelectorAll('.render-mode-btn');
         console.log(`Found ${renderModeButtons.length} render mode buttons to attach listeners to`);
@@ -615,6 +644,124 @@ export class UIStateManager {
                 
                 if (this.callbacks.setFileColorValue) {
                     this.callbacks.setFileColorValue(fileIndex, value);
+                }
+            });
+        });
+
+        // Transform buttons - Apply Matrix
+        const applyMatrixButtons = fileListDiv.querySelectorAll('.apply-matrix');
+        applyMatrixButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                const textarea = document.getElementById(`matrix-${fileIndex}`) as HTMLTextAreaElement;
+                if (textarea && this.callbacks.applyMatrixFromTextarea) {
+                    console.log('Apply matrix clicked for file:', fileIndex);
+                    this.callbacks.applyMatrixFromTextarea(fileIndex, textarea.value);
+                }
+            });
+        });
+
+        // Transform buttons - Invert Matrix
+        const invertMatrixButtons = fileListDiv.querySelectorAll('.invert-matrix');
+        invertMatrixButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                console.log('Invert matrix clicked for file:', fileIndex);
+                if (this.callbacks.invertTransformationMatrix) {
+                    this.callbacks.invertTransformationMatrix(fileIndex);
+                }
+            });
+        });
+
+        // Transform buttons - Reset Matrix
+        const resetMatrixButtons = fileListDiv.querySelectorAll('.reset-matrix');
+        resetMatrixButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                console.log('Reset matrix clicked for file:', fileIndex);
+                if (this.callbacks.resetTransformationMatrix) {
+                    this.callbacks.resetTransformationMatrix(fileIndex);
+                }
+            });
+        });
+
+        // Transform buttons - Rotate X
+        const rotateXButtons = fileListDiv.querySelectorAll('.rotate-x');
+        rotateXButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                console.log('Rotate X clicked for file:', fileIndex);
+                if (this.callbacks.addRotationToMatrix) {
+                    this.callbacks.addRotationToMatrix(fileIndex, 'x', Math.PI / 2); // 90 degrees
+                }
+            });
+        });
+
+        // Transform buttons - Rotate Y
+        const rotateYButtons = fileListDiv.querySelectorAll('.rotate-y');
+        rotateYButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                console.log('Rotate Y clicked for file:', fileIndex);
+                if (this.callbacks.addRotationToMatrix) {
+                    this.callbacks.addRotationToMatrix(fileIndex, 'y', Math.PI / 2); // 90 degrees
+                }
+            });
+        });
+
+        // Transform buttons - Rotate Z
+        const rotateZButtons = fileListDiv.querySelectorAll('.rotate-z');
+        rotateZButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                console.log('Rotate Z clicked for file:', fileIndex);
+                if (this.callbacks.addRotationToMatrix) {
+                    this.callbacks.addRotationToMatrix(fileIndex, 'z', Math.PI / 2); // 90 degrees
+                }
+            });
+        });
+
+        // Transform buttons - Add Translation
+        const addTranslationButtons = fileListDiv.querySelectorAll('.add-translation');
+        addTranslationButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                console.log('Add Translation clicked for file:', fileIndex);
+                if (this.callbacks.showTranslationDialog) {
+                    this.callbacks.showTranslationDialog(fileIndex);
+                }
+            });
+        });
+
+        // Transform buttons - Add Quaternion
+        const addQuaternionButtons = fileListDiv.querySelectorAll('.add-quaternion');
+        addQuaternionButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                console.log('Add Quaternion clicked for file:', fileIndex);
+                if (this.callbacks.showQuaternionDialog) {
+                    this.callbacks.showQuaternionDialog(fileIndex);
+                }
+            });
+        });
+
+        // Transform buttons - Add Angle-Axis
+        const addAngleAxisButtons = fileListDiv.querySelectorAll('.add-angle-axis');
+        addAngleAxisButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                console.log('Add Angle-Axis clicked for file:', fileIndex);
+                if (this.callbacks.showAngleAxisDialog) {
+                    this.callbacks.showAngleAxisDialog(fileIndex);
                 }
             });
         });
