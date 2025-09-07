@@ -9076,8 +9076,30 @@ class PointCloudVisualizer {
                 console.log(`🔧 Applied point size ${currentPointSize} to updated ${fileType} material for file ${fileIndex}`);
             }
             
-            // Update geometry
-            const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
+            // NUCLEAR OPTION: Completely recreate the mesh object to avoid any caching
+            const oldMesh = this.meshes[fileIndex];
+            
+            // Remove old mesh from scene
+            this.scene.remove(oldMesh);
+            
+            // Dispose old geometry and material completely
+            if (oldMesh.geometry) {
+                oldMesh.geometry.dispose();
+            }
+            
+            // Create completely new geometry
+            const geometry = new THREE.BufferGeometry();
+            
+            // Create completely new mesh with new geometry and material
+            const newMesh = new THREE.Points(geometry, newMaterial);
+            
+            // Copy transformation from old mesh
+            newMesh.matrix.copy(oldMesh.matrix);
+            newMesh.matrixAutoUpdate = oldMesh.matrixAutoUpdate;
+            
+            // Replace the mesh in our array and scene
+            this.meshes[fileIndex] = newMesh;
+            this.scene.add(newMesh);
             
             // Create position array
             const positions = new Float32Array(plyData.vertices.length * 3);
@@ -9125,6 +9147,15 @@ class PointCloudVisualizer {
             geometry.boundingSphere = null;
             geometry.computeBoundingBox();
             geometry.computeBoundingSphere();
+            
+            // CRITICAL FIX: Force complete geometry refresh
+            geometry.attributes.position.needsUpdate = true;
+            if (geometry.attributes.color) {
+                geometry.attributes.color.needsUpdate = true;
+            }
+            
+            // Force immediate render to show updated geometry
+            this.renderer.render(this.scene, this.camera);
             
             // Dispose old material
             if (oldMaterial) {
