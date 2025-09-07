@@ -20,6 +20,10 @@ import { UIStateManager, UIStateManagerCallbacks } from '../shared/core/UIStateM
 import { TransformationManager, TransformationManagerCallbacks } from '../shared/core/TransformationManager';
 import { FileUtils, FileUtilsCallbacks } from '../shared/utils/FileUtils';
 import { RenderingUtils, RenderingUtilsCallbacks } from '../shared/utils/RenderingUtils';
+import { EventUtils, EventUtilsCallbacks } from '../shared/utils/EventUtils';
+import { MaterialUtils, MaterialUtilsCallbacks } from '../shared/utils/MaterialUtils';
+import { CameraUtils, CameraUtilsCallbacks } from '../shared/utils/CameraUtils';
+import { DialogUtils, DialogUtilsCallbacks } from '../shared/utils/DialogUtils';
 
 declare const acquireVsCodeApi: () => any;
 declare const GeoTIFF: any;
@@ -68,6 +72,14 @@ class PointCloudVisualizer {
     private fileUtils!: FileUtils;
     // Rendering utilities
     private renderingUtils!: RenderingUtils;
+    // Event handling utilities
+    private eventUtils!: EventUtils;
+    // Material management utilities
+    private materialUtils!: MaterialUtils;
+    // Camera visualization utilities
+    private cameraUtils!: CameraUtils;
+    // Dialog management utilities
+    private dialogUtils!: DialogUtils;
     private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
     private appliedMtlColors: (number | null)[] = []; // Store applied MTL hex colors for each file
     private appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
@@ -411,6 +423,70 @@ class PointCloudVisualizer {
             setLightingMode: (mode) => { this.lightingMode = mode; },
             getUseLinearColorSpace: () => this.useLinearColorSpace,
             rebuildAllPlyMaterials: () => this.rebuildAllPlyMaterials(),
+        });
+
+        // Initialize event utilities
+        this.eventUtils = new EventUtils({
+            getCamera: () => this.camera,
+            getControls: () => this.controls,
+            getRenderer: () => this.renderer,
+            getMeshes: () => this.meshes,
+            getFileVisibility: () => this.fileVisibility,
+            getPointSizes: () => this.pointSizes,
+            fitCameraToObject: (obj) => this.cameraControls.fitCameraToObject(obj),
+            updateCameraMatrix: () => this.updateCameraMatrix(),
+            updateCameraControlsPanel: () => this.updateCameraControlsPanel(),
+            updateRotationOriginButtonState: () => this.updateRotationOriginButtonState(),
+            updateAdaptiveDecimation: () => this.updateAdaptiveDecimation(),
+            showAxesTemporarily: () => {
+                // Temporarily show axes if available
+                const axesGroup = (this as any).axesGroup;
+                if (axesGroup) {
+                    axesGroup.visible = true;
+                    setTimeout(() => {
+                        axesGroup.visible = false;
+                    }, 1000);
+                }
+            },
+            updateAxesForUpVector: (upVector) => this.updateAxesForUpVector(upVector),
+            showRotationCenterFeedback: (point) => this.showRotationCenterFeedback(point),
+            showUpVectorFeedback: (upVector) => this.showUpVectorFeedback(upVector),
+            showStatus: (message) => this.showStatus(message),
+        });
+
+        // Initialize material utilities
+        this.materialUtils = new MaterialUtils({
+            getFiles: () => this.plyFiles,
+            getMeshes: () => this.meshes,
+            getIndividualColorModes: () => this.individualColorModes,
+            getFileColors: () => this.fileColors,
+            getPointSizes: () => this.pointSizes,
+            getLightingMode: () => this.lightingMode,
+            getConvertSrgbToLinear: () => this.convertSrgbToLinear,
+            ensureSrgbLUT: () => this.ensureSrgbLUT(),
+            getSrgbToLinearLUT: () => ColorUtils.getSrgbToLinearLUT(),
+            optimizeForPointCount: (material: THREE.PointsMaterial, pointCount: number) => this.optimizeForPointCount(material, pointCount),
+            updateRenderModeButtonStates: () => this.updateRenderModeButtonStates(),
+        });
+
+        // Initialize camera utilities
+        this.cameraUtils = new CameraUtils({
+            getScene: () => this.scene,
+            getCameraGroups: () => this.cameraGroups,
+            getCameraVisibility: () => this.cameraVisibility,
+            setCameraVisibility: (visible: boolean) => this.cameraVisibility = visible,
+            updateCameraButtonState: () => this.updateCameraButtonState(),
+            showStatus: (message: string) => this.showStatus(message),
+        });
+
+        // Initialize dialog utilities
+        this.dialogUtils = new DialogUtils({
+            getCamera: () => this.camera,
+            getControls: () => this.controls,
+            updateCameraControlsPanel: () => this.updateCameraControlsPanel(),
+            showError: (message: string) => this.showError(message),
+            showStatus: (message: string) => this.showStatus(message),
+            updateRotationOriginButtonState: () => this.updateRotationOriginButtonState(),
         });
 
         this.initializeControls();
@@ -949,173 +1025,23 @@ class PointCloudVisualizer {
     }
 
     private resetCameraToDefault(): void {
-        this.cameraControls.resetCameraToDefault(() => {
-            // Update last known camera state to prevent unnecessary UI updates
-            this.lastCameraPosition.copy(this.camera.position);
-            this.lastCameraQuaternion.copy(this.camera.quaternion);
-            
-            // Force update camera matrix and UI
-            this.updateCameraMatrix();
-            this.updateCameraControlsPanel();
-        });
+        this.eventUtils.resetCameraToDefault();
+        
+        // Update last known camera state to prevent unnecessary UI updates
+        this.lastCameraPosition.copy(this.camera.position);
+        this.lastCameraQuaternion.copy(this.camera.quaternion);
     }
 
     private setRotationCenterToOrigin(): void {
-        // Set rotation center (target) to origin (0, 0, 0)
-        this.controls.target.set(0, 0, 0);
-        this.controls.update();
-        
-        // Update axes position to the new rotation center
-        const axesGroup = (this as any).axesGroup;
-        if (axesGroup) {
-            axesGroup.position.copy(this.controls.target);
-        }
-        
-        // Show axes temporarily to indicate new rotation center
-        const showAxesTemporarily = (this as any).showAxesTemporarily;
-        if (showAxesTemporarily) {
-            showAxesTemporarily();
-        }
-        
-        // debug
-        this.updateRotationOriginButtonState();
+        this.eventUtils.setRotationCenterToOrigin();
     }
 
     private onDoubleClick(event: MouseEvent): void {
-        // Convert mouse coordinates to normalized device coordinates (-1 to +1)
-        const canvas = this.renderer.domElement;
-        const rect = canvas.getBoundingClientRect();
-        const mouse = new THREE.Vector2();
-        
-        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-        // Create raycaster
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(mouse, this.camera);
-        
-        // Progressive threshold approach for double-click detection
-        const validPointSizes = this.pointSizes.filter(size => size > 0);
-        const maxPointSize = validPointSizes.length > 0 ? Math.max(...validPointSizes) : 0.001;
-        
-        // Find intersections with all visible meshes
-        const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
-        
-        // Debug camera and ray information
-        // debug: camera/mouse
-        
-        // Debug visible meshes
-        visibleMeshes.forEach((mesh, index) => {
-            const realIndex = this.meshes.indexOf(mesh);
-            const geometry = mesh.geometry as THREE.BufferGeometry;
-            const positionAttribute = geometry.getAttribute('position');
-            const pointCount = positionAttribute ? positionAttribute.count : 0;
-            // debug: mesh info
-        });
-        
-        // Try progressive thresholds until we find an intersection
-        const thresholds = [
-            Math.max(maxPointSize * 10, 0.001), // Start with point-size based threshold
-            0.01,  // Small threshold
-            0.05,  // Medium threshold  
-            0.1,   // Larger threshold
-            0.5,   // Large threshold
-            2.0    // Very large threshold for distant point clouds
-        ];
-        
-        let intersects: THREE.Intersection[] = [];
-        let usedThreshold = 0;
-        
-        for (const threshold of thresholds) {
-            raycaster.params.Points.threshold = threshold;
-            intersects = raycaster.intersectObjects(visibleMeshes, false);
-            usedThreshold = threshold;
-            
-            // debug: intersection threshold
-            
-            if (intersects.length > 0) {
-                // debug: success threshold
-                break;
-            }
-        }
-        
-        // debug: final intersections result
-
-        if (intersects.length > 0) {
-            // debug list
-            intersects.forEach((intersect, i) => {
-                // debug details
-            });
-            // Get the closest intersection point
-            const intersectionPoint = intersects[0].point;
-            
-            // Check if the point is too close to the camera
-            const distance = this.camera.position.distanceTo(intersectionPoint);
-            const minDistance = 0.005; // Very small minimum distance
-            
-            if (distance < minDistance) {
-                // debug
-                return; // Don't set rotation center for points too close
-            }
-            
-            // Set this point as the new rotation center
-            this.setRotationCenter(intersectionPoint);
-            
-            // debug
-            this.updateRotationOriginButtonState();
-        }
+        this.eventUtils.onDoubleClick(event);
     }
 
     private setRotationCenter(point: THREE.Vector3): void {
-        // Check if the point is too close to the camera or behind it
-        const cameraToPoint = point.clone().sub(this.camera.position);
-        const distance = cameraToPoint.length();
-        const minDistance = 0.01; // Minimum distance to prevent issues
-        
-        // If point is too close or behind camera, adjust it
-        if (distance < minDistance) {
-            // debug
-            
-            // Move the point away from camera along the camera's forward direction
-            const cameraDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-            const adjustedPoint = this.camera.position.clone().add(cameraDirection.multiplyScalar(minDistance));
-            
-            // Set the adjusted point as rotation center
-            this.controls.target.copy(adjustedPoint);
-            
-            // Update axes position
-            const axesGroup = (this as any).axesGroup;
-            if (axesGroup) {
-                axesGroup.position.copy(adjustedPoint);
-            }
-            
-            // debug
-            this.updateRotationOriginButtonState();
-        } else {
-            // Point is at a safe distance, use it directly
-            this.controls.target.copy(point);
-            
-            // Update axes position to the new rotation center
-            const axesGroup = (this as any).axesGroup;
-            if (axesGroup) {
-                axesGroup.position.copy(point);
-            }
-            
-            // debug
-            this.updateRotationOriginButtonState();
-        }
-        
-        // Show axes temporarily for 1 second to indicate new rotation center
-        const showAxesTemporarily = (this as any).showAxesTemporarily;
-        if (showAxesTemporarily) {
-            showAxesTemporarily();
-        }
-        
-        // Update controls
-        this.controls.update();
-        
-        // Visual feedback
-        this.showRotationCenterFeedback(this.controls.target);
+        this.eventUtils.setRotationCenter(point);
     }
 
     private showRotationCenterFeedback(point: THREE.Vector3): void {
@@ -1505,21 +1431,7 @@ class PointCloudVisualizer {
     }
 
     private rebuildAllPlyMaterials(): void {
-        for (let i = 0; i < this.meshes.length && i < this.plyFiles.length; i++) {
-            const data = this.plyFiles[i];
-            const mesh = this.meshes[i];
-            if (!data || !mesh) { continue; }
-            // Only update triangle meshes, not points or line segments
-            const isTriangleMesh = (mesh.type === 'Mesh') && !(mesh as any).isLineSegments;
-            if (!isTriangleMesh) { continue; }
-            const oldMaterial = (mesh as any).material as THREE.Material | THREE.Material[] | undefined;
-            const newMaterial = this.createMaterialForFile(data, i);
-            (mesh as any).material = newMaterial;
-            if (oldMaterial) {
-                if (Array.isArray(oldMaterial)) { oldMaterial.forEach(m => m.dispose()); }
-                else { oldMaterial.dispose(); }
-            }
-        }
+        this.materialUtils.rebuildAllPlyMaterials();
         // Trigger a single render after material changes
         try { (this as any).renderOnce?.(); } catch {}
     }
@@ -2273,103 +2185,7 @@ class PointCloudVisualizer {
     }
 
     private createMaterialForFile(data: PlyData, fileIndex: number): THREE.Material {
-        const colorMode = this.individualColorModes[fileIndex] || 'assigned';
-        
-        if (data.faceCount > 0) {
-            // Mesh material
-            const material: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial = this.useUnlitPly
-                ? new THREE.MeshBasicMaterial()
-                : new THREE.MeshLambertMaterial();
-            material.side = THREE.DoubleSide; // More robust visibility if face winding varies
-            // For files without explicit normals, prefer flat shading to avoid odd gradients
-            if (material instanceof THREE.MeshLambertMaterial) {
-                material.flatShading = !data.hasNormals;
-            }
-            
-            if (colorMode === 'original' && data.hasColors) {
-                // Use original colors from the PLY file
-                const colors = new Float32Array(data.vertices.length * 3);
-                if (this.convertSrgbToLinear) {
-                    this.ensureSrgbLUT();
-                    const lut = ColorUtils.getSrgbToLinearLUT();
-                    for (let i = 0; i < data.vertices.length; i++) {
-                        const v = data.vertices[i];
-                        const r8 = (v.red || 0) & 255;
-                        const g8 = (v.green || 0) & 255;
-                        const b8 = (v.blue || 0) & 255;
-                        colors[i * 3] = lut[r8];
-                        colors[i * 3 + 1] = lut[g8];
-                        colors[i * 3 + 2] = lut[b8];
-                    }
-                } else {
-                    for (let i = 0; i < data.vertices.length; i++) {
-                        const v = data.vertices[i];
-                        colors[i * 3] = ((v.red || 0) & 255) / 255;
-                        colors[i * 3 + 1] = ((v.green || 0) & 255) / 255;
-                        colors[i * 3 + 2] = ((v.blue || 0) & 255) / 255;
-                    }
-                }
-                material.vertexColors = true;
-                material.color = new THREE.Color(1, 1, 1); // White base color
-            } else if (colorMode === 'assigned') {
-                // Use assigned color
-                const color = this.fileColors[fileIndex % this.fileColors.length];
-                material.color.setRGB(color[0], color[1], color[2]);
-            } else {
-                // Use color index
-                const colorIndex = parseInt(colorMode);
-                if (!isNaN(colorIndex) && colorIndex >= 0 && colorIndex < this.fileColors.length) {
-                    const color = this.fileColors[colorIndex];
-                    material.color.setRGB(color[0], color[1], color[2]);
-                }
-            }
-            
-            material.needsUpdate = true;
-            return material;
-        } else {
-            // Points material
-            const material = new THREE.PointsMaterial();
-            
-            // Initialize point size if not set
-            if (!this.pointSizes[fileIndex]) {
-                this.pointSizes[fileIndex] = 0.001;  // Universal default for all file types
-            }
-            
-            material.size = this.pointSizes[fileIndex];
-            material.sizeAttenuation = true; // Always use distance-based scaling
-            
-            // Apply point count-based optimizations
-            const pointCount = data.vertices?.length || 0;
-            this.optimizeForPointCount(material, pointCount);
-            
-            // debug
-            
-            if (colorMode === 'original' && data.hasColors) {
-                // Use original colors from the PLY file
-                const colors = new Float32Array(data.vertices.length * 3);
-                for (let i = 0; i < data.vertices.length; i++) {
-                    const vertex = data.vertices[i];
-                    colors[i * 3] = (vertex.red || 0) / 255;
-                    colors[i * 3 + 1] = (vertex.green || 0) / 255;
-                    colors[i * 3 + 2] = (vertex.blue || 0) / 255;
-                }
-                material.vertexColors = true;
-                material.color = new THREE.Color(1, 1, 1); // White base color
-            } else if (colorMode === 'assigned') {
-                // Use assigned color
-                const color = this.fileColors[fileIndex % this.fileColors.length];
-                material.color.setRGB(color[0], color[1], color[2]);
-            } else {
-                // Use color index
-                const colorIndex = parseInt(colorMode);
-                if (!isNaN(colorIndex) && colorIndex >= 0 && colorIndex < this.fileColors.length) {
-                    const color = this.fileColors[colorIndex];
-                    material.color.setRGB(color[0], color[1], color[2]);
-                }
-            }
-            
-            return material;
-        }
+        return this.materialUtils.createMaterialForFile(data, fileIndex);
     }
 
     private fitCameraToAllObjects(): void {
@@ -4444,442 +4260,15 @@ class PointCloudVisualizer {
     }
 
     private showCameraPositionDialog(): void {
-        const modal = document.createElement('div');
-        modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        `;
-        
-        const dialog = document.createElement('div');
-        dialog.style.cssText = `
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            min-width: 300px;
-            max-width: 400px;
-        `;
-        
-        const currentPos = this.camera.position;
-        
-        dialog.innerHTML = `
-            <h3 style="margin-top:0;">Modify Camera Position</h3>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Camera Position X Y Z in Meter:</label>
-                <textarea id="camera-position-input" 
-                    placeholder="${currentPos.x.toFixed(3)} ${currentPos.y.toFixed(3)} ${currentPos.z.toFixed(3)}" 
-                    style="width:100%;height:60px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
-                >${currentPos.x.toFixed(3)} ${currentPos.y.toFixed(3)} ${currentPos.z.toFixed(3)}</textarea>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:8px;">Keep constant when changing:</label>
-                <div style="display:flex;gap:15px;align-items:center;">
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="position-constraint" value="rotation" style="margin:0;">
-                        <span>Rotation (angle)</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="position-constraint" value="center" checked style="margin:0;">
-                        <span>Rotation center</span>
-                    </label>
-                </div>
-            </div>
-            <div style="text-align:right;">
-                <button id="set-all-pos-zero" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set All to 0</button>
-                <button id="cancel-camera-pos" style="margin-right:10px;padding:8px 15px;">Cancel</button>
-                <button id="apply-camera-pos" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
-            </div>
-        `;
-        
-        modal.appendChild(dialog);
-        document.body.appendChild(modal);
-        
-        const closeModal = () => {
-            modal.remove();
-        };
-        
-        const cancelBtn = dialog.querySelector('#cancel-camera-pos');
-        const applyBtn = dialog.querySelector('#apply-camera-pos');
-        const setAllZeroBtn = dialog.querySelector('#set-all-pos-zero');
-        
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', closeModal);
-        }
-        
-        if (setAllZeroBtn) {
-            setAllZeroBtn.addEventListener('click', () => {
-                (dialog.querySelector('#camera-position-input') as HTMLTextAreaElement).value = '0 0 0';
-            });
-        }
-        
-        if (applyBtn) {
-            applyBtn.addEventListener('click', () => {
-                const input = (dialog.querySelector('#camera-position-input') as HTMLTextAreaElement).value;
-                const constraint = (dialog.querySelector('input[name="position-constraint"]:checked') as HTMLInputElement).value;
-                const values = MathUtils.parseSpaceSeparatedValues(input);
-                
-                if (values.length === 3) {
-                    const [x, y, z] = values;
-                    
-                    // Store current camera state
-                    const currentQuaternion = this.camera.quaternion.clone();
-                    const currentTarget = this.controls.target.clone();
-                    
-                    // Update position
-                    this.camera.position.set(x, y, z);
-                    
-                    // Apply constraint logic
-                    if (constraint === 'rotation') {
-                        // Keep rotation (angle) - restore quaternion
-                        this.camera.quaternion.copy(currentQuaternion);
-                        
-                        // Update target based on new position and preserved rotation
-                        const direction = new THREE.Vector3(0, 0, -1);
-                        direction.applyQuaternion(currentQuaternion);
-                        this.controls.target.copy(this.camera.position.clone().add(direction));
-                    } else {
-                        // Keep rotation center (target) - restore target (default behavior)
-                        this.controls.target.copy(currentTarget);
-                        
-                        // Adjust camera rotation to look at the preserved target
-                        this.camera.lookAt(currentTarget);
-                    }
-                    
-                    this.controls.update();
-                    this.updateCameraControlsPanel();
-                    closeModal();
-                } else {
-                    alert('Please enter exactly 3 numbers for position (X Y Z)');
-                }
-            });
-        }
-        
-        // Close on background click
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                closeModal();
-            }
-        });
-        
-        // Close on Escape key
-        const handleKeydown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                closeModal();
-                document.removeEventListener('keydown', handleKeydown);
-            }
-        };
-        document.addEventListener('keydown', handleKeydown);
+        this.dialogUtils.showCameraPositionDialog();
     }
 
     private showCameraRotationDialog(): void {
-        const modal = document.createElement('div');
-        modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        `;
-        
-        const dialog = document.createElement('div');
-        dialog.style.cssText = `
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            min-width: 300px;
-            max-width: 400px;
-        `;
-        
-        // Get rotation from quaternion to handle all camera operations consistently
-        const euler = new THREE.Euler();
-        euler.setFromQuaternion(this.camera.quaternion, 'XYZ');
-        const rotX = (euler.x * 180 / Math.PI);
-        const rotY = (euler.y * 180 / Math.PI);
-        const rotZ = (euler.z * 180 / Math.PI);
-        
-        dialog.innerHTML = `
-            <h3 style="margin-top:0;">Modify Camera Rotation</h3>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Rotation around X Y Z Axis in degrees:</label>
-                <textarea id="camera-rotation-input" 
-                    placeholder="${rotX.toFixed(1)} ${rotY.toFixed(1)} ${rotZ.toFixed(1)}" 
-                    style="width:100%;height:60px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
-                >${rotX.toFixed(1)} ${rotY.toFixed(1)} ${rotZ.toFixed(1)}</textarea>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:8px;">Keep constant when changing:</label>
-                <div style="display:flex;gap:15px;align-items:center;">
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="rotation-constraint" value="position" style="margin:0;">
-                        <span>Position</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="rotation-constraint" value="center" checked style="margin:0;">
-                        <span>Rotation center</span>
-                    </label>
-                </div>
-            </div>
-            <div style="text-align:right;">
-                <button id="set-all-rot-zero" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set All to 0</button>
-                <button id="cancel-camera-rot" style="margin-right:10px;padding:8px 15px;">Cancel</button>
-                <button id="apply-camera-rot" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
-            </div>
-        `;
-        
-        modal.appendChild(dialog);
-        document.body.appendChild(modal);
-        
-        const closeModal = () => {
-            modal.remove();
-        };
-        
-        const cancelBtn = dialog.querySelector('#cancel-camera-rot');
-        const applyBtn = dialog.querySelector('#apply-camera-rot');
-        const setAllZeroBtn = dialog.querySelector('#set-all-rot-zero');
-        
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', closeModal);
-        }
-        
-        if (setAllZeroBtn) {
-            setAllZeroBtn.addEventListener('click', () => {
-                (dialog.querySelector('#camera-rotation-input') as HTMLTextAreaElement).value = '0 0 0';
-            });
-        }
-        
-        if (applyBtn) {
-            applyBtn.addEventListener('click', () => {
-                const input = (dialog.querySelector('#camera-rotation-input') as HTMLTextAreaElement).value;
-                const constraint = (dialog.querySelector('input[name="rotation-constraint"]:checked') as HTMLInputElement).value;
-                const values = MathUtils.parseSpaceSeparatedValues(input);
-                
-                if (values.length === 3) {
-                    const [x, y, z] = values;
-                    
-                    // Store current camera state
-                    const currentPosition = this.camera.position.clone();
-                    const currentTarget = this.controls.target.clone();
-                    
-                    // Create quaternion from Euler angles
-                    const euler = new THREE.Euler(
-                        (x * Math.PI) / 180,
-                        (y * Math.PI) / 180,
-                        (z * Math.PI) / 180,
-                        'XYZ'
-                    );
-                    const quaternion = new THREE.Quaternion();
-                    quaternion.setFromEuler(euler);
-                    
-                    // Apply constraint logic
-                    if (constraint === 'position') {
-                        // Keep position - restore position and apply rotation directly
-                        this.camera.position.copy(currentPosition);
-                        this.camera.quaternion.copy(quaternion);
-                        
-                        // Update target based on new rotation and preserved position
-                        const direction = new THREE.Vector3(0, 0, -1);
-                        direction.applyQuaternion(quaternion);
-                        this.controls.target.copy(this.camera.position.clone().add(direction));
-                    } else {
-                        // Keep rotation center - restore target and adjust position (default behavior)
-                        const distance = currentPosition.distanceTo(currentTarget);
-                        this.controls.target.copy(currentTarget);
-                        
-                        // Position camera relative to preserved target
-                        const direction = new THREE.Vector3(0, 0, distance);
-                        direction.applyQuaternion(quaternion);
-                        this.camera.position.copy(currentTarget).add(direction);
-                        
-                        // Set up vector and look at target
-                        const up = new THREE.Vector3(0, 1, 0);
-                        up.applyQuaternion(quaternion);
-                        this.camera.up.copy(up);
-                        this.camera.lookAt(currentTarget);
-                    }
-                    
-                    this.controls.update();
-                    this.updateCameraControlsPanel();
-                    closeModal();
-                } else {
-                    alert('Please enter exactly 3 numbers for rotation (X Y Z degrees)');
-                }
-            });
-        }
-        
-        // Close on background click
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                closeModal();
-            }
-        });
-        
-        // Close on Escape key
-        const handleKeydown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                closeModal();
-                document.removeEventListener('keydown', handleKeydown);
-            }
-        };
-        document.addEventListener('keydown', handleKeydown);
+        this.dialogUtils.showCameraRotationDialog();
     }
 
     private showRotationCenterDialog(): void {
-        const modal = document.createElement('div');
-        modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        `;
-        
-        const dialog = document.createElement('div');
-        dialog.style.cssText = `
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            min-width: 300px;
-            max-width: 400px;
-        `;
-        
-        // Get current rotation center (controls target)
-        const target = this.controls.target;
-        
-        dialog.innerHTML = `
-            <h3 style="margin-top:0;">Modify Rotation Center</h3>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Rotation Center X Y Z in Meter:</label>
-                <textarea id="rotation-center-input" 
-                    placeholder="${target.x.toFixed(3)} ${target.y.toFixed(3)} ${target.z.toFixed(3)}" 
-                    style="width:100%;height:60px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
-                >${target.x.toFixed(3)} ${target.y.toFixed(3)} ${target.z.toFixed(3)}</textarea>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:8px;">Keep constant when changing:</label>
-                <div style="display:flex;gap:15px;align-items:center;">
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="center-constraint" value="position" checked style="margin:0;">
-                        <span>Position</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="center-constraint" value="rotation" style="margin:0;">
-                        <span>Rotation (angle)</span>
-                    </label>
-                </div>
-            </div>
-            <div style="text-align:right;">
-                <button id="set-center-origin" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set to Origin (0,0,0)</button>
-                <button id="cancel-rotation-center" style="margin-right:10px;padding:8px 15px;">Cancel</button>
-                <button id="apply-rotation-center" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
-            </div>
-        `;
-        
-        modal.appendChild(dialog);
-        document.body.appendChild(modal);
-        
-        const closeModal = () => {
-            document.body.removeChild(modal);
-        };
-        
-        // Event listeners
-        const setOriginBtn = dialog.querySelector('#set-center-origin');
-        const cancelBtn = dialog.querySelector('#cancel-rotation-center');
-        const applyBtn = dialog.querySelector('#apply-rotation-center');
-        
-        if (setOriginBtn) {
-            setOriginBtn.addEventListener('click', () => {
-                (dialog.querySelector('#rotation-center-input') as HTMLTextAreaElement).value = '0 0 0';
-            });
-        }
-        
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', closeModal);
-        }
-        
-        if (applyBtn) {
-            applyBtn.addEventListener('click', () => {
-                const input = (dialog.querySelector('#rotation-center-input') as HTMLTextAreaElement).value;
-                const constraint = (dialog.querySelector('input[name="center-constraint"]:checked') as HTMLInputElement).value;
-                const values = MathUtils.parseSpaceSeparatedValues(input);
-                
-                if (values.length === 3) {
-                    const [x, y, z] = values;
-                    
-                    // Store current camera state
-                    const currentPosition = this.camera.position.clone();
-                    const currentQuaternion = this.camera.quaternion.clone();
-                    const currentTarget = this.controls.target.clone();
-                    
-                    // Set the new rotation center
-                    this.controls.target.set(x, y, z);
-                    
-                    // Apply constraint logic
-                    if (constraint === 'rotation') {
-                        // Keep rotation - restore quaternion and adjust position to maintain distance from new center
-                        const distance = currentPosition.distanceTo(currentTarget);
-                        this.camera.quaternion.copy(currentQuaternion);
-                        
-                        // Position camera at distance from new center in same direction as rotation
-                        const direction = new THREE.Vector3(0, 0, distance);
-                        direction.applyQuaternion(currentQuaternion);
-                        this.camera.position.copy(this.controls.target).add(direction);
-                    } else {
-                        // Keep position - restore position and adjust rotation to look at new center (default behavior)
-                        this.camera.position.copy(currentPosition);
-                        this.camera.lookAt(this.controls.target);
-                    }
-                    
-                    // Update controls and camera panel
-                    this.controls.update();
-                    this.updateCameraControlsPanel();
-                    
-                    // Update axes position to show new rotation center
-                    const axesGroup = (this as any).axesGroup;
-                    if (axesGroup) {
-                        axesGroup.position.copy(this.controls.target);
-                    }
-                    
-                    console.log(`🎯 Rotation center set to: (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`);
-                    this.updateRotationOriginButtonState();
-                    closeModal();
-                } else {
-                    alert('Please enter exactly 3 numbers for center (X Y Z)');
-                }
-            });
-        }
-        
-        // Close on background click
-        modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                closeModal();
-            }
-        });
-        
-        // Close on Escape key
-        const handleKeydown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                closeModal();
-                document.removeEventListener('keydown', handleKeydown);
-            }
-        };
-        document.addEventListener('keydown', handleKeydown);
+        this.dialogUtils.showRotationCenterDialog();
     }
 
     private openCalibrationFileDialog(fileIndex: number): void {
@@ -8194,236 +7583,35 @@ class PointCloudVisualizer {
     }
 
     private createCameraBodyGeometry(): THREE.Mesh {
-        // Create a 4-sided pyramid shape 
-        const size = 0.02; // 2cm base size
-        const height = size * 1.5;
-        
-        const geometry = new THREE.ConeGeometry(size, height, 4); // 4 sides for square pyramid
-        // Align one face flat to the axes (avoid 45° appearance) by rotating the base square
-        geometry.rotateY(Math.PI / 4);
-        const material = new THREE.MeshBasicMaterial({ 
-            color: 0x4CAF50, // Green color for cameras
-            transparent: true,
-            opacity: 0.9
-        });
-        
-        // Translate geometry so the tip (originally at +Y * height/2) sits at the local origin.
-        // This ensures scaling does not move the tip from the origin.
-        geometry.translate(0, -height / 2, 0);
-        
-        const mesh = new THREE.Mesh(geometry, material);
-        // Orient pyramid to extend forward along +Z with tip anchored at origin
-        mesh.rotation.x = -Math.PI / 2;
-        
-        return mesh;
+        return this.cameraUtils.createCameraBodyGeometry();
     }
 
     private createDirectionArrow(): THREE.Line {
-        // Simple line showing camera direction
-        const lineLength = 0.05; // 5cm direction line
-        
-        const geometry = new THREE.BufferGeometry();
-        // Start at camera origin (tip) and extend forward
-        const positions = new Float32Array([
-            0, 0, 0,
-            0, 0, lineLength
-        ]);
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        
-        const material = new THREE.LineBasicMaterial({ 
-            color: 0x4CAF50, // Same green as triangle
-            linewidth: 2
-        });
-        
-        const line = new THREE.Line(geometry, material);
-        line.name = 'directionLine'; // Add name for identification
-        return line;
+        return this.cameraUtils.createDirectionArrow();
     }
 
     private createCameraLabel(cameraName: string): THREE.Sprite {
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d')!;
-        
-        // Use higher resolution for crisp text
-        const pixelRatio = 3; // 3x resolution for sharp text
-        const baseFontSize = 28;
-        const fontSize = baseFontSize * pixelRatio;
-        
-        // Set font first to measure text accurately
-        context.font = `Bold ${fontSize}px Arial`;
-        const textMetrics = context.measureText(cameraName);
-        
-        // Make canvas size fit the text with padding (high resolution)
-        const padding = 20 * pixelRatio;
-        canvas.width = Math.max(textMetrics.width + padding * 2, 200 * pixelRatio);
-        canvas.height = 48 * pixelRatio;
-        
-        // Set font again after canvas resize and configure for high quality
-        context.font = `Bold ${fontSize}px Arial`;
-        context.fillStyle = 'white';
-        context.strokeStyle = 'black';
-        context.lineWidth = 3 * pixelRatio;
-        context.textAlign = 'center';
-        context.textBaseline = 'middle';
-        
-        // Enable anti-aliasing for smooth text
-        context.imageSmoothingEnabled = true;
-        context.imageSmoothingQuality = 'high';
-        
-        // Clear background
-        context.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // Draw text with outline (centered)
-        const x = canvas.width / 2;
-        const y = canvas.height / 2;
-        
-        context.strokeText(cameraName, x, y);
-        context.fillText(cameraName, x, y);
-        
-        // Create sprite from high-resolution canvas
-        const texture = new THREE.CanvasTexture(canvas);
-        texture.generateMipmaps = true;
-        texture.minFilter = THREE.LinearMipmapLinearFilter;
-        texture.magFilter = THREE.LinearFilter;
-        
-        const material = new THREE.SpriteMaterial({ map: texture });
-        const sprite = new THREE.Sprite(material);
-        
-        // Position label above camera (closer)
-        sprite.position.set(0, 0.04, 0);
-        
-        // Scale proportionally to canvas aspect ratio, accounting for pixel ratio
-        const aspectRatio = canvas.width / canvas.height;
-        // Match label height roughly to the pyramid height at base scale
-        const pyramidHeight = 0.03; // must stay in sync with createCameraBodyGeometry
-        const baseScaleY = pyramidHeight; // label height ~= pyramid height
-        const baseScaleX = baseScaleY * aspectRatio;
-        sprite.scale.set(baseScaleX, baseScaleY, 1);
-        // Preserve original scale for proper proportional scaling later
-        (sprite as any).userData = (sprite as any).userData || {};
-        (sprite as any).userData.baseScale = { x: baseScaleX, y: baseScaleY };
-        
-        return sprite;
+        return this.cameraUtils.createCameraLabel(cameraName);
     }
 
     private toggleCameraVisibility(): void {
-        this.cameraVisibility = !this.cameraVisibility;
-        this.cameraGroups.forEach(group => {
-            group.visible = this.cameraVisibility;
-        });
+        this.cameraUtils.toggleCameraVisibility();
     }
 
     private updateCameraButtonState(): void {
-        const toggleBtn = document.getElementById('toggle-cameras');
-        if (!toggleBtn) return;
-        
-        if (this.cameraVisibility) {
-            toggleBtn.classList.add('active');
-            toggleBtn.innerHTML = 'Show Cameras';
-        } else {
-            toggleBtn.classList.remove('active');
-            toggleBtn.innerHTML = 'Show Cameras';
-        }
+        this.cameraUtils.updateCameraButtonStateHelper();
     }
 
     private toggleCameraProfileLabels(cameraProfileIndex: number, showLabels: boolean): void {
-        if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) return;
-        
-        const profileGroup = this.cameraGroups[cameraProfileIndex];
-        // Iterate through all cameras in the profile
-        profileGroup.children.forEach(child => {
-            if (child instanceof THREE.Group && child.name.startsWith('camera_')) {
-                const label = child.getObjectByName('cameraLabel');
-                if (label) {
-                    label.visible = showLabels;
-                }
-            }
-        });
+        this.cameraUtils.toggleCameraProfileLabels(cameraProfileIndex, showLabels);
     }
 
     private toggleCameraProfileCoordinates(cameraProfileIndex: number, showCoords: boolean): void {
-        if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) return;
-        
-        const profileGroup = this.cameraGroups[cameraProfileIndex];
-        // Iterate through all cameras in the profile
-        profileGroup.children.forEach(child => {
-            if (child instanceof THREE.Group && child.name.startsWith('camera_')) {
-                if (showCoords) {
-                    // Create or update coordinate label
-                    const originalPos = (child as any).originalPosition;
-                    if (originalPos) {
-                        const coordText = `(${originalPos.x.toFixed(3)}, ${originalPos.y.toFixed(3)}, ${originalPos.z.toFixed(3)})`;
-                        let coordLabel = child.getObjectByName('coordinateLabel') as THREE.Sprite;
-                        
-                        if (!coordLabel) {
-                            coordLabel = this.createCameraLabel(coordText);
-                            coordLabel.name = 'coordinateLabel';
-                            coordLabel.position.set(0, -0.03, 0); // Position below camera base
-                            child.add(coordLabel);
-                        } else {
-                            // Update existing label text
-                            const newLabel = this.createCameraLabel(coordText);
-                            coordLabel.material = newLabel.material;
-                        }
-                        coordLabel.visible = true;
-                    }
-                } else {
-                    // Hide coordinate label
-                    const coordLabel = child.getObjectByName('coordinateLabel');
-                    if (coordLabel) {
-                        coordLabel.visible = false;
-                    }
-                }
-            }
-        });
+        this.cameraUtils.toggleCameraProfileCoordinates(cameraProfileIndex, showCoords);
     }
 
     private applyCameraScale(cameraProfileIndex: number, scale: number): void {
-        if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) return;
-        
-        const profileGroup = this.cameraGroups[cameraProfileIndex];
-        // Apply scale to each individual camera's visual elements
-        profileGroup.children.forEach(child => {
-            if (child instanceof THREE.Group && child.name.startsWith('camera_')) {
-                // Scale all visual elements including text labels
-                child.children.forEach(visualElement => {
-                    // Reset scale to 1.0 first to prevent accumulation
-                    visualElement.scale.setScalar(1.0);
-                    
-                    if (visualElement.name === 'cameraLabel') {
-                        // Preserve aspect ratio and scale relative to original base scale
-                        const base = (visualElement as any).userData?.baseScale;
-                        if (base) {
-                            visualElement.scale.set(base.x * scale, base.y * scale, 1);
-                        }
-                        // Adjust position to scale with pyramid
-                        visualElement.position.set(0, 0.04 * scale, 0);
-                    } else if (visualElement.name === 'coordinateLabel') {
-                        // Preserve aspect ratio and scale relative to original base scale, but smaller than name label
-                        const base = (visualElement as any).userData?.baseScale;
-                        if (base) {
-                            const shrink = 0.6; // make coordinates label smaller
-                            visualElement.scale.set(base.x * scale * shrink, base.y * scale * shrink, 1);
-                        }
-                        // Position coordinate label slightly below base
-                        visualElement.position.set(0, -0.035 * scale, 0);
-                    } else if (visualElement.name === 'directionLine') {
-                        // For direction line, recreate geometry with scaled length
-                        const line = visualElement as THREE.Line;
-                        const lineLength = 0.05 * scale; // Scale the line length
-                        const positions = new Float32Array([
-                            0, 0, 0,          // Start at camera origin (tip)
-                            0, 0, lineLength  // Extend forward with scaled length
-                        ]);
-                        line.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-                        line.geometry.attributes.position.needsUpdate = true;
-                    } else {
-                        // Scale pyramid normally
-                        visualElement.scale.setScalar(scale);
-                    }
-                });
-            }
-        });
+        this.cameraUtils.applyCameraScale(cameraProfileIndex, scale);
     }
 
     private normalizePose(raw: any): { joints: Array<{ x: number; y: number; z: number; score?: number; valid?: boolean }>; edges: Array<[number, number]> } {
