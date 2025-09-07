@@ -11,6 +11,15 @@ import {
 import { CameraModel } from './depth/types';
 import { CalibTxtParser } from './depth/CalibTxtParser';
 import { CustomArcballControls, TurntableControls } from './controls';
+import { MathUtils } from '../shared/utils/MathUtils';
+import { ColorUtils } from '../shared/utils/ColorUtils';
+import { GeometryProcessor } from '../shared/utils/GeometryProcessor';
+import { CameraControls } from '../shared/core/CameraControls';
+import { SequenceManager, SequenceManagerCallbacks } from '../shared/core/SequenceManager';
+import { UIStateManager, UIStateManagerCallbacks } from '../shared/core/UIStateManager';
+import { TransformationManager, TransformationManagerCallbacks } from '../shared/core/TransformationManager';
+import { FileUtils, FileUtilsCallbacks } from '../shared/utils/FileUtils';
+import { RenderingUtils, RenderingUtilsCallbacks } from '../shared/utils/RenderingUtils';
 
 declare const acquireVsCodeApi: () => any;
 declare const GeoTIFF: any;
@@ -21,11 +30,12 @@ declare const GeoTIFF: any;
  */
 
 class PointCloudVisualizer {
-    private vscode = acquireVsCodeApi();
+    private vscode: any;
     private scene!: THREE.Scene;
     private camera!: THREE.PerspectiveCamera;
     private renderer!: THREE.WebGLRenderer;
     private controls!: TrackballControls | OrbitControls | CustomArcballControls | TurntableControls;
+    private cameraControls!: CameraControls;
     
     // Camera control state
     private controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare' = 'trackball';
@@ -48,18 +58,16 @@ class PointCloudVisualizer {
     private useOriginalColors = true; // Default to original colors
     private pointSizes: number[] = []; // Individual point sizes for each point cloud
 
-    // Sequence mode state
-    private sequenceMode = false;
-    private sequenceFiles: string[] = [];
-    private sequenceIndex = 0;
-    private sequenceTargetIndex = 0;
-    private sequenceDidInitialFit = false;
-    private sequenceTimer: number | null = null;
-    private sequenceFps = 2; // ~2 frames per second
-    private isSequencePlaying = false;
-    private sequenceCache = new Map<number, THREE.Object3D>();
-    private sequenceCacheOrder: number[] = [];
-    private maxSequenceCache = 6; // keep more frames when navigating back
+    // Sequence mode state - managed by SequenceManager
+    private sequenceManager!: SequenceManager;
+    // UI state management - managed by UIStateManager
+    private uiStateManager!: UIStateManager;
+    // Transformation matrix management - managed by TransformationManager
+    private transformationManager!: TransformationManager;
+    // File management utilities
+    private fileUtils!: FileUtils;
+    // Rendering utilities
+    private renderingUtils!: RenderingUtils;
     private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
     private appliedMtlColors: (number | null)[] = []; // Store applied MTL hex colors for each file
     private appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
@@ -112,7 +120,6 @@ class PointCloudVisualizer {
     
     // Rotation matrices
     private cameraMatrix: THREE.Matrix4 = new THREE.Matrix4(); // Current camera position and rotation
-    private transformationMatrices: THREE.Matrix4[] = []; // Individual transformation matrices for each point cloud
     private frameCount: number = 0; // Frame counter for UI updates
     private lastCameraPosition: THREE.Vector3 = new THREE.Vector3(); // Track camera position changes
     private lastCameraQuaternion: THREE.Quaternion = new THREE.Quaternion(); // Track camera rotation changes
@@ -174,167 +181,59 @@ class PointCloudVisualizer {
         depthBias: 0.0 // Default bias for mono depth networks
     };
     private convertSrgbToLinear: boolean = true; // Default: remove gamma from source colors
-    private srgbToLinearLUT: Float32Array | null = null;
+    // Use shared sRGB utilities
     private lastGeometryMs: number = 0;
     private lastAbsoluteMs: number = 0;
 
     private ensureSrgbLUT(): void {
-        if (this.srgbToLinearLUT) return;
-        const lut = new Float32Array(256);
-        for (let i = 0; i < 256; i++) {
-            const s = i / 255;
-            lut[i] = s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-        }
-        this.srgbToLinearLUT = lut;
+        ColorUtils.ensureSrgbLUT();
     }
 
     private optimizeForPointCount(material: THREE.PointsMaterial, pointCount: number): void {
-        // Keep original visual quality settings
-        material.transparent = true;
-        material.alphaTest = 0.1;
-        material.depthTest = true;
-        material.depthWrite = true;
-        material.sizeAttenuation = true; // Keep world-space sizing
-        
-        // Force material update
-        material.needsUpdate = true;
+        GeometryProcessor.optimizeForPointCount(material, pointCount);
     }
     
     private createOptimizedPointCloud(geometry: THREE.BufferGeometry, material: THREE.PointsMaterial): THREE.Points {
-        // Optimize geometry for GPU
-        const positions = geometry.getAttribute('position') as THREE.BufferAttribute;
-        if (positions && positions.count > 50000) {
-            // For very large point clouds, try to reduce vertex data transfer
-            geometry.deleteAttribute('normal'); // Points don't need normals
-            geometry.computeBoundingBox(); // Help with frustum culling
-            geometry.computeBoundingSphere();
-        }
-        
-        const points = new THREE.Points(geometry, material);
-        
-        // Add adaptive decimation for large point clouds
-        if (positions && positions.count > 100000) {
-            (points as any).originalGeometry = geometry.clone(); // Store full geometry
-            (points as any).hasAdaptiveDecimation = true;
-            points.frustumCulled = false;
-        }
-        
-        return points;
+        return GeometryProcessor.createOptimizedPointCloud(geometry, material);
     }
     
     private decimateGeometryByDistance(originalGeometry: THREE.BufferGeometry, cameraDistance: number): THREE.BufferGeometry {
-        const positions = originalGeometry.getAttribute('position') as THREE.BufferAttribute;
-        const colors = originalGeometry.getAttribute('color') as THREE.BufferAttribute;
-        
-        let decimationFactor = 1;
-        
-        // Aggressive decimation when zoomed out (high camera distance)
-        if (cameraDistance > 50) decimationFactor = 10;      // Keep every 10th point
-        else if (cameraDistance > 20) decimationFactor = 5;  // Keep every 5th point  
-        else if (cameraDistance > 10) decimationFactor = 3;  // Keep every 3rd point
-        else if (cameraDistance > 5) decimationFactor = 2;   // Keep every 2nd point
-        
-        if (decimationFactor === 1) return originalGeometry;
-        
-        const totalPoints = positions.count;
-        const decimatedCount = Math.floor(totalPoints / decimationFactor);
-        
-        const newPositions = new Float32Array(decimatedCount * 3);
-        const newColors = colors ? new Float32Array(decimatedCount * 3) : null;
-        
-        let writeIndex = 0;
-        for (let i = 0; i < totalPoints; i += decimationFactor) {
-            // Copy position
-            newPositions[writeIndex * 3] = positions.array[i * 3];
-            newPositions[writeIndex * 3 + 1] = positions.array[i * 3 + 1];
-            newPositions[writeIndex * 3 + 2] = positions.array[i * 3 + 2];
-            
-            // Copy color if available
-            if (newColors && colors) {
-                newColors[writeIndex * 3] = colors.array[i * 3];
-                newColors[writeIndex * 3 + 1] = colors.array[i * 3 + 1];
-                newColors[writeIndex * 3 + 2] = colors.array[i * 3 + 2];
-            }
-            
-            writeIndex++;
-        }
-        
-        const newGeometry = new THREE.BufferGeometry();
-        newGeometry.setAttribute('position', new THREE.BufferAttribute(newPositions, 3));
-        if (newColors) {
-            newGeometry.setAttribute('color', new THREE.BufferAttribute(newColors, 3));
-        }
-        
-        return newGeometry;
+        return GeometryProcessor.decimateGeometryByDistance(originalGeometry, cameraDistance);
     }
     
     private updateAdaptiveDecimation(): void {
-        // Calculate average distance to all point clouds
-        let totalDistance = 0;
-        let pointCloudCount = 0;
-        
-        for (let i = 0; i < this.meshes.length; i++) {
-            const mesh = this.meshes[i];
-            if (mesh && (mesh instanceof THREE.Points) && (mesh as any).hasAdaptiveDecimation) {
-                if (mesh.geometry.boundingBox) {
-                    const center = mesh.geometry.boundingBox.getCenter(new THREE.Vector3());
-                    center.applyMatrix4(mesh.matrixWorld);
-                    totalDistance += this.camera.position.distanceTo(center);
-                    pointCloudCount++;
-                }
-            }
-        }
-        
-        if (pointCloudCount === 0) return;
-        
-        const avgDistance = totalDistance / pointCloudCount;
-        
-        // Update geometries if distance changed significantly
-        const distanceThreshold = 2.0; // Only update if camera moved significantly
-        if (Math.abs(avgDistance - this.lastCameraDistance) > distanceThreshold) {
-            console.log(`🔄 Adaptive decimation: distance=${avgDistance.toFixed(1)}`);
-            
-            for (let i = 0; i < this.meshes.length; i++) {
-                const mesh = this.meshes[i];
-                if (mesh && (mesh instanceof THREE.Points) && (mesh as any).hasAdaptiveDecimation) {
-                    const originalGeometry = (mesh as any).originalGeometry;
-                    if (originalGeometry) {
-                        const decimatedGeometry = this.decimateGeometryByDistance(originalGeometry, avgDistance);
-                        
-                        // Update mesh geometry
-                        mesh.geometry.dispose();
-                        mesh.geometry = decimatedGeometry;
-                        
-                        console.log(`📊 File ${i}: ${originalGeometry.getAttribute('position').count} → ${decimatedGeometry.getAttribute('position').count} points`);
-                    }
-                }
-            }
-            
-            this.lastCameraDistance = avgDistance;
-        }
+        this.lastCameraDistance = GeometryProcessor.updateAdaptiveDecimation(
+            this.meshes, 
+            this.camera, 
+            this.lastCameraDistance
+        );
     }
     
-    // Predefined colors for different files
-    private readonly fileColors: [number, number, number][] = [
-        [1.0, 1.0, 1.0], // White
-        [1.0, 0.0, 0.0], // Red
-        [0.0, 1.0, 0.0], // Green
-        [0.0, 0.0, 1.0], // Blue
-        [1.0, 1.0, 0.0], // Yellow
-        [1.0, 0.0, 1.0], // Magenta
-        [0.0, 1.0, 1.0], // Cyan
-        [1.0, 0.5, 0.0], // Orange
-        [0.5, 0.0, 1.0], // Purple
-        [0.0, 0.5, 0.0], // Dark Green
-        [0.5, 0.5, 0.5]  // Gray
-    ];
+    // Use shared color utilities
+    private readonly fileColors = ColorUtils.FILE_COLORS;
 
     constructor() {
+        // Ensure acquireVsCodeApi is available before proceeding
+        if (typeof acquireVsCodeApi !== 'function') {
+            console.error('acquireVsCodeApi is not available');
+            return;
+        }
+        
+        this.vscode = acquireVsCodeApi();
+        
+        // Verify vscode API was acquired successfully
+        if (!this.vscode) {
+            console.error('Failed to acquire VS Code API');
+            return;
+        }
+        
         this.init();
     }
 
     private async init(): Promise<void> {
         try {
+            console.log('DOM ready state:', document.readyState);
+            console.log('Document body:', document.body ? 'exists' : 'missing');
             this.initThreeJS();
             this.setupEventListeners();
             this.setupMessageHandler();
@@ -355,8 +254,13 @@ class PointCloudVisualizer {
         this.scene.background = new THREE.Color(0x222222);
 
         // Camera
+        console.log('Looking for viewer-container...');
         const container = document.getElementById('viewer-container');
-        if (!container) {throw new Error('Viewer container not found');}
+        if (!container) {
+            console.error('Available elements:', document.body?.innerHTML?.substring(0, 500));
+            throw new Error('Viewer container not found');
+        }
+        console.log('Found viewer-container:', container);
         
         this.camera = new THREE.PerspectiveCamera(
             75,
@@ -371,8 +275,13 @@ class PointCloudVisualizer {
         this.lastCameraQuaternion.copy(this.camera.quaternion);
 
         // Renderer
+        console.log('Looking for three-canvas...');
         const canvas = document.getElementById('three-canvas') as HTMLCanvasElement;
-        if (!canvas) {throw new Error('Canvas not found');}
+        if (!canvas) {
+            console.error('Available elements:', document.body?.innerHTML?.substring(0, 500));
+            throw new Error('Canvas not found');
+        }
+        console.log('Found three-canvas:', canvas);
         
         this.renderer = new THREE.WebGLRenderer({ 
             canvas: canvas,
@@ -380,6 +289,11 @@ class PointCloudVisualizer {
             alpha: true,
             powerPreference: "high-performance" // Keep discrete GPU preference
         });
+        
+        // Verify renderer was created successfully
+        if (!this.renderer || !this.renderer.domElement) {
+            throw new Error('Failed to create WebGL renderer or domElement is missing');
+        }
         this.renderer.setSize(container.clientWidth, container.clientHeight);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.shadowMap.enabled = true; // Re-enable shadows
@@ -389,13 +303,105 @@ class PointCloudVisualizer {
         this.renderer.sortObjects = true;
         
         // Set initial color space based on preference
-        this.updateRendererColorSpace();
+        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-        // Initialize controls
+        // Initialize camera controls
+        this.cameraControls = new CameraControls(this.camera, this.renderer);
+        this.cameraControls.setCallbacks({
+            onControlStatusUpdate: () => this.updateControlStatus(),
+            onAxesSetup: () => this.setupAxesVisibility()
+        });
+
+        // Initialize sequence manager
+        this.sequenceManager = new SequenceManager({
+            postMessage: (message) => this.vscode.postMessage(message),
+            updateFileList: () => this.updateFileList(),
+            updateSequenceUI: () => this.sequenceManager.updateSequenceUI(),
+            fitCameraToObject: (obj) => this.cameraControls.fitCameraToObject(obj),
+            handleUltimateRawBinaryData: (message) => this.handleUltimateRawBinaryData(message),
+            displayFiles: (files) => this.displayFiles(files),
+            handleXyzData: (message) => this.handleXyzData(message),
+            handleObjData: (message) => this.handleObjData(message),
+            handleStlData: (message) => this.handleStlData(message),
+            handleDepthData: (message) => this.handleDepthData(message),
+            getMeshes: () => this.meshes,
+            getScene: () => this.scene,
+            clearMeshes: () => {
+                for (const obj of this.meshes) this.scene.remove(obj);
+                this.meshes = [];
+            },
+            clearPlyFiles: () => { this.plyFiles = []; },
+            trimNormalModeArraysFrom: (startIndex) => this.trimNormalModeArraysFrom(startIndex)
+        });
+
+        // Initialize UI state manager
+        this.uiStateManager = new UIStateManager({
+            getFiles: () => this.plyFiles,
+            getFileVisibility: () => this.fileVisibility,
+            getPoseGroups: () => this.poseGroups,
+            getCameraGroups: () => this.cameraGroups,
+            getTransformationMatrixAsArray: (fileIndex) => this.transformationManager.getTransformationMatrixAsArray(fileIndex),
+            isDepthDerivedFile: (data) => this.isDepthDerivedFile(data),
+            getDepthSetting: (data, setting) => this.getDepthSetting(data, setting),
+            getFileColors: () => this.fileColors,
+            getIndividualColorModes: () => this.individualColorModes,
+            getPointSizes: () => this.pointSizes,
+            updatePointsNormalsButtonStates: () => this.updateRenderModeButtonStates(),
+            updateUniversalRenderButtonStates: () => this.updateUniversalRenderButtonStates(),
+            updateDefaultButtonState: () => this.updateDefaultButtonState(),
+            toggleFileVisibility: (fileIndex) => this.toggleFileVisibility(fileIndex),
+            updatePointSize: (fileIndex, size) => this.updatePointSize(fileIndex, size),
+            toggleUniversalRenderMode: (fileIndex, mode) => this.toggleUniversalRenderMode(fileIndex, mode),
+            setFileColorValue: (fileIndex, value) => this.setFileColorValue(fileIndex, value),
+            isSequenceMode: () => this.sequenceManager.isSequenceMode(),
+            getSequenceLength: () => this.sequenceManager.getSequenceLength(),
+            getCurrentSequenceIndex: () => this.sequenceManager.getCurrentSequenceIndex(),
+            getCurrentSequenceFilename: () => this.sequenceManager.getCurrentSequenceFilename()
+        });
+
+        // Initialize transformation manager
+        this.transformationManager = new TransformationManager({
+            getMeshes: () => this.meshes,
+            getPoseGroups: () => this.poseGroups,
+            getCameraGroups: () => this.cameraGroups,
+            getFileCount: () => this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length,
+            getPointSizes: () => this.pointSizes,
+            applyCameraScale: (cameraIndex, size) => this.applyCameraScale(cameraIndex, size),
+            updateMatrixTextarea: (fileIndex) => this.transformationManager.updateMatrixTextarea(fileIndex),
+            showError: (message) => this.showError(message)
+        });
+
+        // Initialize file utilities
+        this.fileUtils = new FileUtils({
+            getScene: () => this.scene,
+            getMeshes: () => this.meshes,
+            getPoseGroups: () => this.poseGroups,
+            getCameraGroups: () => this.cameraGroups,
+            getFiles: () => this.plyFiles,
+            getFileVisibility: () => this.fileVisibility,
+            getCamera: () => this.camera,
+            getControls: () => this.controls,
+            postMessage: (message) => this.vscode.postMessage(message),
+            updateFileList: () => this.uiStateManager.updateFileList(),
+            updateFileStats: () => this.updateFileStats(),
+        });
+
+        // Initialize rendering utilities
+        this.renderingUtils = new RenderingUtils({
+            getScene: () => this.scene,
+            getRenderer: () => this.renderer,
+            getMeshes: () => this.meshes,
+            getFiles: () => this.plyFiles,
+            getLightingMode: () => this.lightingMode,
+            setLightingMode: (mode) => { this.lightingMode = mode; },
+            getUseLinearColorSpace: () => this.useLinearColorSpace,
+            rebuildAllPlyMaterials: () => this.rebuildAllPlyMaterials(),
+        });
+
         this.initializeControls();
 
         // Lighting
-        this.initSceneLighting();
+        this.renderingUtils.initSceneLighting();
 
         // Add coordinate axes helper with labels
         this.addAxesHelper();
@@ -404,97 +410,33 @@ class PointCloudVisualizer {
         window.addEventListener('resize', this.onWindowResize.bind(this));
 
         // Double-click to change rotation center (like CloudCompare)
-        this.renderer.domElement.addEventListener('dblclick', this.onDoubleClick.bind(this));
+        if (this.renderer && this.renderer.domElement) {
+            this.renderer.domElement.addEventListener('dblclick', this.onDoubleClick.bind(this));
+        } else {
+            console.error('Renderer or domElement not available for event listener');
+        }
 
         // Start render loop
         this.animate();
     }
 
     private initializeControls(): void {
-        // Store current camera state before disposing old controls
-        const currentCameraPosition = this.camera.position.clone();
-        const currentTarget = this.controls ? this.controls.target.clone() : new THREE.Vector3(0, 0, 0);
-        const currentUp = this.camera.up.clone();
+        this.cameraControls.setControlType(this.controlType);
+        this.cameraControls.setArcballInvertRotation(this.arcballInvertRotation);
+        this.cameraControls.initializeControls();
+        this.controls = this.cameraControls.getControls();
         
-        // Dispose of existing controls if any
-        if (this.controls) {
-            this.controls.dispose();
-        }
-
-        if (this.controlType === 'trackball') {
-            this.controls = new TrackballControls(this.camera, this.renderer.domElement);
-            const trackballControls = this.controls as TrackballControls;
-            trackballControls.rotateSpeed = 5.0;
-            trackballControls.zoomSpeed = 2.5;
-            trackballControls.panSpeed = 1.5;
-            trackballControls.noZoom = false;
-            trackballControls.noPan = false;
-            trackballControls.staticMoving = false;
-            trackballControls.dynamicDampingFactor = 0.2;
-            
-            // Set up screen coordinates for proper rotation
-            trackballControls.screen.left = 0;
-            trackballControls.screen.top = 0;
-            trackballControls.screen.width = this.renderer.domElement.clientWidth;
-            trackballControls.screen.height = this.renderer.domElement.clientHeight;
-        } else if (this.controlType === 'inverse-trackball') {
-            this.controls = new TrackballControls(this.camera, this.renderer.domElement);
-            const trackballControls = this.controls as TrackballControls;
-            trackballControls.rotateSpeed = 1.0;  // Reduced to 1.0 as requested
-            trackballControls.zoomSpeed = 2.5;
-            trackballControls.panSpeed = 1.5;
-            trackballControls.noZoom = false;
-            trackballControls.noPan = false;
-            trackballControls.staticMoving = false;
-            trackballControls.dynamicDampingFactor = 0.2;
-            
-            // Set up screen coordinates for proper rotation
-            trackballControls.screen.left = 0;
-            trackballControls.screen.top = 0;
-            trackballControls.screen.width = this.renderer.domElement.clientWidth;
-            trackballControls.screen.height = this.renderer.domElement.clientHeight;
-            
-            // Apply inversion
-            this.setupInvertedControls();
-        } else if (this.controlType === 'arcball') {
-            this.controls = new CustomArcballControls(this.camera, this.renderer.domElement);
-            const arc = this.controls as CustomArcballControls;
-            arc.rotateSpeed = 1.0;
-            arc.zoomSpeed = 1.0;
-            arc.panSpeed = 1.0;
-            // Apply preference
-            arc.invertRotation = this.arcballInvertRotation;
-        } else if (this.controlType === 'cloudcompare') {
-            this.controls = new TurntableControls(this.camera, this.renderer.domElement);
-            const cc = this.controls as TurntableControls;
-            cc.rotateSpeed = 1.0;
-            cc.zoomSpeed = 1.0;
-            cc.panSpeed = 1.0;
-            cc.worldUp.copy(this.camera.up.lengthSq() > 0 ? this.camera.up : new THREE.Vector3(0,1,0));
-        } else {
-            this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-            const orbitControls = this.controls as OrbitControls;
-            orbitControls.enableDamping = true;
-            orbitControls.dampingFactor = 0.2;
-            orbitControls.screenSpacePanning = false;
-            orbitControls.minDistance = 0.001;
-            orbitControls.maxDistance = 50000;  // Increased to match camera far plane
-        }
-        
-        // Set up axes visibility for all control types
+        // Now that controls are initialized, set up axes visibility
         this.setupAxesVisibility();
-        
-        // Restore camera state to prevent jumps
-        this.camera.position.copy(currentCameraPosition);
-        this.camera.up.copy(currentUp);
-        this.controls.target.copy(currentTarget);
-        this.controls.update();
-        
-        // Update control status to highlight active button
-        this.updateControlStatus();
     }
 
     private setupAxesVisibility(): void {
+        // Check if controls are initialized yet
+        if (!this.controls) {
+            console.log('Controls not yet initialized, skipping axes visibility setup');
+            return;
+        }
+        
         // Track interaction state for axes visibility
         let axesHideTimeout: NodeJS.Timeout | null = null;
         
@@ -701,64 +643,15 @@ class PointCloudVisualizer {
     }
 
     private initSceneLighting(): void {
-        // Remove existing lights
-        const lightsToRemove = this.scene.children.filter(child => 
-            child instanceof THREE.AmbientLight || child instanceof THREE.DirectionalLight || child instanceof THREE.HemisphereLight
-        );
-        lightsToRemove.forEach(light => this.scene.remove(light));
-
-        // Add fresh lighting based on mode
-        if (this.useFlatLighting) {
-            const ambient = new THREE.AmbientLight(0xffffff, 0.9);
-            this.scene.add(ambient);
-            const hemi = new THREE.HemisphereLight(0xffffff, 0x888888, 0.6);
-            this.scene.add(hemi);
-        } else {
-            const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
-            this.scene.add(ambientLight);
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight.position.set(10, 10, 5);
-            directionalLight.castShadow = true;
-            directionalLight.shadow.mapSize.width = 2048;
-            directionalLight.shadow.mapSize.height = 2048;
-            this.scene.add(directionalLight);
-        }
-
-        // Ensure initial UI states reflect current settings
-        setTimeout(() => {
-            this.updateGammaButtonState();
-            this.updateAxesButtonState();
-            this.updateLightingButtonsState();
-        }, 0);
+        this.renderingUtils.initSceneLighting();
     }
 
     private updateLightingButtonsState(): void {
-        const normalBtn = document.getElementById('use-normal-lighting');
-        const flatBtn = document.getElementById('use-flat-lighting');
-        if (normalBtn && flatBtn) {
-            if (this.lightingMode === 'flat') {
-                normalBtn.classList.remove('active');
-                flatBtn.classList.add('active');
-            } else if (this.lightingMode === 'normal') {
-                flatBtn.classList.remove('active');
-                normalBtn.classList.add('active');
-            } else {
-                // Unlit mode: neither normal nor flat highlighted
-                flatBtn.classList.remove('active');
-                normalBtn.classList.remove('active');
-            }
-        }
-        const unlitBtn = document.getElementById('toggle-unlit-ply');
-        if (unlitBtn) {
-            if (this.lightingMode === 'unlit') unlitBtn.classList.add('active');
-            else unlitBtn.classList.remove('active');
-        }
+        this.renderingUtils.updateLightingButtonsState();
     }
 
     private updateRendererColorSpace(): void {
-        // Always output sRGB for correct display on standard monitors
-        this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-        // concise summary already printed elsewhere
+        this.renderingUtils.updateRendererColorSpace();
     }
 
     private toggleGammaCorrection(): void {
@@ -770,22 +663,11 @@ class PointCloudVisualizer {
             ? 'Treat source colors as sRGB (convert to linear before shading)' 
             : 'Treat source colors as linear (no sRGB-to-linear conversion)';
         this.showStatus(statusMessage);
-        this.updateGammaButtonState();
-        // Rebuild color attributes to reflect new conversion setting
-        this.rebuildAllColorAttributesForCurrentGammaSetting();
+        this.renderingUtils.toggleGammaCorrection();
     }
 
     private updateGammaButtonState(): void {
-        const btn = document.getElementById('toggle-gamma-correction');
-        if (!btn) return;
-        // Active (blue) when we apply additional gamma (i.e., we do NOT convert input sRGB → linear)
-        // This matches the UX: blue means extra gamma appearance compared to default pipeline
-        if (!this.convertSrgbToLinear) {
-            btn.classList.add('active');
-        } else {
-            btn.classList.remove('active');
-        }
-        // Keep label text unchanged per request
+        this.renderingUtils.updateGammaButtonState();
     }
 
     private rebuildAllColorAttributesForCurrentGammaSetting(): void {
@@ -808,7 +690,7 @@ class PointCloudVisualizer {
                 if (typedColors && typedColors.length === colorsFloat.length) {
                     if (this.convertSrgbToLinear) {
                         this.ensureSrgbLUT();
-                        const lut = this.srgbToLinearLUT!;
+                        const lut = ColorUtils.getSrgbToLinearLUT();
                         for (let j = 0; j < typedColors.length; j++) colorsFloat[j] = lut[typedColors[j]];
                     } else {
                         for (let j = 0; j < typedColors.length; j++) colorsFloat[j] = typedColors[j] / 255;
@@ -822,7 +704,7 @@ class PointCloudVisualizer {
                     const count = Math.min(vertexCount, verts.length);
                     if (this.convertSrgbToLinear) {
                         this.ensureSrgbLUT();
-                        const lut = this.srgbToLinearLUT!;
+                        const lut = ColorUtils.getSrgbToLinearLUT();
                         for (let v = 0, o = 0; v < count; v++, o += 3) {
                             const vert = verts[v];
                             const r8 = (vert.red || 0) & 255;
@@ -859,23 +741,7 @@ class PointCloudVisualizer {
     }
 
     private onWindowResize(): void {
-        const container = document.getElementById('viewer-container');
-        if (!container) {return;}
-        
-        this.camera.aspect = container.clientWidth / container.clientHeight;
-        this.camera.updateProjectionMatrix();
-        this.renderer.setSize(container.clientWidth, container.clientHeight);
-        
-        // Update controls based on type
-        if (this.controlType === 'trackball') {
-            const trackballControls = this.controls as TrackballControls;
-            trackballControls.screen.width = container.clientWidth;
-            trackballControls.screen.height = container.clientHeight;
-            trackballControls.handleResize();
-        } else {
-            const orbitControls = this.controls as OrbitControls;
-            // OrbitControls automatically handles resize
-        }
+        this.renderingUtils.onWindowResize(this.camera, this.controls);
     }
 
     private animate(): void {
@@ -908,41 +774,17 @@ class PointCloudVisualizer {
             this.lastCameraQuaternion.copy(this.camera.quaternion);
         }
         
+        // Debug render info every 60 frames (1 second at 60fps)
+        if (this.frameCount % 60 === 0) {
+            console.log('Scene children count:', this.scene.children.length, 'Meshes array length:', this.meshes.length);
+        }
+        this.frameCount++;
+        
         this.renderer.render(this.scene, this.camera);
     }
 
     private checkMeshVisibility(): void {
-        // Check if any meshes are being culled by frustum culling
-        for (let i = 0; i < this.meshes.length; i++) {
-            const mesh = this.meshes[i];
-            const isVisible = this.fileVisibility[i];
-            
-            if (!isVisible) continue; // Skip if manually hidden
-            
-            // Check if mesh should be visible but might be culled
-            if (mesh && mesh.geometry && mesh.geometry.boundingBox) {
-                const box = mesh.geometry.boundingBox.clone();
-                box.applyMatrix4(mesh.matrixWorld);
-                
-                // Simple frustum check - if bounding box is completely outside view
-                const center = box.getCenter(new THREE.Vector3());
-                const distanceToCamera = this.camera.position.distanceTo(center);
-                
-                // Check if it's within camera range
-                const withinNearFar = distanceToCamera >= this.camera.near && distanceToCamera <= this.camera.far;
-                
-                if (!withinNearFar) {
-                    // debug: culling warning
-                }
-                
-                // Check if bounding box is extremely large
-                const size = box.getSize(new THREE.Vector3());
-                const maxDim = Math.max(size.x, size.y, size.z);
-                if (maxDim > 50000) {
-                    // debug: large bounds
-                }
-            }
-        }
+        this.fileUtils.checkMeshVisibility();
     }
 
     // Rotation Matrix Methods
@@ -962,169 +804,18 @@ class PointCloudVisualizer {
         this.cameraMatrix.multiply(rotationMatrix).multiply(positionMatrix);
     }
 
-    private setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void {
-        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-            this.transformationMatrices[fileIndex].copy(matrix);
-            this.applyTransformationMatrix(fileIndex);
-        }
-    }
 
-    private getTransformationMatrix(fileIndex: number): THREE.Matrix4 {
-        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-            return this.transformationMatrices[fileIndex].clone();
-        }
-        return new THREE.Matrix4(); // Return identity matrix if index is invalid
-    }
 
-    private getTransformationMatrixAsArray(fileIndex: number): number[] {
-        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-            return this.transformationMatrices[fileIndex].elements.slice();
-        }
-        return new THREE.Matrix4().elements.slice(); // Return identity matrix if index is invalid
-    }
 
-    private applyTransformationMatrix(fileIndex: number): void {
-        if (fileIndex < 0 || fileIndex >= this.transformationMatrices.length) return;
-        
-        const matrix = this.transformationMatrices[fileIndex];
-        
-        // Handle PLY/mesh files
-        if (fileIndex < this.meshes.length) {
-            const mesh = this.meshes[fileIndex];
-            if (mesh) {
-                mesh.matrix.copy(matrix);
-                mesh.matrixAutoUpdate = false;
-            }
-            return;
-        }
-        
-        // Handle poses
-        const poseIndex = fileIndex - this.plyFiles.length;
-        if (poseIndex >= 0 && poseIndex < this.poseGroups.length) {
-            const group = this.poseGroups[poseIndex];
-            if (group) {
-                group.matrix.copy(matrix);
-                group.matrixAutoUpdate = false;
-            }
-            return;
-        }
-        
-        // Handle cameras
-        const cameraIndex = fileIndex - this.plyFiles.length - this.poseGroups.length;
-        if (cameraIndex >= 0 && cameraIndex < this.cameraGroups.length) {
-            const group = this.cameraGroups[cameraIndex];
-            if (group) {
-                // Apply transformation matrix to camera profile group
-                group.matrix.copy(matrix);
-                group.matrixAutoUpdate = false;
-                
-                // Apply scaling only to visual elements, not position
-                const size = this.pointSizes[fileIndex] ?? 1.0;
-                this.applyCameraScale(cameraIndex, size);
-            }
-        }
-    }
 
-    private resetTransformationMatrix(fileIndex: number): void {
-        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-            this.transformationMatrices[fileIndex].identity();
-            this.applyTransformationMatrix(fileIndex);
-        }
-    }
 
-    private createRotationMatrix(axis: 'x' | 'y' | 'z', angle: number): THREE.Matrix4 {
-        const matrix = new THREE.Matrix4();
-        switch (axis) {
-            case 'x':
-                matrix.makeRotationX(angle);
-                break;
-            case 'y':
-                matrix.makeRotationY(angle);
-                break;
-            case 'z':
-                matrix.makeRotationZ(angle);
-                break;
-        }
-        return matrix;
-    }
 
-    private createTranslationMatrix(x: number, y: number, z: number): THREE.Matrix4 {
-        const matrix = new THREE.Matrix4();
-        matrix.makeTranslation(x, y, z);
-        return matrix;
-    }
 
-    private createQuaternionMatrix(x: number, y: number, z: number, w: number): THREE.Matrix4 {
-        const quaternion = new THREE.Quaternion(x, y, z, w);
-        quaternion.normalize();
-        const matrix = new THREE.Matrix4();
-        matrix.makeRotationFromQuaternion(quaternion);
-        return matrix;
-    }
 
-    private createAngleAxisMatrix(axis: THREE.Vector3, angle: number): THREE.Matrix4 {
-        const quaternion = new THREE.Quaternion();
-        quaternion.setFromAxisAngle(axis.normalize(), angle);
-        const matrix = new THREE.Matrix4();
-        matrix.makeRotationFromQuaternion(quaternion);
-        return matrix;
-    }
 
-    private parseSpaceSeparatedValues(input: string): number[] {
-        if (!input.trim()) {
-            return [];
-        }
-        
-        // Remove brackets, parentheses, and normalize whitespace/separators
-        let cleaned = input
-            .replace(/[\[\](){}]/g, '') // Remove brackets/parentheses
-            .replace(/[,;]/g, ' ')      // Replace commas/semicolons with spaces
-            .replace(/\s+/g, ' ')       // Normalize multiple spaces to single
-            .trim();
-        
-        // Split by spaces and parse numbers
-        return cleaned.split(' ')
-            .map(s => parseFloat(s))
-            .filter(n => !isNaN(n));
-    }
 
-    private multiplyTransformationMatrices(fileIndex: number, matrix: THREE.Matrix4): void {
-        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-            this.transformationMatrices[fileIndex].multiply(matrix);
-            this.applyTransformationMatrix(fileIndex);
-        }
-    }
 
-    private addTranslationToMatrix(fileIndex: number, x: number, y: number, z: number): void {
-        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-            const translationMatrix = this.createTranslationMatrix(x, y, z);
-            this.multiplyTransformationMatrices(fileIndex, translationMatrix);
-        }
-    }
 
-    private updateMatrixTextarea(fileIndex: number): void {
-        const textarea = document.getElementById(`matrix-${fileIndex}`) as HTMLTextAreaElement;
-        if (textarea) {
-            const matrixArr = this.getTransformationMatrixAsArray(fileIndex);
-            let matrixStr = '';
-            // Three.js stores matrices in column-major order: [m00, m10, m20, m30, m01, m11, m21, m31, m02, m12, m22, m32, m03, m13, m23, m33]
-            // Display in row-major order to match the input format: each row should be [m0r, m1r, m2r, m3r]
-            for (let row = 0; row < 4; ++row) {
-                const displayRow = [
-                    matrixArr[row],           // m0r (column r, row 0)
-                    matrixArr[row + 4],       // m1r (column r, row 1)
-                    matrixArr[row + 8],       // m2r (column r, row 2)
-                    matrixArr[row + 12]       // m3r (column r, row 3)
-                ].map(v => {
-                    // Format numbers consistently: 6 decimal places, no padding
-                    return v.toFixed(6);
-                });
-                matrixStr += displayRow.join(' ') + '\n';
-            }
-            textarea.value = matrixStr.trim();
-            // debug: matrix display updated
-        }
-    }
 
     private updateCameraMatrixDisplay(): void {
         // Camera matrix is now displayed in the camera controls panel
@@ -1240,26 +931,15 @@ class PointCloudVisualizer {
     }
 
     private resetCameraToDefault(): void {
-        // Reset camera to default position and orientation
-        this.camera.position.set(1, 1, 1);
-        
-        // Reset quaternion to identity (no rotation)
-        this.camera.quaternion.set(0, 0, 0, 1);
-        
-        this.camera.fov = 75;
-        this.camera.updateProjectionMatrix();
-        
-        // Reset controls
-        this.controls.target.set(0, 0, 0);
-        this.controls.update();
-        
-        // Update last known camera state to prevent unnecessary UI updates
-        this.lastCameraPosition.copy(this.camera.position);
-        this.lastCameraQuaternion.copy(this.camera.quaternion);
-        
-        // Force update camera matrix and UI
-        this.updateCameraMatrix();
-        this.updateCameraControlsPanel();
+        this.cameraControls.resetCameraToDefault(() => {
+            // Update last known camera state to prevent unnecessary UI updates
+            this.lastCameraPosition.copy(this.camera.position);
+            this.lastCameraQuaternion.copy(this.camera.quaternion);
+            
+            // Force update camera matrix and UI
+            this.updateCameraMatrix();
+            this.updateCameraControlsPanel();
+        });
     }
 
     private setRotationCenterToOrigin(): void {
@@ -1442,165 +1122,9 @@ class PointCloudVisualizer {
     }
 
     private createGeometryFromPlyData(data: PlyData): THREE.BufferGeometry {
-        const geometry = new THREE.BufferGeometry();
-        
-        const startTime = performance.now();
-        
-        // Check if we have direct TypedArrays (new ultra-fast path)
-        if ((data as any).useTypedArrays) {
-            
-            const positions = (data as any).positionsArray as Float32Array;
-            const colors = (data as any).colorsArray as Uint8Array | null;
-            const normals = (data as any).normalsArray as Float32Array | null;
-            
-            // Direct assignment - zero copying, zero processing!
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            
-            if (colors && data.hasColors) {
-                const colorFloats = new Float32Array(colors.length);
-                if (this.convertSrgbToLinear) {
-                    this.ensureSrgbLUT();
-                    const lut = this.srgbToLinearLUT!;
-                    for (let i = 0; i < colors.length; i++) {
-                        colorFloats[i] = lut[colors[i]];
-                    }
-                } else {
-                    for (let i = 0; i < colors.length; i++) {
-                        colorFloats[i] = colors[i] / 255;
-                    }
-                }
-                geometry.setAttribute('color', new THREE.BufferAttribute(colorFloats, 3));
-            }
-            
-            if (normals && data.hasNormals) {
-                geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-            }
-            
-        } else {
-            // Fallback to traditional vertex object processing
-            const vertexCount = data.vertices.length;
-            // fallback path
-            
-            // Pre-allocate typed arrays for better performance
-            const vertices = new Float32Array(vertexCount * 3);
-            const colors = data.hasColors ? new Float32Array(vertexCount * 3) : null;
-            const normals = data.hasNormals ? new Float32Array(vertexCount * 3) : null;
-
-            // Optimized vertex processing - batch operations
-            const vertexArray = data.vertices;
-            for (let i = 0, i3 = 0; i < vertexCount; i++, i3 += 3) {
-                const vertex = vertexArray[i];
-                
-                // Position data (required)
-                vertices[i3] = vertex.x;
-                vertices[i3 + 1] = vertex.y;
-                vertices[i3 + 2] = vertex.z;
-
-                // Color data (optional)
-                if (colors && vertex.red !== undefined) {
-                    const r8 = (vertex.red || 0) & 255;
-                    const g8 = (vertex.green || 0) & 255;
-                    const b8 = (vertex.blue || 0) & 255;
-                    if (this.convertSrgbToLinear) {
-                        this.ensureSrgbLUT();
-                        const lut = this.srgbToLinearLUT!;
-                        colors[i3] = lut[r8];
-                        colors[i3 + 1] = lut[g8];
-                        colors[i3 + 2] = lut[b8];
-                    } else {
-                        colors[i3] = r8 / 255;
-                        colors[i3 + 1] = g8 / 255;
-                        colors[i3 + 2] = b8 / 255;
-                    }
-                }
-
-                // Normal data (optional)
-                if (normals && vertex.nx !== undefined) {
-                    normals[i3] = vertex.nx;
-                    normals[i3 + 1] = vertex.ny || 0;
-                    normals[i3 + 2] = vertex.nz || 0;
-                }
-            }
-
-            // Set attributes
-            geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-            
-            if (colors) {
-                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-            }
-
-            if (normals) {
-                geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-            }
-        }
-
-        // Optimized face processing
-        if (data.faces.length > 0) {
-            // Estimate index count for pre-allocation
-            let estimatedIndexCount = 0;
-            for (const face of data.faces) {
-                if (face.indices.length >= 3) {
-                    estimatedIndexCount += (face.indices.length - 2) * 3;
-                }
-            }
-            
-            const indices = new Uint32Array(estimatedIndexCount);
-            let indexOffset = 0;
-            
-            for (const face of data.faces) {
-                if (face.indices.length >= 3) {
-                    // Optimized fan triangulation
-                    const faceIndices = face.indices;
-                    const firstIndex = faceIndices[0];
-                    
-                    for (let i = 1; i < faceIndices.length - 1; i++) {
-                        indices[indexOffset++] = firstIndex;
-                        indices[indexOffset++] = faceIndices[i];
-                        indices[indexOffset++] = faceIndices[i + 1];
-                    }
-                }
-            }
-            
-            if (indexOffset > 0) {
-                // Trim array if we over-estimated
-                const finalIndices = indexOffset < indices.length ? indices.slice(0, indexOffset) : indices;
-                geometry.setIndex(new THREE.BufferAttribute(finalIndices, 1));
-            }
-        }
-
-        // Ensure normals are available for proper lighting after indices are set
-        if (!geometry.getAttribute('normal') && data.faces.length > 0) {
-            geometry.computeVertexNormals();
-        }
-
-        geometry.computeBoundingBox();
-        
-        // Debug bounding box for disparity Depth files (may help with disappearing issue)
-        if (geometry.boundingBox) {
-            const box = geometry.boundingBox;
-            const size = box.getSize(new THREE.Vector3());
-            const center = box.getCenter(new THREE.Vector3());
-            
-        // debug: bbox
-            
-            // Check for extreme values that might cause culling issues
-            const maxDimension = Math.max(size.x, size.y, size.z);
-            if (maxDimension > 10000) {
-                // debug
-            }
-            
-            // Check distance from origin
-            const distanceFromOrigin = center.length();
-            if (distanceFromOrigin > 1000) {
-                // debug
-            }
-        }
-        
-        const endTime = performance.now();
-        this.lastGeometryMs = +(endTime - startTime).toFixed(1);
-        console.log(`Render: geometry ${this.lastGeometryMs}ms`);
-        
-        return geometry;
+        return GeometryProcessor.createGeometryFromPlyData(data, this.convertSrgbToLinear, (geometryMs) => {
+            this.lastGeometryMs = geometryMs;
+        });
     }
 
     private setupEventListeners(): void {
@@ -1610,6 +1134,8 @@ class PointCloudVisualizer {
             addFileBtn.addEventListener('click', () => {
                 this.requestAddFile();
             });
+        } else {
+            console.log('Warning: add-file button not found');
         }
 
         // Sequence controls (overlay)
@@ -1619,20 +1145,22 @@ class PointCloudVisualizer {
         const prevBtn = document.getElementById('seq-prev');
         const nextBtn = document.getElementById('seq-next');
         const slider = document.getElementById('seq-slider') as HTMLInputElement | null;
-        if (playBtn) playBtn.addEventListener('click', () => this.playSequence());
-        if (pauseBtn) pauseBtn.addEventListener('click', () => this.pauseSequence());
-        if (stopBtn) stopBtn.addEventListener('click', () => this.stopSequence());
-        if (prevBtn) prevBtn.addEventListener('click', () => this.stepSequence(-1));
-        if (nextBtn) nextBtn.addEventListener('click', () => this.stepSequence(1));
-        if (slider) slider.addEventListener('input', () => this.seekSequence(parseInt(slider.value, 10) || 0));
+        if (playBtn) playBtn.addEventListener('click', () => this.sequenceManager.playSequence());
+        if (pauseBtn) pauseBtn.addEventListener('click', () => this.sequenceManager.pauseSequence());
+        if (stopBtn) stopBtn.addEventListener('click', () => this.sequenceManager.stopSequence());
+        if (prevBtn) prevBtn.addEventListener('click', () => this.sequenceManager.stepSequence(-1));
+        if (nextBtn) nextBtn.addEventListener('click', () => this.sequenceManager.stepSequence(1));
+        if (slider) slider.addEventListener('input', () => this.sequenceManager.seekSequence(parseInt(slider.value, 10) || 0));
 
         // Tab navigation
         const tabButtons = document.querySelectorAll('.tab-button');
+        console.log('Found', tabButtons.length, 'tab buttons');
         tabButtons.forEach(button => {
             button.addEventListener('click', (e) => {
                 const targetTab = (e.target as HTMLElement).getAttribute('data-tab');
                 if (targetTab) {
-                    this.switchTab(targetTab);
+                    console.log('Switching to tab:', targetTab);
+                    this.uiStateManager.switchTab(targetTab);
                 }
             });
         });
@@ -1640,21 +1168,31 @@ class PointCloudVisualizer {
         // Control buttons
         const fitCameraBtn = document.getElementById('fit-camera');
         if (fitCameraBtn) {
+            console.log('Found fit-camera button');
             fitCameraBtn.addEventListener('click', () => {
-                if (!this.sequenceMode) this.fitCameraToAllObjects();
+                console.log('Fit camera clicked');
+                if (!this.sequenceManager.isSequenceMode()) this.fitCameraToAllObjects();
             });
+        } else {
+            console.log('Warning: fit-camera button not found');
         }
 
         const resetCameraBtn = document.getElementById('reset-camera');
         if (resetCameraBtn) {
+            console.log('Found reset-camera button');
             resetCameraBtn.addEventListener('click', () => {
-                if (!this.sequenceMode) this.resetCameraToDefault();
+                console.log('Reset camera clicked');
+                if (!this.sequenceManager.isSequenceMode()) this.resetCameraToDefault();
             });
+        } else {
+            console.log('Warning: reset-camera button not found');
         }
 
         const toggleAxesBtn = document.getElementById('toggle-axes');
         if (toggleAxesBtn) {
+            console.log('Found toggle-axes button');
             toggleAxesBtn.addEventListener('click', () => {
+                console.log('Toggle axes clicked');
                 this.toggleAxesVisibility();
                 this.updateAxesButtonState();
             });
@@ -1791,13 +1329,13 @@ class PointCloudVisualizer {
                     e.preventDefault();
                     break;
                 case 'f':
-                    if (!this.sequenceMode) {
+                    if (!this.sequenceManager.isSequenceMode()) {
                         this.fitCameraToAllObjects();
                     }
                     e.preventDefault();
                     break;
                 case 'r':
-                    if (!this.sequenceMode) {
+                    if (!this.sequenceManager.isSequenceMode()) {
                         this.resetCameraToDefault();
                     }
                     e.preventDefault();
@@ -1881,141 +1419,17 @@ class PointCloudVisualizer {
         // Global color mode toggle (removed - now handled per file)
     }
 
-    private initializeSequence(files: string[], wildcard: string): void {
-        this.sequenceMode = true;
-        this.sequenceFiles = files;
-        this.sequenceIndex = 0;
-        this.sequenceTargetIndex = 0;
-        this.sequenceDidInitialFit = false;
-        this.isSequencePlaying = false;
-        this.sequenceCache.clear();
-        this.sequenceCacheOrder = [];
-        // Show overlay
-        document.getElementById('sequence-overlay')?.classList.remove('hidden');
-        const wildcardInput = document.getElementById('seq-wildcard') as HTMLInputElement | null;
-        if (wildcardInput) wildcardInput.value = wildcard;
-        this.updateSequenceUI();
-        // Clear any existing meshes from normal mode
-        for (const obj of this.meshes) this.scene.remove(obj);
-        this.meshes = [];
-        this.plyFiles = [];
-        // Load first frame
-        if (files.length > 0) this.loadSequenceFrame(0);
-        this.updateFileList();
-    }
 
-    private updateSequenceUI(): void {
-        const slider = document.getElementById('seq-slider') as HTMLInputElement | null;
-        const label = document.getElementById('seq-label') as HTMLElement | null;
-        if (slider) {
-            slider.max = Math.max(0, this.sequenceFiles.length - 1).toString();
-            slider.value = Math.min(this.sequenceIndex, this.sequenceFiles.length ? this.sequenceFiles.length - 1 : 0).toString();
-        }
-        if (label) {
-            label.textContent = `${this.sequenceFiles.length ? this.sequenceIndex + 1 : 0} / ${this.sequenceFiles.length}`;
-        }
-    }
 
-    private playSequence(): void {
-        if (!this.sequenceFiles.length) return;
-        if (this.isSequencePlaying) return;
-        this.isSequencePlaying = true;
-        const intervalMs = Math.max(50, Math.floor(1000 / this.sequenceFps));
-        this.sequenceTimer = window.setInterval(() => {
-            const nextIndex = (this.sequenceIndex + 1) % this.sequenceFiles.length;
-            this.seekSequence(nextIndex);
-        }, intervalMs) as unknown as number;
-    }
 
-    private pauseSequence(): void {
-        this.isSequencePlaying = false;
-        if (this.sequenceTimer !== null) {
-            window.clearInterval(this.sequenceTimer as unknown as number);
-            this.sequenceTimer = null;
-        }
-    }
-    private stopSequence(): void {
-        this.pauseSequence();
-    }
 
-    private stepSequence(delta: number): void {
-        if (!this.sequenceFiles.length) return;
-        this.pauseSequence(); // do not auto-play when stepping
-        const count = this.sequenceFiles.length;
-        const next = (this.sequenceIndex + delta + count) % count;
-        this.seekSequence(next);
-    }
 
-    private seekSequence(index: number): void {
-        if (!this.sequenceFiles.length) return;
-        const clamped = Math.max(0, Math.min(index, this.sequenceFiles.length - 1));
-        this.sequenceTargetIndex = clamped;
-        this.loadSequenceFrame(clamped);
-    }
 
-    private async sequenceHandleUltimate(message: any): Promise<void> {
-        const plyMsg = { ...message, type: 'ultimateRawBinaryData', messageType: 'addFiles' };
-        const startFilesLen = this.plyFiles.length;
-        await this.handleUltimateRawBinaryData(plyMsg);
-        const created = this.meshes[this.meshes.length - 1];
-        if (created) {
-            if (message.index === this.sequenceTargetIndex) this.useSequenceObject(created, message.index);
-            else this.cacheSequenceOnly(created, message.index);
-        }
-        this.trimNormalModeArraysFrom(startFilesLen);
-    }
 
-    private async sequenceHandlePly(message: any): Promise<void> {
-        const startFilesLen = this.plyFiles.length;
-        await this.displayFiles([message.data]);
-        const created = this.meshes[this.meshes.length - 1];
-        if (created) {
-            if (message.index === this.sequenceTargetIndex) this.useSequenceObject(created, message.index);
-            else this.cacheSequenceOnly(created, message.index);
-        }
-        this.trimNormalModeArraysFrom(startFilesLen);
-    }
 
-    private async sequenceHandleXyz(message: any): Promise<void> {
-        const startFilesLen = this.plyFiles.length;
-        await this.handleXyzData({ type: 'xyzData', fileName: message.fileName, data: message.data, isAddFile: true });
-        const created = this.meshes[this.meshes.length - 1];
-        if (created) {
-            if (message.index === this.sequenceTargetIndex) this.useSequenceObject(created, message.index);
-            else this.cacheSequenceOnly(created, message.index);
-        }
-        this.trimNormalModeArraysFrom(startFilesLen);
-    }
 
-    private async sequenceHandleObj(message: any): Promise<void> {
-        const startFilesLen = this.plyFiles.length;
-        await this.handleObjData({ type: 'objData', fileName: message.fileName, data: message.data, isAddFile: true });
-        const created = this.meshes[this.meshes.length - 1];
-        if (created) {
-            if (message.index === this.sequenceTargetIndex) this.useSequenceObject(created, message.index);
-            else this.cacheSequenceOnly(created, message.index);
-        }
-        this.trimNormalModeArraysFrom(startFilesLen);
-    }
 
-    private async sequenceHandleStl(message: any): Promise<void> {
-        const startFilesLen = this.plyFiles.length;
-        await this.handleStlData({ type: 'stlData', fileName: message.fileName, data: message.data, isAddFile: true });
-        const created = this.meshes[this.meshes.length - 1];
-        if (created) {
-            if (message.index === this.sequenceTargetIndex) this.useSequenceObject(created, message.index);
-            else this.cacheSequenceOnly(created, message.index);
-        }
-        this.trimNormalModeArraysFrom(startFilesLen);
-    }
 
-    private async sequenceHandleDepth(message: any): Promise<void> {
-        const startFilesLen = this.plyFiles.length;
-        await this.handleDepthData({ type: 'depthData', fileName: message.fileName, data: message.data, isAddFile: true });
-        const created = this.meshes[this.meshes.length - 1];
-        if (created) this.useSequenceObject(created, message.index);
-        this.trimNormalModeArraysFrom(startFilesLen);
-    }
 
     private trimNormalModeArraysFrom(startIndex: number): void {
         if (this.plyFiles.length > startIndex) this.plyFiles.splice(startIndex);
@@ -2026,138 +1440,11 @@ class PointCloudVisualizer {
         if (this.individualColorModes.length > startIndex) this.individualColorModes.splice(startIndex);
     }
 
-    private async loadSequenceFrame(index: number): Promise<void> {
-        const filePath = this.sequenceFiles[index];
-        if (!filePath) return;
-        // If cached, display immediately
-        const cached = this.sequenceCache.get(index);
-        if (cached) {
-            this.swapSequenceObject(cached, index);
-            return;
-        }
-        // If a request is in-flight and for a different index, let it finish but ignore on arrival
-        const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        // Request from extension with requestId for matching
-        this.vscode.postMessage({ type: 'sequence:requestFile', path: filePath, index, requestId });
-        // Show a lightweight loading hint
-        try { (document.getElementById('loading') as HTMLElement)?.classList.remove('hidden'); } catch {}
-    }
 
-    private useSequenceObject(obj: THREE.Object3D, index: number): void {
-        // Cache management
-        if (!this.sequenceCache.has(index)) {
-            this.sequenceCache.set(index, obj);
-            this.sequenceCacheOrder.push(index);
-            // Evict if over capacity
-            while (this.sequenceCacheOrder.length > this.maxSequenceCache) {
-                const evictIndex = this.sequenceCacheOrder.shift()!;
-                if (evictIndex !== this.sequenceIndex) {
-                    const evictObj = this.sequenceCache.get(evictIndex);
-                    if (evictObj) {
-                        this.scene.remove(evictObj);
-                        if ((evictObj as any).geometry) (evictObj as any).geometry.dispose?.();
-                        if ((evictObj as any).material) {
-                            const mat = (evictObj as any).material;
-                            if (Array.isArray(mat)) mat.forEach(m => m.dispose?.()); else mat.dispose?.();
-                        }
-                    }
-                    this.sequenceCache.delete(evictIndex);
-                }
-            }
-        }
-        this.swapSequenceObject(obj, index);
-    }
 
-    private cacheSequenceOnly(obj: THREE.Object3D, index: number): void {
-        if (obj.parent) this.scene.remove(obj);
-        if (!this.sequenceCache.has(index)) {
-            this.sequenceCache.set(index, obj);
-            this.sequenceCacheOrder.push(index);
-            while (this.sequenceCacheOrder.length > this.maxSequenceCache) {
-                const evictIndex = this.sequenceCacheOrder.shift()!;
-                const evictObj = this.sequenceCache.get(evictIndex);
-                if (evictObj) {
-                    this.scene.remove(evictObj);
-                    if ((evictObj as any).geometry) (evictObj as any).geometry.dispose?.();
-                    if ((evictObj as any).material) {
-                        const mat = (evictObj as any).material;
-                        if (Array.isArray(mat)) mat.forEach(m => m.dispose?.()); else mat.dispose?.();
-                    }
-                }
-                this.sequenceCache.delete(evictIndex);
-            }
-        }
-    }
 
-    private swapSequenceObject(obj: THREE.Object3D, index: number): void {
-        // Remove current
-        const current = this.sequenceCache.get(this.sequenceIndex);
-        if (current && current !== obj) {
-            current.visible = false;
-            this.scene.remove(current);
-        }
-        // Add new
-        if (!obj.parent) this.scene.add(obj);
-        obj.visible = true;
-        // Hide axes when new object is added to rule out looking-only-at-axes confusion
-        try { (this as any).axesGroup.visible = true; } catch {}
-        this.sequenceIndex = index;
-        // Make points clearly visible in sequence mode
-        this.ensureSequenceVisibility(obj);
-        // Fit camera only once on the first visible frame
-        if (!this.sequenceDidInitialFit) {
-            this.fitCameraToObject(obj);
-            this.sequenceDidInitialFit = true;
-        }
-        this.updateSequenceUI();
-        this.updateFileList();
-        // Hide loading if it was shown
-        try { (document.getElementById('loading') as HTMLElement)?.classList.add('hidden'); } catch {}
-        // Preload next
-        const next = (index + 1) % this.sequenceFiles.length;
-        const nextPath = this.sequenceFiles[next] || '';
-        const isDepth = /\.(tif|tiff|pfm|npy|npz|png|exr)$/i.test(nextPath);
-        if (!isDepth && !this.sequenceCache.get(next)) {
-            this.vscode.postMessage({ type: 'sequence:requestFile', path: nextPath, index: next });
-        }
-    }
 
-    private ensureSequenceVisibility(obj: THREE.Object3D): void {
-        if ((obj as any).isPoints && (obj as any).material && (obj as any).material instanceof THREE.PointsMaterial) {
-            const mat = (obj as any).material as THREE.PointsMaterial;
-            // Use a sensible on-screen size for sequence mode; avoid tiny defaults
-            if (!mat.size || mat.size < 0.5) {
-                mat.size = 2.5;
-            }
-            // Use screen-space size for clarity regardless of distance
-            mat.sizeAttenuation = false;
-            mat.needsUpdate = true;
-        }
-    }
 
-    private fitCameraToObject(obj: THREE.Object3D): void {
-        const box = new THREE.Box3().setFromObject(obj);
-        if (!box.isEmpty()) {
-            const size = box.getSize(new THREE.Vector3());
-            const center = box.getCenter(new THREE.Vector3());
-            const maxDim = Math.max(size.x, size.y, size.z);
-            const fov = this.camera.fov * (Math.PI / 180);
-            const distance = (maxDim / 2) / Math.tan(fov / 2) * 1.5;
-
-            // Move camera along its current direction to the new distance
-            const dir = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
-            this.camera.position.copy(center.clone().sub(dir.multiplyScalar(distance)));
-            // Conservative clipping planes for massive point clouds
-            this.camera.near = Math.max(0.001, Math.min(0.1, distance / 10000));
-            this.camera.far = Math.max(distance * 100, 1000000);
-            this.camera.updateProjectionMatrix();
-
-            // Update controls target if present
-            if (this.controls && (this.controls as any).target) {
-                (this.controls as any).target.copy(center);
-            }
-        }
-    }
 
     private getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
         const cameraModelSelect = document.getElementById(`camera-model-${fileIndex}`) as HTMLSelectElement;
@@ -2219,26 +1506,6 @@ class PointCloudVisualizer {
         try { (this as any).renderOnce?.(); } catch {}
     }
 
-    private switchTab(tabName: string): void {
-        // Remove active class from all tabs and panels
-        document.querySelectorAll('.tab-button').forEach(btn => {
-            btn.classList.remove('active');
-        });
-        document.querySelectorAll('.tab-panel').forEach(panel => {
-            panel.classList.remove('active');
-        });
-
-        // Add active class to selected tab and panel
-        const activeTabBtn = document.querySelector(`[data-tab="${tabName}"]`);
-        const activePanel = document.getElementById(`${tabName}-tab`);
-        
-        if (activeTabBtn) {
-            activeTabBtn.classList.add('active');
-        }
-        if (activePanel) {
-            activePanel.classList.add('active');
-        }
-    }
 
     private toggleAxesVisibility(): void {
         const axesGroup = (this as any).axesGroup;
@@ -2262,57 +1529,299 @@ class PointCloudVisualizer {
         });
     }
     
-    private togglePointsVisibility(fileIndex: number): void {
-        if (fileIndex < 0 || fileIndex >= this.meshes.length) return;
-        
-        // Initialize visibility state if not set
-        if (this.pointsVisible[fileIndex] === undefined) {
-            this.pointsVisible[fileIndex] = true;
+    
+    
+    
+    
+    
+    
+    
+    private toggleUniversalRenderMode(fileIndex: number, mode: string): void {
+        console.log(`🔄 toggleUniversalRenderMode called: fileIndex=${fileIndex}, mode=${mode}`);
+        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+            console.log(`❌ Invalid fileIndex: ${fileIndex}, plyFiles.length=${this.plyFiles.length}`);
+            return;
         }
         
-        // Toggle the visibility state
+        const data = this.plyFiles[fileIndex];
+        console.log(`📋 File data:`, data?.fileName);
+        
+        switch (mode) {
+            case 'solid':
+            case 'mesh':
+                this.toggleSolidRendering(fileIndex);
+                break;
+            case 'wireframe':
+                this.toggleWireframeRendering(fileIndex);
+                break;
+            case 'points':
+                this.togglePointsRendering(fileIndex);
+                break;
+            case 'normals':
+                this.toggleNormalsRendering(fileIndex);
+                break;
+        }
+        
+        // Update button states after mode change
+        this.updateUniversalRenderButtonStates();
+    }
+    
+    private toggleSolidRendering(fileIndex: number): void {
+        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
+        
+        // Ensure array is properly sized with default values
+        while (this.solidVisible.length <= fileIndex) {
+            const data = this.plyFiles[this.solidVisible.length];
+            const defaultValue = data && data.faceCount > 0; // Default true for meshes, false for point clouds
+            this.solidVisible.push(defaultValue);
+        }
+        
+        // Toggle solid visibility state
+        this.solidVisible[fileIndex] = !this.solidVisible[fileIndex];
+        
+        this.updateMeshVisibilityAndMaterial(fileIndex);
+    }
+    
+    private toggleWireframeRendering(fileIndex: number): void {
+        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
+        
+        // Ensure array is properly sized with default values
+        while (this.wireframeVisible.length <= fileIndex) {
+            this.wireframeVisible.push(false); // Wireframe always defaults to false
+        }
+        
+        // Toggle wireframe visibility state
+        this.wireframeVisible[fileIndex] = !this.wireframeVisible[fileIndex];
+        
+        this.updateMeshVisibilityAndMaterial(fileIndex);
+    }
+    
+    private togglePointsRendering(fileIndex: number): void {
+        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
+        
+        // Ensure array is properly sized with default values
+        while (this.pointsVisible.length <= fileIndex) {
+            const data = this.plyFiles[this.pointsVisible.length];
+            const defaultValue = !data || data.faceCount === 0; // Default true for point clouds, false for meshes
+            this.pointsVisible.push(defaultValue);
+        }
+        
+        // Toggle points visibility state
         this.pointsVisible[fileIndex] = !this.pointsVisible[fileIndex];
         
-        // Apply to the actual mesh
-        if (this.meshes[fileIndex]) {
-            this.meshes[fileIndex].visible = this.pointsVisible[fileIndex];
+        this.updateMeshVisibilityAndMaterial(fileIndex);
+    }
+    
+    private updateMeshVisibilityAndMaterial(fileIndex: number): void {
+        const mesh = this.meshes[fileIndex];
+        const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
+        
+        // Handle either regular mesh or multi-material OBJ group
+        const target = multiMaterialGroup || mesh;
+        if (!target) {
+            console.log(`No mesh or multi-material group found for file ${fileIndex}`);
+            return;
+        }
+        
+        const solidVisible = this.solidVisible[fileIndex] ?? true;
+        const wireframeVisible = this.wireframeVisible[fileIndex] ?? false;
+        const pointsVisible = this.pointsVisible[fileIndex] ?? true;
+        const fileVisible = this.fileVisibility[fileIndex] ?? true;
+        
+        // Set visibility for the target (mesh or multi-material group)
+        if (mesh && mesh.type === 'Points') {
+            // Point cloud case
+            mesh.visible = pointsVisible && fileVisible;
+        } else {
+            // Triangle mesh or multi-material group case
+            target.visible = (solidVisible || wireframeVisible) && fileVisible;
+            
+            // Handle vertex points visualization for triangle meshes
+            if (mesh) { // Only for regular meshes, not multi-material groups
+                this.updateVertexPointsVisualization(fileIndex, pointsVisible, solidVisible, wireframeVisible, fileVisible);
+            } else if (multiMaterialGroup) {
+                // Handle points for multi-material OBJ groups independently
+                this.updateMultiMaterialPointsVisualization(fileIndex, pointsVisible, fileVisible);
+            }
+        }
+        
+        // Update materials for wireframe mode
+        if (multiMaterialGroup) {
+            // Handle multi-material OBJ groups
+            const subMeshes = this.materialMeshes[fileIndex];
+            if (subMeshes) {
+                subMeshes.forEach(subMesh => {
+                    if (subMesh instanceof THREE.Mesh && subMesh.material) {
+                        const material = subMesh.material as THREE.Material;
+                        if (material instanceof THREE.MeshBasicMaterial || material instanceof THREE.MeshLambertMaterial) {
+                            material.wireframe = wireframeVisible && !solidVisible;
+                            material.opacity = 1.0;
+                            material.transparent = false;
+                        }
+                    }
+                });
+            }
+        } else if (mesh && mesh.material) {
+            // Handle regular single mesh
+            if (Array.isArray(mesh.material)) {
+                mesh.material.forEach(material => {
+                    if (material instanceof THREE.MeshBasicMaterial || material instanceof THREE.MeshLambertMaterial) {
+                        material.wireframe = wireframeVisible && !solidVisible;
+                        material.opacity = 1.0;
+                        material.transparent = false;
+                    }
+                });
+            } else {
+                const material = mesh.material as THREE.Material;
+                if (material instanceof THREE.MeshBasicMaterial || material instanceof THREE.MeshLambertMaterial) {
+                    material.wireframe = wireframeVisible && !solidVisible;
+                    material.opacity = 1.0;
+                    material.transparent = false;
+                }
+            }
         }
     }
     
-    private toggleFileNormalsVisibility(fileIndex: number): void {
-        if (fileIndex < 0 || fileIndex >= this.normalsVisualizers.length) return;
+    private updateVertexPointsVisualization(fileIndex: number, pointsVisible: boolean, solidVisible: boolean, wireframeVisible: boolean, fileVisible: boolean): void {
+        // This method handles showing vertex points for triangle meshes
+        const mesh = this.meshes[fileIndex];
+        if (!mesh) return;
         
-        // Initialize visibility state if not set
-        if (this.normalsVisible[fileIndex] === undefined) {
-            this.normalsVisible[fileIndex] = true;
+        // Check if we have vertex points overlay
+        let pointsOverlay = (mesh as any).__pointsOverlay;
+        
+        if (!pointsOverlay && mesh.geometry && pointsVisible) {
+            // Create points overlay from mesh vertices
+            const pointsMaterial = new THREE.PointsMaterial({
+                color: 0xffffff,
+                size: this.pointSizes[fileIndex] || 0.001,
+                sizeAttenuation: true
+            });
+            
+            pointsOverlay = new THREE.Points(mesh.geometry, pointsMaterial);
+            (mesh as any).__pointsOverlay = pointsOverlay;
+            this.scene.add(pointsOverlay);
         }
         
-        // Toggle the visibility state
-        this.normalsVisible[fileIndex] = !this.normalsVisible[fileIndex];
-        
-        // Apply to the actual normals visualizer
-        if (this.normalsVisualizers[fileIndex]) {
-            this.normalsVisualizers[fileIndex]!.visible = this.normalsVisible[fileIndex];
+        if (pointsOverlay) {
+            pointsOverlay.visible = pointsVisible && fileVisible;
         }
     }
     
-    private updatePointsNormalsButtonStates(): void {
+    private updateMultiMaterialPointsVisualization(fileIndex: number, pointsVisible: boolean, fileVisible: boolean): void {
+        const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
+        if (!multiMaterialGroup) return;
+        
+        // For multi-material groups, we'd need more complex handling
+        // For now, just handle basic visibility
+        console.log(`Multi-material points visualization for file ${fileIndex}: pointsVisible=${pointsVisible}, fileVisible=${fileVisible}`);
+    }
+    
+    private setFileColorValue(fileIndex: number, value: string): void {
+        console.log('setFileColorValue called for fileIndex:', fileIndex, 'value:', value);
+        
+        // Ensure individualColorModes array is properly sized
+        while (this.individualColorModes.length <= fileIndex) {
+            this.individualColorModes.push('assigned');
+        }
+        
+        // Update the color mode
+        this.individualColorModes[fileIndex] = value;
+        
+        // Check if this is a pose or point cloud
+        const isPose = fileIndex >= this.plyFiles.length;
+        
+        if (isPose) {
+            // Update pose group material color (from original implementation)
+            const poseIndex = fileIndex - this.plyFiles.length;
+            const group = this.poseGroups[poseIndex];
+            if (group) {
+                const colorIdx = value === 'assigned' ? (fileIndex % this.fileColors.length) : parseInt(value);
+                const color = isNaN(colorIdx) ? this.fileColors[fileIndex % this.fileColors.length] : this.fileColors[colorIdx];
+                group.traverse(obj => {
+                    if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
+                        const material = obj.material as THREE.MeshBasicMaterial;
+                        material.color.setRGB(color[0], color[1], color[2]);
+                        material.needsUpdate = true;
+                    } else if ((obj as any).isLineSegments && obj instanceof THREE.LineSegments) {
+                        const material = obj.material as THREE.LineBasicMaterial;
+                        material.color.setRGB(color[0], color[1], color[2]);
+                        material.needsUpdate = true;
+                    }
+                });
+            }
+        } else if (fileIndex < this.meshes.length) {
+            // Recreate material for point clouds/meshes (from original implementation)
+            this.rebuildMaterialForFile(fileIndex);
+        }
+        
+        // Update UI state
+        this.uiStateManager.updateFileList();
+    }
+    
+    private rebuildMaterialForFile(fileIndex: number): void {
+        console.log('rebuildMaterialForFile called for fileIndex:', fileIndex);
+        
+        if (fileIndex < 0 || fileIndex >= this.meshes.length || fileIndex >= this.plyFiles.length) {
+            console.log('Invalid fileIndex for rebuildMaterialForFile');
+            return;
+        }
+        
+        const data = this.plyFiles[fileIndex];
+        const mesh = this.meshes[fileIndex];
+        
+        if (!data || !mesh) {
+            console.log('No data or mesh found for fileIndex:', fileIndex);
+            return;
+        }
+        
+        // Store the old material for disposal
+        const oldMaterial = (mesh as any).material as THREE.Material | THREE.Material[] | undefined;
+        
+        // Create new material with updated color settings
+        const newMaterial = this.createMaterialForFile(data, fileIndex);
+        (mesh as any).material = newMaterial;
+        
+        // Dispose of the old material
+        if (oldMaterial) {
+            if (Array.isArray(oldMaterial)) { 
+                oldMaterial.forEach(m => m.dispose()); 
+            } else { 
+                oldMaterial.dispose(); 
+            }
+        }
+        
+        console.log('Material rebuilt for file:', fileIndex, 'with color mode:', this.individualColorModes[fileIndex]);
+        
+        // Trigger a render to show the changes
+        try { 
+            (this as any).renderOnce?.(); 
+        } catch (e) {
+            console.log('Failed to trigger render after material rebuild:', e);
+        }
+    }
+    
+    private updateRenderModeButtonStates(): void {
         // Update points toggle button states
-        const pointsButtons = document.querySelectorAll('.points-toggle-btn');
+        const pointsButtons = document.querySelectorAll('.render-mode-btn.points-btn');
+        console.log('Updating button states, found', pointsButtons.length, 'points buttons');
         pointsButtons.forEach(button => {
             const fileIndex = parseInt(button.getAttribute('data-file-index') || '0');
             const isVisible = this.pointsVisible[fileIndex] !== false; // Default to true
+            console.log('Points button', fileIndex, 'visible:', isVisible);
             
-            const baseStyle = 'flex: 1; padding: 4px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;';
+            const baseStyle = 'padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;';
             if (isVisible) {
                 button.setAttribute('style', baseStyle + ' background: var(--vscode-button-background); color: var(--vscode-button-foreground);');
+                button.classList.add('active');
             } else {
                 button.setAttribute('style', baseStyle + ' background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);');
+                button.classList.remove('active');
             }
         });
         
         // Update normals toggle button states
-        const normalsButtons = document.querySelectorAll('.normals-toggle-btn');
+        const normalsButtons = document.querySelectorAll('.render-mode-btn.normals-btn');
         normalsButtons.forEach(button => {
             const fileIndex = parseInt(button.getAttribute('data-file-index') || '0');
             
@@ -2321,13 +1830,47 @@ class PointCloudVisualizer {
                 return;
             }
             
-            const isVisible = this.normalsVisible[fileIndex] !== false; // Default to true
+            const isVisible = this.normalsVisible[fileIndex] === true; // Normals default to false
             
-            const baseStyle = 'flex: 1; padding: 4px 8px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;';
+            const baseStyle = 'padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;';
             if (isVisible) {
                 button.setAttribute('style', baseStyle + ' background: var(--vscode-button-background); color: var(--vscode-button-foreground);');
+                button.classList.add('active');
             } else {
                 button.setAttribute('style', baseStyle + ' background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);');
+                button.classList.remove('active');
+            }
+        });
+        
+        // Update mesh toggle button states
+        const meshButtons = document.querySelectorAll('.render-mode-btn.mesh-btn');
+        meshButtons.forEach(button => {
+            const fileIndex = parseInt(button.getAttribute('data-file-index') || '0');
+            const isVisible = this.solidVisible[fileIndex] !== false; // Default to true
+            
+            const baseStyle = 'padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;';
+            if (isVisible) {
+                button.setAttribute('style', baseStyle + ' background: var(--vscode-button-background); color: var(--vscode-button-foreground);');
+                button.classList.add('active');
+            } else {
+                button.setAttribute('style', baseStyle + ' background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);');
+                button.classList.remove('active');
+            }
+        });
+        
+        // Update wireframe toggle button states
+        const wireframeButtons = document.querySelectorAll('.render-mode-btn.wireframe-btn');
+        wireframeButtons.forEach(button => {
+            const fileIndex = parseInt(button.getAttribute('data-file-index') || '0');
+            const isVisible = this.wireframeVisible[fileIndex] === true; // Default to false
+            
+            const baseStyle = 'padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;';
+            if (isVisible) {
+                button.setAttribute('style', baseStyle + ' background: var(--vscode-button-background); color: var(--vscode-button-foreground);');
+                button.classList.add('active');
+            } else {
+                button.setAttribute('style', baseStyle + ' background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground);');
+                button.classList.remove('active');
             }
         });
     }
@@ -2552,33 +2095,33 @@ class PointCloudVisualizer {
                     break;
                 case 'sequence:init':
                     try {
-                        this.initializeSequence(message.files as string[], message.wildcard as string);
+                        this.sequenceManager.initializeSequence(message.files as string[], message.wildcard as string);
                     } catch (error) {
                         console.error('Error starting sequence:', error);
                         this.showError('Failed to start sequence: ' + (error instanceof Error ? error.message : String(error)));
                     }
                     break;
                 case 'sequence:file:ultimate':
-                    await this.sequenceHandleUltimate(message);
+                    await this.sequenceManager.sequenceHandleUltimate(message);
                     break;
                 case 'sequence:file:ply':
-                    await this.sequenceHandlePly(message);
+                    await this.sequenceManager.sequenceHandlePly(message);
                     break;
                 case 'sequence:file:xyz':
-                    await this.sequenceHandleXyz(message);
+                    await this.sequenceManager.sequenceHandleXyz(message);
                     break;
                 case 'sequence:file:obj':
-                    await this.sequenceHandleObj(message);
+                    await this.sequenceManager.sequenceHandleObj(message);
                     break;
                 case 'sequence:file:stl':
-                    await this.sequenceHandleStl(message);
+                    await this.sequenceManager.sequenceHandleStl(message);
                     break;
                 case 'sequence:file:depth':
-                    await this.sequenceHandleDepth(message);
+                    await this.sequenceManager.sequenceHandleDepth(message);
                     break;
                 case 'fileRemoved':
                     try {
-                        this.removeFileByIndex(message.fileIndex);
+                        this.fileUtils.removeFileByIndex(message.fileIndex);
                     } catch (error) {
                         console.error('Error removing file:', error);
                         this.showError('Failed to remove file: ' + (error instanceof Error ? error.message : String(error)));
@@ -2688,9 +2231,9 @@ class PointCloudVisualizer {
     private async displayFiles(dataArray: PlyData[]): Promise<void> {
         // concise summary printed separately
         // In sequence mode: do not auto-fit camera or heavy UI work
-        if (this.sequenceMode) {
+        if (this.sequenceManager.isSequenceMode()) {
             this.addNewFiles(dataArray);
-            this.updateFileList();
+            this.uiStateManager.updateFileList();
             try { (document.getElementById('loading') as HTMLElement)?.classList.add('hidden'); } catch {}
             return;
         }
@@ -2698,7 +2241,7 @@ class PointCloudVisualizer {
         // Normal mode
         this.addNewFiles(dataArray);
         this.updateFileStats();
-        this.updateFileList();
+        this.uiStateManager.updateFileList();
         this.updateCameraControlsPanel();
         this.fitCameraToAllObjects();
         (document.getElementById('loading') as HTMLElement)?.classList.add('hidden');
@@ -2730,7 +2273,7 @@ class PointCloudVisualizer {
                 const colors = new Float32Array(data.vertices.length * 3);
                 if (this.convertSrgbToLinear) {
                     this.ensureSrgbLUT();
-                    const lut = this.srgbToLinearLUT!;
+                    const lut = ColorUtils.getSrgbToLinearLUT();
                     for (let i = 0; i < data.vertices.length; i++) {
                         const v = data.vertices[i];
                         const r8 = (v.red || 0) & 255;
@@ -2812,27 +2355,12 @@ class PointCloudVisualizer {
     }
 
     private fitCameraToAllObjects(): void {
-        if (this.meshes.length === 0 && this.poseGroups.length === 0 && this.cameraGroups.length === 0) {return;}
-
-        const box = new THREE.Box3();
-        for (const obj of this.meshes) { box.expandByObject(obj); }
-        for (const group of this.poseGroups) { box.expandByObject(group); }
-        for (const group of this.cameraGroups) { box.expandByObject(group); }
-
-        const size = box.getSize(new THREE.Vector3());
-        const center = box.getCenter(new THREE.Vector3());
-
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const fov = this.camera.fov * (Math.PI / 180);
-        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-
-        cameraZ *= 2; // Add some padding
-
-        this.camera.position.set(center.x, center.y, center.z + cameraZ);
-        this.camera.lookAt(center);
-        
-        this.controls.target.copy(center);
-        this.controls.update();
+        console.log('fitCameraToAllObjects called, meshes count:', this.meshes.length);
+        if (this.fileUtils) {
+            this.fileUtils.fitCameraToAllObjects();
+        } else {
+            console.error('fileUtils not available for fitCameraToAllObjects');
+        }
     }
 
     private updateFileStats(): void {
@@ -2879,1208 +2407,9 @@ class PointCloudVisualizer {
     }
 
     private updateFileList(): void {
-        const fileListDiv = document.getElementById('file-list');
-        if (!fileListDiv) return;
-
-        if (this.plyFiles.length === 0 && this.poseGroups.length === 0 && this.cameraGroups.length === 0) {
-            fileListDiv.innerHTML = '<div class="no-files">No objects loaded</div>';
-            return;
-        }
-
-        let html = '';
-        // In sequence mode, show only the current frame information
-        if (this.sequenceMode && this.sequenceFiles.length > 0) {
-            const name = this.sequenceFiles[this.sequenceIndex]?.split(/[\\/]/).pop() || `Frame ${this.sequenceIndex + 1}`;
-            html += `
-                <div class="file-item">
-                    <div class="file-item-main">
-                        <input type="checkbox" id="file-0" checked disabled>
-                        <span class="color-indicator" style="background-color: #888"></span>
-                        <label for="file-0" class="file-name">${name}</label>
-                    </div>
-                    <div class="file-info">Frame ${this.sequenceIndex + 1} of ${this.sequenceFiles.length}</div>
-                </div>
-            `;
-            fileListDiv.innerHTML = html;
-            return;
-        }
-
-        // Render point clouds and meshes
-        for (let i = 0; i < this.plyFiles.length; i++) {
-            const data = this.plyFiles[i];
-            
-            // Color indicator
-            let colorIndicator = '';
-            if (this.individualColorModes[i] === 'original' && data.hasColors) {
-                colorIndicator = '<span class="color-indicator" style="background: linear-gradient(45deg, #ff0000, #00ff00, #0000ff); border: 1px solid #666;"></span>';
-            } else {
-                const color = this.fileColors[i % this.fileColors.length];
-                const colorHex = `#${Math.round(color[0] * 255).toString(16).padStart(2, '0')}${Math.round(color[1] * 255).toString(16).padStart(2, '0')}${Math.round(color[2] * 255).toString(16).padStart(2, '0')}`;
-                colorIndicator = `<span class="color-indicator" style="background-color: ${colorHex}"></span>`;
-            }
-            
-            // Transformation matrix UI
-            const matrixArr = this.getTransformationMatrixAsArray(i);
-            let matrixStr = '';
-            for (let r = 0; r < 4; ++r) {
-                const row = matrixArr.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
-                matrixStr += row.join(' ') + '\n';
-            }
-            
-            html += `
-                <div class="file-item">
-                    <div class="file-item-main">
-                        <input type="checkbox" id="file-${i}" ${this.fileVisibility[i] ? 'checked' : ''}>
-                        ${colorIndicator}
-                        <label for="file-${i}" class="file-name">${data.fileName || `File ${i + 1}`}</label>
-                        <button class="remove-file" data-file-index="${i}" title="Remove file">✕</button>
-                    </div>
-                    <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
-                    
-                    ${this.isDepthDerivedFile(data) ? `
-                    <!-- Depth Settings (First) -->
-                    <div class="depth-controls" style="margin-top: 8px;">
-                        <button class="depth-settings-toggle" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%;">
-                            <span class="toggle-icon">▶</span> Depth Settings
-                        </button>
-                        <div class="depth-settings-panel" id="depth-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
-                            <div id="image-size-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Image Size: Width: -, Height: -</div>
-                            
-                            <!-- Calibration File Loading -->
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Load Calibration:</label>
-                                <button class="load-calibration-btn" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
-                                    📁 Load Calibration File
-                                </button>
-                                <div class="calibration-info" id="calibration-info-${i}" style="display: none; margin-top: 4px; padding: 4px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
-                                    <div style="display: flex; align-items: center; gap: 8px;">
-                                        <div id="calibration-filename-${i}" style="font-size: 9px; font-weight: bold; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
-                                        <select id="camera-select-${i}" style="flex: 0 0 25%; font-size: 9px; padding: 1px 2px;">
-                                            <option value="">Select camera...</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <label for="camera-model-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Camera Model ⭐:</label>
-                                <select id="camera-model-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    <option value="pinhole-ideal" ${this.getDepthSetting(data, 'camera').includes('pinhole-ideal') ? 'selected' : ''}>Pinhole Ideal</option>
-                                    <option value="pinhole-opencv" ${this.getDepthSetting(data, 'camera').includes('pinhole-opencv') ? 'selected' : ''}>Pinhole + OpenCV Distortion (beta)</option>
-                                    <option value="fisheye-equidistant" ${this.getDepthSetting(data, 'camera').includes('fisheye-equidistant') ? 'selected' : ''}>Fisheye Equidistant</option>
-                                    <option value="fisheye-opencv" ${this.getDepthSetting(data, 'camera').includes('fisheye-opencv') ? 'selected' : ''}>Fisheye + OpenCV Distortion (beta)</option>
-                                    <option value="fisheye-kannala-brandt" ${this.getDepthSetting(data, 'camera').includes('fisheye-kannala-brandt') ? 'selected' : ''}>Fisheye Kannala-Brandt (beta)</option>
-                                </select>
-                            </div>
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <label for="depth-type-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Depth Type ⭐:</label>
-                                <select id="depth-type-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    <option value="euclidean" ${this.getDepthSetting(data, 'depth').includes('euclidean') ? 'selected' : ''}>Euclidean</option>
-                                    <option value="orthogonal" ${this.getDepthSetting(data, 'depth').includes('orthogonal') ? 'selected' : ''}>Orthogonal</option>
-                                    <option value="disparity" ${this.getDepthSetting(data, 'depth').includes('disparity') ? 'selected' : ''}>Disparity</option>
-                                    <option value="inverse_depth" ${this.getDepthSetting(data, 'depth').includes('inverse_depth') ? 'selected' : ''}>Inverse Depth</option>
-                                </select>
-                            </div>
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Focal Length (px) ⭐:</label>
-                                <div style="display: flex; gap: 4px;">
-                                    <div style="flex: 1;">
-                                        <label for="fx-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">fx:</label>
-                                        <input type="number" id="fx-${i}" value="${this.getDepthFx(data)}" min="1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    </div>
-                                    <div style="flex: 1;">
-                                        <label for="fy-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">fy:</label>
-                                        <input type="number" id="fy-${i}" value="${this.getDepthFy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Same as fx">
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Principle Point (px):</label>
-                                <div style="display: flex; gap: 4px; align-items: end;">
-                                    <div style="flex: 1;">
-                                        <label for="cx-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cx:</label>
-                                        <input type="number" id="cx-${i}" value="${this.getDepthCx(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    </div>
-                                    <div style="flex: 1;">
-                                        <label for="cy-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cy:</label>
-                                        <input type="number" id="cy-${i}" value="${this.getDepthCy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    </div>
-                                    <div style="flex: 0 0 auto;">
-                                        <button class="reset-principle-point" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px;" title="Reset to auto-calculated center">↺</button>
-                                    </div>
-                                </div>
-                                <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Auto-calculated as (width-1)/2 and (height-1)/2</div>
-                            </div>
-                            <div class="depth-group" id="distortion-params-${i}" style="margin-bottom: 8px; display: none;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Distortion Parameters:</label>
-                                
-                                <!-- Pinhole OpenCV parameters: k1, k2, k3, p1, p2 -->
-                                <div id="pinhole-params-${i}" style="display: none;">
-                                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-                                        <div style="flex: 1;">
-                                            <label for="k1-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k1:</label>
-                                            <input type="number" id="k1-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;">
-                                            <label for="k2-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k2:</label>
-                                            <input type="number" id="k2-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;">
-                                            <label for="k3-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k3:</label>
-                                            <input type="number" id="k3-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                    </div>
-                                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-                                        <div style="flex: 1;">
-                                            <label for="p1-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">p1:</label>
-                                            <input type="number" id="p1-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;">
-                                            <label for="p2-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">p2:</label>
-                                            <input type="number" id="p2-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;"></div>
-                                    </div>
-                                    <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">k1,k2,k3: radial; p1,p2: tangential</div>
-                                </div>
-                                
-                                <!-- Fisheye OpenCV parameters: k1, k2, k3, k4 -->
-                                <div id="fisheye-opencv-params-${i}" style="display: none;">
-                                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-                                        <div style="flex: 1;">
-                                            <label for="k1-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k1:</label>
-                                            <input type="number" id="k1-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;">
-                                            <label for="k2-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k2:</label>
-                                            <input type="number" id="k2-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;">
-                                            <label for="k3-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k3:</label>
-                                            <input type="number" id="k3-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;">
-                                            <label for="k4-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k4:</label>
-                                            <input type="number" id="k4-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                    </div>
-                                    <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">Fisheye radial distortion coefficients</div>
-                                </div>
-                                
-                                <!-- Kannala-Brandt parameters: k1, k2, k3, k4, k5 -->
-                                <div id="kannala-brandt-params-${i}" style="display: none;">
-                                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-                                        <div style="flex: 1;">
-                                            <label for="k1-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k1:</label>
-                                            <input type="number" id="k1-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;">
-                                            <label for="k2-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k2:</label>
-                                            <input type="number" id="k2-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;">
-                                            <label for="k3-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k3:</label>
-                                            <input type="number" id="k3-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                    </div>
-                                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-                                        <div style="flex: 1;">
-                                            <label for="k4-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k4:</label>
-                                            <input type="number" id="k4-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;">
-                                            <label for="k5-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">k5:</label>
-                                            <input type="number" id="k5-${i}" value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0">
-                                        </div>
-                                        <div style="flex: 1;"></div>
-                                    </div>
-                                    <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">Polynomial fisheye coefficients</div>
-                                </div>
-                            </div>
-                            <div class="depth-group" id="baseline-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
-                                <label for="baseline-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Baseline (mm) ⭐:</label>
-                                <input type="number" id="baseline-${i}" value="${this.getDepthBaseline(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
-                            </div>
-                            <div class="depth-group" id="disparity-offset-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
-                                <label for="disparity-offset-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Disparity Offset:</label>
-                                <div style="display: flex; gap: 4px; align-items: center;">
-                                    <input type="number" id="disparity-offset-${i}" value="0" step="0.1" style="flex: 1; padding: 2px; font-size: 11px;" placeholder="Offset added to disparity values">
-                                    <button class="reset-disparity-offset" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px; flex: 0 0 auto;" title="Reset to 0">↺</button>
-                                </div>
-                            </div>
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 4px;">Depth from Mono Parameters ⭐:</label>
-                                <div style="display: flex; gap: 6px; align-items: end;">
-                                    <div style="flex: 1;">
-                                        <label for="depth-scale-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Scale:</label>
-                                        <input type="number" id="depth-scale-${i}" value="1.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Scale factor">
-                                    </div>
-                                    <div style="flex: 1;">
-                                        <label for="depth-bias-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Bias:</label>
-                                        <input type="number" id="depth-bias-${i}" value="0.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Bias offset">
-                                    </div>
-                                    <div style="flex: 0 0 auto;">
-                                        <button class="reset-mono-params" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px;" title="Reset to Scale=1.0, Bias=0.0">↺</button>
-                                    </div>
-                                </div>
-                            </div>
-                            ${this.isPngDerivedFile(data) ? `
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <label for="png-scale-factor-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Scale Factor ⭐:</label>
-                                <input type="number" id="png-scale-factor-${i}" value="${this.getPngScaleFactor(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="1000 for mm, 256 for disparity">
-                                <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">The depth/disparity is divided to get the applied value in meters/disparities</div>
-                            </div>
-                            ` : ''}
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <label for="convention-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Coordinate Convention ⭐:</label>
-                                <select id="convention-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    <option value="opengl" ${this.getDepthConvention(data) === 'opengl' ? 'selected' : ''}>OpenGL (Y-up, Z-backward)</option>
-                                    <option value="opencv" ${this.getDepthConvention(data) === 'opencv' ? 'selected' : ''}>OpenCV (Y-down, Z-forward)</option>
-                                </select>
-                            </div>
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Color Image (optional):</label>
-                                <button class="select-color-image" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px; text-align: left;">📁 Select Color Image...</button>
-                                ${this.getStoredColorImageName(i) ? `<div style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-top: 2px; display: flex; align-items: center; gap: 4px;">📷 Current: ${this.getStoredColorImageName(i)} <button class="remove-color-image" data-file-index="${i}" style="font-size: 8px; padding: 1px 4px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer;">✕</button></div>` : ''}
-                            </div>
-                            <div class="depth-group" style="margin-bottom: 8px;">
-                                <div style="display: flex; gap: 4px;">
-                                    <button class="apply-depth-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">Apply Settings</button>
-                                    <button class="save-ply-file" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">💾 Save as PLY</button>
-                                </div>
-                                <div style="display: flex; gap: 4px; margin-top: 4px;">
-                                    <button class="use-as-default-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">⭐ Use as Default</button>
-                                    <button class="reset-to-default-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">⭐ Reset to Default</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    ` : ''}
-                    
-                    <!-- Transform Controls (Second) -->
-                    <div class="transform-section">
-                        <button class="transform-toggle" data-file-index="${i}">
-                            <span class="toggle-icon">▶</span> Transform
-                        </button>
-                        <div class="transform-panel" id="transform-panel-${i}" style="display:none;">
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Transformations:</label>
-                                <div class="transform-buttons">
-                                    <button class="add-translation" data-file-index="${i}">Add Translation</button>
-                                    <button class="add-quaternion" data-file-index="${i}">Add Quaternion</button>
-                                    <button class="add-angle-axis" data-file-index="${i}">Add Angle-Axis</button>
-                                </div>
-                            </div>
-                            
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Rotation (90°):</label>
-                                <div class="transform-buttons">
-                                    <button class="rotate-x" data-file-index="${i}">X</button>
-                                    <button class="rotate-y" data-file-index="${i}">Y</button>
-                                    <button class="rotate-z" data-file-index="${i}">Z</button>
-                                </div>
-                            </div>
-                            
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
-                                <textarea id="matrix-${i}" rows="4" cols="50" style="width:100%;font-size:9px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${matrixStr.trim()}</textarea>
-                                <div class="transform-buttons" style="margin-top:4px;">
-                                    <button class="apply-matrix" data-file-index="${i}">Apply Matrix</button>
-                                    <button class="invert-matrix" data-file-index="${i}">Invert</button>
-                                    <button class="reset-matrix" data-file-index="${i}">Reset</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Universal Rendering Controls (conditional based on file content) -->
-                    <div class="rendering-controls" style="margin-top: 4px; margin-bottom: 6px;">
-                        ${(() => {
-                            const hasFaces = data.faceCount > 0;
-                            const hasLines = (data as any).objData && (data as any).objData.lineCount > 0;
-                            const hasGeometry = hasFaces || hasLines; // Either faces or lines enable mesh/wireframe modes
-                            const hasNormalsData = data.hasNormals || hasFaces; // Faces can generate normals
-                            const buttons = [];
-                            
-                            // Debug logging
-                            console.log(`File ${i}: ${data.fileName}, faceCount=${data.faceCount}, lineCount=${(data as any).objData?.lineCount || 0}, hasNormals=${data.hasNormals}, hasFaces=${hasFaces}, hasLines=${hasLines}, hasGeometry=${hasGeometry}`);
-                            
-                            // Always show points button
-                            buttons.push(`<button class="render-mode-btn points-btn" data-file-index="${i}" data-mode="points" style="padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;">👁️ Points</button>`);
-                            
-                            // Show mesh/wireframe buttons if there are faces OR lines (OBJ wireframes)
-                            if (hasGeometry) {
-                                buttons.push(`<button class="render-mode-btn mesh-btn" data-file-index="${i}" data-mode="mesh" style="padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;">🔷 Mesh</button>`);
-                                buttons.push(`<button class="render-mode-btn wireframe-btn" data-file-index="${i}" data-mode="wireframe" style="padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;">📐 Wireframe</button>`);
-                            }
-                            
-                            // Show normals button if there are normals or faces (can compute normals)
-                            // Exception: Don't show for PTS files unless they actually have normals in vertices
-                            const isPtsFile = data.fileName?.toLowerCase().endsWith('.pts');
-                            const shouldShowNormals = hasNormalsData && (!isPtsFile || (data.vertices.length > 0 && data.vertices[0]?.nx !== undefined));
-                            
-                            if (shouldShowNormals) {
-                                buttons.push(`<button class="render-mode-btn normals-btn" data-file-index="${i}" data-mode="normals" style="padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;">📏 Normals</button>`);
-                            }
-                            
-                            // Determine grid layout based on number of buttons
-                            const buttonCount = buttons.length;
-                            let gridColumns = '';
-                            if (buttonCount === 1) gridColumns = '1fr';
-                            else if (buttonCount === 2) gridColumns = '1fr 1fr';
-                            else if (buttonCount === 3) gridColumns = '1fr 1fr 1fr';
-                            else if (buttonCount === 4) gridColumns = '1fr 1fr 1fr 1fr';
-                            
-                            return `<div style="display: grid; grid-template-columns: ${gridColumns}; gap: 3px;">${buttons.join('')}</div>`;
-                        })()}
-                    </div>
-                    
-                    <!-- Point/Line Size Control -->
-                    <div class="point-size-control" style="margin-top: 4px;">
-                        <label for="size-${i}" style="font-size: 11px;">Point Size:</label>
-                        ${(() => {
-                            const isObjFile = (data as any).isObjFile;
-                            const currentSize = this.pointSizes[i];
-                            
-                            // Universal point size slider for all file types
-                            const sizeValue = currentSize || 0.001;
-                            return `<input type="range" id="size-${i}" min="0.0001" max="0.1" step="0.0001" value="${sizeValue}" class="size-slider" style="width: 100%;">
-                            <span class="size-value" style="font-size: 10px;">${sizeValue.toFixed(4)}</span>`;
-                        })()
-                        }
-                    </div>
-                    
-                    ${((data as any).isObjWireframe || (data as any).isObjFile) ? `
-                    <!-- OBJ Controls -->
-                    <div class="obj-controls" style="margin-top: 8px;">
-                        <!-- MTL Material Control -->
-                        <button class="load-mtl-btn" data-file-index="${i}" style="background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); padding: 4px 8px; border-radius: 2px; cursor: pointer; font-size: 11px; width: 100%; margin-bottom: 4px;">
-                            🎨 Load MTL Material
-                        </button>
-                        ${this.appliedMtlNames[i] ? `
-                        <div class="mtl-status" style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-bottom: 4px; text-align: center;">
-                            📄 ${this.appliedMtlNames[i]} applied
-                        </div>
-                        ` : ''}
-                    </div>
-                    ` : ''}
-                    
-                    <!-- Color Control (Fourth) -->
-                    <div class="color-control">
-                        <label for="color-${i}">Color:</label>
-                        <select id="color-${i}" class="color-selector">
-                            ${data.hasColors ? `<option value="original" ${this.individualColorModes[i] === 'original' ? 'selected' : ''}>Original</option>` : ''}
-                            <option value="assigned" ${this.individualColorModes[i] === 'assigned' ? 'selected' : ''}>Assigned (${this.getColorName(i)})</option>
-                            ${this.getColorOptions(i)}
-                        </select>
-                    </div>
-                </div>
-            `;
-        }
-
-        // Render pose entries appended after point clouds
-        const baseIndex = this.plyFiles.length;
-        for (let p = 0; p < this.poseGroups.length; p++) {
-            const i = baseIndex + p;
-            const meta = this.poseMeta[p];
-            const color = this.fileColors[i % this.fileColors.length];
-            const colorHex = `#${Math.round(color[0] * 255).toString(16).padStart(2, '0')}${Math.round(color[1] * 255).toString(16).padStart(2, '0')}${Math.round(color[2] * 255).toString(16).padStart(2, '0')}`;
-            const colorIndicator = `<span class="color-indicator" style="background-color: ${colorHex}"></span>`;
-            const visible = this.fileVisibility[i] ?? true;
-            const sizeVal = this.pointSizes[i] ?? 0.02;
-            // Transformation matrix UI content for pose
-            const poseMatrixArr = this.getTransformationMatrixAsArray(i);
-            let poseMatrixStr = '';
-            for (let r = 0; r < 4; ++r) {
-                const row = poseMatrixArr.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
-                poseMatrixStr += row.join(' ') + '\n';
-            }
-
-            html += `
-                <div class="file-item">
-                    <div class="file-item-main">
-                        <input type="checkbox" id="file-${i}" ${visible ? 'checked' : ''}>
-                        ${colorIndicator}
-                        <label for="file-${i}" class="file-name">${meta.fileName || `Pose ${p + 1}`}</label>
-                        <button class="remove-file" data-file-index="${i}" title="Remove object">✕</button>
-                    </div>
-                    <div class="file-info">${meta.jointCount} joints, ${meta.edgeCount} edges${meta.invalidJoints ? `, ${meta.invalidJoints} invalid` : ''}</div>
-                    <div class="panel-section" style="margin-top:6px;">
-                        <div class="control-buttons">
-                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
-                                <input type="checkbox" id="pose-dataset-colors-${i}" ${this.poseUseDatasetColors[i] ? 'checked' : ''}>
-                                Use dataset colors
-                            </label>
-                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
-                                <input type="checkbox" id="pose-show-labels-${i}" ${this.poseShowLabels[i] ? 'checked' : ''}>
-                                Show labels
-                            </label>
-                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
-                                <input type="checkbox" id="pose-scale-score-${i}" ${this.poseScaleByScore[i] ? 'checked' : ''}>
-                                Scale by score
-                            </label>
-                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
-                                <input type="checkbox" id="pose-scale-uncertainty-${i}" ${this.poseScaleByUncertainty[i] ? 'checked' : ''}>
-                                Scale by uncertainty
-                            </label>
-                            <div style="display:flex;gap:6px;align-items:center;">
-                                <span style="font-size:10px;">Pose Convention:</span>
-                                <select id="pose-conv-${i}" style="font-size:10px;">
-                                    <option value="opengl" ${this.poseConvention[i] === 'opengl' ? 'selected' : ''}>OpenGL</option>
-                                    <option value="opencv" ${this.poseConvention[i] === 'opencv' ? 'selected' : ''}>OpenCV</option>
-                                </select>
-                            </div>
-                            <div style="display:flex;gap:6px;align-items:center;">
-                                <span style="font-size:10px;">Min score:</span>
-                                <input type="range" id="pose-minscore-${i}" min="0" max="1" step="0.01" value="${(this.poseMinScoreThreshold[i] ?? 0).toFixed(2)}" style="flex:1;">
-                                <span id="pose-minscore-val-${i}" style="font-size:10px;">${(this.poseMinScoreThreshold[i] ?? 0).toFixed(2)}</span>
-                            </div>
-                            <div style="display:flex;gap:6px;align-items:center;">
-                                <span style="font-size:10px;">Max uncertainty:</span>
-                                <input type="range" id="pose-maxunc-${i}" min="0" max="1" step="0.01" value="${(this.poseMaxUncertaintyThreshold[i] ?? 1).toFixed(2)}" style="flex:1;">
-                                <span id="pose-maxunc-val-${i}" style="font-size:10px;">${(this.poseMaxUncertaintyThreshold[i] ?? 1).toFixed(2)}</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="transform-section">
-                        <button class="transform-toggle" data-file-index="${i}">
-                            <span class="toggle-icon">▶</span> Transform
-                        </button>
-                        <div class="transform-panel" id="transform-panel-${i}" style="display:none;">
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Transformations:</label>
-                                <div class="transform-buttons">
-                                    <button class="add-translation" data-file-index="${i}">Add Translation</button>
-                                    <button class="add-quaternion" data-file-index="${i}">Add Quaternion</button>
-                                    <button class="add-angle-axis" data-file-index="${i}">Add Angle-Axis</button>
-                                </div>
-                            </div>
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Rotation (90°):</label>
-                                <div class="transform-buttons">
-                                    <button class="rotate-x" data-file-index="${i}">X</button>
-                                    <button class="rotate-y" data-file-index="${i}">Y</button>
-                                    <button class="rotate-z" data-file-index="${i}">Z</button>
-                                </div>
-                            </div>
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
-                                <textarea id="matrix-${i}" rows="4" cols="50" style="width:100%;font-size:9px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${poseMatrixStr.trim()}</textarea>
-                                <div class="transform-buttons" style="margin-top:4px;">
-                                    <button class="apply-matrix" data-file-index="${i}">Apply Matrix</button>
-                                    <button class="invert-matrix" data-file-index="${i}">Invert</button>
-                                    <button class="reset-matrix" data-file-index="${i}">Reset</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="point-size-control">
-                        <label for="size-${i}">Joint Radius (m):</label>
-                        <input type="range" id="size-${i}" min="0.001" max="0.1" step="0.001" value="${sizeVal}" class="size-slider">
-                        <span class="size-value">${sizeVal.toFixed(3)}</span>
-                    </div>
-                    <div class="color-control">
-                        <label for="color-${i}">Color:</label>
-                        <select id="color-${i}" class="color-selector">
-                            <option value="assigned" ${this.individualColorModes[i] === 'assigned' ? 'selected' : ''}>Assigned (Red)</option>
-                            ${this.getColorOptions(i)}
-                        </select>
-                    </div>
-                </div>
-            `;
-        }
-        
-        // Render camera profiles (like poses)
-        for (let c = 0; c < this.cameraGroups.length; c++) {
-            const i = this.plyFiles.length + this.poseGroups.length + c; // Unified index
-            const cameraProfileName = this.cameraNames[c];
-            const color = this.fileColors[i % this.fileColors.length];
-            const colorHex = `#${Math.round(color[0] * 255).toString(16).padStart(2, '0')}${Math.round(color[1] * 255).toString(16).padStart(2, '0')}${Math.round(color[2] * 255).toString(16).padStart(2, '0')}`;
-            const colorIndicator = `<span class="color-indicator" style="background-color: ${colorHex}"></span>`;
-            const visible = this.fileVisibility[i] ?? true;
-            const sizeVal = this.pointSizes[i] ?? 1.0;
-            
-            // Count cameras in the profile
-            const group = this.cameraGroups[c];
-            const cameraCount = group.children.length;
-            
-            // Transformation matrix UI
-            const cameraMatrixArr = this.getTransformationMatrixAsArray(i);
-            let cameraMatrixStr = '';
-            for (let r = 0; r < 4; ++r) {
-                const row = cameraMatrixArr.slice(r * 4, r * 4 + 4).map(v => v.toFixed(6));
-                cameraMatrixStr += row.join(' ') + '\n';
-            }
-
-            html += `
-                <div class="file-item">
-                    <div class="file-item-main">
-                        <input type="checkbox" id="file-${i}" ${visible ? 'checked' : ''}>
-                        ${colorIndicator}
-                        <label for="file-${i}" class="file-name">📷 ${cameraProfileName}</label>
-                        <button class="remove-file" data-file-index="${i}" title="Remove camera profile">✕</button>
-                    </div>
-                    <div class="file-info">${cameraCount} cameras</div>
-                    <div class="panel-section" style="margin-top:6px;">
-                        <div class="control-buttons">
-                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
-                                <input type="checkbox" id="camera-show-labels-${i}">
-                                Show labels
-                            </label>
-                            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
-                                <input type="checkbox" id="camera-show-coords-${i}">
-                                Show coordinates
-                            </label>
-                        </div>
-                    </div>
-                    <div class="size-control">
-                        <label for="size-${i}">Scale:</label>
-                        <input type="range" id="size-${i}" min="0.1" max="5.0" step="0.1" value="${sizeVal}">
-                        <span id="size-value-${i}">${sizeVal.toFixed(1)}</span>
-                    </div>
-                    <!-- Transform Panel (First) -->
-                    <div class="transformation-panel" style="margin-top:8px;">
-                        <div class="panel-header" style="display:flex;align-items:center;margin-bottom:4px;">
-                            <button class="toggle-panel transformation-toggle" data-file-index="${i}" style="background:none;border:none;color:var(--vscode-foreground);cursor:pointer;display:flex;align-items:center;gap:4px;padding:2px;font-size:10px;">
-                                <span class="toggle-icon">▶</span> Transform Matrix
-                            </button>
-                        </div>
-                        <div id="transformation-panel-${i}" class="transformation-content" style="display:none;background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:8px;margin-top:4px;">
-                            
-                            <div class="transform-group">
-                                <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
-                                <textarea id="matrix-${i}" rows="4" cols="50" style="width:100%;font-size:9px;font-family:monospace;" placeholder="1.000000 0.000000 0.000000 0.000000&#10;0.000000 1.000000 0.000000 0.000000&#10;0.000000 0.000000 1.000000 0.000000&#10;0.000000 0.000000 0.000000 1.000000">${cameraMatrixStr.trim()}</textarea>
-                                <div class="transform-buttons" style="margin-top:4px;">
-                                    <button class="apply-matrix" data-file-index="${i}">Apply Matrix</button>
-                                    <button class="invert-matrix" data-file-index="${i}">Invert</button>
-                                    <button class="reset-matrix" data-file-index="${i}">Reset</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-        
-        fileListDiv.innerHTML = html;
-        
-        // Add event listeners after setting innerHTML
-        const totalEntries = this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length;
-        for (let i = 0; i < totalEntries; i++) {
-            const checkbox = document.getElementById(`file-${i}`);
-            if (checkbox) {
-                checkbox.addEventListener('click', (e) => {
-                    const event = e as MouseEvent;
-                    if (event.shiftKey) {
-                        // Shift+click: solo this point cloud
-                        e.preventDefault(); // Prevent checkbox from toggling
-                        this.soloPointCloud(i);
-                    } else {
-                        // Normal click: let the checkbox toggle normally
-                        // The change event will handle the visibility toggle
-                    }
-                });
-                
-                // Keep the change event for normal toggling
-                checkbox.addEventListener('change', () => {
-                    this.toggleFileVisibility(i);
-                });
-            }
-            
-            // Transform toggle logic with improved UI (handle both point clouds and cameras)
-            const transformBtn = document.querySelector(`.transform-toggle[data-file-index="${i}"]`);
-            const transformationBtn = document.querySelector(`.transformation-toggle[data-file-index="${i}"]`);
-            const transformPanel = document.getElementById(`transform-panel-${i}`);
-            const transformationPanel = document.getElementById(`transformation-panel-${i}`);
-            
-            const activeBtn = transformBtn || transformationBtn;
-            const activePanel = transformPanel || transformationPanel;
-            
-            if (activeBtn && activePanel) {
-                // Always hide by default and set triangle to side
-                activePanel.style.display = 'none';
-                const toggleIcon = activeBtn.querySelector('.toggle-icon');
-                if (toggleIcon) toggleIcon.textContent = '▶';
-                
-                activeBtn.addEventListener('click', () => {
-                    const isVisible = activePanel.style.display !== 'none';
-                    activePanel.style.display = isVisible ? 'none' : 'block';
-                    if (toggleIcon) toggleIcon.textContent = isVisible ? '▶' : '▼';
-                });
-            }
-            
-            // Apply matrix logic with improved parsing
-            const applyBtn = document.querySelector(`.apply-matrix[data-file-index="${i}"]`);
-            if (applyBtn && activePanel) {
-                applyBtn.addEventListener('click', () => {
-                    const textarea = document.getElementById(`matrix-${i}`) as HTMLTextAreaElement;
-                    if (textarea) {
-                        const values = this.parseMatrixInput(textarea.value);
-                        if (values && values.length === 16) {
-                            const mat = new THREE.Matrix4();
-                            // Read matrix in row-major order (as displayed in UI)
-                            mat.set(
-                                values[0], values[1], values[2],  values[3],
-                                values[4], values[5], values[6],  values[7],
-                                values[8], values[9], values[10], values[11],
-                                values[12], values[13], values[14], values[15]
-                            );
-                            this.setTransformationMatrix(i, mat);
-                            // Auto-format the matrix after applying
-                            this.updateMatrixTextarea(i);
-                        } else {
-                            alert('Please enter 16 valid numbers for the 4x4 matrix.');
-                        }
-                    }
-                });
-            }
-
-            // Invert matrix logic
-            const invertBtn = document.querySelector(`.invert-matrix[data-file-index="${i}"]`);
-            if (invertBtn && transformPanel) {
-                invertBtn.addEventListener('click', () => {
-                    const currentMatrix = this.getTransformationMatrix(i);
-                    try {
-                        const invertedMatrix = currentMatrix.clone().invert();
-                        this.setTransformationMatrix(i, invertedMatrix);
-                        this.updateMatrixTextarea(i);
-                    } catch (error) {
-                        alert('Matrix is not invertible (determinant is zero).');
-                    }
-                });
-            }
-            
-            // Reset matrix logic
-            const resetBtn = document.querySelector(`.reset-matrix[data-file-index="${i}"]`);
-            if (resetBtn && transformPanel) {
-                resetBtn.addEventListener('click', () => {
-                    this.resetTransformationMatrix(i);
-                    // Update textarea to identity
-                    const textarea = document.getElementById(`matrix-${i}`) as HTMLTextAreaElement;
-                    if (textarea) {
-                        textarea.value = '1.000000 0.000000 0.000000 0.000000\n0.000000 1.000000 0.000000 0.000000\n0.000000 0.000000 1.000000 0.000000\n0.000000 0.000000 0.000000 1.000000';
-                    }
-                });
-            }
-
-            // Transformation buttons
-            const addTranslationBtn = document.querySelector(`.add-translation[data-file-index="${i}"]`);
-            if (addTranslationBtn) {
-                addTranslationBtn.addEventListener('click', () => {
-                    this.showTranslationDialog(i);
-                });
-            }
-
-            const addQuaternionBtn = document.querySelector(`.add-quaternion[data-file-index="${i}"]`);
-            if (addQuaternionBtn) {
-                addQuaternionBtn.addEventListener('click', () => {
-                    this.showQuaternionDialog(i);
-                });
-            }
-
-            const addAngleAxisBtn = document.querySelector(`.add-angle-axis[data-file-index="${i}"]`);
-            if (addAngleAxisBtn) {
-                addAngleAxisBtn.addEventListener('click', () => {
-                    this.showAngleAxisDialog(i);
-                });
-            }
-
-            // Rotation buttons
-            const rotateXBtn = document.querySelector(`.rotate-x[data-file-index="${i}"]`);
-            if (rotateXBtn) {
-                rotateXBtn.addEventListener('click', () => {
-                    const rotationMatrix = this.createRotationMatrix('x', Math.PI / 2); // 90 degrees
-                    this.multiplyTransformationMatrices(i, rotationMatrix);
-                    this.updateMatrixTextarea(i);
-                });
-            }
-
-            const rotateYBtn = document.querySelector(`.rotate-y[data-file-index="${i}"]`);
-            if (rotateYBtn) {
-                rotateYBtn.addEventListener('click', () => {
-                    const rotationMatrix = this.createRotationMatrix('y', Math.PI / 2); // 90 degrees
-                    this.multiplyTransformationMatrices(i, rotationMatrix);
-                    this.updateMatrixTextarea(i);
-                });
-            }
-
-            const rotateZBtn = document.querySelector(`.rotate-z[data-file-index="${i}"]`);
-            if (rotateZBtn) {
-                rotateZBtn.addEventListener('click', () => {
-                    const rotationMatrix = this.createRotationMatrix('z', Math.PI / 2); // 90 degrees
-                    this.multiplyTransformationMatrices(i, rotationMatrix);
-                    this.updateMatrixTextarea(i);
-                });
-            }
-            
-            // Pose controls listeners
-            const datasetColorsCb = document.getElementById(`pose-dataset-colors-${i}`) as HTMLInputElement;
-            if (datasetColorsCb) {
-                datasetColorsCb.addEventListener('change', () => {
-                    this.poseUseDatasetColors[i] = !!datasetColorsCb.checked;
-                    this.updatePoseAppearance(i);
-                });
-            }
-            const showLabelsCb = document.getElementById(`pose-show-labels-${i}`) as HTMLInputElement;
-            if (showLabelsCb) {
-                showLabelsCb.addEventListener('change', () => {
-                    this.poseShowLabels[i] = !!showLabelsCb.checked;
-                    this.updatePoseLabels(i);
-                });
-            }
-            const scaleScoreCb = document.getElementById(`pose-scale-score-${i}`) as HTMLInputElement;
-            if (scaleScoreCb) {
-                scaleScoreCb.addEventListener('change', () => {
-                    this.poseScaleByScore[i] = !!scaleScoreCb.checked;
-                    this.updatePoseScaling(i);
-                });
-            }
-            const scaleUncCb = document.getElementById(`pose-scale-uncertainty-${i}`) as HTMLInputElement;
-            if (scaleUncCb) {
-                scaleUncCb.addEventListener('change', () => {
-                    this.poseScaleByUncertainty[i] = !!scaleUncCb.checked;
-                    this.updatePoseScaling(i);
-                });
-            }
-            const poseConvSel = document.getElementById(`pose-conv-${i}`) as HTMLSelectElement;
-            if (poseConvSel) {
-                poseConvSel.addEventListener('change', () => {
-                    const val = poseConvSel.value === 'opencv' ? 'opencv' : 'opengl';
-                    this.applyPoseConvention(i, val);
-                });
-            }
-
-            const minScoreSlider = document.getElementById(`pose-minscore-${i}`) as HTMLInputElement;
-            const minScoreVal = document.getElementById(`pose-minscore-val-${i}`) as HTMLElement;
-            if (minScoreSlider && minScoreVal) {
-                minScoreSlider.addEventListener('input', () => {
-                    const v = Math.max(0, Math.min(1, parseFloat(minScoreSlider.value)));
-                    this.poseMinScoreThreshold[i] = v;
-                    minScoreVal.textContent = v.toFixed(2);
-                    this.applyPoseFilters(i);
-                });
-            }
-            const maxUncSlider = document.getElementById(`pose-maxunc-${i}`) as HTMLInputElement;
-            const maxUncVal = document.getElementById(`pose-maxunc-val-${i}`) as HTMLElement;
-            if (maxUncSlider && maxUncVal) {
-                maxUncSlider.addEventListener('input', () => {
-                    const v = Math.max(0, Math.min(1, parseFloat(maxUncSlider.value)));
-                    this.poseMaxUncertaintyThreshold[i] = v;
-                    maxUncVal.textContent = v.toFixed(2);
-                    this.applyPoseFilters(i);
-                });
-            }
-            
-            // Camera profile controls listeners
-            const cameraLabelCb = document.getElementById(`camera-show-labels-${i}`) as HTMLInputElement;
-            if (cameraLabelCb) {
-                cameraLabelCb.addEventListener('change', () => {
-                    const cameraProfileIndex = i - this.plyFiles.length - this.poseGroups.length;
-                    this.toggleCameraProfileLabels(cameraProfileIndex, cameraLabelCb.checked);
-                });
-            }
-            
-            const cameraCoordsCb = document.getElementById(`camera-show-coords-${i}`) as HTMLInputElement;
-            if (cameraCoordsCb) {
-                cameraCoordsCb.addEventListener('change', () => {
-                    const cameraProfileIndex = i - this.plyFiles.length - this.poseGroups.length;
-                    this.toggleCameraProfileCoordinates(cameraProfileIndex, cameraCoordsCb.checked);
-                });
-            }
-            
-            // Add size slider listeners for point clouds and OBJ files
-            const sizeSlider = document.getElementById(`size-${i}`) as HTMLInputElement;
-            const isPose = i >= this.plyFiles.length && i < this.plyFiles.length + this.poseGroups.length;
-            const isCamera = i >= this.plyFiles.length + this.poseGroups.length;
-            const isObjFile = !isPose && !isCamera && (this.plyFiles[i] as any).isObjFile;
-            if (sizeSlider) {
-                sizeSlider.addEventListener('input', (e) => {
-                    const newSize = parseFloat((e.target as HTMLInputElement).value);
-                    this.updatePointSize(i, newSize);
-                    
-                    // Update the displayed value
-                    const sizeValue = document.querySelector(`#size-${i} + .size-value`) as HTMLElement;
-                    if (sizeValue) {
-                        if (isPose) {
-                            sizeValue.textContent = newSize.toFixed(3); // Joint radius precision
-                        } else if (isCamera) {
-                            sizeValue.textContent = newSize.toFixed(1); // Camera scale precision
-                        } else {
-                            sizeValue.textContent = newSize.toFixed(4); // Universal point size precision
-                        }
-                    }
-                });
-            }
-            
-            // Color selector listeners
-            const colorSelector = document.getElementById(`color-${i}`) as HTMLSelectElement;
-            if (colorSelector) {
-                colorSelector.addEventListener('change', () => {
-                    const value = colorSelector.value;
-                        this.individualColorModes[i] = value;
-                    const isPose = i >= this.plyFiles.length;
-                    if (isPose) {
-                        // Update pose group material color
-                        const poseIndex = i - this.plyFiles.length;
-                        const group = this.poseGroups[poseIndex];
-                        if (group) {
-                            const colorIdx = value === 'assigned' ? (i % this.fileColors.length) : parseInt(value);
-                            const color = isNaN(colorIdx) ? this.fileColors[i % this.fileColors.length] : this.fileColors[colorIdx];
-                            group.traverse(obj => {
-                                if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
-                                    const material = obj.material as THREE.MeshBasicMaterial;
-                                    material.color.setRGB(color[0], color[1], color[2]);
-                                    material.needsUpdate = true;
-                                } else if ((obj as any).isLineSegments && obj instanceof THREE.LineSegments) {
-                                    const material = obj.material as THREE.LineBasicMaterial;
-                                    material.color.setRGB(color[0], color[1], color[2]);
-                                    material.needsUpdate = true;
-                                }
-                            });
-                        }
-                    } else if (i < this.meshes.length) {
-                        // Recreate material for point clouds/OBJ
-                        const oldMaterial = this.meshes[i].material as any;
-                            const newMaterial = this.createMaterialForFile(this.plyFiles[i], i);
-                        (this.meshes[i] as any).material = newMaterial;
-                            if (oldMaterial) {
-                            if (Array.isArray(oldMaterial)) { oldMaterial.forEach((m: any) => m.dispose()); } else { oldMaterial.dispose(); }
-                        }
-                    }
-                });
-            }
-
-            // Depth settings toggle and controls
-            if (this.isDepthDerivedFile(this.plyFiles[i])) {
-                const depthToggleBtn = document.querySelector(`.depth-settings-toggle[data-file-index="${i}"]`);
-                const depthPanel = document.getElementById(`depth-panel-${i}`);
-                if (depthToggleBtn && depthPanel) {
-                    // Hide by default
-                    depthPanel.style.display = 'none';
-                    const toggleIcon = depthToggleBtn.querySelector('.toggle-icon');
-                    if (toggleIcon) toggleIcon.textContent = '▶';
-                    
-                    depthToggleBtn.addEventListener('click', () => {
-                        const isVisible = depthPanel.style.display !== 'none';
-                        depthPanel.style.display = isVisible ? 'none' : 'block';
-                        if (toggleIcon) toggleIcon.textContent = isVisible ? '▶' : '▼';
-                    });
-                }
-
-                // Calibration file loading
-                const loadCalibrationBtn = document.querySelector(`.load-calibration-btn[data-file-index="${i}"]`);
-                if (loadCalibrationBtn) {
-                    loadCalibrationBtn.addEventListener('click', () => {
-                        this.openCalibrationFileDialog(i);
-                    });
-                }
-
-                // Camera selection change handler
-                const cameraSelect = document.getElementById(`camera-select-${i}`) as HTMLSelectElement;
-                if (cameraSelect) {
-                    cameraSelect.addEventListener('change', () => {
-                        this.onCameraSelectionChange(i, cameraSelect.value);
-                    });
-                }
-
-                // Depth type change handler for baseline and disparity offset visibility
-                const depthTypeSelect = document.getElementById(`depth-type-${i}`) as HTMLSelectElement;
-                const baselineGroup = document.getElementById(`baseline-group-${i}`);
-                const disparityOffsetGroup = document.getElementById(`disparity-offset-group-${i}`);
-                if (depthTypeSelect && baselineGroup && disparityOffsetGroup) {
-                    depthTypeSelect.addEventListener('change', () => {
-                        const isDisparity = depthTypeSelect.value === 'disparity';
-                        baselineGroup.style.display = isDisparity ? '' : 'none';
-                        disparityOffsetGroup.style.display = isDisparity ? '' : 'none';
-                        this.updateSingleDefaultButtonState(i);
-                    });
-                }
-
-                // Update button state when any depth setting changes
-                const fxInput = document.getElementById(`fx-${i}`) as HTMLInputElement;
-                const fyInput = document.getElementById(`fy-${i}`) as HTMLInputElement;
-                if (fxInput) {
-                    fxInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
-                    // Prevent scroll wheel from changing value but allow page scrolling
-                    fxInput.addEventListener('wheel', (e) => {
-                        (e.target as HTMLInputElement).blur();
-                    });
-                }
-                if (fyInput) {
-                    fyInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
-                    // Prevent scroll wheel from changing value but allow page scrolling
-                    fyInput.addEventListener('wheel', (e) => {
-                        (e.target as HTMLInputElement).blur();
-                    });
-                }
-
-                const cxInput = document.getElementById(`cx-${i}`) as HTMLInputElement;
-                if (cxInput) {
-                    cxInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
-                    // Prevent scroll wheel from changing value but allow page scrolling
-                    cxInput.addEventListener('wheel', (e) => {
-                        (e.target as HTMLInputElement).blur();
-                    });
-                }
-
-                const cyInput = document.getElementById(`cy-${i}`) as HTMLInputElement;
-                if (cyInput) {
-                    cyInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
-                    // Prevent scroll wheel from changing value but allow page scrolling
-                    cyInput.addEventListener('wheel', (e) => {
-                        (e.target as HTMLInputElement).blur();
-                    });
-                }
-
-                const cameraModelSelect = document.getElementById(`camera-model-${i}`) as HTMLSelectElement;
-                if (cameraModelSelect) {
-                    cameraModelSelect.addEventListener('change', () => {
-                        // Show/hide distortion parameters based on camera model selection
-                        const distortionGroup = document.getElementById(`distortion-params-${i}`);
-                        const pinholeParams = document.getElementById(`pinhole-params-${i}`);
-                        const fisheyeOpencvParams = document.getElementById(`fisheye-opencv-params-${i}`);
-                        const kannalaBrandtParams = document.getElementById(`kannala-brandt-params-${i}`);
-                        
-                        if (distortionGroup && pinholeParams && fisheyeOpencvParams && kannalaBrandtParams) {
-                            // Hide all parameter sections first
-                            pinholeParams.style.display = 'none';
-                            fisheyeOpencvParams.style.display = 'none';
-                            kannalaBrandtParams.style.display = 'none';
-                            
-                            // Show appropriate parameter section based on model
-                            if (cameraModelSelect.value === 'pinhole-opencv') {
-                                distortionGroup.style.display = '';
-                                pinholeParams.style.display = '';
-                            } else if (cameraModelSelect.value === 'fisheye-opencv') {
-                                distortionGroup.style.display = '';
-                                fisheyeOpencvParams.style.display = '';
-                            } else if (cameraModelSelect.value === 'fisheye-kannala-brandt') {
-                                distortionGroup.style.display = '';
-                                kannalaBrandtParams.style.display = '';
-                            } else {
-                                distortionGroup.style.display = 'none';
-                            }
-                        }
-                        this.updateSingleDefaultButtonState(i);
-                    });
-                    
-                    // Initialize distortion parameters visibility
-                    const distortionGroup = document.getElementById(`distortion-params-${i}`);
-                    const pinholeParams = document.getElementById(`pinhole-params-${i}`);
-                    const fisheyeOpencvParams = document.getElementById(`fisheye-opencv-params-${i}`);
-                    const kannalaBrandtParams = document.getElementById(`kannala-brandt-params-${i}`);
-                    
-                    if (distortionGroup && pinholeParams && fisheyeOpencvParams && kannalaBrandtParams) {
-                        // Hide all parameter sections first
-                        pinholeParams.style.display = 'none';
-                        fisheyeOpencvParams.style.display = 'none';
-                        kannalaBrandtParams.style.display = 'none';
-                        
-                        // Show appropriate parameter section based on model
-                        if (cameraModelSelect.value === 'pinhole-opencv') {
-                            distortionGroup.style.display = '';
-                            pinholeParams.style.display = '';
-                        } else if (cameraModelSelect.value === 'fisheye-opencv') {
-                            distortionGroup.style.display = '';
-                            fisheyeOpencvParams.style.display = '';
-                        } else if (cameraModelSelect.value === 'fisheye-kannala-brandt') {
-                            distortionGroup.style.display = '';
-                            kannalaBrandtParams.style.display = '';
-                        } else {
-                            distortionGroup.style.display = 'none';
-                        }
-                    }
-                }
-
-                // Add event listeners for all distortion parameters
-                ['k1', 'k2', 'k3', 'k4', 'k5', 'p1', 'p2'].forEach(param => {
-                    const input = document.getElementById(`${param}-${i}`) as HTMLInputElement;
-                    if (input) {
-                        input.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
-                        input.addEventListener('wheel', (e) => {
-                            (e.target as HTMLInputElement).blur();
-                        });
-                    }
-                });
-
-                const baselineInput = document.getElementById(`baseline-${i}`) as HTMLInputElement;
-                if (baselineInput) {
-                    baselineInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
-                    // Prevent scroll wheel from changing value but allow page scrolling
-                    baselineInput.addEventListener('wheel', (e) => {
-                        (e.target as HTMLInputElement).blur();
-                    });
-                }
-
-                const depthScaleInput = document.getElementById(`depth-scale-${i}`) as HTMLInputElement;
-                if (depthScaleInput) {
-                    depthScaleInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
-                    // Prevent scroll wheel from changing value but allow page scrolling
-                    depthScaleInput.addEventListener('wheel', (e) => {
-                        (e.target as HTMLInputElement).blur();
-                    });
-                }
-
-                const depthBiasInput = document.getElementById(`depth-bias-${i}`) as HTMLInputElement;
-                if (depthBiasInput) {
-                    depthBiasInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
-                    // Prevent scroll wheel from changing value but allow page scrolling
-                    depthBiasInput.addEventListener('wheel', (e) => {
-                        (e.target as HTMLInputElement).blur();
-                    });
-                }
-
-                const pngScaleFactorInput = document.getElementById(`png-scale-factor-${i}`) as HTMLInputElement;
-                if (pngScaleFactorInput) {
-                    pngScaleFactorInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
-                    // Prevent scroll wheel from changing value but allow page scrolling
-                    pngScaleFactorInput.addEventListener('wheel', (e) => {
-                        (e.target as HTMLInputElement).blur();
-                    });
-                }
-
-                const conventionSelect = document.getElementById(`convention-${i}`) as HTMLSelectElement;
-                if (conventionSelect) {
-                    conventionSelect.addEventListener('change', () => this.updateSingleDefaultButtonState(i));
-                }
-
-                // Apply Deptn settings button
-                const applyDepthBtn = document.querySelector(`.apply-depth-settings[data-file-index="${i}"]`);
-                if (applyDepthBtn) {
-                    applyDepthBtn.addEventListener('click', async () => {
-                        await this.applyDepthSettings(i);
-                    });
-                }
-
-                // Use as Default settings button
-                const useAsDefaultBtn = document.querySelector(`.use-as-default-settings[data-file-index="${i}"]`);
-                if (useAsDefaultBtn) {
-                    useAsDefaultBtn.addEventListener('click', async () => {
-                        await this.useAsDefaultSettings(i);
-                    });
-                }
-
-                // Reset to Default settings button
-                const resetToDefaultBtn = document.querySelector(`.reset-to-default-settings[data-file-index="${i}"]`);
-                if (resetToDefaultBtn) {
-                    resetToDefaultBtn.addEventListener('click', async () => {
-                        await this.resetToDefaultSettings(i);
-                    });
-                }
-
-                // Save PLY file button
-                const savePlyBtn = document.querySelector(`.save-ply-file[data-file-index="${i}"]`);
-                if (savePlyBtn) {
-                    savePlyBtn.addEventListener('click', () => {
-                        this.savePlyFile(i);
-                    });
-                }
-
-                // Color image selection button
-                const selectColorImageBtn = document.querySelector(`.select-color-image[data-file-index="${i}"]`);
-                if (selectColorImageBtn) {
-                    selectColorImageBtn.addEventListener('click', () => {
-                        this.requestColorImageForDepth(i);
-                    });
-                }
-
-                // Remove color image button
-                const removeColorBtn = document.querySelector(`.remove-color-image[data-file-index="${i}"]`);
-                if (removeColorBtn) {
-                    removeColorBtn.addEventListener('click', async () => {
-                        await this.removeColorImageFromDepth(i);
-                    });
-                }
-
-                // Reset mono parameters button
-                const resetMonoBtn = document.querySelector(`.reset-mono-params[data-file-index="${i}"]`);
-                if (resetMonoBtn) {
-                    resetMonoBtn.addEventListener('click', () => {
-                        this.resetMonoParameters(i);
-                    });
-                }
-
-                // Reset disparity offset button
-                const resetDisparityOffsetBtn = document.querySelector(`.reset-disparity-offset[data-file-index="${i}"]`);
-                if (resetDisparityOffsetBtn) {
-                    resetDisparityOffsetBtn.addEventListener('click', () => {
-                        this.resetDisparityOffset(i);
-                    });
-                }
-
-                // Reset principle point button
-                const resetPrinciplePointBtn = document.querySelector(`.reset-principle-point[data-file-index="${i}"]`);
-                if (resetPrinciplePointBtn) {
-                    resetPrinciplePointBtn.addEventListener('click', () => {
-                        this.resetPrinciplePoint(i);
-                    });
-                }
-            }
-        }
-        
-        // Add remove button listeners
-        const removeButtons = fileListDiv.querySelectorAll('.remove-file');
-        removeButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                const fileIndex = parseInt((e.target as HTMLElement).getAttribute('data-file-index') || '0');
-                this.requestRemoveFile(fileIndex);
-            });
-        });
-
-        // Add MTL button listeners for OBJ files
-        const mtlButtons = fileListDiv.querySelectorAll('.load-mtl-btn');
-        mtlButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                const fileIndex = parseInt((e.target as HTMLElement).getAttribute('data-file-index') || '0');
-                this.requestLoadMtl(fileIndex);
-            });
-        });
-        
-        // Add universal render mode button listeners (solid, wireframe, points, normals)
-        const renderModeButtons = fileListDiv.querySelectorAll('.render-mode-btn');
-        console.log(`Found ${renderModeButtons.length} render mode buttons to attach listeners to`);
-        renderModeButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                const target = e.target as HTMLElement;
-                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
-                const mode = target.getAttribute('data-mode') || 'solid';
-                console.log(`🔘 Render button clicked: fileIndex=${fileIndex}, mode=${mode}`);
-                this.toggleUniversalRenderMode(fileIndex, mode);
-            });
-        });
-        
-        // Add points/normals toggle button listeners
-        const pointsToggleButtons = fileListDiv.querySelectorAll('.points-toggle-btn');
-        pointsToggleButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                const target = e.target as HTMLElement;
-                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
-                this.togglePointsVisibility(fileIndex);
-                this.updatePointsNormalsButtonStates();
-            });
-        });
-        
-        const normalsToggleButtons = fileListDiv.querySelectorAll('.normals-toggle-btn');
-        normalsToggleButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                const target = e.target as HTMLElement;
-                
-                // Ignore clicks on disabled buttons
-                if (target.hasAttribute('disabled') || target.classList.contains('disabled')) {
-                    return;
-                }
-                
-                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
-                this.toggleFileNormalsVisibility(fileIndex);
-                this.updatePointsNormalsButtonStates();
-            });
-        });
-        
-        // Update button states after file list is refreshed
-        this.updatePointsNormalsButtonStates();
-        this.updateUniversalRenderButtonStates();
-        this.updateDefaultButtonState();
+        this.uiStateManager.updateFileList();
     }
+
 
     private toggleFileVisibility(fileIndex: number): void {
         if (fileIndex < 0) return;
@@ -4120,85 +2449,8 @@ class PointCloudVisualizer {
         }
     }
     
-    /**
-     * Universal render mode toggle for all file types
-     * Handles solid, wireframe, points, and normals rendering modes
-     */
-    private toggleUniversalRenderMode(fileIndex: number, mode: string): void {
-        console.log(`🔄 toggleUniversalRenderMode called: fileIndex=${fileIndex}, mode=${mode}`);
-        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
-            console.log(`❌ Invalid fileIndex: ${fileIndex}, plyFiles.length=${this.plyFiles.length}`);
-            return;
-        }
-        
-        const data = this.plyFiles[fileIndex];
-        console.log(`📋 File data:`, data?.fileName);
-        
-        switch (mode) {
-            case 'solid':
-            case 'mesh':
-                this.toggleSolidRendering(fileIndex);
-                break;
-            case 'wireframe':
-                this.toggleWireframeRendering(fileIndex);
-                break;
-            case 'points':
-                this.togglePointsRendering(fileIndex);
-                break;
-            case 'normals':
-                this.toggleNormalsRendering(fileIndex);
-                break;
-        }
-        
-        // Update button states after mode change
-        this.updateUniversalRenderButtonStates();
-    }
     
-    private toggleSolidRendering(fileIndex: number): void {
-        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
-        
-        // Ensure array is properly sized with default values
-        while (this.solidVisible.length <= fileIndex) {
-            const data = this.plyFiles[this.solidVisible.length];
-            const defaultValue = data && data.faceCount > 0; // Default true for meshes, false for point clouds
-            this.solidVisible.push(defaultValue);
-        }
-        
-        // Toggle solid visibility state
-        this.solidVisible[fileIndex] = !this.solidVisible[fileIndex];
-        
-        this.updateMeshVisibilityAndMaterial(fileIndex);
-    }
     
-    private toggleWireframeRendering(fileIndex: number): void {
-        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
-        
-        // Ensure array is properly sized with default values
-        while (this.wireframeVisible.length <= fileIndex) {
-            this.wireframeVisible.push(false); // Wireframe always defaults to false
-        }
-        
-        // Toggle wireframe visibility state
-        this.wireframeVisible[fileIndex] = !this.wireframeVisible[fileIndex];
-        
-        this.updateMeshVisibilityAndMaterial(fileIndex);
-    }
-    
-    private togglePointsRendering(fileIndex: number): void {
-        if (fileIndex < 0 || fileIndex >= this.plyFiles.length) return;
-        
-        // Ensure array is properly sized with default values
-        while (this.pointsVisible.length <= fileIndex) {
-            const data = this.plyFiles[this.pointsVisible.length];
-            const defaultValue = !data || data.faceCount === 0; // Default true for point clouds, false for meshes
-            this.pointsVisible.push(defaultValue);
-        }
-        
-        // Toggle points visibility state
-        this.pointsVisible[fileIndex] = !this.pointsVisible[fileIndex];
-        
-        this.updateMeshVisibilityAndMaterial(fileIndex);
-    }
     
     private updateMeshVisibilityAndMaterial(fileIndex: number): void {
         const mesh = this.meshes[fileIndex];
@@ -4443,6 +2695,9 @@ class PointCloudVisualizer {
         } else {
             console.log(`No normals visualizer found for file ${fileIndex}`);
         }
+        
+        // Update button states
+        this.updateRenderModeButtonStates();
     }
     
     private updateUniversalRenderButtonStates(): void {
@@ -4536,46 +2791,22 @@ class PointCloudVisualizer {
     }
 
     private showError(message: string): void {
-        // Log to console for developer tools visibility
-        try { console.error(message); } catch (_) {}
-        document.getElementById('loading')?.classList.add('hidden');
-        const errorMsg = document.getElementById('error-message');
-        const errorDiv = document.getElementById('error');
-        
-        if (errorMsg) {
-            errorMsg.textContent = message;
-        }
-        
-        if (errorDiv) {
-            errorDiv.classList.remove('hidden');
-            
-            // Set up close button (only once)
-            const closeBtn = document.getElementById('error-close');
-            if (closeBtn) {
-                    // debug
-                if (!closeBtn.hasAttribute('data-listener-added')) {
-                    closeBtn.setAttribute('data-listener-added', 'true');
-                    closeBtn.addEventListener('click', () => {
-                        // debug
-                        this.clearError();
-                    });
-                    // debug
-                } else {
-                    // debug
-                }
-            } else {
-                // debug
+        if (this.fileUtils) {
+            this.fileUtils.showError(message);
+        } else {
+            // Fallback if fileUtils is not yet initialized
+            console.error('PLY Visualizer Error:', message);
+            const errorDiv = document.getElementById('error');
+            const errorMessage = document.getElementById('error-message');
+            if (errorDiv && errorMessage) {
+                errorMessage.textContent = message;
+                errorDiv.classList.remove('hidden');
             }
         }
-        
-        // keep error visible in UI only
     }
 
     private clearError(): void {
-        const errorDiv = document.getElementById('error');
-        if (errorDiv) {
-            errorDiv.classList.add('hidden');
-        }
+        this.fileUtils.clearError();
     }
 
     // File management methods
@@ -4848,8 +3079,10 @@ class PointCloudVisualizer {
                 } else {
                     // Fallback to points - use optimized creation
                     const mesh = this.createOptimizedPointCloud(geometry, material as THREE.PointsMaterial);
+                    console.log('Adding point cloud mesh to scene, total meshes will be:', this.meshes.length + 1);
                     this.scene.add(mesh);
                     this.meshes.push(mesh);
+                    console.log('Mesh added successfully, current meshes count:', this.meshes.length);
                 }
             } else {
                 // Handle legacy OBJ wireframe format and regular PLY files
@@ -4897,8 +3130,8 @@ class PointCloudVisualizer {
                 }
             }
             // If sequence mode is active, only the current frame stays visible to avoid overloading the scene
-            const isSeqMode = this.sequenceFiles.length > 0;
-            const shouldBeVisible = !isSeqMode || (data.fileIndex === this.sequenceIndex);
+            const isSeqMode = this.sequenceManager.getSequenceLength() > 0;
+            const shouldBeVisible = !isSeqMode || (data.fileIndex === this.sequenceManager.getCurrentSequenceIndex());
             this.fileVisibility.push(shouldBeVisible);
             const lastObject = this.meshes[this.meshes.length - 1];
             if (lastObject) lastObject.visible = shouldBeVisible;
@@ -4912,11 +3145,11 @@ class PointCloudVisualizer {
             this.materialMeshes.push(null); // No sub-meshes initially
             
             // Initialize transformation matrix for this file
-            this.transformationMatrices.push(new THREE.Matrix4());
+            this.transformationManager.insertTransformationMatrix(this.transformationManager.getMatrixCount());
         }
 
         // Update UI
-        this.updateFileList();
+        this.uiStateManager.updateFileList();
         this.updateFileStats();
 
         // debug
@@ -4947,7 +3180,7 @@ class PointCloudVisualizer {
             if (this.individualColorModes[fileIndex] !== undefined) {
                 this.individualColorModes.splice(fileIndex, 1);
             }
-            this.updateFileList();
+            this.uiStateManager.updateFileList();
             this.updateFileStats();
             return;
         }
@@ -4998,7 +3231,7 @@ class PointCloudVisualizer {
         }
 
         // Update UI
-        this.updateFileList();
+        this.uiStateManager.updateFileList();
         this.updateFileStats();
         
         // debug
@@ -5476,6 +3709,7 @@ class PointCloudVisualizer {
     }
 
     private updatePointSize(fileIndex: number, newSize: number): void {
+        console.log('updatePointSize called with:', fileIndex, newSize, 'pointSizes.length:', this.pointSizes.length);
         if (fileIndex >= 0 && fileIndex < this.pointSizes.length) {
             const oldSize = this.pointSizes[fileIndex];
             console.log(`🎚️ Updating point size for file ${fileIndex}: ${oldSize} → ${newSize}`);
@@ -5488,7 +3722,7 @@ class PointCloudVisualizer {
             
             if (isCamera) {
                 // Handle camera scaling by applying transformation matrix with scale
-                this.applyTransformationMatrix(fileIndex);
+                this.transformationManager.applyTransformationMatrix(fileIndex);
             } else if (isPose) {
                 // Update instanced sphere scale in pose group if stored using PointsMaterial size semantics is different.
                 const poseIndex = fileIndex - this.plyFiles.length;
@@ -5856,7 +4090,7 @@ class PointCloudVisualizer {
             if (group) group.visible = true;
         }
         // Update UI
-        this.updateFileList();
+        this.uiStateManager.updateFileList();
     }
 
     private switchToTrackballControls(): void {
@@ -6092,12 +4326,12 @@ class PointCloudVisualizer {
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
                 const input = (dialog.querySelector('#translation-input') as HTMLTextAreaElement).value;
-                const values = this.parseSpaceSeparatedValues(input);
+                const values = MathUtils.parseSpaceSeparatedValues(input);
                 
                 if (values.length === 3) {
                     const [x, y, z] = values;
-                    this.addTranslationToMatrix(fileIndex, x, y, z);
-                    this.updateMatrixTextarea(fileIndex);
+                    this.transformationManager.addTranslationToMatrix(fileIndex, x, y, z);
+                    this.transformationManager.updateMatrixTextarea(fileIndex);
                     closeModal();
                 } else {
                     alert('Please enter exactly 3 numbers for translation (X Y Z)');
@@ -6183,13 +4417,12 @@ class PointCloudVisualizer {
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
                 const input = (dialog.querySelector('#quaternion-input') as HTMLTextAreaElement).value;
-                const values = this.parseSpaceSeparatedValues(input);
+                const values = MathUtils.parseSpaceSeparatedValues(input);
                 
                 if (values.length === 4) {
                     const [x, y, z, w] = values;
-                    const quaternionMatrix = this.createQuaternionMatrix(x, y, z, w);
-                    this.multiplyTransformationMatrices(fileIndex, quaternionMatrix);
-                    this.updateMatrixTextarea(fileIndex);
+                    this.transformationManager.addQuaternionToMatrix(fileIndex, x, y, z, w);
+                    this.transformationManager.updateMatrixTextarea(fileIndex);
                     closeModal();
                 } else {
                     alert('Please enter exactly 4 numbers for the quaternion (X Y Z W)');
@@ -6275,15 +4508,14 @@ class PointCloudVisualizer {
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
                 const input = (dialog.querySelector('#angle-axis-input') as HTMLTextAreaElement).value;
-                const values = this.parseSpaceSeparatedValues(input);
+                const values = MathUtils.parseSpaceSeparatedValues(input);
                 
                 if (values.length === 4) {
                     const [axisX, axisY, axisZ, angleDegrees] = values;
                     const axis = new THREE.Vector3(axisX, axisY, axisZ);
                     const angle = (angleDegrees * Math.PI) / 180; // Convert to radians
-                    const angleAxisMatrix = this.createAngleAxisMatrix(axis, angle);
-                    this.multiplyTransformationMatrices(fileIndex, angleAxisMatrix);
-                    this.updateMatrixTextarea(fileIndex);
+                    this.transformationManager.addAngleAxisToMatrix(fileIndex, axis, angle);
+                    this.transformationManager.updateMatrixTextarea(fileIndex);
                     closeModal();
                 } else {
                     alert('Please enter exactly 4 numbers for axis and angle (X Y Z angle in degrees)');
@@ -6388,7 +4620,7 @@ class PointCloudVisualizer {
             applyBtn.addEventListener('click', () => {
                 const input = (dialog.querySelector('#camera-position-input') as HTMLTextAreaElement).value;
                 const constraint = (dialog.querySelector('input[name="position-constraint"]:checked') as HTMLInputElement).value;
-                const values = this.parseSpaceSeparatedValues(input);
+                const values = MathUtils.parseSpaceSeparatedValues(input);
                 
                 if (values.length === 3) {
                     const [x, y, z] = values;
@@ -6528,7 +4760,7 @@ class PointCloudVisualizer {
             applyBtn.addEventListener('click', () => {
                 const input = (dialog.querySelector('#camera-rotation-input') as HTMLTextAreaElement).value;
                 const constraint = (dialog.querySelector('input[name="rotation-constraint"]:checked') as HTMLInputElement).value;
-                const values = this.parseSpaceSeparatedValues(input);
+                const values = MathUtils.parseSpaceSeparatedValues(input);
                 
                 if (values.length === 3) {
                     const [x, y, z] = values;
@@ -6682,7 +4914,7 @@ class PointCloudVisualizer {
             applyBtn.addEventListener('click', () => {
                 const input = (dialog.querySelector('#rotation-center-input') as HTMLTextAreaElement).value;
                 const constraint = (dialog.querySelector('input[name="center-constraint"]:checked') as HTMLInputElement).value;
-                const values = this.parseSpaceSeparatedValues(input);
+                const values = MathUtils.parseSpaceSeparatedValues(input);
                 
                 if (values.length === 3) {
                     const [x, y, z] = values;
@@ -8264,7 +6496,7 @@ class PointCloudVisualizer {
             const colors = new Float32Array(plyData.vertices.length * 3);
             if (this.convertSrgbToLinear) {
                 this.ensureSrgbLUT();
-                const lut = this.srgbToLinearLUT!;
+                const lut = ColorUtils.getSrgbToLinearLUT();
                 for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
                     const v = plyData.vertices[i];
                     const r8 = (v.red || 0) & 255;
@@ -8304,7 +6536,7 @@ class PointCloudVisualizer {
             // Update UI (preserve depth panel states)
             const openPanelStates = this.captureDepthPanelStates();
             this.updateFileStats();
-            this.updateFileList();
+            this.uiStateManager.updateFileList();
             this.restoreDepthPanelStates(openPanelStates);
             this.showStatus(`Color image "${message.fileName}" applied successfully!`);
 
@@ -9097,7 +7329,7 @@ class PointCloudVisualizer {
                 const colors = new Float32Array(plyData.vertices.length * 3);
             if (this.convertSrgbToLinear) {
                 this.ensureSrgbLUT();
-                const lut = this.srgbToLinearLUT!;
+                const lut = ColorUtils.getSrgbToLinearLUT();
                 for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
                     const v = plyData.vertices[i];
                     const r8 = (v.red || 0) & 255;
@@ -9692,7 +7924,7 @@ class PointCloudVisualizer {
             // Update UI (preserve depth panel states)
             const openPanelStates = this.captureDepthPanelStates();
             this.updateFileStats();
-            this.updateFileList();
+            this.uiStateManager.updateFileList();
             this.restoreDepthPanelStates(openPanelStates);
             this.showStatus('Color image removed - reverted to default depth-based colors');
 
@@ -9874,10 +8106,10 @@ class PointCloudVisualizer {
                     this.poseScaleByScore[unifiedIndex] = false;
                     this.poseScaleByUncertainty[unifiedIndex] = false;
                     this.poseConvention[unifiedIndex] = 'opengl';
-                    this.transformationMatrices.push(new THREE.Matrix4());
-                    this.applyTransformationMatrix(unifiedIndex);
+                    this.transformationManager.insertTransformationMatrix(this.transformationManager.getMatrixCount());
+                    this.transformationManager.applyTransformationMatrix(unifiedIndex);
                 }
-                this.updateFileList();
+                this.uiStateManager.updateFileList();
                 this.updateFileStats();
                 this.fitCameraToAllObjects();
                 // Hide loading overlay for pose JSONs
@@ -9940,10 +8172,10 @@ class PointCloudVisualizer {
                 this.poseScaleByUncertainty[unifiedIndex] = false;
                 this.poseConvention[unifiedIndex] = 'opengl';
             // Initialize transformation matrix for this pose
-            this.transformationMatrices.push(new THREE.Matrix4());
-            this.applyTransformationMatrix(unifiedIndex);
+            this.transformationManager.insertTransformationMatrix(this.transformationManager.getMatrixCount());
+            this.transformationManager.applyTransformationMatrix(unifiedIndex);
             // Update UI
-            this.updateFileList();
+            this.uiStateManager.updateFileList();
             this.updateFileStats();
             this.fitCameraToAllObjects();
                 // Hide loading overlay for pose JSONs
@@ -9972,7 +8204,7 @@ class PointCloudVisualizer {
                 if (camera.local_extrinsics && camera.local_extrinsics.params) {
                     const params = camera.local_extrinsics.params;
                     if (params.location && params.rotation_quaternion) {
-                        const cameraViz = this.createCameraVisualization(
+                        const cameraViz = this.fileUtils.createCameraVisualization(
                             cameraName,
                             params.location,
                             params.rotation_quaternion,
@@ -9996,12 +8228,12 @@ class PointCloudVisualizer {
                 this.individualColorModes[unifiedIndex] = 'assigned';
                 
                 // Initialize transformation matrix for camera profile
-                this.transformationMatrices.push(new THREE.Matrix4());
-                this.applyTransformationMatrix(unifiedIndex);
+                this.transformationManager.insertTransformationMatrix(this.transformationManager.getMatrixCount());
+                this.transformationManager.applyTransformationMatrix(unifiedIndex);
             }
             
             // Update UI
-            this.updateFileList();
+            this.uiStateManager.updateFileList();
             this.updateFileStats();
             this.fitCameraToAllObjects();
             
@@ -10701,7 +8933,7 @@ class PointCloudVisualizer {
             this.appliedMtlData[fileIndex] = mtlData;
             
             // Update UI to show loaded MTL
-            this.updateFileList();
+            this.uiStateManager.updateFileList();
             
             const materialCount = mtlData.materialCount || Object.keys(mtlData.materials || {}).length;
             this.showStatus(`MTL material applied! Using material '${materialName}' from ${message.fileName}`);

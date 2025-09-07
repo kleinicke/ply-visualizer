@@ -1,4 +1,5 @@
 const path = require('path');
+const webpack = require('webpack');
 
 module.exports = [
     // Extension source
@@ -40,7 +41,8 @@ module.exports = [
         entry: './src/webview/main.ts',
         output: {
             path: path.resolve(__dirname, 'out', 'webview'),
-            filename: 'main.js'
+            filename: 'main.js',
+            globalObject: 'this'
         },
         devtool: 'nosources-source-map',
         resolve: {
@@ -48,12 +50,24 @@ module.exports = [
             alias: {
                 // Force single Three.js instance to prevent multiple imports
                 'three': path.resolve(__dirname, 'node_modules/three'),
+            },
+            fallback: {
+                // Provide browser alternatives for Node.js modules
+                "fs": false,
+                "path": false,
+                "crypto": false
             }
         },
         optimization: {
             // Deduplicate modules to prevent multiple Three.js instances
             splitChunks: false
         },
+        plugins: [
+            new webpack.DefinePlugin({
+                'global': 'globalThis',
+                'exports': '({})'
+            })
+        ],
         module: {
             rules: [
                 {
