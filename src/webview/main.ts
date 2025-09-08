@@ -24,6 +24,8 @@ import { EventUtils, EventUtilsCallbacks } from '../shared/utils/EventUtils';
 import { MaterialUtils, MaterialUtilsCallbacks } from '../shared/utils/MaterialUtils';
 import { CameraUtils, CameraUtilsCallbacks } from '../shared/utils/CameraUtils';
 import { DialogUtils, DialogUtilsCallbacks } from '../shared/utils/DialogUtils';
+import { MessageHandler, MessageHandlerCallbacks } from '../shared/utils/MessageHandler';
+import { DepthUtils, DepthUtilsCallbacks } from '../shared/utils/DepthUtils';
 
 declare const acquireVsCodeApi: () => any;
 declare const GeoTIFF: any;
@@ -80,6 +82,10 @@ class PointCloudVisualizer {
     private cameraUtils!: CameraUtils;
     // Dialog management utilities
     private dialogUtils!: DialogUtils;
+    // Message handling utilities
+    private messageHandler!: MessageHandler;
+    // Depth processing utilities
+    private depthUtils!: DepthUtils;
     private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
     private appliedMtlColors: (number | null)[] = []; // Store applied MTL hex colors for each file
     private appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
@@ -487,6 +493,45 @@ class PointCloudVisualizer {
             showError: (message: string) => this.showError(message),
             showStatus: (message: string) => this.showStatus(message),
             updateRotationOriginButtonState: () => this.updateRotationOriginButtonState(),
+        });
+
+        // Initialize message handler
+        this.messageHandler = new MessageHandler({
+            addNewFiles: (files: PlyData[]) => this.addNewFiles(files),
+            displayFiles: (files: PlyData[]) => this.displayFiles(files),
+            showStatus: (message: string) => this.showStatus(message),
+            showError: (message: string) => this.showError(message),
+            getPendingDepthFiles: () => this.pendingDepthFiles,
+            setPendingDepthFile: (requestId: string, data: any) => this.pendingDepthFiles.set(requestId, data),
+            removePendingDepthFile: (requestId: string) => this.pendingDepthFiles.delete(requestId),
+            saveCameraParams: (params: any) => this.saveCameraParams(params),
+            processDepthWithParams: (requestId: string, params: any) => this.processDepthWithParams(requestId, params),
+            getPlyFilesLength: () => this.plyFiles.length,
+            createNormalsVisualizer: (plyData: PlyData) => this.createNormalsVisualizer(plyData),
+            getNormalsVisible: () => this.normalsVisible,
+            setNormalsVisible: (fileIndex: number, visible: boolean) => { this.normalsVisible[fileIndex] = visible; },
+            getNormalsVisualizers: () => this.normalsVisualizers,
+            addNormalsVisualizer: (fileIndex: number, visualizer: any) => {
+                while (this.normalsVisualizers.length <= fileIndex) {
+                    this.normalsVisualizers.push(null);
+                }
+                this.normalsVisualizers[fileIndex] = visualizer;
+            },
+            getScene: () => this.scene,
+        });
+
+        // Initialize depth processing utilities
+        this.depthUtils = new DepthUtils({
+            showStatus: (message: string) => this.showStatus(message),
+            showError: (message: string) => this.showError(message),
+            getPendingDepthFiles: () => this.pendingDepthFiles,
+            removePendingDepthFile: (requestId: string) => this.pendingDepthFiles.delete(requestId),
+            getFileDepthData: () => this.fileDepthData,
+            setFileDepthData: (fileIndex: number, data: any) => this.fileDepthData.set(fileIndex, data),
+            addNewFiles: (files: PlyData[]) => this.addNewFiles(files),
+            displayFiles: (files: PlyData[]) => this.displayFiles(files),
+            getPlyFilesLength: () => this.plyFiles.length,
+            updatePrinciplePointFields: (fileIndex: number, dimensions: { width: number; height: number }) => this.updatePrinciplePointFields(fileIndex, dimensions),
         });
 
         this.initializeControls();
@@ -4590,217 +4635,16 @@ class PointCloudVisualizer {
     }
 
     private async processDepthWithParams(requestId: string, cameraParams: CameraParams): Promise<void> {
-        const depthFileData = this.pendingDepthFiles.get(requestId);
-        if (!depthFileData) {
-            console.error('Depth file data not found for requestId:', requestId);
-            return;
-        }
-
-        console.log('Processing depth with camera params:', cameraParams);
-        this.showStatus('Converting depth image to point cloud...');
-
         // Store original data for re-processing
-        this.originalDepthFileName = depthFileData.fileName;
-        this.currentCameraParams = cameraParams;
-
-        // Process the depth data using the new depth processing system
-        const result = await this.processDepthToPointCloud(depthFileData.data, depthFileData.fileName, cameraParams);
-
-        const isPfm = /\.pfm$/i.test(depthFileData.fileName);
-        const isTif = /\.(tif|tiff)$/i.test(depthFileData.fileName);
-        const isNpy = /\.(npy|npz)$/i.test(depthFileData.fileName);
-        const isPng = /\.png$/i.test(depthFileData.fileName);
-        const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : isPng ? 'PNG' : 'TIF';
-
-        // Create PLY data structure with vertices converted from typed arrays
-        const vertices: PlyVertex[] = [];
-        for (let i = 0; i < result.pointCount; i++) {
-            const vertex: PlyVertex = {
-                x: result.vertices[i * 3],
-                y: result.vertices[i * 3 + 1],
-                z: result.vertices[i * 3 + 2]
-            };
-            if (result.colors) {
-                vertex.red = Math.round(result.colors[i * 3] * 255);
-                vertex.green = Math.round(result.colors[i * 3 + 1] * 255);
-                vertex.blue = Math.round(result.colors[i * 3 + 2] * 255);
-            }
-            vertices.push(vertex);
+        const depthFileData = this.pendingDepthFiles.get(requestId);
+        if (depthFileData) {
+            this.originalDepthFileName = depthFileData.fileName;
+            this.currentCameraParams = cameraParams;
         }
-
-        const plyData: PlyData = {
-            vertices: vertices,
-            faces: [],
-            vertexCount: result.pointCount,
-            hasColors: !!result.colors,
-            hasNormals: false,
-            faceCount: 0,
-            fileName: depthFileData.fileName,
-            fileIndex: depthFileData.isAddFile ? this.plyFiles.length : 0,
-            format: 'binary_little_endian',
-            version: '1.0',
-            comments: [
-                `Converted from ${fileType} depth image: ${depthFileData.fileName}`, 
-                `Camera: ${cameraParams.cameraModel}`, 
-                `Depth type: ${cameraParams.depthType}`,
-                `fx: ${cameraParams.fx}px${cameraParams.fy ? `, fy: ${cameraParams.fy}px` : ''}`,
-                ...(cameraParams.baseline ? [`Baseline: ${cameraParams.baseline}mm`] : []),
-                ...(cameraParams.pngScaleFactor ? [`Scale factor: scale=${cameraParams.pngScaleFactor}`] : [])
-            ]
-        };
-
-        console.log(`${fileType} to PLY conversion complete: ${result.pointCount} points`);
-
-        // Add to scene
-        if (depthFileData.isAddFile) {
-            this.addNewFiles([plyData]);
-        } else {
-            await this.displayFiles([plyData]);
-        }
-
-        // Cache the depth file data for later reprocessing (using the file index)
-        const fileIndex = plyData.fileIndex || 0;
-        const dimensions = {
-            width: (result as any).width || 0,
-            height: (result as any).height || 0
-        };
         
-        // Log depth image dimensions when storing
-        console.log(`📐 Storing depth data for file ${fileIndex} (${fileType}):`);
-        console.log(`   Dimensions: ${dimensions.width} × ${dimensions.height}`);
-        console.log(`   Computed principle point would be: cx = ${(dimensions.width-1)/2}, cy = ${(dimensions.height-1)/2}`);
-        
-        this.fileDepthData.set(fileIndex, {
-            originalData: depthFileData.data,
-            fileName: depthFileData.fileName,
-            cameraParams: cameraParams,
-            depthDimensions: dimensions
-        });
-
-        // Update the cx/cy form fields with the actual computed values
-        this.updatePrinciplePointFields(fileIndex, dimensions);
-
-        // Clean up
-        this.pendingDepthFiles.delete(requestId);
-        this.showStatus(`${fileType} to point cloud conversion complete: ${result.pointCount} points`);
+        return this.depthUtils.processDepthWithParams(requestId, cameraParams);
     }
 
-    private async processDepthToPointCloud(depthData: ArrayBuffer, fileName: string, cameraParams: CameraParams): Promise<DepthConversionResult> {
-        const { registerDefaultReaders, readDepth } = await import('./depth/DepthRegistry');
-        const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
-        try {
-            // DEBUG: Log what parameters we received
-            console.log(`🔬 PROCESS DEPTH DEBUG for ${fileName}:`);
-            console.log('  Received cameraParams:', cameraParams);
-            console.log('  depthType specifically:', cameraParams.depthType);
-            console.log('  baseline specifically:', cameraParams.baseline);
-            
-            registerDefaultReaders();
-            
-            // Configure PNG reader with scale factor if processing PNG file
-            if (/\.png$/i.test(fileName) && cameraParams.pngScaleFactor) {
-                const { PngReader } = await import('./depth/readers/PngReader');
-                const pngReader = new PngReader();
-                pngReader.setConfig({
-                    pngScaleFactor: cameraParams.pngScaleFactor,
-                    invalidValue: 0
-                });
-                
-                // Re-register the configured PNG reader
-                const { registerReader } = await import('./depth/DepthRegistry');
-                registerReader(pngReader);
-                console.log(`🎯 Configured PNG reader with scale factor: ${cameraParams.pngScaleFactor}`);
-            }
-            
-            const { image, meta: baseMeta } = await readDepth(fileName, depthData);
-            
-            // Update cx/cy with computed values if they are still placeholder values
-            const computedCx = (image.width - 1) / 2;
-            const computedCy = (image.height - 1) / 2;
-            
-            // If cx/cy are not provided, replace with computed values
-            const shouldUpdateCx = cameraParams.cx === undefined;
-            const shouldUpdateCy = cameraParams.cy === undefined;
-            
-            if (shouldUpdateCx) {
-                cameraParams.cx = computedCx;
-                console.log(`📐 Updated cx from placeholder to computed value: ${computedCx}`);
-            }
-            
-            if (shouldUpdateCy) {
-                cameraParams.cy = computedCy;  
-                console.log(`📐 Updated cy from placeholder to computed value: ${computedCy}`);
-            }
-            
-            // Log image dimensions and principle point information
-            console.log(`📐 Depth image loaded: ${fileName}`);
-            console.log(`   Image dimensions: ${image.width} × ${image.height} pixels`);
-            console.log(`   Auto-computed principle point: cx = ${computedCx}, cy = ${computedCy}`);
-            console.log(`   Using cx/cy values from camera parameters: cx = ${cameraParams.cx}, cy = ${cameraParams.cy}`);
-            console.log(`   🎯 Camera parameters are the source of truth for principle point`);
-            
-            // Set up camera parameters (use values from camera parameters, which may have been updated)
-            const fx = cameraParams.fx;
-            const fy = cameraParams.fy || cameraParams.fx; // Use fx if fy is not provided
-            const cx = cameraParams.cx !== undefined ? cameraParams.cx : (image.width - 1) / 2; // Use provided value or auto-calculate
-            const cy = cameraParams.cy !== undefined ? cameraParams.cy : (image.height - 1) / 2; // Use provided value or auto-calculate
-
-            // Override depth kind based on UI selection
-            const meta: any = { ...baseMeta };
-            console.log(`  📋 Original baseMeta.kind: ${baseMeta.kind}`);
-            console.log(`  ⚙️ Checking depthType: ${cameraParams.depthType}`);
-            
-            if (cameraParams.depthType === 'disparity') {
-                const fxOk = !!cameraParams.fx && cameraParams.fx > 0;
-                const blOk = !!cameraParams.baseline && cameraParams.baseline > 0;
-                console.log(`  🔍 Disparity checks: fxOk=${fxOk} (${cameraParams.fx}), blOk=${blOk} (${cameraParams.baseline})`);
-                if (fxOk && blOk) {
-                    meta.kind = 'disparity';
-                    meta.baseline = cameraParams.baseline! / 1000; // Convert mm to meters
-                    meta.disparityOffset = cameraParams.disparityOffset || 0; // Default to 0
-                    console.log(`  ✅ Set meta.kind to 'disparity', baseline=${meta.baseline}m, offset=${meta.disparityOffset}`);
-                } else {
-                    console.warn('Disparity selected but baseline/focal missing; keeping original kind:', baseMeta.kind);
-                }
-            } else if (cameraParams.depthType === 'orthogonal') {
-                meta.kind = 'z';
-                console.log(`  ✅ Set meta.kind to 'z' (orthogonal)`);
-            } else if (cameraParams.depthType === 'euclidean') {
-                meta.kind = 'depth';
-                console.log(`  ✅ Set meta.kind to 'depth' (euclidean)`);
-            } else if (cameraParams.depthType === 'inverse_depth') {
-                meta.kind = 'inverse_depth';
-                console.log(`  ✅ Set meta.kind to 'inverse_depth'`);
-            }
-            
-            console.log(`  📋 Final meta.kind: ${meta.kind}`);
-
-            const norm = normalizeDepth(image, {
-                ...meta,
-                fx, fy, cx, cy,
-                baseline: meta.baseline,
-                depthScale: cameraParams.depthScale,
-                depthBias: cameraParams.depthBias
-            });
-
-            const result = projectToPointCloud(norm, {
-                kind: meta.kind,
-                fx, fy, cx, cy,
-                cameraModel: cameraParams.cameraModel,
-                convention: cameraParams.convention || 'opengl', // Use selected convention, default to OpenGL
-                k1: cameraParams.k1 ? parseFloat(cameraParams.k1.toString()) : undefined,
-                k2: cameraParams.k2 ? parseFloat(cameraParams.k2.toString()) : undefined,
-                k3: cameraParams.k3 ? parseFloat(cameraParams.k3.toString()) : undefined,
-                k4: cameraParams.k4 ? parseFloat(cameraParams.k4.toString()) : undefined,
-                k5: cameraParams.k5 ? parseFloat(cameraParams.k5.toString()) : undefined,
-                p1: cameraParams.p1 ? parseFloat(cameraParams.p1.toString()) : undefined,
-                p2: cameraParams.p2 ? parseFloat(cameraParams.p2.toString()) : undefined
-            });
-            return result as unknown as DepthConversionResult;
-        } catch (error) {
-            throw new Error(`Failed to process depth file: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
 
     private async handleObjData(message: any): Promise<void> {
         try {
@@ -4892,262 +4736,15 @@ class PointCloudVisualizer {
     }
 
     private async handleStlData(message: any): Promise<void> {
-        try {
-            console.log(`Load: recv STL ${message.fileName}`);
-            this.showStatus(`STL: processing ${message.fileName}`);
-            
-            const stlData = message.data;
-            const hasColors = stlData.hasColors;
-            
-            console.log(`STL: ${stlData.triangleCount} triangles, format=${stlData.format}, colors=${hasColors}`);
-            
-            // Handle empty STL files
-            if (stlData.triangleCount === 0 || !stlData.triangles || stlData.triangles.length === 0) {
-                console.log('STL: Empty mesh detected');
-                this.showStatus(`STL: Empty mesh loaded (${message.fileName})`);
-                
-                // Create minimal PLY data for empty mesh
-                const plyData: PlyData = {
-                    vertices: [],
-                    faces: [],
-                    format: stlData.format === 'binary' ? 'binary_little_endian' : 'ascii',
-                    version: '1.0',
-                    comments: [
-                        `Empty STL mesh: ${message.fileName}`,
-                        `Original format: ${stlData.format}`,
-                        ...(stlData.header ? [`Header: ${stlData.header}`] : [])
-                    ],
-                    vertexCount: 0,
-                    faceCount: 0,
-                    hasColors: false,
-                    hasNormals: false,
-                    fileName: message.fileName.replace(/\.stl$/i, '_empty.ply'),
-                    fileIndex: this.plyFiles.length
-                };
-                
-                // Add to visualization (even empty files should be tracked)
-                if (message.isAddFile) {
-                    this.addNewFiles([plyData]);
-                } else {
-                    await this.displayFiles([plyData]);
-                }
-                
-                return;
-            }
-            
-            // Convert STL triangles to PLY vertices and faces
-            const vertices: PlyVertex[] = [];
-            const faces: PlyFace[] = [];
-            const vertexMap = new Map<string, number>(); // For deduplication
-            
-            let vertexIndex = 0;
-            
-            for (let i = 0; i < stlData.triangles.length; i++) {
-                const triangle = stlData.triangles[i];
-                const faceIndices: number[] = [];
-                
-                // Process each vertex of the triangle
-                for (let j = 0; j < 3; j++) {
-                    const vertex = triangle.vertices[j];
-                    const key = `${vertex.x},${vertex.y},${vertex.z}`;
-                    
-                    let vIndex = vertexMap.get(key);
-                    if (vIndex === undefined) {
-                        // New vertex
-                        vIndex = vertexIndex++;
-                        vertexMap.set(key, vIndex);
-                        
-                        const plyVertex: PlyVertex = {
-                            x: vertex.x,
-                            y: vertex.y,
-                            z: vertex.z,
-                            nx: triangle.normal.x,
-                            ny: triangle.normal.y,
-                            nz: triangle.normal.z
-                        };
-                        
-                        // Add color if available
-                        if (hasColors && triangle.color) {
-                            plyVertex.red = triangle.color.red;
-                            plyVertex.green = triangle.color.green;
-                            plyVertex.blue = triangle.color.blue;
-                        } else {
-                            // Default gray color
-                            plyVertex.red = 180;
-                            plyVertex.green = 180;
-                            plyVertex.blue = 180;
-                        }
-                        
-                        vertices.push(plyVertex);
-                    }
-                    
-                    faceIndices.push(vIndex);
-                }
-                
-                // Add the face
-                faces.push({
-                    indices: faceIndices
-                });
-            }
-            
-            // Create PLY data structure
-            const plyData: PlyData = {
-                vertices,
-                faces,
-                format: stlData.format === 'binary' ? 'binary_little_endian' : 'ascii',
-                version: '1.0',
-                comments: [
-                    `Converted from STL file: ${message.fileName}`,
-                    `Original format: ${stlData.format}`,
-                    `Triangle count: ${stlData.triangleCount}`,
-                    ...(stlData.header ? [`Header: ${stlData.header}`] : [])
-                ],
-                vertexCount: vertices.length,
-                faceCount: faces.length,
-                hasColors: true,
-                hasNormals: true,
-                fileName: message.fileName.replace(/\.stl$/i, '_mesh.ply'),
-                fileIndex: this.plyFiles.length
-            };
-            
-            // Store STL-specific data for enhanced rendering
-            (plyData as any).stlData = stlData;
-            (plyData as any).isStlFile = true;
-            (plyData as any).stlFormat = stlData.format;
-            (plyData as any).stlTriangleCount = stlData.triangleCount;
-            
-            // Add to visualization
-            if (message.isAddFile) {
-                this.addNewFiles([plyData]);
-            } else {
-                await this.displayFiles([plyData]);
-            }
-            
-            // Status message
-            const statusParts = [
-                `${vertices.length.toLocaleString()} vertices`,
-                `${faces.length.toLocaleString()} triangles`,
-                `${stlData.format} format`
-            ];
-            if (hasColors) {
-                statusParts.push('with colors');
-            }
-            
-            this.showStatus(`STL mesh loaded: ${statusParts.join(', ')}`);
-            
-        } catch (error) {
-            console.error('Error handling STL data:', error);
-            this.showError(`Failed to process STL file: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        return this.messageHandler.handleStlData(message);
     }
 
     private async handleXyzData(message: any): Promise<void> {
-        try {
-            console.log('Received XYZ data for processing:', message.fileName);
-            this.showStatus('Parsing XYZ file...');
-            
-            // Parse XYZ file (simple format: x y z [r g b] per line)
-            const decoder = new TextDecoder('utf-8');
-            const text = decoder.decode(message.data);
-            const lines = text.split('\n').filter(line => line.trim().length > 0);
-            
-            const vertices: PlyVertex[] = [];
-            let hasColors = false;
-            
-            for (const line of lines) {
-                const parts = line.trim().split(/\s+/);
-                if (parts.length >= 3) {
-                    const x = parseFloat(parts[0]);
-                    const y = parseFloat(parts[1]);
-                    const z = parseFloat(parts[2]);
-                    
-                    if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-                        const vertex: PlyVertex = { x, y, z };
-                        
-                        // Check for color data (RGB values)
-                        if (parts.length >= 6) {
-                            const r = parseInt(parts[3]);
-                            const g = parseInt(parts[4]);
-                            const b = parseInt(parts[5]);
-                            
-                            if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
-                                vertex.red = Math.max(0, Math.min(255, r));
-                                vertex.green = Math.max(0, Math.min(255, g));
-                                vertex.blue = Math.max(0, Math.min(255, b));
-                                hasColors = true;
-                            }
-                        }
-                        
-                        vertices.push(vertex);
-                    }
-                }
-            }
-            
-            if (vertices.length === 0) {
-                throw new Error('No valid vertices found in XYZ file');
-            }
-            
-            // Create PLY data structure
-            const plyData: PlyData = {
-                vertices,
-                faces: [],
-                format: 'ascii',
-                version: '1.0',
-                comments: [`Converted from XYZ file: ${message.fileName}`],
-                vertexCount: vertices.length,
-                faceCount: 0,
-                hasColors,
-                hasNormals: false,
-                fileName: message.fileName.replace(/\.xyz$/i, '_pointcloud.ply'),
-                fileIndex: this.plyFiles.length
-            };
-            
-            // Add to visualization
-            if (message.isAddFile) {
-                this.addNewFiles([plyData]);
-            } else {
-                await this.displayFiles([plyData]);
-            }
-            
-            this.showStatus(`XYZ file loaded successfully! ${vertices.length.toLocaleString()} points${hasColors ? ' with colors' : ''}`);
-            
-        } catch (error) {
-            console.error('Error handling XYZ data:', error);
-            this.showError(`Failed to process XYZ file: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        return this.messageHandler.handleXyzData(message);
     }
 
     private async handleCameraParams(message: any): Promise<void> {
-        try {
-            const requestId = message.requestId;
-            if (!requestId || !this.pendingDepthFiles.has(requestId)) {
-                throw new Error('No Deptn data available for processing');
-            }
-
-            console.log('Processing Depth with camera params:', message);
-            
-            const cameraParams: CameraParams = {
-                cameraModel: message.cameraModel,
-                fx: message.fx,
-                fy: message.fy,
-                cx: message.cx, // Will be calculated from image dimensions if not provided
-                cy: message.cy, // Will be calculated from image dimensions if not provided
-                depthType: message.depthType || 'euclidean', // Default to euclidean for backward compatibility
-                baseline: message.baseline,
-                convention: message.convention || 'opengl' // Default to OpenGL convention
-            };
-
-            // Save camera parameters for future use
-            this.saveCameraParams(cameraParams);
-            console.log('✅ Camera parameters saved for future Depth files');
-            
-            // Process the depth file (could be TIF or PFM)
-            await this.processDepthWithParams(requestId, cameraParams);
-            
-        } catch (error) {
-            console.error('Error processing Depth with camera params:', error);
-            this.showError(`Depth conversion failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        return this.messageHandler.handleCameraParams(message);
     }
 
     private loadSavedCameraParams(): CameraParams | null {
@@ -5214,326 +4811,23 @@ class PointCloudVisualizer {
     }
 
     private async handlePcdData(message: any): Promise<void> {
-        try {
-            console.log(`Load: recv PCD ${message.fileName}`);
-            this.showStatus(`PCD: processing ${message.fileName}`);
-            
-            const pcdData = message.data;
-            console.log(`PCD: ${pcdData.vertexCount} points, format=${pcdData.format}, colors=${pcdData.hasColors}, normals=${pcdData.hasNormals}`);
-            
-            // Convert PCD data to PLY format for rendering
-            const plyData: PlyData = {
-                vertices: pcdData.vertices,
-                faces: [], // PCD files are point clouds, no faces
-                format: pcdData.format === 'binary' ? 'binary_little_endian' : 'ascii',
-                version: '1.0',
-                comments: [
-                    `Converted from PCD: ${message.fileName}`,
-                    `Original format: ${pcdData.format}`,
-                    `Width: ${pcdData.width}, Height: ${pcdData.height}`,
-                    `Fields: ${pcdData.fields?.join(', ') || 'unknown'}`,
-                    ...pcdData.comments
-                ],
-                vertexCount: pcdData.vertexCount,
-                faceCount: 0,
-                hasColors: pcdData.hasColors,
-                hasNormals: pcdData.hasNormals,
-                fileName: message.fileName
-            };
-
-            if (message.isAddFile) {
-                this.addNewFiles([plyData]);
-            } else {
-                await this.displayFiles([plyData]);
-            }
-
-            // Create normals visualizer if PCD has normals
-            if (plyData.hasNormals) {
-                const normalsVisualizer = this.createNormalsVisualizer(plyData);
-                
-                // Set initial visibility based on stored state (default true)
-                const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
-                const initialVisible = this.normalsVisible[fileIndex] !== false;
-                normalsVisualizer.visible = initialVisible;
-                
-                this.scene.add(normalsVisualizer);
-                
-                // Ensure the array has the correct size and place the visualizer at the right index
-                while (this.normalsVisualizers.length <= fileIndex) {
-                    this.normalsVisualizers.push(null);
-                }
-                this.normalsVisualizers[fileIndex] = normalsVisualizer;
-            }
-            
-            this.showStatus(`PCD: loaded ${pcdData.vertexCount} points from ${message.fileName}`);
-            
-        } catch (error) {
-            console.error('Error handling PCD data:', error);
-            this.showError(`PCD processing failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        return this.messageHandler.handlePcdDataWithNormals(message);
     }
 
     private async handlePtsData(message: any): Promise<void> {
-        try {
-            console.log(`Load: recv PTS ${message.fileName}`);
-            this.showStatus(`PTS: processing ${message.fileName}`);
-            
-            const ptsData = message.data;
-            console.log(`PTS: ${ptsData.vertexCount} points, format=${ptsData.detectedFormat}, colors=${ptsData.hasColors}, normals=${ptsData.hasNormals}, intensity=${ptsData.hasIntensity}`);
-            
-            // Convert PTS data to PLY format for rendering
-            const plyData: PlyData = {
-                vertices: ptsData.vertices,
-                faces: [], // PTS files are point clouds, no faces
-                format: 'ascii',
-                version: '1.0',
-                comments: [
-                    `Converted from PTS: ${message.fileName}`,
-                    `Detected format: ${ptsData.detectedFormat}`,
-                    ...ptsData.comments
-                ],
-                vertexCount: ptsData.vertexCount,
-                faceCount: 0,
-                hasColors: ptsData.hasColors,
-                hasNormals: ptsData.hasNormals,
-                fileName: message.fileName
-            };
-
-            if (message.isAddFile) {
-                this.addNewFiles([plyData]);
-            } else {
-                await this.displayFiles([plyData]);
-            }
-
-            // Create normals visualizer if PTS has normals
-            if (plyData.hasNormals) {
-                const normalsVisualizer = this.createNormalsVisualizer(plyData);
-                
-                // Set initial visibility based on stored state (default true)
-                const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
-                const initialVisible = this.normalsVisible[fileIndex] !== false;
-                normalsVisualizer.visible = initialVisible;
-                
-                this.scene.add(normalsVisualizer);
-                
-                // Ensure the array has the correct size and place the visualizer at the right index
-                while (this.normalsVisualizers.length <= fileIndex) {
-                    this.normalsVisualizers.push(null);
-                }
-                this.normalsVisualizers[fileIndex] = normalsVisualizer;
-            }
-            
-            this.showStatus(`PTS: loaded ${ptsData.vertexCount} points from ${message.fileName}`);
-            
-        } catch (error) {
-            console.error('Error handling PTS data:', error);
-            this.showError(`PTS processing failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        return this.messageHandler.handlePtsData(message);
     }
 
     private async handleOffData(message: any): Promise<void> {
-        try {
-            console.log(`Load: recv OFF ${message.fileName}`);
-            this.showStatus(`OFF: processing ${message.fileName}`);
-            
-            const offData = message.data;
-            console.log(`OFF: ${offData.vertexCount} vertices, ${offData.faceCount} faces, variant=${offData.offVariant}, colors=${offData.hasColors}, normals=${offData.hasNormals}`);
-            
-            // Convert OFF data to PLY format for rendering
-            const plyData: PlyData = {
-                vertices: offData.vertices,
-                faces: offData.faces,
-                format: 'ascii',
-                version: '1.0',
-                comments: [
-                    `Converted from OFF: ${message.fileName}`,
-                    `OFF variant: ${offData.offVariant}`,
-                    ...offData.comments
-                ],
-                vertexCount: offData.vertexCount,
-                faceCount: offData.faceCount,
-                hasColors: offData.hasColors,
-                hasNormals: offData.hasNormals,
-                fileName: message.fileName
-            };
-
-            if (message.isAddFile) {
-                this.addNewFiles([plyData]);
-            } else {
-                await this.displayFiles([plyData]);
-            }
-
-            // Create normals visualizer if OFF has normals (for both meshes and point clouds)
-            if (plyData.hasNormals) {
-                const normalsVisualizer = this.createNormalsVisualizer(plyData);
-                
-                // Set initial visibility based on stored state (default true)
-                const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
-                const initialVisible = this.normalsVisible[fileIndex] !== false;
-                normalsVisualizer.visible = initialVisible;
-                
-                this.scene.add(normalsVisualizer);
-                
-                // Ensure the array has the correct size and place the visualizer at the right index
-                while (this.normalsVisualizers.length <= fileIndex) {
-                    this.normalsVisualizers.push(null);
-                }
-                this.normalsVisualizers[fileIndex] = normalsVisualizer;
-            }
-            
-            const meshType = offData.faceCount > 0 ? 'mesh' : 'point cloud';
-            this.showStatus(`OFF: loaded ${offData.vertexCount} vertices, ${offData.faceCount} faces as ${meshType} from ${message.fileName}`);
-            
-        } catch (error) {
-            console.error('Error handling OFF data:', error);
-            this.showError(`OFF processing failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        return this.messageHandler.handleOffData(message);
     }
 
     private async handleGltfData(message: any): Promise<void> {
-        try {
-            console.log(`Load: recv GLTF/GLB ${message.fileName}`);
-            this.showStatus(`GLTF: processing ${message.fileName}`);
-            
-            const gltfData = message.data;
-            console.log(`GLTF: ${gltfData.vertexCount} vertices, ${gltfData.faceCount} faces, ${gltfData.meshCount} meshes, ${gltfData.materialCount} materials, colors=${gltfData.hasColors}, normals=${gltfData.hasNormals}`);
-            
-            // Convert GLTF data to PLY format for rendering
-            const plyData: PlyData = {
-                vertices: gltfData.vertices,
-                faces: gltfData.faces,
-                format: 'ascii',
-                version: '1.0',
-                comments: [
-                    `Converted from GLTF/GLB: ${message.fileName}`,
-                    `Format: ${gltfData.format}`,
-                    `Meshes: ${gltfData.meshCount}, Materials: ${gltfData.materialCount}`,
-                    ...gltfData.comments
-                ],
-                vertexCount: gltfData.vertexCount,
-                faceCount: gltfData.faceCount,
-                hasColors: gltfData.hasColors,
-                hasNormals: gltfData.hasNormals,
-                fileName: message.fileName
-            };
-
-            if (message.isAddFile) {
-                this.addNewFiles([plyData]);
-            } else {
-                await this.displayFiles([plyData]);
-            }
-            
-            const meshType = gltfData.faceCount > 0 ? 'mesh' : 'point cloud';
-            this.showStatus(`GLTF: loaded ${gltfData.vertexCount} vertices, ${gltfData.faceCount} faces as ${meshType} from ${message.fileName}`);
-            
-        } catch (error) {
-            console.error('Error handling GLTF data:', error);
-            this.showError(`GLTF processing failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        return this.messageHandler.handleGltfData(message);
     }
 
     private async handleXyzVariantData(message: any): Promise<void> {
-        try {
-            console.log(`Load: recv XYZ variant (${message.variant}) ${message.fileName}`);
-            this.showStatus(`XYZ: processing ${message.fileName} (${message.variant})`);
-            
-            // Parse XYZ variant data
-            const plyData = this.parseXyzVariantData(message.data, message.variant, message.fileName);
-
-            if (message.isAddFile) {
-                this.addNewFiles([plyData]);
-            } else {
-                await this.displayFiles([plyData]);
-            }
-
-            if (plyData.hasNormals) {
-                const normalsVisualizer = this.createNormalsVisualizer(plyData);
-                
-                // Set initial visibility based on stored state (default true)
-                const fileIndex = plyData.fileIndex || (this.plyFiles.length - 1);
-                const initialVisible = this.normalsVisible[fileIndex] !== false;
-                normalsVisualizer.visible = initialVisible;
-                
-                this.scene.add(normalsVisualizer);
-                
-                // Ensure the array has the correct size and place the visualizer at the right index
-                while (this.normalsVisualizers.length <= fileIndex) {
-                    this.normalsVisualizers.push(null);
-                }
-                this.normalsVisualizers[fileIndex] = normalsVisualizer;
-            }
-            
-            this.showStatus(`${message.variant.toUpperCase()}: loaded ${plyData.vertexCount} points from ${message.fileName}`);
-            
-        } catch (error) {
-            console.error('Error handling XYZ variant data:', error);
-            this.showError(`${message.variant.toUpperCase()} processing failed: ${error instanceof Error ? error.message : String(error)}`);
-        }
-    }
-
-    private parseXyzVariantData(data: ArrayBuffer, variant: string, fileName: string): PlyData {
-        const decoder = new TextDecoder('utf-8');
-        const text = decoder.decode(data);
-        const lines = text.split('\n').filter(line => line.trim() !== '');
-        
-        const vertices: PlyVertex[] = [];
-        let hasColors = false;
-        let hasNormals = false;
-        
-        if (variant === 'xyzn') {
-            hasNormals = true;
-        } else if (variant === 'xyzrgb') {
-            hasColors = true;
-        }
-        
-        for (const line of lines) {
-            const parts = line.trim().split(/\s+/);
-            if (parts.length < 3) continue;
-            
-            const vertex: PlyVertex = {
-                x: parseFloat(parts[0]),
-                y: parseFloat(parts[1]),
-                z: parseFloat(parts[2])
-            };
-            
-            if (variant === 'xyzn' && parts.length >= 6) {
-                vertex.nx = parseFloat(parts[3]);
-                vertex.ny = parseFloat(parts[4]);
-                vertex.nz = parseFloat(parts[5]);
-            } else if (variant === 'xyzrgb' && parts.length >= 6) {
-                const r = parseFloat(parts[3]);
-                const g = parseFloat(parts[4]);
-                const b = parseFloat(parts[5]);
-                
-                if (r <= 1.0 && g <= 1.0 && b <= 1.0) {
-                    vertex.red = Math.round(r * 255);
-                    vertex.green = Math.round(g * 255);
-                    vertex.blue = Math.round(b * 255);
-                } else {
-                    vertex.red = Math.round(Math.min(255, Math.max(0, r)));
-                    vertex.green = Math.round(Math.min(255, Math.max(0, g)));
-                    vertex.blue = Math.round(Math.min(255, Math.max(0, b)));
-                }
-            }
-            
-            vertices.push(vertex);
-        }
-        
-        return {
-            vertices,
-            faces: [],
-            format: 'ascii',
-            version: '1.0',
-            comments: [
-                `Converted from ${variant.toUpperCase()}: ${fileName}`,
-                `Format variant: ${variant}`
-            ],
-            vertexCount: vertices.length,
-            faceCount: 0,
-            hasColors,
-            hasNormals,
-            fileName: fileName
-        };
+        return this.messageHandler.handleXyzVariantData(message);
     }
 
     private createNormalsVisualizer(data: PlyData): THREE.LineSegments {
@@ -5750,7 +5044,7 @@ class PointCloudVisualizer {
             depthData.colorImageName = message.fileName;
 
             // Reprocess depth image with color data
-            const result = await this.processDepthToPointCloud(depthData.originalData, depthData.fileName, depthData.cameraParams);
+            const result = await this.depthUtils.processDepthToPointCloud(depthData.originalData, depthData.fileName, depthData.cameraParams);
             await this.applyColorToDepthResult(result, imageData, depthData);
 
             // Update the PLY data
@@ -6561,7 +5855,7 @@ class PointCloudVisualizer {
             this.showStatus(`Reprocessing ${fileType} with new settings...`);
 
             // Process the depth data with new parameters using the new system
-            const result = await this.processDepthToPointCloud(depthData.originalData, depthData.fileName, newCameraParams);
+            const result = await this.depthUtils.processDepthToPointCloud(depthData.originalData, depthData.fileName, newCameraParams);
             
             // Update the stored camera parameters with the processed values (cx/cy might have been updated)
             depthData.cameraParams = newCameraParams;
@@ -7151,7 +6445,7 @@ class PointCloudVisualizer {
             delete depthData.colorImageName;
 
             // Reprocess depth image without color data (will use default grayscale colors)
-            const result = await this.processDepthToPointCloud(depthData.originalData, depthData.fileName, depthData.cameraParams);
+            const result = await this.depthUtils.processDepthToPointCloud(depthData.originalData, depthData.fileName, depthData.cameraParams);
 
             // Update the PLY data
             const plyData = this.plyFiles[fileIndex];
