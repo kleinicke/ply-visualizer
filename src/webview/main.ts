@@ -10,6 +10,11 @@ import {
 } from './interfaces';
 import { CameraModel } from './depth/types';
 import { CalibTxtParser } from './depth/CalibTxtParser';
+import { YamlCalibrationParser } from './depth/YamlCalibrationParser';
+import { ColmapParser } from './depth/ColmapParser';
+import { ZedParser } from './depth/ZedParser';
+import { RealSenseParser } from './depth/RealSenseParser';
+import { TumParser } from './depth/TumParser';
 import { CustomArcballControls, TurntableControls } from './controls';
 
 declare const acquireVsCodeApi: () => any;
@@ -6759,26 +6764,10 @@ class PointCloudVisualizer {
             const text = await file.text();
             let calibrationData: any;
 
-            if (file.name.toLowerCase().endsWith('.json')) {
-                // JSON format
-                calibrationData = JSON.parse(text);
-            } else if (file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().includes('calib')) {
-                // calib.txt format
-                const calibTxtData = CalibTxtParser.parse(text);
-                CalibTxtParser.validate(calibTxtData);
-                
-                // Convert to compatible format
-                calibrationData = CalibTxtParser.toCameraFormat(calibTxtData);
-                
-                // Store the original calib.txt data for disparity conversion
-                calibrationData._calibTxtData = calibTxtData;
-                
-                console.log('✅ Loaded calib.txt with cameras:', Object.keys(calibrationData.cameras));
-                console.log('📏 Baseline:', calibTxtData.baseline, 'mm');
-                console.log('🔍 Image size:', `${calibTxtData.width}x${calibTxtData.height}`);
-            } else {
-                alert('Supported calibration file formats: JSON (.json) and stereo calibration (.txt, calib.txt).');
-                return;
+            // Parse calibration file based on format
+            calibrationData = this.parseCalibrationFile(text, file.name);
+            if (!calibrationData) {
+                return; // Error already shown by parseCalibrationFile
             }
 
             // Display calibration file info and populate camera selection
@@ -6865,30 +6854,117 @@ class PointCloudVisualizer {
         console.log(`📷 Applied calibration for camera "${selectedCamera}" to file ${fileIndex}`);
     }
 
+    /**
+     * Parse calibration file content based on format
+     */
+    private parseCalibrationFile(content: string, fileName: string): any {
+        const lowerFileName = fileName.toLowerCase();
+        
+        try {
+            // Try different parsers based on file extension and content
+            
+            // JSON formats (PLY Visualizer, RealSense)
+            if (lowerFileName.endsWith('.json')) {
+                // Check if it's RealSense format
+                if (RealSenseParser.isRealSenseFormat(content)) {
+                    console.log('🔍 Detected RealSense JSON format');
+                    const result = RealSenseParser.parse(content);
+                    return RealSenseParser.toCameraFormat(result);
+                } else {
+                    // Standard PLY Visualizer JSON format
+                    console.log('🔍 Detected PLY Visualizer JSON format');
+                    return JSON.parse(content);
+                }
+            }
+            
+            // YAML formats (OpenCV, ROS, Stereo, Kalibr)
+            else if (lowerFileName.endsWith('.yml') || lowerFileName.endsWith('.yaml')) {
+                console.log('🔍 Detected YAML format');
+                const result = YamlCalibrationParser.parse(content, fileName);
+                return YamlCalibrationParser.toCameraFormat(result);
+            }
+            
+            // XML formats (OpenCV)
+            else if (lowerFileName.endsWith('.xml')) {
+                alert('XML format parsing is not yet implemented. Please use YAML format for OpenCV calibrations.');
+                return null;
+            }
+            
+            // Conf formats (ZED)
+            else if (lowerFileName.endsWith('.conf')) {
+                console.log('🔍 Detected ZED .conf format');
+                const result = ZedParser.parse(content);
+                return ZedParser.toCameraFormat(result);
+            }
+            
+            // Text formats (TXT)
+            else if (lowerFileName.endsWith('.txt')) {
+                // Try different TXT parsers
+                
+                // Check for Middlebury calib.txt format
+                if (lowerFileName.includes('calib') || content.includes('cam0=') || content.includes('baseline=')) {
+                    console.log('🔍 Detected Middlebury calib.txt format');
+                    const calibTxtData = CalibTxtParser.parse(content);
+                    CalibTxtParser.validate(calibTxtData);
+                    
+                    const calibrationData = CalibTxtParser.toCameraFormat(calibTxtData);
+                    (calibrationData as any)._calibTxtData = calibTxtData;
+                    
+                    console.log('✅ Loaded calib.txt with cameras:', Object.keys(calibrationData.cameras));
+                    console.log('📏 Baseline:', calibTxtData.baseline, 'mm');
+                    console.log('🔍 Image size:', `${calibTxtData.width}x${calibTxtData.height}`);
+                    
+                    return calibrationData;
+                }
+                
+                // Check for COLMAP format
+                else if (ColmapParser.validate(content)) {
+                    console.log('🔍 Detected COLMAP cameras.txt format');
+                    const result = ColmapParser.parse(content);
+                    return ColmapParser.toCameraFormat(result);
+                }
+                
+                // Check for TUM format
+                else if (TumParser.isTumFormat(content, fileName)) {
+                    console.log('🔍 Detected TUM camera.txt format');
+                    const result = TumParser.parse(content, fileName);
+                    return TumParser.toCameraFormat(result);
+                }
+                
+                else {
+                    alert('Unknown TXT calibration format. Supported TXT formats: Middlebury calib.txt, COLMAP cameras.txt, TUM camera.txt');
+                    return null;
+                }
+            }
+            
+            // INI formats
+            else if (lowerFileName.endsWith('.ini')) {
+                alert('INI format parsing is not yet implemented.');
+                return null;
+            }
+            
+            else {
+                alert(`Unsupported calibration file format: ${fileName}\n\nSupported formats:\n• JSON (.json) - PLY Visualizer, RealSense\n• YAML (.yml, .yaml) - OpenCV, ROS, Stereo, Kalibr\n• TXT (.txt) - Middlebury calib.txt, COLMAP cameras.txt, TUM camera.txt\n• CONF (.conf) - ZED calibration`);
+                return null;
+            }
+            
+        } catch (error) {
+            console.error('Error parsing calibration file:', error);
+            alert(`Failed to parse calibration file: ${error instanceof Error ? error.message : String(error)}`);
+            return null;
+        }
+    }
+
     private handleCalibrationFileSelected(message: any): void {
         try {
             const fileIndex = message.fileIndex;
             const fileName = message.fileName;
             const content = message.content;
             
-            // Parse the calibration file content based on file type
-            let calibrationData: any;
-            
-            if (fileName.toLowerCase().endsWith('.json')) {
-                // JSON format
-                calibrationData = JSON.parse(content);
-            } else if (fileName.toLowerCase().endsWith('.txt') || fileName.toLowerCase().includes('calib')) {
-                // calib.txt format
-                const calibTxtData = CalibTxtParser.parse(content);
-                calibrationData = CalibTxtParser.toCameraFormat(calibTxtData);
-                calibrationData._calibTxtData = calibTxtData; // Store original data for disparity offset
-                
-                console.log('✅ Loaded calib.txt with cameras:', Object.keys(calibrationData.cameras));
-                console.log('📏 Baseline:', calibTxtData.baseline, 'mm');
-                console.log('🔍 Image size:', `${calibTxtData.width}x${calibTxtData.height}`);
-            } else {
-                alert('Supported calibration file formats: JSON (.json) and stereo calibration (.txt, calib.txt).');
-                return;
+            // Parse calibration file using the universal parser
+            const calibrationData = this.parseCalibrationFile(content, fileName);
+            if (!calibrationData) {
+                return; // Error already shown by parseCalibrationFile
             }
 
             // Display calibration file info and populate camera selection
@@ -6930,15 +7006,20 @@ class PointCloudVisualizer {
         if (cameraData.baseline !== undefined && baselineInput) {
             baselineInput.value = String(cameraData.baseline);
             
-            // If we have a baseline, automatically set depth type to disparity
-            if (depthTypeSelect) {
+            // Smart auto-detection: If baseline is present and depth type is still at default (euclidean),
+            // auto-switch to disparity mode since baseline is typically used for disparity data.
+            // But only if the user hasn't explicitly changed the depth type from default.
+            if (depthTypeSelect && depthTypeSelect.value === 'euclidean') {
+                console.log(`📐 Baseline detected (${cameraData.baseline}mm), auto-switching depth type to 'disparity'`);
                 depthTypeSelect.value = 'disparity';
                 
-                // Show baseline and disparity offset groups
+                // Show baseline and disparity offset groups since we switched to disparity
                 const baselineGroup = document.getElementById(`baseline-group-${fileIndex}`);
                 const disparityOffsetGroup = document.getElementById(`disparity-offset-group-${fileIndex}`);
                 if (baselineGroup) baselineGroup.style.display = '';
                 if (disparityOffsetGroup) disparityOffsetGroup.style.display = '';
+            } else if (depthTypeSelect) {
+                console.log(`📐 Baseline detected but depth type already set to '${depthTypeSelect.value}', keeping user choice`);
             }
         }
 
@@ -6970,8 +7051,36 @@ class PointCloudVisualizer {
                 const option = Array.from(cameraModelSelect.options).find(opt => opt.value === modelName);
                 if (option) {
                     cameraModelSelect.value = modelName;
+                    // CRITICAL FIX: Trigger change event to show/hide distortion parameter fields
+                    cameraModelSelect.dispatchEvent(new Event('change'));
                 }
             }
+        }
+        
+        // Populate distortion coefficients if available
+        if (cameraData.k1 !== undefined) {
+            const k1Input = document.getElementById(`k1-${fileIndex}`) as HTMLInputElement;
+            if (k1Input) k1Input.value = String(cameraData.k1);
+        }
+        if (cameraData.k2 !== undefined) {
+            const k2Input = document.getElementById(`k2-${fileIndex}`) as HTMLInputElement;
+            if (k2Input) k2Input.value = String(cameraData.k2);
+        }
+        if (cameraData.k3 !== undefined) {
+            const k3Input = document.getElementById(`k3-${fileIndex}`) as HTMLInputElement;
+            if (k3Input) k3Input.value = String(cameraData.k3);
+        }
+        if (cameraData.k4 !== undefined) {
+            const k4Input = document.getElementById(`k4-${fileIndex}`) as HTMLInputElement;
+            if (k4Input) k4Input.value = String(cameraData.k4);
+        }
+        if (cameraData.p1 !== undefined) {
+            const p1Input = document.getElementById(`p1-${fileIndex}`) as HTMLInputElement;
+            if (p1Input) p1Input.value = String(cameraData.p1);
+        }
+        if (cameraData.p2 !== undefined) {
+            const p2Input = document.getElementById(`p2-${fileIndex}`) as HTMLInputElement;
+            if (p2Input) p2Input.value = String(cameraData.p2);
         }
 
         // Trigger update of default button state

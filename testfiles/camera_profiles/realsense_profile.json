@@ -1,0 +1,36 @@
+{
+  "device": {
+    "serial_number": "123456789",
+    "firmware_version": "5.12.7.100"
+  },
+  "color_stream": {
+    "width": 640,
+    "height": 480,
+    "fps": 30,
+    "format": "RGB8",
+    "intrinsics": {
+      "fx": 615.123,
+      "fy": 615.456,
+      "ppx": 320.789,
+      "ppy": 240.123,
+      "coeffs": [0.1, -0.2, 0.001, 0.002, 0.05]
+    }
+  },
+  "depth_stream": {
+    "width": 640,
+    "height": 480,
+    "fps": 30,
+    "format": "Z16",
+    "intrinsics": {
+      "fx": 385.123,
+      "fy": 385.456,
+      "ppx": 320.789,
+      "ppy": 240.123,
+      "coeffs": [0.0, 0.0, 0.0, 0.0, 0.0]
+    }
+  },
+  "extrinsics": {
+    "rotation": [0.999, 0.001, -0.02, -0.001, 1.0, 0.001, 0.02, -0.001, 0.999],
+    "translation": [-0.05, 0.0, 0.0]
+  }
+}

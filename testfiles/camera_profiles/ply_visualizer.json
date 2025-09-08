@@ -1,0 +1,31 @@
+{
+  "cameras": {
+    "camera_0": {
+      "fx": 525.0,
+      "fy": 525.0,
+      "cx": 319.5,
+      "cy": 239.5,
+      "camera_model": "pinhole-ideal",
+      "k1": 0.1,
+      "k2": -0.05,
+      "p1": 0.001,
+      "p2": 0.002
+    },
+    "left_camera": {
+      "fx": 3997.684,
+      "fy": 3997.684,
+      "cx": 1176.728,
+      "cy": 1011.728,
+      "camera_model": "pinhole-opencv",
+      "baseline": 193.001
+    },
+    "right_camera": {
+      "fx": 3997.684,
+      "fy": 3997.684,
+      "cx": 1307.839,
+      "cy": 1011.728,
+      "camera_model": "pinhole-opencv",
+      "baseline": 193.001
+    }
+  }
+}
