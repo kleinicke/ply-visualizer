@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PLY Visualizer (Web)</title>
+    <link rel="icon" href="../icon.png">
+    <link href="../media/style.css" rel="stylesheet">
+    <style>
+        body { overflow: hidden; }
+    </style>
+    <!-- Optional: keep CSP minimal for local use; tighten later if desired -->
+</head>
+<body>
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>Loading PLY file...</p>
+    </div>
+
+    <div id="error" class="error hidden">
+        <div class="error-header">
+            <h3>Error</h3>
+            <button id="error-close" class="error-close-btn" title="Close error message">✕</button>
+        </div>
+        <p id="error-message"></p>
+    </div>
+
+    <div id="main-ui-panel" class="main-ui-panel">
+        <div class="tab-navigation">
+            <button class="tab-button active" data-tab="files">Files</button>
+            <button class="tab-button" data-tab="camera">Camera</button>
+            <button class="tab-button" data-tab="controls">Controls</button>
+            <button class="tab-button" data-tab="info">Info</button>
+        </div>
+
+        <div class="tab-content">
+            <div id="files-tab" class="tab-panel active">
+                <div class="panel-section">
+                    <h4>File Management</h4>
+                    <div class="file-controls">
+                        <button id="add-file" class="primary-button">+ Add Point Cloud</button>
+                    </div>
+                    <div id="file-list"></div>
+                </div>
+            </div>
+
+            <div id="camera-tab" class="tab-panel">
+                <div class="panel-section">
+                    <h4>Camera Settings</h4>
+                    <div id="camera-controls-panel"></div>
+                </div>
+            </div>
+
+            <div id="controls-tab" class="tab-panel">
+                <div class="panel-section">
+                    <h4>View Controls</h4>
+                    <div class="control-buttons">
+                        <button id="fit-camera" class="control-button">Fit to View <span class="button-shortcut">F</span></button>
+                        <button id="reset-camera" class="control-button">Reset Camera <span class="button-shortcut">R</span></button>
+                        <button id="toggle-axes" class="control-button">Toggle Axes <span class="button-shortcut">A</span></button>
+                        <button id="toggle-cameras" class="control-button active">Show Cameras</button>
+                        <button id="set-rotation-origin" class="control-button">Set Rotation Center to Origin <span class="button-shortcut">W</span></button>
+                    </div>
+                </div>
+                <div class="panel-section">
+                    <h4>Camera Conventions</h4>
+                    <div class="control-buttons camera-conventions">
+                        <button id="opencv-convention" class="control-button">OpenCV (Y down) <span class="button-shortcut">C</span></button>
+                        <button id="opengl-convention" class="control-button">OpenGL (Y up) <span class="button-shortcut">B</span></button>
+                    </div>
+                </div>
+                <div class="panel-section">
+                    <h4>Color & Lighting</h4>
+                    <div class="control-buttons">
+                        <button id="toggle-gamma-correction" class="control-button">Toggle Gamma Correction <span class="button-shortcut">G</span></button>
+                    </div>
+                    <p class="setting-description">Gamma affects original vertex colors. Unlit PLY ignores scene lights. Choose Normal or Flat lighting for scene illumination.</p>
+                    <div class="control-buttons">
+                        <button id="toggle-unlit-ply" class="control-button">Use Unlit PLY (Uniform)</button>
+                        <button id="use-normal-lighting" class="control-button">Use Normal Lighting</button>
+                        <button id="use-flat-lighting" class="control-button">Use Flat Lighting</button>
+                    </div>
+                    <p class="setting-description">Shading options are only effecting PLY files with faces.</p>
+                </div>
+            </div>
+
+            <div id="info-tab" class="tab-panel">
+                <div class="panel-section">
+                    <h4>Statistics</h4>
+                    <div id="file-stats"></div>
+                </div>
+                <div class="panel-section">
+                    <h4>Keyboard Shortcuts</h4>
+                    <div class="shortcuts-list">
+                        <div class="shortcut-item"><span class="shortcut-key">Double-click</span><span class="shortcut-desc">Set rotation center</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">Shift + Click</span><span class="shortcut-desc">Solo point cloud</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">Mouse wheel</span><span class="shortcut-desc">Zoom</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">F</span><span class="shortcut-desc">Fit to view</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">R</span><span class="shortcut-desc">Reset camera</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">A</span><span class="shortcut-desc">Toggle axes</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">C</span><span class="shortcut-desc">OpenCV convention (Y down)</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">B</span><span class="shortcut-desc">OpenGL convention (Y up)</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">T/O/I/K</span><span class="shortcut-desc">Control modes</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">W</span><span class="shortcut-desc">Set rotation center to origin</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">G</span><span class="shortcut-desc">Toggle gamma correction</span></div>
+                        <div class="shortcut-item"><span class="shortcut-key">H</span><span class="shortcut-desc">Show this help</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="sequence-overlay" class="sequence-overlay hidden">
+        <div class="seq-row">
+            <input id="seq-wildcard" type="text" readonly placeholder="Wildcard" class="seq-wildcard" />
+            <button id="seq-play" class="seq-btn">▶</button>
+            <button id="seq-pause" class="seq-btn">⏸</button>
+            <button id="seq-stop" class="seq-btn">⏹</button>
+            <button id="seq-prev" class="seq-btn">◀</button>
+            <button id="seq-next" class="seq-btn">▶</button>
+            <input id="seq-slider" type="range" min="0" max="0" value="0" class="seq-slider" />
+            <span id="seq-label" class="seq-label">0 / 0</span>
+        </div>
+    </div>
+
+    <div id="viewer-container">
+        <canvas id="three-canvas"></canvas>
+    </div>
+
+    <script>
+        // CommonJS loader via <script> injection (works with file:// URLs)
+        (function () {
+            function loadCJS(src) {
+                return new Promise(function(resolve, reject) {
+                    var prevExports = window.exports;
+                    var prevModule = window.module;
+                    window.exports = {};
+                    window.module = { exports: window.exports };
+                    var s = document.createElement('script');
+                    s.src = src;
+                    s.onload = function() {
+                        var out = (window.module && window.module.exports) ? window.module.exports : window.exports;
+                        window.exports = prevExports;
+                        window.module = prevModule;
+                        resolve(out);
+                    };
+                    s.onerror = function(e) {
+                        window.exports = prevExports;
+                        window.module = prevModule;
+                        reject(e);
+                    };
+                    document.head.appendChild(s);
+                });
+            }
+
+            window.__parserLoader = async function ensureParsers(ext) {
+                ext = (ext || '').toLowerCase();
+                if (ext === 'ply' && !window.PlyParser) {
+                    if (typeof PlyParser !== 'undefined') { window.PlyParser = PlyParser; } else { var mod1 = await loadCJS('../out/plyParser.js'); window.PlyParser = window.PlyParser || mod1.PlyParser || (typeof PlyParser !== 'undefined' ? PlyParser : undefined); }
+                }
+                if (ext === 'obj' && !window.ObjParser) {
+                    if (typeof ObjParser !== 'undefined') { window.ObjParser = ObjParser; } else { var mod2 = await loadCJS('../out/objParser.js'); window.ObjParser = window.ObjParser || mod2.ObjParser || (typeof ObjParser !== 'undefined' ? ObjParser : undefined); }
+                    if (!window.MtlParser) { if (typeof MtlParser !== 'undefined') { window.MtlParser = MtlParser; } else { var mod2b = await loadCJS('../out/mtlParser.js'); window.MtlParser = window.MtlParser || mod2b.MtlParser || (typeof MtlParser !== 'undefined' ? MtlParser : undefined); } }
+                }
+                if (ext === 'stl' && !window.StlParser) {
+                    if (typeof StlParser !== 'undefined') { window.StlParser = StlParser; } else { var mod3 = await loadCJS('../out/stlParser.js'); window.StlParser = window.StlParser || mod3.StlParser || (typeof StlParser !== 'undefined' ? StlParser : undefined); }
+                }
+                if (ext === 'pcd' && !window.PcdParser) {
+                    if (typeof PcdParser !== 'undefined') { window.PcdParser = PcdParser; } else { var mod4 = await loadCJS('../out/pcdParser.js'); window.PcdParser = window.PcdParser || mod4.PcdParser || (typeof PcdParser !== 'undefined' ? PcdParser : undefined); }
+                }
+                if (ext === 'pts' && !window.PtsParser) {
+                    if (typeof PtsParser !== 'undefined') { window.PtsParser = PtsParser; } else { var mod5 = await loadCJS('../out/ptsParser.js'); window.PtsParser = window.PtsParser || mod5.PtsParser || (typeof PtsParser !== 'undefined' ? PtsParser : undefined); }
+                }
+                if (ext === 'off' && !window.OffParser) {
+                    if (typeof OffParser !== 'undefined') { window.OffParser = OffParser; } else { var mod6 = await loadCJS('../out/offParser.js'); window.OffParser = window.OffParser || mod6.OffParser || (typeof OffParser !== 'undefined' ? OffParser : undefined); }
+                }
+                if ((ext === 'gltf' || ext === 'glb') && !window.GltfParser) {
+                    if (typeof GltfParser !== 'undefined') { window.GltfParser = GltfParser; } else { var mod7 = await loadCJS('../out/gltfParser.js'); window.GltfParser = window.GltfParser || mod7.GltfParser || (typeof GltfParser !== 'undefined' ? GltfParser : undefined); }
+                }
+                if (ext === 'mtl' && !window.MtlParser) {
+                    if (typeof MtlParser !== 'undefined') { window.MtlParser = MtlParser; } else { var mod8 = await loadCJS('../out/mtlParser.js'); window.MtlParser = window.MtlParser || mod8.MtlParser || (typeof MtlParser !== 'undefined' ? MtlParser : undefined); }
+                }
+            };
+
+            // Preload common parsers at startup to avoid on-demand loader issues under file://
+            (function preloadParsers() {
+                var scripts = [
+                    '../out/plyParser.js',
+                    '../out/objParser.js',
+                    '../out/mtlParser.js',
+                    '../out/stlParser.js',
+                    '../out/pcdParser.js',
+                    '../out/ptsParser.js',
+                    '../out/offParser.js',
+                    '../out/gltfParser.js'
+                ];
+                // Load sequentially, ignore errors to keep page working
+                (async function() {
+                    for (var i = 0; i < scripts.length; i++) {
+                        try {
+                            var mod = await loadCJS(scripts[i]);
+                            if (mod && mod.PlyParser) window.PlyParser = window.PlyParser || mod.PlyParser;
+                            if (mod && mod.ObjParser) window.ObjParser = window.ObjParser || mod.ObjParser;
+                            if (mod && mod.MtlParser) window.MtlParser = window.MtlParser || mod.MtlParser;
+                            if (mod && mod.StlParser) window.StlParser = window.StlParser || mod.StlParser;
+                            if (mod && mod.PcdParser) window.PcdParser = window.PcdParser || mod.PcdParser;
+                            if (mod && mod.PtsParser) window.PtsParser = window.PtsParser || mod.PtsParser;
+                            if (mod && mod.OffParser) window.OffParser = window.OffParser || mod.OffParser;
+                            if (mod && mod.GltfParser) window.GltfParser = window.GltfParser || mod.GltfParser;
+                        } catch (e) { /* ignore */ }
+                    }
+                })();
+            })();
+        })();
+    </script>
+
+    <script>
+        // VS Code API polyfill to drive the existing webview script
+        (function () {
+            const stateKey = 'plyviz:web:state';
+            function getState() { try { return JSON.parse(localStorage.getItem(stateKey) || 'null'); } catch { return null; } }
+            function setState(v) { try { localStorage.setItem(stateKey, JSON.stringify(v)); } catch {} }
+            function respond(msg) { window.postMessage(msg, '*'); }
+
+            function pickFiles(accept, multiple) {
+                return new Promise((resolve) => {
+                    try { console.log('[WEB] pickFiles: create input'); } catch {}
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.multiple = !!multiple;
+                    if (accept) input.accept = accept;
+                    input.style.position = 'fixed';
+                    input.style.left = '-9999px';
+                    input.style.top = '0';
+                    document.body.appendChild(input);
+                    let resolved = false;
+                    const done = (files) => {
+                        if (resolved) return;
+                        resolved = true;
+                        var arr = files ? Array.from(files) : [];
+                        try {
+                            console.log('[WEB] pickFiles: files selected?', !!(arr && arr.length), 'count', arr && arr.length, arr && arr.map(f=>f.name));
+                        } catch {}
+                        input.remove();
+                        resolve(arr);
+                    };
+                    input.addEventListener('change', () => done(input.files));
+                    input.addEventListener('input', () => done(input.files));
+                    // Fallback: if browser suppresses events, resolve after a delay with whatever is present
+                    setTimeout(() => { if (!resolved) { done(input.files); } }, 10000);
+                    input.click();
+                });
+            }
+            function toU8(ab) { return new Uint8Array(ab); }
+
+            async function addFile() {
+                try { console.log('[WEB] addFile: open picker'); } catch {}
+                const files = await pickFiles('.ply,.xyz,.xyzn,.xyzrgb,.obj,.stl,.pcd,.pts,.off,.gltf,.glb,.tif,.tiff,.pfm,.npy,.npz,.png,.exr,.json,.mtl', true);
+                if (!files || !files.length) { try { console.log('[WEB] addFile: no files selected'); } catch {}; return; }
+                try { console.log('[WEB] addFile: total files', files.length); } catch {}
+
+                for (const f of Array.isArray(files) ? files : Array.from(files)) {
+                    const name = f.name;
+                    const ext = (name.split('.').pop() || '').toLowerCase();
+                    const buf = await f.arrayBuffer();
+                    try { console.log('[WEB] addFile: selected', name, 'ext', ext, 'bytes', buf.byteLength); } catch {}
+                    try {
+                        switch (ext) {
+                            case 'ply': {
+                                await window.__parserLoader('ply');
+                                if (!window.PlyParser) { throw new Error('PlyParser missing'); }
+                                const parsed = await new window.PlyParser().parse(toU8(buf));
+                                try { console.log('[WEB] addFile: posting plyData', parsed && parsed.vertexCount); } catch {}
+                                respond({ type: 'plyData', fileName: name, data: parsed, isAddFile: true });
+                                break;
+                            }
+                            case 'xyz': {
+                                try { console.log('[WEB] addFile: posting xyzData'); } catch {}
+                                respond({ type: 'xyzData', fileName: name, data: buf, isAddFile: true });
+                                break;
+                            }
+                            case 'xyzn':
+                            case 'xyzrgb': {
+                                try { console.log('[WEB] addFile: posting xyzVariantData', ext); } catch {}
+                                respond({ type: 'xyzVariantData', fileName: name, variant: ext, data: buf, isAddFile: true });
+                                break;
+                            }
+                            case 'obj': {
+                                await window.__parserLoader('obj');
+                                if (!window.ObjParser) { throw new Error('ObjParser missing'); }
+                                const parsed = await new window.ObjParser().parse(toU8(buf));
+                                try { console.log('[WEB] addFile: posting objData'); } catch {}
+                                respond({ type: 'objData', fileName: name, data: parsed, isAddFile: true });
+                                break;
+                            }
+                            case 'mtl': {
+                                await window.__parserLoader('mtl');
+                                if (!window.MtlParser) { throw new Error('MtlParser missing'); }
+                                const parsed = await new window.MtlParser().parse(toU8(buf));
+                                try { console.log('[WEB] addFile: posting mtlData'); } catch {}
+                                respond({ type: 'mtlData', fileName: name, data: parsed });
+                                break;
+                            }
+                            case 'stl': {
+                                await window.__parserLoader('stl');
+                                if (!window.StlParser) { throw new Error('StlParser missing'); }
+                                const parsed = await new window.StlParser().parse(toU8(buf));
+                                try { console.log('[WEB] addFile: posting stlData'); } catch {}
+                                respond({ type: 'stlData', fileName: name, data: parsed, isAddFile: true });
+                                break;
+                            }
+                            case 'pcd': {
+                                await window.__parserLoader('pcd');
+                                if (!window.PcdParser) { throw new Error('PcdParser missing'); }
+                                const parsed = await new window.PcdParser().parse(toU8(buf));
+                                try { console.log('[WEB] addFile: posting pcdData'); } catch {}
+                                respond({ type: 'pcdData', fileName: name, data: parsed, isAddFile: true });
+                                break;
+                            }
+                            case 'pts': {
+                                await window.__parserLoader('pts');
+                                if (!window.PtsParser) { throw new Error('PtsParser missing'); }
+                                const parsed = await new window.PtsParser().parse(toU8(buf));
+                                try { console.log('[WEB] addFile: posting ptsData'); } catch {}
+                                respond({ type: 'ptsData', fileName: name, data: parsed, isAddFile: true });
+                                break;
+                            }
+                            case 'off': {
+                                await window.__parserLoader('off');
+                                if (!window.OffParser) { throw new Error('OffParser missing'); }
+                                const parsed = await new window.OffParser().parse(toU8(buf));
+                                try { console.log('[WEB] addFile: posting offData'); } catch {}
+                                respond({ type: 'offData', fileName: name, data: parsed, isAddFile: true });
+                                break;
+                            }
+                            case 'gltf':
+                            case 'glb': {
+                                await window.__parserLoader(ext);
+                                if (!window.GltfParser) { throw new Error('GltfParser missing'); }
+                                const parsed = await new window.GltfParser().parse(toU8(buf));
+                                try { console.log('[WEB] addFile: posting gltfData'); } catch {}
+                                respond({ type: 'gltfData', fileName: name, data: parsed, isAddFile: true });
+                                break;
+                            }
+                            case 'tif':
+                            case 'tiff':
+                            case 'pfm':
+                            case 'npy':
+                            case 'npz':
+                            case 'png':
+                            case 'exr': {
+                                try { console.log('[WEB] addFile: posting depthData'); } catch {}
+                                respond({ type: 'depthData', fileName: name, data: buf, isAddFile: true });
+                                break;
+                            }
+                            case 'json': {
+                                const text = await f.text();
+                                let data;
+                                try { data = JSON.parse(text); }
+                                catch {
+                                    const sanitized = text.replace(/\bNaN\b/g, 'null').replace(/\bInfinity\b/g, 'null').replace(/\b-Infinity\b/g, 'null');
+                                    data = JSON.parse(sanitized);
+                                }
+                                try { console.log('[WEB] addFile: posting poseData'); } catch {}
+                                respond({ type: 'poseData', fileName: name, data, isAddFile: true });
+                                break;
+                            }
+                            default:
+                                try { console.warn('[WEB] addFile: unsupported file', name); } catch {}
+                        }
+                    } catch (e) {
+                        try { console.error('[WEB] addFile error for', name, e); } catch {}
+                        respond({ type: 'loadingError', error: (e && e.message) || String(e) });
+                    }
+                }
+            }
+
+            async function loadMtl(fileIndex) {
+                const files = await pickFiles('.mtl', false);
+                const f = files && files[0]; if (!f) return;
+                await window.__parserLoader('mtl');
+                const buf = await f.arrayBuffer();
+                const data = await new window.MtlParser().parse(new Uint8Array(buf));
+                respond({ type: 'mtlData', fileName: f.name, data, fileIndex });
+            }
+
+            async function selectColorImage(fileIndex) {
+                const files = await pickFiles('image/*', false);
+                const f = files && files[0]; if (!f) return;
+                const buf = await f.arrayBuffer();
+                respond({ type: 'colorImageData', fileIndex, fileName: f.name, mimeType: f.type || 'image/png', data: buf });
+            }
+
+            async function savePly(fileName, data) {
+                try {
+                    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = fileName || 'export.ply.json';
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    respond({ type: 'savePlyFileResult', success: true, filePath: fileName });
+                } catch (e) {
+                    respond({ type: 'savePlyFileResult', success: false, error: (e && e.message) || String(e) });
+                }
+            }
+
+            window.acquireVsCodeApi = () => ({
+                getState, setState,
+                postMessage: async (msg) => {
+                    try { console.log('[WEB] postMessage recv', msg && msg.type); } catch {}
+                    switch (msg && msg.type) {
+                        case 'addFile': return addFile();
+                        case 'removeFile': return respond({ type: 'fileRemoved', fileIndex: msg.fileIndex });
+                        case 'loadMtl': return loadMtl(msg.fileIndex);
+                        case 'selectColorImage': return selectColorImage(msg.fileIndex);
+                        case 'savePly': return savePly(msg.fileName, msg.data);
+                        case 'requestDefaultDepthSettings':
+                            return respond({
+                                type: 'defaultDepthSettings',
+                                settings: {
+                                    fx: 1000, fy: undefined, cameraModel: 'pinhole-ideal',
+                                    depthType: 'euclidean', baseline: undefined, convention: 'opengl',
+                                    pngScaleFactor: 1000, depthScale: 1.0, depthBias: 0.0
+                                }
+                            });
+                    }
+                }
+            });
+        })();
+    </script>
+
+    <script src="../media/geotiff.min.js"></script>
+    <script src="../out/webview/main.js"></script>
+</body>
+</html>
+

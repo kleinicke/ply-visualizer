@@ -140,6 +140,11 @@
         "command": "plyViewer.convertExrToPointCloud",
         "title": "Convert EXR Depth to Point Cloud",
         "category": "PLY Visualizer"
+      },
+      {
+        "command": "plyViewer.resetSettings",
+        "title": "Reset All Settings",
+        "category": "PLY Visualizer"
       }
     ],
     "menus": {
