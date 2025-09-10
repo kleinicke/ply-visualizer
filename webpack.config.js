@@ -40,7 +40,13 @@ module.exports = [
         entry: './src/webview/main.ts',
         output: {
             path: path.resolve(__dirname, 'out', 'webview'),
-            filename: 'main.js'
+            filename: 'main.js',
+            library: {
+                type: 'module'
+            }
+        },
+        experiments: {
+            outputModule: true
         },
         devtool: 'nosources-source-map',
         resolve: {

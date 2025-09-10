@@ -2178,15 +2178,34 @@ class PointCloudVisualizer {
         const conventionSelect = document.getElementById(`convention-${fileIndex}`) as HTMLSelectElement;
         const pngScaleFactorInput = document.getElementById(`png-scale-factor-${fileIndex}`) as HTMLInputElement;
 
+        // Get distortion coefficient inputs
+        const k1Input = document.getElementById(`k1-${fileIndex}`) as HTMLInputElement;
+        const k2Input = document.getElementById(`k2-${fileIndex}`) as HTMLInputElement;
+        const k3Input = document.getElementById(`k3-${fileIndex}`) as HTMLInputElement;
+        const k4Input = document.getElementById(`k4-${fileIndex}`) as HTMLInputElement;
+        const k5Input = document.getElementById(`k5-${fileIndex}`) as HTMLInputElement;
+        const p1Input = document.getElementById(`p1-${fileIndex}`) as HTMLInputElement;
+        const p2Input = document.getElementById(`p2-${fileIndex}`) as HTMLInputElement;
+
         const cx = cxInput?.value && cxInput.value.trim() !== '' ? parseFloat(cxInput.value) : undefined; // Will be auto-calculated if not provided
         const cy = cyInput?.value && cyInput.value.trim() !== '' ? parseFloat(cyInput.value) : undefined; // Will be auto-calculated if not provided 
         const fx = parseFloat(fxInput?.value || '1000');
         const fyValue = fyInput?.value?.trim();
         const fy = fyValue && fyValue !== '' ? parseFloat(fyValue) : undefined;
         
+        // Parse distortion coefficients (only if they have values)
+        const k1 = k1Input?.value && k1Input.value.trim() !== '' ? parseFloat(k1Input.value) : undefined;
+        const k2 = k2Input?.value && k2Input.value.trim() !== '' ? parseFloat(k2Input.value) : undefined;
+        const k3 = k3Input?.value && k3Input.value.trim() !== '' ? parseFloat(k3Input.value) : undefined;
+        const k4 = k4Input?.value && k4Input.value.trim() !== '' ? parseFloat(k4Input.value) : undefined;
+        const k5 = k5Input?.value && k5Input.value.trim() !== '' ? parseFloat(k5Input.value) : undefined;
+        const p1 = p1Input?.value && p1Input.value.trim() !== '' ? parseFloat(p1Input.value) : undefined;
+        const p2 = p2Input?.value && p2Input.value.trim() !== '' ? parseFloat(p2Input.value) : undefined;
+        
         // Log the focal length and principle point values read from form
         console.log(`📐 Reading focal lengths from form for file ${fileIndex}: fx = ${fx}, fy = ${fy || 'same as fx'}`);
         console.log(`📐 Reading principle point from form for file ${fileIndex}: cx = ${cx}, cy = ${cy}`);
+        console.log(`📐 Reading distortion coefficients from form for file ${fileIndex}: k1=${k1}, k2=${k2}, k3=${k3}, k4=${k4}, k5=${k5}, p1=${p1}, p2=${p2}`);
         
         return {
             cameraModel: (cameraModelSelect?.value as any) || 'pinhole-ideal',
@@ -2200,7 +2219,14 @@ class PointCloudVisualizer {
             depthScale: depthScaleInput?.value ? parseFloat(depthScaleInput.value) : undefined,
             depthBias: depthBiasInput?.value ? parseFloat(depthBiasInput.value) : undefined,
             convention: (conventionSelect?.value as 'opengl' | 'opencv') || 'opengl',
-            pngScaleFactor: pngScaleFactorInput ? parseFloat(pngScaleFactorInput.value || '1000') || 1000 : undefined
+            pngScaleFactor: pngScaleFactorInput ? parseFloat(pngScaleFactorInput.value || '1000') || 1000 : undefined,
+            k1: k1,
+            k2: k2,
+            k3: k3,
+            k4: k4,
+            k5: k5,
+            p1: p1,
+            p2: p2
         };
     }
 
@@ -7149,14 +7175,14 @@ class PointCloudVisualizer {
                 cameraModel: this.defaultDepthSettings.cameraModel,
                 fx: this.defaultDepthSettings.fx,
                 fy: this.defaultDepthSettings.fy,
-                cx: 0, // Temporary placeholder, will be updated after reading image dimensions
-                cy: 0, // Temporary placeholder, will be updated after reading image dimensions  
+                cx: undefined, // Will be auto-calculated from image dimensions
+                cy: undefined, // Will be auto-calculated from image dimensions
                 depthType: this.defaultDepthSettings.depthType,
                 baseline: this.defaultDepthSettings.baseline,
                 convention: this.defaultDepthSettings.convention || 'opengl',
                 pngScaleFactor: isPng ? (this.defaultDepthSettings.pngScaleFactor || 1000) : undefined
             };
-            console.log('✅ Using saved default depth settings:', defaultSettings);
+            console.log('✅ Using saved default depth settings for initial conversion:', defaultSettings);
             const fileTypeLabel = isPng ? 'PNG' : isPfm ? 'PFM' : isNpy ? 'NPY' : 'TIF';
             const scaleInfo = isPng ? `, scale factor ${defaultSettings.pngScaleFactor}` : '';
             const fyInfo = defaultSettings.fy ? ` / fy=${defaultSettings.fy}` : '';
