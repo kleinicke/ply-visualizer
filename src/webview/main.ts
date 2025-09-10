@@ -35,6 +35,10 @@ class PointCloudVisualizer {
     // Camera control state
     private controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare' = 'trackball';
     
+    // On-demand rendering state
+    private needsRender: boolean = false;
+    private animationId: number | null = null;
+    
     // Unified file management
     private plyFiles: PlyData[] = [];
     private meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
@@ -409,12 +413,15 @@ class PointCloudVisualizer {
 
         // Window resize
         window.addEventListener('resize', this.onWindowResize.bind(this));
+        this.renderer.domElement.addEventListener('pointermove', () => this.requestRender());
+        this.renderer.domElement.addEventListener('pointerdown', () => this.requestRender());
+        this.renderer.domElement.addEventListener('wheel', () => this.requestRender());
 
         // Double-click to change rotation center (like CloudCompare)
         this.renderer.domElement.addEventListener('dblclick', this.onDoubleClick.bind(this));
 
         // Start render loop
-        this.animate();
+        this.startRenderLoop();
     }
 
     private initializeControls(): void {
@@ -539,10 +546,12 @@ class PointCloudVisualizer {
         if (this.controlType === 'trackball' || this.controlType === 'inverse-trackball' || this.controlType === 'arcball' || this.controlType === 'cloudcompare') {
             (this.controls as any).addEventListener('start', showAxes);
             (this.controls as any).addEventListener('end', hideAxesAfterDelay);
+            (this.controls as any).addEventListener('change', () => this.requestRender());
         } else {
             const orbitControls = this.controls as OrbitControls;
             orbitControls.addEventListener('start', showAxes);
             orbitControls.addEventListener('end', hideAxesAfterDelay);
+            orbitControls.addEventListener('change', () => this.requestRender());
         }
         
         // debug: axes visibility init
@@ -780,6 +789,7 @@ class PointCloudVisualizer {
         this.updateGammaButtonState();
         // Rebuild color attributes to reflect new conversion setting
         this.rebuildAllColorAttributesForCurrentGammaSetting();
+        this.requestRender();
     }
 
     private updateGammaButtonState(): void {
@@ -886,7 +896,7 @@ class PointCloudVisualizer {
     }
 
     private animate(): void {
-        requestAnimationFrame(this.animate.bind(this));
+        this.animationId = requestAnimationFrame(this.animate.bind(this));
         
         // Update controls
         this.controls.update();
@@ -913,9 +923,32 @@ class PointCloudVisualizer {
             // Update last known position and rotation
             this.lastCameraPosition.copy(this.camera.position);
             this.lastCameraQuaternion.copy(this.camera.quaternion);
+            
+            this.needsRender = true;
         }
         
-        this.renderer.render(this.scene, this.camera);
+        // Always render when needed (this covers camera damping/momentum)
+        if (this.needsRender) {
+            this.renderer.render(this.scene, this.camera);
+            this.needsRender = false;
+        }
+    }
+
+    private requestRender(): void {
+        this.needsRender = true;
+    }
+
+    private startRenderLoop(): void {
+        if (this.animationId === null) {
+            this.animate();
+        }
+    }
+
+    private stopRenderLoop(): void {
+        if (this.animationId !== null) {
+            cancelAnimationFrame(this.animationId);
+            this.animationId = null;
+        }
     }
 
     private checkMeshVisibility(): void {
@@ -1214,6 +1247,7 @@ class PointCloudVisualizer {
                 if (fovValue) {
                     fovValue.textContent = newFov.toFixed(1) + '°';
                 }
+                this.requestRender();
             });
         }
 
@@ -2108,6 +2142,8 @@ class PointCloudVisualizer {
         obj.visible = true;
         // Hide axes when new object is added to rule out looking-only-at-axes confusion
         try { (this as any).axesGroup.visible = true; } catch {}
+        
+        this.requestRender();
         this.sequenceIndex = index;
         // Make points clearly visible in sequence mode
         this.ensureSequenceVisibility(obj);
@@ -2286,6 +2322,8 @@ class PointCloudVisualizer {
 
         // When permanently visible, keep axes shown regardless of idle timeout in setupAxesVisibility
         // When turned off, allow setupAxesVisibility handlers to hide them after interactions
+        
+        this.requestRender();
     }
 
     private toggleNormalsVisibility(): void {
@@ -2294,6 +2332,7 @@ class PointCloudVisualizer {
                 normals.visible = !normals.visible;
             }
         });
+        this.requestRender();
     }
     
     private togglePointsVisibility(fileIndex: number): void {
@@ -3732,6 +3771,7 @@ class PointCloudVisualizer {
                 sizeSlider.addEventListener('input', (e) => {
                     const newSize = parseFloat((e.target as HTMLInputElement).value);
                     this.updatePointSize(i, newSize);
+                    this.requestRender();
                     
                     // Update the displayed value
                     const sizeValue = document.querySelector(`#size-${i} + .size-value`) as HTMLElement;
@@ -4731,6 +4771,7 @@ class PointCloudVisualizer {
                     (wireframeMesh as any).isLineSegments = true;
                     this.scene.add(wireframeMesh);
                     this.meshes.push(wireframeMesh);
+                    this.requestRender();
                 } else if (objRenderType === 'mesh' && data.faceCount > 0) {
                     // Create multi-material mesh(es)
                     const objData = (data as any).objData;
@@ -4888,12 +4929,14 @@ class PointCloudVisualizer {
                         (mesh as any).isObjMesh = true;
                         this.scene.add(mesh);
                         this.meshes.push(mesh);
+                        this.requestRender();
                     }
                 } else {
                     // Fallback to points - use optimized creation
                     const mesh = this.createOptimizedPointCloud(geometry, material as THREE.PointsMaterial);
                     this.scene.add(mesh);
                     this.meshes.push(mesh);
+                    this.requestRender();
                 }
             } else {
                 // Handle legacy OBJ wireframe format and regular PLY files
@@ -4929,6 +4972,7 @@ class PointCloudVisualizer {
                     (wireframeMesh as any).isLineSegments = true;
                     this.scene.add(wireframeMesh);
                     this.meshes.push(wireframeMesh);
+                    this.requestRender();
                 } else {
                     // Create regular mesh for PLY files
                     const shouldShowAsPoints = data.faceCount === 0;
@@ -4938,6 +4982,7 @@ class PointCloudVisualizer {
                     
                     this.scene.add(mesh);
                     this.meshes.push(mesh);
+                    this.requestRender();
                 }
             }
             // If sequence mode is active, only the current frame stays visible to avoid overloading the scene
