@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
-import { ObjParser } from '../../objParser';
+import { ObjParser } from '../../webview/parsers/objParser';
 
 suite('OBJ Parser Test Suite', () => {
     let parser: ObjParser;

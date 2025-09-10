@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { PcdParser } from '../../pcdParser';
+import { PcdParser } from '../../webview/parsers/pcdParser';
 
 suite('PCD Parser Test Suite', () => {
     let parser: PcdParser;

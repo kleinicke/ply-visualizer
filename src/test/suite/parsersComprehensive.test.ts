@@ -1,7 +1,7 @@
 import * as assert from 'assert';
-import { GltfParser } from '../../gltfParser';
-import { OffParser } from '../../offParser';
-import { PtsParser } from '../../ptsParser';
+import { GltfParser } from '../../webview/parsers/gltfParser';
+import { OffParser } from '../../webview/parsers/offParser';
+import { PtsParser } from '../../webview/parsers/ptsParser';
 
 suite('Comprehensive Parser Test Suite', () => {
     

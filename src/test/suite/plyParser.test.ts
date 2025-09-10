@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
-import { PlyParser } from '../../plyParser';
+import { PlyParser } from '../../webview/parsers/plyParser';
 
 suite('PLY Parser Test Suite', () => {
     let parser: PlyParser;

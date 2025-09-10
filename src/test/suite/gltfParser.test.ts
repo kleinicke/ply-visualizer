@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { GltfParser } from '../../gltfParser';
+import { GltfParser } from '../../webview/parsers/gltfParser';
 
 suite('GLTF Parser Test Suite', () => {
     let parser: GltfParser;

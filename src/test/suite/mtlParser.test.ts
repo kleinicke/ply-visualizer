@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
-import { MtlParser } from '../../mtlParser';
+import { MtlParser } from '../../webview/parsers/mtlParser';
 
 suite('MTL Parser Test Suite', () => {
     let parser: MtlParser;

@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { PlyParser } from '../../plyParser';
+import { PlyParser } from '../../webview/parsers/plyParser';
 
 suite('PLY Parser Advanced Test Suite', () => {
     let parser: PlyParser;

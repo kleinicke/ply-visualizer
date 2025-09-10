@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { OffParser } from '../../offParser';
+import { OffParser } from '../../webview/parsers/offParser';
 
 suite('OFF Parser Test Suite', () => {
     let parser: OffParser;

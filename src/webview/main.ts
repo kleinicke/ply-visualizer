@@ -3834,14 +3834,16 @@ class PointCloudVisualizer {
                 // Update button state when any depth setting changes
                 const fxInput = document.getElementById(`fx-${i}`) as HTMLInputElement;
                 const fyInput = document.getElementById(`fy-${i}`) as HTMLInputElement;
-                if (fxInput) {
+                if (fxInput && !fxInput.hasAttribute('data-listener-attached')) {
+                    fxInput.setAttribute('data-listener-attached', 'true');
                     fxInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
                     // Prevent scroll wheel from changing value but allow page scrolling
                     fxInput.addEventListener('wheel', (e) => {
                         (e.target as HTMLInputElement).blur();
                     });
                 }
-                if (fyInput) {
+                if (fyInput && !fyInput.hasAttribute('data-listener-attached')) {
+                    fyInput.setAttribute('data-listener-attached', 'true');
                     fyInput.addEventListener('input', () => this.updateSingleDefaultButtonState(i));
                     // Prevent scroll wheel from changing value but allow page scrolling
                     fyInput.addEventListener('wheel', (e) => {
@@ -4054,8 +4056,9 @@ class PointCloudVisualizer {
         }
         
         // Add remove button listeners
-        const removeButtons = fileListDiv.querySelectorAll('.remove-file');
+        const removeButtons = fileListDiv.querySelectorAll('.remove-file:not([data-listener-attached])');
         removeButtons.forEach(button => {
+            button.setAttribute('data-listener-attached', 'true');
             button.addEventListener('click', (e) => {
                 const fileIndex = parseInt((e.target as HTMLElement).getAttribute('data-file-index') || '0');
                 this.requestRemoveFile(fileIndex);
@@ -4063,8 +4066,9 @@ class PointCloudVisualizer {
         });
 
         // Add MTL button listeners for OBJ files
-        const mtlButtons = fileListDiv.querySelectorAll('.load-mtl-btn');
+        const mtlButtons = fileListDiv.querySelectorAll('.load-mtl-btn:not([data-listener-attached])');
         mtlButtons.forEach(button => {
+            button.setAttribute('data-listener-attached', 'true');
             button.addEventListener('click', (e) => {
                 const fileIndex = parseInt((e.target as HTMLElement).getAttribute('data-file-index') || '0');
                 this.requestLoadMtl(fileIndex);
@@ -4072,21 +4076,25 @@ class PointCloudVisualizer {
         });
         
         // Add universal render mode button listeners (solid, wireframe, points, normals)
-        const renderModeButtons = fileListDiv.querySelectorAll('.render-mode-btn');
-        console.log(`Found ${renderModeButtons.length} render mode buttons to attach listeners to`);
-        renderModeButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                const target = e.target as HTMLElement;
-                const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
-                const mode = target.getAttribute('data-mode') || 'solid';
-                console.log(`🔘 Render button clicked: fileIndex=${fileIndex}, mode=${mode}`);
-                this.toggleUniversalRenderMode(fileIndex, mode);
+        const renderModeButtons = fileListDiv.querySelectorAll('.render-mode-btn:not([data-listener-attached])');
+        if (renderModeButtons.length > 0) {
+            console.log(`Found ${renderModeButtons.length} render mode buttons to attach listeners to`);
+            renderModeButtons.forEach(button => {
+                button.setAttribute('data-listener-attached', 'true');
+                button.addEventListener('click', (e) => {
+                    const target = e.target as HTMLElement;
+                    const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
+                    const mode = target.getAttribute('data-mode') || 'solid';
+                    console.log(`🔘 Render button clicked: fileIndex=${fileIndex}, mode=${mode}`);
+                    this.toggleUniversalRenderMode(fileIndex, mode);
+                });
             });
-        });
+        }
         
         // Add points/normals toggle button listeners
-        const pointsToggleButtons = fileListDiv.querySelectorAll('.points-toggle-btn');
+        const pointsToggleButtons = fileListDiv.querySelectorAll('.points-toggle-btn:not([data-listener-attached])');
         pointsToggleButtons.forEach(button => {
+            button.setAttribute('data-listener-attached', 'true');
             button.addEventListener('click', (e) => {
                 const target = e.target as HTMLElement;
                 const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
@@ -4095,8 +4103,9 @@ class PointCloudVisualizer {
             });
         });
         
-        const normalsToggleButtons = fileListDiv.querySelectorAll('.normals-toggle-btn');
+        const normalsToggleButtons = fileListDiv.querySelectorAll('.normals-toggle-btn:not([data-listener-attached])');
         normalsToggleButtons.forEach(button => {
+            button.setAttribute('data-listener-attached', 'true');
             button.addEventListener('click', (e) => {
                 const target = e.target as HTMLElement;
                 

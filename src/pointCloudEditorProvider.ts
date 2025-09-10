@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { PlyParser } from './plyParser';
-import { ObjParser } from './objParser';
-import { MtlParser } from './mtlParser';
-import { StlParser } from './stlParser';
-import { PcdParser } from './pcdParser';
-import { PtsParser } from './ptsParser';
-import { OffParser } from './offParser';
-import { GltfParser } from './gltfParser';
+import { PlyParser } from './webview/parsers/plyParser';
+import { ObjParser } from './webview/parsers/objParser';
+import { MtlParser } from './webview/parsers/mtlParser';
+import { StlParser } from './webview/parsers/stlParser';
+import { PcdParser } from './webview/parsers/pcdParser';
+import { PtsParser } from './webview/parsers/ptsParser';
+import { OffParser } from './webview/parsers/offParser';
+import { GltfParser } from './webview/parsers/gltfParser';
 
 export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProvider {
     private static readonly viewType = 'plyViewer.plyEditor';

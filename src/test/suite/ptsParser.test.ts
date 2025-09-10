@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { PtsParser } from '../../ptsParser';
+import { PtsParser } from '../../webview/parsers/ptsParser';
 
 suite('PTS Parser Test Suite', () => {
     let parser: PtsParser;
