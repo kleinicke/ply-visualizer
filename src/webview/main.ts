@@ -297,7 +297,7 @@ class PointCloudVisualizer {
         // Update geometries if distance changed significantly
         const distanceThreshold = 2.0; // Only update if camera moved significantly
         if (Math.abs(avgDistance - this.lastCameraDistance) > distanceThreshold) {
-            console.log(`🔄 Adaptive decimation: distance=${avgDistance.toFixed(1)}`);
+            let decimationLog = `🔄 Adaptive decimation: distance=${avgDistance.toFixed(1)}`;
             
             for (let i = 0; i < this.meshes.length; i++) {
                 const mesh = this.meshes[i];
@@ -310,10 +310,12 @@ class PointCloudVisualizer {
                         mesh.geometry.dispose();
                         mesh.geometry = decimatedGeometry;
                         
-                        console.log(`📊 File ${i}: ${originalGeometry.getAttribute('position').count} → ${decimatedGeometry.getAttribute('position').count} points`);
+                        decimationLog += `\n📊 File ${i}: ${originalGeometry.getAttribute('position').count} → ${decimatedGeometry.getAttribute('position').count} points`;
                     }
                 }
             }
+            
+            console.log(decimationLog);
             
             this.lastCameraDistance = avgDistance;
         }
@@ -2177,7 +2179,7 @@ class PointCloudVisualizer {
         const depthBiasInput = document.getElementById(`depth-bias-${fileIndex}`) as HTMLInputElement;
         const conventionSelect = document.getElementById(`convention-${fileIndex}`) as HTMLSelectElement;
         const pngScaleFactorInput = document.getElementById(`png-scale-factor-${fileIndex}`) as HTMLInputElement;
-
+        
         // Get distortion coefficient inputs
         const k1Input = document.getElementById(`k1-${fileIndex}`) as HTMLInputElement;
         const k2Input = document.getElementById(`k2-${fileIndex}`) as HTMLInputElement;
@@ -2203,9 +2205,10 @@ class PointCloudVisualizer {
         const p2 = p2Input?.value && p2Input.value.trim() !== '' ? parseFloat(p2Input.value) : undefined;
         
         // Log the focal length and principle point values read from form
-        console.log(`📐 Reading focal lengths from form for file ${fileIndex}: fx = ${fx}, fy = ${fy || 'same as fx'}`);
-        console.log(`📐 Reading principle point from form for file ${fileIndex}: cx = ${cx}, cy = ${cy}`);
-        console.log(`📐 Reading distortion coefficients from form for file ${fileIndex}: k1=${k1}, k2=${k2}, k3=${k3}, k4=${k4}, k5=${k5}, p1=${p1}, p2=${p2}`);
+        console.log(`📐 Reading camera parameters from form for file ${fileIndex}:
+   Focal lengths: fx = ${fx}, fy = ${fy || 'same as fx'}
+   Principle point: cx = ${cx}, cy = ${cy}
+   Distortion coefficients: k1=${k1}, k2=${k2}, k3=${k3}, k4=${k4}, k5=${k5}, p1=${p1}, p2=${p2}`);
         
         return {
             cameraModel: (cameraModelSelect?.value as any) || 'pinhole-ideal',
@@ -2446,16 +2449,17 @@ class PointCloudVisualizer {
 
     private showKeyboardShortcuts(): void {
         // debug
-        console.log('  X: Set X-up');
-        console.log('  Y: Set Y-up (default)');
-        console.log('  Z: Set Z-up (CAD style)');
-        console.log('  R: Reset camera and up vector');
-        console.log('  T: Switch to TrackballControls');
-        console.log('  O: Switch to OrbitControls');
-        console.log('  I: Switch to Inverse TrackballControls');
-        console.log('  C: Set OpenCV camera convention (Y-down)');
-        console.log('  B: Set OpenGL camera convention (Y-up)');
-        console.log('  W: Set rotation center to world origin (0,0,0)');
+        console.log(`Keyboard Shortcuts:
+  X: Set X-up
+  Y: Set Y-up (default)
+  Z: Set Z-up (CAD style)
+  R: Reset camera and up vector
+  T: Switch to TrackballControls
+  O: Switch to OrbitControls
+  I: Switch to Inverse TrackballControls
+  C: Set OpenCV camera convention (Y-down)
+  B: Set OpenGL camera convention (Y-up)
+  W: Set rotation center to world origin (0,0,0)`);
         
         // Create permanent shortcuts UI section
         this.createShortcutsUI();
@@ -5359,20 +5363,23 @@ class PointCloudVisualizer {
         const geometryTime = totalTime - startTime - conversionTime;
         
         const ts = new Date().toISOString();
-        console.log(`Load: complete ${completeLoadTime.toFixed(1)}ms, absolute ${absoluteCompleteTime.toFixed(1)}ms @ ${ts}`);
-        console.log(`📊 Breakdown: Extension ${extensionProcessingTime.toFixed(1)}ms + Conversion ${conversionTime.toFixed(1)}ms + Geometry ${geometryTime.toFixed(1)}ms`);
         
         // Calculate hidden time gaps
         const measuredTime = extensionProcessingTime + conversionTime + geometryTime;
         const hiddenTime = completeLoadTime - measuredTime;
-        if (hiddenTime > 10) {
-            console.log(`🔍 HIDDEN TIME: ${hiddenTime.toFixed(1)}ms (unmeasured overhead)`);
-        }
         
         // Performance summary
         const totalVertices = message.vertexCount;
         const verticesPerSecond = Math.round(totalVertices / (absoluteCompleteTime / 1000));
-        console.log(`🚀 PERFORMANCE: ${totalVertices.toLocaleString()} vertices in ${absoluteCompleteTime.toFixed(1)}ms (${verticesPerSecond.toLocaleString()} vertices/sec)`);
+        
+        const performanceLog = `Load: complete ${completeLoadTime.toFixed(1)}ms, absolute ${absoluteCompleteTime.toFixed(1)}ms @ ${ts}
+📊 Breakdown: Extension ${extensionProcessingTime.toFixed(1)}ms + Conversion ${conversionTime.toFixed(1)}ms + Geometry ${geometryTime.toFixed(1)}ms`;
+        
+        if (hiddenTime > 10) {
+            console.log(performanceLog + `\n🔍 HIDDEN TIME: ${hiddenTime.toFixed(1)}ms (unmeasured overhead)\n🚀 PERFORMANCE: ${totalVertices.toLocaleString()} vertices in ${absoluteCompleteTime.toFixed(1)}ms (${verticesPerSecond.toLocaleString()} vertices/sec)`);
+        } else {
+            console.log(performanceLog + `\n🚀 PERFORMANCE: ${totalVertices.toLocaleString()} vertices in ${absoluteCompleteTime.toFixed(1)}ms (${verticesPerSecond.toLocaleString()} vertices/sec)`);
+        }
     }
 
     private handleStartLargeFile(message: any): void {
@@ -5460,11 +5467,11 @@ class PointCloudVisualizer {
         const transferTime = fileState.lastChunkTime - fileState.firstChunkTime;
         const assemblyStartTime = performance.now();
 
-        console.log(`📊 Chunked loading timing for ${message.fileName}:`);
-        console.log(`  • Total transfer time: ${totalTransferTime.toFixed(2)}ms`);
-        console.log(`  • Time to first chunk: ${firstChunkDelay.toFixed(2)}ms`);
-        console.log(`  • Chunk transfer time: ${transferTime.toFixed(2)}ms`);
-        console.log(`  • Chunks: ${fileState.totalChunks} (${(transferTime / fileState.totalChunks).toFixed(2)}ms avg)`);
+        console.log(`📊 Chunked loading timing for ${message.fileName}:
+  • Total transfer time: ${totalTransferTime.toFixed(2)}ms
+  • Time to first chunk: ${firstChunkDelay.toFixed(2)}ms
+  • Chunk transfer time: ${transferTime.toFixed(2)}ms
+  • Chunks: ${fileState.totalChunks} (${(transferTime / fileState.totalChunks).toFixed(2)}ms avg)`);
 
         // Create complete PLY data object
         const plyData: PlyData = {
@@ -5482,7 +5489,6 @@ class PointCloudVisualizer {
         };
 
         const assemblyTime = performance.now() - assemblyStartTime;
-        console.log(`  • PLY assembly time: ${assemblyTime.toFixed(2)}ms`);
 
         // Process the completed file based on original message type
         const processStartTime = performance.now();
@@ -5496,8 +5502,9 @@ class PointCloudVisualizer {
         const processTime = performance.now() - processStartTime;
         
         const totalTime = performance.now() - fileState.startTime;
-        console.log(`  • File processing time: ${processTime.toFixed(2)}ms`);
-        console.log(`  • TOTAL TIME: ${totalTime.toFixed(2)}ms`);
+        console.log(`  • PLY assembly time: ${assemblyTime.toFixed(2)}ms
+  • File processing time: ${processTime.toFixed(2)}ms
+  • TOTAL TIME: ${totalTime.toFixed(2)}ms`);
 
         // Hide loading indicator
         document.getElementById('loading')?.classList.add('hidden');
@@ -5612,8 +5619,7 @@ class PointCloudVisualizer {
                     }
                     
                 } else {
-                    console.warn(`⚠️ Could not apply point size for file ${fileIndex}: unsupported mesh type`);
-                    console.log(`Mesh type: ${mesh?.constructor.name}, Material type: ${mesh?.material?.constructor.name}`);
+                    console.warn(`⚠️ Could not apply point size for file ${fileIndex}: unsupported mesh type\nMesh type: ${mesh?.constructor.name}, Material type: ${mesh?.material?.constructor.name}`);
                 }
             }
             
@@ -6849,8 +6855,7 @@ class PointCloudVisualizer {
                 const cameraData = calibrationData.cameras[firstCamera];
                 this.populateFormFromCalibration(cameraData, fileIndex);
                 
-                console.log(`📷 Loaded calibration file with ${cameraNames.length} cameras:`, cameraNames);
-                console.log(`✅ Automatically selected first camera: ${firstCamera}`);
+                console.log(`📷 Loaded calibration file with ${cameraNames.length} cameras: ${cameraNames.join(', ')}\n✅ Automatically selected first camera: ${firstCamera}`);
             } else {
                 console.warn('No cameras found in calibration file');
                 alert('No cameras found in the calibration file. Please check the file format.');
@@ -6936,9 +6941,7 @@ class PointCloudVisualizer {
                     const calibrationData = CalibTxtParser.toCameraFormat(calibTxtData);
                     (calibrationData as any)._calibTxtData = calibTxtData;
                     
-                    console.log('✅ Loaded calib.txt with cameras:', Object.keys(calibrationData.cameras));
-                    console.log('📏 Baseline:', calibTxtData.baseline, 'mm');
-                    console.log('🔍 Image size:', `${calibTxtData.width}x${calibTxtData.height}`);
+                    console.log(`✅ Loaded calib.txt with cameras: ${Object.keys(calibrationData.cameras).join(', ')}\n📏 Baseline: ${calibTxtData.baseline} mm\n🔍 Image size: ${calibTxtData.width}x${calibTxtData.height}`);
                     
                     return calibrationData;
                 }
@@ -7035,6 +7038,7 @@ class PointCloudVisualizer {
             // Smart auto-detection: If baseline is present and depth type is still at default (euclidean),
             // auto-switch to disparity mode since baseline is typically used for disparity data.
             // But only if the user hasn't explicitly changed the depth type from default.
+            // TODO: This is very handcrafted and should be more general in the future
             if (depthTypeSelect && depthTypeSelect.value === 'euclidean') {
                 console.log(`📐 Baseline detected (${cameraData.baseline}mm), auto-switching depth type to 'disparity'`);
                 depthTypeSelect.value = 'disparity';
@@ -7276,9 +7280,7 @@ class PointCloudVisualizer {
         };
         
         // Log depth image dimensions when storing
-        console.log(`📐 Storing depth data for file ${fileIndex} (${fileType}):`);
-        console.log(`   Dimensions: ${dimensions.width} × ${dimensions.height}`);
-        console.log(`   Computed principle point would be: cx = ${(dimensions.width-1)/2}, cy = ${(dimensions.height-1)/2}`);
+        console.log(`📐 Storing depth data for file ${fileIndex} (${fileType}):\n   Dimensions: ${dimensions.width} × ${dimensions.height}\n   Computed principle point would be: cx = ${(dimensions.width-1)/2}, cy = ${(dimensions.height-1)/2}`);
         
         this.fileDepthData.set(fileIndex, {
             originalData: depthFileData.data,
@@ -7300,10 +7302,7 @@ class PointCloudVisualizer {
         const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
         try {
             // DEBUG: Log what parameters we received
-            console.log(`🔬 PROCESS DEPTH DEBUG for ${fileName}:`);
-            console.log('  Received cameraParams:', cameraParams);
-            console.log('  depthType specifically:', cameraParams.depthType);
-            console.log('  baseline specifically:', cameraParams.baseline);
+            console.log(`🔬 PROCESS DEPTH DEBUG for ${fileName}:\n  Received cameraParams: ${JSON.stringify(cameraParams, null, 2)}\n  depthType specifically: ${cameraParams.depthType}\n  baseline specifically: ${cameraParams.baseline}`);
             
             registerDefaultReaders();
             
@@ -7343,11 +7342,7 @@ class PointCloudVisualizer {
             }
             
             // Log image dimensions and principle point information
-            console.log(`📐 Depth image loaded: ${fileName}`);
-            console.log(`   Image dimensions: ${image.width} × ${image.height} pixels`);
-            console.log(`   Auto-computed principle point: cx = ${computedCx}, cy = ${computedCy}`);
-            console.log(`   Using cx/cy values from camera parameters: cx = ${cameraParams.cx}, cy = ${cameraParams.cy}`);
-            console.log(`   🎯 Camera parameters are the source of truth for principle point`);
+            console.log(`📐 Depth image loaded: ${fileName}\n   Image dimensions: ${image.width} × ${image.height} pixels\n   Auto-computed principle point: cx = ${computedCx}, cy = ${computedCy}\n   Using cx/cy values from camera parameters: cx = ${cameraParams.cx}, cy = ${cameraParams.cy}\n   🎯 Camera parameters are the source of truth for principle point`);
             
             // Set up camera parameters (use values from camera parameters, which may have been updated)
             const fx = cameraParams.fx;
@@ -7357,8 +7352,7 @@ class PointCloudVisualizer {
 
             // Override depth kind based on UI selection
             const meta: any = { ...baseMeta };
-            console.log(`  📋 Original baseMeta.kind: ${baseMeta.kind}`);
-            console.log(`  ⚙️ Checking depthType: ${cameraParams.depthType}`);
+            console.log(`  📋 Original baseMeta.kind: ${baseMeta.kind}\n  ⚙️ Checking depthType: ${cameraParams.depthType}`);
             
             if (cameraParams.depthType === 'disparity') {
                 const fxOk = !!cameraParams.fx && cameraParams.fx > 0;
@@ -7393,11 +7387,12 @@ class PointCloudVisualizer {
                 depthBias: cameraParams.depthBias
             });
 
-            const result = projectToPointCloud(norm, {
+            // Prepare projection parameters
+            const projectionParams = {
                 kind: meta.kind,
                 fx, fy, cx, cy,
                 cameraModel: cameraParams.cameraModel,
-                convention: cameraParams.convention || 'opengl', // Use selected convention, default to OpenGL
+                convention: cameraParams.convention || 'opengl',
                 k1: cameraParams.k1 ? parseFloat(cameraParams.k1.toString()) : undefined,
                 k2: cameraParams.k2 ? parseFloat(cameraParams.k2.toString()) : undefined,
                 k3: cameraParams.k3 ? parseFloat(cameraParams.k3.toString()) : undefined,
@@ -7405,7 +7400,43 @@ class PointCloudVisualizer {
                 k5: cameraParams.k5 ? parseFloat(cameraParams.k5.toString()) : undefined,
                 p1: cameraParams.p1 ? parseFloat(cameraParams.p1.toString()) : undefined,
                 p2: cameraParams.p2 ? parseFloat(cameraParams.p2.toString()) : undefined
-            });
+            };
+
+            // 🚀 DETAILED LOGGING: All parameters used for point cloud computation
+            console.log(`🚀 DEPTH-TO-POINT-CLOUD CONVERSION
+📁 File: ${fileName}
+📏 Image Dimensions: ${norm.width}×${norm.height}
+🎯 Depth Type (kind): ${meta.kind}
+📷 Camera Model: ${projectionParams.cameraModel}
+🔧 Coordinate Convention: ${projectionParams.convention}
+🔍 Intrinsic Parameters:
+  - fx (focal length x): ${fx}
+  - fy (focal length y): ${fy}
+  - cx (principal point x): ${cx}
+  - cy (principal point y): ${cy}
+📐 Distortion Coefficients:
+  - k1 (radial): ${projectionParams.k1 ?? 'not set'}
+  - k2 (radial): ${projectionParams.k2 ?? 'not set'}
+  - k3 (radial): ${projectionParams.k3 ?? 'not set'}
+  - k4 (radial): ${projectionParams.k4 ?? 'not set'}
+  - k5 (radial): ${projectionParams.k5 ?? 'not set'}
+  - p1 (tangential): ${projectionParams.p1 ?? 'not set'}
+  - p2 (tangential): ${projectionParams.p2 ?? 'not set'}
+💾 Normalization Parameters:
+  - baseline: ${meta.baseline ?? 'not set'}
+  - depthScale: ${cameraParams.depthScale ?? 'not set'}
+  - depthBias: ${cameraParams.depthBias ?? 'not set'}`);
+
+            const result = projectToPointCloud(norm, projectionParams);
+            
+            // 🎉 CONVERSION RESULTS LOGGING
+            console.log(`🎉 DEPTH-TO-POINT-CLOUD CONVERSION COMPLETED
+📊 Results:
+  - Points generated: ${result.pointCount}
+  - Has colors: ${!!result.colors}
+  - Vertices array size: ${result.vertices.length}
+  - Colors array size: ${result.colors?.length ?? 0}`);
+            
             return result as unknown as DepthConversionResult;
         } catch (error) {
             throw new Error(`Failed to process depth file: ${error instanceof Error ? error.message : String(error)}`);
@@ -8637,9 +8668,7 @@ class PointCloudVisualizer {
             }
         }
 
-        console.log(`Generated ${pointIndex} points from ${width}x${height} depth image`);
-        console.log(`📊 Depth statistics: min=${minDepth.toFixed(3)}, max=${maxDepth.toFixed(3)}, valid=${validPointCount}, skipped=${skippedPoints}`);
-        console.log(`🎥 Camera range: near=${0.001}, far=${1000000}`);
+        console.log(`Generated ${pointIndex} points from ${width}x${height} depth image\n📊 Depth statistics: min=${minDepth.toFixed(3)}, max=${maxDepth.toFixed(3)}, valid=${validPointCount}, skipped=${skippedPoints}\n🎥 Camera range: near=${0.001}, far=${1000000}`);
         
         // Check for potential clipping issues
         if (minDepth < 0.001) {
@@ -9142,10 +9171,7 @@ class PointCloudVisualizer {
             const newCameraParams = this.getDepthSettingsFromFileUI(fileIndex);
             
             // DEBUG: Log what we read from the form
-            console.log(`🔍 APPLY SETTINGS DEBUG for file ${fileIndex}:`);
-            console.log('  Form read values:', newCameraParams);
-            console.log('  depthType specifically:', newCameraParams.depthType);
-            console.log('  baseline specifically:', newCameraParams.baseline);
+            console.log(`🔍 APPLY SETTINGS DEBUG for file ${fileIndex}:\n  Form read values: ${JSON.stringify(newCameraParams, null, 2)}\n  depthType specifically: ${newCameraParams.depthType}\n  baseline specifically: ${newCameraParams.baseline}`);
 
             // Validate parameters
             if (!newCameraParams.fx || newCameraParams.fx <= 0) {
@@ -9178,8 +9204,7 @@ class PointCloudVisualizer {
             
             // If there's a stored color image, reapply it (works for all depth formats)
             if (depthData.colorImageData) {
-                console.log(`🎨 Reapplying stored color image: ${depthData.colorImageName}`);
-                console.log(`🎯 Using updated camera params: cx=${newCameraParams.cx}, cy=${newCameraParams.cy}`);
+                console.log(`🎨 Reapplying stored color image: ${depthData.colorImageName}\n🎯 Using updated camera params: cx=${newCameraParams.cx}, cy=${newCameraParams.cy}`);
                 await this.applyColorToDepthResult(result, depthData.colorImageData, { cameraParams: newCameraParams });
             }
             
@@ -9440,7 +9465,7 @@ class PointCloudVisualizer {
             cyInput.value = computedCy.toString();
             console.log(`📐 Updated cy field for file ${fileIndex}: ${computedCy} (from ${dimensions.width}×${dimensions.height})`);
         }
-        
+
         // Update image size display
         const imageSizeDiv = document.getElementById(`image-size-${fileIndex}`);
         if (imageSizeDiv) {
@@ -9469,9 +9494,7 @@ class PointCloudVisualizer {
             const currentParams = this.getDepthSettingsFromFileUI(fileIndex);
             
             // Debug logging
-            console.log(`🔍 Button state check for file ${fileIndex}:`);
-            console.log('  Current params:', currentParams);
-            console.log('  Default settings:', this.defaultDepthSettings);
+            console.log(`🔍 Button state check for file ${fileIndex}:\n  Current params: ${JSON.stringify(currentParams, null, 2)}\n  Default settings: ${JSON.stringify(this.defaultDepthSettings, null, 2)}`);
             
             // Check if current settings match defaults
             const fxMatch = currentParams.fx === this.defaultDepthSettings.fx;
@@ -9490,15 +9513,7 @@ class PointCloudVisualizer {
                                    currentScale === undefined && defaultScale === undefined ? true : 
                                    currentScale !== undefined && defaultScale !== undefined ? currentScale === defaultScale : false;
             
-            console.log(`  fx match: ${fxMatch} (${currentParams.fx} === ${this.defaultDepthSettings.fx})`);
-            console.log(`  fy match: ${fyMatch} (${currentParams.fy} === ${this.defaultDepthSettings.fy})`);
-            console.log(`  Camera match: ${cameraMatch} (${currentParams.cameraModel} === ${this.defaultDepthSettings.cameraModel})`);
-            console.log(`  Depth match: ${depthMatch} (${currentParams.depthType} === ${this.defaultDepthSettings.depthType})`);
-            console.log(`  Convention match: ${conventionMatch} (${currentParams.convention} === ${this.defaultDepthSettings.convention})`);
-            console.log(`  Baseline match: ${baselineMatch} (${currentParams.baseline} === ${this.defaultDepthSettings.baseline})`);
-            console.log(`  Depth scale match: ${depthScaleMatch} (${currentParams.depthScale} === ${this.defaultDepthSettings.depthScale})`);
-            console.log(`  Depth bias match: ${depthBiasMatch} (${currentParams.depthBias} === ${this.defaultDepthSettings.depthBias})`);
-            console.log(`  Scale factor match: ${pngScaleFactorMatch} (current: ${currentScale}, default: ${defaultScale}, isPNG: ${isPngFile})`);
+            console.log(`  fx match: ${fxMatch} (${currentParams.fx} === ${this.defaultDepthSettings.fx})\n  fy match: ${fyMatch} (${currentParams.fy} === ${this.defaultDepthSettings.fy})\n  Camera match: ${cameraMatch} (${currentParams.cameraModel} === ${this.defaultDepthSettings.cameraModel})\n  Depth match: ${depthMatch} (${currentParams.depthType} === ${this.defaultDepthSettings.depthType})\n  Convention match: ${conventionMatch} (${currentParams.convention} === ${this.defaultDepthSettings.convention})\n  Baseline match: ${baselineMatch} (${currentParams.baseline} === ${this.defaultDepthSettings.baseline})\n  Depth scale match: ${depthScaleMatch} (${currentParams.depthScale} === ${this.defaultDepthSettings.depthScale})\n  Depth bias match: ${depthBiasMatch} (${currentParams.depthBias} === ${this.defaultDepthSettings.depthBias})\n  Scale factor match: ${pngScaleFactorMatch} (current: ${currentScale}, default: ${defaultScale}, isPNG: ${isPngFile})`);
             
             const isDefault = fxMatch && fyMatch && cameraMatch && depthMatch && conventionMatch && baselineMatch && depthScaleMatch && depthBiasMatch && pngScaleFactorMatch;
 

@@ -2045,8 +2045,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
             if (saveUri) {
                 // User selected a location, write the file
-                console.log(`💾 Saving PLY file to: ${saveUri.fsPath}`);
-                
                 const plyContent = Buffer.from(message.content, 'utf8');
                 await vscode.workspace.fs.writeFile(saveUri, plyContent);
                 
@@ -2060,7 +2058,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                 
                 // Show success message to user
                 vscode.window.showInformationMessage(`PLY file saved successfully: ${path.basename(saveUri.fsPath)}`);
-                console.log(`✅ PLY file saved successfully: ${saveUri.fsPath}`);
+                console.log(`💾 Saving PLY file to: ${saveUri.fsPath}\n✅ PLY file saved successfully: ${saveUri.fsPath}`);
                 
             } else {
                 // User cancelled the save dialog
@@ -2110,8 +2108,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
             if (files && files.length > 0) {
                 const selectedFile = files[0];
-                console.log(`📷 Selected color image: ${selectedFile.fsPath}`);
-                
                 // Read the file data
                 const fileData = await vscode.workspace.fs.readFile(selectedFile);
                 const fileName = path.basename(selectedFile.fsPath);
@@ -2148,7 +2144,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                     mimeType: mimeType
                 });
                 
-                console.log(`✅ Color image data sent to webview: ${fileName}`);
+                console.log(`📷 Selected color image: ${selectedFile.fsPath}\n✅ Color image data sent to webview: ${fileName}`);
                 
             } else {
                 console.log('🚫 User cancelled color image selection');
@@ -2180,8 +2176,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
             if (files && files.length > 0) {
                 const mtlFile = files[0];
-                console.log(`Loading MTL file: ${mtlFile.fsPath}`);
-                
                 // Read and parse MTL file
                 const mtlData = await vscode.workspace.fs.readFile(mtlFile);
                 const mtlParser = new MtlParser();
@@ -2209,7 +2203,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                     data: serializedMtl
                 });
                 
-                console.log(`MTL file ${path.basename(mtlFile.fsPath)} sent to webview for file index ${message.fileIndex}`);
+                console.log(`Loading MTL file: ${mtlFile.fsPath}\nMTL file ${path.basename(mtlFile.fsPath)} sent to webview for file index ${message.fileIndex}`);
             }
         } catch (error) {
             console.error('Error loading MTL file:', error);
@@ -2370,7 +2364,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
             if (files && files.length > 0) {
                 const selectedFile = files[0];
-                console.log(`📄 Selected calibration file: ${selectedFile.fsPath}`);
                 
                 // Read the file data
                 const fileData = await vscode.workspace.fs.readFile(selectedFile);
@@ -2385,7 +2378,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                     content: fileContent
                 });
                 
-                console.log(`✅ Calibration file ${fileName} sent to webview for file index ${message.fileIndex}`);
+                console.log(`📄 Selected calibration file: ${selectedFile.fsPath}\n✅ Calibration file ${fileName} sent to webview for file index ${message.fileIndex}`);
             }
         } catch (error) {
             console.error('Error selecting calibration file:', error);
