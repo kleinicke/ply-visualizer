@@ -38,6 +38,7 @@ class PointCloudVisualizer {
     // On-demand rendering state
     private needsRender: boolean = false;
     private animationId: number | null = null;
+    private resizeObserver: ResizeObserver | null = null;
     
     // Unified file management
     private plyFiles: PlyData[] = [];
@@ -389,6 +390,7 @@ class PointCloudVisualizer {
             canvas: canvas,
             antialias: true, // Re-enable antialiasing for quality
             alpha: true,
+            preserveDrawingBuffer: false, // better performance
             powerPreference: "high-performance" // Keep discrete GPU preference
         });
         this.renderer.setSize(container.clientWidth, container.clientHeight);
@@ -411,8 +413,9 @@ class PointCloudVisualizer {
         // Add coordinate axes helper with labels
         this.addAxesHelper();
 
-        // Window resize
+        // Window resize with ResizeObserver for comprehensive dimension change detection
         window.addEventListener('resize', this.onWindowResize.bind(this));
+        this.setupResizeObserver();
 
         // Global UI interaction listener - triggers render on any button/input change
         document.addEventListener('click', (e) => {
@@ -437,6 +440,11 @@ class PointCloudVisualizer {
 
         // Start render loop
         this.startRenderLoop();
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            this.dispose();
+        });
     }
 
     private initializeControls(): void {
@@ -853,7 +861,17 @@ class PointCloudVisualizer {
                 if (!filled && Array.isArray((plyData as any).vertices)) {
                     const verts: any[] = (plyData as any).vertices;
                     const count = Math.min(vertexCount, verts.length);
-                    if (this.convertSrgbToLinear) {
+                    const isDepthDerived = (plyData as any).isDepthDerived;
+                    
+                    // Depth-derived colors are already linear, so don't apply gamma correction
+                    if (isDepthDerived) {
+                        for (let v = 0, o = 0; v < count; v++, o += 3) {
+                            const vert = verts[v];
+                            colorsFloat[o] = ((vert.red || 0) & 255) / 255;
+                            colorsFloat[o + 1] = ((vert.green || 0) & 255) / 255;
+                            colorsFloat[o + 2] = ((vert.blue || 0) & 255) / 255;
+                        }
+                    } else if (this.convertSrgbToLinear) {
                         this.ensureSrgbLUT();
                         const lut = this.srgbToLinearLUT!;
                         for (let v = 0, o = 0; v < count; v++, o += 3) {
@@ -891,6 +909,36 @@ class PointCloudVisualizer {
         }
     }
 
+    private setupResizeObserver(): void {
+        const container = document.getElementById('viewer-container');
+        if (!container) return;
+
+        this.resizeObserver = new ResizeObserver(() => {
+            // Trigger rerender when container dimensions change
+            this.onWindowResize();
+        });
+        
+        this.resizeObserver.observe(container);
+    }
+
+    private dispose(): void {
+        // Clean up ResizeObserver
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+            this.resizeObserver = null;
+        }
+        
+        // Clean up controls
+        if (this.controls) {
+            this.controls.dispose();
+        }
+        
+        // Clean up renderer
+        if (this.renderer) {
+            this.renderer.dispose();
+        }
+    }
+
     private onWindowResize(): void {
         const container = document.getElementById('viewer-container');
         if (!container) {return;}
@@ -909,6 +957,9 @@ class PointCloudVisualizer {
             const orbitControls = this.controls as OrbitControls;
             // OrbitControls automatically handles resize
         }
+        
+        // Force immediate render to prevent flashing
+        this.renderer.render(this.scene, this.camera);
     }
 
     private animate(): void {
@@ -8513,6 +8564,8 @@ class PointCloudVisualizer {
             const plyData = this.plyFiles[fileIndex];
             plyData.vertices = this.convertDepthResultToVertices(result);
             plyData.hasColors = true;
+            // Mark as depth-derived so gamma correction knows these are already linear colors
+            (plyData as any).isDepthDerived = true;
 
             // Update the mesh with colored data
             const oldMaterial = this.meshes[fileIndex].material;
@@ -9328,6 +9381,8 @@ class PointCloudVisualizer {
             plyData.vertices = this.convertDepthResultToVertices(result);
             plyData.vertexCount = result.pointCount;
             plyData.hasColors = !!result.colors;
+            // Mark as depth-derived so gamma correction knows these are already linear colors
+            (plyData as any).isDepthDerived = true;
             plyData.comments = [
                 `Converted from ${fileType} depth image: ${depthData.fileName}`,
                 `Camera: ${newCameraParams.cameraModel}`,
@@ -9928,6 +9983,8 @@ class PointCloudVisualizer {
             const plyData = this.plyFiles[fileIndex];
             plyData.vertices = this.convertDepthResultToVertices(result);
             plyData.hasColors = !!result.colors;
+            // Mark as depth-derived so gamma correction knows these are already linear colors
+            (plyData as any).isDepthDerived = true;
 
             // Update the mesh with default colors
             const oldMaterial = this.meshes[fileIndex].material;
