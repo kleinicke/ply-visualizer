@@ -1051,6 +1051,28 @@ class PointCloudVisualizer {
                 mesh.matrix.copy(matrix);
                 mesh.matrixAutoUpdate = false;
             }
+            
+            // Also apply transformation to vertex points visualization
+            const vertexPoints = this.vertexPointsObjects[fileIndex];
+            if (vertexPoints) {
+                vertexPoints.matrix.copy(matrix);
+                vertexPoints.matrixAutoUpdate = false;
+            }
+            
+            // Also apply transformation to normals visualizer
+            const normalsVisualizer = this.normalsVisualizers[fileIndex];
+            if (normalsVisualizer) {
+                normalsVisualizer.matrix.copy(matrix);
+                normalsVisualizer.matrixAutoUpdate = false;
+            }
+            
+            // Also apply transformation to multi-material groups (for OBJ files)
+            const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
+            if (multiMaterialGroup) {
+                multiMaterialGroup.matrix.copy(matrix);
+                multiMaterialGroup.matrixAutoUpdate = false;
+            }
+            
             return;
         }
         
