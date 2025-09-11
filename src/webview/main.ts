@@ -2808,6 +2808,10 @@ class PointCloudVisualizer {
         if (this.sequenceMode) {
             this.addNewFiles(dataArray);
             this.updateFileList();
+            
+            // Ensure color consistency with current gamma setting
+            this.rebuildAllColorAttributesForCurrentGammaSetting();
+            
             try { (document.getElementById('loading') as HTMLElement)?.classList.add('hidden'); } catch {}
             return;
         }
@@ -2817,6 +2821,10 @@ class PointCloudVisualizer {
         this.updateFileStats();
         this.updateFileList();
         this.updateCameraControlsPanel();
+        
+        // Ensure color consistency with current gamma setting
+        this.rebuildAllColorAttributesForCurrentGammaSetting();
+        
         this.fitCameraToAllObjects();
         (document.getElementById('loading') as HTMLElement)?.classList.add('hidden');
         this.clearError();

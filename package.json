@@ -2,7 +2,7 @@
   "name": "ply-visualizer",
   "displayName": "3D Point Cloud Visualizer (PLY, ...)",
   "description": "A 3D visualizer for Point Cloud files like PLY (Polygon File Format) using Three.js. Supports 13+ formats: PLY, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth to point cloud conversions.",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "publisher": "kleinicke",
   "icon": "icon.png",
   "repository": {
