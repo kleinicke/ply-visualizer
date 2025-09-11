@@ -40,6 +40,11 @@ class PointCloudVisualizer {
     private animationId: number | null = null;
     private resizeObserver: ResizeObserver | null = null;
     
+    // FPS tracking
+    private fpsFrameTimes: number[] = [];
+    private lastFpsUpdate: number = 0;
+    private currentFps: number = 0;
+    
     // Unified file management
     private plyFiles: PlyData[] = [];
     private meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
@@ -960,10 +965,15 @@ class PointCloudVisualizer {
         
         // Force immediate render to prevent flashing
         this.renderer.render(this.scene, this.camera);
+        // Track render event for resize renders too
+        this.trackRender();
     }
 
     private animate(): void {
         this.animationId = requestAnimationFrame(this.animate.bind(this));
+        
+        // Update FPS calculation (always, to decay to 0 when no renders)
+        this.updateFPSCalculation();
         
         // Update controls
         this.controls.update();
@@ -998,11 +1008,43 @@ class PointCloudVisualizer {
         if (this.needsRender) {
             this.renderer.render(this.scene, this.camera);
             this.needsRender = false;
+            // Track render event
+            this.trackRender();
         }
     }
 
     private requestRender(): void {
         this.needsRender = true;
+    }
+
+    private trackRender(): void {
+        // Record a render event
+        const now = performance.now();
+        this.fpsFrameTimes.push(now);
+    }
+
+    private updateFPSCalculation(): void {
+        const now = performance.now();
+        
+        // Keep only renders from the last second
+        const oneSecondAgo = now - 1000;
+        while (this.fpsFrameTimes.length > 0 && this.fpsFrameTimes[0] < oneSecondAgo) {
+            this.fpsFrameTimes.shift();
+        }
+        
+        // Update FPS display every 250ms to avoid too frequent updates
+        if (now - this.lastFpsUpdate > 250) {
+            this.currentFps = this.fpsFrameTimes.length;
+            this.lastFpsUpdate = now;
+            this.updateFPSDisplay();
+        }
+    }
+
+    private updateFPSDisplay(): void {
+        const fpsElement = document.getElementById('fps-display');
+        if (fpsElement && fpsElement.textContent !== `${this.currentFps} FPS`) {
+            fpsElement.textContent = `${this.currentFps} FPS`;
+        }
     }
 
     private startRenderLoop(): void {

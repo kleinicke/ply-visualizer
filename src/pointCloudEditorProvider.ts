@@ -818,6 +818,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
                 <div id="viewer-container">
                     <canvas id="three-canvas"></canvas>
+                    <div id="fps-display" style="position: absolute; top: 10px; right: 10px; background: rgba(0, 0, 0, 0.7); color: white; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; pointer-events: none; z-index: 1000;">60 FPS</div>
                 </div>
                 
                 <script nonce="${nonce}" src="${geotiffUri}"></script>
