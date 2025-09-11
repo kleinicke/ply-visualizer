@@ -413,9 +413,24 @@ class PointCloudVisualizer {
 
         // Window resize
         window.addEventListener('resize', this.onWindowResize.bind(this));
-        this.renderer.domElement.addEventListener('pointermove', () => this.requestRender());
-        this.renderer.domElement.addEventListener('pointerdown', () => this.requestRender());
-        this.renderer.domElement.addEventListener('wheel', () => this.requestRender());
+
+        // Global UI interaction listener - triggers render on any button/input change
+        document.addEventListener('click', (e) => {
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'BUTTON' || target.classList.contains('btn') || 
+                target.closest('button') || target.closest('.btn')) {
+                this.requestRender();
+                // this.requestRender();
+            }
+        });
+        
+        document.addEventListener('input', (e) => {
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' || target.tagName === 'SELECT') {
+                this.requestRender();
+                // this.requestRender();
+            }
+        });
 
         // Double-click to change rotation center (like CloudCompare)
         this.renderer.domElement.addEventListener('dblclick', this.onDoubleClick.bind(this));
@@ -790,6 +805,7 @@ class PointCloudVisualizer {
         // Rebuild color attributes to reflect new conversion setting
         this.rebuildAllColorAttributesForCurrentGammaSetting();
         this.requestRender();
+        // this.requestRender();
     }
 
     private updateGammaButtonState(): void {
@@ -1248,6 +1264,7 @@ class PointCloudVisualizer {
                     fovValue.textContent = newFov.toFixed(1) + '°';
                 }
                 this.requestRender();
+                // this.requestRender();
             });
         }
 
@@ -2350,6 +2367,8 @@ class PointCloudVisualizer {
         if (this.meshes[fileIndex]) {
             this.meshes[fileIndex].visible = this.pointsVisible[fileIndex];
         }
+        this.requestRender();
+        // this.requestRender();
     }
     
     private toggleFileNormalsVisibility(fileIndex: number): void {
@@ -2367,6 +2386,8 @@ class PointCloudVisualizer {
         if (this.normalsVisualizers[fileIndex]) {
             this.normalsVisualizers[fileIndex]!.visible = this.normalsVisible[fileIndex];
         }
+        this.requestRender();
+        // this.requestRender();
     }
     
     private updatePointsNormalsButtonStates(): void {
@@ -3772,6 +3793,7 @@ class PointCloudVisualizer {
                     const newSize = parseFloat((e.target as HTMLInputElement).value);
                     this.updatePointSize(i, newSize);
                     this.requestRender();
+                    // this.requestRender();
                     
                     // Update the displayed value
                     const sizeValue = document.querySelector(`#size-${i} + .size-value`) as HTMLElement;
@@ -4252,6 +4274,8 @@ class PointCloudVisualizer {
         this.solidVisible[fileIndex] = !this.solidVisible[fileIndex];
         
         this.updateMeshVisibilityAndMaterial(fileIndex);
+        this.requestRender();
+        // this.requestRender();
     }
     
     private toggleWireframeRendering(fileIndex: number): void {
@@ -4266,6 +4290,8 @@ class PointCloudVisualizer {
         this.wireframeVisible[fileIndex] = !this.wireframeVisible[fileIndex];
         
         this.updateMeshVisibilityAndMaterial(fileIndex);
+        this.requestRender();
+        // this.requestRender();
     }
     
     private togglePointsRendering(fileIndex: number): void {
@@ -4282,6 +4308,8 @@ class PointCloudVisualizer {
         this.pointsVisible[fileIndex] = !this.pointsVisible[fileIndex];
         
         this.updateMeshVisibilityAndMaterial(fileIndex);
+        this.requestRender();
+        // this.requestRender();
     }
     
     private updateMeshVisibilityAndMaterial(fileIndex: number): void {
@@ -4527,6 +4555,8 @@ class PointCloudVisualizer {
         } else {
             console.log(`No normals visualizer found for file ${fileIndex}`);
         }
+        this.requestRender();
+        // this.requestRender();
     }
     
     private updateUniversalRenderButtonStates(): void {
@@ -4930,6 +4960,7 @@ class PointCloudVisualizer {
                         this.scene.add(mesh);
                         this.meshes.push(mesh);
                         this.requestRender();
+                        // this.requestRender();
                     }
                 } else {
                     // Fallback to points - use optimized creation
