@@ -3166,16 +3166,20 @@ class PointCloudVisualizer {
                             
                             <!-- Calibration File Loading -->
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Load Calibration:</label>
-                                <button class="load-calibration-btn" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
-                                    📁 Load Calibration File
+                                <button class="depth-section-toggle" data-section="load-calibration-${i}" style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+                                    <span class="toggle-icon" style="font-size: 8px;">▶</span> Load Calibration (beta)
                                 </button>
-                                <div class="calibration-info" id="calibration-info-${i}" style="display: none; margin-top: 4px; padding: 4px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
-                                    <div style="display: flex; align-items: center; gap: 8px;">
-                                        <div id="calibration-filename-${i}" style="font-size: 9px; font-weight: bold; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
-                                        <select id="camera-select-${i}" style="flex: 0 0 25%; font-size: 9px; padding: 1px 2px;">
-                                            <option value="">Select camera...</option>
-                                        </select>
+                                <div class="depth-section-content" id="load-calibration-${i}" style="display: none; margin-top: 4px;">
+                                    <button class="load-calibration-btn" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 10px;">
+                                        📁 Load Calibration File
+                                    </button>
+                                    <div class="calibration-info" id="calibration-info-${i}" style="display: none; margin-top: 4px; padding: 4px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
+                                        <div style="display: flex; align-items: center; gap: 8px;">
+                                            <div id="calibration-filename-${i}" style="font-size: 9px; font-weight: bold; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></div>
+                                            <select id="camera-select-${i}" style="flex: 0 0 25%; font-size: 9px; padding: 1px 2px;">
+                                                <option value="">Select camera...</option>
+                                            </select>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -3213,24 +3217,31 @@ class PointCloudVisualizer {
                                 </div>
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Principle Point (px):</label>
-                                <div style="display: flex; gap: 4px; align-items: end;">
-                                    <div style="flex: 1;">
-                                        <label for="cx-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cx:</label>
-                                        <input type="number" id="cx-${i}" value="${this.getDepthCx(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                <button class="depth-section-toggle" data-section="principal-point-${i}" style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+                                    <span class="toggle-icon" style="font-size: 8px;">▶</span> Principal Point (px)
+                                </button>
+                                <div class="depth-section-content" id="principal-point-${i}" style="display: none; margin-top: 4px;">
+                                    <div style="display: flex; gap: 4px; align-items: end;">
+                                        <div style="flex: 1;">
+                                            <label for="cx-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cx:</label>
+                                            <input type="number" id="cx-${i}" value="${this.getDepthCx(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="cy-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cy:</label>
+                                            <input type="number" id="cy-${i}" value="${this.getDepthCy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                        </div>
+                                        <div style="flex: 0 0 auto;">
+                                            <button class="reset-principle-point" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px;" title="Reset to auto-calculated center">↺</button>
+                                        </div>
                                     </div>
-                                    <div style="flex: 1;">
-                                        <label for="cy-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cy:</label>
-                                        <input type="number" id="cy-${i}" value="${this.getDepthCy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    </div>
-                                    <div style="flex: 0 0 auto;">
-                                        <button class="reset-principle-point" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px;" title="Reset to auto-calculated center">↺</button>
-                                    </div>
+                                    <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Auto-calculated as (width-1)/2 and (height-1)/2</div>
                                 </div>
-                                <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Auto-calculated as (width-1)/2 and (height-1)/2</div>
                             </div>
                             <div class="depth-group" id="distortion-params-${i}" style="margin-bottom: 8px; display: none;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Distortion Parameters:</label>
+                                <button class="depth-section-toggle" data-section="distortion-content-${i}" style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+                                    <span class="toggle-icon" style="font-size: 8px;">▶</span> Distortion Parameters
+                                </button>
+                                <div class="depth-section-content" id="distortion-content-${i}" style="display: none; margin-top: 4px;">
                                 
                                 <!-- Pinhole OpenCV parameters: k1, k2, k3, p1, p2 -->
                                 <div id="pinhole-params-${i}" style="display: none;">
@@ -3314,31 +3325,40 @@ class PointCloudVisualizer {
                                     </div>
                                     <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">Polynomial fisheye coefficients</div>
                                 </div>
+                                </div>
                             </div>
                             <div class="depth-group" id="baseline-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
                                 <label for="baseline-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Baseline (mm) ⭐:</label>
                                 <input type="number" id="baseline-${i}" value="${this.getDepthBaseline(data)}" min="0.1" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                             </div>
                             <div class="depth-group" id="disparity-offset-group-${i}" style="margin-bottom: 8px; ${this.getDepthSetting(data, 'depth').includes('disparity') ? '' : 'display:none;'}">
-                                <label for="disparity-offset-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Disparity Offset:</label>
-                                <div style="display: flex; gap: 4px; align-items: center;">
-                                    <input type="number" id="disparity-offset-${i}" value="0" step="0.1" style="flex: 1; padding: 2px; font-size: 11px;" placeholder="Offset added to disparity values">
-                                    <button class="reset-disparity-offset" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px; flex: 0 0 auto;" title="Reset to 0">↺</button>
+                                <button class="depth-section-toggle" data-section="disparity-offset-content-${i}" style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+                                    <span class="toggle-icon" style="font-size: 8px;">▶</span> Disparity Offset
+                                </button>
+                                <div class="depth-section-content" id="disparity-offset-content-${i}" style="display: none; margin-top: 4px;">
+                                    <div style="display: flex; gap: 4px; align-items: center;">
+                                        <input type="number" id="disparity-offset-${i}" value="0" step="0.1" style="flex: 1; padding: 2px; font-size: 11px;" placeholder="Offset added to disparity values">
+                                        <button class="reset-disparity-offset" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px; flex: 0 0 auto;" title="Reset to 0">↺</button>
+                                    </div>
                                 </div>
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 4px;">Depth from Mono Parameters ⭐:</label>
-                                <div style="display: flex; gap: 6px; align-items: end;">
-                                    <div style="flex: 1;">
-                                        <label for="depth-scale-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Scale:</label>
-                                        <input type="number" id="depth-scale-${i}" value="1.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Scale factor">
-                                    </div>
-                                    <div style="flex: 1;">
-                                        <label for="depth-bias-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Bias:</label>
-                                        <input type="number" id="depth-bias-${i}" value="0.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Bias offset">
-                                    </div>
-                                    <div style="flex: 0 0 auto;">
-                                        <button class="reset-mono-params" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px;" title="Reset to Scale=1.0, Bias=0.0">↺</button>
+                                <button class="depth-section-toggle" data-section="mono-params-${i}" style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+                                    <span class="toggle-icon" style="font-size: 8px;">▶</span> Depth from Mono Parameters ⭐
+                                </button>
+                                <div class="depth-section-content" id="mono-params-${i}" style="display: none; margin-top: 4px;">
+                                    <div style="display: flex; gap: 6px; align-items: end;">
+                                        <div style="flex: 1;">
+                                            <label for="depth-scale-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Scale:</label>
+                                            <input type="number" id="depth-scale-${i}" value="1.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Scale factor">
+                                        </div>
+                                        <div style="flex: 1;">
+                                            <label for="depth-bias-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Bias:</label>
+                                            <input type="number" id="depth-bias-${i}" value="0.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Bias offset">
+                                        </div>
+                                        <div style="flex: 0 0 auto;">
+                                            <button class="reset-mono-params" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px;" title="Reset to Scale=1.0, Bias=0.0">↺</button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -3350,16 +3370,24 @@ class PointCloudVisualizer {
                             </div>
                             ` : ''}
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label for="convention-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Coordinate Convention ⭐:</label>
-                                <select id="convention-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
-                                    <option value="opengl" ${this.getDepthConvention(data) === 'opengl' ? 'selected' : ''}>OpenGL (Y-up, Z-backward)</option>
-                                    <option value="opencv" ${this.getDepthConvention(data) === 'opencv' ? 'selected' : ''}>OpenCV (Y-down, Z-forward)</option>
-                                </select>
+                                <button class="depth-section-toggle" data-section="coordinate-convention-${i}" style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+                                    <span class="toggle-icon" style="font-size: 8px;">▶</span> Coordinate Convention ⭐
+                                </button>
+                                <div class="depth-section-content" id="coordinate-convention-${i}" style="display: none; margin-top: 4px;">
+                                    <select id="convention-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
+                                        <option value="opengl" ${this.getDepthConvention(data) === 'opengl' ? 'selected' : ''}>OpenGL (Y-up, Z-backward)</option>
+                                        <option value="opencv" ${this.getDepthConvention(data) === 'opencv' ? 'selected' : ''}>OpenCV (Y-down, Z-forward)</option>
+                                    </select>
+                                </div>
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
-                                <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Color Image (optional):</label>
-                                <button class="select-color-image" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px; text-align: left;">📁 Select Color Image...</button>
-                                ${this.getStoredColorImageName(i) ? `<div style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-top: 2px; display: flex; align-items: center; gap: 4px;">📷 Current: ${this.getStoredColorImageName(i)} <button class="remove-color-image" data-file-index="${i}" style="font-size: 8px; padding: 1px 4px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer;">✕</button></div>` : ''}
+                                <button class="depth-section-toggle" data-section="color-image-${i}" style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+                                    <span class="toggle-icon" style="font-size: 8px;">▶</span> Color Image (optional)
+                                </button>
+                                <div class="depth-section-content" id="color-image-${i}" style="display: none; margin-top: 4px;">
+                                    <button class="select-color-image" data-file-index="${i}" style="width: 100%; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px; text-align: left;">📁 Select Color Image...</button>
+                                    ${this.getStoredColorImageName(i) ? `<div style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-top: 2px; display: flex; align-items: center; gap: 4px;">📷 Current: ${this.getStoredColorImageName(i)} <button class="remove-color-image" data-file-index="${i}" style="font-size: 8px; padding: 1px 4px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer;">✕</button></div>` : ''}
+                                </div>
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
                                 <div style="display: flex; gap: 4px;">
@@ -3726,6 +3754,26 @@ class PointCloudVisualizer {
                     if (toggleIcon) toggleIcon.textContent = isVisible ? '▶' : '▼';
                 });
             }
+            
+            // Depth section toggle logic
+            const depthSectionToggles = document.querySelectorAll(`.depth-section-toggle[data-section*="${i}"]`);
+            depthSectionToggles.forEach(toggle => {
+                const sectionId = toggle.getAttribute('data-section');
+                const sectionContent = document.getElementById(sectionId!);
+                
+                if (toggle && sectionContent) {
+                    // Always hide by default and set triangle to side
+                    sectionContent.style.display = 'none';
+                    const toggleIcon = toggle.querySelector('.toggle-icon');
+                    if (toggleIcon) toggleIcon.textContent = '▶';
+                    
+                    toggle.addEventListener('click', () => {
+                        const isVisible = sectionContent.style.display !== 'none';
+                        sectionContent.style.display = isVisible ? 'none' : 'block';
+                        if (toggleIcon) toggleIcon.textContent = isVisible ? '▶' : '▼';
+                    });
+                }
+            });
             
             // Apply matrix logic with improved parsing
             const applyBtn = document.querySelector(`.apply-matrix[data-file-index="${i}"]`);

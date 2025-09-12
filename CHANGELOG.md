@@ -5,6 +5,8 @@
 Add easier selection of material
 Add support for fx, fy, cx, cy, disp offset, bias and scale and inverse depth support for depth images
 Add support for different camera distortion models for depth to point cloud conversion: Pinhole + OpenCV Distortion, Fisheye + OpenCV Distortion and Fisheye Kannala-Brandt
+Option to load calibration files
+Improve performance (for occluded points and idle state)
 
 ## [1.2.0] - 2025-08-25
 
