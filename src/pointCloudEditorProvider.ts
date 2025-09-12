@@ -662,7 +662,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                         <!-- Files Tab -->
                         <div id="files-tab" class="tab-panel active">
                             <div class="panel-section">
-                                <h4>File Management</h4>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <h4 style="margin: 0;">File Management</h4>
+                                    <div id="performance-stats" style="font-size: 10px; color: var(--vscode-descriptionForeground); font-family: monospace;">60 fps / 16.7 ms</div>
+                                </div>
                                 <div class="file-controls">
                                     <button id="add-file" class="primary-button">+ Add Point Cloud</button>
                                 </div>
@@ -719,6 +722,14 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                                     <button id="use-flat-lighting" class="control-button">Use Flat Lighting</button>
                                 </div>
                                 <p class="setting-description">Shading options are only effecting PLY files with faces.</p>
+                            </div>
+                            <div class="panel-section">
+                                <h4>Performance</h4>
+                                <div class="control-buttons">
+                                    <button id="toggle-screenspace-scaling" class="control-button">Screen-Space Scaling <span class="button-shortcut">S</span></button>
+                                    <button id="toggle-transparency" class="control-button">Allow Transparency <span class="button-shortcut">T</span></button>
+                                </div>
+                                <p class="setting-description">Screen-Space Scaling: Distance-based point sizes for better visuals. Allow Transparency: Re-enables alpha blending (impacts performance).</p>
                             </div>
                         </div>
                         
@@ -818,7 +829,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
                 <div id="viewer-container">
                     <canvas id="three-canvas"></canvas>
-                    <div id="fps-display" style="position: absolute; top: 10px; right: 10px; background: rgba(0, 0, 0, 0.7); color: white; padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px; pointer-events: none; z-index: 1000;">60 FPS</div>
                 </div>
                 
                 <script nonce="${nonce}" src="${geotiffUri}"></script>

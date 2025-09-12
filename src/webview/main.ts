@@ -34,6 +34,8 @@ class PointCloudVisualizer {
     
     // Camera control state
     private controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare' = 'trackball';
+    private screenSpaceScaling: boolean = false;
+    private allowTransparency: boolean = false;
     
     // On-demand rendering state
     private needsRender: boolean = false;
@@ -44,6 +46,21 @@ class PointCloudVisualizer {
     private fpsFrameTimes: number[] = [];
     private lastFpsUpdate: number = 0;
     private currentFps: number = 0;
+    private previousFps: number = 0;
+    
+    // Frame time tracking  
+    private lastFrameTime: number = 0;
+    private frameRenderTimes: number[] = [];
+    private currentFrameTime: number = 0;
+    
+    // GPU timing
+    private gpuTimerExtension: any = null;
+    private gpuQueries: any[] = [];
+    private gpuTimes: number[] = [];
+    private currentGpuTime: number = 0;
+    
+    // Camera tracking for screen-space scaling
+    private lastScalingUpdate: number = 0;
     
     // Unified file management
     private plyFiles: PlyData[] = [];
@@ -204,15 +221,323 @@ class PointCloudVisualizer {
     }
 
     private optimizeForPointCount(material: THREE.PointsMaterial, pointCount: number): void {
-        // Keep original visual quality settings
-        material.transparent = true;
-        material.alphaTest = 0.1;
+        // Apply transparency settings
+        if (this.allowTransparency) {
+            material.transparent = true;
+            material.alphaTest = 0.1;
+        } else {
+            // GPU rendering optimizations - skip transparency pipeline since points are fully opaque
+            material.transparent = false;   // Skip alpha blending pipeline
+            material.alphaTest = 0;        // Skip alpha testing (no alpha data anyway)
+        }
+        
         material.depthTest = true;
         material.depthWrite = true;
         material.sizeAttenuation = true; // Keep world-space sizing
+        material.side = THREE.DoubleSide; // Default for points
         
         // Force material update
         material.needsUpdate = true;
+    }
+    
+    
+    private toggleTransparency(): void {
+        this.allowTransparency = !this.allowTransparency;
+        console.log(`Transparency ${this.allowTransparency ? 'enabled' : 'disabled'}`);
+        
+        // Update UI button state
+        const button = document.getElementById('toggle-transparency');
+        if (button) {
+            button.classList.toggle('active', this.allowTransparency);
+        }
+        
+        // Update all existing materials with new transparency settings
+        this.updateAllMaterialsForTransparency();
+        
+        // Show status message
+        this.showStatus(`Transparency ${this.allowTransparency ? 'enabled' : 'disabled'}: ${this.allowTransparency ? 'Alpha blending available (may impact performance)' : 'Optimized opaque rendering'}`);
+        
+        this.requestRender();
+    }
+    
+    private updateAllMaterialsForTransparency(): void {
+        // Update all mesh materials with transparency settings
+        this.meshes.forEach(mesh => {
+            if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
+                const material = mesh.material as THREE.PointsMaterial;
+                if (this.allowTransparency) {
+                    material.transparent = true;
+                    material.alphaTest = 0.1;
+                } else {
+                    material.transparent = false;
+                    material.alphaTest = 0;
+                }
+                material.needsUpdate = true;
+            }
+        });
+        
+        // Update vertex points objects
+        this.vertexPointsObjects.forEach(vertexPoints => {
+            if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
+                const material = vertexPoints.material as THREE.PointsMaterial;
+                if (this.allowTransparency) {
+                    material.transparent = true;
+                    material.alphaTest = 0.1;
+                } else {
+                    material.transparent = false;
+                    material.alphaTest = 0;
+                }
+                material.needsUpdate = true;
+            }
+        });
+        
+        // Update multi-material groups
+        this.multiMaterialGroups.forEach(group => {
+            if (group) {
+                group.traverse((child) => {
+                    if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
+                        const material = child.material as THREE.PointsMaterial;
+                        if (this.allowTransparency) {
+                            material.transparent = true;
+                            material.alphaTest = 0.1;
+                        } else {
+                            material.transparent = false;
+                            material.alphaTest = 0;
+                        }
+                        material.needsUpdate = true;
+                    }
+                });
+            }
+        });
+        
+        console.log(`Updated transparency for ${this.meshes.length} main meshes, ${this.vertexPointsObjects.length} vertex point objects, and ${this.multiMaterialGroups.length} multi-material groups`);
+    }
+    
+    private toggleScreenSpaceScaling(): void {
+        this.screenSpaceScaling = !this.screenSpaceScaling;
+        console.log(`Screen-space scaling ${this.screenSpaceScaling ? 'enabled' : 'disabled'}`);
+        
+        // Update UI button state
+        const button = document.getElementById('toggle-screenspace-scaling');
+        if (button) {
+            button.classList.toggle('active', this.screenSpaceScaling);
+        }
+        
+        // Update all point sizes immediately
+        this.updateAllPointSizesForDistance();
+        
+        // Show status message
+        this.showStatus(`Screen-space scaling ${this.screenSpaceScaling ? 'enabled' : 'disabled'}: ${this.screenSpaceScaling ? 'Point sizes adjust with camera distance' : 'Fixed point sizes restored'}`);
+        
+        this.requestRender();
+    }
+    
+    private updateAllPointSizesForDistance(): void {
+        if (!this.screenSpaceScaling) {
+            // Restore original point sizes
+            this.restoreOriginalPointSizes();
+            return;
+        }
+        
+        // Calculate camera distance to scene center
+        const sceneCenter = new THREE.Vector3();
+        const box = new THREE.Box3();
+        
+        // Calculate overall scene bounding box
+        this.scene.traverse((object) => {
+            if (object instanceof THREE.Points || object instanceof THREE.Mesh) {
+                const geometry = object.geometry;
+                if (geometry) {
+                    geometry.computeBoundingBox();
+                    if (geometry.boundingBox) {
+                        const transformedBox = geometry.boundingBox.clone().applyMatrix4(object.matrixWorld);
+                        box.union(transformedBox);
+                    }
+                }
+            }
+        });
+        
+        if (!box.isEmpty()) {
+            box.getCenter(sceneCenter);
+        }
+        
+        const cameraDistance = this.camera.position.distanceTo(sceneCenter);
+        
+        // Apply distance-based scaling to all point materials
+        this.meshes.forEach((mesh, index) => {
+            if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
+                const material = mesh.material as THREE.PointsMaterial;
+                const baseSize = this.pointSizes[index] || 1.0;
+                material.size = this.calculateScreenSpacePointSize(baseSize, cameraDistance);
+                material.needsUpdate = true;
+            }
+        });
+        
+        // Update vertex points objects
+        this.vertexPointsObjects.forEach((vertexPoints, index) => {
+            if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
+                const material = vertexPoints.material as THREE.PointsMaterial;
+                const baseSize = this.pointSizes[index] || 1.0;
+                material.size = this.calculateScreenSpacePointSize(baseSize, cameraDistance);
+                material.needsUpdate = true;
+            }
+        });
+        
+        // Update multi-material groups
+        this.multiMaterialGroups.forEach((group, index) => {
+            if (group) {
+                group.traverse((child) => {
+                    if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
+                        const material = child.material as THREE.PointsMaterial;
+                        const baseSize = this.pointSizes[index] || 0.001;
+                        material.size = this.calculateScreenSpacePointSize(baseSize, cameraDistance);
+                        material.needsUpdate = true;
+                    }
+                });
+            }
+        });
+    }
+    
+    private calculateScreenSpacePointSize(baseSize: number, cameraDistance: number): number {
+        // Scale point size inversely with distance, with reasonable limits
+        const minSize = baseSize * 0.1;  // Don't go below 10% of original
+        const maxSize = baseSize * 3.0;  // Don't go above 300% of original
+        const scaledSize = baseSize * (20 / Math.max(1, cameraDistance));
+        return Math.max(minSize, Math.min(maxSize, scaledSize));
+    }
+    
+    private restoreOriginalPointSizes(): void {
+        // Restore original point sizes from stored values
+        this.meshes.forEach((mesh, index) => {
+            if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
+                const material = mesh.material as THREE.PointsMaterial;
+                material.size = this.pointSizes[index] || 1.0;
+                material.needsUpdate = true;
+            }
+        });
+        
+        this.vertexPointsObjects.forEach((vertexPoints, index) => {
+            if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
+                const material = vertexPoints.material as THREE.PointsMaterial;
+                material.size = this.pointSizes[index] || 1.0;
+                material.needsUpdate = true;
+            }
+        });
+        
+        this.multiMaterialGroups.forEach((group, index) => {
+            if (group) {
+                group.traverse((child) => {
+                    if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
+                        const material = child.material as THREE.PointsMaterial;
+                        material.size = this.pointSizes[index] || 0.001;
+                        material.needsUpdate = true;
+                    }
+                });
+            }
+        });
+    }
+    
+    
+    private initGPUTiming(): void {
+        const gl = this.renderer.getContext();
+        
+        // Try to get timer query extension
+        this.gpuTimerExtension = gl.getExtension('EXT_disjoint_timer_query_webgl2') || 
+                                gl.getExtension('EXT_disjoint_timer_query');
+        
+        if (this.gpuTimerExtension) {
+            console.log('GPU timing available - measuring actual render time');
+        } else {
+            console.log('GPU timing not available - using CPU frame time');
+        }
+    }
+    
+    private startGPUTiming(): any {
+        if (!this.gpuTimerExtension) return null;
+        
+        const gl = this.renderer.getContext() as any; // Cast to handle extension methods
+        
+        if (gl.createQuery) {
+            // WebGL2 approach
+            const query = gl.createQuery();
+            gl.beginQuery(this.gpuTimerExtension.TIME_ELAPSED_EXT, query);
+            return query;
+        } else if (this.gpuTimerExtension.createQueryEXT) {
+            // WebGL1 extension approach
+            const query = this.gpuTimerExtension.createQueryEXT();
+            this.gpuTimerExtension.beginQueryEXT(this.gpuTimerExtension.TIME_ELAPSED_EXT, query);
+            return query;
+        }
+        
+        return null;
+    }
+    
+    private endGPUTiming(query: any): void {
+        if (!query || !this.gpuTimerExtension) return;
+        
+        const gl = this.renderer.getContext() as any;
+        
+        if (gl.endQuery) {
+            // WebGL2 approach
+            gl.endQuery(this.gpuTimerExtension.TIME_ELAPSED_EXT);
+        } else if (this.gpuTimerExtension.endQueryEXT) {
+            // WebGL1 extension approach
+            this.gpuTimerExtension.endQueryEXT(this.gpuTimerExtension.TIME_ELAPSED_EXT);
+        }
+        
+        this.gpuQueries.push(query);
+    }
+    
+    private updateGPUTiming(): void {
+        if (!this.gpuTimerExtension) return;
+        
+        const gl = this.renderer.getContext() as any;
+        
+        // Check completed queries
+        for (let i = this.gpuQueries.length - 1; i >= 0; i--) {
+            const query = this.gpuQueries[i];
+            let available = false;
+            let timeElapsed = 0;
+            
+            if (gl.getQueryParameter) {
+                // WebGL2 approach
+                available = gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE);
+                if (available) {
+                    timeElapsed = gl.getQueryParameter(query, gl.QUERY_RESULT);
+                }
+            } else if (this.gpuTimerExtension.getQueryObjectEXT) {
+                // WebGL1 extension approach
+                available = this.gpuTimerExtension.getQueryObjectEXT(query, this.gpuTimerExtension.QUERY_RESULT_AVAILABLE_EXT);
+                if (available) {
+                    timeElapsed = this.gpuTimerExtension.getQueryObjectEXT(query, this.gpuTimerExtension.QUERY_RESULT_EXT);
+                }
+            }
+            
+            const disjoint = gl.getParameter(this.gpuTimerExtension.GPU_DISJOINT_EXT);
+            
+            if (available && !disjoint) {
+                const timeMs = timeElapsed / 1000000; // Convert nanoseconds to milliseconds
+                
+                this.gpuTimes.push(timeMs);
+                
+                // Keep only last 30 GPU times for averaging
+                if (this.gpuTimes.length > 30) {
+                    this.gpuTimes.shift();
+                }
+                
+                // Calculate average GPU time
+                this.currentGpuTime = this.gpuTimes.reduce((a, b) => a + b, 0) / this.gpuTimes.length;
+                
+                // Clean up query
+                if (gl.deleteQuery) {
+                    gl.deleteQuery(query);
+                } else if (this.gpuTimerExtension.deleteQueryEXT) {
+                    this.gpuTimerExtension.deleteQueryEXT(query);
+                }
+                
+                this.gpuQueries.splice(i, 1);
+            }
+        }
     }
     
     private createOptimizedPointCloud(geometry: THREE.BufferGeometry, material: THREE.PointsMaterial): THREE.Points {
@@ -402,6 +727,9 @@ class PointCloudVisualizer {
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         this.renderer.shadowMap.enabled = true; // Re-enable shadows
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        
+        // Initialize GPU timing if supported
+        this.initGPUTiming();
         
         // Re-enable object sorting for better visual quality
         this.renderer.sortObjects = true;
@@ -964,7 +1292,18 @@ class PointCloudVisualizer {
         }
         
         // Force immediate render to prevent flashing
+        const now = performance.now();
+        if (this.lastFrameTime > 0) {
+            this.trackFrameTime(now - this.lastFrameTime);
+        }
+        this.lastFrameTime = now;
+        
+        // Start GPU timing for resize render
+        const gpuQuery = this.startGPUTiming();
         this.renderer.render(this.scene, this.camera);
+        this.endGPUTiming(gpuQuery);
+        this.updateGPUTiming();
+        
         // Track render event for resize renders too
         this.trackRender();
     }
@@ -990,6 +1329,16 @@ class PointCloudVisualizer {
             // Apply adaptive decimation based on camera distance
             this.updateAdaptiveDecimation();
             
+            // Update screen-space scaling if enabled
+            if (this.screenSpaceScaling) {
+                const now = performance.now();
+                // Throttle updates to every 100ms for performance
+                if (now - this.lastScalingUpdate > 100) {
+                    this.updateAllPointSizesForDistance();
+                    this.lastScalingUpdate = now;
+                }
+            }
+            
             // Debug: Check if any Depth-derived point clouds are being culled
             // Only log every 60 frames to avoid spam
             this.frameCount++;
@@ -1006,7 +1355,21 @@ class PointCloudVisualizer {
         
         // Always render when needed (this covers camera damping/momentum)
         if (this.needsRender) {
+            const now = performance.now();
+            // Measure full frame time (time between actual renders)
+            if (this.lastFrameTime > 0) {
+                this.trackFrameTime(now - this.lastFrameTime);
+            }
+            this.lastFrameTime = now;
+            
+            // Start GPU timing
+            const gpuQuery = this.startGPUTiming();
             this.renderer.render(this.scene, this.camera);
+            this.endGPUTiming(gpuQuery);
+            
+            // Update GPU timing results
+            this.updateGPUTiming();
+            
             this.needsRender = false;
             // Track render event
             this.trackRender();
@@ -1022,6 +1385,37 @@ class PointCloudVisualizer {
         const now = performance.now();
         this.fpsFrameTimes.push(now);
     }
+    
+    private trackFrameTime(frameTimeMs: number): void {
+        // Check if we're transitioning from 0 FPS (idle) to active rendering
+        const wasIdle = this.previousFps === 0 && this.currentFps > 0;
+        
+        if (wasIdle) {
+            // Reset frame history when restarting from idle
+            this.frameRenderTimes = [frameTimeMs];
+            this.currentFrameTime = frameTimeMs;
+        } else {
+            // Add current frame time to history
+            this.frameRenderTimes.push(frameTimeMs);
+            
+            // Keep only last 30 frame times for averaging
+            if (this.frameRenderTimes.length > 30) {
+                this.frameRenderTimes.shift();
+            }
+            
+            // When at 0 FPS, use the exact time of the last rendering
+            // When active (FPS > 1), use averaging for smoother display
+            if (this.currentFps === 0) {
+                this.currentFrameTime = frameTimeMs;
+            } else if (this.currentFps <= 1) {
+                this.currentFrameTime = frameTimeMs;
+            } else {
+                // Normal averaging when we have multiple recent frames
+                this.currentFrameTime = this.frameRenderTimes.reduce((a, b) => a + b, 0) / this.frameRenderTimes.length;
+            }
+        }
+    }
+    
 
     private updateFPSCalculation(): void {
         const now = performance.now();
@@ -1034,6 +1428,7 @@ class PointCloudVisualizer {
         
         // Update FPS display every 250ms to avoid too frequent updates
         if (now - this.lastFpsUpdate > 250) {
+            this.previousFps = this.currentFps;  // Store previous FPS value
             this.currentFps = this.fpsFrameTimes.length;
             this.lastFpsUpdate = now;
             this.updateFPSDisplay();
@@ -1041,9 +1436,20 @@ class PointCloudVisualizer {
     }
 
     private updateFPSDisplay(): void {
-        const fpsElement = document.getElementById('fps-display');
-        if (fpsElement && fpsElement.textContent !== `${this.currentFps} FPS`) {
-            fpsElement.textContent = `${this.currentFps} FPS`;
+        const statsElement = document.getElementById('performance-stats');
+        if (statsElement) {
+            let timeStr;
+            if (this.gpuTimerExtension && this.currentGpuTime > 0) {
+                // Show actual GPU render time when available
+                timeStr = `${this.currentGpuTime.toFixed(1)} ms`;
+            } else {
+                // Fallback to frame time
+                timeStr = `${this.currentFrameTime.toFixed(1)} ms`;
+            }
+            const statsStr = `${this.currentFps} fps / ${timeStr}`;
+            if (statsElement.textContent !== statsStr) {
+                statsElement.textContent = statsStr;
+            }
         }
     }
 
@@ -1911,6 +2317,23 @@ class PointCloudVisualizer {
             });
         }
 
+
+        // Screen-space scaling toggle
+        const toggleScreenSpaceScalingBtn = document.getElementById('toggle-screenspace-scaling');
+        if (toggleScreenSpaceScalingBtn) {
+            toggleScreenSpaceScalingBtn.addEventListener('click', () => {
+                this.toggleScreenSpaceScaling();
+            });
+        }
+
+        // Transparency toggle
+        const toggleTransparencyBtn = document.getElementById('toggle-transparency');
+        if (toggleTransparencyBtn) {
+            toggleTransparencyBtn.addEventListener('click', () => {
+                this.toggleTransparency();
+            });
+        }
+
         // Unlit PLY button - acts as a mode switch now
         const toggleUnlitPlyBtn = document.getElementById('toggle-unlit-ply');
         if (toggleUnlitPlyBtn) {
@@ -2033,6 +2456,14 @@ class PointCloudVisualizer {
                     break;
                 case 'g':
                     this.toggleGammaCorrection();
+                    e.preventDefault();
+                    break;
+                case 's':
+                    this.toggleScreenSpaceScaling();
+                    e.preventDefault();
+                    break;
+                case 't':
+                    this.toggleTransparency();
                     e.preventDefault();
                     break;
                 case 'l':
@@ -2634,7 +3065,10 @@ class PointCloudVisualizer {
   I: Switch to Inverse TrackballControls
   C: Set OpenCV camera convention (Y-down)
   B: Set OpenGL camera convention (Y-up)
-  W: Set rotation center to world origin (0,0,0)`);
+  W: Set rotation center to world origin (0,0,0)
+  G: Toggle gamma correction
+  S: Toggle screen-space scaling (distance-based point sizes)
+  T: Toggle transparency (re-enable alpha blending)`);
         
         // Create permanent shortcuts UI section
         this.createShortcutsUI();
@@ -4614,11 +5048,13 @@ class PointCloudVisualizer {
             vertexColors: geometry.attributes.color ? true : false,
             color: geometry.attributes.color ? undefined : 0x888888,
             sizeAttenuation: true,
-            // Restore original quality settings
-            transparent: true,
-            alphaTest: 0.1,
+            // Apply transparency settings
+            transparent: this.allowTransparency,
+            alphaTest: this.allowTransparency ? 0.1 : 0,
+            opacity: 1.0,
             depthWrite: true,
-            depthTest: true
+            depthTest: true,
+            side: THREE.DoubleSide
         });
         
         const points = new THREE.Points(pointsGeometry, pointsMaterial);
@@ -5084,11 +5520,13 @@ class PointCloudVisualizer {
                                     color: 0xff0000, // Default red - will be colored by MTL
                                     size: this.pointSizes[data.fileIndex] || 0.001, // Use stored point size (world units)
                                     sizeAttenuation: true, // Use world-space sizing like other file types
-                                    // Restore original quality settings
-                                    transparent: true,
-                                    alphaTest: 0.1,
+                                    // Apply transparency settings
+                                    transparent: this.allowTransparency,
+                                    alphaTest: this.allowTransparency ? 0.1 : 0,
+                                    opacity: 1.0,
                                     depthWrite: true,
-                                    depthTest: true
+                                    depthTest: true,
+                                    side: THREE.DoubleSide
                                 });
                                 
                                 const points = new THREE.Points(pointGeometry, pointMaterial);
