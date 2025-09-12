@@ -178,10 +178,27 @@
           "command": "plyViewer.convertPngToPointCloud",
           "when": "resourceExtname == .png",
           "group": "navigation"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "plyViewer.convertTifToPointCloud",
+          "when": "resourceExtname == .tif || resourceExtname == .tiff",
+          "group": "navigation"
         },
         {
-          "command": "plyViewer.convertExrToPointCloud",
-          "when": "resourceExtname == .exr",
+          "command": "plyViewer.convertDepthToPointCloud",
+          "when": "resourceExtname == .pfm",
+          "group": "navigation"
+        },
+        {
+          "command": "plyViewer.convertNpyToPointCloud",
+          "when": "resourceExtname == .npy || resourceExtname == .npz",
+          "group": "navigation"
+        },
+        {
+          "command": "plyViewer.convertPngToPointCloud",
+          "when": "resourceExtname == .png",
           "group": "navigation"
         }
       ]
