@@ -1,0 +1,25 @@
+# Build outputs
+out/
+dist/
+coverage/
+
+# Dependencies
+node_modules/
+
+# VS Code extension files
+*.d.ts
+*.vsix
+
+# Media files and external libraries
+media/**/*.js
+media/**/*.css
+
+# Test files that might have specific formatting
+testfiles/
+
+# Lock files
+package-lock.json
+yarn.lock
+
+# Generated files
+CHANGELOG.md

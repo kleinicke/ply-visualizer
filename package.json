@@ -220,7 +220,10 @@
     "test:ui": "npm run compile && node ./out/test/ui-test-runner.js",
     "test:all": "npm run test && npm run test:ui",
     "test:exr": "node test_exr_parsing.js",
-    "test:stl": "node test-stl.js"
+    "test:stl": "node test-stl.js",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@types/glob": "^8.0.0",
@@ -234,8 +237,11 @@
     "@vscode/test-electron": "^2.2.0",
     "eslint": "^8.28.0",
     "glob": "^8.1.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.1.6",
     "mocha": "^10.2.0",
     "nyc": "^17.1.0",
+    "prettier": "^3.6.2",
     "ts-loader": "^9.5.1",
     "typescript": "^4.9.4",
     "vscode-extension-tester": "^8.17.0",
@@ -270,5 +276,13 @@
     "functions": 80,
     "branches": 80,
     "statements": 80
+  },
+  "lint-staged": {
+    "*.{js,ts,tsx,json,css,md}": [
+      "prettier --write"
+    ],
+    "*.{js,ts,tsx}": [
+      "eslint --fix"
+    ]
   }
 }
