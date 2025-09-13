@@ -214,7 +214,9 @@ class PointCloudVisualizer {
   private lastAbsoluteMs: number = 0;
 
   private ensureSrgbLUT(): void {
-    if (this.srgbToLinearLUT) {return;}
+    if (this.srgbToLinearLUT) {
+      return;
+    }
     const lut = new Float32Array(256);
     for (let i = 0; i < 256; i++) {
       const s = i / 255;
@@ -461,7 +463,9 @@ class PointCloudVisualizer {
   }
 
   private startGPUTiming(): any {
-    if (!this.gpuTimerExtension) {return null;}
+    if (!this.gpuTimerExtension) {
+      return null;
+    }
 
     const gl = this.renderer.getContext() as any; // Cast to handle extension methods
 
@@ -481,7 +485,9 @@ class PointCloudVisualizer {
   }
 
   private endGPUTiming(query: any): void {
-    if (!query || !this.gpuTimerExtension) {return;}
+    if (!query || !this.gpuTimerExtension) {
+      return;
+    }
 
     const gl = this.renderer.getContext() as any;
 
@@ -497,7 +503,9 @@ class PointCloudVisualizer {
   }
 
   private updateGPUTiming(): void {
-    if (!this.gpuTimerExtension) {return;}
+    if (!this.gpuTimerExtension) {
+      return;
+    }
 
     const gl = this.renderer.getContext() as any;
 
@@ -589,15 +597,22 @@ class PointCloudVisualizer {
     let decimationFactor = 1;
 
     // Aggressive decimation when zoomed out (high camera distance)
-    if (cameraDistance > 50)
-      {decimationFactor = 10;} // Keep every 10th point
-    else if (cameraDistance > 20)
-      {decimationFactor = 5;} // Keep every 5th point
-    else if (cameraDistance > 10)
-      {decimationFactor = 3;} // Keep every 3rd point
-    else if (cameraDistance > 5) {decimationFactor = 2;} // Keep every 2nd point
+    if (cameraDistance > 50) {
+      decimationFactor = 10;
+    } // Keep every 10th point
+    else if (cameraDistance > 20) {
+      decimationFactor = 5;
+    } // Keep every 5th point
+    else if (cameraDistance > 10) {
+      decimationFactor = 3;
+    } // Keep every 3rd point
+    else if (cameraDistance > 5) {
+      decimationFactor = 2;
+    } // Keep every 2nd point
 
-    if (decimationFactor === 1) {return originalGeometry;}
+    if (decimationFactor === 1) {
+      return originalGeometry;
+    }
 
     const totalPoints = positions.count;
     const decimatedCount = Math.floor(totalPoints / decimationFactor);
@@ -648,7 +663,9 @@ class PointCloudVisualizer {
       }
     }
 
-    if (pointCloudCount === 0) {return;}
+    if (pointCloudCount === 0) {
+      return;
+    }
 
     const avgDistance = totalDistance / pointCloudCount;
 
@@ -960,7 +977,9 @@ class PointCloudVisualizer {
   }
 
   private setupInvertedControls(): void {
-    if (this.controlType !== 'inverse-trackball') {return;}
+    if (this.controlType !== 'inverse-trackball') {
+      return;
+    }
 
     // TRACKBALL ROTATION DIRECTION INVERSION - Override the _rotateCamera method
     // debug: controls inversion setup
@@ -1170,8 +1189,11 @@ class PointCloudVisualizer {
     }
     const unlitBtn = document.getElementById('toggle-unlit-ply');
     if (unlitBtn) {
-      if (this.lightingMode === 'unlit') {unlitBtn.classList.add('active');}
-      else {unlitBtn.classList.remove('active');}
+      if (this.lightingMode === 'unlit') {
+        unlitBtn.classList.add('active');
+      } else {
+        unlitBtn.classList.remove('active');
+      }
     }
   }
 
@@ -1199,7 +1221,9 @@ class PointCloudVisualizer {
 
   private updateGammaButtonState(): void {
     const btn = document.getElementById('toggle-gamma-correction');
-    if (!btn) {return;}
+    if (!btn) {
+      return;
+    }
     // Active (blue) when we apply additional gamma (i.e., we do NOT convert input sRGB → linear)
     // This matches the UX: blue means extra gamma appearance compared to default pipeline
     if (!this.convertSrgbToLinear) {
@@ -1216,10 +1240,14 @@ class PointCloudVisualizer {
       for (let i = 0; i < this.plyFiles.length && i < this.meshes.length; i++) {
         const plyData = this.plyFiles[i];
         const mesh = this.meshes[i];
-        if (!mesh || !plyData || !plyData.hasColors) {continue;}
+        if (!mesh || !plyData || !plyData.hasColors) {
+          continue;
+        }
         const geometry = mesh.geometry as THREE.BufferGeometry;
         const positionAttr = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
-        if (!positionAttr) {continue;}
+        if (!positionAttr) {
+          continue;
+        }
         const vertexCount = positionAttr.count;
 
         let colorsFloat = new Float32Array(vertexCount * 3);
@@ -1231,9 +1259,13 @@ class PointCloudVisualizer {
           if (this.convertSrgbToLinear) {
             this.ensureSrgbLUT();
             const lut = this.srgbToLinearLUT!;
-            for (let j = 0; j < typedColors.length; j++) {colorsFloat[j] = lut[typedColors[j]];}
+            for (let j = 0; j < typedColors.length; j++) {
+              colorsFloat[j] = lut[typedColors[j]];
+            }
           } else {
-            for (let j = 0; j < typedColors.length; j++) {colorsFloat[j] = typedColors[j] / 255;}
+            for (let j = 0; j < typedColors.length; j++) {
+              colorsFloat[j] = typedColors[j] / 255;
+            }
           }
           filled = true;
         }
@@ -1278,7 +1310,9 @@ class PointCloudVisualizer {
         if (filled) {
           geometry.setAttribute('color', new THREE.BufferAttribute(colorsFloat, 3));
           const colorAttr = geometry.getAttribute('color');
-          if (colorAttr) {(colorAttr as any).needsUpdate = true;}
+          if (colorAttr) {
+            (colorAttr as any).needsUpdate = true;
+          }
           // Ensure material uses vertex colors
           if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
             mesh.material.vertexColors = true;
@@ -1292,7 +1326,9 @@ class PointCloudVisualizer {
 
   private setupResizeObserver(): void {
     const container = document.getElementById('viewer-container');
-    if (!container) {return;}
+    if (!container) {
+      return;
+    }
 
     this.resizeObserver = new ResizeObserver(() => {
       // Trigger rerender when container dimensions change
@@ -1522,7 +1558,9 @@ class PointCloudVisualizer {
       const mesh = this.meshes[i];
       const isVisible = this.fileVisibility[i];
 
-      if (!isVisible) {continue;} // Skip if manually hidden
+      if (!isVisible) {
+        continue;
+      } // Skip if manually hidden
 
       // Check if mesh should be visible but might be culled
       if (mesh && mesh.geometry && mesh.geometry.boundingBox) {
@@ -1594,7 +1632,9 @@ class PointCloudVisualizer {
   }
 
   private applyTransformationMatrix(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.transformationMatrices.length) {return;}
+    if (fileIndex < 0 || fileIndex >= this.transformationMatrices.length) {
+      return;
+    }
 
     const matrix = this.transformationMatrices[fileIndex];
 
@@ -2254,13 +2294,24 @@ class PointCloudVisualizer {
     const prevBtn = document.getElementById('seq-prev');
     const nextBtn = document.getElementById('seq-next');
     const slider = document.getElementById('seq-slider') as HTMLInputElement | null;
-    if (playBtn) {playBtn.addEventListener('click', () => this.playSequence());}
-    if (pauseBtn) {pauseBtn.addEventListener('click', () => this.pauseSequence());}
-    if (stopBtn) {stopBtn.addEventListener('click', () => this.stopSequence());}
-    if (prevBtn) {prevBtn.addEventListener('click', () => this.stepSequence(-1));}
-    if (nextBtn) {nextBtn.addEventListener('click', () => this.stepSequence(1));}
-    if (slider)
-      {slider.addEventListener('input', () => this.seekSequence(parseInt(slider.value, 10) || 0));}
+    if (playBtn) {
+      playBtn.addEventListener('click', () => this.playSequence());
+    }
+    if (pauseBtn) {
+      pauseBtn.addEventListener('click', () => this.pauseSequence());
+    }
+    if (stopBtn) {
+      stopBtn.addEventListener('click', () => this.stopSequence());
+    }
+    if (prevBtn) {
+      prevBtn.addEventListener('click', () => this.stepSequence(-1));
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener('click', () => this.stepSequence(1));
+    }
+    if (slider) {
+      slider.addEventListener('input', () => this.seekSequence(parseInt(slider.value, 10) || 0));
+    }
 
     // Tab navigation
     const tabButtons = document.querySelectorAll('.tab-button');
@@ -2277,14 +2328,18 @@ class PointCloudVisualizer {
     const fitCameraBtn = document.getElementById('fit-camera');
     if (fitCameraBtn) {
       fitCameraBtn.addEventListener('click', () => {
-        if (!this.sequenceMode) {this.fitCameraToAllObjects();}
+        if (!this.sequenceMode) {
+          this.fitCameraToAllObjects();
+        }
       });
     }
 
     const resetCameraBtn = document.getElementById('reset-camera');
     if (resetCameraBtn) {
       resetCameraBtn.addEventListener('click', () => {
-        if (!this.sequenceMode) {this.resetCameraToDefault();}
+        if (!this.sequenceMode) {
+          this.resetCameraToDefault();
+        }
       });
     }
 
@@ -2561,14 +2616,20 @@ class PointCloudVisualizer {
     // Show overlay
     document.getElementById('sequence-overlay')?.classList.remove('hidden');
     const wildcardInput = document.getElementById('seq-wildcard') as HTMLInputElement | null;
-    if (wildcardInput) {wildcardInput.value = wildcard;}
+    if (wildcardInput) {
+      wildcardInput.value = wildcard;
+    }
     this.updateSequenceUI();
     // Clear any existing meshes from normal mode
-    for (const obj of this.meshes) {this.scene.remove(obj);}
+    for (const obj of this.meshes) {
+      this.scene.remove(obj);
+    }
     this.meshes = [];
     this.plyFiles = [];
     // Load first frame
-    if (files.length > 0) {this.loadSequenceFrame(0);}
+    if (files.length > 0) {
+      this.loadSequenceFrame(0);
+    }
     this.updateFileList();
   }
 
@@ -2588,8 +2649,12 @@ class PointCloudVisualizer {
   }
 
   private playSequence(): void {
-    if (!this.sequenceFiles.length) {return;}
-    if (this.isSequencePlaying) {return;}
+    if (!this.sequenceFiles.length) {
+      return;
+    }
+    if (this.isSequencePlaying) {
+      return;
+    }
     this.isSequencePlaying = true;
     const intervalMs = Math.max(50, Math.floor(1000 / this.sequenceFps));
     this.sequenceTimer = window.setInterval(() => {
@@ -2610,7 +2675,9 @@ class PointCloudVisualizer {
   }
 
   private stepSequence(delta: number): void {
-    if (!this.sequenceFiles.length) {return;}
+    if (!this.sequenceFiles.length) {
+      return;
+    }
     this.pauseSequence(); // do not auto-play when stepping
     const count = this.sequenceFiles.length;
     const next = (this.sequenceIndex + delta + count) % count;
@@ -2618,7 +2685,9 @@ class PointCloudVisualizer {
   }
 
   private seekSequence(index: number): void {
-    if (!this.sequenceFiles.length) {return;}
+    if (!this.sequenceFiles.length) {
+      return;
+    }
     const clamped = Math.max(0, Math.min(index, this.sequenceFiles.length - 1));
     this.sequenceTargetIndex = clamped;
     this.loadSequenceFrame(clamped);
@@ -2630,9 +2699,11 @@ class PointCloudVisualizer {
     await this.handleUltimateRawBinaryData(plyMsg);
     const created = this.meshes[this.meshes.length - 1];
     if (created) {
-      if (message.index === this.sequenceTargetIndex)
-        {this.useSequenceObject(created, message.index);}
-      else {this.cacheSequenceOnly(created, message.index);}
+      if (message.index === this.sequenceTargetIndex) {
+        this.useSequenceObject(created, message.index);
+      } else {
+        this.cacheSequenceOnly(created, message.index);
+      }
     }
     this.trimNormalModeArraysFrom(startFilesLen);
   }
@@ -2642,9 +2713,11 @@ class PointCloudVisualizer {
     await this.displayFiles([message.data]);
     const created = this.meshes[this.meshes.length - 1];
     if (created) {
-      if (message.index === this.sequenceTargetIndex)
-        {this.useSequenceObject(created, message.index);}
-      else {this.cacheSequenceOnly(created, message.index);}
+      if (message.index === this.sequenceTargetIndex) {
+        this.useSequenceObject(created, message.index);
+      } else {
+        this.cacheSequenceOnly(created, message.index);
+      }
     }
     this.trimNormalModeArraysFrom(startFilesLen);
   }
@@ -2659,9 +2732,11 @@ class PointCloudVisualizer {
     });
     const created = this.meshes[this.meshes.length - 1];
     if (created) {
-      if (message.index === this.sequenceTargetIndex)
-        {this.useSequenceObject(created, message.index);}
-      else {this.cacheSequenceOnly(created, message.index);}
+      if (message.index === this.sequenceTargetIndex) {
+        this.useSequenceObject(created, message.index);
+      } else {
+        this.cacheSequenceOnly(created, message.index);
+      }
     }
     this.trimNormalModeArraysFrom(startFilesLen);
   }
@@ -2676,9 +2751,11 @@ class PointCloudVisualizer {
     });
     const created = this.meshes[this.meshes.length - 1];
     if (created) {
-      if (message.index === this.sequenceTargetIndex)
-        {this.useSequenceObject(created, message.index);}
-      else {this.cacheSequenceOnly(created, message.index);}
+      if (message.index === this.sequenceTargetIndex) {
+        this.useSequenceObject(created, message.index);
+      } else {
+        this.cacheSequenceOnly(created, message.index);
+      }
     }
     this.trimNormalModeArraysFrom(startFilesLen);
   }
@@ -2693,9 +2770,11 @@ class PointCloudVisualizer {
     });
     const created = this.meshes[this.meshes.length - 1];
     if (created) {
-      if (message.index === this.sequenceTargetIndex)
-        {this.useSequenceObject(created, message.index);}
-      else {this.cacheSequenceOnly(created, message.index);}
+      if (message.index === this.sequenceTargetIndex) {
+        this.useSequenceObject(created, message.index);
+      } else {
+        this.cacheSequenceOnly(created, message.index);
+      }
     }
     this.trimNormalModeArraysFrom(startFilesLen);
   }
@@ -2709,22 +2788,38 @@ class PointCloudVisualizer {
       isAddFile: true,
     });
     const created = this.meshes[this.meshes.length - 1];
-    if (created) {this.useSequenceObject(created, message.index);}
+    if (created) {
+      this.useSequenceObject(created, message.index);
+    }
     this.trimNormalModeArraysFrom(startFilesLen);
   }
 
   private trimNormalModeArraysFrom(startIndex: number): void {
-    if (this.plyFiles.length > startIndex) {this.plyFiles.splice(startIndex);}
-    if (this.multiMaterialGroups.length > startIndex) {this.multiMaterialGroups.splice(startIndex);}
-    if (this.materialMeshes.length > startIndex) {this.materialMeshes.splice(startIndex);}
-    if (this.fileVisibility.length > startIndex) {this.fileVisibility.splice(startIndex);}
-    if (this.pointSizes.length > startIndex) {this.pointSizes.splice(startIndex);}
-    if (this.individualColorModes.length > startIndex) {this.individualColorModes.splice(startIndex);}
+    if (this.plyFiles.length > startIndex) {
+      this.plyFiles.splice(startIndex);
+    }
+    if (this.multiMaterialGroups.length > startIndex) {
+      this.multiMaterialGroups.splice(startIndex);
+    }
+    if (this.materialMeshes.length > startIndex) {
+      this.materialMeshes.splice(startIndex);
+    }
+    if (this.fileVisibility.length > startIndex) {
+      this.fileVisibility.splice(startIndex);
+    }
+    if (this.pointSizes.length > startIndex) {
+      this.pointSizes.splice(startIndex);
+    }
+    if (this.individualColorModes.length > startIndex) {
+      this.individualColorModes.splice(startIndex);
+    }
   }
 
   private async loadSequenceFrame(index: number): Promise<void> {
     const filePath = this.sequenceFiles[index];
-    if (!filePath) {return;}
+    if (!filePath) {
+      return;
+    }
     // If cached, display immediately
     const cached = this.sequenceCache.get(index);
     if (cached) {
@@ -2753,11 +2848,16 @@ class PointCloudVisualizer {
           const evictObj = this.sequenceCache.get(evictIndex);
           if (evictObj) {
             this.scene.remove(evictObj);
-            if ((evictObj as any).geometry) {(evictObj as any).geometry.dispose?.();}
+            if ((evictObj as any).geometry) {
+              (evictObj as any).geometry.dispose?.();
+            }
             if ((evictObj as any).material) {
               const mat = (evictObj as any).material;
-              if (Array.isArray(mat)) {mat.forEach(m => m.dispose?.());}
-              else {mat.dispose?.();}
+              if (Array.isArray(mat)) {
+                mat.forEach(m => m.dispose?.());
+              } else {
+                mat.dispose?.();
+              }
             }
           }
           this.sequenceCache.delete(evictIndex);
@@ -2768,7 +2868,9 @@ class PointCloudVisualizer {
   }
 
   private cacheSequenceOnly(obj: THREE.Object3D, index: number): void {
-    if (obj.parent) {this.scene.remove(obj);}
+    if (obj.parent) {
+      this.scene.remove(obj);
+    }
     if (!this.sequenceCache.has(index)) {
       this.sequenceCache.set(index, obj);
       this.sequenceCacheOrder.push(index);
@@ -2777,11 +2879,16 @@ class PointCloudVisualizer {
         const evictObj = this.sequenceCache.get(evictIndex);
         if (evictObj) {
           this.scene.remove(evictObj);
-          if ((evictObj as any).geometry) {(evictObj as any).geometry.dispose?.();}
+          if ((evictObj as any).geometry) {
+            (evictObj as any).geometry.dispose?.();
+          }
           if ((evictObj as any).material) {
             const mat = (evictObj as any).material;
-            if (Array.isArray(mat)) {mat.forEach(m => m.dispose?.());}
-            else {mat.dispose?.();}
+            if (Array.isArray(mat)) {
+              mat.forEach(m => m.dispose?.());
+            } else {
+              mat.dispose?.();
+            }
           }
         }
         this.sequenceCache.delete(evictIndex);
@@ -2797,7 +2904,9 @@ class PointCloudVisualizer {
       this.scene.remove(current);
     }
     // Add new
-    if (!obj.parent) {this.scene.add(obj);}
+    if (!obj.parent) {
+      this.scene.add(obj);
+    }
     obj.visible = true;
     // Hide axes when new object is added to rule out looking-only-at-axes confusion
     try {
@@ -3015,7 +3124,9 @@ class PointCloudVisualizer {
 
   private toggleAxesVisibility(): void {
     const axesGroup = (this as any).axesGroup;
-    if (!axesGroup) {return;}
+    if (!axesGroup) {
+      return;
+    }
 
     // Flip persistent visibility flag
     this.axesPermanentlyVisible = !this.axesPermanentlyVisible;
@@ -3039,7 +3150,9 @@ class PointCloudVisualizer {
   }
 
   private togglePointsVisibility(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.meshes.length) {return;}
+    if (fileIndex < 0 || fileIndex >= this.meshes.length) {
+      return;
+    }
 
     // Initialize visibility state if not set
     if (this.pointsVisible[fileIndex] === undefined) {
@@ -3058,7 +3171,9 @@ class PointCloudVisualizer {
   }
 
   private toggleFileNormalsVisibility(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.normalsVisualizers.length) {return;}
+    if (fileIndex < 0 || fileIndex >= this.normalsVisualizers.length) {
+      return;
+    }
 
     // Initialize visibility state if not set
     if (this.normalsVisible[fileIndex] === undefined) {
@@ -3132,7 +3247,9 @@ class PointCloudVisualizer {
 
   private updateAxesButtonState(): void {
     const toggleBtn = document.getElementById('toggle-axes');
-    if (!toggleBtn) {return;}
+    if (!toggleBtn) {
+      return;
+    }
     // Active (blue) when axes are permanently visible
     if (this.axesPermanentlyVisible) {
       toggleBtn.classList.add('active');
@@ -3145,7 +3262,9 @@ class PointCloudVisualizer {
 
   private updateRotationOriginButtonState(): void {
     const btn = document.getElementById('set-rotation-origin');
-    if (!btn) {return;}
+    if (!btn) {
+      return;
+    }
     const t = this.controls?.target;
     const atOrigin = !!t && Math.abs(t.x) < 1e-9 && Math.abs(t.y) < 1e-9 && Math.abs(t.z) < 1e-9;
     if (atOrigin) {
@@ -3501,7 +3620,9 @@ class PointCloudVisualizer {
     format?: string;
   } | null = null;
   private handleTimingMessage(msg: any): void {
-    if (!this.currentTiming) {this.currentTiming = { kind: msg.kind };}
+    if (!this.currentTiming) {
+      this.currentTiming = { kind: msg.kind };
+    }
     if (msg.phase === 'start') {
       this.currentTiming = { kind: msg.kind, startAt: msg.at };
     } else if (msg.phase === 'read') {
@@ -3545,7 +3666,11 @@ class PointCloudVisualizer {
     // In sequence mode: do not auto-fit camera or heavy UI work
     if (this.sequenceMode) {
       this.addNewFiles(dataArray);
+
+      // Capture and restore form states even in sequence mode
+      const openPanelStates = this.captureDepthPanelStates();
       this.updateFileList();
+      this.restoreDepthPanelStates(openPanelStates);
 
       // Ensure color consistency with current gamma setting
       this.rebuildAllColorAttributesForCurrentGammaSetting();
@@ -3559,7 +3684,13 @@ class PointCloudVisualizer {
     // Normal mode
     this.addNewFiles(dataArray);
     this.updateFileStats();
+
+    // Capture current form states before regenerating UI
+    const openPanelStates = this.captureDepthPanelStates();
     this.updateFileList();
+    // Restore form values after UI regeneration
+    this.restoreDepthPanelStates(openPanelStates);
+
     this.updateCameraControlsPanel();
 
     // Ensure color consistency with current gamma setting
@@ -3726,7 +3857,9 @@ class PointCloudVisualizer {
       statsDiv.innerHTML = '<div>No objects loaded</div>';
       // Also clear camera matrix panel
       const cameraPanel = document.getElementById('camera-matrix-panel');
-      if (cameraPanel) {cameraPanel.innerHTML = '';}
+      if (cameraPanel) {
+        cameraPanel.innerHTML = '';
+      }
       return;
     }
 
@@ -3772,7 +3905,9 @@ class PointCloudVisualizer {
 
   private updateFileList(): void {
     const fileListDiv = document.getElementById('file-list');
-    if (!fileListDiv) {return;}
+    if (!fileListDiv) {
+      return;
+    }
 
     if (
       this.plyFiles.length === 0 &&
@@ -3851,7 +3986,7 @@ class PointCloudVisualizer {
                             <span class="toggle-icon">▶</span> Depth Settings
                         </button>
                         <div class="depth-settings-panel" id="depth-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
-                            <div id="image-size-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Image Size: Width: -, Height: -</div>
+                            <div id="image-size-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">${this.getImageSizeDisplay(i)}</div>
                             
                             <!-- Calibration File Loading -->
                             <div class="depth-group" style="margin-bottom: 8px;">
@@ -3913,11 +4048,11 @@ class PointCloudVisualizer {
                                     <div style="display: flex; gap: 4px; align-items: end;">
                                         <div style="flex: 1;">
                                             <label for="cx-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cx:</label>
-                                            <input type="number" id="cx-${i}" value="${this.getDepthCx(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                            <input type="number" id="cx-${i}" value="${this.getDepthCx(data, i)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                                         </div>
                                         <div style="flex: 1;">
                                             <label for="cy-${i}" style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">cy:</label>
-                                            <input type="number" id="cy-${i}" value="${this.getDepthCy(data)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
+                                            <input type="number" id="cy-${i}" value="${this.getDepthCy(data, i)}" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;">
                                         </div>
                                         <div style="flex: 0 0 auto;">
                                             <button class="reset-principle-point" data-file-index="${i}" style="padding: 2px 6px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 9px; height: 24px;" title="Reset to auto-calculated center">↺</button>
@@ -4181,10 +4316,15 @@ class PointCloudVisualizer {
                           // Determine grid layout based on number of buttons
                           const buttonCount = buttons.length;
                           let gridColumns = '';
-                          if (buttonCount === 1) {gridColumns = '1fr';}
-                          else if (buttonCount === 2) {gridColumns = '1fr 1fr';}
-                          else if (buttonCount === 3) {gridColumns = '1fr 1fr 1fr';}
-                          else if (buttonCount === 4) {gridColumns = '1fr 1fr 1fr 1fr';}
+                          if (buttonCount === 1) {
+                            gridColumns = '1fr';
+                          } else if (buttonCount === 2) {
+                            gridColumns = '1fr 1fr';
+                          } else if (buttonCount === 3) {
+                            gridColumns = '1fr 1fr 1fr';
+                          } else if (buttonCount === 4) {
+                            gridColumns = '1fr 1fr 1fr 1fr';
+                          }
 
                           return `<div style="display: grid; grid-template-columns: ${gridColumns}; gap: 3px;">${buttons.join('')}</div>`;
                         })()}
@@ -4476,12 +4616,16 @@ class PointCloudVisualizer {
         // Always hide by default and set triangle to side
         activePanel.style.display = 'none';
         const toggleIcon = activeBtn.querySelector('.toggle-icon');
-        if (toggleIcon) {toggleIcon.textContent = '▶';}
+        if (toggleIcon) {
+          toggleIcon.textContent = '▶';
+        }
 
         activeBtn.addEventListener('click', () => {
           const isVisible = activePanel.style.display !== 'none';
           activePanel.style.display = isVisible ? 'none' : 'block';
-          if (toggleIcon) {toggleIcon.textContent = isVisible ? '▶' : '▼';}
+          if (toggleIcon) {
+            toggleIcon.textContent = isVisible ? '▶' : '▼';
+          }
         });
       }
 
@@ -4497,12 +4641,16 @@ class PointCloudVisualizer {
           // Always hide by default and set triangle to side
           sectionContent.style.display = 'none';
           const toggleIcon = toggle.querySelector('.toggle-icon');
-          if (toggleIcon) {toggleIcon.textContent = '▶';}
+          if (toggleIcon) {
+            toggleIcon.textContent = '▶';
+          }
 
           toggle.addEventListener('click', () => {
             const isVisible = sectionContent.style.display !== 'none';
             sectionContent.style.display = isVisible ? 'none' : 'block';
-            if (toggleIcon) {toggleIcon.textContent = isVisible ? '▶' : '▼';}
+            if (toggleIcon) {
+              toggleIcon.textContent = isVisible ? '▶' : '▼';
+            }
           });
         }
       });
@@ -4781,12 +4929,16 @@ class PointCloudVisualizer {
           // Hide by default
           depthPanel.style.display = 'none';
           const toggleIcon = depthToggleBtn.querySelector('.toggle-icon');
-          if (toggleIcon) {toggleIcon.textContent = '▶';}
+          if (toggleIcon) {
+            toggleIcon.textContent = '▶';
+          }
 
           depthToggleBtn.addEventListener('click', () => {
             const isVisible = depthPanel.style.display !== 'none';
             depthPanel.style.display = isVisible ? 'none' : 'block';
-            if (toggleIcon) {toggleIcon.textContent = isVisible ? '▶' : '▼';}
+            if (toggleIcon) {
+              toggleIcon.textContent = isVisible ? '▶' : '▼';
+            }
           });
         }
 
@@ -5147,7 +5299,9 @@ class PointCloudVisualizer {
   }
 
   private toggleFileVisibility(fileIndex: number): void {
-    if (fileIndex < 0) {return;}
+    if (fileIndex < 0) {
+      return;
+    }
     // Determine desired visibility from checkbox state
     const checkboxEl = document.getElementById(`file-${fileIndex}`) as HTMLInputElement | null;
     const desiredVisible = checkboxEl
@@ -5172,9 +5326,13 @@ class PointCloudVisualizer {
     const poseIndex = fileIndex - this.plyFiles.length;
     if (poseIndex >= 0 && poseIndex < this.poseGroups.length) {
       const group = this.poseGroups[poseIndex];
-      if (group) {group.visible = desiredVisible;}
+      if (group) {
+        group.visible = desiredVisible;
+      }
       const labels = this.poseLabelsGroups[poseIndex];
-      if (labels) {labels.visible = desiredVisible;}
+      if (labels) {
+        labels.visible = desiredVisible;
+      }
       return;
     }
 
@@ -5182,7 +5340,9 @@ class PointCloudVisualizer {
     const cameraIndex = fileIndex - this.plyFiles.length - this.poseGroups.length;
     if (cameraIndex >= 0 && cameraIndex < this.cameraGroups.length) {
       const group = this.cameraGroups[cameraIndex];
-      if (group) {group.visible = desiredVisible;}
+      if (group) {
+        group.visible = desiredVisible;
+      }
     }
   }
 
@@ -5221,7 +5381,9 @@ class PointCloudVisualizer {
   }
 
   private toggleSolidRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {return;}
+    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+      return;
+    }
 
     // Ensure array is properly sized with default values
     while (this.solidVisible.length <= fileIndex) {
@@ -5239,7 +5401,9 @@ class PointCloudVisualizer {
   }
 
   private toggleWireframeRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {return;}
+    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+      return;
+    }
 
     // Ensure array is properly sized with default values
     while (this.wireframeVisible.length <= fileIndex) {
@@ -5255,7 +5419,9 @@ class PointCloudVisualizer {
   }
 
   private togglePointsRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {return;}
+    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+      return;
+    }
 
     // Ensure array is properly sized with default values
     while (this.pointsVisible.length <= fileIndex) {
@@ -5369,7 +5535,9 @@ class PointCloudVisualizer {
     fileVisible: boolean
   ): void {
     const mesh = this.meshes[fileIndex];
-    if (!mesh || mesh.type === 'Points') {return;} // Skip if it's already a point cloud
+    if (!mesh || mesh.type === 'Points') {
+      return;
+    } // Skip if it's already a point cloud
 
     const shouldShowVertexPoints = pointsVisible && fileVisible;
     let vertexPointsObject = this.vertexPointsObjects[fileIndex];
@@ -5407,7 +5575,9 @@ class PointCloudVisualizer {
       });
     }
 
-    if (!geometry || !geometry.attributes.position) {return null;}
+    if (!geometry || !geometry.attributes.position) {
+      return null;
+    }
 
     // Create points geometry from mesh vertices
     const pointsGeometry = new THREE.BufferGeometry();
@@ -5462,7 +5632,9 @@ class PointCloudVisualizer {
   }
 
   private toggleNormalsRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {return;}
+    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+      return;
+    }
 
     // Ensure array is properly sized with default values
     while (this.normalsVisible.length <= fileIndex) {
@@ -6027,7 +6199,9 @@ class PointCloudVisualizer {
       const shouldBeVisible = !isSeqMode || data.fileIndex === this.sequenceIndex;
       this.fileVisibility.push(shouldBeVisible);
       const lastObject = this.meshes[this.meshes.length - 1];
-      if (lastObject) {lastObject.visible = shouldBeVisible;}
+      if (lastObject) {
+        lastObject.visible = shouldBeVisible;
+      }
       const isObjFile3 = (data as any).isObjFile;
       // Universal default point size for all file types (now that all use world-space sizing)
       this.pointSizes.push(0.001);
@@ -6041,8 +6215,10 @@ class PointCloudVisualizer {
       this.transformationMatrices.push(new THREE.Matrix4());
     }
 
-    // Update UI
+    // Update UI (preserve depth panel states)
+    const openPanelStates = this.captureDepthPanelStates();
     this.updateFileList();
+    this.restoreDepthPanelStates(openPanelStates);
     this.updateFileStats();
 
     // debug
@@ -6063,11 +6239,15 @@ class PointCloudVisualizer {
       const group = this.poseGroups[poseIndex];
       this.scene.remove(group);
       group.traverse((obj: any) => {
-        if (obj.geometry && typeof obj.geometry.dispose === 'function') {obj.geometry.dispose();}
+        if (obj.geometry && typeof obj.geometry.dispose === 'function') {
+          obj.geometry.dispose();
+        }
         if (obj.material) {
-          if (Array.isArray(obj.material))
-            {obj.material.forEach((m: any) => m.dispose && m.dispose());}
-          else if (typeof obj.material.dispose === 'function') {obj.material.dispose();}
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach((m: any) => m.dispose && m.dispose());
+          } else if (typeof obj.material.dispose === 'function') {
+            obj.material.dispose();
+          }
         }
       });
       this.poseGroups.splice(poseIndex, 1);
@@ -6078,7 +6258,10 @@ class PointCloudVisualizer {
       if (this.individualColorModes[fileIndex] !== undefined) {
         this.individualColorModes.splice(fileIndex, 1);
       }
+      // Preserve depth panel states when removing files
+      const openPanelStates = this.captureDepthPanelStates();
       this.updateFileList();
+      this.restoreDepthPanelStates(openPanelStates);
       this.updateFileStats();
       return;
     }
@@ -6132,8 +6315,10 @@ class PointCloudVisualizer {
       this.plyFiles[i].fileIndex = i;
     }
 
-    // Update UI
+    // Update UI (preserve depth panel states)
+    const openPanelStates = this.captureDepthPanelStates();
     this.updateFileList();
+    this.restoreDepthPanelStates(openPanelStates);
     this.updateFileStats();
 
     // debug
@@ -6208,55 +6393,64 @@ class PointCloudVisualizer {
       const i3 = i * 3;
 
       // Read positions with correct data type
-      if (xOffset)
-        {positions[i3] = readBinaryValue(
+      if (xOffset) {
+        positions[i3] = readBinaryValue(
           vertexOffset + (xOffset as any).offset,
           (xOffset as any).type
-        );}
-      if (yOffset)
-        {positions[i3 + 1] = readBinaryValue(
+        );
+      }
+      if (yOffset) {
+        positions[i3 + 1] = readBinaryValue(
           vertexOffset + (yOffset as any).offset,
           (yOffset as any).type
-        );}
-      if (zOffset)
-        {positions[i3 + 2] = readBinaryValue(
+        );
+      }
+      if (zOffset) {
+        positions[i3 + 2] = readBinaryValue(
           vertexOffset + (zOffset as any).offset,
           (zOffset as any).type
-        );}
+        );
+      }
 
       // Read colors with correct data type
-      if (colors && redOffset)
-        {colors[i3] = readBinaryValue(
+      if (colors && redOffset) {
+        colors[i3] = readBinaryValue(
           vertexOffset + (redOffset as any).offset,
           (redOffset as any).type
-        );}
-      if (colors && greenOffset)
-        {colors[i3 + 1] = readBinaryValue(
+        );
+      }
+      if (colors && greenOffset) {
+        colors[i3 + 1] = readBinaryValue(
           vertexOffset + (greenOffset as any).offset,
           (greenOffset as any).type
-        );}
-      if (colors && blueOffset)
-        {colors[i3 + 2] = readBinaryValue(
+        );
+      }
+      if (colors && blueOffset) {
+        colors[i3 + 2] = readBinaryValue(
           vertexOffset + (blueOffset as any).offset,
           (blueOffset as any).type
-        );}
+        );
+      }
 
       // Read normals with correct data type
-      if (normals && nxOffset)
-        {normals[i3] = readBinaryValue(
+      if (normals && nxOffset) {
+        normals[i3] = readBinaryValue(
           vertexOffset + (nxOffset as any).offset,
           (nxOffset as any).type
-        );}
-      if (normals && nyOffset)
-        {normals[i3 + 1] = readBinaryValue(
+        );
+      }
+      if (normals && nyOffset) {
+        normals[i3 + 1] = readBinaryValue(
           vertexOffset + (nyOffset as any).offset,
           (nyOffset as any).type
-        );}
-      if (normals && nzOffset)
-        {normals[i3 + 2] = readBinaryValue(
+        );
+      }
+      if (normals && nzOffset) {
+        normals[i3 + 2] = readBinaryValue(
           vertexOffset + (nzOffset as any).offset,
           (nzOffset as any).type
-        );}
+        );
+      }
     }
 
     const parseTime = performance.now();
@@ -6860,7 +7054,9 @@ class PointCloudVisualizer {
   // ===== Pose feature updaters =====
   private updatePoseAppearance(fileIndex: number): void {
     const poseIndex = fileIndex - this.plyFiles.length;
-    if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {return;}
+    if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
+      return;
+    }
     const group = this.poseGroups[poseIndex];
     const meta = this.poseMeta[poseIndex];
     const useDataset = this.poseUseDatasetColors[fileIndex];
@@ -6930,7 +7126,9 @@ class PointCloudVisualizer {
 
   private updatePoseLabels(fileIndex: number): void {
     const poseIndex = fileIndex - this.plyFiles.length;
-    if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {return;}
+    if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
+      return;
+    }
     const show = this.poseShowLabels[fileIndex];
     const group = this.poseGroups[poseIndex];
     const joints = this.poseJoints[poseIndex] || [];
@@ -6941,7 +7139,9 @@ class PointCloudVisualizer {
       this.scene.remove(existing);
       this.poseLabelsGroups[poseIndex] = null;
     }
-    if (!show) {return;}
+    if (!show) {
+      return;
+    }
     // Build a new labels group using simple Sprites
     const labelsGroup = new THREE.Group();
     const meta = this.poseMeta[poseIndex];
@@ -6968,7 +7168,9 @@ class PointCloudVisualizer {
     for (let k = 0; k < count; k++) {
       const originalIndex = validMap.length === count ? validMap[k] : k;
       const j = joints[originalIndex];
-      if (!j || j.valid !== true) {continue;}
+      if (!j || j.valid !== true) {
+        continue;
+      }
       const label = makeLabel(names[originalIndex] || `${originalIndex}`);
       label.position.set(j.x, j.y + (this.pointSizes[fileIndex] ?? 0.02) * 1.5, j.z);
       labelsGroup.add(label);
@@ -6979,7 +7181,9 @@ class PointCloudVisualizer {
 
   private updatePoseScaling(fileIndex: number): void {
     const poseIndex = fileIndex - this.plyFiles.length;
-    if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {return;}
+    if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
+      return;
+    }
     const group = this.poseGroups[poseIndex];
     const baseRadius = this.pointSizes[fileIndex] ?? 0.02;
     const scaleByScore = this.poseScaleByScore[fileIndex];
@@ -7021,10 +7225,14 @@ class PointCloudVisualizer {
 
   private applyPoseConvention(fileIndex: number, conv: 'opengl' | 'opencv'): void {
     const poseIndex = fileIndex - this.plyFiles.length;
-    if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {return;}
+    if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
+      return;
+    }
     const group = this.poseGroups[poseIndex];
     const prev = this.poseConvention[fileIndex] || 'opengl';
-    if (prev === conv) {return;} // already applied
+    if (prev === conv) {
+      return;
+    } // already applied
     // Toggle flip each time we switch; inverse = same flip
     const mat = new THREE.Matrix4().set(1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1);
     group.applyMatrix4(mat);
@@ -7034,7 +7242,9 @@ class PointCloudVisualizer {
 
   private applyPoseFilters(fileIndex: number): void {
     const poseIndex = fileIndex - this.plyFiles.length;
-    if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {return;}
+    if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
+      return;
+    }
     const group = this.poseGroups[poseIndex];
     const meta = this.poseMeta[poseIndex];
     const minScore = this.poseMinScoreThreshold[fileIndex] ?? 0;
@@ -7060,10 +7270,14 @@ class PointCloudVisualizer {
             meta.jointScores[originalIndex] != null &&
             isFinite(meta.jointScores[originalIndex]!)
           ) {
-            if (meta.jointScores[originalIndex]! < minScore) {visible = false;}
+            if (meta.jointScores[originalIndex]! < minScore) {
+              visible = false;
+            }
           }
           if (uncMag && uncMag[originalIndex] != null && isFinite(uncMag[originalIndex]!)) {
-            if (uncMag[originalIndex]! > maxUnc) {visible = false;}
+            if (uncMag[originalIndex]! > maxUnc) {
+              visible = false;
+            }
           }
           const targetScale = visible ? (this.pointSizes[fileIndex] ?? 0.02) : 0;
           dummy.scale.setScalar(targetScale);
@@ -7095,14 +7309,20 @@ class PointCloudVisualizer {
             uncMagArr[k]! > maxUnc
           );
           const visible = scoreOk && uncOk && joints[k] && joints[k].valid === true;
-          if (!visible) {hidden.add(k);}
+          if (!visible) {
+            hidden.add(k);
+          }
         }
         const tempPositions: number[] = [];
         for (const [a, b] of edges) {
-          if (hidden.has(a) || hidden.has(b)) {continue;}
+          if (hidden.has(a) || hidden.has(b)) {
+            continue;
+          }
           const pa = joints[a];
           const pb = joints[b];
-          if (!pa || !pb) {continue;}
+          if (!pa || !pb) {
+            continue;
+          }
           tempPositions.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
         }
         const newGeo = new THREE.BufferGeometry();
@@ -7123,29 +7343,39 @@ class PointCloudVisualizer {
       this.fileVisibility[i] = false;
       if (i < this.meshes.length) {
         const obj = this.meshes[i];
-        if (obj) {obj.visible = false;}
+        if (obj) {
+          obj.visible = false;
+        }
       } else {
         const poseIndex = i - this.plyFiles.length;
         const group = this.poseGroups[poseIndex];
-        if (group) {group.visible = false;}
+        if (group) {
+          group.visible = false;
+        }
       }
     }
     // Show only the selected entry
     this.fileVisibility[fileIndex] = true;
     if (fileIndex < this.meshes.length) {
       const obj = this.meshes[fileIndex];
-      if (obj) {obj.visible = true;}
+      if (obj) {
+        obj.visible = true;
+      }
     } else {
       const poseIndex = fileIndex - this.plyFiles.length;
       const group = this.poseGroups[poseIndex];
-      if (group) {group.visible = true;}
+      if (group) {
+        group.visible = true;
+      }
     }
     // Update UI
     this.updateFileList();
   }
 
   private switchToTrackballControls(): void {
-    if (this.controlType === 'trackball') {return;}
+    if (this.controlType === 'trackball') {
+      return;
+    }
 
     console.log('🔄 Switching to TrackballControls');
     this.controlType = 'trackball';
@@ -7155,7 +7385,9 @@ class PointCloudVisualizer {
   }
 
   private switchToOrbitControls(): void {
-    if (this.controlType === 'orbit') {return;}
+    if (this.controlType === 'orbit') {
+      return;
+    }
 
     console.log('🔄 Switching to OrbitControls');
     this.controlType = 'orbit';
@@ -7165,7 +7397,9 @@ class PointCloudVisualizer {
   }
 
   private switchToInverseTrackballControls(): void {
-    if (this.controlType === 'inverse-trackball') {return;}
+    if (this.controlType === 'inverse-trackball') {
+      return;
+    }
 
     console.log('🔄 Switching to Inverse TrackballControls');
     this.controlType = 'inverse-trackball';
@@ -7175,7 +7409,9 @@ class PointCloudVisualizer {
   }
 
   private switchToArcballControls(): void {
-    if (this.controlType === 'arcball') {return;}
+    if (this.controlType === 'arcball') {
+      return;
+    }
 
     console.log('🔄 Switching to ArcballControls');
     this.controlType = 'arcball';
@@ -8327,8 +8563,12 @@ class PointCloudVisualizer {
         // Show baseline and disparity offset groups since we switched to disparity
         const baselineGroup = document.getElementById(`baseline-group-${fileIndex}`);
         const disparityOffsetGroup = document.getElementById(`disparity-offset-group-${fileIndex}`);
-        if (baselineGroup) {baselineGroup.style.display = '';}
-        if (disparityOffsetGroup) {disparityOffsetGroup.style.display = '';}
+        if (baselineGroup) {
+          baselineGroup.style.display = '';
+        }
+        if (disparityOffsetGroup) {
+          disparityOffsetGroup.style.display = '';
+        }
       } else if (depthTypeSelect) {
         console.log(
           `📐 Baseline detected but depth type already set to '${depthTypeSelect.value}', keeping user choice`
@@ -8376,27 +8616,39 @@ class PointCloudVisualizer {
     // Populate distortion coefficients if available
     if (cameraData.k1 !== undefined) {
       const k1Input = document.getElementById(`k1-${fileIndex}`) as HTMLInputElement;
-      if (k1Input) {k1Input.value = String(cameraData.k1);}
+      if (k1Input) {
+        k1Input.value = String(cameraData.k1);
+      }
     }
     if (cameraData.k2 !== undefined) {
       const k2Input = document.getElementById(`k2-${fileIndex}`) as HTMLInputElement;
-      if (k2Input) {k2Input.value = String(cameraData.k2);}
+      if (k2Input) {
+        k2Input.value = String(cameraData.k2);
+      }
     }
     if (cameraData.k3 !== undefined) {
       const k3Input = document.getElementById(`k3-${fileIndex}`) as HTMLInputElement;
-      if (k3Input) {k3Input.value = String(cameraData.k3);}
+      if (k3Input) {
+        k3Input.value = String(cameraData.k3);
+      }
     }
     if (cameraData.k4 !== undefined) {
       const k4Input = document.getElementById(`k4-${fileIndex}`) as HTMLInputElement;
-      if (k4Input) {k4Input.value = String(cameraData.k4);}
+      if (k4Input) {
+        k4Input.value = String(cameraData.k4);
+      }
     }
     if (cameraData.p1 !== undefined) {
       const p1Input = document.getElementById(`p1-${fileIndex}`) as HTMLInputElement;
-      if (p1Input) {p1Input.value = String(cameraData.p1);}
+      if (p1Input) {
+        p1Input.value = String(cameraData.p1);
+      }
     }
     if (cameraData.p2 !== undefined) {
       const p2Input = document.getElementById(`p2-${fileIndex}`) as HTMLInputElement;
-      if (p2Input) {p2Input.value = String(cameraData.p2);}
+      if (p2Input) {
+        p2Input.value = String(cameraData.p2);
+      }
     }
 
     // Trigger update of default button state
@@ -8854,11 +9106,21 @@ class PointCloudVisualizer {
 
       // Status message based on what was loaded
       let statusParts = [`${vertices.length.toLocaleString()} vertices`];
-      if (hasPoints) {statusParts.push(`${objData.pointCount} points`);}
-      if (hasFaces) {statusParts.push(`${faces.length.toLocaleString()} faces`);}
-      if (hasLines) {statusParts.push(`${objData.lineCount} line segments`);}
-      if (objData.hasTextures) {statusParts.push(`${objData.textureCoordCount} texture coords`);}
-      if (objData.hasNormals) {statusParts.push(`${objData.normalCount} normals`);}
+      if (hasPoints) {
+        statusParts.push(`${objData.pointCount} points`);
+      }
+      if (hasFaces) {
+        statusParts.push(`${faces.length.toLocaleString()} faces`);
+      }
+      if (hasLines) {
+        statusParts.push(`${objData.lineCount} line segments`);
+      }
+      if (objData.hasTextures) {
+        statusParts.push(`${objData.textureCoordCount} texture coords`);
+      }
+      if (objData.hasNormals) {
+        statusParts.push(`${objData.normalCount} normals`);
+      }
 
       this.showStatus(`OBJ ${hasFaces ? 'mesh' : 'wireframe'} loaded: ${statusParts.join(', ')}`);
     } catch (error) {
@@ -9492,7 +9754,9 @@ class PointCloudVisualizer {
 
     for (const line of lines) {
       const parts = line.trim().split(/\s+/);
-      if (parts.length < 3) {continue;}
+      if (parts.length < 3) {
+        continue;
+      }
 
       const vertex: PlyVertex = {
         x: parseFloat(parts[0]),
@@ -10425,7 +10689,9 @@ class PointCloudVisualizer {
 
   private isDepthDerivedFile(data: PlyData): boolean {
     const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {return false;}
+    if (!Array.isArray(comments)) {
+      return false;
+    }
     return comments.some(
       (comment: string) =>
         typeof comment === 'string' &&
@@ -10438,7 +10704,9 @@ class PointCloudVisualizer {
 
   private isPngDerivedFile(data: PlyData): boolean {
     const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {return false;}
+    if (!Array.isArray(comments)) {
+      return false;
+    }
     return comments.some(
       (comment: string) =>
         typeof comment === 'string' && comment.includes('Converted from PNG depth image')
@@ -10447,7 +10715,9 @@ class PointCloudVisualizer {
 
   private getPngScaleFactor(data: PlyData): number {
     const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {return 1000;} // Default
+    if (!Array.isArray(comments)) {
+      return 1000;
+    } // Default
 
     for (const comment of comments) {
       if (typeof comment === 'string' && comment.includes('scale=')) {
@@ -10463,8 +10733,12 @@ class PointCloudVisualizer {
   private getDepthSetting(data: PlyData, setting: 'camera' | 'depth'): string {
     const comments = (data as any)?.comments;
     if (!Array.isArray(comments)) {
-      if (setting === 'camera') {return this.defaultDepthSettings.cameraModel;}
-      if (setting === 'depth') {return this.defaultDepthSettings.depthType;}
+      if (setting === 'camera') {
+        return this.defaultDepthSettings.cameraModel;
+      }
+      if (setting === 'depth') {
+        return this.defaultDepthSettings.depthType;
+      }
       return '';
     }
     for (const comment of comments) {
@@ -10476,14 +10750,20 @@ class PointCloudVisualizer {
       }
     }
     // Return default settings if no setting found in comments
-    if (setting === 'camera') {return this.defaultDepthSettings.cameraModel;}
-    if (setting === 'depth') {return this.defaultDepthSettings.depthType;}
+    if (setting === 'camera') {
+      return this.defaultDepthSettings.cameraModel;
+    }
+    if (setting === 'depth') {
+      return this.defaultDepthSettings.depthType;
+    }
     return '';
   }
 
   private getDepthFx(data: PlyData): number {
     const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {return this.defaultDepthSettings.fx;}
+    if (!Array.isArray(comments)) {
+      return this.defaultDepthSettings.fx;
+    }
     for (const comment of comments) {
       if (comment.startsWith('fx: ')) {
         const match = comment.match(/(\d+(?:\.\d+)?)px/);
@@ -10500,7 +10780,9 @@ class PointCloudVisualizer {
 
   private getDepthFy(data: PlyData): string {
     const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {return this.defaultDepthSettings.fy?.toString() || '';}
+    if (!Array.isArray(comments)) {
+      return this.defaultDepthSettings.fy?.toString() || '';
+    }
     for (const comment of comments) {
       if (comment.startsWith('fy: ')) {
         const match = comment.match(/(\d+(?:\.\d+)?)px/);
@@ -10512,7 +10794,9 @@ class PointCloudVisualizer {
 
   private getDepthBaseline(data: PlyData): number {
     const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {return this.defaultDepthSettings.baseline || 50;}
+    if (!Array.isArray(comments)) {
+      return this.defaultDepthSettings.baseline || 50;
+    }
     for (const comment of comments) {
       if (comment.startsWith('Baseline: ')) {
         const match = comment.match(/(\d+(?:\.\d+)?)mm/);
@@ -10522,8 +10806,20 @@ class PointCloudVisualizer {
     return this.defaultDepthSettings.baseline || 50; // Use default baseline
   }
 
-  private getDepthCx(data: PlyData): string {
-    // Auto-calculate cx as (width - 1) / 2
+  private getDepthCx(data: PlyData, fileIndex?: number): string {
+    // First try to get dimensions from stored depth data using file index
+    if (fileIndex !== undefined) {
+      const depthData = this.fileDepthData.get(fileIndex);
+      if (depthData?.depthDimensions?.width) {
+        const cx = (depthData.depthDimensions.width - 1) / 2;
+        console.log(
+          `📐 Using stored dimensions for file ${fileIndex}: ${depthData.depthDimensions.width}×${depthData.depthDimensions.height}, computed cx = ${cx}`
+        );
+        return cx.toString();
+      }
+    }
+
+    // Fall back to checking dimensions on the data object (legacy)
     const dimensions = (data as any)?.depthDimensions;
     if (dimensions && dimensions.width) {
       const cx = (dimensions.width - 1) / 2;
@@ -10537,8 +10833,20 @@ class PointCloudVisualizer {
     return ''; // Empty = will be auto-calculated once image is processed
   }
 
-  private getDepthCy(data: PlyData): string {
-    // Auto-calculate cy as (height - 1) / 2
+  private getDepthCy(data: PlyData, fileIndex?: number): string {
+    // First try to get dimensions from stored depth data using file index
+    if (fileIndex !== undefined) {
+      const depthData = this.fileDepthData.get(fileIndex);
+      if (depthData?.depthDimensions?.height) {
+        const cy = (depthData.depthDimensions.height - 1) / 2;
+        console.log(
+          `📐 Using stored dimensions for file ${fileIndex}: ${depthData.depthDimensions.width}×${depthData.depthDimensions.height}, computed cy = ${cy}`
+        );
+        return cy.toString();
+      }
+    }
+
+    // Fall back to checking dimensions on the data object (legacy)
     const dimensions = (data as any)?.depthDimensions;
     if (dimensions && dimensions.height) {
       const cy = (dimensions.height - 1) / 2;
@@ -10572,6 +10880,15 @@ class PointCloudVisualizer {
   private getStoredColorImageName(fileIndex: number): string | null {
     const depthData = this.fileDepthData.get(fileIndex);
     return depthData?.colorImageName || null;
+  }
+
+  private getImageSizeDisplay(fileIndex: number): string {
+    const depthData = this.fileDepthData.get(fileIndex);
+    if (depthData?.depthDimensions) {
+      const { width, height } = depthData.depthDimensions;
+      return `Image Size: Width: ${width}, Height: ${height}`;
+    }
+    return 'Image Size: Width: -, Height: -';
   }
 
   private parseMatrixInput(input: string): number[] | null {
@@ -10970,7 +11287,9 @@ class PointCloudVisualizer {
     const button = document.querySelector(
       `.use-as-default-settings[data-file-index="${fileIndex}"]`
     ) as HTMLButtonElement;
-    if (!button) {return;}
+    if (!button) {
+      return;
+    }
 
     try {
       // Get current form values
@@ -11930,7 +12249,9 @@ class PointCloudVisualizer {
 
   private updateCameraButtonState(): void {
     const toggleBtn = document.getElementById('toggle-cameras');
-    if (!toggleBtn) {return;}
+    if (!toggleBtn) {
+      return;
+    }
 
     if (this.cameraVisibility) {
       toggleBtn.classList.add('active');
@@ -11942,7 +12263,9 @@ class PointCloudVisualizer {
   }
 
   private toggleCameraProfileLabels(cameraProfileIndex: number, showLabels: boolean): void {
-    if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) {return;}
+    if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) {
+      return;
+    }
 
     const profileGroup = this.cameraGroups[cameraProfileIndex];
     // Iterate through all cameras in the profile
@@ -11957,7 +12280,9 @@ class PointCloudVisualizer {
   }
 
   private toggleCameraProfileCoordinates(cameraProfileIndex: number, showCoords: boolean): void {
-    if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) {return;}
+    if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) {
+      return;
+    }
 
     const profileGroup = this.cameraGroups[cameraProfileIndex];
     // Iterate through all cameras in the profile
@@ -11994,7 +12319,9 @@ class PointCloudVisualizer {
   }
 
   private applyCameraScale(cameraProfileIndex: number, scale: number): void {
-    if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) {return;}
+    if (cameraProfileIndex < 0 || cameraProfileIndex >= this.cameraGroups.length) {
+      return;
+    }
 
     const profileGroup = this.cameraGroups[cameraProfileIndex];
     // Apply scale to each individual camera's visual elements
@@ -12135,7 +12462,9 @@ class PointCloudVisualizer {
       );
       // Attach dataset extras to the last meta entry provisionally (will be moved per-pose)
       const toColor = (arr: any): [number, number, number][] => {
-        if (!arr || !Array.isArray(arr.__ndarray__)) {return [];}
+        if (!arr || !Array.isArray(arr.__ndarray__)) {
+          return [];
+        }
         return arr.__ndarray__.map((rgb: number[]) => [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255]);
       };
       const jointColors = toColor(raw.meta_info.keypoint_colors);
@@ -12277,7 +12606,9 @@ class PointCloudVisualizer {
     for (let i = 0; i < joints.length; i++) {
       const distances: Array<{ j: number; d: number }> = [];
       for (let j = 0; j < joints.length; j++) {
-        if (i === j) {continue;}
+        if (i === j) {
+          continue;
+        }
         const dx = joints[i].x - joints[j].x;
         const dy = joints[i].y - joints[j].y;
         const dz = joints[i].z - joints[j].z;
@@ -12331,7 +12662,9 @@ class PointCloudVisualizer {
     const validJointIndices: number[] = [];
     for (let i = 0; i < pose.joints.length; i++) {
       const p = pose.joints[i] as any;
-      if (p && p.valid === true) {validJointIndices.push(i);}
+      if (p && p.valid === true) {
+        validJointIndices.push(i);
+      }
     }
     const inst = new THREE.InstancedMesh(sphereGeo, mat, validJointIndices.length);
     const dummy = new THREE.Object3D();
@@ -12355,12 +12688,18 @@ class PointCloudVisualizer {
       for (const [a, b] of pose.edges) {
         const pa = pose.joints[a] as any;
         const pb = pose.joints[b] as any;
-        if (!(pa && pb)) {continue;}
-        if (pa.valid !== true || pb.valid !== true) {continue;}
+        if (!(pa && pb)) {
+          continue;
+        }
+        if (pa.valid !== true || pb.valid !== true) {
+          continue;
+        }
         // Also skip edges where endpoint equals origin due to sanitized NaN
         const aIsOrigin = pa.x === 0 && pa.y === 0 && pa.z === 0;
         const bIsOrigin = pb.x === 0 && pb.y === 0 && pb.z === 0;
-        if (aIsOrigin || bIsOrigin) {continue;}
+        if (aIsOrigin || bIsOrigin) {
+          continue;
+        }
         tempPositions.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
       }
       const lineGeo = new THREE.BufferGeometry();
@@ -12631,11 +12970,15 @@ class PointCloudVisualizer {
           if (state.panelOpen) {
             (panel as HTMLElement).style.display = 'block';
             const icon = toggleButton.querySelector('.toggle-icon');
-            if (icon) {icon.textContent = '▼';}
+            if (icon) {
+              icon.textContent = '▼';
+            }
           } else {
             (panel as HTMLElement).style.display = 'none';
             const icon = toggleButton.querySelector('.toggle-icon');
-            if (icon) {icon.textContent = '▶';}
+            if (icon) {
+              icon.textContent = '▶';
+            }
           }
 
           // Restore form values
@@ -12667,7 +13010,9 @@ class PointCloudVisualizer {
     const setValue = (id: string, value: string | null) => {
       if (value !== null) {
         const element = document.getElementById(id) as HTMLInputElement | HTMLSelectElement;
-        if (element) {element.value = value;}
+        if (element) {
+          element.value = value;
+        }
       }
     };
 
