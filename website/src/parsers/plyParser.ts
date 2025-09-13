@@ -233,9 +233,15 @@ export class PlyParser {
       const yIdx = propMap.get('y');
       const zIdx = propMap.get('z');
 
-      if (xIdx !== undefined) {vertex.x = parseFloat(values[xIdx]);}
-      if (yIdx !== undefined) {vertex.y = parseFloat(values[yIdx]);}
-      if (zIdx !== undefined) {vertex.z = parseFloat(values[zIdx]);}
+      if (xIdx !== undefined) {
+        vertex.x = parseFloat(values[xIdx]);
+      }
+      if (yIdx !== undefined) {
+        vertex.y = parseFloat(values[yIdx]);
+      }
+      if (zIdx !== undefined) {
+        vertex.z = parseFloat(values[zIdx]);
+      }
 
       // Only parse colors if they exist
       if (result.hasColors) {
@@ -243,9 +249,15 @@ export class PlyParser {
         const greenIdx = propMap.get('green');
         const blueIdx = propMap.get('blue');
 
-        if (redIdx !== undefined) {vertex.red = parseFloat(values[redIdx]);}
-        if (greenIdx !== undefined) {vertex.green = parseFloat(values[greenIdx]);}
-        if (blueIdx !== undefined) {vertex.blue = parseFloat(values[blueIdx]);}
+        if (redIdx !== undefined) {
+          vertex.red = parseFloat(values[redIdx]);
+        }
+        if (greenIdx !== undefined) {
+          vertex.green = parseFloat(values[greenIdx]);
+        }
+        if (blueIdx !== undefined) {
+          vertex.blue = parseFloat(values[blueIdx]);
+        }
       }
 
       // Only parse normals if they exist
@@ -254,9 +266,15 @@ export class PlyParser {
         const nyIdx = propMap.get('ny');
         const nzIdx = propMap.get('nz');
 
-        if (nxIdx !== undefined) {vertex.nx = parseFloat(values[nxIdx]);}
-        if (nyIdx !== undefined) {vertex.ny = parseFloat(values[nyIdx]);}
-        if (nzIdx !== undefined) {vertex.nz = parseFloat(values[nzIdx]);}
+        if (nxIdx !== undefined) {
+          vertex.nx = parseFloat(values[nxIdx]);
+        }
+        if (nyIdx !== undefined) {
+          vertex.ny = parseFloat(values[nyIdx]);
+        }
+        if (nzIdx !== undefined) {
+          vertex.nz = parseFloat(values[nzIdx]);
+        }
       }
 
       result.vertices[i] = vertex;
@@ -351,9 +369,15 @@ export class PlyParser {
           const values = line.split(/\s+/);
           const base = verticesParsed * 3;
 
-          if (xIdx !== undefined) {positions[base] = parseFloat(values[xIdx]);}
-          if (yIdx !== undefined) {positions[base + 1] = parseFloat(values[yIdx]);}
-          if (zIdx !== undefined) {positions[base + 2] = parseFloat(values[zIdx]);}
+          if (xIdx !== undefined) {
+            positions[base] = parseFloat(values[xIdx]);
+          }
+          if (yIdx !== undefined) {
+            positions[base + 1] = parseFloat(values[yIdx]);
+          }
+          if (zIdx !== undefined) {
+            positions[base + 2] = parseFloat(values[zIdx]);
+          }
 
           if (colors && rIdx !== undefined && gIdx !== undefined && bIdx !== undefined) {
             colors[base] = (values[rIdx] !== undefined ? parseFloat(values[rIdx]) : 0) as number;
@@ -402,9 +426,15 @@ export class PlyParser {
         if (verticesParsed < vertexCount) {
           const values = line.split(/\s+/);
           const base = verticesParsed * 3;
-          if (xIdx !== undefined) {positions[base] = parseFloat(values[xIdx]);}
-          if (yIdx !== undefined) {positions[base + 1] = parseFloat(values[yIdx]);}
-          if (zIdx !== undefined) {positions[base + 2] = parseFloat(values[zIdx]);}
+          if (xIdx !== undefined) {
+            positions[base] = parseFloat(values[xIdx]);
+          }
+          if (yIdx !== undefined) {
+            positions[base + 1] = parseFloat(values[yIdx]);
+          }
+          if (zIdx !== undefined) {
+            positions[base + 2] = parseFloat(values[zIdx]);
+          }
           if (colors && rIdx !== undefined && gIdx !== undefined && bIdx !== undefined) {
             colors[base] = (values[rIdx] !== undefined ? parseFloat(values[rIdx]) : 0) as number;
             colors[base + 1] = (
@@ -534,15 +564,25 @@ export class PlyParser {
         const value = this.readBinaryValueFast(vertexProperties[propIdx].type);
 
         // Direct array assignment based on property index
-        if (propIdx === xIdx) {positions[i3] = value;}
-        else if (propIdx === yIdx) {positions[i3 + 1] = value;}
-        else if (propIdx === zIdx) {positions[i3 + 2] = value;}
-        else if (colors && propIdx === redIdx) {colors[i3] = value;}
-        else if (colors && propIdx === greenIdx) {colors[i3 + 1] = value;}
-        else if (colors && propIdx === blueIdx) {colors[i3 + 2] = value;}
-        else if (normals && propIdx === nxIdx) {normals[i3] = value;}
-        else if (normals && propIdx === nyIdx) {normals[i3 + 1] = value;}
-        else if (normals && propIdx === nzIdx) {normals[i3 + 2] = value;}
+        if (propIdx === xIdx) {
+          positions[i3] = value;
+        } else if (propIdx === yIdx) {
+          positions[i3 + 1] = value;
+        } else if (propIdx === zIdx) {
+          positions[i3 + 2] = value;
+        } else if (colors && propIdx === redIdx) {
+          colors[i3] = value;
+        } else if (colors && propIdx === greenIdx) {
+          colors[i3 + 1] = value;
+        } else if (colors && propIdx === blueIdx) {
+          colors[i3 + 2] = value;
+        } else if (normals && propIdx === nxIdx) {
+          normals[i3] = value;
+        } else if (normals && propIdx === nyIdx) {
+          normals[i3 + 1] = value;
+        } else if (normals && propIdx === nzIdx) {
+          normals[i3 + 2] = value;
+        }
       }
     }
 

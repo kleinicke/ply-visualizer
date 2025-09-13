@@ -11,7 +11,9 @@ suite('CalibTXT Parser Test Suite', () => {
       const params: any = {};
 
       for (const line of lines) {
-        if (line.startsWith('#') || line.startsWith('//')) {continue;} // Skip comments
+        if (line.startsWith('#') || line.startsWith('//')) {
+          continue;
+        } // Skip comments
 
         const parts = line.split(/[:\s=]+/).filter(p => p.length > 0);
         if (parts.length >= 2) {
@@ -56,7 +58,9 @@ suite('CalibTXT Parser Test Suite', () => {
       const matrix: number[][] = [];
 
       for (const line of lines) {
-        if (line.startsWith('#') || line.startsWith('//')) {continue;}
+        if (line.startsWith('#') || line.startsWith('//')) {
+          continue;
+        }
 
         // Try to parse as matrix row
         const values = line

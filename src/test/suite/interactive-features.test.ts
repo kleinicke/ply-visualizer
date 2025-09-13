@@ -506,7 +506,9 @@ suite('Interactive Features Test Suite', function () {
     ];
 
     function calculateBoundingBox(points: number[][]) {
-      if (points.length === 0) {return null;}
+      if (points.length === 0) {
+        return null;
+      }
 
       const min = [Infinity, Infinity, Infinity];
       const max = [-Infinity, -Infinity, -Infinity];

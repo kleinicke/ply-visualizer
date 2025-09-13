@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": false,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "paths": {
+      "../../src/webview/*": ["../src/webview/*"]
+    }
+  },
+  "include": ["src/**/*", "../src/webview/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

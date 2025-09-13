@@ -53,9 +53,15 @@ export class BasicExrParser {
     }
 
     // Check for unsupported features
-    if (version & 0x200) {throw new Error('Tiled EXR files are not supported');}
-    if (version & 0x800) {throw new Error('Deep EXR files are not supported');}
-    if (version & 0x1000) {throw new Error('Multi-part EXR files are not supported');}
+    if (version & 0x200) {
+      throw new Error('Tiled EXR files are not supported');
+    }
+    if (version & 0x800) {
+      throw new Error('Deep EXR files are not supported');
+    }
+    if (version & 0x1000) {
+      throw new Error('Multi-part EXR files are not supported');
+    }
 
     // Parse header
     const headerInfo = this.parseHeader();
@@ -92,7 +98,9 @@ export class BasicExrParser {
     // Read header attributes
     while (true) {
       const attrName = this.readString();
-      if (attrName === '') {break;} // End of header
+      if (attrName === '') {
+        break;
+      } // End of header
 
       const attrType = this.readString();
       const attrSize = this.readUint32();
@@ -135,7 +143,9 @@ export class BasicExrParser {
 
     while (this.offset < endOffset) {
       const name = this.readString();
-      if (name === '' || this.offset >= endOffset) {break;}
+      if (name === '' || this.offset >= endOffset) {
+        break;
+      }
 
       try {
         const pixelType = this.readUint32();
@@ -313,7 +323,9 @@ export class BasicExrParser {
     let result = '';
     while (this.offset < this.view.byteLength) {
       const byte = this.readUint8();
-      if (byte === 0) {break;}
+      if (byte === 0) {
+        break;
+      }
       result += String.fromCharCode(byte);
     }
     return result;

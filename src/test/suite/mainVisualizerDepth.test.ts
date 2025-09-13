@@ -320,7 +320,9 @@ suite('PointCloudVisualizer Depth Processing Test Suite', () => {
       // Count valid depth values (> 0)
       let validCount = 0;
       for (const depth of tifData) {
-        if (depth > 0) {validCount++;}
+        if (depth > 0) {
+          validCount++;
+        }
       }
 
       assert.strictEqual(validCount, 10); // Should have 10 valid depths

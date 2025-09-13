@@ -6,7 +6,9 @@ class PointCloudVisualizerAdvancedUtils {
   // Extracted from parseMatrixInput method
   static parseMatrixInput(input: string): number[] | null {
     const cleanInput = input.trim();
-    if (!cleanInput) {return null;}
+    if (!cleanInput) {
+      return null;
+    }
 
     // Split by whitespace and/or commas, filter out empty strings
     const parts = cleanInput.split(/[\s,]+/).filter(part => part.length > 0);
@@ -108,7 +110,9 @@ class PointCloudVisualizerAdvancedUtils {
 
       // Calculate distances to all other joints
       for (let j = 0; j < joints.length; j++) {
-        if (i === j) {continue;}
+        if (i === j) {
+          continue;
+        }
 
         const dx = joints[i].x - joints[j].x;
         const dy = joints[i].y - joints[j].y;
@@ -145,8 +149,12 @@ class PointCloudVisualizerAdvancedUtils {
   }
 
   static validateRotationQuaternion(quat: number[]): boolean {
-    if (quat.length !== 4) {return false;}
-    if (quat.some(val => typeof val !== 'number' || isNaN(val))) {return false;}
+    if (quat.length !== 4) {
+      return false;
+    }
+    if (quat.some(val => typeof val !== 'number' || isNaN(val))) {
+      return false;
+    }
 
     // Check if quaternion is normalized (approximately)
     const magnitude = Math.sqrt(
@@ -219,7 +227,9 @@ class PointCloudVisualizerAdvancedUtils {
 
   // Depth form utilities
   static validateDepthFormValues(formValues: any): boolean {
-    if (!formValues) {return false;}
+    if (!formValues) {
+      return false;
+    }
 
     const requiredFields = ['fx', 'fy', 'cx', 'cy'];
     return requiredFields.every(field => {
@@ -229,7 +239,9 @@ class PointCloudVisualizerAdvancedUtils {
   }
 
   static sanitizeDepthFormValues(formValues: any): any {
-    if (!formValues) {return {};}
+    if (!formValues) {
+      return {};
+    }
 
     const sanitized: any = {};
     const numericFields = ['fx', 'fy', 'cx', 'cy', 'baseline', 'doffs'];
@@ -251,7 +263,9 @@ class PointCloudVisualizerAdvancedUtils {
 
   // Color processing utilities
   static applyGammaCorrection(color: number, gamma: number): number {
-    if (gamma <= 0) {return color;}
+    if (gamma <= 0) {
+      return color;
+    }
     return Math.pow(Math.max(0, Math.min(1, color)), 1 / gamma);
   }
 

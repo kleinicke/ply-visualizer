@@ -77,7 +77,9 @@ export class ExrParser {
     // Read header attributes
     while (true) {
       const name = this.readString();
-      if (name === '') {break;} // End of header
+      if (name === '') {
+        break;
+      } // End of header
 
       const type = this.readString();
       const size = this.readUint32();
@@ -114,7 +116,9 @@ export class ExrParser {
 
     while (this.offset < endOffset) {
       const name = this.readString();
-      if (name === '') {break;}
+      if (name === '') {
+        break;
+      }
 
       const pixelType = this.readUint32();
       const pLinear = this.readUint8();
@@ -226,7 +230,9 @@ export class ExrParser {
     let result = '';
     while (true) {
       const byte = this.readUint8();
-      if (byte === 0) {break;}
+      if (byte === 0) {
+        break;
+      }
       result += String.fromCharCode(byte);
     }
     return result;

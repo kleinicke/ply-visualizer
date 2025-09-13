@@ -17,7 +17,9 @@ suite('Webview Integration Advanced Test Suite', () => {
         add: (obj: any) => this.scene.children.push(obj),
         remove: (obj: any) => {
           const index = this.scene.children.indexOf(obj);
-          if (index > -1) {this.scene.children.splice(index, 1);}
+          if (index > -1) {
+            this.scene.children.splice(index, 1);
+          }
         },
       };
 
@@ -76,10 +78,18 @@ suite('Webview Integration Advanced Test Suite', () => {
     }
 
     private calculateOptimalPointSize(vertexCount: number): number {
-      if (vertexCount < 1000) {return 8.0;}
-      if (vertexCount < 10000) {return 6.0;}
-      if (vertexCount < 100000) {return 4.0;}
-      if (vertexCount < 1000000) {return 2.0;}
+      if (vertexCount < 1000) {
+        return 8.0;
+      }
+      if (vertexCount < 10000) {
+        return 6.0;
+      }
+      if (vertexCount < 100000) {
+        return 4.0;
+      }
+      if (vertexCount < 1000000) {
+        return 2.0;
+      }
       return 1.0;
     }
 
@@ -107,7 +117,9 @@ suite('Webview Integration Advanced Test Suite', () => {
 
     transformFile(fileId: string, matrix: number[]): boolean {
       const file = this.files.get(fileId);
-      if (!file) {return false;}
+      if (!file) {
+        return false;
+      }
 
       if (matrix.length !== 16) {
         throw new Error('Transformation matrix must be 4x4 (16 elements)');
@@ -119,7 +131,9 @@ suite('Webview Integration Advanced Test Suite', () => {
 
     setFileVisibility(fileId: string, visible: boolean): boolean {
       const file = this.files.get(fileId);
-      if (!file) {return false;}
+      if (!file) {
+        return false;
+      }
 
       file.visible = visible;
       return true;
@@ -144,7 +158,9 @@ suite('Webview Integration Advanced Test Suite', () => {
       let hasVisibleObjects = false;
 
       for (const obj of this.files.values()) {
-        if (!obj.visible) {continue;}
+        if (!obj.visible) {
+          continue;
+        }
 
         hasVisibleObjects = true;
         // Mock bounding box calculation
@@ -178,7 +194,9 @@ suite('Webview Integration Advanced Test Suite', () => {
 
     removeFile(fileId: string): boolean {
       const file = this.files.get(fileId);
-      if (!file) {return false;}
+      if (!file) {
+        return false;
+      }
 
       this.scene.remove(file);
       this.files.delete(fileId);
@@ -209,9 +227,15 @@ suite('Webview Integration Advanced Test Suite', () => {
       let bytes = 0;
       for (const obj of this.files.values()) {
         bytes += obj.vertices.length * 4; // Float32Array
-        if (obj.colors) {bytes += obj.colors.length * 1;} // Uint8Array
-        if (obj.normals) {bytes += obj.normals.length * 4;} // Float32Array
-        if (obj.faces) {bytes += obj.faces.length * 4;} // Uint32Array
+        if (obj.colors) {
+          bytes += obj.colors.length * 1;
+        } // Uint8Array
+        if (obj.normals) {
+          bytes += obj.normals.length * 4;
+        } // Float32Array
+        if (obj.faces) {
+          bytes += obj.faces.length * 4;
+        } // Uint32Array
       }
       return bytes;
     }

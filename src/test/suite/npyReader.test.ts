@@ -77,7 +77,9 @@ suite('NPY Reader Test Suite', function () {
         .split(',')
         .map(s => {
           const num = parseInt(s.trim(), 10);
-          if (isNaN(num)) {throw new Error(`Invalid shape dimension: ${s}`);}
+          if (isNaN(num)) {
+            throw new Error(`Invalid shape dimension: ${s}`);
+          }
           return num;
         })
         .filter(n => n > 0);

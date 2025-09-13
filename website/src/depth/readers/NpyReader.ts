@@ -49,7 +49,9 @@ function parseNpyHeader(view: DataView): { shape: number[]; dtype: string; dataO
     .split(',')
     .map(s => {
       const num = parseInt(s.trim(), 10);
-      if (isNaN(num)) {throw new Error(`Invalid shape dimension: ${s}`);}
+      if (isNaN(num)) {
+        throw new Error(`Invalid shape dimension: ${s}`);
+      }
       return num;
     })
     .filter(n => n > 0); // Remove trailing zeros from shape like (480, 640,)

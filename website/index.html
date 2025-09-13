@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="media/style.css" rel="stylesheet">
+    <title>3D Point Cloud Visualizer</title>
+    <style>
+        /* Fallback colors in case themes don't load */
+        :root {
+            --vscode-editor-background: #FFFFFF;
+            --vscode-editor-foreground: #1F1F1F;
+            --vscode-sideBar-background: #F8F8F8;
+            --vscode-sideBar-border: #E5E5E5;
+            --vscode-input-background: #FFFFFF;
+            --vscode-input-foreground: #1F1F1F;
+            --vscode-input-border: #CCCCCC;
+            --vscode-button-background: #005FB8;
+            --vscode-button-foreground: #FFFFFF;
+            --vscode-foreground: #1F1F1F;
+        }
+        
+        /* Ensure solid background */
+        html, body {
+            background-color: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+    <!-- Hidden file input for browser file loading -->
+    <input type="file" id="hiddenFileInput" multiple accept=".ply,.xyz,.xyzn,.xyzrgb,.obj,.stl,.pcd,.pts,.off,.gltf,.glb,.tif,.tiff,.pfm,.npy,.npz,.png,.json" style="display: none;">
+
+    <div id="loading" class="loading">
+        <div class="spinner"></div>
+        <p>Loading PLY file...</p>
+    </div>
+    <div id="error" class="error hidden">
+        <div class="error-header">
+            <h3>Error</h3>
+            <button id="error-close" class="error-close-btn" title="Close error message">✕</button>
+        </div>
+        <p id="error-message"></p>
+    </div>
+    
+    <!-- Main UI Panel -->
+    <div id="main-ui-panel" class="main-ui-panel">
+        <!-- Tab Navigation -->
+        <div class="tab-navigation">
+            <button class="tab-button active" data-tab="files">Files</button>
+            <button class="tab-button" data-tab="camera">Camera</button>
+            <button class="tab-button" data-tab="controls">Controls</button>
+            <button class="tab-button" data-tab="info">Info</button>
+        </div>
+        
+        <!-- Tab Content -->
+        <div class="tab-content">
+            <!-- Files Tab -->
+            <div id="files-tab" class="tab-panel active">
+                <div class="panel-section">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <h4 style="margin: 0;">File Management</h4>
+                        <div id="performance-stats" style="font-size: 10px; color: var(--vscode-descriptionForeground); font-family: monospace;">60 fps / 16.7 ms</div>
+                    </div>
+                    <div class="file-controls">
+                        <button id="add-file" class="primary-button">+ Add Point Cloud</button>
+                    </div>
+                    <div id="file-list"></div>
+                </div>
+            </div>
+            
+            <!-- Camera Tab -->
+            <div id="camera-tab" class="tab-panel">
+                <div class="panel-section">
+                    <h4>Camera Settings</h4>
+                    <div id="camera-controls-panel"></div>
+                </div>
+            </div>
+            
+            <!-- Controls Tab -->
+            <div id="controls-tab" class="tab-panel">
+                <div class="panel-section">
+                    <h4>Theme</h4>
+                    <div class="control-group">
+                        <label for="theme-selector">Color Theme:</label>
+                        <select id="theme-selector" class="control-input">
+                            <option value="dark-modern">Dark Modern</option>
+                            <option value="light-modern" selected>Light Modern</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="panel-section">
+                    <h4>View Controls</h4>
+                    <div class="control-group">
+                        <label class="switch-label">
+                            <input type="checkbox" id="toggle-transparency">
+                            <span class="control-label">Allow Transparency</span>
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <label class="switch-label">
+                            <input type="checkbox" id="toggle-screenspace-scaling">
+                            <span class="control-label">Screen Space Scaling</span>
+                        </label>
+                    </div>
+                    <div class="control-group lighting-controls">
+                        <label class="section-label">Lighting Mode:</label>
+                        <div class="button-group">
+                            <button id="use-normal-lighting" class="toggle-button active">Normal</button>
+                            <button id="use-flat-lighting" class="toggle-button">Flat</button>
+                            <button id="toggle-unlit-ply" class="toggle-button">Unlit</button>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label class="switch-label">
+                            <input type="checkbox" id="toggle-gamma-correction">
+                            <span class="control-label">Gamma Correction</span>
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <div id="shortcut-help"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Info Tab -->
+            <div id="info-tab" class="tab-panel">
+                <div class="panel-section">
+                    <h4>Object Statistics</h4>
+                    <div id="stats-container"></div>
+                </div>
+                <div class="panel-section">
+                    <h4>Transformation Matrix</h4>
+                    <div id="matrix-display"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Control buttons at bottom -->
+        <div class="bottom-controls">
+            <div class="sequence-controls" id="sequence-controls" style="display: none;">
+                <button id="seq-play-pause" class="control-button">▶</button>
+                <button id="seq-prev" class="control-button">◀</button>
+                <button id="seq-next" class="control-button">▶</button>
+                <input id="seq-slider" type="range" min="0" max="0" value="0" class="seq-slider" />
+                <span id="seq-label" class="seq-label">0 / 0</span>
+            </div>
+        </div>
+    </div>
+    <div id="viewer-container">
+        <canvas id="three-canvas"></canvas>
+    </div>
+    
+    <script src="media/geotiff.min.js"></script>
+    <script src="bundle.js"></script>
+</body>
+</html>

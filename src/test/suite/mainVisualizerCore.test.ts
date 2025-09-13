@@ -374,15 +374,21 @@ suite('PointCloudVisualizer Core Methods Test Suite', () => {
 // Helper function for matrix parsing
 function parseMatrixFromString(input: string): number[] | null {
   const cleanInput = input.trim();
-  if (!cleanInput) {return null;}
+  if (!cleanInput) {
+    return null;
+  }
 
   const parts = cleanInput.split(/\s+/);
-  if (parts.length !== 16) {return null;}
+  if (parts.length !== 16) {
+    return null;
+  }
 
   const numbers: number[] = [];
   for (const part of parts) {
     const num = parseFloat(part);
-    if (isNaN(num)) {return null;}
+    if (isNaN(num)) {
+      return null;
+    }
     numbers.push(num);
   }
 

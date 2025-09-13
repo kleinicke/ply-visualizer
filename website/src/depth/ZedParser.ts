@@ -135,11 +135,21 @@ export class ZedParser {
     };
 
     // Optional distortion parameters
-    if (params.k1) {camera.k1 = parseFloat(params.k1);}
-    if (params.k2) {camera.k2 = parseFloat(params.k2);}
-    if (params.k3) {camera.k3 = parseFloat(params.k3);}
-    if (params.p1) {camera.p1 = parseFloat(params.p1);}
-    if (params.p2) {camera.p2 = parseFloat(params.p2);}
+    if (params.k1) {
+      camera.k1 = parseFloat(params.k1);
+    }
+    if (params.k2) {
+      camera.k2 = parseFloat(params.k2);
+    }
+    if (params.k3) {
+      camera.k3 = parseFloat(params.k3);
+    }
+    if (params.p1) {
+      camera.p1 = parseFloat(params.p1);
+    }
+    if (params.p2) {
+      camera.p2 = parseFloat(params.p2);
+    }
 
     return camera;
   }

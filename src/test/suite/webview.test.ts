@@ -93,7 +93,9 @@ end_header
     this.timeout(4000);
     // Open an empty webview by creating a temp PLY file, then send poseData
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {return;}
+    if (!workspaceFolder) {
+      return;
+    }
     const tempFilePath = path.join(workspaceFolder.uri.fsPath, 'temp_for_pose_view.ply');
     fs.writeFileSync(
       tempFilePath,
@@ -106,7 +108,9 @@ end_header
       // We cannot directly access the webview context here; this test ensures no crash path
       assert.ok(true, 'Webview opened');
     } finally {
-      if (fs.existsSync(tempFilePath)) {fs.unlinkSync(tempFilePath);}
+      if (fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+      }
     }
   });
 

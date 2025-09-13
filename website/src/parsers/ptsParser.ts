@@ -147,10 +147,14 @@ export class PtsParser {
     let processedLines = 0;
     for (let i = dataStartLine; i < lines.length; i++) {
       const line = lines[i].trim();
-      if (line === '') {continue;}
+      if (line === '') {
+        continue;
+      }
 
       const parts = line.split(/\s+/);
-      if (parts.length < 3) {continue;}
+      if (parts.length < 3) {
+        continue;
+      }
 
       const values = parts.map(val => {
         const num = parseFloat(val);

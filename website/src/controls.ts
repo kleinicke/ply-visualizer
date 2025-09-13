@@ -47,7 +47,9 @@ export class CustomArcballControls {
   }
 
   addEventListener(type: 'start' | 'end' | 'change', listener: (e?: any) => void): void {
-    if (!this.listeners.has(type)) {this.listeners.set(type, new Set());}
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, new Set());
+    }
     this.listeners.get(type)!.add(listener);
   }
 
@@ -57,8 +59,12 @@ export class CustomArcballControls {
 
   private dispatchEvent(type: 'start' | 'end' | 'change'): void {
     const set = this.listeners.get(type);
-    if (!set) {return;}
-    for (const l of set) {l();}
+    if (!set) {
+      return;
+    }
+    for (const l of set) {
+      l();
+    }
   }
 
   private getCanvasRect(): DOMRect {
@@ -86,12 +92,16 @@ export class CustomArcballControls {
     const vx = (clientX - cx) / (rect.width / 2);
     const vy = (cy - clientY) / (rect.height / 2);
     const v = new THREE.Vector2(vx, vy);
-    if (v.lengthSq() > 1) {v.normalize();}
+    if (v.lengthSq() > 1) {
+      v.normalize();
+    }
     return v;
   }
 
   private onPointerDown(e: PointerEvent): void {
-    if (!this.enabled) {return;}
+    if (!this.enabled) {
+      return;
+    }
     this.domElement.setPointerCapture(e.pointerId);
     if (e.button === 0 && !e.shiftKey) {
       this.isRotating = true;
@@ -108,8 +118,12 @@ export class CustomArcballControls {
   }
 
   private onPointerMove(e: PointerEvent): void {
-    if (!this.enabled) {return;}
-    if (!this.isRotating && !this.isPanning) {return;}
+    if (!this.enabled) {
+      return;
+    }
+    if (!this.isRotating && !this.isPanning) {
+      return;
+    }
 
     if (this.isRotating) {
       const rect = this.getCanvasRect();
@@ -151,7 +165,9 @@ export class CustomArcballControls {
 
       // Combine
       let q = new THREE.Quaternion().multiplyQuaternions(qRoll, qYawPitch);
-      if (this.invertRotation) {q.invert();}
+      if (this.invertRotation) {
+        q.invert();
+      }
 
       // Apply
       const eye = this.object.position.clone().sub(this.target);
@@ -206,7 +222,9 @@ export class CustomArcballControls {
   }
 
   private onWheel(e: WheelEvent): void {
-    if (!this.enabled) {return;}
+    if (!this.enabled) {
+      return;
+    }
     e.preventDefault();
     const delta = e.deltaY; // positive: typically zoom out (move away)
     const scale = Math.exp((delta / 100) * this.zoomSpeed);
@@ -263,7 +281,9 @@ export class TurntableControls {
   }
 
   addEventListener(type: 'start' | 'end' | 'change', listener: (e?: any) => void): void {
-    if (!this.listeners.has(type)) {this.listeners.set(type, new Set());}
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, new Set());
+    }
     this.listeners.get(type)!.add(listener);
   }
 
@@ -273,8 +293,12 @@ export class TurntableControls {
 
   private dispatchEvent(type: 'start' | 'end' | 'change'): void {
     const set = this.listeners.get(type);
-    if (!set) {return;}
-    for (const l of set) {l();}
+    if (!set) {
+      return;
+    }
+    for (const l of set) {
+      l();
+    }
   }
 
   private addDOMListeners(): void {
@@ -294,7 +318,9 @@ export class TurntableControls {
   }
 
   private onPointerDown(e: PointerEvent): void {
-    if (!this.enabled) {return;}
+    if (!this.enabled) {
+      return;
+    }
     this.domElement.setPointerCapture(e.pointerId);
     this.lastX = e.clientX;
     this.lastY = e.clientY;
@@ -308,8 +334,12 @@ export class TurntableControls {
   }
 
   private onPointerMove(e: PointerEvent): void {
-    if (!this.enabled) {return;}
-    if (!this.isRotating && !this.isPanning) {return;}
+    if (!this.enabled) {
+      return;
+    }
+    if (!this.isRotating && !this.isPanning) {
+      return;
+    }
 
     const rect = this.getCanvasRect();
     const dx = e.clientX - this.lastX;
@@ -392,7 +422,9 @@ export class TurntableControls {
   }
 
   private onWheel(e: WheelEvent): void {
-    if (!this.enabled) {return;}
+    if (!this.enabled) {
+      return;
+    }
     e.preventDefault();
     const scale = Math.exp((e.deltaY / 100) * this.zoomSpeed);
     const eye = this.object.position.clone().sub(this.target);

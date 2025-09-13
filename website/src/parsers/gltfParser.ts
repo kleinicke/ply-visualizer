@@ -130,9 +130,15 @@ export class GltfParser {
 
     // Add asset info as comments
     if (gltfJson.asset) {
-      if (gltfJson.asset.generator) {comments.push(`Generator: ${gltfJson.asset.generator}`);}
-      if (gltfJson.asset.version) {comments.push(`Version: ${gltfJson.asset.version}`);}
-      if (gltfJson.asset.copyright) {comments.push(`Copyright: ${gltfJson.asset.copyright}`);}
+      if (gltfJson.asset.generator) {
+        comments.push(`Generator: ${gltfJson.asset.generator}`);
+      }
+      if (gltfJson.asset.version) {
+        comments.push(`Version: ${gltfJson.asset.version}`);
+      }
+      if (gltfJson.asset.copyright) {
+        comments.push(`Copyright: ${gltfJson.asset.copyright}`);
+      }
     }
 
     // Process meshes
@@ -141,17 +147,25 @@ export class GltfParser {
       timingCallback?.(`🔧 GLTF: Processing ${meshCount} meshes...`);
 
       for (const mesh of gltfJson.meshes) {
-        if (!mesh.primitives) {continue;}
+        if (!mesh.primitives) {
+          continue;
+        }
 
         for (const primitive of mesh.primitives) {
-          if (!primitive.attributes) {continue;}
+          if (!primitive.attributes) {
+            continue;
+          }
 
           // Get position accessor
           const positionAccessorIndex = primitive.attributes.POSITION;
-          if (positionAccessorIndex === undefined) {continue;}
+          if (positionAccessorIndex === undefined) {
+            continue;
+          }
 
           const positionAccessor = gltfJson.accessors[positionAccessorIndex];
-          if (!positionAccessor || positionAccessor.type !== 'VEC3') {continue;}
+          if (!positionAccessor || positionAccessor.type !== 'VEC3') {
+            continue;
+          }
 
           // Get positions
           const positions = this.getAccessorData(
@@ -174,7 +188,9 @@ export class GltfParser {
               binaryData,
               timingCallback
             );
-            if (colors) {hasColors = true;}
+            if (colors) {
+              hasColors = true;
+            }
           }
 
           // Get normals if available
@@ -186,7 +202,9 @@ export class GltfParser {
               binaryData,
               timingCallback
             );
-            if (normals) {hasNormals = true;}
+            if (normals) {
+              hasNormals = true;
+            }
           }
 
           // Create vertices

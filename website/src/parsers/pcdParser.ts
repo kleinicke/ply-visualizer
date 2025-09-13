@@ -140,7 +140,9 @@ export class PcdParser {
       let processedPoints = 0;
 
       for (const line of dataLines) {
-        if (line.trim() === '') {continue;}
+        if (line.trim() === '') {
+          continue;
+        }
 
         const values = line
           .trim()
@@ -150,7 +152,9 @@ export class PcdParser {
             return isNaN(num) ? 0 : num;
           });
 
-        if (values.length < fields.length) {continue;}
+        if (values.length < fields.length) {
+          continue;
+        }
 
         const vertex: any = { x: 0, y: 0, z: 0 };
 
@@ -263,16 +267,26 @@ export class PcdParser {
                   : dataView.getFloat64(offset, true);
               break;
             case 'U':
-              if (fieldSize === 1) {value = dataView.getUint8(offset);}
-              else if (fieldSize === 2) {value = dataView.getUint16(offset, true);}
-              else if (fieldSize === 4) {value = dataView.getUint32(offset, true);}
-              else {value = 0;}
+              if (fieldSize === 1) {
+                value = dataView.getUint8(offset);
+              } else if (fieldSize === 2) {
+                value = dataView.getUint16(offset, true);
+              } else if (fieldSize === 4) {
+                value = dataView.getUint32(offset, true);
+              } else {
+                value = 0;
+              }
               break;
             case 'I':
-              if (fieldSize === 1) {value = dataView.getInt8(offset);}
-              else if (fieldSize === 2) {value = dataView.getInt16(offset, true);}
-              else if (fieldSize === 4) {value = dataView.getInt32(offset, true);}
-              else {value = 0;}
+              if (fieldSize === 1) {
+                value = dataView.getInt8(offset);
+              } else if (fieldSize === 2) {
+                value = dataView.getInt16(offset, true);
+              } else if (fieldSize === 4) {
+                value = dataView.getInt32(offset, true);
+              } else {
+                value = 0;
+              }
               break;
             default:
               value = 0;

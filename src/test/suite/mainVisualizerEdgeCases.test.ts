@@ -125,7 +125,9 @@ suite('PointCloudVisualizer Edge Cases and Specific Methods Test Suite', () => {
       ): THREE.Matrix4 | null => {
         // Check if quaternion is valid (non-zero length)
         const length = Math.sqrt(x * x + y * y + z * z + w * w);
-        if (length < 0.001) {return null;}
+        if (length < 0.001) {
+          return null;
+        }
 
         const quaternion = new THREE.Quaternion(x, y, z, w);
         quaternion.normalize();
@@ -314,7 +316,9 @@ suite('PointCloudVisualizer Edge Cases and Specific Methods Test Suite', () => {
         const r8 = r4 * r4;
 
         // Avoid division by zero
-        if (r2 < 1e-12) {return [x, y];}
+        if (r2 < 1e-12) {
+          return [x, y];
+        }
 
         const r = Math.sqrt(r2);
         const theta = Math.atan(r);
@@ -325,7 +329,9 @@ suite('PointCloudVisualizer Edge Cases and Specific Methods Test Suite', () => {
 
         const theta_d = theta * (1 + k1 * theta2 + k2 * theta4 + k3 * theta6 + k4 * theta8);
 
-        if (r < 1e-12) {return [x, y];}
+        if (r < 1e-12) {
+          return [x, y];
+        }
 
         const scale = theta_d / r;
         return [x * scale, y * scale];
@@ -357,10 +363,14 @@ suite('PointCloudVisualizer Edge Cases and Specific Methods Test Suite', () => {
       const maxIndex = 10;
 
       const stepSequence = (delta: number): boolean => {
-        if (isTransitioning) {return false;} // Ignore rapid clicks
+        if (isTransitioning) {
+          return false;
+        } // Ignore rapid clicks
 
         const newIndex = Math.max(0, Math.min(maxIndex - 1, sequenceIndex + delta));
-        if (newIndex === sequenceIndex) {return false;}
+        if (newIndex === sequenceIndex) {
+          return false;
+        }
 
         isTransitioning = true;
         sequenceIndex = newIndex;
@@ -393,15 +403,21 @@ suite('PointCloudVisualizer Edge Cases and Specific Methods Test Suite', () => {
         input: string
       ): { valid: boolean; matrix?: THREE.Matrix4; error?: string } => {
         const trimmed = input.trim();
-        if (!trimmed) {return { valid: false, error: 'Empty input' };}
+        if (!trimmed) {
+          return { valid: false, error: 'Empty input' };
+        }
 
         const values = trimmed.split(/[\s,]+/).filter(v => v.length > 0);
-        if (values.length !== 16) {return { valid: false, error: 'Must have exactly 16 values' };}
+        if (values.length !== 16) {
+          return { valid: false, error: 'Must have exactly 16 values' };
+        }
 
         const numbers: number[] = [];
         for (const value of values) {
           const num = parseFloat(value);
-          if (!isFinite(num)) {return { valid: false, error: `Invalid number: ${value}` };}
+          if (!isFinite(num)) {
+            return { valid: false, error: `Invalid number: ${value}` };
+          }
           numbers.push(num);
         }
 
@@ -505,7 +521,9 @@ suite('PointCloudVisualizer Edge Cases and Specific Methods Test Suite', () => {
       };
 
       const handleContextRestore = (state: WebGLContextState): boolean => {
-        if (!state.canRestore) {return false;}
+        if (!state.canRestore) {
+          return false;
+        }
 
         state.isLost = false;
         state.lastError = null;

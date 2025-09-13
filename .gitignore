@@ -11,3 +11,15 @@ testfiles/new_formats/**
 dataset/
 coverage/
 .nyc_output/
+
+# Website build outputs and dependencies
+website/node_modules/
+website/dist/
+website/package-lock.json
+
+# Test outputs
+website/test-results/
+website/playwright-report/
+
+# OS files
+.DS_Store

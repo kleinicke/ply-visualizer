@@ -10,16 +10,35 @@ import { ZedParser } from './depth/ZedParser';
 import { RealSenseParser } from './depth/RealSenseParser';
 import { TumParser } from './depth/TumParser';
 import { CustomArcballControls, TurntableControls } from './controls';
+import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
 
-declare const acquireVsCodeApi: () => any;
 declare const GeoTIFF: any;
+
+// # VSCode changes: before it needed this line instead of importing the parsers like this
+// declare const acquireVsCodeApi: () => any;
+
+// File parsers for browser version
+import { PlyParser } from './parsers/plyParser';
+import { StlParser } from './parsers/stlParser';
+import { ObjParser } from './parsers/objParser';
+import { PcdParser } from './parsers/pcdParser';
+import { PtsParser } from './parsers/ptsParser';
+import { OffParser } from './parsers/offParser';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
+ * Adapted for standalone browser operation
  */
 
 class PointCloudVisualizer {
-  private vscode = acquireVsCodeApi();
+  // # VSCode changes: before it was defined like this
+  //   private vscode = acquireVsCodeApi();
+  private vscode: any = {
+    // Mock VS Code API for browser version
+    postMessage: (message: any) => {
+      console.log('🌐 VS Code message (disabled in browser):', message.type);
+    },
+  };
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private renderer!: THREE.WebGLRenderer;
@@ -719,16 +738,24 @@ class PointCloudVisualizer {
   }
 
   private async init(): Promise<void> {
+    // # VSCode changes: before the try statement was
+    // try {
+    //   this.initThreeJS();
+    //   this.setupEventListeners();
+    //   this.setupMessageHandler();
+
+    //   // Request default depth settings from extension
+    //   console.log('📤 Requesting default depth settings from extension...');
+    //   this.vscode.postMessage({
+    //     type: 'requestDefaultDepthSettings',
+    //   });
     try {
       this.initThreeJS();
       this.setupEventListeners();
-      this.setupMessageHandler();
+      this.setupBrowserFileHandlers(); // Replace VS Code message handler with browser file handlers
 
-      // Request default depth settings from extension
-      console.log('📤 Requesting default depth settings from extension...');
-      this.vscode.postMessage({
-        type: 'requestDefaultDepthSettings',
-      });
+      // Initialize with default settings (no need to request from extension)
+      console.log('🌐 Initializing standalone browser version...');
     } catch (error) {
       this.showError(
         `Failed to initialize PLY Visualizer: ${error instanceof Error ? error.message : String(error)}`
@@ -2281,9 +2308,18 @@ class PointCloudVisualizer {
   private setupEventListeners(): void {
     // Add file button
     const addFileBtn = document.getElementById('add-file');
+    // # VSCode changes: before it used this function
+    // if (addFileBtn) {
+    //   addFileBtn.addEventListener('click', () => {
+    //     this.requestAddFile();
+    //   });
     if (addFileBtn) {
       addFileBtn.addEventListener('click', () => {
-        this.requestAddFile();
+        // In browser version, trigger file input
+        const fileInput = document.getElementById('hiddenFileInput') as HTMLInputElement;
+        if (fileInput) {
+          fileInput.click();
+        }
       });
     }
 
@@ -3660,6 +3696,144 @@ class PointCloudVisualizer {
       this.currentTiming = null;
     }
   }
+
+  // # VSCode changes: the functions below are used in the browser and were not used for the extension
+  // Browser file handling methods
+  private setupBrowserFileHandlers(): void {
+    const fileInput = document.getElementById('hiddenFileInput') as HTMLInputElement;
+    const addFileButton = document.getElementById('add-file');
+    const mainPanel = document.getElementById('main-ui-panel');
+
+    if (fileInput) {
+      fileInput.addEventListener('change', event => {
+        const files = (event.target as HTMLInputElement).files;
+        if (files) {
+          this.handleBrowserFiles(Array.from(files));
+        }
+      });
+    }
+
+    // Add drag & drop support to the Add Point Cloud button
+    if (addFileButton) {
+      addFileButton.addEventListener('dragover', event => {
+        event.preventDefault();
+        addFileButton.style.backgroundColor = '#1177bb';
+        addFileButton.style.transform = 'scale(1.02)';
+      });
+
+      addFileButton.addEventListener('dragleave', () => {
+        addFileButton.style.backgroundColor = '';
+        addFileButton.style.transform = '';
+      });
+
+      addFileButton.addEventListener('drop', event => {
+        event.preventDefault();
+        addFileButton.style.backgroundColor = '';
+        addFileButton.style.transform = '';
+        const files = Array.from(event.dataTransfer?.files || []);
+        this.handleBrowserFiles(files);
+      });
+    }
+
+    // Also add drag & drop to the entire main UI panel as fallback
+    if (mainPanel) {
+      mainPanel.addEventListener('dragover', event => {
+        event.preventDefault();
+        event.dataTransfer!.dropEffect = 'copy';
+      });
+
+      mainPanel.addEventListener('drop', event => {
+        event.preventDefault();
+        const files = Array.from(event.dataTransfer?.files || []);
+        if (files.length > 0) {
+          this.handleBrowserFiles(files);
+        }
+      });
+    }
+  }
+
+  private async handleBrowserFiles(files: File[]) {
+    console.log(`🌐 Loading ${files.length} files in browser...`);
+    this.showImmediateLoading({ fileName: `${files.length} files`, pointCount: 0 });
+
+    try {
+      const plyDataArray: PlyData[] = [];
+
+      for (const file of files) {
+        const extension = file.name.toLowerCase().split('.').pop();
+        const arrayBuffer = await file.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+
+        let plyData: PlyData;
+
+        switch (extension) {
+          case 'ply':
+            const plyParser = new PlyParser();
+            plyData = await plyParser.parse(uint8Array);
+            break;
+          case 'stl':
+            const stlParser = new StlParser();
+            const stlData = await stlParser.parse(uint8Array);
+            plyData = this.convertToUnifiedFormat(stlData, file.name);
+            break;
+          case 'obj':
+            const objParser = new ObjParser();
+            const objData = await objParser.parse(uint8Array);
+            plyData = this.convertToUnifiedFormat(objData, file.name);
+            break;
+          case 'pcd':
+            const pcdParser = new PcdParser();
+            const pcdData = await pcdParser.parse(uint8Array);
+            plyData = this.convertToUnifiedFormat(pcdData, file.name);
+            break;
+          case 'pts':
+            const ptsParser = new PtsParser();
+            const ptsData = await ptsParser.parse(uint8Array);
+            plyData = this.convertToUnifiedFormat(ptsData, file.name);
+            break;
+          case 'off':
+            const offParser = new OffParser();
+            const offData = await offParser.parse(uint8Array);
+            plyData = this.convertToUnifiedFormat(offData, file.name);
+            break;
+          default:
+            console.warn(`Unsupported file format: ${extension} for file ${file.name}`);
+            continue;
+        }
+
+        plyData.fileName = file.name;
+        plyDataArray.push(plyData);
+      }
+
+      if (plyDataArray.length > 0) {
+        await this.displayFiles(plyDataArray);
+      }
+    } catch (error) {
+      console.error('Error loading files:', error);
+      this.showError(
+        `Failed to load files: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private convertToUnifiedFormat(data: any, fileName: string): PlyData {
+    // Convert any parser data format to unified PlyData format
+    return {
+      vertices: data.vertices || [],
+      faces: data.faces || data.triangles || [],
+      format: 'ascii',
+      version: data.version || '1.0',
+      comments: data.comments || [],
+      vertexCount: data.vertexCount || (data.vertices ? data.vertices.length : 0),
+      faceCount:
+        data.faceCount ||
+        (data.faces ? data.faces.length : data.triangles ? data.triangles.length : 0),
+      hasColors: data.hasColors || false,
+      hasNormals: data.hasNormals || false,
+      fileName: fileName,
+    };
+  }
+  // # VSCode changes: the functions above are used in the browser and were not used for the extension
 
   private async displayFiles(dataArray: PlyData[]): Promise<void> {
     // concise summary printed separately
@@ -13082,9 +13256,67 @@ class PointCloudVisualizer {
   }
 }
 
+// # VSCode changes: before this code was used instead of anything below
+
 // Initialize when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => new PointCloudVisualizer());
-} else {
-  new PointCloudVisualizer();
+// if (document.readyState === 'loading') {
+//   document.addEventListener('DOMContentLoaded', () => new PointCloudVisualizer());
+// } else {
+//   new PointCloudVisualizer();
+// }
+// below, everything is new for the web version
+
+// Export for global access
+(window as any).PointCloudVisualizer = PointCloudVisualizer;
+
+// Initialize when DOM is ready
+let visualizer: PointCloudVisualizer | null = null;
+
+async function initializeVisualizer() {
+  // Initialize themes first
+  await initializeThemes();
+  console.log('✅ Theme system initialized');
+
+  // Initialize theme switcher
+  setupThemeSwitcher();
+
+  if (!visualizer) {
+    visualizer = new PointCloudVisualizer();
+    (window as any).visualizer = visualizer;
+    console.log('✅ PointCloudVisualizer initialized');
+  }
 }
+
+function setupThemeSwitcher() {
+  const themeSelector = document.getElementById('theme-selector') as HTMLSelectElement;
+  if (themeSelector) {
+    // Set current theme as selected
+    themeSelector.value = getCurrentThemeName();
+
+    // Add event listener for theme changes
+    themeSelector.addEventListener('change', async event => {
+      const selectedTheme = (event.target as HTMLSelectElement).value;
+      console.log('🎨 Switching to theme:', selectedTheme);
+
+      const theme = await getThemeByName(selectedTheme);
+      if (theme) {
+        applyTheme(theme);
+        console.log('✅ Theme applied:', theme.displayName);
+      } else {
+        console.error('❌ Failed to load theme:', selectedTheme);
+      }
+    });
+
+    console.log('✅ Theme switcher initialized');
+  } else {
+    console.warn('⚠️ Theme selector not found in DOM');
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeVisualizer);
+} else {
+  initializeVisualizer();
+}
+
+export default PointCloudVisualizer;

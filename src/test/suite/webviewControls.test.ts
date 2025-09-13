@@ -17,7 +17,9 @@ class MockHTMLElement {
     const list = this.listeners.get(type);
     if (list) {
       const index = list.indexOf(listener);
-      if (index > -1) {list.splice(index, 1);}
+      if (index > -1) {
+        list.splice(index, 1);
+      }
     }
   }
 

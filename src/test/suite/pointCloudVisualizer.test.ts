@@ -76,13 +76,18 @@ class PointCloudVisualizerTestUtils {
   // Extracted from decimation logic
   static calculateDecimationFactor(cameraDistance: number): number {
     let decimationFactor = 1;
-    if (cameraDistance > 100)
-      {decimationFactor = 20;} // Keep every 20th point
-    else if (cameraDistance > 50)
-      {decimationFactor = 10;} // Keep every 10th point
-    else if (cameraDistance > 20)
-      {decimationFactor = 4;} // Keep every 4th point
-    else if (cameraDistance > 10) {decimationFactor = 2;} // Keep every 2nd point
+    if (cameraDistance > 100) {
+      decimationFactor = 20;
+    } // Keep every 20th point
+    else if (cameraDistance > 50) {
+      decimationFactor = 10;
+    } // Keep every 10th point
+    else if (cameraDistance > 20) {
+      decimationFactor = 4;
+    } // Keep every 4th point
+    else if (cameraDistance > 10) {
+      decimationFactor = 2;
+    } // Keep every 2nd point
     return decimationFactor;
   }
 
@@ -107,9 +112,13 @@ class PointCloudVisualizerTestUtils {
 
   // Extracted from color processing logic
   static validateColorArray(colors: number[]): boolean {
-    if (colors.length % 3 !== 0) {return false;}
+    if (colors.length % 3 !== 0) {
+      return false;
+    }
     for (let i = 0; i < colors.length; i++) {
-      if (colors[i] < 0 || colors[i] > 1) {return false;}
+      if (colors[i] < 0 || colors[i] > 1) {
+        return false;
+      }
     }
     return true;
   }
@@ -138,7 +147,9 @@ class PointCloudVisualizerTestUtils {
 
   // Depth value processing
   static normalizeDepthValue(depth: number, minDepth: number, maxDepth: number): number {
-    if (maxDepth <= minDepth) {return 0;}
+    if (maxDepth <= minDepth) {
+      return 0;
+    }
     return (depth - minDepth) / (maxDepth - minDepth);
   }
 }

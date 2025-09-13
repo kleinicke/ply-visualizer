@@ -7,7 +7,9 @@ suite('PointCloudVisualizer Utility Methods Test Suite', () => {
     test('Should parse space-separated numeric values', () => {
       const parseSpaceSeparatedValues = (input: string): number[] => {
         const trimmed = input.trim();
-        if (!trimmed) {return [];}
+        if (!trimmed) {
+          return [];
+        }
 
         return trimmed.split(/\s+/).map(str => {
           const num = parseFloat(str);
@@ -33,15 +35,21 @@ suite('PointCloudVisualizer Utility Methods Test Suite', () => {
     test('Should parse 4x4 transformation matrix from text', () => {
       const parseMatrixInput = (input: string): number[] | null => {
         const cleanInput = input.trim();
-        if (!cleanInput) {return null;}
+        if (!cleanInput) {
+          return null;
+        }
 
         const parts = cleanInput.split(/[\s,]+/).filter(part => part.length > 0);
-        if (parts.length !== 16) {return null;}
+        if (parts.length !== 16) {
+          return null;
+        }
 
         const numbers: number[] = [];
         for (const part of parts) {
           const num = parseFloat(part);
-          if (isNaN(num)) {return null;}
+          if (isNaN(num)) {
+            return null;
+          }
           numbers.push(num);
         }
 
@@ -65,7 +73,9 @@ suite('PointCloudVisualizer Utility Methods Test Suite', () => {
     test('Should validate numeric inputs with ranges', () => {
       const validateNumberInRange = (value: string, min: number, max: number): number | null => {
         const num = parseFloat(value);
-        if (isNaN(num) || num < min || num > max) {return null;}
+        if (isNaN(num) || num < min || num > max) {
+          return null;
+        }
         return num;
       };
 
@@ -215,7 +225,9 @@ suite('PointCloudVisualizer Utility Methods Test Suite', () => {
     test('Should normalize vectors', () => {
       const normalizeVector = (vector: THREE.Vector3): THREE.Vector3 => {
         const length = vector.length();
-        if (length === 0) {return vector.clone();}
+        if (length === 0) {
+          return vector.clone();
+        }
         return vector.clone().divideScalar(length);
       };
 
@@ -261,8 +273,12 @@ suite('PointCloudVisualizer Utility Methods Test Suite', () => {
         hasNormals: boolean
       ): number => {
         let bytesPerVertex = 12; // 3 floats (x,y,z) * 4 bytes each
-        if (hasColors) {bytesPerVertex += 12;} // 3 floats for RGB
-        if (hasNormals) {bytesPerVertex += 12;} // 3 floats for normals
+        if (hasColors) {
+          bytesPerVertex += 12;
+        } // 3 floats for RGB
+        if (hasNormals) {
+          bytesPerVertex += 12;
+        } // 3 floats for normals
         return vertexCount * bytesPerVertex;
       };
 
@@ -439,7 +455,9 @@ suite('PointCloudVisualizer Utility Methods Test Suite', () => {
 
     test('Should manage frame rate calculations', () => {
       const calculateFPS = (frameTimes: number[]): number => {
-        if (frameTimes.length < 2) {return 0;}
+        if (frameTimes.length < 2) {
+          return 0;
+        }
 
         const totalTime = frameTimes[frameTimes.length - 1] - frameTimes[0];
         const frameCount = frameTimes.length - 1;

@@ -6,7 +6,9 @@ class MainGeometryMathUtils {
   // From parseSpaceSeparatedValues method
   static parseSpaceSeparatedValues(input: string): number[] {
     const trimmed = input.trim();
-    if (!trimmed) {return [];}
+    if (!trimmed) {
+      return [];
+    }
 
     return trimmed.split(/\s+/).map(str => {
       const num = parseFloat(str);
@@ -72,7 +74,9 @@ class MainGeometryMathUtils {
 
   // From setRotationCenter method - rotation center calculations
   static calculateRotationCenter(intersections: THREE.Intersection[]): THREE.Vector3 | null {
-    if (intersections.length === 0) {return null;}
+    if (intersections.length === 0) {
+      return null;
+    }
 
     // Use the first valid intersection point
     const intersection = intersections[0];
@@ -197,15 +201,23 @@ class MainGeometryMathUtils {
     bitsPerSample: number[]
   ): boolean {
     // Single channel (grayscale)
-    if (samplesPerPixel !== 1) {return false;}
+    if (samplesPerPixel !== 1) {
+      return false;
+    }
 
     // Float format or unsigned integer
-    if (sampleFormat !== null && sampleFormat !== 3 && sampleFormat !== 1) {return false;}
+    if (sampleFormat !== null && sampleFormat !== 3 && sampleFormat !== 1) {
+      return false;
+    }
 
     // 16-bit or 32-bit
-    if (bitsPerSample.length !== 1) {return false;}
+    if (bitsPerSample.length !== 1) {
+      return false;
+    }
     const bits = bitsPerSample[0];
-    if (bits !== 16 && bits !== 32) {return false;}
+    if (bits !== 16 && bits !== 32) {
+      return false;
+    }
 
     return true;
   }

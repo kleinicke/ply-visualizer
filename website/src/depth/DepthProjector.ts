@@ -43,7 +43,9 @@ export function projectToPointCloud(
       for (let u = 0; u < width; u++) {
         const idx = v * width + u;
         const val = data[idx];
-        if (!isFinite(val) || val <= 0) {continue;}
+        if (!isFinite(val) || val <= 0) {
+          continue;
+        }
 
         const pointBase = pointIndex * 3;
 
@@ -88,7 +90,9 @@ export function projectToPointCloud(
       for (let u = 0; u < width; u++) {
         const idx = v * width + u;
         const val = data[idx];
-        if (!isFinite(val) || val <= 0) {continue;}
+        if (!isFinite(val) || val <= 0) {
+          continue;
+        }
 
         // Convert pixel coordinates to normalized coordinates
         let xn = (u - cx) / fx;
@@ -144,7 +148,9 @@ export function projectToPointCloud(
       for (let u = 0; u < width; u++) {
         const idx = v * width + u;
         const depth = data[idx];
-        if (!isFinite(depth) || depth <= 0) {continue;}
+        if (!isFinite(depth) || depth <= 0) {
+          continue;
+        }
 
         const du = u - cx;
         const dv = v - cy;
@@ -187,7 +193,9 @@ export function projectToPointCloud(
       for (let u = 0; u < width; u++) {
         const idx = v * width + u;
         const depth = data[idx];
-        if (!isFinite(depth) || depth <= 0) {continue;}
+        if (!isFinite(depth) || depth <= 0) {
+          continue;
+        }
 
         const du = u - cx;
         const dv = v - cy;
@@ -240,7 +248,9 @@ export function projectToPointCloud(
       for (let u = 0; u < width; u++) {
         const idx = v * width + u;
         const depth = data[idx];
-        if (!isFinite(depth) || depth <= 0) {continue;}
+        if (!isFinite(depth) || depth <= 0) {
+          continue;
+        }
 
         const du = u - cx;
         const dv = v - cy;
@@ -273,9 +283,13 @@ export function projectToPointCloud(
               r / fx;
             const df = k1 + 3 * k2 * theta2 + 5 * k3 * theta4 + 7 * k4 * theta6 + 9 * k5 * theta8;
 
-            if (Math.abs(df) < 1e-12) {break;}
+            if (Math.abs(df) < 1e-12) {
+              break;
+            }
             theta = theta - f / df;
-            if (Math.abs(f) < 1e-12) {break;}
+            if (Math.abs(f) < 1e-12) {
+              break;
+            }
           }
 
           const uNorm = du / r;
@@ -301,7 +315,9 @@ export function projectToPointCloud(
       for (let u = 0; u < width; u++) {
         const idx = v * width + u;
         const val = data[idx];
-        if (!isFinite(val) || val <= 0) {continue;}
+        if (!isFinite(val) || val <= 0) {
+          continue;
+        }
 
         const pointBase = pointIndex * 3;
 
@@ -385,7 +401,9 @@ export function normalizeDepth(image: DepthImage, meta: DepthMetadata): DepthIma
   // Apply unit/scale to convert to meters when kind is depth/z
   if ((meta.kind === 'depth' || meta.kind === 'z') && (meta.unit || meta.scale)) {
     const scale = (meta.unit === 'millimeter' ? 1 / 1000 : 1) * (meta.scale ?? 1);
-    for (let i = 0; i < data.length; i++) {data[i] = data[i] * scale;}
+    for (let i = 0; i < data.length; i++) {
+      data[i] = data[i] * scale;
+    }
   }
 
   // Apply depth scale and bias for mono depth networks (before type-specific conversions)
@@ -428,8 +446,12 @@ export function normalizeDepth(image: DepthImage, meta: DepthMetadata): DepthIma
     const { min, max } = meta.depthClamp;
     for (let i = 0; i < data.length; i++) {
       const z = data[i];
-      if (min !== undefined && z < min) {data[i] = NaN;}
-      if (max !== undefined && z > max) {data[i] = NaN;}
+      if (min !== undefined && z < min) {
+        data[i] = NaN;
+      }
+      if (max !== undefined && z > max) {
+        data[i] = NaN;
+      }
     }
   }
 

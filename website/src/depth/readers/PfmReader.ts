@@ -7,7 +7,9 @@ function readAsciiLine(view: DataView, offset: number): { line: string; next: nu
     if (b === 0x0a /*\n*/) {
       return { line: new TextDecoder().decode(new Uint8Array(bytes)), next: i + 1 };
     }
-    if (b !== 0x0d /*\r*/) {bytes.push(b);}
+    if (b !== 0x0d /*\r*/) {
+      bytes.push(b);
+    }
   }
   return { line: new TextDecoder().decode(new Uint8Array(bytes)), next: view.byteLength };
 }
@@ -24,12 +26,16 @@ export class PfmReader implements DepthReader {
     let r1 = readAsciiLine(view, offset);
     offset = r1.next;
     const id = r1.line.trim();
-    if (id !== 'Pf' && id !== 'PF') {throw new Error('Invalid PFM header');}
+    if (id !== 'Pf' && id !== 'PF') {
+      throw new Error('Invalid PFM header');
+    }
     const channels = id === 'PF' ? 3 : 1;
     let r2 = readAsciiLine(view, offset);
     offset = r2.next;
     const dims = r2.line.trim().split(/\s+/);
-    if (dims.length < 2) {throw new Error('Invalid PFM dimensions');}
+    if (dims.length < 2) {
+      throw new Error('Invalid PFM dimensions');
+    }
     const width = parseInt(dims[0], 10);
     const height = parseInt(dims[1], 10);
     let r3 = readAsciiLine(view, offset);

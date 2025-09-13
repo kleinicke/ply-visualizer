@@ -2008,7 +2008,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         placeHolder: 'Leave empty to use same as fx',
         value: defaults.fy?.toString() || '',
         validateInput: (value: string) => {
-          if (value.trim() === '') {return null;} // Empty is OK
+          if (value.trim() === '') {
+            return null;
+          } // Empty is OK
           const num = parseFloat(value);
           if (isNaN(num) || num <= 0) {
             return 'Please enter a valid positive number for fy, or leave empty';
@@ -2276,7 +2278,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         placeHolder: 'Leave empty to use same as fx',
         value: defaults.fy?.toString() || '',
         validateInput: (value: string) => {
-          if (value.trim() === '') {return null;} // Empty is OK
+          if (value.trim() === '') {
+            return null;
+          } // Empty is OK
           const num = parseFloat(value);
           if (isNaN(num) || num <= 0) {
             return 'Please enter a valid positive number for fy, or leave empty';

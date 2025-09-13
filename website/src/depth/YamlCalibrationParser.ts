@@ -89,8 +89,12 @@ export class YamlCalibrationParser {
       camera.k3 = distortion[4];
     }
 
-    if (data.image_width) {camera.width = data.image_width;}
-    if (data.image_height) {camera.height = data.image_height;}
+    if (data.image_width) {
+      camera.width = data.image_width;
+    }
+    if (data.image_height) {
+      camera.height = data.image_height;
+    }
 
     return {
       cameras: { camera },
