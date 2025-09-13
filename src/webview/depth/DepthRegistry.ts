@@ -32,7 +32,7 @@ export function findReader(filename: string, mimeType?: string): DepthReader | u
 
 export async function readDepth(filename: string, buf: ArrayBuffer): Promise<DepthReaderResult> {
   const reader = findReader(filename);
-  if (!reader) throw new Error(`No depth reader registered for ${filename}`);
+  if (!reader) {throw new Error(`No depth reader registered for ${filename}`);}
   return reader.read(buf);
 }
 

@@ -32,7 +32,7 @@ export class BasicExrParser {
 
   parse(): BasicExrResult {
     console.log('📋 Basic EXR Parser: Parsing EXR file for depth channels...');
-    
+
     // Check file size
     if (this.view.byteLength > 50 * 1024 * 1024) {
       throw new Error('EXR file too large (>50MB)');
@@ -47,22 +47,28 @@ export class BasicExrParser {
     // Read version info
     const version = this.readUint32();
     const versionNumber = version & 0xff;
-    
+
     if (versionNumber !== 2) {
       throw new Error(`Unsupported EXR version: ${versionNumber}`);
     }
 
     // Check for unsupported features
-    if (version & 0x200) throw new Error('Tiled EXR files are not supported');
-    if (version & 0x800) throw new Error('Deep EXR files are not supported');
-    if (version & 0x1000) throw new Error('Multi-part EXR files are not supported');
+    if (version & 0x200) {throw new Error('Tiled EXR files are not supported');}
+    if (version & 0x800) {throw new Error('Deep EXR files are not supported');}
+    if (version & 0x1000) {throw new Error('Multi-part EXR files are not supported');}
 
     // Parse header
     const headerInfo = this.parseHeader();
-    
+
     // Handle uncompressed and ZIP compression
-    if (headerInfo.compression !== 0 && headerInfo.compression !== 2 && headerInfo.compression !== 3) {
-      throw new Error(`EXR compression type ${headerInfo.compression} not supported by basic parser. Supported: uncompressed (0), ZIPS (2), ZIP (3). Please use uncompressed EXR files, standard RGB channels, or supported compression types.`);
+    if (
+      headerInfo.compression !== 0 &&
+      headerInfo.compression !== 2 &&
+      headerInfo.compression !== 3
+    ) {
+      throw new Error(
+        `EXR compression type ${headerInfo.compression} not supported by basic parser. Supported: uncompressed (0), ZIPS (2), ZIP (3). Please use uncompressed EXR files, standard RGB channels, or supported compression types.`
+      );
     }
 
     // Extract depth data
@@ -73,19 +79,20 @@ export class BasicExrParser {
       height: headerInfo.height,
       channels: headerInfo.channels,
       depthData: depthResult.data,
-      depthChannelName: depthResult.channelName
+      depthChannelName: depthResult.channelName,
     };
   }
 
   private parseHeader() {
     const channels: ExrChannel[] = [];
-    let width = 0, height = 0;
+    let width = 0,
+      height = 0;
     let compression = 0;
 
     // Read header attributes
     while (true) {
       const attrName = this.readString();
-      if (attrName === '') break; // End of header
+      if (attrName === '') {break;} // End of header
 
       const attrType = this.readString();
       const attrSize = this.readUint32();
@@ -114,7 +121,10 @@ export class BasicExrParser {
     }
 
     console.log(`📋 Basic EXR Parser: Dimensions: ${width}x${height}, compression: ${compression}`);
-    console.log(`📋 Basic EXR Parser: Found ${channels.length} channels:`, channels.map(ch => `${ch.name}(${ch.pixelType})`));
+    console.log(
+      `📋 Basic EXR Parser: Found ${channels.length} channels:`,
+      channels.map(ch => `${ch.name}(${ch.pixelType})`)
+    );
 
     return { channels, width, height, compression };
   }
@@ -125,7 +135,7 @@ export class BasicExrParser {
 
     while (this.offset < endOffset) {
       const name = this.readString();
-      if (name === '' || this.offset >= endOffset) break;
+      if (name === '' || this.offset >= endOffset) {break;}
 
       try {
         const pixelType = this.readUint32();
@@ -142,7 +152,7 @@ export class BasicExrParser {
           name,
           pixelType,
           bytesPerPixel,
-          offset: currentOffset
+          offset: currentOffset,
         });
 
         currentOffset += bytesPerPixel;
@@ -153,7 +163,7 @@ export class BasicExrParser {
 
     // Sort channels alphabetically (EXR standard)
     channels.sort((a, b) => a.name.localeCompare(b.name));
-    
+
     // Recalculate offsets after sorting
     let offset = 0;
     for (const channel of channels) {
@@ -162,18 +172,27 @@ export class BasicExrParser {
     }
   }
 
-  private extractDepthData(headerInfo: any): { data: Float32Array | null, channelName: string | null } {
+  private extractDepthData(headerInfo: any): {
+    data: Float32Array | null;
+    channelName: string | null;
+  } {
     // Find depth channel with flexible matching
     const depthChannelNames = ['Depth.V', 'Depth', 'Z', 'Depth.Z', 'Disparity', 'Disp', 'R'];
-    
-    console.log(`📋 Basic EXR Parser: Looking for depth channels among:`, headerInfo.channels.map((ch: ExrChannel) => ch.name));
-    
+
+    console.log(
+      `📋 Basic EXR Parser: Looking for depth channels among:`,
+      headerInfo.channels.map((ch: ExrChannel) => ch.name)
+    );
+
     const depthChannel = headerInfo.channels.find((ch: ExrChannel) => {
       return depthChannelNames.includes(ch.name);
     });
 
     if (!depthChannel) {
-      console.log(`📋 Basic EXR Parser: No depth channel found. Available channels:`, headerInfo.channels.map((ch: ExrChannel) => ch.name));
+      console.log(
+        `📋 Basic EXR Parser: No depth channel found. Available channels:`,
+        headerInfo.channels.map((ch: ExrChannel) => ch.name)
+      );
       return { data: null, channelName: null };
     }
 
@@ -186,42 +205,55 @@ export class BasicExrParser {
         scanlineOffsets.push(this.readUint64());
       }
 
-      const pixelSize = headerInfo.channels.reduce((sum: number, ch: ExrChannel) => sum + ch.bytesPerPixel, 0);
+      const pixelSize = headerInfo.channels.reduce(
+        (sum: number, ch: ExrChannel) => sum + ch.bytesPerPixel,
+        0
+      );
       const depthData = new Float32Array(headerInfo.width * headerInfo.height);
 
-      console.log(`📋 Basic EXR Parser: Reading ${headerInfo.height} scanlines, pixel size: ${pixelSize} bytes, compression: ${headerInfo.compression}`);
+      console.log(
+        `📋 Basic EXR Parser: Reading ${headerInfo.height} scanlines, pixel size: ${pixelSize} bytes, compression: ${headerInfo.compression}`
+      );
 
       // Read depth data from each scanline
       for (let y = 0; y < headerInfo.height; y++) {
         // Read scanline header
         const scanlineY = this.readUint32();
         const pixelDataSize = this.readUint32();
-        
+
         let scanlineData: Uint8Array;
-        
+
         if (headerInfo.compression === 0) {
           // Uncompressed - read directly
           const expectedSize = pixelSize * headerInfo.width;
           if (pixelDataSize !== expectedSize) {
-            throw new Error(`Unexpected scanline size: got ${pixelDataSize}, expected ${expectedSize}`);
+            throw new Error(
+              `Unexpected scanline size: got ${pixelDataSize}, expected ${expectedSize}`
+            );
           }
-          
+
           scanlineData = new Uint8Array(this.view.buffer, this.offset, pixelDataSize);
           this.offset += pixelDataSize;
-          
         } else {
           // Compressed - decompress the scanline
           const compressedData = new Uint8Array(this.view.buffer, this.offset, pixelDataSize);
           this.offset += pixelDataSize;
-          
+
           const expectedSize = pixelSize * headerInfo.width;
-          scanlineData = this.decompressScanline(compressedData, expectedSize, headerInfo.compression);
-          
-          if (y < 2) { // Debug first two scanlines
-            console.log(`📋 Basic EXR Parser: Scanline ${y}: compressed ${pixelDataSize} -> uncompressed ${scanlineData.length} bytes`);
+          scanlineData = this.decompressScanline(
+            compressedData,
+            expectedSize,
+            headerInfo.compression
+          );
+
+          if (y < 2) {
+            // Debug first two scanlines
+            console.log(
+              `📋 Basic EXR Parser: Scanline ${y}: compressed ${pixelDataSize} -> uncompressed ${scanlineData.length} bytes`
+            );
           }
         }
-        
+
         const scanlineView = new DataView(scanlineData.buffer, scanlineData.byteOffset);
 
         // Extract depth values from scanline
@@ -229,12 +261,15 @@ export class BasicExrParser {
           const pixelOffset = x * pixelSize + depthChannel.offset;
 
           let depthValue: number;
-          if (depthChannel.pixelType === 2) { // FLOAT
+          if (depthChannel.pixelType === 2) {
+            // FLOAT
             depthValue = scanlineView.getFloat32(pixelOffset, true);
-          } else if (depthChannel.pixelType === 1) { // HALF
+          } else if (depthChannel.pixelType === 1) {
+            // HALF
             const halfBits = scanlineView.getUint16(pixelOffset, true);
             depthValue = this.halfToFloat(halfBits);
-          } else { // UINT32
+          } else {
+            // UINT32
             depthValue = scanlineView.getUint32(pixelOffset, true);
           }
 
@@ -243,7 +278,6 @@ export class BasicExrParser {
       }
 
       return { data: depthData, channelName: depthChannel.name };
-
     } catch (error) {
       console.warn('📋 Basic EXR Parser: Failed to extract depth data:', error);
       return { data: null, channelName: null };
@@ -272,14 +306,14 @@ export class BasicExrParser {
   private readUint64(): number {
     const low = this.readUint32();
     const high = this.readUint32();
-    return low + (high * 0x100000000);
+    return low + high * 0x100000000;
   }
 
   private readString(): string {
     let result = '';
     while (this.offset < this.view.byteLength) {
       const byte = this.readUint8();
-      if (byte === 0) break;
+      if (byte === 0) {break;}
       result += String.fromCharCode(byte);
     }
     return result;
@@ -299,8 +333,13 @@ export class BasicExrParser {
     }
   }
 
-  private decompressScanline(compressedData: Uint8Array, expectedSize: number, compression: number): Uint8Array {
-    if (compression === 2 || compression === 3) { // ZIPS or ZIP
+  private decompressScanline(
+    compressedData: Uint8Array,
+    expectedSize: number,
+    compression: number
+  ): Uint8Array {
+    if (compression === 2 || compression === 3) {
+      // ZIPS or ZIP
       return this.decompressZIP(compressedData, expectedSize);
     } else {
       throw new Error(`Unsupported compression type: ${compression}`);
@@ -309,19 +348,24 @@ export class BasicExrParser {
 
   private decompressZIP(compressedData: Uint8Array, expectedSize: number): Uint8Array {
     try {
-      console.log(`📋 Basic EXR Parser: Decompressing ZIP data: ${compressedData.length} -> ${expectedSize} bytes`);
-      
+      console.log(
+        `📋 Basic EXR Parser: Decompressing ZIP data: ${compressedData.length} -> ${expectedSize} bytes`
+      );
+
       // Use pako library for ZIP/deflate decompression
       const result = pako.inflate(compressedData);
-      
+
       if (result.length !== expectedSize) {
-        console.warn(`📋 Basic EXR Parser: Size mismatch after decompression: got ${result.length}, expected ${expectedSize}`);
+        console.warn(
+          `📋 Basic EXR Parser: Size mismatch after decompression: got ${result.length}, expected ${expectedSize}`
+        );
       }
-      
+
       return new Uint8Array(result);
-      
     } catch (error) {
-      throw new Error(`ZIP decompression failed: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `ZIP decompression failed: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 }

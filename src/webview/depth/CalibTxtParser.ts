@@ -1,24 +1,24 @@
 export interface CalibTxtData {
   cam0: {
-    f: number;      // focal length in pixels
-    cx: number;     // principal point x
-    cy: number;     // principal point y
+    f: number; // focal length in pixels
+    cx: number; // principal point x
+    cy: number; // principal point y
   };
   cam1: {
-    f: number;      // focal length in pixels  
-    cx: number;     // principal point x
-    cy: number;     // principal point y
+    f: number; // focal length in pixels
+    cx: number; // principal point x
+    cy: number; // principal point y
   };
-  doffs: number;    // x-difference of principal points (cx1 - cx0)
+  doffs: number; // x-difference of principal points (cx1 - cx0)
   baseline: number; // camera baseline in mm
-  width: number;    // image width in pixels
-  height: number;   // image height in pixels
-  ndisp: number;    // conservative bound on disparity levels
-  isint: number;    // whether GT disparities have integer precision (0 or 1)
-  vmin: number;     // minimum disparity for visualization
-  vmax: number;     // maximum disparity for visualization  
-  dyavg: number;    // average absolute y-disparity
-  dymax: number;    // maximum absolute y-disparity
+  width: number; // image width in pixels
+  height: number; // image height in pixels
+  ndisp: number; // conservative bound on disparity levels
+  isint: number; // whether GT disparities have integer precision (0 or 1)
+  vmin: number; // minimum disparity for visualization
+  vmax: number; // maximum disparity for visualization
+  dyavg: number; // average absolute y-disparity
+  dymax: number; // maximum absolute y-disparity
 }
 
 export interface CalibTxtCamera {
@@ -32,10 +32,10 @@ export interface CalibTxtCamera {
 
 /**
  * Parses a calib.txt file containing stereo camera calibration parameters.
- * 
+ *
  * Format:
  * cam0=[f 0 cx; 0 f cy; 0 0 1]
- * cam1=[f 0 cx; 0 f cy; 0 0 1] 
+ * cam1=[f 0 cx; 0 f cy; 0 0 1]
  * doffs=131.111
  * baseline=193.001
  * width=2964
@@ -52,7 +52,10 @@ export class CalibTxtParser {
    * Parses calib.txt content and returns structured calibration data
    */
   static parse(content: string): CalibTxtData {
-    const lines = content.trim().split('\n').map(line => line.trim());
+    const lines = content
+      .trim()
+      .split('\n')
+      .map(line => line.trim());
     const result: Partial<CalibTxtData> = {};
 
     for (const line of lines) {
@@ -67,7 +70,7 @@ export class CalibTxtParser {
       } else if (line.includes('=')) {
         const [key, value] = line.split('=', 2);
         const numValue = parseFloat(value);
-        
+
         if (isNaN(numValue)) {
           throw new Error(`Invalid numeric value for ${key}: ${value}`);
         }
@@ -127,7 +130,7 @@ export class CalibTxtParser {
     // Remove brackets and split by semicolons
     const cleaned = matrixStr.replace(/[\[\]]/g, '').trim();
     const rows = cleaned.split(';').map(row => row.trim());
-    
+
     if (rows.length !== 3) {
       throw new Error(`Invalid camera matrix format: expected 3 rows, got ${rows.length}`);
     }
@@ -145,7 +148,7 @@ export class CalibTxtParser {
     if (row2.length !== 3) {
       throw new Error(`Invalid camera matrix second row: expected 3 values, got ${row2.length}`);
     }
-    const fy = row2[1]; 
+    const fy = row2[1];
     const cy = row2[2];
 
     // Verify that fx == fy (as specified in the format)
@@ -175,17 +178,17 @@ export class CalibTxtParser {
           fy: calibData.cam0.f, // fx == fy in this format
           cx: calibData.cam0.cx,
           cy: calibData.cam0.cy,
-          baseline: calibData.baseline
+          baseline: calibData.baseline,
         },
         cam1: {
-          name: 'cam1', 
+          name: 'cam1',
           fx: calibData.cam1.f,
           fy: calibData.cam1.f, // fx == fy in this format
           cx: calibData.cam1.cx,
           cy: calibData.cam1.cy,
-          baseline: calibData.baseline
-        }
-      }
+          baseline: calibData.baseline,
+        },
+      },
     };
   }
 
@@ -196,11 +199,11 @@ export class CalibTxtParser {
     // Check that doffs matches the difference in principal points
     const computedDoffs = calibData.cam1.cx - calibData.cam0.cx;
     const tolerance = 1e-3;
-    
+
     if (Math.abs(calibData.doffs - computedDoffs) > tolerance) {
       console.warn(
         `doffs inconsistency: specified=${calibData.doffs}, computed=${computedDoffs.toFixed(3)} ` +
-        `(difference: ${Math.abs(calibData.doffs - computedDoffs).toFixed(3)})`
+          `(difference: ${Math.abs(calibData.doffs - computedDoffs).toFixed(3)})`
       );
     }
 

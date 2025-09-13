@@ -1,11 +1,12 @@
 # Camera Calibration and Profile Formats
 
-This document describes common camera calibration file formats used in computer vision, particularly for stereo depth processing.
+This document describes common camera calibration file formats used in computer
+vision, particularly for stereo depth processing.
 
 ## OpenCV Camera Calibration (camera_calibration.yml, intrinsics.xml)
 
-**File extensions:** `.yml`, `.yaml`, `.xml`
-**Common names:** `camera_calibration.yml`, `intrinsics.yml`, `camera_matrix.xml`
+**File extensions:** `.yml`, `.yaml`, `.xml` **Common names:**
+`camera_calibration.yml`, `intrinsics.yml`, `camera_matrix.xml`
 
 ```yaml
 %YAML:1.0
@@ -27,8 +28,8 @@ image_height: 480
 
 ## ROS Camera Info (camera_info.yaml)
 
-**File extensions:** `.yaml`, `.yml`
-**Common names:** `camera_info.yaml`, `left_camera.yaml`, `right_camera.yaml`
+**File extensions:** `.yaml`, `.yml` **Common names:** `camera_info.yaml`,
+`left_camera.yaml`, `right_camera.yaml`
 
 ```yaml
 image_width: 640
@@ -55,8 +56,8 @@ projection_matrix:
 
 ## Stereo Calibration (stereo_calibration.yml)
 
-**File extensions:** `.yml`, `.yaml`
-**Common names:** `stereo_calibration.yml`, `stereo_params.yaml`
+**File extensions:** `.yml`, `.yaml` **Common names:** `stereo_calibration.yml`,
+`stereo_params.yaml`
 
 ```yaml
 %YAML:1.0
@@ -105,8 +106,7 @@ baseline: 120.0  # in mm
 
 ## COLMAP Camera Models (cameras.txt)
 
-**File extensions:** `.txt`
-**Common names:** `cameras.txt`, `camera_models.txt`
+**File extensions:** `.txt` **Common names:** `cameras.txt`, `camera_models.txt`
 
 ```
 # Camera list with one line of data per camera:
@@ -119,8 +119,8 @@ baseline: 120.0  # in mm
 
 ## Kalibr Camera Chain (camchain.yaml)
 
-**File extensions:** `.yaml`
-**Common names:** `camchain.yaml`, `camera_chain.yaml`
+**File extensions:** `.yaml` **Common names:** `camchain.yaml`,
+`camera_chain.yaml`
 
 ```yaml
 cam0:
@@ -137,7 +137,7 @@ cam1:
   distortion_coeffs: [k1, k2, p1, p2]
   resolution: [640, 480]
   rostopic: /cam1/image_raw
-  T_cn_cnm1:  # Transform from cam0 to cam1
+  T_cn_cnm1: # Transform from cam0 to cam1
     - [r11, r12, r13, tx]
     - [r21, r22, r23, ty]
     - [r31, r32, r33, tz]
@@ -146,8 +146,8 @@ cam1:
 
 ## Intel RealSense Profile (.bag metadata)
 
-**File extensions:** `.json`, `.cfg`
-**Common names:** `camera_profile.json`, `realsense_config.json`
+**File extensions:** `.json`, `.cfg` **Common names:** `camera_profile.json`,
+`realsense_config.json`
 
 ```json
 {
@@ -190,8 +190,8 @@ cam1:
 
 ## ZED Camera Calibration (.conf)
 
-**File extensions:** `.conf`
-**Common names:** `SN12345.conf`, `calibration.conf`
+**File extensions:** `.conf` **Common names:** `SN12345.conf`,
+`calibration.conf`
 
 ```ini
 [LEFT_CAM_HD]
@@ -224,8 +224,8 @@ RX_HD=-74.123
 
 ## Structure from Motion (SfM) Format (.txt)
 
-**File extensions:** `.txt`, `.dat`
-**Common names:** `cameras.txt`, `reconstruction.txt`
+**File extensions:** `.txt`, `.dat` **Common names:** `cameras.txt`,
+`reconstruction.txt`
 
 ```
 # Bundler format
@@ -244,8 +244,7 @@ RX_HD=-74.123
 
 ## Middlebury Stereo Dataset (calib.txt)
 
-**File extensions:** `.txt`
-**Common names:** `calib.txt`, `calibration.txt`
+**File extensions:** `.txt` **Common names:** `calib.txt`, `calibration.txt`
 **Used by:** Middlebury Stereo Evaluation, ETH3D Dataset (similar format)
 
 ```
@@ -265,6 +264,7 @@ dymax=1.516
 ```
 
 **Parameters:**
+
 - `cam0`, `cam1`: Camera matrices in format `[f 0 cx; 0 f cy; 0 0 1]`
   - `f`: Focal length in pixels (same for fx, fy)
   - `cx`, `cy`: Principal point coordinates
@@ -274,18 +274,20 @@ dymax=1.516
 - `ndisp`: Conservative bound on disparity levels (0 to ndisp-1)
 - `isint`: Whether GT disparities have integer precision (0=float, 1=integer)
 - `vmin`, `vmax`: Tight bounds on min/max disparities for visualization
-- `dyavg`, `dymax`: Average and maximum absolute y-disparities (calibration error indication)
+- `dyavg`, `dymax`: Average and maximum absolute y-disparities (calibration
+  error indication)
 
 **Disparity-to-Depth Conversion:**
+
 ```
 Z = baseline * f / (d + doffs)
 ```
+
 Where `d` is the disparity value from .pfm files, `Z` is depth in mm.
 
 ## TUM Dataset Format (associations.txt, camera.txt)
 
-**File extensions:** `.txt`
-**Common names:** `camera.txt`, `groundtruth.txt`
+**File extensions:** `.txt` **Common names:** `camera.txt`, `groundtruth.txt`
 
 ```
 # Camera parameters (TUM format)
@@ -300,12 +302,14 @@ timestamp_rgb rgb_filename timestamp_depth depth_filename
 ## Parameter Definitions
 
 ### Common Intrinsic Parameters
+
 - `fx, fy`: Focal lengths in pixels
 - `cx, cy`: Principal point coordinates (image center)
 - `k1, k2, k3`: Radial distortion coefficients
 - `p1, p2`: Tangential distortion coefficients
 
 ### Stereo Parameters
+
 - `baseline`: Distance between camera centers (mm)
 - `R`: Rotation matrix between cameras (3x3)
 - `T`: Translation vector between cameras (3x1)
@@ -314,11 +318,12 @@ timestamp_rgb rgb_filename timestamp_depth depth_filename
 
 ## Camera Profile JSON Format
 
-**File extensions:** `.json`
-**Common names:** `calibration.json`, `cameras.json`, `camera_profile.json`
-**Used by:** PLY Visualizer extension for depth-to-point cloud conversion
+**File extensions:** `.json` **Common names:** `calibration.json`,
+`cameras.json`, `camera_profile.json` **Used by:** PLY Visualizer extension for
+depth-to-point cloud conversion
 
-The PLY Visualizer currently supports a custom JSON format for camera calibration:
+The PLY Visualizer currently supports a custom JSON format for camera
+calibration:
 
 ```json
 {
@@ -355,6 +360,7 @@ The PLY Visualizer currently supports a custom JSON format for camera calibratio
 ```
 
 **Supported Camera Models:**
+
 - `pinhole-ideal`: Standard pinhole camera (no distortion)
 - `pinhole-opencv`: Pinhole with OpenCV distortion model
 - `fisheye-equidistant`: Equidistant fisheye projection
@@ -362,14 +368,17 @@ The PLY Visualizer currently supports a custom JSON format for camera calibratio
 - `fisheye-kannala-brandt`: Kannala-Brandt polynomial fisheye model
 
 **Usage in PLY Visualizer:**
+
 1. Load calibration file via "📁 Load Calibration File" button
 2. Select camera from dropdown (populated from JSON keys)
 3. Camera parameters automatically populate the depth conversion form
 4. Use for converting depth/disparity images to 3D point clouds
 
 ### File Usage Context
+
 - **Single camera calibration**: OpenCV YAML, ROS camera_info
-- **Stereo pairs**: Stereo calibration YAML, Kalibr camchain, Middlebury calib.txt
+- **Stereo pairs**: Stereo calibration YAML, Kalibr camchain, Middlebury
+  calib.txt
 - **Multi-camera rigs**: COLMAP, Kalibr, Camera JSON
 - **Commercial systems**: RealSense JSON, ZED conf
 - **Research datasets**: TUM, KITTI, Middlebury, ETH3D formats

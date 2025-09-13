@@ -15,72 +15,74 @@ console.log('====================');
 // Check if test files exist
 const stlTestDir = path.join(__dirname, 'testfiles', 'stl');
 const requiredFiles = [
-    'test_cube_ascii.stl',
-    'test_empty_ascii.stl', 
-    'test_large_coordinates.stl',
-    'test_colored_cube_binary.stl'
+  'test_cube_ascii.stl',
+  'test_empty_ascii.stl',
+  'test_large_coordinates.stl',
+  'test_colored_cube_binary.stl',
 ];
 
 console.log('\n📁 Checking STL test files...');
 let allFilesPresent = true;
 
 for (const file of requiredFiles) {
-    const filePath = path.join(stlTestDir, file);
-    if (fs.existsSync(filePath)) {
-        const stats = fs.statSync(filePath);
-        console.log(`✅ ${file} (${stats.size} bytes)`);
-    } else {
-        console.log(`❌ ${file} - NOT FOUND`);
-        allFilesPresent = false;
-    }
+  const filePath = path.join(stlTestDir, file);
+  if (fs.existsSync(filePath)) {
+    const stats = fs.statSync(filePath);
+    console.log(`✅ ${file} (${stats.size} bytes)`);
+  } else {
+    console.log(`❌ ${file} - NOT FOUND`);
+    allFilesPresent = false;
+  }
 }
 
 if (!allFilesPresent) {
-    console.log('\n⚠️  Some test files are missing. Please ensure all STL test files are in testfiles/stl/');
-    process.exit(1);
+  console.log(
+    '\n⚠️  Some test files are missing. Please ensure all STL test files are in testfiles/stl/'
+  );
+  process.exit(1);
 }
 
 // Check if extension compiles
 console.log('\n🔨 Checking extension compilation...');
 try {
-    execSync('npm run compile', { stdio: 'pipe' });
-    console.log('✅ Extension compiles successfully');
+  execSync('npm run compile', { stdio: 'pipe' });
+  console.log('✅ Extension compiles successfully');
 } catch (error) {
-    console.log('❌ Compilation failed:');
-    console.log(error.stdout?.toString() || error.message);
-    process.exit(1);
+  console.log('❌ Compilation failed:');
+  console.log(error.stdout?.toString() || error.message);
+  process.exit(1);
 }
 
 // Run linting
 console.log('\n🧹 Running linter...');
 try {
-    execSync('npm run lint', { stdio: 'pipe' });
-    console.log('✅ Linting passed');
+  execSync('npm run lint', { stdio: 'pipe' });
+  console.log('✅ Linting passed');
 } catch (error) {
-    console.log('⚠️  Linting warnings (non-blocking):');
-    const output = error.stdout?.toString() || error.message;
-    const lines = output.split('\n');
-    const errorCount = lines.filter(line => line.includes('error')).length;
-    const warningCount = lines.filter(line => line.includes('warning')).length;
-    
-    if (errorCount > 0) {
-        console.log(`❌ ${errorCount} errors found`);
-        process.exit(1);
-    } else {
-        console.log(`⚠️  ${warningCount} warnings (acceptable)`);
-    }
+  console.log('⚠️  Linting warnings (non-blocking):');
+  const output = error.stdout?.toString() || error.message;
+  const lines = output.split('\n');
+  const errorCount = lines.filter(line => line.includes('error')).length;
+  const warningCount = lines.filter(line => line.includes('warning')).length;
+
+  if (errorCount > 0) {
+    console.log(`❌ ${errorCount} errors found`);
+    process.exit(1);
+  } else {
+    console.log(`⚠️  ${warningCount} warnings (acceptable)`);
+  }
 }
 
 // Quick unit test check
 console.log('\n🧪 Running unit tests...');
 try {
-    execSync('npm run test', { stdio: 'pipe' });
-    console.log('✅ Unit tests passed');
+  execSync('npm run test', { stdio: 'pipe' });
+  console.log('✅ Unit tests passed');
 } catch (error) {
-    console.log('❌ Unit tests failed:');
-    const output = error.stdout?.toString() || error.message;
-    console.log(output.split('\n').slice(-10).join('\n')); // Last 10 lines
-    console.log('\nNote: Some test failures may be expected if new STL features need test updates');
+  console.log('❌ Unit tests failed:');
+  const output = error.stdout?.toString() || error.message;
+  console.log(output.split('\n').slice(-10).join('\n')); // Last 10 lines
+  console.log('\nNote: Some test failures may be expected if new STL features need test updates');
 }
 
 console.log('\n🎯 STL Manual Testing Checklist:');

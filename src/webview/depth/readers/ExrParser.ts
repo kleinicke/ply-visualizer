@@ -16,8 +16,8 @@ export interface ExrHeader {
   height: number;
   channels: Map<string, ExrChannel>;
   compression: number;
-  dataWindow: {xMin: number, yMin: number, xMax: number, yMax: number};
-  displayWindow: {xMin: number, yMin: number, xMax: number, yMax: number};
+  dataWindow: { xMin: number; yMin: number; xMax: number; yMax: number };
+  displayWindow: { xMin: number; yMin: number; xMax: number; yMax: number };
 }
 
 export interface ExrData {
@@ -59,7 +59,7 @@ export class ExrParser {
 
     // Parse header
     const header = this.parseHeader();
-    
+
     // Parse channel data
     const channelData = this.parseChannelData(header);
 
@@ -68,15 +68,16 @@ export class ExrParser {
 
   private parseHeader(): ExrHeader {
     const channels = new Map<string, ExrChannel>();
-    let width = 0, height = 0;
+    let width = 0,
+      height = 0;
     let compression = 0;
-    let dataWindow = {xMin: 0, yMin: 0, xMax: 0, yMax: 0};
-    let displayWindow = {xMin: 0, yMin: 0, xMax: 0, yMax: 0};
+    let dataWindow = { xMin: 0, yMin: 0, xMax: 0, yMax: 0 };
+    let displayWindow = { xMin: 0, yMin: 0, xMax: 0, yMax: 0 };
 
     // Read header attributes
     while (true) {
       const name = this.readString();
-      if (name === '') break; // End of header
+      if (name === '') {break;} // End of header
 
       const type = this.readString();
       const size = this.readUint32();
@@ -104,16 +105,16 @@ export class ExrParser {
       channels,
       compression,
       dataWindow,
-      displayWindow
+      displayWindow,
     };
   }
 
   private parseChannels(channels: Map<string, ExrChannel>, size: number): void {
     const endOffset = this.offset + size;
-    
+
     while (this.offset < endOffset) {
       const name = this.readString();
-      if (name === '') break;
+      if (name === '') {break;}
 
       const pixelType = this.readUint32();
       const pLinear = this.readUint8();
@@ -128,22 +129,24 @@ export class ExrParser {
         pixelType,
         pLinear: !!pLinear,
         xSampling,
-        ySampling
+        ySampling,
       });
     }
   }
 
   private parseChannelData(header: ExrHeader): Map<string, Float32Array> {
     const channelData = new Map<string, Float32Array>();
-    
+
     if (header.compression !== 0) {
-      throw new Error('Compressed EXR files are not yet supported. Please use uncompressed EXR files.');
+      throw new Error(
+        'Compressed EXR files are not yet supported. Please use uncompressed EXR files.'
+      );
     }
 
     // Read scanline offset table
     const scanlineCount = header.height;
     const scanlineOffsets: number[] = [];
-    
+
     for (let i = 0; i < scanlineCount; i++) {
       scanlineOffsets.push(this.readUint64());
     }
@@ -158,23 +161,26 @@ export class ExrParser {
       // Each scanline starts with y-coordinate and pixel data size
       const scanlineY = this.readUint32();
       const pixelDataSize = this.readUint32();
-      
+
       // Read pixel data for this scanline
       for (const [channelName, channel] of header.channels) {
         const channelArray = channelData.get(channelName)!;
-        
+
         for (let x = 0; x < header.width; x++) {
           const pixelIndex = y * header.width + x;
           let value: number;
-          
-          if (channel.pixelType === 2) { // FLOAT
+
+          if (channel.pixelType === 2) {
+            // FLOAT
             value = this.readFloat32();
-          } else if (channel.pixelType === 1) { // HALF
+          } else if (channel.pixelType === 1) {
+            // HALF
             value = this.readHalf();
-          } else { // UINT32
+          } else {
+            // UINT32
             value = this.readUint32();
           }
-          
+
           channelArray[pixelIndex] = value;
         }
       }
@@ -200,7 +206,7 @@ export class ExrParser {
     // JavaScript doesn't have native 64-bit integers, read as two 32-bit
     const low = this.readUint32();
     const high = this.readUint32();
-    return low + (high * 0x100000000);
+    return low + high * 0x100000000;
   }
 
   private readFloat32(): number {
@@ -220,18 +226,18 @@ export class ExrParser {
     let result = '';
     while (true) {
       const byte = this.readUint8();
-      if (byte === 0) break;
+      if (byte === 0) {break;}
       result += String.fromCharCode(byte);
     }
     return result;
   }
 
-  private readBox2i(): {xMin: number, yMin: number, xMax: number, yMax: number} {
+  private readBox2i(): { xMin: number; yMin: number; xMax: number; yMax: number } {
     return {
       xMin: this.readUint32(),
       yMin: this.readUint32(),
       xMax: this.readUint32(),
-      yMax: this.readUint32()
+      yMax: this.readUint32(),
     };
   }
 
@@ -265,12 +271,12 @@ export class ExrParser {
 export function findDepthChannel(channels: Map<string, ExrChannel>): string | null {
   // Priority order for depth channel detection
   const depthChannelNames = [
-    'Depth.V',    // Blender depth
-    'Depth',      // Generic depth
-    'Z',          // Z-buffer
-    'Depth.Z',    // Explicit Z depth
-    'Disparity',  // Stereo disparity
-    'Disp'        // Short disparity
+    'Depth.V', // Blender depth
+    'Depth', // Generic depth
+    'Z', // Z-buffer
+    'Depth.Z', // Explicit Z depth
+    'Disparity', // Stereo disparity
+    'Disp', // Short disparity
   ];
 
   for (const channelName of depthChannelNames) {

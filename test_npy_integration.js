@@ -10,41 +10,41 @@ console.log('Testing NPY integration...');
 
 // Check if NpyReader exists
 if (!fs.existsSync(npyReaderPath)) {
-    console.error('❌ NpyReader.ts not found');
-    process.exit(1);
+  console.error('❌ NpyReader.ts not found');
+  process.exit(1);
 }
 
 // Check if NPY reader is registered
 const registryContent = fs.readFileSync(registryPath, 'utf8');
 if (!registryContent.includes('NpyReader')) {
-    console.error('❌ NpyReader not registered in DepthRegistry');
-    process.exit(1);
+  console.error('❌ NpyReader not registered in DepthRegistry');
+  process.exit(1);
 }
 
 // Check if package.json includes NPY extensions
 const packageJson = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
 const hasNpyPattern = packageJson.contributes.customEditors[0].selector.some(
-    selector => selector.filenamePattern === '*.npy' || selector.filenamePattern === '*.npz'
+  selector => selector.filenamePattern === '*.npy' || selector.filenamePattern === '*.npz'
 );
 
 if (!hasNpyPattern) {
-    console.error('❌ NPY file patterns not found in package.json');
-    process.exit(1);
+  console.error('❌ NPY file patterns not found in package.json');
+  process.exit(1);
 }
 
 // Check test files exist
 const testFiles = [
-    './testfiles/test_depth.npy',
-    './testfiles/test_disparity.npy', 
-    './testfiles/test_depth_small.npy',
-    './testfiles/test_depth_with_params.npz'
+  './testfiles/test_depth.npy',
+  './testfiles/test_disparity.npy',
+  './testfiles/test_depth_small.npy',
+  './testfiles/test_depth_with_params.npz',
 ];
 
 for (const file of testFiles) {
-    if (!fs.existsSync(file)) {
-        console.error(`❌ Test file not found: ${file}`);
-        process.exit(1);
-    }
+  if (!fs.existsSync(file)) {
+    console.error(`❌ Test file not found: ${file}`);
+    process.exit(1);
+  }
 }
 
 console.log('✅ NPY integration tests passed!');

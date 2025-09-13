@@ -1,8 +1,8 @@
-export type CameraModel = 
-  | 'pinhole-ideal' 
-  | 'pinhole-opencv' 
-  | 'fisheye-equidistant' 
-  | 'fisheye-opencv' 
+export type CameraModel =
+  | 'pinhole-ideal'
+  | 'pinhole-opencv'
+  | 'fisheye-equidistant'
+  | 'fisheye-opencv'
   | 'fisheye-kannala-brandt';
 
 export type DepthKind = 'depth' | 'disparity' | 'inverse_depth' | 'z';
@@ -20,7 +20,10 @@ export interface DepthMetadata {
   kind: DepthKind; // 'depth' (range), 'z' (optical axis), 'disparity', 'inverse_depth'
   unit?: 'meter' | 'millimeter';
   scale?: number; // multiplier to convert values to meters when kind === 'depth'|'z'
-  fx?: number; fy?: number; cx?: number; cy?: number;
+  fx?: number;
+  fy?: number;
+  cx?: number;
+  cy?: number;
   baseline?: number; // meters, for disparity
   disparityOffset?: number; // offset added to disparity values (default 0)
   depthScale?: number; // scale factor for depth values (for depth from mono networks)
@@ -29,7 +32,7 @@ export interface DepthMetadata {
   convention?: 'opencv' | 'opengl';
   depthClamp?: { min?: number; max?: number };
   // NPZ-specific metadata
-  availableArrays?: { [key: string]: { shape: number[], dtype: string } };
+  availableArrays?: { [key: string]: { shape: number[]; dtype: string } };
   requiresConfiguration?: boolean;
   selectedArray?: string;
   selectedChannel?: number;
