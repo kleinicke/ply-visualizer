@@ -18,6 +18,9 @@ module.exports = [
     },
     resolve: {
       extensions: ['.ts', '.js'],
+      alias: {
+        '@website': path.resolve(__dirname, 'website/src'),
+      },
     },
     module: {
       rules: [
@@ -37,16 +40,10 @@ module.exports = [
   {
     target: 'web',
     mode: 'production',
-    entry: './src/webview/main.ts',
+    entry: './website/src/main.ts',
     output: {
       path: path.resolve(__dirname, 'out', 'webview'),
       filename: 'main.js',
-      library: {
-        type: 'module',
-      },
-    },
-    experiments: {
-      outputModule: true,
     },
     devtool: 'nosources-source-map',
     resolve: {
@@ -69,7 +66,7 @@ module.exports = [
             {
               loader: 'ts-loader',
               options: {
-                configFile: 'src/webview/tsconfig.json',
+                configFile: 'website/src/tsconfig.json',
               },
             },
           ],

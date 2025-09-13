@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { PlyParser } from './webview/parsers/plyParser';
-import { ObjParser } from './webview/parsers/objParser';
-import { MtlParser } from './webview/parsers/mtlParser';
-import { StlParser } from './webview/parsers/stlParser';
-import { PcdParser } from './webview/parsers/pcdParser';
-import { PtsParser } from './webview/parsers/ptsParser';
-import { OffParser } from './webview/parsers/offParser';
-import { GltfParser } from './webview/parsers/gltfParser';
+import { PlyParser } from '@website/parsers/plyParser';
+import { ObjParser } from '@website/parsers/objParser';
+import { MtlParser } from '@website/parsers/mtlParser';
+import { StlParser } from '@website/parsers/stlParser';
+import { PcdParser } from '@website/parsers/pcdParser';
+import { PtsParser } from '@website/parsers/ptsParser';
+import { OffParser } from '@website/parsers/offParser';
+import { GltfParser } from '@website/parsers/gltfParser';
 
 export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProvider {
   private static readonly viewType = 'plyViewer.plyEditor';
@@ -41,7 +41,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     webviewPanel.webview.options = {
       enableScripts: true,
       localResourceRoots: [
-        vscode.Uri.joinPath(this.context.extensionUri, 'media'),
+        vscode.Uri.joinPath(this.context.extensionUri, 'website', 'media'),
         vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview'),
       ],
     };
@@ -670,12 +670,18 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     );
     const scriptUri = webview.asWebviewUri(scriptPathOnDisk);
 
-    const stylePathOnDisk = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'style.css');
+    const stylePathOnDisk = vscode.Uri.joinPath(
+      this.context.extensionUri,
+      'website',
+      'media',
+      'style.css'
+    );
     const styleUri = webview.asWebviewUri(stylePathOnDisk);
 
     // Add GeoTIFF library for TIF support
     const geotiffPathOnDisk = vscode.Uri.joinPath(
       this.context.extensionUri,
+      'website',
       'media',
       'geotiff.min.js'
     );

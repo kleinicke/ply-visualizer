@@ -13,9 +13,10 @@ import { CustomArcballControls, TurntableControls } from './controls';
 import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
 
 declare const GeoTIFF: any;
+declare const acquireVsCodeApi: () => any;
 
-// # VSCode changes: before it needed this line instead of importing the parsers like this
-// declare const acquireVsCodeApi: () => any;
+// Environment detection - works in both VSCode and browser
+const isVSCode = typeof acquireVsCodeApi !== 'undefined';
 
 // File parsers for browser version
 import { PlyParser } from './parsers/plyParser';
@@ -24,21 +25,27 @@ import { ObjParser } from './parsers/objParser';
 import { PcdParser } from './parsers/pcdParser';
 import { PtsParser } from './parsers/ptsParser';
 import { OffParser } from './parsers/offParser';
+import { GltfParser } from './parsers/gltfParser';
+
+// Depth processing modules
+import { registerDefaultReaders, readDepth, registerReader } from './depth/DepthRegistry';
+import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
+import { PngReader } from './depth/readers/PngReader';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
- * Adapted for standalone browser operation
+ * Works in both VSCode extension and standalone browser environments
  */
 
 class PointCloudVisualizer {
-  // # VSCode changes: before it was defined like this
-  //   private vscode = acquireVsCodeApi();
-  private vscode: any = {
-    // Mock VS Code API for browser version
-    postMessage: (message: any) => {
-      console.log('🌐 VS Code message (disabled in browser):', message.type);
-    },
-  };
+  private vscode: any = isVSCode
+    ? acquireVsCodeApi()
+    : {
+        // Mock VS Code API for browser version
+        postMessage: (message: any) => {
+          console.log('🌐 VS Code message (disabled in browser):', message.type);
+        },
+      };
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private renderer!: THREE.WebGLRenderer;
@@ -738,24 +745,22 @@ class PointCloudVisualizer {
   }
 
   private async init(): Promise<void> {
-    // # VSCode changes: before the try statement was
-    // try {
-    //   this.initThreeJS();
-    //   this.setupEventListeners();
-    //   this.setupMessageHandler();
-
-    //   // Request default depth settings from extension
-    //   console.log('📤 Requesting default depth settings from extension...');
-    //   this.vscode.postMessage({
-    //     type: 'requestDefaultDepthSettings',
-    //   });
     try {
       this.initThreeJS();
       this.setupEventListeners();
-      this.setupBrowserFileHandlers(); // Replace VS Code message handler with browser file handlers
 
-      // Initialize with default settings (no need to request from extension)
-      console.log('🌐 Initializing standalone browser version...');
+      if (isVSCode) {
+        // VSCode extension environment
+        this.setupMessageHandler();
+        console.log('📤 Requesting default depth settings from extension...');
+        this.vscode.postMessage({
+          type: 'requestDefaultDepthSettings',
+        });
+      } else {
+        // Browser environment
+        this.setupBrowserFileHandlers();
+        console.log('🌐 Initializing standalone browser version...');
+      }
     } catch (error) {
       this.showError(
         `Failed to initialize PLY Visualizer: ${error instanceof Error ? error.message : String(error)}`
@@ -2306,19 +2311,19 @@ class PointCloudVisualizer {
   }
 
   private setupEventListeners(): void {
-    // Add file button
+    // Add file button - different behavior for VSCode vs browser
     const addFileBtn = document.getElementById('add-file');
-    // # VSCode changes: before it used this function
-    // if (addFileBtn) {
-    //   addFileBtn.addEventListener('click', () => {
-    //     this.requestAddFile();
-    //   });
     if (addFileBtn) {
       addFileBtn.addEventListener('click', () => {
-        // In browser version, trigger file input
-        const fileInput = document.getElementById('hiddenFileInput') as HTMLInputElement;
-        if (fileInput) {
-          fileInput.click();
+        if (isVSCode) {
+          // VSCode environment - request file from extension
+          this.requestAddFile();
+        } else {
+          // Browser environment - trigger file input
+          const fileInput = document.getElementById('hiddenFileInput') as HTMLInputElement;
+          if (fileInput) {
+            fileInput.click();
+          }
         }
       });
     }
@@ -3796,8 +3801,60 @@ class PointCloudVisualizer {
             const offData = await offParser.parse(uint8Array);
             plyData = this.convertToUnifiedFormat(offData, file.name);
             break;
+          case 'tif':
+          case 'tiff':
+          case 'pfm':
+          case 'npy':
+          case 'npz':
+          case 'png':
+            // Handle depth image files - these need special processing
+            console.log(`🖼️ Depth image detected: ${file.name} (${extension})`);
+            this.showError(
+              `Depth image support (${extension.toUpperCase()}) coming soon! Currently only point cloud formats are supported in the web version.`
+            );
+            continue;
+          case 'json':
+            // Handle JSON pose files
+            console.log(`📍 JSON file detected: ${file.name}`);
+            this.showError(
+              `JSON pose file support coming soon! Currently only point cloud formats are supported in the web version.`
+            );
+            continue;
+          case 'xyz':
+          case 'xyzn':
+          case 'xyzrgb':
+            // Handle XYZ variants - these should work with PLY parser
+            console.log(`📊 XYZ file detected: ${file.name} (${extension})`);
+            const xyzParser = new PlyParser();
+            try {
+              plyData = await xyzParser.parse(uint8Array);
+            } catch (error) {
+              this.showError(
+                `Failed to parse XYZ file ${file.name}: ${error instanceof Error ? error.message : String(error)}`
+              );
+              continue;
+            }
+            break;
+          case 'gltf':
+          case 'glb':
+            // Handle GLTF files
+            console.log(`🎭 GLTF file detected: ${file.name} (${extension})`);
+            const gltfParser = new GltfParser();
+            try {
+              const gltfData = await gltfParser.parse(uint8Array);
+              plyData = this.convertToUnifiedFormat(gltfData, file.name);
+            } catch (error) {
+              this.showError(
+                `Failed to parse GLTF file ${file.name}: ${error instanceof Error ? error.message : String(error)}`
+              );
+              continue;
+            }
+            break;
           default:
             console.warn(`Unsupported file format: ${extension} for file ${file.name}`);
+            this.showError(
+              `Unsupported file format: .${extension}\n\nSupported formats:\n• Point clouds: PLY, XYZ, PCD, PTS, OFF\n• Meshes: STL, OBJ, GLTF, GLB\n• Coming soon: TIF, PFM, NPY, PNG, JSON`
+            );
             continue;
         }
 
@@ -3818,18 +3875,71 @@ class PointCloudVisualizer {
 
   private convertToUnifiedFormat(data: any, fileName: string): PlyData {
     // Convert any parser data format to unified PlyData format
+    let vertices = data.vertices || [];
+    let faces = data.faces || [];
+
+    // Handle STL format specifically
+    if (data.triangles && Array.isArray(data.triangles)) {
+      console.log(`🔄 Converting STL data: ${data.triangles.length} triangles`);
+
+      // STL stores triangles directly with vertex coordinates
+      // We need to extract unique vertices and create face indices
+      const vertexMap = new Map<string, number>();
+      const convertedVertices: any[] = [];
+      const convertedFaces: any[] = [];
+
+      data.triangles.forEach((triangle: any, triIndex: number) => {
+        const faceIndices: number[] = [];
+
+        // Process each vertex in the triangle
+        triangle.vertices.forEach((vertex: any, vertIndex: number) => {
+          // Create a unique key for the vertex
+          const vertexKey = `${vertex.x.toFixed(6)}_${vertex.y.toFixed(6)}_${vertex.z.toFixed(6)}`;
+
+          let vertexIndex = vertexMap.get(vertexKey);
+          if (vertexIndex === undefined) {
+            // New unique vertex
+            vertexIndex = convertedVertices.length;
+            vertexMap.set(vertexKey, vertexIndex);
+
+            convertedVertices.push({
+              x: vertex.x,
+              y: vertex.y,
+              z: vertex.z,
+              nx: triangle.normal?.x || 0,
+              ny: triangle.normal?.y || 0,
+              nz: triangle.normal?.z || 0,
+              red: triangle.color?.red || 128,
+              green: triangle.color?.green || 128,
+              blue: triangle.color?.blue || 128,
+            });
+          }
+
+          faceIndices.push(vertexIndex);
+        });
+
+        // Add the face with proper indices format
+        convertedFaces.push({
+          indices: faceIndices,
+        });
+      });
+
+      vertices = convertedVertices;
+      faces = convertedFaces;
+
+      console.log(`✅ STL conversion: ${vertices.length} unique vertices, ${faces.length} faces`);
+    }
+
     return {
-      vertices: data.vertices || [],
-      faces: data.faces || data.triangles || [],
+      vertices: vertices,
+      faces: faces,
       format: 'ascii',
       version: data.version || '1.0',
       comments: data.comments || [],
-      vertexCount: data.vertexCount || (data.vertices ? data.vertices.length : 0),
-      faceCount:
-        data.faceCount ||
-        (data.faces ? data.faces.length : data.triangles ? data.triangles.length : 0),
+      vertexCount: vertices.length,
+      faceCount: faces.length,
       hasColors: data.hasColors || false,
-      hasNormals: data.hasNormals || false,
+      hasNormals: data.hasNormals || true, // STL always has normals
       fileName: fileName,
     };
   }
@@ -9037,8 +9147,7 @@ class PointCloudVisualizer {
     fileName: string,
     cameraParams: CameraParams
   ): Promise<DepthConversionResult> {
-    const { registerDefaultReaders, readDepth } = await import('./depth/DepthRegistry');
-    const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
+    // Using static imports instead of dynamic imports for VSCode compatibility
     try {
       // DEBUG: Log what parameters we received
       console.log(
@@ -9049,7 +9158,7 @@ class PointCloudVisualizer {
 
       // Configure PNG reader with scale factor if processing PNG file
       if (/\.png$/i.test(fileName) && cameraParams.pngScaleFactor) {
-        const { PngReader } = await import('./depth/readers/PngReader');
+        // Using static import instead of dynamic import
         const pngReader = new PngReader();
         pngReader.setConfig({
           pngScaleFactor: cameraParams.pngScaleFactor,
@@ -9057,7 +9166,7 @@ class PointCloudVisualizer {
         });
 
         // Re-register the configured PNG reader
-        const { registerReader } = await import('./depth/DepthRegistry');
+        // Using static import instead of dynamic import
         registerReader(pngReader);
         console.log(`🎯 Configured PNG reader with scale factor: ${cameraParams.pngScaleFactor}`);
       }

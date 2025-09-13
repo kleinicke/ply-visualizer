@@ -96,47 +96,127 @@
                 
                 <div class="panel-section">
                     <h4>View Controls</h4>
-                    <div class="control-group">
-                        <label class="switch-label">
-                            <input type="checkbox" id="toggle-transparency">
-                            <span class="control-label">Allow Transparency</span>
-                        </label>
+                    <div class="control-buttons">
+                        <button id="fit-camera" class="control-button">Fit to View <span class="button-shortcut">F</span></button>
+                        <button id="reset-camera" class="control-button">Reset Camera <span class="button-shortcut">R</span></button>
+                        <button id="toggle-axes" class="control-button">Toggle Axes <span class="button-shortcut">A</span></button>
+                        <button id="toggle-cameras" class="control-button active">Show Cameras</button>
+                        <button id="set-rotation-origin" class="control-button">Set Rotation Center to Origin <span class="button-shortcut">W</span></button>
                     </div>
-                    <div class="control-group">
-                        <label class="switch-label">
-                            <input type="checkbox" id="toggle-screenspace-scaling">
-                            <span class="control-label">Screen Space Scaling</span>
-                        </label>
+                </div>
+                <div class="panel-section">
+                    <h4>Camera Conventions</h4>
+                    <div class="control-buttons camera-conventions">
+                        <button id="opencv-convention" class="control-button">OpenCV (Y down) <span class="button-shortcut">C</span></button>
+                        <button id="opengl-convention" class="control-button">OpenGL (Y up) <span class="button-shortcut">B</span></button>
                     </div>
-                    <div class="control-group lighting-controls">
-                        <label class="section-label">Lighting Mode:</label>
-                        <div class="button-group">
-                            <button id="use-normal-lighting" class="toggle-button active">Normal</button>
-                            <button id="use-flat-lighting" class="toggle-button">Flat</button>
-                            <button id="toggle-unlit-ply" class="toggle-button">Unlit</button>
-                        </div>
+                </div>
+                <div class="panel-section">
+                    <h4>Control Type</h4>
+                    <div class="control-buttons">
+                        <button id="trackball-controls" class="control-button">Trackball <span class="button-shortcut">T</span></button>
+                        <button id="orbit-controls" class="control-button">Orbit <span class="button-shortcut">O</span></button>
+                        <button id="inverse-trackball-controls" class="control-button">Inverse <span class="button-shortcut">I</span></button>
+                        <button id="arcball-controls" class="control-button">Arcball <span class="button-shortcut">K</span></button>
                     </div>
-                    <div class="control-group">
-                        <label class="switch-label">
-                            <input type="checkbox" id="toggle-gamma-correction">
-                            <span class="control-label">Gamma Correction</span>
-                        </label>
+                </div>
+                <div class="panel-section">
+                    <h4>Color & Lighting</h4>
+                    <div class="control-buttons">
+                        <button id="toggle-gamma-correction" class="control-button">Toggle Gamma Correction <span class="button-shortcut">G</span></button>
                     </div>
-                    <div class="control-group">
-                        <div id="shortcut-help"></div>
+                    <p class="setting-description">Gamma affects original vertex colors. Unlit PLY ignores scene lights. Choose Normal or Flat lighting for scene illumination.</p>
+                    <div class="control-buttons">
+                        <button id="toggle-unlit-ply" class="control-button">Use Unlit PLY (Uniform)</button>
+                        <button id="use-normal-lighting" class="control-button">Use Normal Lighting</button>
+                        <button id="use-flat-lighting" class="control-button">Use Flat Lighting</button>
                     </div>
+                    <p class="setting-description">Shading options are only effecting PLY files with faces.</p>
+                </div>
+                <div class="panel-section">
+                    <h4>Performance</h4>
+                    <div class="control-buttons">
+                        <button id="toggle-screenspace-scaling" class="control-button">Screen-Space Scaling <span class="button-shortcut">S</span></button>
+                        <button id="toggle-transparency" class="control-button">Allow Transparency <span class="button-shortcut">T</span></button>
+                    </div>
+                    <p class="setting-description">Screen-Space Scaling: Distance-based point sizes for better visuals. Allow Transparency: Re-enables alpha blending (impacts performance).</p>
                 </div>
             </div>
             
             <!-- Info Tab -->
             <div id="info-tab" class="tab-panel">
                 <div class="panel-section">
-                    <h4>Object Statistics</h4>
-                    <div id="stats-container"></div>
+                    <h4>Statistics</h4>
+                    <div id="file-stats"></div>
                 </div>
                 <div class="panel-section">
-                    <h4>Transformation Matrix</h4>
-                    <div id="matrix-display"></div>
+                    <h4>Keyboard Shortcuts</h4>
+                    <div class="shortcuts-list">
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">Double-click</span>
+                            <span class="shortcut-desc">Set rotation center</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">Shift + Click</span>
+                            <span class="shortcut-desc">Solo point cloud</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">Mouse wheel</span>
+                            <span class="shortcut-desc">Zoom</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">Drag</span>
+                            <span class="shortcut-desc">Rotate/Pan</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">F</span>
+                            <span class="shortcut-desc">Fit to view</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">R</span>
+                            <span class="shortcut-desc">Reset camera</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">A</span>
+                            <span class="shortcut-desc">Toggle axes</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">C</span>
+                            <span class="shortcut-desc">OpenCV convention (Y down)</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">B</span>
+                            <span class="shortcut-desc">OpenGL convention (Y up)</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">T</span>
+                            <span class="shortcut-desc">Trackball controls</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">O</span>
+                            <span class="shortcut-desc">Orbit controls</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">I</span>
+                            <span class="shortcut-desc">Inverse trackball</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">K</span>
+                            <span class="shortcut-desc">Arcball controls</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">G</span>
+                            <span class="shortcut-desc">Toggle gamma correction</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">S</span>
+                            <span class="shortcut-desc">Screen-space scaling</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">W</span>
+                            <span class="shortcut-desc">Set rotation center to origin</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

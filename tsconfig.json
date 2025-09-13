@@ -5,11 +5,22 @@
     "outDir": "out",
     "lib": ["ES2020", "DOM"],
     "sourceMap": true,
-    "rootDir": "src",
+    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@website/*": ["website/src/*"]
+    }
   },
-  "exclude": ["node_modules", ".vscode-test", "ui-tests", "website"]
+  "include": ["src/**/*", "website/src/parsers/**/*", "website/src/interfaces.ts"],
+  "exclude": [
+    "node_modules",
+    ".vscode-test",
+    "ui-tests",
+    "website/tests",
+    "website/playwright.config.ts"
+  ]
 }
