@@ -49,6 +49,10 @@ module.exports = {
           from: 'about',
           to: 'about',
         },
+        {
+          from: 'src/themes',
+          to: 'src/themes',
+        },
       ],
     }),
   ],

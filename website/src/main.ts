@@ -3820,7 +3820,9 @@ class PointCloudVisualizer {
       // Handle depth files with existing special logic
       for (const depthFile of depthFiles) {
         const fileType = detectFileType(depthFile.name);
-        if (!fileType) {continue;}
+        if (!fileType) {
+          continue;
+        }
 
         console.log(`🖼️ Depth image detected: ${depthFile.name} (${fileType.extension})`);
         try {
@@ -6513,17 +6515,78 @@ class PointCloudVisualizer {
       }
     }
 
+    // Remove normals visualizer from scene and dispose
+    const normalsVisualizer = this.normalsVisualizers[fileIndex];
+    if (normalsVisualizer) {
+      this.scene.remove(normalsVisualizer);
+      if (normalsVisualizer.geometry) {
+        normalsVisualizer.geometry.dispose();
+      }
+      if (normalsVisualizer.material) {
+        if (Array.isArray(normalsVisualizer.material)) {
+          normalsVisualizer.material.forEach(mat => mat.dispose());
+        } else {
+          normalsVisualizer.material.dispose();
+        }
+      }
+    }
+
+    // Remove vertex points object from scene and dispose
+    const vertexPoints = this.vertexPointsObjects[fileIndex];
+    if (vertexPoints) {
+      this.scene.remove(vertexPoints);
+      if (vertexPoints.geometry) {
+        vertexPoints.geometry.dispose();
+      }
+      if (vertexPoints.material) {
+        if (Array.isArray(vertexPoints.material)) {
+          vertexPoints.material.forEach(mat => mat.dispose());
+        } else {
+          vertexPoints.material.dispose();
+        }
+      }
+    }
+
+    // Remove multi-material group from scene and dispose
+    const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
+    if (multiMaterialGroup) {
+      this.scene.remove(multiMaterialGroup);
+      multiMaterialGroup.traverse((obj: any) => {
+        if (obj.geometry && typeof obj.geometry.dispose === 'function') {
+          obj.geometry.dispose();
+        }
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach((m: any) => m.dispose && m.dispose());
+          } else if (typeof obj.material.dispose === 'function') {
+            obj.material.dispose();
+          }
+        }
+      });
+    }
+
     // Remove from arrays
     this.plyFiles.splice(fileIndex, 1);
     this.meshes.splice(fileIndex, 1);
+    this.normalsVisualizers.splice(fileIndex, 1); // Remove normals visualizer for this file
+    this.vertexPointsObjects.splice(fileIndex, 1); // Remove vertex points object for this file
+    this.multiMaterialGroups.splice(fileIndex, 1); // Remove multi-material group for this file
+    this.materialMeshes.splice(fileIndex, 1); // Remove sub-meshes for this file
     this.fileVisibility.splice(fileIndex, 1);
     this.pointSizes.splice(fileIndex, 1); // Remove point size for this file
     this.individualColorModes.splice(fileIndex, 1); // Remove color mode for this file
     this.appliedMtlColors.splice(fileIndex, 1); // Remove MTL color for this file
     this.appliedMtlNames.splice(fileIndex, 1); // Remove MTL name for this file
     this.appliedMtlData.splice(fileIndex, 1); // Remove MTL data for this file
-    this.multiMaterialGroups.splice(fileIndex, 1); // Remove multi-material group for this file
-    this.materialMeshes.splice(fileIndex, 1); // Remove sub-meshes for this file
+
+    // Remove rendering mode states for this file
+    this.solidVisible.splice(fileIndex, 1);
+    this.wireframeVisible.splice(fileIndex, 1);
+    this.pointsVisible.splice(fileIndex, 1);
+    this.normalsVisible.splice(fileIndex, 1);
+
+    // Remove transformation matrix for this file
+    this.transformationMatrices.splice(fileIndex, 1);
 
     // Remove Depth data if it exists for this file
     this.fileDepthData.delete(fileIndex);
@@ -6550,7 +6613,8 @@ class PointCloudVisualizer {
     this.restoreDepthPanelStates(openPanelStates);
     this.updateFileStats();
 
-    // debug
+    // Request render to update the display after removing objects
+    this.requestRender();
   }
 
   private async handleUltimateRawBinaryData(message: any): Promise<void> {
