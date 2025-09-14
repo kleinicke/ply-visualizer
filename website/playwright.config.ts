@@ -1,7 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './tests',
+  testDir: './test',
+  testMatch: '**/*.spec.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -18,7 +19,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'cd dist && python -m http.server 8001',
+    command: 'cd dist && python3 -m http.server 8001',
     port: 8001,
     reuseExistingServer: !process.env.CI,
   },

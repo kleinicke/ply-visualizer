@@ -1020,3 +1020,39 @@ body {
 .control-label {
   color: var(--vscode-foreground);
 }
+
+/* Bottom right navigation buttons */
+.bottom-right-nav {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  gap: 8px;
+  z-index: 100;
+}
+
+.nav-button {
+  background-color: transparent;
+  color: var(--vscode-descriptionForeground);
+  border: none;
+  padding: 2px 4px;
+  border-radius: 2px;
+  text-decoration: none;
+  font-size: 10px;
+  font-weight: 400;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.nav-button:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+  color: var(--vscode-button-secondaryForeground);
+  text-decoration: none;
+  opacity: 1;
+}
+
+.nav-button:active {
+  background-color: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}

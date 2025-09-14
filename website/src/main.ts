@@ -3755,6 +3755,30 @@ class PointCloudVisualizer {
         }
       });
     }
+
+    // Add drag & drop support to the entire window
+    document.addEventListener('dragover', event => {
+      event.preventDefault();
+      event.dataTransfer!.dropEffect = 'copy';
+      // Add visual feedback to the entire window
+      document.body.style.backgroundColor = 'rgba(0, 95, 184, 0.1)';
+    });
+
+    document.addEventListener('dragleave', event => {
+      // Only remove highlight when leaving the entire document
+      if (!event.relatedTarget || event.relatedTarget === document.documentElement) {
+        document.body.style.backgroundColor = '';
+      }
+    });
+
+    document.addEventListener('drop', event => {
+      event.preventDefault();
+      document.body.style.backgroundColor = '';
+      const files = Array.from(event.dataTransfer?.files || []);
+      if (files.length > 0) {
+        this.handleBrowserFiles(files);
+      }
+    });
   }
 
   private async handleBrowserFiles(files: File[]) {

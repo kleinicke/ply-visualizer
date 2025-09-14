@@ -35,7 +35,7 @@
     <!-- Hidden file input for browser file loading -->
     <input type="file" id="hiddenFileInput" multiple accept=".ply,.xyz,.xyzn,.xyzrgb,.obj,.stl,.pcd,.pts,.off,.gltf,.glb,.tif,.tiff,.pfm,.npy,.npz,.png,.json" style="display: none;">
 
-    <div id="loading" class="loading">
+    <div id="loading" class="loading hidden">
         <div class="spinner"></div>
         <p>Loading PLY file...</p>
     </div>
@@ -234,6 +234,11 @@
     </div>
     <div id="viewer-container">
         <canvas id="three-canvas"></canvas>
+        <!-- Navigation buttons at bottom right -->
+        <div class="bottom-right-nav">
+            <a href="about/" class="nav-button">About</a>
+            <a href="about/impressum.html" class="nav-button">Impressum</a>
+        </div>
     </div>
     
     <script src="media/geotiff.min.js"></script>

@@ -5,7 +5,9 @@ async function main() {
   try {
     // The folder containing the Extension Manifest package.json
     // Passed to `--extensionDevelopmentPath`
-    const extensionDevelopmentPath = path.resolve(__dirname, '../../');
+    // __dirname at runtime is .../out/src/test
+    // We need the repository root as the extension development path
+    const extensionDevelopmentPath = path.resolve(__dirname, '../../../');
 
     // The path to test runner
     // Passed to --extensionTestsPath
@@ -15,7 +17,9 @@ async function main() {
     await runTests({
       extensionDevelopmentPath,
       extensionTestsPath,
-      launchArgs: ['--disable-extensions'], // Disable other extensions during testing
+      // Do not disable extensions; we want our extension under development to load
+      // Removing '--disable-extensions' ensures contributions are available during tests
+      launchArgs: [],
     });
   } catch (err) {
     console.error('Failed to run tests');

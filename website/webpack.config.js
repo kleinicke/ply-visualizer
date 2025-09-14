@@ -1,4 +1,5 @@
 const path = require('path');
+const CopyWebpackPlugin = require('copy-webpack-plugin');
 
 module.exports = {
   mode: 'development',
@@ -33,6 +34,16 @@ module.exports = {
     // GeoTIFF will be loaded as external script
     geotiff: 'GeoTIFF',
   },
+  plugins: [
+    new CopyWebpackPlugin({
+      patterns: [
+        {
+          from: 'about',
+          to: 'about',
+        },
+      ],
+    }),
+  ],
   devtool: 'source-map',
   devServer: {
     static: {
