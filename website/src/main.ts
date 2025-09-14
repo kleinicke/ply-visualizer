@@ -90,6 +90,7 @@ class PointCloudVisualizer {
   private multiMaterialGroups: (THREE.Group | null)[] = []; // Multi-material Groups for OBJ files
   private materialMeshes: (THREE.Object3D[] | null)[] = []; // Sub-meshes for multi-material OBJ files
   private fileVisibility: boolean[] = [];
+  private isFirstFileLoad: boolean = true; // Track if this is the first file being loaded
 
   // Universal rendering mode states for each file
   private solidVisible: boolean[] = []; // Solid mesh rendering
@@ -1947,18 +1948,15 @@ class PointCloudVisualizer {
   }
 
   private resetCameraToDefault(): void {
-    // Reset camera to default position and orientation
-    this.camera.position.set(1, 1, 1);
+    // Reset FOV and camera orientation
+    this.camera.fov = 75;
+    this.camera.updateProjectionMatrix();
 
     // Reset quaternion to identity (no rotation)
     this.camera.quaternion.set(0, 0, 0, 1);
 
-    this.camera.fov = 75;
-    this.camera.updateProjectionMatrix();
-
-    // Reset controls
-    this.controls.target.set(0, 0, 0);
-    this.controls.update();
+    // Fit camera to all objects with origin as rotation center
+    this.fitCameraToAllObjects();
 
     // Update last known camera state to prevent unnecessary UI updates
     this.lastCameraPosition.copy(this.camera.position);
@@ -4150,20 +4148,41 @@ class PointCloudVisualizer {
       box.expandByObject(group);
     }
 
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
+    // Calculate distance from origin to furthest corner of bounding box
+    const corners = [
+      new THREE.Vector3(box.min.x, box.min.y, box.min.z),
+      new THREE.Vector3(box.max.x, box.min.y, box.min.z),
+      new THREE.Vector3(box.min.x, box.max.y, box.min.z),
+      new THREE.Vector3(box.max.x, box.max.y, box.min.z),
+      new THREE.Vector3(box.min.x, box.min.y, box.max.z),
+      new THREE.Vector3(box.max.x, box.min.y, box.max.z),
+      new THREE.Vector3(box.min.x, box.max.y, box.max.z),
+      new THREE.Vector3(box.max.x, box.max.y, box.max.z),
+    ];
 
-    const maxDim = Math.max(size.x, size.y, size.z);
+    const origin = new THREE.Vector3(0, 0, 0);
+    const maxDistanceFromOrigin = Math.max(...corners.map(corner => corner.distanceTo(origin)));
+
     const fov = this.camera.fov * (Math.PI / 180);
-    let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+    let cameraZ = Math.abs(maxDistanceFromOrigin / Math.tan(fov / 2));
 
     cameraZ *= 2; // Add some padding
 
-    this.camera.position.set(center.x, center.y, center.z + cameraZ);
-    this.camera.lookAt(center);
+    // Position camera at origin + Z offset, looking at origin
+    this.camera.position.set(0, 0, cameraZ);
+    this.camera.lookAt(0, 0, 0);
 
-    this.controls.target.copy(center);
+    // Set rotation center to origin
+    this.controls.target.set(0, 0, 0);
     this.controls.update();
+  }
+
+  private autoFitCameraOnFirstLoad(): void {
+    // Only auto-fit camera on first file load
+    if (this.isFirstFileLoad) {
+      this.fitCameraToAllObjects();
+      this.isFirstFileLoad = false;
+    }
   }
 
   private updateFileStats(): void {
@@ -12264,7 +12283,7 @@ class PointCloudVisualizer {
         }
         this.updateFileList();
         this.updateFileStats();
-        this.fitCameraToAllObjects();
+        this.autoFitCameraOnFirstLoad();
         // Hide loading overlay for pose JSONs
         document.getElementById('loading')?.classList.add('hidden');
       } else {
@@ -12330,7 +12349,7 @@ class PointCloudVisualizer {
         // Update UI
         this.updateFileList();
         this.updateFileStats();
-        this.fitCameraToAllObjects();
+        this.autoFitCameraOnFirstLoad();
         // Hide loading overlay for pose JSONs
         document.getElementById('loading')?.classList.add('hidden');
       }
@@ -12389,7 +12408,7 @@ class PointCloudVisualizer {
       // Update UI
       this.updateFileList();
       this.updateFileStats();
-      this.fitCameraToAllObjects();
+      this.autoFitCameraOnFirstLoad();
 
       // Hide loading overlay
       document.getElementById('loading')?.classList.add('hidden');
@@ -13585,7 +13604,7 @@ class PointCloudVisualizer {
       registerDefaultReaders();
 
       // Read the depth image
-      const { image, meta } = await readDepth(fileName, depthData.buffer);
+      const { image, meta } = await readDepth(fileName, depthData.buffer as ArrayBuffer);
       console.log(`📐 Depth image loaded: ${image.width}x${image.height}, kind: ${meta.kind}`);
 
       // Determine the depth kind based on user selection
