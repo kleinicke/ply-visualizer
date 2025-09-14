@@ -26,6 +26,11 @@ import {
   DEFAULT_COLORS,
   shouldRequestDepthParams,
   generateDepthRequestId,
+  createDefaultCameraParams,
+  createBrowserFileHandler,
+  BrowserMessageHandler,
+  collectCameraParamsForBrowserPrompt,
+  convertDepthToUnified,
 } from './fileHandler';
 
 // Depth processing modules
@@ -42,11 +47,15 @@ class PointCloudVisualizer {
   private vscode: any = isVSCode
     ? acquireVsCodeApi()
     : {
-        // Mock VS Code API for browser version
+        // Mock VS Code API for browser version - fully functional
         postMessage: (message: any) => {
-          console.log('🌐 VS Code message (disabled in browser):', message.type);
+          console.log('🌐 Browser mode handling:', message.type);
+          this.handleBrowserMessage(message);
         },
       };
+
+  // Browser file handler
+  private browserFileHandler: BrowserMessageHandler | null = null;
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private renderer!: THREE.WebGLRenderer;
@@ -749,6 +758,7 @@ class PointCloudVisualizer {
       } else {
         // Browser environment
         this.setupBrowserFileHandlers();
+        this.initializeBrowserFileHandler();
         console.log('🌐 Initializing standalone browser version...');
       }
     } catch (error) {
@@ -3689,6 +3699,61 @@ class PointCloudVisualizer {
     }
   }
 
+  /**
+   * Initialize browser file handler with shared functionality
+   */
+  private initializeBrowserFileHandler(): void {
+    this.browserFileHandler = createBrowserFileHandler(
+      (fileIndex: number) => this.removeFileByIndex(fileIndex),
+      (message: any) => {
+        // Route messages to the appropriate handlers
+        switch (message.type) {
+          case 'cameraParamsResult':
+            this.handleCameraParams(message);
+            break;
+          case 'cameraParamsWithScaleResult':
+            this.handleCameraParams(message);
+            break;
+          default:
+            console.log(`🌐 Unhandled browser message: ${message.type}`);
+            break;
+        }
+      }
+    );
+  }
+
+  /**
+   * Handle messages in browser mode - implements VS Code extension functionality locally
+   */
+  private handleBrowserMessage(message: any): void {
+    if (!this.browserFileHandler) {
+      console.error('🌐 Browser file handler not initialized');
+      return;
+    }
+
+    switch (message.type) {
+      case 'removeFile':
+        this.browserFileHandler.removeFile(message.fileIndex);
+        break;
+
+      case 'requestCameraParams':
+        this.browserFileHandler.handleCameraParams(message);
+        break;
+
+      case 'requestCameraParamsWithScale':
+        this.browserFileHandler.handleCameraParamsWithScale(message);
+        break;
+
+      case 'savePlyFile':
+        this.browserFileHandler.savePlyFile(message);
+        break;
+
+      default:
+        console.log(`🌐 Browser mode: Unhandled message type ${message.type}`);
+        break;
+    }
+  }
+
   // # VSCode changes: the functions below are used in the browser and were not used for the extension
   // Browser file handling methods
   private setupBrowserFileHandlers(): void {
@@ -3795,6 +3860,16 @@ class PointCloudVisualizer {
       });
 
       const plyDataArray: PlyData[] = [];
+      // Remember starting index to map newly added files
+      const baseIndexStart = this.plyFiles.length;
+      // Track depth metadata to populate fileDepthData after display
+      const depthMetaRecords: Array<{
+        localIndex: number;
+        fileName: string;
+        buffer: ArrayBuffer;
+        params: CameraParams;
+        dims?: { width: number; height: number };
+      }> = [];
 
       // Process regular files using shared functionality
       if (regularFiles.length > 0) {
@@ -3817,28 +3892,45 @@ class PointCloudVisualizer {
         });
       }
 
-      // Handle depth files with existing special logic
+      // Handle depth files using the unified flow
       for (const depthFile of depthFiles) {
-        const fileType = detectFileType(depthFile.name);
-        if (!fileType) {
-          continue;
-        }
-
-        console.log(`🖼️ Depth image detected: ${depthFile.name} (${fileType.extension})`);
+        console.log(`🖼️ Depth image detected: ${depthFile.name}`);
         try {
-          const cameraParams = await this.promptForCameraParameters(depthFile.name);
-          if (!cameraParams) {
+          // Ask for params (prompt); then convert via shared helper
+          const params = await this.promptForCameraParameters(depthFile.name);
+          if (!params) {
             console.log(`⏭️ Skipping ${depthFile.name} - camera parameters cancelled`);
             continue;
           }
-          const depthPlyData = await this.convertDepthToPointCloud(
-            depthFile.data,
-            depthFile.name,
-            cameraParams
-          );
-          if (depthPlyData) {
-            plyDataArray.push(depthPlyData);
+          const parse = await convertDepthToUnified(depthFile.name, depthFile.data.buffer, {
+            fx: params.fx,
+            fy: params.fy ?? params.fx,
+            cx: params.cx ?? undefined,
+            cy: params.cy ?? undefined,
+            cameraModel: params.cameraModel,
+            depthType: params.depthType,
+            convention: params.convention ?? 'opengl',
+            baseline: params.baseline,
+            pngScaleFactor: params.pngScaleFactor,
+            depthScale: params.depthScale,
+            depthBias: params.depthBias,
+          });
+          const data = parse.data as PlyData;
+          (data as any).isDepthDerived = true;
+          // Record dimensions if provided
+          const dims = (parse.data as any).depthDimensions;
+          if (dims) {
+            (data as any).depthDimensions = dims;
           }
+          const localIndex = plyDataArray.length;
+          plyDataArray.push(data);
+          depthMetaRecords.push({
+            localIndex,
+            fileName: depthFile.name,
+            buffer: depthFile.data.buffer,
+            params,
+            dims,
+          });
         } catch (error) {
           console.error(`❌ Error processing depth image ${depthFile.name}:`, error);
           this.showError(`Failed to process depth image ${depthFile.name}: ${error}`);
@@ -3860,6 +3952,21 @@ class PointCloudVisualizer {
 
       if (plyDataArray.length > 0) {
         await this.displayFiles(plyDataArray);
+
+        // Populate fileDepthData for newly added depth-derived files
+        for (const rec of depthMetaRecords) {
+          const fileIndex = baseIndexStart + rec.localIndex;
+          this.fileDepthData.set(fileIndex, {
+            originalData: rec.buffer,
+            fileName: rec.fileName,
+            cameraParams: rec.params,
+            depthDimensions: rec.dims || { width: 0, height: 0 },
+          });
+          if (rec.dims) {
+            // Ensure cx/cy fields are populated correctly in UI
+            this.updatePrinciplePointFields(fileIndex, rec.dims);
+          }
+        }
       }
     } catch (error) {
       console.error('Error loading files:', error);
@@ -4209,7 +4316,7 @@ class PointCloudVisualizer {
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
                     
                     ${
-                      this.isDepthDerivedFile(data)
+                      this.isDepthDerivedFile(data) || (data as any).isDepthDerived
                         ? `
                     <!-- Depth Settings (First) -->
                     <div class="depth-controls" style="margin-top: 8px;">
@@ -5151,7 +5258,7 @@ class PointCloudVisualizer {
       }
 
       // Depth settings toggle and controls
-      if (this.isDepthDerivedFile(this.plyFiles[i])) {
+      if (this.isDepthDerivedFile(this.plyFiles[i]) || (this.plyFiles[i] as any).isDepthDerived) {
         const depthToggleBtn = document.querySelector(
           `.depth-settings-toggle[data-file-index="${i}"]`
         );
@@ -9018,7 +9125,7 @@ class PointCloudVisualizer {
   /**
    * Show depth conversion UI for local parameter collection
    */
-  private showDepthConversionUI(fileName: string, requestId: string): void {
+  private async showDepthConversionUI(fileName: string, requestId: string): Promise<void> {
     console.log('📋 Showing depth conversion UI for:', fileName);
 
     const depthFileData = this.pendingDepthFiles.get(requestId);
@@ -9028,10 +9135,38 @@ class PointCloudVisualizer {
       return;
     }
 
-    // TODO: Implement actual UI dialog for depth conversion parameters
-    // For now, fall back to using defaults with a warning
-    console.warn('⚠️  Local depth conversion UI not yet implemented - using defaults');
-    this.processDepthWithDefaults(fileName, depthFileData.data, requestId, depthFileData.isAddFile);
+    // Use shared prompt-based UI to collect camera parameters in browser mode
+    (async () => {
+      try {
+        // Probe image size to center cx/cy (quick path: read header via depth pipeline)
+        const tmpId = `tmp_${requestId}`;
+        // We don't have direct readers here; rely on defaults for cx/cy and let processing update
+        const params = await collectCameraParamsForBrowserPrompt(
+          1024,
+          768,
+          this.defaultDepthSettings
+        );
+        if (!params) {
+          console.warn('Camera parameter collection cancelled, using defaults.');
+          await this.processDepthWithDefaults(
+            fileName,
+            depthFileData.data,
+            requestId,
+            depthFileData.isAddFile
+          );
+          return;
+        }
+        await this.processDepthWithParams(requestId, params as any);
+      } catch (e) {
+        console.warn('Camera parameter prompt failed, using defaults:', e);
+        await this.processDepthWithDefaults(
+          fileName,
+          depthFileData.data,
+          requestId,
+          depthFileData.isAddFile
+        );
+      }
+    })();
   }
 
   /**
@@ -9146,6 +9281,9 @@ class PointCloudVisualizer {
       ],
     };
 
+    // Mark explicitly as depth-derived so the UI always shows the depth panel later
+    (plyData as any).isDepthDerived = true;
+
     console.log(`${fileType} to PLY conversion complete: ${result.pointCount} points`);
 
     // Add to scene
@@ -9154,6 +9292,24 @@ class PointCloudVisualizer {
     } else {
       await this.displayFiles([plyData]);
     }
+
+    // Auto-open Depth Settings panel for newly created depth-derived file in browser
+    setTimeout(() => {
+      try {
+        const idx = plyData.fileIndex || 0;
+        const panel = document.getElementById(`depth-panel-${idx}`);
+        const toggleBtn = document.querySelector(
+          `.depth-settings-toggle[data-file-index="${idx}"]`
+        );
+        if (panel && toggleBtn) {
+          panel.style.display = 'block';
+          const icon = (toggleBtn as HTMLElement).querySelector('.toggle-icon');
+          if (icon) {
+            icon.textContent = '▼';
+          }
+        }
+      } catch {}
+    }, 0);
 
     // Cache the depth file data for later reprocessing (using the file index)
     const fileIndex = plyData.fileIndex || 0;
@@ -11015,14 +11171,19 @@ class PointCloudVisualizer {
     if (!Array.isArray(comments)) {
       return false;
     }
-    return comments.some(
-      (comment: string) =>
-        typeof comment === 'string' &&
-        (comment.includes('Converted from TIF depth image') ||
-          comment.includes('Converted from PFM depth image') ||
-          comment.includes('Converted from PNG depth image') ||
-          comment.includes('Converted from NPY depth image'))
-    );
+    return comments.some((comment: string) => {
+      if (typeof comment !== 'string') {
+        return false;
+      }
+      const lc = comment.toLowerCase();
+      return (
+        lc.includes('converted from tif depth image') ||
+        lc.includes('converted from pfm depth image') ||
+        lc.includes('converted from png depth image') ||
+        lc.includes('converted from npy depth image') ||
+        lc.includes('converted from depth image')
+      );
+    });
   }
 
   private isPngDerivedFile(data: PlyData): boolean {
@@ -13396,6 +13557,15 @@ class PointCloudVisualizer {
         console.log(
           `📐 Restored image size display for file ${fileIndex}: ${depthData.depthDimensions.width}×${depthData.depthDimensions.height}`
         );
+      }
+
+      // Backfill cx/cy if blank but dimensions are known
+      const cxEl = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement | null;
+      const cyEl = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement | null;
+      const cxBlank = !cxEl?.value || cxEl.value.trim() === '';
+      const cyBlank = !cyEl?.value || cyEl.value.trim() === '';
+      if (cxBlank || cyBlank) {
+        this.updatePrinciplePointFields(fileIndex, depthData.depthDimensions);
       }
     }
 
