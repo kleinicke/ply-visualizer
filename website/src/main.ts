@@ -1435,7 +1435,7 @@ class PointCloudVisualizer {
       this.updateCameraControlsPanel();
 
       // Apply adaptive decimation based on camera distance
-      this.updateAdaptiveDecimation();
+      // this.updateAdaptiveDecimation();
 
       // Update screen-space scaling if enabled
       if (this.screenSpaceScaling) {
