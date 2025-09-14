@@ -89,7 +89,7 @@ end_header
     // Test the data format that gets sent to the webview
     const testFilePath = path.join(__dirname, '../../../testfiles/ply/test_ascii.ply');
     if (fs.existsSync(testFilePath)) {
-      const { PlyParser } = await import('../../webview/parsers/plyParser');
+      const { PlyParser } = await import('../../src/parsers/plyParser');
       const parser = new PlyParser();
       const fileData = fs.readFileSync(testFilePath);
 

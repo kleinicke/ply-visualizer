@@ -3,7 +3,7 @@ import {
   PngReader,
   Enhanced16BitPngReader,
   PngDepthConfig,
-} from '../../webview/depth/readers/PngReader';
+} from '../../src/depth/readers/PngReader';
 
 // Mock DOM APIs for testing
 class MockImageData {

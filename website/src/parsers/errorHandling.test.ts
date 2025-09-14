@@ -1,8 +1,8 @@
 import * as assert from 'assert';
-import { PlyParser } from '../../webview/parsers/plyParser';
-import { ObjParser } from '../../webview/parsers/objParser';
-import { StlParser } from '../../webview/parsers/stlParser';
-import { PcdParser } from '../../webview/parsers/pcdParser';
+import { PlyParser } from '../../src/parsers/plyParser';
+import { ObjParser } from '../../src/parsers/objParser';
+import { StlParser } from '../../src/parsers/stlParser';
+import { PcdParser } from '../../src/parsers/pcdParser';
 
 suite('Parser Error Handling Test Suite', () => {
   test('PLY Parser should handle corrupted headers gracefully', async () => {

@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { CustomArcballControls, TurntableControls } from '../../webview/controls';
+import { CustomArcballControls, TurntableControls } from '../../src/controls';
 
 // Mock DOM elements and THREE.js components
 class MockHTMLElement {

@@ -5,13 +5,8 @@ import {
   findReader,
   readDepth,
   clearReaders,
-} from '../../webview/depth/DepthRegistry';
-import {
-  DepthReader,
-  DepthReaderResult,
-  DepthImage,
-  DepthMetadata,
-} from '../../webview/depth/types';
+} from '../../src/depth/DepthRegistry';
+import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata } from '../../src/depth/types';
 
 // Mock depth reader for testing
 class MockDepthReader implements DepthReader {

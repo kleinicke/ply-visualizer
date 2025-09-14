@@ -5,7 +5,7 @@ import {
   PlyData,
   CameraParams,
   DepthConversionResult,
-} from '../../webview/interfaces';
+} from '../../src/interfaces';
 
 suite('Webview Interfaces', () => {
   suite('PlyVertex', () => {

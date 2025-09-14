@@ -6,7 +6,7 @@ import {
   DepthMetadata,
   DepthReaderResult,
   DepthReader,
-} from '../../webview/depth/types';
+} from '../../src/depth/types';
 
 suite('Webview Depth Types', () => {
   suite('CameraModel type', () => {

@@ -1,8 +1,8 @@
 import * as assert from 'assert';
 import * as path from 'path';
 import * as fs from 'fs';
-import { ObjParser } from '../../webview/parsers/objParser';
-import { MtlParser } from '../../webview/parsers/mtlParser';
+import { ObjParser } from '../../src/parsers/objParser';
+import { MtlParser } from '../../src/parsers/mtlParser';
 
 suite('OBJ+MTL Integration Test Suite', () => {
   let objParser: ObjParser;

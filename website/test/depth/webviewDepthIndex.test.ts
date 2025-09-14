@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import * as depthIndex from '../../webview/depth/index';
+import * as depthIndex from '../../src/depth/index';
 
 suite('Webview Depth Index', () => {
   suite('Module exports', () => {

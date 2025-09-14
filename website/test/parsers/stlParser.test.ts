@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { StlParser } from '../../webview/parsers/stlParser';
+import { StlParser } from '../../src/parsers/stlParser';
 
 suite('STL Parser Test Suite', () => {
   let parser: StlParser;

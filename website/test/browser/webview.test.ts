@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { PlyParser } from '../../webview/parsers/plyParser';
+import { PlyParser } from '../../src/parsers/plyParser';
 
 suite('Webview Integration Test Suite', () => {
   let activeWebviewPanel: vscode.WebviewPanel | undefined;

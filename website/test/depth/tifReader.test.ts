@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { TifReader } from '../../webview/depth/readers/TifReader';
+import { TifReader } from '../../src/depth/readers/TifReader';
 
 // Mock GeoTIFF library
 const mockGeoTIFF = {

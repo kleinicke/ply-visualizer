@@ -1,6 +1,6 @@
 import * as assert from 'assert';
-import { PfmReader } from '../../webview/depth/readers/PfmReader';
-import { DepthReaderResult } from '../../webview/depth/types';
+import { PfmReader } from '../../src/depth/readers/PfmReader';
+import { DepthReaderResult } from '../../src/depth/types';
 
 suite('PfmReader', () => {
   let reader: PfmReader;

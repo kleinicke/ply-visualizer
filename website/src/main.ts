@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { PlyVertex, PlyFace, PlyData, CameraParams, DepthConversionResult } from './interfaces';
-import { CameraModel } from './depth/types';
+import { CameraModel, DepthMetadata } from './depth/types';
 import { CalibTxtParser } from './depth/CalibTxtParser';
 import { YamlCalibrationParser } from './depth/YamlCalibrationParser';
 import { ColmapParser } from './depth/ColmapParser';
@@ -3807,11 +3807,26 @@ class PointCloudVisualizer {
           case 'npy':
           case 'npz':
           case 'png':
-            // Handle depth image files - these need special processing
+            // Handle depth image files - convert to point cloud
             console.log(`🖼️ Depth image detected: ${file.name} (${extension})`);
-            this.showError(
-              `Depth image support (${extension.toUpperCase()}) coming soon! Currently only point cloud formats are supported in the web version.`
-            );
+            try {
+              const cameraParams = await this.promptForCameraParameters(file.name);
+              if (!cameraParams) {
+                console.log(`⏭️ Skipping ${file.name} - camera parameters cancelled`);
+                continue;
+              }
+              const depthPlyData = await this.convertDepthToPointCloud(
+                uint8Array,
+                file.name,
+                cameraParams
+              );
+              if (depthPlyData) {
+                plyDataArray.push(depthPlyData);
+              }
+            } catch (error) {
+              console.error(`❌ Error processing depth image ${file.name}:`, error);
+              this.showError(`Failed to process depth image ${file.name}: ${error}`);
+            }
             continue;
           case 'json':
             // Handle JSON pose files
@@ -13362,6 +13377,282 @@ class PointCloudVisualizer {
     console.log(
       `📝 Restored form values for file ${fileIndex}: fx=${formValues.fx}, cx=${formValues.cx}`
     );
+  }
+
+  private async promptForCameraParameters(fileName: string): Promise<CameraParams | null> {
+    return new Promise(resolve => {
+      // Create dialog overlay
+      const overlay = document.createElement('div');
+      overlay.style.position = 'fixed';
+      overlay.style.top = '0';
+      overlay.style.left = '0';
+      overlay.style.right = '0';
+      overlay.style.bottom = '0';
+      overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+      overlay.style.display = 'flex';
+      overlay.style.alignItems = 'center';
+      overlay.style.justifyContent = 'center';
+      overlay.style.zIndex = '10000';
+
+      // Create dialog box
+      const dialog = document.createElement('div');
+      dialog.style.backgroundColor = 'var(--vscode-editor-background)';
+      dialog.style.color = 'var(--vscode-editor-foreground)';
+      dialog.style.padding = '20px';
+      dialog.style.borderRadius = '8px';
+      dialog.style.border = '1px solid var(--vscode-input-border)';
+      dialog.style.minWidth = '400px';
+      dialog.style.maxWidth = '600px';
+      dialog.style.maxHeight = '80vh';
+      dialog.style.overflow = 'auto';
+
+      dialog.innerHTML = `
+        <h3 style="margin-top: 0;">Camera Parameters for ${fileName}</h3>
+        <p style="color: var(--vscode-descriptionForeground); margin-bottom: 20px;">
+          Enter camera intrinsic parameters to convert depth image to point cloud:
+        </p>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+          <div>
+            <label style="display: block; margin-bottom: 5px;">Focal Length X (fx):</label>
+            <input type="number" id="depth-fx" step="0.1" value="525" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;">
+          </div>
+          <div>
+            <label style="display: block; margin-bottom: 5px;">Focal Length Y (fy):</label>
+            <input type="number" id="depth-fy" step="0.1" placeholder="Same as fx" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;">
+          </div>
+          <div>
+            <label style="display: block; margin-bottom: 5px;">Principal Point X (cx):</label>
+            <input type="number" id="depth-cx" step="0.1" placeholder="Auto (width/2)" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;">
+          </div>
+          <div>
+            <label style="display: block; margin-bottom: 5px;">Principal Point Y (cy):</label>
+            <input type="number" id="depth-cy" step="0.1" placeholder="Auto (height/2)" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;">
+          </div>
+        </div>
+        
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; margin-bottom: 5px;">Depth Type:</label>
+          <select id="depth-type" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;">
+            <option value="euclidean">Euclidean Distance (depth)</option>
+            <option value="orthogonal">Orthogonal Distance (z)</option>
+            <option value="disparity">Disparity</option>
+            <option value="inverse_depth">Inverse Depth</option>
+          </select>
+        </div>
+        
+        <div id="disparity-params" style="display: none; margin-bottom: 20px; padding: 15px; background: var(--vscode-sideBar-background); border-radius: 4px;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+            <div>
+              <label style="display: block; margin-bottom: 5px;">Baseline (mm):</label>
+              <input type="number" id="depth-baseline" step="0.1" value="120" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;">
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 5px;">Disparity Offset:</label>
+              <input type="number" id="depth-disparity-offset" step="0.1" value="0" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;">
+            </div>
+          </div>
+        </div>
+        
+        <div style="margin-bottom: 20px;">
+          <label style="display: block; margin-bottom: 5px;">Camera Model:</label>
+          <select id="camera-model" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;">
+            <option value="pinhole-ideal">Pinhole (Ideal)</option>
+            <option value="pinhole-opencv">Pinhole (OpenCV)</option>
+            <option value="fisheye-equidistant">Fisheye (Equidistant)</option>
+            <option value="fisheye-opencv">Fisheye (OpenCV)</option>
+            <option value="fisheye-kannala-brandt">Fisheye (Kannala-Brandt)</option>
+          </select>
+        </div>
+        
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+          <button id="depth-cancel" style="padding: 10px 20px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-input-border); border-radius: 4px; cursor: pointer;">Cancel</button>
+          <button id="depth-ok" style="padding: 10px 20px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer;">Convert to Point Cloud</button>
+        </div>
+      `;
+
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+
+      // Handle depth type selection
+      const depthTypeSelect = dialog.querySelector('#depth-type') as HTMLSelectElement;
+      const disparityParams = dialog.querySelector('#disparity-params') as HTMLElement;
+
+      depthTypeSelect.addEventListener('change', () => {
+        disparityParams.style.display = depthTypeSelect.value === 'disparity' ? 'block' : 'none';
+      });
+
+      // Handle buttons
+      const cancelButton = dialog.querySelector('#depth-cancel') as HTMLButtonElement;
+      const okButton = dialog.querySelector('#depth-ok') as HTMLButtonElement;
+
+      const cleanup = () => document.body.removeChild(overlay);
+
+      cancelButton.addEventListener('click', () => {
+        cleanup();
+        resolve(null);
+      });
+
+      okButton.addEventListener('click', () => {
+        const fx = parseFloat((dialog.querySelector('#depth-fx') as HTMLInputElement).value);
+        const fyInput = (dialog.querySelector('#depth-fy') as HTMLInputElement).value;
+        const fy = fyInput ? parseFloat(fyInput) : fx;
+        const cxInput = (dialog.querySelector('#depth-cx') as HTMLInputElement).value;
+        const cyInput = (dialog.querySelector('#depth-cy') as HTMLInputElement).value;
+        const cx = cxInput ? parseFloat(cxInput) : undefined;
+        const cy = cyInput ? parseFloat(cyInput) : undefined;
+        const depthType = (dialog.querySelector('#depth-type') as HTMLSelectElement).value as
+          | 'euclidean'
+          | 'orthogonal'
+          | 'disparity'
+          | 'inverse_depth';
+        const cameraModel = (dialog.querySelector('#camera-model') as HTMLSelectElement).value as
+          | 'pinhole-ideal'
+          | 'pinhole-opencv'
+          | 'fisheye-equidistant'
+          | 'fisheye-opencv'
+          | 'fisheye-kannala-brandt';
+        const baseline = parseFloat(
+          (dialog.querySelector('#depth-baseline') as HTMLInputElement).value
+        );
+        const disparityOffset = parseFloat(
+          (dialog.querySelector('#depth-disparity-offset') as HTMLInputElement).value
+        );
+
+        if (isNaN(fx) || fx <= 0) {
+          alert('Invalid focal length X (fx)');
+          return;
+        }
+
+        if (depthType === 'disparity' && (isNaN(baseline) || baseline <= 0)) {
+          alert('Invalid baseline for disparity mode');
+          return;
+        }
+
+        const cameraParams: CameraParams = {
+          fx,
+          fy,
+          cx,
+          cy,
+          depthType,
+          cameraModel,
+          baseline: depthType === 'disparity' ? baseline : undefined,
+          disparityOffset: depthType === 'disparity' ? disparityOffset : undefined,
+        };
+
+        cleanup();
+        resolve(cameraParams);
+      });
+
+      // Focus the fx input
+      setTimeout(() => (dialog.querySelector('#depth-fx') as HTMLInputElement).focus(), 100);
+    });
+  }
+
+  private async convertDepthToPointCloud(
+    depthData: Uint8Array,
+    fileName: string,
+    cameraParams: CameraParams
+  ): Promise<PlyData | null> {
+    try {
+      console.log(`🖼️ Converting depth image ${fileName} to point cloud...`);
+
+      // Register depth readers if not already registered
+      registerDefaultReaders();
+
+      // Read the depth image
+      const { image, meta } = await readDepth(fileName, depthData.buffer);
+      console.log(`📐 Depth image loaded: ${image.width}x${image.height}, kind: ${meta.kind}`);
+
+      // Determine the depth kind based on user selection
+      const depthKind =
+        cameraParams.depthType === 'euclidean'
+          ? 'depth'
+          : cameraParams.depthType === 'orthogonal'
+            ? 'z'
+            : cameraParams.depthType === 'disparity'
+              ? 'disparity'
+              : cameraParams.depthType === 'inverse_depth'
+                ? 'inverse_depth'
+                : 'depth';
+
+      // Update camera parameters in metadata
+      const updatedMeta: DepthMetadata = {
+        ...meta,
+        fx: cameraParams.fx,
+        fy: cameraParams.fy || cameraParams.fx,
+        cx: cameraParams.cx !== undefined ? cameraParams.cx : (image.width - 1) / 2,
+        cy: cameraParams.cy !== undefined ? cameraParams.cy : (image.height - 1) / 2,
+        cameraModel: cameraParams.cameraModel as CameraModel,
+        kind: depthKind,
+        baseline: cameraParams.baseline ? cameraParams.baseline / 1000 : undefined, // Convert mm to meters
+        disparityOffset: cameraParams.disparityOffset || 0,
+      };
+
+      // Normalize depth values
+      const normalizedImage = normalizeDepth(image, updatedMeta);
+
+      // Project to point cloud
+      const projectionMeta = {
+        ...updatedMeta,
+        fx: updatedMeta.fx!,
+        cx: updatedMeta.cx!,
+        cy: updatedMeta.cy!,
+        cameraModel: updatedMeta.cameraModel!,
+      };
+      const pointCloudResult = projectToPointCloud(normalizedImage, projectionMeta);
+
+      console.log(`✅ Converted ${pointCloudResult.pointCount} depth pixels to points`);
+
+      // Convert to PLY format
+      const vertices = [];
+      const pointCount = pointCloudResult.pointCount;
+
+      for (let i = 0; i < pointCount; i++) {
+        const vertexBase = i * 3;
+        const colorBase = i * 3;
+
+        const vertex: any = {
+          x: pointCloudResult.vertices[vertexBase],
+          y: pointCloudResult.vertices[vertexBase + 1],
+          z: pointCloudResult.vertices[vertexBase + 2],
+        };
+
+        // Add colors if available
+        if (pointCloudResult.colors) {
+          vertex.red = Math.round(pointCloudResult.colors[colorBase] * 255);
+          vertex.green = Math.round(pointCloudResult.colors[colorBase + 1] * 255);
+          vertex.blue = Math.round(pointCloudResult.colors[colorBase + 2] * 255);
+        } else {
+          // Default gray color
+          vertex.red = 128;
+          vertex.green = 128;
+          vertex.blue = 128;
+        }
+
+        vertices.push(vertex);
+      }
+
+      const plyData: PlyData = {
+        vertices,
+        faces: [],
+        format: 'ascii',
+        version: '1.0',
+        comments: [`Converted from depth image: ${fileName}`],
+        vertexCount: pointCount,
+        faceCount: 0,
+        hasColors: true,
+        hasNormals: false,
+        fileName,
+        fileIndex: 0,
+      };
+
+      console.log(`✅ Created PLY data with ${vertices.length} vertices from depth image`);
+      return plyData;
+    } catch (error) {
+      console.error(`❌ Error converting depth image ${fileName}:`, error);
+      throw error;
+    }
   }
 }
 
