@@ -112,7 +112,7 @@ export function applyTheme(theme: VSCodeTheme): void {
  * Get the currently active theme name from localStorage
  */
 export function getCurrentThemeName(): string {
-  return localStorage.getItem('ply-visualizer-theme') || 'light-modern';
+  return localStorage.getItem('ply-visualizer-theme') || 'dark-modern';
 }
 
 /**
