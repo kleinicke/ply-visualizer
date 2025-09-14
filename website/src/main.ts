@@ -18,14 +18,15 @@ declare const acquireVsCodeApi: () => any;
 // Environment detection - works in both VSCode and browser
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
 
-// File parsers for browser version
-import { PlyParser } from './parsers/plyParser';
-import { StlParser } from './parsers/stlParser';
-import { ObjParser } from './parsers/objParser';
-import { PcdParser } from './parsers/pcdParser';
-import { PtsParser } from './parsers/ptsParser';
-import { OffParser } from './parsers/offParser';
-import { GltfParser } from './parsers/gltfParser';
+// Shared file handling functionality
+import {
+  processFiles,
+  detectFileType,
+  FileError,
+  DEFAULT_COLORS,
+  shouldRequestDepthParams,
+  generateDepthRequestId,
+} from './fileHandler';
 
 // Depth processing modules
 import { registerDefaultReaders, readDepth, registerReader } from './depth/DepthRegistry';
@@ -726,20 +727,8 @@ class PointCloudVisualizer {
     }
   }
 
-  // Predefined colors for different files
-  private readonly fileColors: [number, number, number][] = [
-    [1.0, 1.0, 1.0], // White
-    [1.0, 0.0, 0.0], // Red
-    [0.0, 1.0, 0.0], // Green
-    [0.0, 0.0, 1.0], // Blue
-    [1.0, 1.0, 0.0], // Yellow
-    [1.0, 0.0, 1.0], // Magenta
-    [0.0, 1.0, 1.0], // Cyan
-    [1.0, 0.5, 0.0], // Orange
-    [0.5, 0.0, 1.0], // Purple
-    [0.0, 0.5, 0.0], // Dark Green
-    [0.5, 0.5, 0.5], // Gray
-  ];
+  // Predefined colors for different files - use shared constants
+  private readonly fileColors: [number, number, number][] = DEFAULT_COLORS.FILE_COLORS;
 
   constructor() {
     this.init();
@@ -3784,120 +3773,88 @@ class PointCloudVisualizer {
     this.showImmediateLoading({ fileName: `${files.length} files`, pointCount: 0 });
 
     try {
+      // Convert File objects to data format expected by shared function
+      const fileData = await Promise.all(
+        files.map(async file => ({
+          name: file.name,
+          data: new Uint8Array(await file.arrayBuffer()),
+        }))
+      );
+
+      // Separate depth files for special handling
+      const depthFiles: typeof fileData = [];
+      const regularFiles: typeof fileData = [];
+
+      fileData.forEach(file => {
+        const fileType = detectFileType(file.name);
+        if (fileType?.isDepthFile) {
+          depthFiles.push(file);
+        } else {
+          regularFiles.push(file);
+        }
+      });
+
       const plyDataArray: PlyData[] = [];
 
-      for (const file of files) {
-        const extension = file.name.toLowerCase().split('.').pop();
-        const arrayBuffer = await file.arrayBuffer();
-        const uint8Array = new Uint8Array(arrayBuffer);
+      // Process regular files using shared functionality
+      if (regularFiles.length > 0) {
+        const parseResults = await processFiles(regularFiles, {
+          timingCallback: (message: string) => {
+            console.log(`⏱️ ${message}`);
+          },
+          progressCallback: (current: number, total: number, fileName: string) => {
+            console.log(`📁 Processing ${fileName} (${current}/${total})`);
+          },
+          errorCallback: (error: FileError) => {
+            console.error(`❌ Error processing ${error.fileName}:`, error.error);
+            this.showError(error.error);
+          },
+        });
 
-        let plyData: PlyData;
-
-        switch (extension) {
-          case 'ply':
-            const plyParser = new PlyParser();
-            plyData = await plyParser.parse(uint8Array);
-            break;
-          case 'stl':
-            const stlParser = new StlParser();
-            const stlData = await stlParser.parse(uint8Array);
-            plyData = this.convertToUnifiedFormat(stlData, file.name);
-            break;
-          case 'obj':
-            const objParser = new ObjParser();
-            const objData = await objParser.parse(uint8Array);
-            plyData = this.convertToUnifiedFormat(objData, file.name);
-            break;
-          case 'pcd':
-            const pcdParser = new PcdParser();
-            const pcdData = await pcdParser.parse(uint8Array);
-            plyData = this.convertToUnifiedFormat(pcdData, file.name);
-            break;
-          case 'pts':
-            const ptsParser = new PtsParser();
-            const ptsData = await ptsParser.parse(uint8Array);
-            plyData = this.convertToUnifiedFormat(ptsData, file.name);
-            break;
-          case 'off':
-            const offParser = new OffParser();
-            const offData = await offParser.parse(uint8Array);
-            plyData = this.convertToUnifiedFormat(offData, file.name);
-            break;
-          case 'tif':
-          case 'tiff':
-          case 'pfm':
-          case 'npy':
-          case 'npz':
-          case 'png':
-            // Handle depth image files - convert to point cloud
-            console.log(`🖼️ Depth image detected: ${file.name} (${extension})`);
-            try {
-              const cameraParams = await this.promptForCameraParameters(file.name);
-              if (!cameraParams) {
-                console.log(`⏭️ Skipping ${file.name} - camera parameters cancelled`);
-                continue;
-              }
-              const depthPlyData = await this.convertDepthToPointCloud(
-                uint8Array,
-                file.name,
-                cameraParams
-              );
-              if (depthPlyData) {
-                plyDataArray.push(depthPlyData);
-              }
-            } catch (error) {
-              console.error(`❌ Error processing depth image ${file.name}:`, error);
-              this.showError(`Failed to process depth image ${file.name}: ${error}`);
-            }
-            continue;
-          case 'json':
-            // Handle JSON pose files
-            console.log(`📍 JSON file detected: ${file.name}`);
-            this.showError(
-              `JSON pose file support coming soon! Currently only point cloud formats are supported in the web version.`
-            );
-            continue;
-          case 'xyz':
-          case 'xyzn':
-          case 'xyzrgb':
-            // Handle XYZ variants - these should work with PLY parser
-            console.log(`📊 XYZ file detected: ${file.name} (${extension})`);
-            const xyzParser = new PlyParser();
-            try {
-              plyData = await xyzParser.parse(uint8Array);
-            } catch (error) {
-              this.showError(
-                `Failed to parse XYZ file ${file.name}: ${error instanceof Error ? error.message : String(error)}`
-              );
-              continue;
-            }
-            break;
-          case 'gltf':
-          case 'glb':
-            // Handle GLTF files
-            console.log(`🎭 GLTF file detected: ${file.name} (${extension})`);
-            const gltfParser = new GltfParser();
-            try {
-              const gltfData = await gltfParser.parse(uint8Array);
-              plyData = this.convertToUnifiedFormat(gltfData, file.name);
-            } catch (error) {
-              this.showError(
-                `Failed to parse GLTF file ${file.name}: ${error instanceof Error ? error.message : String(error)}`
-              );
-              continue;
-            }
-            break;
-          default:
-            console.warn(`Unsupported file format: ${extension} for file ${file.name}`);
-            this.showError(
-              `Unsupported file format: .${extension}\n\nSupported formats:\n• Point clouds: PLY, XYZ, PCD, PTS, OFF\n• Meshes: STL, OBJ, GLTF, GLB\n• Coming soon: TIF, PFM, NPY, PNG, JSON`
-            );
-            continue;
-        }
-
-        plyData.fileName = file.name;
-        plyDataArray.push(plyData);
+        // Convert parse results to PlyData format
+        parseResults.forEach(result => {
+          plyDataArray.push(result.data as PlyData);
+        });
       }
+
+      // Handle depth files with existing special logic
+      for (const depthFile of depthFiles) {
+        const fileType = detectFileType(depthFile.name);
+        if (!fileType) {continue;}
+
+        console.log(`🖼️ Depth image detected: ${depthFile.name} (${fileType.extension})`);
+        try {
+          const cameraParams = await this.promptForCameraParameters(depthFile.name);
+          if (!cameraParams) {
+            console.log(`⏭️ Skipping ${depthFile.name} - camera parameters cancelled`);
+            continue;
+          }
+          const depthPlyData = await this.convertDepthToPointCloud(
+            depthFile.data,
+            depthFile.name,
+            cameraParams
+          );
+          if (depthPlyData) {
+            plyDataArray.push(depthPlyData);
+          }
+        } catch (error) {
+          console.error(`❌ Error processing depth image ${depthFile.name}:`, error);
+          this.showError(`Failed to process depth image ${depthFile.name}: ${error}`);
+        }
+      }
+
+      // Handle JSON files separately (not yet supported)
+      const jsonFiles = fileData.filter(file => {
+        const fileType = detectFileType(file.name);
+        return fileType?.category === 'poseData';
+      });
+
+      jsonFiles.forEach(file => {
+        console.log(`📍 JSON file detected: ${file.name}`);
+        this.showError(
+          `JSON pose file support coming soon! Currently only point cloud formats are supported in the web version.`
+        );
+      });
 
       if (plyDataArray.length > 0) {
         await this.displayFiles(plyDataArray);
@@ -3910,76 +3867,6 @@ class PointCloudVisualizer {
     }
   }
 
-  private convertToUnifiedFormat(data: any, fileName: string): PlyData {
-    // Convert any parser data format to unified PlyData format
-    let vertices = data.vertices || [];
-    let faces = data.faces || [];
-
-    // Handle STL format specifically
-    if (data.triangles && Array.isArray(data.triangles)) {
-      console.log(`🔄 Converting STL data: ${data.triangles.length} triangles`);
-
-      // STL stores triangles directly with vertex coordinates
-      // We need to extract unique vertices and create face indices
-      const vertexMap = new Map<string, number>();
-      const convertedVertices: any[] = [];
-      const convertedFaces: any[] = [];
-
-      data.triangles.forEach((triangle: any, triIndex: number) => {
-        const faceIndices: number[] = [];
-
-        // Process each vertex in the triangle
-        triangle.vertices.forEach((vertex: any, vertIndex: number) => {
-          // Create a unique key for the vertex
-          const vertexKey = `${vertex.x.toFixed(6)}_${vertex.y.toFixed(6)}_${vertex.z.toFixed(6)}`;
-
-          let vertexIndex = vertexMap.get(vertexKey);
-          if (vertexIndex === undefined) {
-            // New unique vertex
-            vertexIndex = convertedVertices.length;
-            vertexMap.set(vertexKey, vertexIndex);
-
-            convertedVertices.push({
-              x: vertex.x,
-              y: vertex.y,
-              z: vertex.z,
-              nx: triangle.normal?.x || 0,
-              ny: triangle.normal?.y || 0,
-              nz: triangle.normal?.z || 0,
-              red: triangle.color?.red || 128,
-              green: triangle.color?.green || 128,
-              blue: triangle.color?.blue || 128,
-            });
-          }
-
-          faceIndices.push(vertexIndex);
-        });
-
-        // Add the face with proper indices format
-        convertedFaces.push({
-          indices: faceIndices,
-        });
-      });
-
-      vertices = convertedVertices;
-      faces = convertedFaces;
-
-      console.log(`✅ STL conversion: ${vertices.length} unique vertices, ${faces.length} faces`);
-    }
-
-    return {
-      vertices: vertices,
-      faces: faces,
-      format: 'ascii',
-      version: data.version || '1.0',
-      comments: data.comments || [],
-      vertexCount: vertices.length,
-      faceCount: faces.length,
-      hasColors: data.hasColors || false,
-      hasNormals: data.hasNormals || true, // STL always has normals
-      fileName: fileName,
-    };
-  }
   // # VSCode changes: the functions above are used in the browser and were not used for the extension
 
   private async displayFiles(dataArray: PlyData[]): Promise<void> {
@@ -9010,8 +8897,8 @@ class PointCloudVisualizer {
     try {
       console.log('Received depth data for processing:', message.fileName);
 
-      // Generate unique request ID for this depth file
-      const requestId = `depth_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Generate unique request ID for this depth file using shared function
+      const requestId = generateDepthRequestId();
 
       // Store depth data in the map
       this.pendingDepthFiles.set(requestId, {
@@ -9021,78 +8908,109 @@ class PointCloudVisualizer {
         requestId: requestId,
       });
 
-      const isTif = /\.(tif|tiff)$/i.test(message.fileName);
-      const isPfm = /\.pfm$/i.test(message.fileName);
-      const isNpy = /\.(npy|npz)$/i.test(message.fileName);
-      const isPng = /\.png$/i.test(message.fileName);
+      // Determine how to handle depth conversion based on environment
+      const depthHandling = shouldRequestDepthParams(isVSCode);
 
-      if (isTif) {
-        // For TIF files, check if it's a depth image
-        const tiff = await GeoTIFF.fromArrayBuffer(message.data);
-        const image = await tiff.getImage();
-
-        const samplesPerPixel = image.getSamplesPerPixel();
-        const sampleFormat = image.getSampleFormat ? image.getSampleFormat() : null;
-        const bitsPerSample = image.getBitsPerSample();
-
-        const isDepthImage = this.isDepthTifImage(samplesPerPixel, sampleFormat, bitsPerSample);
-
-        if (!isDepthImage) {
-          const bitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 'unknown';
-          const formatDesc =
-            sampleFormat === 3
-              ? 'float'
-              : sampleFormat === 1
-                ? 'uint'
-                : sampleFormat === 2
-                  ? 'int'
-                  : 'unknown';
-          console.log('Detected regular TIF image - not suitable for point cloud conversion');
-          this.showError(
-            `This TIF file appears to be a regular image (${samplesPerPixel} channel(s), ${bitDepth}-bit ${formatDesc}) rather than a depth/disparity image. Please use a single-channel depth TIF (floating-point) or disparity TIF (integer or floating-point) for point cloud conversion.`
-          );
-          this.pendingDepthFiles.delete(requestId);
-          return;
-        }
-      } else if (isNpy) {
-        // NPY files are assumed to be depth data - no additional validation needed
-        console.log('Detected NPY/NPZ file - treating as depth data');
-      } else if (isPng) {
-        // PNG files are assumed to be depth data - need scale factor
-        console.log('Detected PNG file - treating as depth data');
+      if (depthHandling === 'extension') {
+        // Request camera parameters from VS Code extension
+        console.log('🔄 Requesting camera parameters from VS Code extension...');
+        this.vscode.postMessage({
+          type: 'requestCameraParams',
+          fileName: message.fileName,
+          requestId: requestId,
+        });
+        return; // Exit early - extension will respond with camera params
+      } else if (depthHandling === 'local') {
+        // Show local UI to collect camera parameters
+        console.log('📋 Showing local camera parameter UI...');
+        this.showDepthConversionUI(message.fileName, requestId);
+        return; // Exit early - UI will call processDepthWithParams when ready
+      } else {
+        // Use defaults immediately
+        console.log('⚡ Using default camera parameters...');
+        await this.processDepthWithDefaults(
+          message.fileName,
+          message.data,
+          requestId,
+          message.isAddFile
+        );
+        return; // Exit early - processing complete
       }
-
-      // For all depth file types (TIF, PFM, NPY, PNG), we need to read the image first to get dimensions
-      // This will be done in processDepthWithParams after reading the actual image
-      const defaultSettings: CameraParams = {
-        cameraModel: this.defaultDepthSettings.cameraModel,
-        fx: this.defaultDepthSettings.fx,
-        fy: this.defaultDepthSettings.fy,
-        cx: undefined, // Will be auto-calculated from image dimensions
-        cy: undefined, // Will be auto-calculated from image dimensions
-        depthType: this.defaultDepthSettings.depthType,
-        baseline: this.defaultDepthSettings.baseline,
-        convention: this.defaultDepthSettings.convention || 'opengl',
-        pngScaleFactor: isPng ? this.defaultDepthSettings.pngScaleFactor || 1000 : undefined,
-      };
-      console.log('✅ Using saved default depth settings for initial conversion:', defaultSettings);
-      const fileTypeLabel = isPng ? 'PNG' : isPfm ? 'PFM' : isNpy ? 'NPY' : 'TIF';
-      const scaleInfo = isPng ? `, scale factor ${defaultSettings.pngScaleFactor}` : '';
-      const fyInfo = defaultSettings.fy ? ` / fy=${defaultSettings.fy}` : '';
-      this.showStatus(
-        `Converting ${fileTypeLabel} depth image: ${defaultSettings.cameraModel} camera, fx=${defaultSettings.fx}${fyInfo}px, ${defaultSettings.depthType} depth${scaleInfo}...`
-      );
-      await this.processDepthWithParams(requestId, defaultSettings);
     } catch (error) {
       console.error('Error handling depth data:', error);
-      const isTif = /\.(tif|tiff)$/i.test(message.fileName);
-      const isNpy = /\.(npy|npz)$/i.test(message.fileName);
-      const isPng = /\.png$/i.test(message.fileName);
-      const label = isTif ? 'TIF' : isNpy ? 'NPY' : isPng ? 'PNG' : 'depth';
+      // Clean up any pending depth files for this fileName
+      for (const [id, fileData] of this.pendingDepthFiles.entries()) {
+        if (fileData.fileName === message.fileName) {
+          this.pendingDepthFiles.delete(id);
+          break;
+        }
+      }
       this.showError(
-        `Failed to process ${label} data: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to process depth data: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+  }
+
+  /**
+   * Show depth conversion UI for local parameter collection
+   */
+  private showDepthConversionUI(fileName: string, requestId: string): void {
+    console.log('📋 Showing depth conversion UI for:', fileName);
+
+    const depthFileData = this.pendingDepthFiles.get(requestId);
+    if (!depthFileData) {
+      console.error('Depth file data not found for requestId:', requestId);
+      this.showError('Depth file data not found for processing');
+      return;
+    }
+
+    // TODO: Implement actual UI dialog for depth conversion parameters
+    // For now, fall back to using defaults with a warning
+    console.warn('⚠️  Local depth conversion UI not yet implemented - using defaults');
+    this.processDepthWithDefaults(fileName, depthFileData.data, requestId, depthFileData.isAddFile);
+  }
+
+  /**
+   * Process depth data using default camera parameters
+   */
+  private async processDepthWithDefaults(
+    fileName: string,
+    data: ArrayBuffer,
+    requestId: string,
+    isAddFile: boolean
+  ): Promise<void> {
+    console.log('⚡ Processing depth with defaults for:', fileName);
+
+    const isPng = /\.png$/i.test(fileName);
+
+    // Create default camera parameters
+    const defaultSettings: CameraParams = {
+      cameraModel: this.defaultDepthSettings.cameraModel,
+      fx: this.defaultDepthSettings.fx,
+      fy: this.defaultDepthSettings.fy,
+      cx: undefined, // Will be auto-calculated from image dimensions
+      cy: undefined, // Will be auto-calculated from image dimensions
+      depthType: this.defaultDepthSettings.depthType,
+      baseline: this.defaultDepthSettings.baseline,
+      convention: this.defaultDepthSettings.convention || 'opengl',
+      pngScaleFactor: isPng ? this.defaultDepthSettings.pngScaleFactor || 1000 : undefined,
+    };
+
+    const fileTypeLabel = isPng
+      ? 'PNG'
+      : fileName.toLowerCase().endsWith('.pfm')
+        ? 'PFM'
+        : fileName.toLowerCase().match(/\.np[yz]$/)
+          ? 'NPY'
+          : 'TIF';
+    const scaleInfo = isPng ? `, scale factor ${defaultSettings.pngScaleFactor}` : '';
+    const fyInfo = defaultSettings.fy ? ` / fy=${defaultSettings.fy}` : '';
+    this.showStatus(
+      `Converting ${fileTypeLabel} depth image: ${defaultSettings.cameraModel} camera, fx=${defaultSettings.fx}${fyInfo}px, ${defaultSettings.depthType} depth${scaleInfo}...`
+    );
+
+    console.log('✅ Using default camera parameters:', defaultSettings);
+    await this.processDepthWithParams(requestId, defaultSettings);
   }
 
   private async processDepthWithParams(

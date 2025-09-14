@@ -219,7 +219,6 @@
     "coverage:report": "node --experimental-loader ./analyze-coverage.mjs",
     "test:ui": "npm run compile && node ./out/test/ui-test-runner.js",
     "test:all": "npm run test && npm run test:ui",
-    "test:exr": "node test_exr_parsing.js",
     "test:stl": "node test-stl.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

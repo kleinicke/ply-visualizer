@@ -101,54 +101,12 @@ suite('Depth Readers Test Suite', () => {
     }
   }
 
-  class TestExrReader {
-    canRead(filename: string): boolean {
-      return filename.toLowerCase().endsWith('.exr');
-    }
-
-    async readDepth(data: ArrayBuffer): Promise<{
-      image: { width: number; height: number; data: Float32Array };
-      meta: { kind: string };
-    }> {
-      const view = new DataView(data);
-
-      // Check EXR magic number
-      const magic = view.getUint32(0, true);
-      if (magic !== 0x01312f76) {
-        throw new Error('Invalid EXR file format');
-      }
-
-      // Mock EXR parsing - very simplified
-      const version = view.getUint32(4, true);
-      const flags = view.getUint32(8, true);
-
-      // Mock dimensions
-      const width = 640;
-      const height = 480;
-      const pixelCount = width * height;
-
-      const depthData = new Float32Array(pixelCount);
-
-      // Fill with mock high dynamic range depth values
-      for (let i = 0; i < pixelCount; i++) {
-        depthData[i] = Math.random() * 10000; // HDR depth range
-      }
-
-      return {
-        image: { width, height, data: depthData },
-        meta: { kind: 'depth' },
-      };
-    }
-  }
-
   let pfmReader: TestPfmReader;
   let pngReader: TestPngReader;
-  let exrReader: TestExrReader;
 
   setup(() => {
     pfmReader = new TestPfmReader();
     pngReader = new TestPngReader();
-    exrReader = new TestExrReader();
   });
 
   test('PFM Reader should identify PFM files correctly', () => {
@@ -250,51 +208,12 @@ suite('Depth Readers Test Suite', () => {
     }
   });
 
-  test('EXR Reader should identify EXR files correctly', () => {
-    assert.ok(exrReader.canRead('depth.exr'));
-    assert.ok(exrReader.canRead('HDR_DEPTH.EXR'));
-    assert.ok(!exrReader.canRead('depth.png'));
-    assert.ok(!exrReader.canRead('image.jpg'));
-  });
-
-  test('EXR Reader should validate EXR magic number', async () => {
-    const mockData = new ArrayBuffer(50);
-    const view = new DataView(mockData);
-
-    // Set EXR magic number
-    view.setUint32(0, 0x01312f76, true);
-    view.setUint32(4, 2, true); // version
-    view.setUint32(8, 0, true); // flags
-
-    const result = await exrReader.readDepth(mockData);
-
-    assert.strictEqual(result.image.width, 640);
-    assert.strictEqual(result.image.height, 480);
-    assert.strictEqual(result.meta.kind, 'depth');
-    assert.ok(result.image.data instanceof Float32Array);
-  });
-
-  test('EXR Reader should reject invalid EXR files', async () => {
-    const invalidData = new ArrayBuffer(20);
-    const view = new DataView(invalidData);
-    view.setUint32(0, 0x12345678, true); // Wrong magic number
-
-    try {
-      await exrReader.readDepth(invalidData);
-      assert.fail('Should have thrown error for invalid EXR');
-    } catch (error) {
-      assert.ok(error instanceof Error);
-      assert.ok(error.message.includes('Invalid EXR'));
-    }
-  });
-
   test('All readers should handle empty or truncated files', async () => {
     const emptyData = new ArrayBuffer(0);
 
     const readers = [
       { reader: pfmReader, name: 'PFM' },
       { reader: pngReader, name: 'PNG' },
-      { reader: exrReader, name: 'EXR' },
     ];
 
     for (const { reader, name } of readers) {
@@ -333,7 +252,6 @@ suite('Depth Readers Test Suite', () => {
     const testFiles = [
       { reader: pfmReader, filename: 'test.pfm' },
       { reader: pngReader, filename: 'test.png' },
-      { reader: exrReader, filename: 'test.exr' },
     ];
 
     for (const { reader, filename } of testFiles) {

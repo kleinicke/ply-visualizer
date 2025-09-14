@@ -9,6 +9,15 @@ import { PtsParser } from '@website/parsers/ptsParser';
 import { OffParser } from '@website/parsers/offParser';
 import { GltfParser } from '@website/parsers/gltfParser';
 
+// Shared file handling functionality
+import {
+  detectFileType,
+  isPlyBinary,
+  generateErrorMessage,
+  SUPPORTED_EXTENSIONS,
+  ALL_SUPPORTED_EXTENSIONS,
+} from '../website/src/fileHandler';
+
 export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProvider {
   private static readonly viewType = 'plyViewer.plyEditor';
   private activePanels = new Set<vscode.WebviewPanel>();
@@ -46,22 +55,25 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       ],
     };
 
-    // Check file type
-    const filePath = document.uri.fsPath.toLowerCase();
-    const isTifFile = filePath.endsWith('.tif') || filePath.endsWith('.tiff');
-    const isPfmFile = filePath.endsWith('.pfm');
-    const isNpyFile = filePath.endsWith('.npy') || filePath.endsWith('.npz');
-    const isPngFile = filePath.endsWith('.png');
-    const isExrFile = filePath.endsWith('.exr');
-    const isDepthFile = isTifFile || isPfmFile || isNpyFile || isPngFile || isExrFile;
-    const isObjFile = filePath.endsWith('.obj');
-    const isStlFile = filePath.endsWith('.stl');
-    const isPcdFile = filePath.endsWith('.pcd');
-    const isPtsFile = filePath.endsWith('.pts');
-    const isOffFile = filePath.endsWith('.off');
-    const isGltfFile = filePath.endsWith('.gltf') || filePath.endsWith('.glb');
-    const isXyzVariant = filePath.endsWith('.xyzn') || filePath.endsWith('.xyzrgb');
-    const isJsonFile = filePath.endsWith('.json');
+    // Check file type using shared functionality
+    const fileName = path.basename(document.uri.fsPath);
+    const fileType = detectFileType(fileName);
+
+    // Legacy boolean flags for existing message structure
+    const isTifFile = fileType?.extension === 'tif' || fileType?.extension === 'tiff';
+    const isPfmFile = fileType?.extension === 'pfm';
+    const isNpyFile = fileType?.extension === 'npy' || fileType?.extension === 'npz';
+    const isPngFile = fileType?.extension === 'png';
+    const isExrFile = fileType?.extension === 'exr';
+    const isDepthFile = fileType?.isDepthFile || false;
+    const isObjFile = fileType?.extension === 'obj';
+    const isStlFile = fileType?.extension === 'stl';
+    const isPcdFile = fileType?.extension === 'pcd';
+    const isPtsFile = fileType?.extension === 'pts';
+    const isOffFile = fileType?.extension === 'off';
+    const isGltfFile = fileType?.extension === 'gltf' || fileType?.extension === 'glb';
+    const isXyzVariant = fileType?.extension === 'xyzn' || fileType?.extension === 'xyzrgb';
+    const isJsonFile = fileType?.extension === 'json';
 
     // Show UI immediately before any file processing
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
@@ -417,7 +429,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             type: 'xyzVariantData',
             fileName: path.basename(document.uri.fsPath),
             data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength),
-            variant: filePath.endsWith('.xyzn') ? 'xyzn' : 'xyzrgb',
+            variant: fileType?.extension === 'xyzn' ? 'xyzn' : 'xyzrgb',
           });
 
           return; // Exit early for XYZ variant files
@@ -490,12 +502,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           });
         };
 
-        // Detect format first
-        const decoder = new TextDecoder('utf-8');
-        const headerPreview = decoder.decode(plyData.slice(0, 1024));
-        const isBinary =
-          headerPreview.includes('binary_little_endian') ||
-          headerPreview.includes('binary_big_endian');
+        // Detect format first using shared functionality
+        const isBinary = isPlyBinary(plyData);
 
         if (isBinary) {
           // Binary PLY - use ULTIMATE parsing
@@ -912,47 +920,15 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       canSelectMany: true,
       filters: {
         // eslint-disable-next-line @typescript-eslint/naming-convention
-        'Point Cloud & Pose Files': [
-          'ply',
-          'xyz',
-          'xyzn',
-          'xyzrgb',
-          'obj',
-          'stl',
-          'pcd',
-          'pts',
-          'off',
-          'gltf',
-          'glb',
-          'tif',
-          'tiff',
-          'pfm',
-          'npy',
-          'npz',
-          'png',
-          'exr',
-          'json',
-        ],
+        'Point Cloud & Pose Files': [...ALL_SUPPORTED_EXTENSIONS],
         // eslint-disable-next-line @typescript-eslint/naming-convention
-        'PLY Files': ['ply'],
+        'Point Clouds': [...SUPPORTED_EXTENSIONS.pointClouds],
         // eslint-disable-next-line @typescript-eslint/naming-convention
-        'XYZ Files': ['xyz'],
+        Meshes: [...SUPPORTED_EXTENSIONS.meshes],
         // eslint-disable-next-line @typescript-eslint/naming-convention
-        'OBJ Files': ['obj'],
+        'Depth Images': [...SUPPORTED_EXTENSIONS.depthImages],
         // eslint-disable-next-line @typescript-eslint/naming-convention
-        'STL Files': ['stl'],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        'PCD Files': ['pcd'],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        'PTS Files': ['pts'],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        'OFF Files': ['off'],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        'GLTF Files': ['gltf', 'glb'],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        'Depth Images': ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png', 'exr'],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        'Pose JSON': ['json'],
+        'Pose Data': [...SUPPORTED_EXTENSIONS.poseData],
       },
       title: 'Select point cloud files to add',
       defaultUri: defaultUri,
@@ -1003,12 +979,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             // Parse file (detect format first)
             const parser = new PlyParser();
 
-            // Quick format detection
-            const decoder = new TextDecoder('utf-8');
-            const headerPreview = decoder.decode(plyData.slice(0, 1024));
-            const isBinary =
-              headerPreview.includes('binary_little_endian') ||
-              headerPreview.includes('binary_big_endian');
+            // Quick format detection using shared functionality
+            const isBinary = isPlyBinary(plyData);
 
             if (isBinary) {
               // Use ultimate binary transfer for binary PLY files
@@ -1224,7 +1196,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
           // Unsupported file type
           vscode.window.showWarningMessage(
-            `Unsupported file type: ${fileExtension}. Supported types: .ply, .xyz, .xyzn, .xyzrgb, .obj, .stl, .pcd, .pts, .off, .gltf, .glb, .tif, .tiff, .pfm, .npy, .npz, .png, .exr, .json`
+            generateErrorMessage(
+              fileName,
+              fileExtension.substring(1),
+              new Error('Unsupported file type')
+            )
           );
         } catch (error) {
           console.error(`Failed to load file ${files[i].fsPath}:`, error);
@@ -1267,11 +1243,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       if (ext === '.ply') {
         const plyData = await vscode.workspace.fs.readFile(fileUri);
         const parser = new PlyParser();
-        const decoder = new TextDecoder('utf-8');
-        const headerPreview = decoder.decode(plyData.slice(0, 1024));
-        const isBinary =
-          headerPreview.includes('binary_little_endian') ||
-          headerPreview.includes('binary_big_endian');
+        const isBinary = isPlyBinary(plyData);
         if (isBinary) {
           const headerResult = await parser.parseHeaderOnly(plyData);
           headerResult.headerInfo.fileName = fileName;
@@ -1401,11 +1373,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       if (ext === '.ply') {
         const bytes = await vscode.workspace.fs.readFile(fileUri);
         const parser = new PlyParser();
-        const decoder = new TextDecoder('utf-8');
-        const headerPreview = decoder.decode(bytes.slice(0, 1024));
-        const isBinary =
-          headerPreview.includes('binary_little_endian') ||
-          headerPreview.includes('binary_big_endian');
+        const isBinary = isPlyBinary(bytes);
         if (isBinary) {
           const header = await parser.parseHeaderOnly(bytes);
           header.headerInfo.fileName = fileName;

@@ -38,6 +38,14 @@ module.exports = {
     new CopyWebpackPlugin({
       patterns: [
         {
+          from: 'index.html',
+          to: 'index.html',
+        },
+        {
+          from: 'media',
+          to: 'media',
+        },
+        {
           from: 'about',
           to: 'about',
         },

@@ -319,14 +319,6 @@ suite('DepthRegistry', () => {
             throw new Error('Mock');
           }
         },
-        ExrReader: class {
-          canRead() {
-            return false;
-          }
-          async read() {
-            throw new Error('Mock');
-          }
-        },
       };
 
       (require as any) = function (moduleId: string) {
