@@ -1832,7 +1832,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
       console.log('🎯 Using default settings for camera parameters dialog:', defaults);
 
-      // Show option to use defaults directly or customize
+      // Automatically use default settings without showing dialog
+      // (Original dialog code commented out - user requested to always use defaults)
+      /*
       const useDefaults = await vscode.window.showQuickPick(
         [
           {
@@ -1861,19 +1863,24 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       }
 
       if (useDefaults.value === 'defaults') {
-        // Use saved defaults without showing additional dialogs
-        webviewPanel.webview.postMessage({
-          type: 'cameraParams',
-          cameraModel: defaults.cameraModel,
-          fx: defaults.fx,
-          fy: defaults.fy,
-          depthType: defaults.depthType,
-          baseline: defaults.baseline,
-          convention: defaults.convention,
-          requestId: message.requestId,
-        });
-        return;
-      }
+      */
+
+      // Always use defaults automatically
+      // Use saved defaults without showing additional dialogs
+      webviewPanel.webview.postMessage({
+        type: 'cameraParams',
+        cameraModel: defaults.cameraModel,
+        fx: defaults.fx,
+        fy: defaults.fy,
+        depthType: defaults.depthType,
+        baseline: defaults.baseline,
+        convention: defaults.convention,
+        requestId: message.requestId,
+      });
+      return;
+
+      /*
+      // All customization dialog code commented out (user requested to always use defaults)
 
       // Show camera model selection dialog
       const cameraModel = await vscode.window.showQuickPick(
@@ -2079,6 +2086,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         convention: convention.value,
         requestId: message.requestId,
       });
+      */
     } catch (error) {
       webviewPanel.webview.postMessage({
         type: 'cameraParamsError',
