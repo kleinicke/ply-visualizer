@@ -35,9 +35,12 @@
     <div id="error" class="error hidden">
       <div class="error-header">
         <h3>Error</h3>
-        <button id="error-close" class="error-close-btn" title="Close error message">✕</button>
+        <div class="error-buttons">
+          <button id="error-copy" class="error-copy-btn" title="Copy error message">📋</button>
+          <button id="error-close" class="error-close-btn" title="Close error message">✕</button>
+        </div>
       </div>
-      <p id="error-message"></p>
+      <p id="error-message" style="user-select: text; -webkit-user-select: text; -moz-user-select: text; -ms-user-select: text;"></p>
     </div>
 
     <!-- Main UI Panel -->
