@@ -25,27 +25,27 @@ test('Debug UI initialization', async ({ page }) => {
   console.log('PointCloudVisualizer exists:', visualizerExists);
 
   // Check DOM structure
-  const viewerContainer = await page.locator('#viewer-container').count();
+  const mainUiPanel = await page.locator('#main-ui-panel').count();
   const threeCanvas = await page.locator('#three-canvas').count();
-  const statsContainer = await page.locator('#stats-container').count();
+  const fileStats = await page.locator('#file-stats').count();
   const fileList = await page.locator('#file-list').count();
 
   console.log('DOM elements found:');
-  console.log('- viewer-container:', viewerContainer);
+  console.log('- main-ui-panel:', mainUiPanel);
   console.log('- three-canvas:', threeCanvas);
-  console.log('- stats-container:', statsContainer);
+  console.log('- file-stats:', fileStats);
   console.log('- file-list:', fileList);
 
-  // Check if stats container has content
-  const statsText = await page.locator('#stats-container').textContent();
-  console.log('Stats container text:', JSON.stringify(statsText));
+  // Check if file stats has content (initially empty)
+  const statsText = await page.locator('#file-stats').textContent();
+  console.log('File stats text:', JSON.stringify(statsText));
 
   // Check if initialization is complete
   const initComplete = await page.evaluate(() => {
-    const element = document.getElementById('stats-container');
+    const element = document.getElementById('file-stats');
     return element ? element.innerHTML : 'Element not found';
   });
-  console.log('Stats container innerHTML:', initComplete);
+  console.log('File stats innerHTML:', initComplete);
 
   // Take screenshot for debugging
   await page.screenshot({ path: 'test-results/debug-ui.png', fullPage: true });

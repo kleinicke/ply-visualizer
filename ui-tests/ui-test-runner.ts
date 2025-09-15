@@ -13,12 +13,12 @@ async function main(): Promise<void> {
 
     // Install the extension
     await extester.installVsix({
-      vsixFile: path.resolve(__dirname, '../../ply-visualizer-1.1.2.vsix'),
+      vsixFile: path.resolve(__dirname, '../ply-visualizer-1.2.5.vsix'),
       useYarn: false,
     });
 
     // Run the UI tests
-    await extester.runTests(path.resolve(__dirname, 'ui'));
+    await extester.runTests(path.resolve(__dirname, 'specs'));
   } catch (error) {
     console.error('UI test execution failed:', error);
     process.exit(1);

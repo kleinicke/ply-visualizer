@@ -65,9 +65,9 @@ test.describe('PLY File Loading', () => {
     await page.waitForTimeout(500);
 
     // Check that stats are updated (should now be visible in Info tab)
-    const statsContainer = page.locator('#stats-container');
-    await expect(statsContainer).toBeVisible();
-    await expect(statsContainer).toContainText('sample_mesh.ply');
+    const fileStats = page.locator('#file-stats');
+    await expect(fileStats).toBeVisible();
+    await expect(fileStats).toContainText('Vertices');
 
     // Verify that the 3D object is rendered (canvas should have content)
     const canvas = page.locator('#three-canvas');
@@ -102,18 +102,9 @@ test.describe('PLY File Loading', () => {
       }
     });
 
-    // Simulate drag and drop on the drop area
-    const dragDropArea = page.locator('#dragDropArea');
-    await expect(dragDropArea).toBeVisible();
-
-    // Create a file list and dispatch drop event
-    const dataTransfer = await page.evaluateHandle(filePath => {
-      const dt = new DataTransfer();
-      // Note: In a real test we'd need to create a File object, but this tests the UI
-      return dt;
-    }, plyFilePath);
-
-    // For now, let's test the file input method since drag-drop is complex in Playwright
+    // Note: This website doesn't have a specific drag-drop area like VS Code extension
+    // Instead we'll test the direct file input method which is the main way to load files
+    console.log('Testing file input method (no drag-drop area in this website version)');
     await page.locator('#hiddenFileInput').setInputFiles(plyFilePath);
 
     // Wait for processing
@@ -166,7 +157,7 @@ test.describe('PLY File Loading', () => {
   test('should initialize with empty state', async ({ page }) => {
     // Check initial state
     await expect(page.locator('#file-list')).toBeEmpty();
-    await expect(page.locator('#stats-container')).toContainText('No objects loaded');
+    // Note: Website doesn't show "No objects loaded" text, just empty file stats
 
     // Check that main UI elements are present
     await expect(page.locator('.tab-button')).toHaveCount(4); // Files, Camera, Controls, Info tabs

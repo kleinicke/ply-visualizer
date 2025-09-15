@@ -3937,18 +3937,33 @@ class PointCloudVisualizer {
         }
       }
 
-      // Handle JSON files separately (not yet supported)
+      // Handle JSON files - check if they're camera profiles or pose data
       const jsonFiles = fileData.filter(file => {
         const fileType = detectFileType(file.name);
         return fileType?.category === 'poseData';
       });
 
-      jsonFiles.forEach(file => {
+      for (const file of jsonFiles) {
         console.log(`📍 JSON file detected: ${file.name}`);
-        this.showError(
-          `JSON pose file support coming soon! Currently only point cloud formats are supported in the web version.`
-        );
-      });
+        try {
+          // Parse JSON to determine if it's a camera profile or pose data
+          const jsonText = new TextDecoder().decode(file.data);
+          const jsonData = JSON.parse(jsonText);
+
+          // Check if this is a camera profile JSON
+          if (jsonData && jsonData.cameras && typeof jsonData.cameras === 'object') {
+            console.log(`📷 Camera profile detected: ${file.name}`);
+            this.handleCameraProfile(jsonData, file.name);
+          } else {
+            console.log(`📍 Pose data detected: ${file.name}`);
+            // Handle pose data using the existing method
+            await this.handlePoseData({ data: jsonData, fileName: file.name });
+          }
+        } catch (error) {
+          console.error(`❌ Error parsing JSON file ${file.name}:`, error);
+          this.showError(`Failed to parse JSON file ${file.name}: ${error}`);
+        }
+      }
 
       if (plyDataArray.length > 0) {
         await this.displayFiles(plyDataArray);
@@ -4316,7 +4331,7 @@ class PointCloudVisualizer {
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
                     
                     ${
-                      this.isDepthDerivedFile(data) || (data as any).isDepthDerived
+                      data && (this.isDepthDerivedFile(data) || (data as any).isDepthDerived)
                         ? `
                     <!-- Depth Settings (First) -->
                     <div class="depth-controls" style="margin-top: 8px;">
@@ -5258,7 +5273,10 @@ class PointCloudVisualizer {
       }
 
       // Depth settings toggle and controls
-      if (this.isDepthDerivedFile(this.plyFiles[i]) || (this.plyFiles[i] as any).isDepthDerived) {
+      if (
+        this.plyFiles[i] &&
+        (this.isDepthDerivedFile(this.plyFiles[i]) || (this.plyFiles[i] as any).isDepthDerived)
+      ) {
         const depthToggleBtn = document.querySelector(
           `.depth-settings-toggle[data-file-index="${i}"]`
         );
@@ -6172,20 +6190,45 @@ class PointCloudVisualizer {
 
       // Set up close button (only once)
       const closeBtn = document.getElementById('error-close');
-      if (closeBtn) {
-        // debug
-        if (!closeBtn.hasAttribute('data-listener-added')) {
-          closeBtn.setAttribute('data-listener-added', 'true');
-          closeBtn.addEventListener('click', () => {
-            // debug
-            this.clearError();
-          });
-          // debug
-        } else {
-          // debug
-        }
-      } else {
-        // debug
+      if (closeBtn && !closeBtn.hasAttribute('data-listener-added')) {
+        closeBtn.setAttribute('data-listener-added', 'true');
+        closeBtn.addEventListener('click', () => {
+          this.clearError();
+        });
+      }
+
+      // Set up copy button (only once)
+      const copyBtn = document.getElementById('error-copy');
+      if (copyBtn && !copyBtn.hasAttribute('data-listener-added')) {
+        copyBtn.setAttribute('data-listener-added', 'true');
+        copyBtn.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(message);
+            // Provide visual feedback
+            const originalText = copyBtn.textContent;
+            copyBtn.textContent = '✓';
+            setTimeout(() => {
+              copyBtn.textContent = originalText;
+            }, 1000);
+          } catch (err) {
+            // Fallback for older browsers
+            const textArea = document.createElement('textarea');
+            textArea.value = message;
+            textArea.style.position = 'fixed';
+            textArea.style.opacity = '0';
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+
+            // Provide visual feedback
+            const originalText = copyBtn.textContent;
+            copyBtn.textContent = '✓';
+            setTimeout(() => {
+              copyBtn.textContent = originalText;
+            }, 1000);
+          }
+        });
       }
     }
 

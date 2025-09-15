@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2020",
+    "outDir": "../out/ui-tests",
+    "lib": ["ES2020", "DOM"],
+    "sourceMap": true,
+    "rootDir": ".",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["ui-test-runner.ts", "specs/playwright-ply-loading.test.ts"],
+  "exclude": ["node_modules", "../node_modules"]
+}

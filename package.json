@@ -217,7 +217,7 @@
     "test:coverage": "npm run pretest && NODE_V8_COVERAGE=coverage npm run test",
     "coverage": "npm run test:coverage && npm run coverage:report",
     "coverage:report": "node --experimental-loader ./analyze-coverage.mjs",
-    "test:ui": "npm run compile && node ./out/test/ui-test-runner.js",
+    "test:ui": "npm run compile && cd ui-tests && npx tsc && cd .. && node ./out/ui-tests/ui-test-runner.js",
     "test:all": "npm run test && npm run test:ui",
     "test:stl": "node test-stl.js",
     "format": "prettier --write .",
