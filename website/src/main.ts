@@ -1967,6 +1967,12 @@ class PointCloudVisualizer {
   }
 
   private setRotationCenterToOrigin(): void {
+    // Temporarily remove change listener to prevent continuous rendering
+    const changeHandler = () => this.requestRender();
+    if (this.controls) {
+      (this.controls as any).removeEventListener('change', changeHandler);
+    }
+
     // Set rotation center (target) to origin (0, 0, 0)
     this.controls.target.set(0, 0, 0);
     this.controls.update();
@@ -1977,11 +1983,19 @@ class PointCloudVisualizer {
       axesGroup.position.copy(this.controls.target);
     }
 
+    // Re-add change listener
+    if (this.controls) {
+      (this.controls as any).addEventListener('change', changeHandler);
+    }
+
     // Show axes temporarily to indicate new rotation center
     const showAxesTemporarily = (this as any).showAxesTemporarily;
     if (showAxesTemporarily) {
       showAxesTemporarily();
     }
+
+    // Single render request for the rotation center change
+    this.requestRender();
 
     // debug
     this.updateRotationOriginButtonState();
@@ -2073,6 +2087,12 @@ class PointCloudVisualizer {
   }
 
   private setRotationCenter(point: THREE.Vector3): void {
+    // Temporarily remove change listener to prevent continuous rendering
+    const changeHandler = () => this.requestRender();
+    if (this.controls) {
+      (this.controls as any).removeEventListener('change', changeHandler);
+    }
+
     // Check if the point is too close to the camera or behind it
     const cameraToPoint = point.clone().sub(this.camera.position);
     const distance = cameraToPoint.length();
@@ -2121,6 +2141,14 @@ class PointCloudVisualizer {
 
     // Update controls
     this.controls.update();
+
+    // Re-add change listener
+    if (this.controls) {
+      (this.controls as any).addEventListener('change', changeHandler);
+    }
+
+    // Single render request for the rotation center change
+    this.requestRender();
 
     // Visual feedback
     this.showRotationCenterFeedback(this.controls.target);
