@@ -18,13 +18,22 @@ support your workflow or new file formats on
 - **Compare Multiple Point Clouds**: Multiple point clouds can be loaded in the
   same view and activated and deactivated independently
 - **Rotation of points**: Apply Rotation Matrix for single point clouds
-- **Point Cloud Formats**: Support for both ASCII and binary PLY formats, XYZ
-  point clouds, OBJ wireframes, STL files, PCD files, PTS files, OFF files, and
-  GLTF/GLB models.
+- **Point Cloud Formats**: Support for both ASCII and binary PLY point clouds
+  and meshes, XYZ, XYZN, XYZRGB, PCD and PTS point clouds, OBJ, STL, OFF and
+  GLTF/GLB meshes
 - **Depth to point cloud conversion**: Can convert on the fly depth images to
   point clouds. It has support for tiff, png, pfm, npy and npz files
+- **Depth to point cloud settings**: Allow setting the fx, fy, cx, cy, different
+  camera disturbance models, mono depth scale and bias parameter, png int16
+  scale parameter, disparity offset ...
 - **Pose estimations**: Currently in development is support for 3d pose
   estimations in json files
+- **Buttons for meshes**: Easily active wireframe, mesh, points and normals
+- **Corresponding website**: All features can be also used without VS Code using
+  the static website https://f-kleinicke.de
+- **Frame rate visualization**: Shows the current frame rate. When point cloud
+  is not moved, no more frames will be generated to save power, also ignores
+  transparencies by default to save power
 
 Interpret depth/disparity images as point cloud.
 ![tifPC](https://github.com/kleinicke/ply-visualizer/releases/download/v1.0.0/disp2pc.gif)
@@ -43,16 +52,11 @@ Load two point clouds and switch between them imediatly pressing shift and click
   contain meshes or animations, Exr files can contain float depth images or
   complete point clouds, gaussian splats
 - **Measure distance**: Add option to measure the distance between points
-- **Add buttons for meshes**: Easily active wireframe, mesh, points and normals
-- **Create website**: Create a website with the same functionality as this
-  extension
 - **Dataset support**: Add images from Middlebury stereo and Eth3d as example
   images
-- **Improve depth parameter support**: allow more parameter to be used like disp
-  offset and center points
 - **Automatic usage of calib files**: calibration files next to the depth images
   can contain all required parameter for a depth to pc conversion. Automatically
-  use those
+  use those for depth images for intrinsics and extrinsics for point clouds
 - **Improve npz file interpretation**: These files can have different
   structures. Offer some options to visualize them
 

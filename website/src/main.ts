@@ -4316,6 +4316,7 @@ class PointCloudVisualizer {
                 </div>
             `;
       fileListDiv.innerHTML = html;
+      this.addTooltipsToTruncatedFilenames();
       return;
     }
 
@@ -4444,7 +4445,7 @@ class PointCloudVisualizer {
                             </div>
                             <div class="depth-group" id="distortion-params-${i}" style="margin-bottom: 8px; display: none;">
                                 <button class="depth-section-toggle" data-section="distortion-content-${i}" style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
-                                    <span class="toggle-icon" style="font-size: 8px;">▶</span> Distortion Parameters
+                                    <span class="toggle-icon" style="font-size: 8px;">▶</span> Distortion Parameters (beta)
                                 </button>
                                 <div class="depth-section-content" id="distortion-content-${i}" style="display: none; margin-top: 4px;">
                                 
@@ -4981,8 +4982,13 @@ class PointCloudVisualizer {
           this.toggleFileVisibility(i);
         });
       }
+    }
 
-      // Transform toggle logic with improved UI (handle both point clouds and cameras)
+    // Add tooltips only to truncated filenames
+    this.addTooltipsToTruncatedFilenames();
+
+    // Transform toggle logic with improved UI (handle both point clouds and cameras)
+    for (let i = 0; i < this.plyFiles.length; i++) {
       const transformBtn = document.querySelector(`.transform-toggle[data-file-index="${i}"]`);
       const transformationBtn = document.querySelector(
         `.transformation-toggle[data-file-index="${i}"]`
@@ -13919,6 +13925,21 @@ class PointCloudVisualizer {
       console.error(`❌ Error converting depth image ${fileName}:`, error);
       throw error;
     }
+  }
+
+  private addTooltipsToTruncatedFilenames(): void {
+    const fileNameLabels = document.querySelectorAll('.file-name');
+    fileNameLabels.forEach(label => {
+      const element = label as HTMLElement;
+      // Check if the element is truncated
+      if (element.scrollWidth > element.clientWidth) {
+        // Element is truncated, add tooltip with the full text
+        element.title = element.textContent || '';
+      } else {
+        // Element is not truncated, remove any existing tooltip
+        element.removeAttribute('title');
+      }
+    });
   }
 }
 
