@@ -4,6 +4,9 @@
 .claude/**
 src/**
 temp/
+website/**
+!website/src/**
+!website/media/**
 .gitignore
 .editorconfig
 .yarnrc
