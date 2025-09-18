@@ -1,39 +1,43 @@
 # Change Log
 
-## [1.3.0]
+## [1.4.0]
 
-Add easier selection of material
-Add support for fx, fy, cx, cy, disp offset, bias and scale and inverse depth support for depth images
-Add support for different camera distortion models for depth to point cloud conversion: Pinhole + OpenCV Distortion, Fisheye + OpenCV Distortion and Fisheye Kannala-Brandt
-Option to load calibration files
-Improve performance (for occluded points and idle state)
+- Add support for npy point clouds (dimension [...,3])
+
+## [1.3.0] - 2025-09-16
+
+- Add easier selection of material
+- Add support for fx, fy, cx, cy, disp offset, bias and scale and inverse depth support for depth images
+- Add support for different camera distortion models for depth to point cloud conversion: Pinhole + OpenCV Distortion, Fisheye + OpenCV Distortion and Fisheye Kannala-Brandt
+- Option to load calibration files (experimentally)
+- Improve performance (for occluded points, idle state and removing transparency by default)
 
 ## [1.2.0] - 2025-08-25
 
-Add support for pfm depth/disparity predictions
-Add support for npy/npz depth/disparity predictions
-Add support for stl files
-Add support for pcd files (Point Cloud Data format)
-Add support for pts files (Point Cloud format)
-Add support for off files (Object File Format)
-Add support for gltf/glb files (3D model formats)
-Add support for some camera position profiles
-Add support for some body pose estimations
-Easier application of translation, quaternion or angle axis.
+- Add support for pfm depth/disparity predictions
+- Add support for npy/npz depth/disparity predictions
+- Add support for stl files
+- Add support for pcd files (Point Cloud Data format)
+- Add support for pts files (Point Cloud format)
+- Add support for off files (Object File Format)
+- Add support for gltf/glb files (3D model formats)
+- Add support for some camera position profiles
+- Add support for some body pose estimations
+- Easier application of translation, quaternion or angle axis.
 
 ## [1.1.0] - 2025-08-11
 
-Add support for obj files
-Add experimental Arcball camera rotation
-Add experimental pose estimation support
-Improve support for ply mesh files
-Fix gamma correction issues
-Add button toggling fixes
+- Add support for obj files
+- Add experimental Arcball camera rotation
+- Add experimental pose estimation support
+- Improve support for ply mesh files
+- Fix gamma correction issues
+- Add button toggling fixes
 
 ## [1.0.0] - 2025-08-04
 
-Improve Readme
-Add some tests
+- Improve Readme
+- Add some tests
 
 ## [0.0.14] - 2025-07-23
 

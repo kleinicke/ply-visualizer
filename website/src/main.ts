@@ -22,6 +22,7 @@ const isVSCode = typeof acquireVsCodeApi !== 'undefined';
 import {
   processFiles,
   detectFileType,
+  detectFileTypeWithContent,
   FileError,
   DEFAULT_COLORS,
   shouldRequestDepthParams,
@@ -3634,6 +3635,9 @@ class PointCloudVisualizer {
         case 'gltfData':
           this.handleGltfData(message);
           break;
+        case 'npyData':
+          this.handleNpyData(message);
+          break;
         case 'xyzVariantData':
           this.handleXyzVariantData(message);
           break;
@@ -3879,7 +3883,7 @@ class PointCloudVisualizer {
       const regularFiles: typeof fileData = [];
 
       fileData.forEach(file => {
-        const fileType = detectFileType(file.name);
+        const fileType = detectFileTypeWithContent(file.name, file.data);
         if (fileType?.isDepthFile) {
           depthFiles.push(file);
         } else {
@@ -3967,7 +3971,7 @@ class PointCloudVisualizer {
 
       // Handle JSON files - check if they're camera profiles or pose data
       const jsonFiles = fileData.filter(file => {
-        const fileType = detectFileType(file.name);
+        const fileType = detectFileTypeWithContent(file.name, file.data);
         return fileType?.category === 'poseData';
       });
 
@@ -10075,6 +10079,58 @@ class PointCloudVisualizer {
       console.error('Error handling PCD data:', error);
       this.showError(
         `PCD processing failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async handleNpyData(message: any): Promise<void> {
+    try {
+      console.log(`Load: recv NPY point cloud ${message.fileName}`);
+      this.showStatus(`NPY: processing point cloud data from ${message.fileName}`);
+
+      const npyData = message.data;
+      console.log(
+        `NPY: ${npyData.vertexCount} points, format=${npyData.format}, colors=${npyData.hasColors}, normals=${npyData.hasNormals}`
+      );
+
+      // NPY data is already in PLY format from the parser
+      const plyData: PlyData = {
+        ...npyData,
+        fileName: message.fileName,
+      };
+
+      if (message.isAddFile) {
+        plyData.fileIndex = this.plyFiles.length;
+      }
+
+      await this.displayFiles([plyData]);
+
+      // Handle normals visualization if available
+      const fileIndex = plyData.fileIndex!;
+      if (npyData.hasNormals) {
+        // Ensure normalsVisualizers array is properly sized
+        while (this.normalsVisualizers.length <= fileIndex) {
+          this.normalsVisualizers.push(null);
+        }
+
+        const normalsVisualizer = this.createNormalsVisualizer(plyData);
+        if (normalsVisualizer) {
+          this.scene.add(normalsVisualizer);
+        }
+        this.normalsVisualizers[fileIndex] = normalsVisualizer;
+      } else {
+        // Ensure array is properly sized even without normals
+        while (this.normalsVisualizers.length <= fileIndex) {
+          this.normalsVisualizers.push(null);
+        }
+        this.normalsVisualizers[fileIndex] = null;
+      }
+
+      this.showStatus(`NPY: loaded ${npyData.vertexCount} points from ${message.fileName}`);
+    } catch (error) {
+      console.error('Error handling NPY data:', error);
+      this.showError(
+        `NPY processing failed: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

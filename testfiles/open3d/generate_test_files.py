@@ -8,6 +8,33 @@ import open3d as o3d
 import numpy as np
 import os
 
+def _choose_2d_factors(n):
+    """Pick two factors (p1, p2) close to sqrt(n) so that p1 * p2 == n."""
+    if n <= 0:
+        return 1, 1
+    p1 = int(round(np.sqrt(n)))
+    p1 = max(1, p1)
+    while p1 > 1 and n % p1 != 0:
+        p1 -= 1
+    p2 = n // p1
+    return p1, p2
+
+def _choose_3d_factors(n):
+    """Pick three factors (p1, p2, p3) close to cbrt/sqrt so that p1 * p2 * p3 == n."""
+    if n <= 0:
+        return 1, 1, 1
+    p1 = int(round(n ** (1.0 / 3.0)))
+    p1 = max(1, p1)
+    while p1 > 1 and n % p1 != 0:
+        p1 -= 1
+    remaining = n // p1
+    p2 = int(round(np.sqrt(remaining)))
+    p2 = max(1, p2)
+    while p2 > 1 and remaining % p2 != 0:
+        p2 -= 1
+    p3 = remaining // p2
+    return p1, p2, p3
+
 def create_sample_point_cloud():
     """Create a sample point cloud with colors and normals"""
     # Create a sphere point cloud
@@ -93,6 +120,35 @@ def generate_point_cloud_files(pcd, output_dir):
                 print(f"✗ Failed to create {filename}")
         except Exception as e:
             print(f"✗ Error creating {filename}: {e}")
+
+    # Additionally, write NumPy .npy arrays with trailing axis of size 3
+    try:
+        points = np.asarray(pcd.points)  # shape (P, 3)
+        if points.ndim == 2 and points.shape[1] == 3:
+            P = points.shape[0]
+
+            # [P, 3]
+            npy_p3 = os.path.join(output_dir, f"sample_pointcloud_{P}x3.npy")
+            np.save(npy_p3, points)
+            print(f"✓ Created {os.path.basename(npy_p3)}")
+
+            # [p1, p2, 3]
+            p1, p2 = _choose_2d_factors(P)
+            arr_2d = points.reshape(p1, p2, 3)
+            npy_2d = os.path.join(output_dir, f"sample_pointcloud_{p1}x{p2}x3.npy")
+            np.save(npy_2d, arr_2d)
+            print(f"✓ Created {os.path.basename(npy_2d)}")
+
+            # [p1, p2, p3, 3]
+            d1, d2, d3 = _choose_3d_factors(P)
+            arr_3d = points.reshape(d1, d2, d3, 3)
+            npy_3d = os.path.join(output_dir, f"sample_pointcloud_{d1}x{d2}x{d3}x3.npy")
+            np.save(npy_3d, arr_3d)
+            print(f"✓ Created {os.path.basename(npy_3d)}")
+        else:
+            print("✗ Point data is not in expected shape [P,3]; skipping .npy exports")
+    except Exception as e:
+        print(f"✗ Error creating .npy files: {e}")
 
 def generate_mesh_files(mesh, output_dir):
     """Generate mesh files in all supported formats"""

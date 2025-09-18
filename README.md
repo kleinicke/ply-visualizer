@@ -68,3 +68,12 @@ free to suggest them on the
 know how to fix bugs or how to implement certain features, feel free to
 contribute. If you provide an example file, I can implement support for it in
 the extension.
+
+# Appendix:
+
+## Required structures of certain file formats
+
+### npy
+
+- As depth image: [X,Y]
+- As point cloud: [...,3] with the 3 values X,Y,Z

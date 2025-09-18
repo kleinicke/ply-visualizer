@@ -8,10 +8,12 @@ import { PcdParser } from '@website/parsers/pcdParser';
 import { PtsParser } from '@website/parsers/ptsParser';
 import { OffParser } from '@website/parsers/offParser';
 import { GltfParser } from '@website/parsers/gltfParser';
+import { NpyParser, isNpyPointCloudData } from '@website/parsers/npyParser';
 
 // Shared file handling functionality
 import {
   detectFileType,
+  detectFileTypeWithContent,
   isPlyBinary,
   generateErrorMessage,
   SUPPORTED_EXTENSIONS,
@@ -55,9 +57,22 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       ],
     };
 
-    // Check file type using shared functionality
+    // Check file type using shared functionality with content analysis
     const fileName = path.basename(document.uri.fsPath);
-    const fileType = detectFileType(fileName);
+    let fileType = detectFileType(fileName);
+
+    // For NPY files, read the file and perform content-based detection
+    if (fileType?.extension === 'npy') {
+      try {
+        const fileData = await vscode.workspace.fs.readFile(document.uri);
+        fileType = detectFileTypeWithContent(fileName, fileData);
+        console.log(
+          `VS Code NPY analysis: ${fileName} -> category: ${fileType?.category}, isDepthFile: ${fileType?.isDepthFile}`
+        );
+      } catch (error) {
+        console.warn('Failed to read NPY file for content analysis:', error);
+      }
+    }
 
     // Legacy boolean flags for existing message structure
     const isTifFile = fileType?.extension === 'tif' || fileType?.extension === 'tiff';
@@ -74,6 +89,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const isGltfFile = fileType?.extension === 'gltf' || fileType?.extension === 'glb';
     const isXyzVariant = fileType?.extension === 'xyzn' || fileType?.extension === 'xyzrgb';
     const isJsonFile = fileType?.extension === 'json';
+    const isNpyPointCloud = fileType?.extension === 'npy' && fileType?.category === 'pointCloud';
 
     // Show UI immediately before any file processing
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
@@ -145,6 +161,39 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           });
 
           return; // Exit early for depth files
+        }
+
+        if (isNpyPointCloud) {
+          // Handle NPY point cloud file (shape ending with 3)
+          webviewPanel.webview.postMessage({
+            type: 'timingUpdate',
+            message: '🚀 Extension: Starting NPY point cloud processing...',
+            timestamp: loadStartTime,
+          });
+          const npyData = await vscode.workspace.fs.readFile(document.uri);
+          const fileReadTime = performance.now();
+          webviewPanel.webview.postMessage({
+            type: 'timingUpdate',
+            message: `📁 Extension: File read in ${(fileReadTime - loadStartTime).toFixed(2)}ms`,
+            timestamp: loadStartTime,
+          });
+
+          const npyParser = new NpyParser();
+          const parsedData = await npyParser.parse(npyData);
+
+          webviewPanel.webview.postMessage({
+            type: 'timingUpdate',
+            message: `🔬 Extension: NPY parsing completed in ${performance.now() - fileReadTime}ms`,
+            timestamp: loadStartTime,
+          });
+
+          // Send parsed NPY data to webview
+          webviewPanel.webview.postMessage({
+            type: 'npyData',
+            fileName: path.basename(document.uri.fsPath),
+            data: parsedData,
+          });
+          return; // Exit early for NPY point cloud files
         }
 
         if (isObjFile) {

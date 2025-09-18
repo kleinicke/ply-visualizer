@@ -10,6 +10,7 @@ import { PcdParser } from './parsers/pcdParser';
 import { PtsParser } from './parsers/ptsParser';
 import { OffParser } from './parsers/offParser';
 import { GltfParser } from './parsers/gltfParser';
+import { NpyParser, isNpyPointCloudData } from './parsers/npyParser';
 
 // Shared constants for consistent behavior across extension and website
 export const DEFAULT_COLORS = {
@@ -136,6 +137,43 @@ export function detectFileType(fileName: string): FileTypeInfo | null {
 }
 
 /**
+ * Detects file type with content-based analysis for NPY files
+ * NPY files can contain either depth images or XYZ point cloud data
+ */
+export function detectFileTypeWithContent(
+  fileName: string,
+  fileData?: Uint8Array
+): FileTypeInfo | null {
+  const basicType = detectFileType(fileName);
+  if (!basicType) {
+    return null;
+  }
+
+  // For NPY files, analyze content to determine if it's point cloud data or depth data
+  if (basicType.extension === 'npy' && fileData) {
+    try {
+      const arrayBuffer = fileData.buffer.slice(
+        fileData.byteOffset,
+        fileData.byteOffset + fileData.byteLength
+      );
+      if (isNpyPointCloudData(arrayBuffer)) {
+        // NPY contains XYZ point cloud data - route to point cloud pipeline
+        return {
+          extension: basicType.extension,
+          category: 'pointCloud',
+          isDepthFile: false,
+        };
+      }
+    } catch (error) {
+      // If we can't analyze the NPY content, fall back to depth image assumption
+      console.warn('Failed to analyze NPY content, treating as depth image:', error);
+    }
+  }
+
+  return basicType;
+}
+
+/**
  * Detects if PLY file is binary format
  */
 export function isPlyBinary(data: Uint8Array): boolean {
@@ -231,6 +269,25 @@ export async function parseFileData(
         },
         type: 'xyzData',
       };
+
+    case 'npy':
+      // NPY files containing XYZ point cloud data (detected by content analysis)
+      if (fileInfo.category === 'pointCloud') {
+        const npyParser = new NpyParser();
+        const npyData = await npyParser.parse(data, timingCallback);
+        return {
+          data: {
+            ...npyData,
+            fileName,
+          },
+          type: 'npyData',
+        };
+      } else {
+        // This should not happen if detectFileTypeWithContent works correctly
+        throw new Error(
+          `NPY file ${fileName} was not detected as point cloud data. Shape may not end with dimension 3.`
+        );
+      }
 
     default:
       throw new Error(`Unsupported file format: ${extension}`);
@@ -540,7 +597,9 @@ export async function handleVSCodeCameraParams(
         },
       });
 
-      if (fx) {finalParams.fx = parseFloat(fx);}
+      if (fx) {
+        finalParams.fx = parseFloat(fx);
+      }
     }
 
     // Calculate cx/cy from image dimensions
