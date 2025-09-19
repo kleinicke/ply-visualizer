@@ -66,10 +66,11 @@ def create_test_npy_files():
     small_depth = depth_data[::4, ::4]  # Downsample by 4x
     np.save('test_depth_small.npy', small_depth)
     print(f"Created test_depth_small.npy with shape {small_depth.shape}")
+    np.save('test_depth_100.npy', depth_data[:100, :100])
     
     print("\nTest files created successfully!")
     print("Files:")
-    for filename in ['test_depth.npy', 'test_disparity.npy', 'test_depth_with_params.npz', 'test_depth_small.npy']:
+    for filename in ['test_depth.npy', 'test_disparity.npy', 'test_depth_with_params.npz', 'test_depth_small.npy', 'test_depth_100.npy']:
         if os.path.exists(filename):
             size = os.path.getsize(filename)
             print(f"  {filename}: {size/1024:.1f} KB")

@@ -11096,24 +11096,34 @@ class PointCloudVisualizer {
             const imageData = ctx!.createImageData(width, height);
             const data = imageData.data;
 
+            // Detect bit depth and data range for proper normalization
+            const bitsPerSample = image.getBitsPerSample();
+            const bitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 8;
+            const maxValue = bitDepth === 16 ? 65535 : 255;
+
+            console.log(`TIF color image bit depth: ${bitDepth}, max value: ${maxValue}`);
+
             if (rasters.length >= 3) {
-              // RGB TIF - handle different data types
+              // RGB TIF - handle different data types with proper normalization
               const r = rasters[0];
               const g = rasters[1];
               const b = rasters[2];
 
               for (let i = 0; i < width * height; i++) {
-                // Normalize to 0-255 range regardless of input data type
-                data[i * 4] = Math.min(255, Math.max(0, Math.round(r[i])));
-                data[i * 4 + 1] = Math.min(255, Math.max(0, Math.round(g[i])));
-                data[i * 4 + 2] = Math.min(255, Math.max(0, Math.round(b[i])));
+                // Normalize from actual bit depth range to 0-255 range
+                data[i * 4] = Math.min(255, Math.max(0, Math.round((r[i] / maxValue) * 255)));
+                data[i * 4 + 1] = Math.min(255, Math.max(0, Math.round((g[i] / maxValue) * 255)));
+                data[i * 4 + 2] = Math.min(255, Math.max(0, Math.round((b[i] / maxValue) * 255)));
                 data[i * 4 + 3] = 255; // Alpha
               }
             } else {
-              // Grayscale TIF - handle different data types
+              // Grayscale TIF - handle different data types with proper normalization
               const gray = rasters[0];
               for (let i = 0; i < width * height; i++) {
-                const grayValue = Math.min(255, Math.max(0, Math.round(gray[i])));
+                const grayValue = Math.min(
+                  255,
+                  Math.max(0, Math.round((gray[i] / maxValue) * 255))
+                );
                 data[i * 4] = grayValue;
                 data[i * 4 + 1] = grayValue;
                 data[i * 4 + 2] = grayValue;

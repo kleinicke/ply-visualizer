@@ -149,12 +149,17 @@ export class PngReader implements DepthReader {
     const imageData = await this.decodePng(data);
     const depthData = new Float32Array(pngInfo.width * pngInfo.height);
 
+    // Since canvas API converts to 8-bit, we need to handle this limitation
+    // The scaling factor should account for the original 16-bit range
+    console.log(`PNG Reader: Processing 16-bit PNG with fallback to canvas (8-bit precision)`);
+
     // Convert 8-bit canvas data to depth values, scaling up to simulate 16-bit range
     for (let i = 0; i < pngInfo.width * pngInfo.height; i++) {
       const pixelIndex = i * 4;
       let rawValue = imageData.data[pixelIndex]; // Use red channel
 
       // Scale 8-bit value to 16-bit range for better depth representation
+      // This partially compensates for precision loss from canvas conversion
       rawValue = rawValue * 256;
 
       // Check for invalid pixels
