@@ -277,7 +277,7 @@ class PointCloudVisualizer {
     material.depthTest = true;
     material.depthWrite = true;
     material.sizeAttenuation = true; // Keep world-space sizing
-    material.side = THREE.DoubleSide; // Default for points
+    material.side = THREE.FrontSide; // Default for points
 
     // Force material update
     material.needsUpdate = true;
@@ -5995,7 +5995,7 @@ class PointCloudVisualizer {
       opacity: 1.0,
       depthWrite: true,
       depthTest: true,
-      side: THREE.DoubleSide,
+      side: THREE.FrontSide,
     });
 
     const points = new THREE.Points(pointsGeometry, pointsMaterial);
