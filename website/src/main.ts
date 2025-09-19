@@ -183,6 +183,7 @@ class PointCloudVisualizer {
   private frameCount: number = 0; // Frame counter for UI updates
   private lastCameraPosition: THREE.Vector3 = new THREE.Vector3(); // Track camera position changes
   private lastCameraQuaternion: THREE.Quaternion = new THREE.Quaternion(); // Track camera rotation changes
+  private lastRotationCenter: THREE.Vector3 = new THREE.Vector3(); // Track rotation center changes
   private arcballInvertRotation: boolean = false; // preference for arcball handedness
 
   // Lighting/material toggles
@@ -946,6 +947,9 @@ class PointCloudVisualizer {
     this.controls.target.copy(currentTarget);
     this.controls.update();
 
+    // Initialize rotation center tracking
+    this.lastRotationCenter.copy(this.controls.target);
+
     // Update control status to highlight active button
     this.updateControlStatus();
   }
@@ -1436,9 +1440,10 @@ class PointCloudVisualizer {
     // Update controls
     this.controls.update();
 
-    // Check if camera position or rotation has changed
+    // Check if camera position, rotation, or rotation center has changed
     const positionChanged = !this.camera.position.equals(this.lastCameraPosition);
     const rotationChanged = !this.camera.quaternion.equals(this.lastCameraQuaternion);
+    const rotationCenterChanged = !this.controls.target.equals(this.lastRotationCenter);
 
     // Only update camera matrix and UI when camera actually changes
     if (positionChanged || rotationChanged) {
@@ -1468,6 +1473,23 @@ class PointCloudVisualizer {
       // Update last known position and rotation
       this.lastCameraPosition.copy(this.camera.position);
       this.lastCameraQuaternion.copy(this.camera.quaternion);
+
+      this.needsRender = true;
+    }
+
+    // Handle rotation center changes separately
+    if (rotationCenterChanged) {
+      // Update coordinate system position to follow the rotation center
+      const axesGroup = (this as any).axesGroup;
+      if (axesGroup) {
+        axesGroup.position.copy(this.controls.target);
+      }
+
+      // Update reset to center button state
+      this.updateRotationOriginButtonState();
+
+      // Update last known rotation center
+      this.lastRotationCenter.copy(this.controls.target);
 
       this.needsRender = true;
     }
@@ -2003,88 +2025,161 @@ class PointCloudVisualizer {
   }
 
   private onDoubleClick(event: MouseEvent): void {
-    // Convert mouse coordinates to normalized device coordinates (-1 to +1)
+    // Get canvas and mouse position in screen coordinates
     const canvas = this.renderer.domElement;
     const rect = canvas.getBoundingClientRect();
-    const mouse = new THREE.Vector2();
+    const mouseScreenX = event.clientX - rect.left;
+    const mouseScreenY = event.clientY - rect.top;
 
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-    // Create raycaster
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouse, this.camera);
-
-    // Progressive threshold approach for double-click detection
-    const validPointSizes = this.pointSizes.filter(size => size > 0);
-    const maxPointSize = validPointSizes.length > 0 ? Math.max(...validPointSizes) : 0.001;
-
-    // Find intersections with all visible meshes
+    // Find all visible meshes
     const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
 
-    // Debug camera and ray information
-    // debug: camera/mouse
+    if (visibleMeshes.length === 0) {
+      return;
+    }
 
-    // Debug visible meshes
-    visibleMeshes.forEach((mesh, index) => {
-      const realIndex = this.meshes.indexOf(mesh);
+    // Separate meshes from point clouds for different intersection approaches
+    const triangleMeshes = visibleMeshes.filter(mesh => {
       const geometry = mesh.geometry as THREE.BufferGeometry;
-      const positionAttribute = geometry.getAttribute('position');
-      const pointCount = positionAttribute ? positionAttribute.count : 0;
-      // debug: mesh info
+      const indexAttribute = geometry.getIndex();
+      // Triangle meshes have indices (faces), point clouds typically don't
+      return indexAttribute && indexAttribute.count > 0;
     });
 
-    // Try progressive thresholds until we find an intersection
-    const thresholds = [
-      Math.max(maxPointSize * 10, 0.001), // Start with point-size based threshold
-      0.01, // Small threshold
-      0.05, // Medium threshold
-      0.1, // Larger threshold
-      0.5, // Large threshold
-      2.0, // Very large threshold for distant point clouds
-    ];
+    const pointCloudMeshes = visibleMeshes.filter(mesh => {
+      const geometry = mesh.geometry as THREE.BufferGeometry;
+      const indexAttribute = geometry.getIndex();
+      // Point clouds typically don't have indices
+      return !indexAttribute || indexAttribute.count === 0;
+    });
 
-    let intersects: THREE.Intersection[] = [];
-    let usedThreshold = 0;
+    // First try ray casting for triangle meshes only (more precise for triangular surfaces)
+    if (triangleMeshes.length > 0) {
+      const mouse = new THREE.Vector2();
+      mouse.x = (mouseScreenX / canvas.clientWidth) * 2 - 1;
+      mouse.y = -(mouseScreenY / canvas.clientHeight) * 2 + 1;
 
-    for (const threshold of thresholds) {
-      raycaster.params.Points.threshold = threshold;
-      intersects = raycaster.intersectObjects(visibleMeshes, false);
-      usedThreshold = threshold;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(mouse, this.camera);
 
-      // debug: intersection threshold
+      const intersects = raycaster.intersectObjects(triangleMeshes, false);
 
       if (intersects.length > 0) {
-        // debug: success threshold
-        break;
+        // Found mesh surface intersection - use the exact intersection point on the surface
+        const intersectionPoint = intersects[0].point;
+
+        // Check if the point is too close to the camera
+        const distance = this.camera.position.distanceTo(intersectionPoint);
+        const minDistance = 0.005;
+
+        if (distance >= minDistance) {
+          this.setRotationCenter(intersectionPoint);
+          this.updateRotationOriginButtonState();
+          return; // Successfully set rotation center on mesh surface
+        }
       }
     }
 
-    // debug: final intersections result
+    // Use pixel-based point detection for point clouds and fallback for meshes
+    // Pixel-based point detection within 5 pixels
+    const pixelRadius = 5;
+    let closestPoint: THREE.Vector3 | null = null;
+    let closestPixelDistance = Infinity;
+    let foundPoint = false;
 
-    if (intersects.length > 0) {
-      // debug list
-      intersects.forEach((intersect, i) => {
-        // debug details
-      });
-      // Get the closest intersection point
-      const intersectionPoint = intersects[0].point;
+    // Create a temporary vector for screen position calculations
+    const screenPosition = new THREE.Vector3();
+    const worldPosition = new THREE.Vector3();
 
+    // Check point clouds and any remaining meshes
+    for (let meshIndex = 0; meshIndex < pointCloudMeshes.length; meshIndex++) {
+      const mesh = pointCloudMeshes[meshIndex];
+      const geometry = mesh.geometry as THREE.BufferGeometry;
+      const positionAttribute = geometry.getAttribute('position');
+
+      if (!positionAttribute) {
+        continue;
+      }
+
+      const pointCount = positionAttribute.count;
+
+      // Fast spatial culling approach - check all points but with early rejection
+
+      // Convert click area to normalized device coordinates for fast comparison
+      const clickNDCX = (mouseScreenX / canvas.clientWidth) * 2 - 1;
+      const clickNDCY = -((mouseScreenY / canvas.clientHeight) * 2 - 1);
+
+      // Calculate NDC radius for 5-pixel radius
+      const pixelRadiusNDC = (pixelRadius / canvas.clientWidth) * 2;
+      const pixelRadiusNDCSquared = pixelRadiusNDC * pixelRadiusNDC;
+
+      // Frustum culling: get camera frustum for coarse rejection
+      const cameraFrustum = new THREE.Frustum();
+      const cameraMatrix = new THREE.Matrix4();
+      cameraMatrix.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+      cameraFrustum.setFromProjectionMatrix(cameraMatrix);
+
+      for (let i = 0; i < pointCount; i++) {
+        // Get world position of the point
+        worldPosition.fromBufferAttribute(positionAttribute, i);
+        worldPosition.applyMatrix4(mesh.matrixWorld);
+
+        // Early rejection 1: Frustum culling - skip points outside camera view
+        if (!cameraFrustum.containsPoint(worldPosition)) {
+          continue;
+        }
+
+        // Early rejection 2: Distance culling - skip points too far behind camera
+        const cameraToPoint = worldPosition.clone().sub(this.camera.position);
+        const dotProduct = cameraToPoint.dot(this.camera.getWorldDirection(new THREE.Vector3()));
+        if (dotProduct < 0.1) {
+          // Point is behind camera
+          continue;
+        }
+
+        // Project to NDC space for fast comparison
+        screenPosition.copy(worldPosition);
+        screenPosition.project(this.camera);
+
+        // Early rejection 3: Fast NDC-space distance check (cheaper than pixel conversion)
+        const ndcDistanceSquared =
+          Math.pow(screenPosition.x - clickNDCX, 2) + Math.pow(screenPosition.y - clickNDCY, 2);
+
+        if (ndcDistanceSquared > pixelRadiusNDCSquared) {
+          continue; // Point is outside pixel radius
+        }
+
+        // Only do expensive pixel conversion for points that passed all culling tests
+        const screenX = (screenPosition.x * 0.5 + 0.5) * canvas.clientWidth;
+        const screenY = (screenPosition.y * -0.5 + 0.5) * canvas.clientHeight;
+
+        const pixelDistance = Math.sqrt(
+          Math.pow(screenX - mouseScreenX, 2) + Math.pow(screenY - mouseScreenY, 2)
+        );
+
+        if (pixelDistance <= pixelRadius && pixelDistance < closestPixelDistance) {
+          closestPixelDistance = pixelDistance;
+          closestPoint = worldPosition.clone();
+          foundPoint = true;
+        }
+      }
+    }
+
+    // If we found a point within pixel radius, use it
+    if (foundPoint && closestPoint) {
       // Check if the point is too close to the camera
-      const distance = this.camera.position.distanceTo(intersectionPoint);
-      const minDistance = 0.005; // Very small minimum distance
+      const minDistance = 0.005;
+      const distance3D = this.camera.position.distanceTo(closestPoint);
 
-      if (distance < minDistance) {
-        // debug
+      if (distance3D < minDistance) {
         return; // Don't set rotation center for points too close
       }
 
       // Set this point as the new rotation center
-      this.setRotationCenter(intersectionPoint);
-
-      // debug
+      this.setRotationCenter(closestPoint);
       this.updateRotationOriginButtonState();
     }
+    // If no point found within pixel radius, do nothing (ignore empty clicks)
   }
 
   private setRotationCenter(point: THREE.Vector3): void {
@@ -2122,7 +2217,18 @@ class PointCloudVisualizer {
       this.updateRotationOriginButtonState();
     } else {
       // Point is at a safe distance, use it directly
+
+      // Calculate the current direction from camera to target
+      const currentDirection = this.controls.target.clone().sub(this.camera.position).normalize();
+      const currentDistance = this.camera.position.distanceTo(this.controls.target);
+
+      // Set new rotation center
       this.controls.target.copy(point);
+
+      // Move camera to maintain the same relative position and viewing direction
+      // Keep the same distance from the new target
+      const newCameraPosition = point.clone().sub(currentDirection.multiplyScalar(currentDistance));
+      this.camera.position.copy(newCameraPosition);
 
       // Update axes position to the new rotation center
       const axesGroup = (this as any).axesGroup;
