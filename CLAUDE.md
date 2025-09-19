@@ -11,6 +11,8 @@ code in this repository.
 npm run compile          # Build the extension using webpack
 npm run watch           # Watch mode for development
 npm run vscode:prepublish  # Production build before publishing
+npm run clean           # Clean output directory
+npm run compile:all     # Compile both extension and tests
 ```
 
 ### Testing & Linting
@@ -22,6 +24,16 @@ npm run pretest         # Compile and lint before testing
 npm run test:ui         # Run UI tests (VS Code Extension Tester)
 npm run test:all        # Run both unit and UI tests
 npm run test:stl        # Quick STL functionality validation and checklist
+npm run test:coverage   # Run tests with coverage analysis
+npm run coverage        # Generate coverage report
+```
+
+### Code Quality & Formatting
+
+```bash
+npm run format          # Format code with Prettier
+npm run format:check    # Check code formatting
+npx lint-staged         # Run linting on staged files (via git hooks)
 ```
 
 ### Extension Testing
@@ -38,11 +50,61 @@ npm run test:stl        # Quick STL functionality validation and checklist
   - `testfiles/obj/` - OBJ wireframe files (if present)
   - Root directory - Large test PLY files for performance testing
 
+### Development Workflow
+
+**For Core Functionality Changes** (parsers, visualization, controls):
+
+1. Work in `website/src/` directory - this is the shared codebase
+2. Test standalone website: `cd website && npm run dev` (if available)
+3. Test VS Code extension: Press **F5** to launch Extension Development Host
+4. Changes in `website/src/` automatically affect both targets
+
+**For VS Code-Specific Features** (commands, menus, file associations):
+
+1. Work in `src/` directory for extension host integration
+2. Use `npm run watch` for automatic rebuilding during development
+3. Test with **F5** Extension Development Host
+
 ## Architecture Overview
 
-This is a **VS Code extension** that provides 3D visualization for point clouds,
-triangle meshes, and depth-to-pointcloud conversion using Three.js. Supports 10+
-file formats including PLY, XYZ, OBJ, STL, TIF, NPY, and JSON pose data.
+This project implements a **dual-target architecture** supporting both a
+standalone website and a VS Code extension:
+
+1. **Standalone Website** (`website/` folder) - Can run independently at
+   https://f-kleinicke.de
+2. **VS Code Extension** - Integrates the same core functionality into VS Code
+
+**Key Architectural Principle**: The `website/src/` directory contains all core
+visualization functionality (parsers, renderers, controls, depth processing)
+that is shared between both targets. The `src/` directory contains only VS
+Code-specific integration code.
+
+### Project Structure
+
+```
+├── src/                     # VS Code extension-specific files
+│   ├── extension.ts         # Extension activation & VS Code API integration
+│   ├── pointCloudEditorProvider.ts  # Custom editor registration
+│   └── *Parser.ts          # Lightweight parser wrappers for extension host
+├── website/                 # Shared core functionality + standalone website
+│   ├── src/                # Core visualization engine (shared code)
+│   │   ├── main.ts         # Main 3D visualization engine (~9000+ lines)
+│   │   ├── parsers/        # Complete format parsers (PLY, OBJ, STL, etc.)
+│   │   ├── depth/          # Depth-to-pointcloud processing pipeline
+│   │   ├── controls.ts     # Camera control systems
+│   │   └── themes/         # UI themes and styling
+│   ├── index.html          # Standalone website entry point
+│   └── webpack.config.js   # Website-specific build configuration
+├── media/                  # Shared static assets (CSS, external libraries)
+└── testfiles/             # Test data organized by format type
+```
+
+This architecture enables:
+
+- **Code Reuse**: Core functionality written once, used in both contexts
+- **Independent Development**: Website can be developed and tested standalone
+- **VS Code Integration**: Extension provides native VS Code experience with
+  same features
 
 ### Core Components
 
@@ -59,21 +121,35 @@ file formats including PLY, XYZ, OBJ, STL, TIF, NPY, and JSON pose data.
 
 **Webview (Browser Context)**
 
-- `src/webview/main.ts` - Main visualization engine (~9000+ lines)
-- `src/webview/tifProcessor.ts` - TIF depth image to point cloud conversion
-- `src/webview/depth/` - Depth processing pipeline:
+- `website/src/main.ts` - Main visualization engine (~9000+ lines)
+- `website/src/depth/` - Depth processing pipeline:
   - `DepthRegistry.ts` - Format detection and reader selection
   - `DepthProjector.ts` - 3D projection with camera models (pinhole/fisheye)
   - `readers/` - Format-specific depth readers (TIF, PFM, NPY, PNG)
+- `website/src/parsers/` - Format-specific parsers (PLY, OBJ, STL, etc.)
+- `website/src/controls.ts` - Camera control systems
+- `website/src/themes/` - Color themes and UI styling
 - `media/` - External dependencies (geotiff.min.js, CSS)
 
 ### Key Architectural Patterns
 
-**Dual Build System**: Webpack creates two separate bundles:
+**Dual Build System**: Webpack creates separate bundles for different targets:
 
-- Extension bundle (Node.js target) - VS Code API integration, file parsing
-- Webview bundle (Web target) - Three.js visualization, user interaction
-- Separate TypeScript configs prevent dependency conflicts
+1. **Extension Bundle** (Node.js target):
+   - Entry: `src/extension.ts`
+   - Purpose: VS Code API integration, file I/O, command registration
+   - Contains lightweight parsers that delegate core parsing to webview
+
+2. **Webview Bundle** (Web target):
+   - Entry: `website/src/main.ts`
+   - Purpose: 3D visualization, user interaction, core functionality
+   - Contains complete parsers, rendering engine, controls, themes
+   - Same bundle used for both VS Code webview and standalone website
+
+3. **Shared Resources**:
+   - `media/` directory assets accessible to both targets
+   - Webpack alias ensures single Three.js instance across bundles
+   - Separate TypeScript configs prevent dependency conflicts
 
 **Message Passing Architecture**: Extension host and webview communicate via
 `postMessage/onMessage`:
@@ -147,7 +223,7 @@ supporting:
 **TypeScript Configuration**:
 
 - Root `tsconfig.json` - Extension host compilation (Node.js target)
-- `src/webview/tsconfig.json` - Webview compilation (DOM/ES6 target)
+- `website/src/tsconfig.json` - Webview compilation (DOM/ES6 target)
 - Webpack enforces separation and prevents dependency conflicts
 
 **Test Organization**:
@@ -164,7 +240,15 @@ supporting:
 
 - `media/` - External JavaScript libraries and CSS
 - `out/` - Compiled extension and webview bundles
+- `website/` - Webview source code and assets
 - `testfiles/` - Organized test files by format type
+
+**Git Hooks & Code Quality**:
+
+- `.husky/pre-commit` - Runs lint-staged on git commits
+- `lint-staged` configuration in package.json for automatic formatting and
+  linting
+- Coverage thresholds enforced via nyc configuration (80% minimum)
 
 ## Important Development Notes
 
