@@ -176,6 +176,8 @@ class PointCloudVisualizer {
   private cameraGroups: THREE.Group[] = [];
   private cameraNames: string[] = [];
   private cameraVisibility: boolean = true;
+  private cameraShowLabels: boolean[] = [];
+  private cameraShowCoords: boolean[] = [];
 
   // Rotation matrices
   private cameraMatrix: THREE.Matrix4 = new THREE.Matrix4(); // Current camera position and rotation
@@ -3984,7 +3986,7 @@ class PointCloudVisualizer {
         }))
       );
 
-      // Separate depth files for special handling
+      // Separate depth files and JSON files for special handling
       const depthFiles: typeof fileData = [];
       const regularFiles: typeof fileData = [];
 
@@ -3992,6 +3994,9 @@ class PointCloudVisualizer {
         const fileType = detectFileTypeWithContent(file.name, file.data);
         if (fileType?.isDepthFile) {
           depthFiles.push(file);
+        } else if (fileType?.category === 'poseData') {
+          // JSON files are handled separately below, don't add to regularFiles
+          // to avoid double processing
         } else {
           regularFiles.push(file);
         }
@@ -5030,11 +5035,11 @@ class PointCloudVisualizer {
                     <div class="panel-section" style="margin-top:6px;">
                         <div class="control-buttons">
                             <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
-                                <input type="checkbox" id="camera-show-labels-${i}">
+                                <input type="checkbox" id="camera-show-labels-${i}" ${this.cameraShowLabels[c] ? 'checked' : ''}>
                                 Show labels
                             </label>
                             <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
-                                <input type="checkbox" id="camera-show-coords-${i}">
+                                <input type="checkbox" id="camera-show-coords-${i}" ${this.cameraShowCoords[c] ? 'checked' : ''}>
                                 Show coordinates
                             </label>
                         </div>
@@ -5098,7 +5103,7 @@ class PointCloudVisualizer {
     this.addTooltipsToTruncatedFilenames();
 
     // Transform toggle logic with improved UI (handle both point clouds and cameras)
-    for (let i = 0; i < this.plyFiles.length; i++) {
+    for (let i = 0; i < totalEntries; i++) {
       const transformBtn = document.querySelector(`.transform-toggle[data-file-index="${i}"]`);
       const transformationBtn = document.querySelector(
         `.transformation-toggle[data-file-index="${i}"]`
@@ -6754,8 +6759,53 @@ class PointCloudVisualizer {
       return;
     }
 
-    // Determine if this index refers to a pose or a pointcloud/mesh
+    // Determine if this index refers to a camera profile, pose, or pointcloud/mesh
+    const cameraStartIndex = this.plyFiles.length + this.poseGroups.length;
+
+    if (fileIndex >= cameraStartIndex) {
+      // Camera profile removal
+      const cameraIndex = fileIndex - cameraStartIndex;
+      if (cameraIndex < 0 || cameraIndex >= this.cameraGroups.length) {
+        return;
+      }
+
+      const group = this.cameraGroups[cameraIndex];
+      this.scene.remove(group);
+      group.traverse((obj: any) => {
+        if (obj.geometry && typeof obj.geometry.dispose === 'function') {
+          obj.geometry.dispose();
+        }
+        if (obj.material) {
+          if (Array.isArray(obj.material)) {
+            obj.material.forEach((m: any) => m.dispose && m.dispose());
+          } else if (typeof obj.material.dispose === 'function') {
+            obj.material.dispose();
+          }
+        }
+      });
+      this.cameraGroups.splice(cameraIndex, 1);
+      this.cameraNames.splice(cameraIndex, 1);
+      this.cameraShowLabels.splice(cameraIndex, 1);
+      this.cameraShowCoords.splice(cameraIndex, 1);
+
+      // Remove UI-aligned state for this unified index
+      this.fileVisibility.splice(fileIndex, 1);
+      this.pointSizes.splice(fileIndex, 1);
+      if (this.individualColorModes[fileIndex] !== undefined) {
+        this.individualColorModes.splice(fileIndex, 1);
+      }
+      this.transformationMatrices.splice(fileIndex, 1);
+
+      // Preserve depth panel states when removing files
+      const openPanelStates = this.captureDepthPanelStates();
+      this.updateFileList();
+      this.restoreDepthPanelStates(openPanelStates);
+      this.updateFileStats();
+      return;
+    }
+
     if (fileIndex >= this.plyFiles.length) {
+      // Pose removal
       const poseIndex = fileIndex - this.plyFiles.length;
       if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
         return;
@@ -6788,10 +6838,6 @@ class PointCloudVisualizer {
       this.updateFileList();
       this.restoreDepthPanelStates(openPanelStates);
       this.updateFileStats();
-      return;
-    }
-
-    if (fileIndex >= this.plyFiles.length) {
       return;
     }
 
@@ -12795,6 +12841,10 @@ class PointCloudVisualizer {
         // Initialize transformation matrix for camera profile
         this.transformationMatrices.push(new THREE.Matrix4());
         this.applyTransformationMatrix(unifiedIndex);
+
+        // Initialize camera UI state arrays
+        this.cameraShowLabels.push(false);
+        this.cameraShowCoords.push(false);
       }
 
       // Update UI
@@ -13010,6 +13060,9 @@ class PointCloudVisualizer {
         }
       }
     });
+
+    // Update state array
+    this.cameraShowLabels[cameraProfileIndex] = showLabels;
   }
 
   private toggleCameraProfileCoordinates(cameraProfileIndex: number, showCoords: boolean): void {
@@ -13049,6 +13102,9 @@ class PointCloudVisualizer {
         }
       }
     });
+
+    // Update state array
+    this.cameraShowCoords[cameraProfileIndex] = showCoords;
   }
 
   private applyCameraScale(cameraProfileIndex: number, scale: number): void {

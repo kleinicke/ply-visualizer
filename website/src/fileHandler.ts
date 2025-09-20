@@ -289,6 +289,26 @@ export async function parseFileData(
         );
       }
 
+    case 'json':
+      // JSON files for pose data and camera profiles - create empty geometry structure
+      // Actual parsing is handled in main.ts based on content structure
+      const textContent = new TextDecoder().decode(data);
+      return {
+        data: {
+          vertices: [],
+          faces: [],
+          format: 'json',
+          vertexCount: 0,
+          faceCount: 0,
+          hasColors: false,
+          hasNormals: false,
+          fileName,
+          // Store JSON content in comments field for access in main.ts
+          comments: [textContent],
+        },
+        type: 'jsonData',
+      };
+
     default:
       throw new Error(`Unsupported file format: ${extension}`);
   }
