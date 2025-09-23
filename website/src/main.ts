@@ -8003,6 +8003,8 @@ class PointCloudVisualizer {
     }
     // Update UI
     this.updateFileList();
+    // Request render to show visibility changes
+    this.requestRender();
   }
 
   private switchToTrackballControls(): void {
