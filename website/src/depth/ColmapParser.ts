@@ -157,13 +157,13 @@ export class ColmapParser {
   }
 
   /**
-   * Convert to PLY Visualizer camera format
+   * Convert to 3D Visualizer camera format
    */
   static toCameraFormat(result: ColmapCalibrationResult): { cameras: Record<string, any> } {
     const cameras: Record<string, any> = {};
 
     for (const [name, cam] of Object.entries(result.cameras)) {
-      // Map COLMAP models to PLY Visualizer camera models
+      // Map COLMAP models to 3D Visualizer camera models
       let cameraModel = 'pinhole-ideal';
       if (cam.model === 'opencv' && (cam.k1 || cam.k2 || cam.p1 || cam.p2)) {
         cameraModel = 'pinhole-opencv';

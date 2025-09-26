@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Create test NPY and NPZ files with depth data for the PLY visualizer
+Create test NPY and NPZ files with depth data for the 3D Visualizer
 """
 import numpy as np
 import os

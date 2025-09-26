@@ -1,7 +1,7 @@
 # 3D Point Cloud Visualizer - Web Version
 
 A standalone web application for visualizing 3D point clouds and meshes, adapted
-from the VS Code PLY Visualizer extension.
+from the VS Code 3D Visualizer extension.
 
 ## Features
 

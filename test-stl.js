@@ -89,7 +89,7 @@ console.log('\n🎯 STL Manual Testing Checklist:');
 console.log('================================');
 console.log('1. Press F5 in VS Code to open Extension Development Host');
 console.log('2. Navigate to testfiles/stl/ folder');
-console.log('3. Right-click test_cube_ascii.stl → "Open with PLY Visualizer"');
+console.log('3. Right-click test_cube_ascii.stl → "Open with 3D Visualizer"');
 console.log('4. Verify 3D cube mesh appears');
 console.log('5. Test test_empty_ascii.stl (should show "Empty mesh loaded")');
 console.log('6. Test test_large_coordinates.stl (press F for Fit to View)');

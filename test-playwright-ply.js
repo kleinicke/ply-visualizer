@@ -89,7 +89,7 @@ async function testPlaywrightPly() {
     console.log('✅ VSIX package available');
     console.log('\n📋 Test Features Implemented:');
     console.log('   • File discovery in VS Code Explorer');
-    console.log('   • Context menu "Open with PLY Visualizer" interaction');
+    console.log('   • Context menu "Open with 3D Visualizer" interaction');
     console.log('   • Webview validation and Three.js canvas detection');
     console.log('   • UI interaction testing (Camera/Controls tabs)');
     console.log('   • Console output monitoring');

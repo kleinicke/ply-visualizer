@@ -15,7 +15,7 @@ const testFiles = [
   { file: 'zed_calibration.conf', parser: 'ZED' },
   { file: 'realsense_profile.json', parser: 'RealSense' },
   { file: 'tum_camera.txt', parser: 'TUM' },
-  { file: 'ply_visualizer.json', parser: 'PLY Visualizer' },
+  { file: 'ply_visualizer.json', parser: '3D Visualizer' },
   { file: 'middlebury_calib.txt', parser: 'Middlebury' },
 ];
 

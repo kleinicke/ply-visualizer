@@ -319,10 +319,10 @@ timestamp_rgb rgb_filename timestamp_depth depth_filename
 ## Camera Profile JSON Format
 
 **File extensions:** `.json` **Common names:** `calibration.json`,
-`cameras.json`, `camera_profile.json` **Used by:** PLY Visualizer extension for
+`cameras.json`, `camera_profile.json` **Used by:** 3D Visualizer extension for
 depth-to-point cloud conversion
 
-The PLY Visualizer currently supports a custom JSON format for camera
+The 3D Visualizer currently supports a custom JSON format for camera
 calibration:
 
 ```json
@@ -367,7 +367,7 @@ calibration:
 - `fisheye-opencv`: OpenCV fisheye model
 - `fisheye-kannala-brandt`: Kannala-Brandt polynomial fisheye model
 
-**Usage in PLY Visualizer:**
+**Usage in 3D Visualizer:**
 
 1. Load calibration file via "📁 Load Calibration File" button
 2. Select camera from dropdown (populated from JSON keys)

@@ -98,53 +98,53 @@
     "commands": [
       {
         "command": "plyViewer.openFile",
-        "title": "Open with PLY Visualizer",
-        "category": "PLY Visualizer"
+        "title": "Open with 3D Visualizer",
+        "category": "3D Visualizer"
       },
       {
         "command": "plyViewer.openMultipleFiles",
         "title": "Open Multiple Point Cloud Files",
-        "category": "PLY Visualizer"
+        "category": "3D Visualizer"
       },
       {
         "command": "plyViewer.playPointCloudSequence",
         "title": "Play Point Cloud Sequence (Wildcard)",
-        "category": "PLY Visualizer"
+        "category": "3D Visualizer"
       },
       {
         "command": "plyViewer.convertTifToPointCloud",
         "title": "Convert TIFF to Point Cloud",
-        "category": "PLY Visualizer"
+        "category": "3D Visualizer"
       },
       {
         "command": "plyViewer.loadJsonAsPose",
         "title": "Load JSON as 3D Pose",
-        "category": "PLY Visualizer"
+        "category": "3D Visualizer"
       },
       {
         "command": "plyViewer.convertDepthToPointCloud",
         "title": "Convert PFM to Point Cloud",
-        "category": "PLY Visualizer"
+        "category": "3D Visualizer"
       },
       {
         "command": "plyViewer.convertNpyToPointCloud",
         "title": "Convert NPY/NPZ to Point Cloud",
-        "category": "PLY Visualizer"
+        "category": "3D Visualizer"
       },
       {
         "command": "plyViewer.convertPngToPointCloud",
         "title": "Convert PNG Depth to Point Cloud",
-        "category": "PLY Visualizer"
+        "category": "3D Visualizer"
       },
       {
         "command": "plyViewer.convertExrToPointCloud",
         "title": "Convert EXR Depth to Point Cloud",
-        "category": "PLY Visualizer"
+        "category": "3D Visualizer"
       },
       {
         "command": "plyViewer.resetSettings",
         "title": "Reset All Settings",
-        "category": "PLY Visualizer"
+        "category": "3D Visualizer"
       }
     ],
     "menus": {

@@ -1,5 +1,5 @@
 // Shared interfaces for the visualizer
-export interface PlyVertex {
+export interface SpatialVertex {
   x: number;
   y: number;
   z: number;
@@ -12,13 +12,13 @@ export interface PlyVertex {
   nz?: number;
 }
 
-export interface PlyFace {
+export interface SpatialFace {
   indices: number[];
 }
 
-export interface PlyData {
-  vertices: PlyVertex[];
-  faces: PlyFace[];
+export interface SpatialData {
+  vertices: SpatialVertex[];
+  faces: SpatialFace[];
   format: 'ascii' | 'binary_little_endian' | 'binary_big_endian';
   version: string;
   comments: string[];

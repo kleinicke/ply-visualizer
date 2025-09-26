@@ -143,7 +143,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('plyViewer.resetSettings', async () => {
       try {
         const response = await vscode.window.showWarningMessage(
-          'This will reset all PLY Visualizer settings to default values. This cannot be undone.',
+          'This will reset all 3D Visualizer settings to default values. This cannot be undone.',
           { modal: true },
           'Reset Settings',
           'Cancel'
@@ -154,10 +154,10 @@ export function activate(context: vscode.ExtensionContext) {
           await context.globalState.update('defaultDepthSettings', undefined);
 
           vscode.window.showInformationMessage(
-            'PLY Visualizer settings have been reset to defaults. Restart VS Code for a completely fresh start.'
+            '3D Visualizer settings have been reset to defaults. Restart VS Code for a completely fresh start.'
           );
 
-          console.log('PLY Visualizer settings reset successfully');
+          console.log('3D Visualizer settings reset successfully');
         }
       } catch (error) {
         vscode.window.showErrorMessage(
@@ -167,7 +167,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  console.log('PLY Visualizer extension is now active!');
+  console.log('3D Visualizer extension is now active!');
 }
 
 async function handleDepthToPointCloudConversion(
@@ -228,7 +228,7 @@ async function handleOpenMultipleFiles(): Promise<void> {
     }
 
     // Check if we have a mix of file types
-    const plyFiles = files.filter(f => f.fsPath.toLowerCase().endsWith('.ply'));
+    const spatialFiles = files.filter(f => f.fsPath.toLowerCase().endsWith('.ply'));
     const xyzFiles = files.filter(f => f.fsPath.toLowerCase().endsWith('.xyz'));
     const objFiles = files.filter(f => f.fsPath.toLowerCase().endsWith('.obj'));
     const tifFiles = files.filter(
@@ -242,7 +242,7 @@ async function handleOpenMultipleFiles(): Promise<void> {
     // If there are additional files, add them
     if (files.length > 1) {
       vscode.window.showInformationMessage(
-        `Opening ${files.length} files together: ${plyFiles.length} PLY, ${xyzFiles.length} XYZ, ${objFiles.length} OBJ, ${tifFiles.length} TIF files`
+        `Opening ${files.length} files together: ${spatialFiles.length} PLY, ${xyzFiles.length} XYZ, ${objFiles.length} OBJ, ${tifFiles.length} TIF files`
       );
     }
   } catch (error) {
@@ -253,5 +253,5 @@ async function handleOpenMultipleFiles(): Promise<void> {
 }
 
 export function deactivate() {
-  console.log('PLY Visualizer extension is now deactivated!');
+  console.log('3D Visualizer extension is now deactivated!');
 }

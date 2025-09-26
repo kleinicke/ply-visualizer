@@ -32,12 +32,12 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     uri: vscode.Uri,
     openContext: vscode.CustomDocumentOpenContext,
     token: vscode.CancellationToken
-  ): Promise<PlyDocument> {
-    return new PlyDocument(uri);
+  ): Promise<SpatialDocument> {
+    return new SpatialDocument(uri);
   }
 
   public async resolveCustomEditor(
-    document: PlyDocument,
+    document: SpatialDocument,
     webviewPanel: vscode.WebviewPanel,
     token: vscode.CancellationToken
   ): Promise<void> {
@@ -526,7 +526,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           at: wallStart,
         });
 
-        const plyData = await vscode.workspace.fs.readFile(document.uri);
+        const spatialData = await vscode.workspace.fs.readFile(document.uri);
         const fileReadTime = performance.now();
         webviewPanel.webview.postMessage({
           type: 'timing',
@@ -552,11 +552,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         };
 
         // Detect format first using shared functionality
-        const isBinary = isPlyBinary(plyData);
+        const isBinary = isPlyBinary(spatialData);
 
         if (isBinary) {
           // Binary PLY - use ULTIMATE parsing
-          const headerResult = await parser.parseHeaderOnly(plyData, timingCallback);
+          const headerResult = await parser.parseHeaderOnly(spatialData, timingCallback);
           const parsedData = headerResult.headerInfo;
           const parseTime = performance.now();
           webviewPanel.webview.postMessage({
@@ -597,15 +597,15 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel,
             parsedData,
             headerResult,
-            plyData,
-            'multiPlyData'
+            spatialData,
+            'multiSpatialData'
           );
         } else {
           // ASCII PLY - use traditional parsing
           console.log(
             `📝 ASCII PLY detected: ${path.basename(document.uri.fsPath)} - using traditional parsing`
           );
-          const parsedData = await parser.parse(plyData, timingCallback);
+          const parsedData = await parser.parse(spatialData, timingCallback);
           const parseTime = performance.now();
           webviewPanel.webview.postMessage({
             type: 'timing',
@@ -620,7 +620,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           parsedData.fileIndex = 0;
 
           // Send via traditional method (will use binary transfer if possible)
-          await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'multiPlyData');
+          await this.sendSpatialDataToWebview(webviewPanel, [parsedData], 'multiSpatialData');
         }
         const totalTime = performance.now();
         webviewPanel.webview.postMessage({
@@ -667,7 +667,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'savePlyFile':
           // Handle PLY file save request
-          await this.handleSavePlyFile(webviewPanel, message);
+          await this.handleSaveSpatialFile(webviewPanel, message);
           break;
         case 'selectColorImage':
           await this.handleSelectColorImage(webviewPanel, message);
@@ -754,7 +754,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <link href="${styleUri}" rel="stylesheet">
-                <title>PLY Visualizer</title>
+                <title>3D Visualizer</title>
             </head>
             <body>
                 <div id="loading" class="loading">
@@ -1022,18 +1022,18 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           // Handle PLY files (existing logic)
           if (fileExtension === '.ply') {
             // Read file data
-            const plyData = await vscode.workspace.fs.readFile(files[i]);
+            const spatialData = await vscode.workspace.fs.readFile(files[i]);
             const fileReadTime = performance.now();
 
             // Parse file (detect format first)
             const parser = new PlyParser();
 
             // Quick format detection using shared functionality
-            const isBinary = isPlyBinary(plyData);
+            const isBinary = isPlyBinary(spatialData);
 
             if (isBinary) {
               // Use ultimate binary transfer for binary PLY files
-              const headerResult = await parser.parseHeaderOnly(plyData);
+              const headerResult = await parser.parseHeaderOnly(spatialData);
               const parseTime = performance.now();
 
               // Add file info
@@ -1045,13 +1045,13 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                 webviewPanel,
                 headerResult.headerInfo,
                 headerResult,
-                plyData,
+                spatialData,
                 'addFiles'
               );
             } else {
               // Use traditional parsing for ASCII PLY files
               console.log(`📝 ASCII PLY detected: ${fileName} - using traditional parsing`);
-              const parsedData = await parser.parse(plyData);
+              const parsedData = await parser.parse(spatialData);
               const parseTime = performance.now();
 
               // Add file info
@@ -1059,7 +1059,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
               parsedData.fileIndex = i;
 
               // Send via traditional method (will use binary transfer if possible)
-              await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'addFiles');
+              await this.sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
             }
 
             const totalTime = performance.now();
@@ -1290,23 +1290,23 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         return;
       }
       if (ext === '.ply') {
-        const plyData = await vscode.workspace.fs.readFile(fileUri);
+        const spatialData = await vscode.workspace.fs.readFile(fileUri);
         const parser = new PlyParser();
-        const isBinary = isPlyBinary(plyData);
+        const isBinary = isPlyBinary(spatialData);
         if (isBinary) {
-          const headerResult = await parser.parseHeaderOnly(plyData);
+          const headerResult = await parser.parseHeaderOnly(spatialData);
           headerResult.headerInfo.fileName = fileName;
           await this.sendUltimateRawBinary(
             webviewPanel,
             headerResult.headerInfo,
             headerResult,
-            plyData,
+            spatialData,
             'addFiles'
           );
         } else {
-          const parsedData = await parser.parse(plyData);
+          const parsedData = await parser.parse(spatialData);
           parsedData.fileName = fileName;
-          await this.sendPlyDataToWebview(webviewPanel, [parsedData], 'addFiles');
+          await this.sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
         }
         return;
       }
@@ -1643,52 +1643,54 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     });
   }
 
-  private async sendPlyDataToWebview(
+  private async sendSpatialDataToWebview(
     webviewPanel: vscode.WebviewPanel,
-    plyDataArray: any[],
+    spatialDataArray: any[],
     messageType: string
   ): Promise<void> {
-    for (const plyData of plyDataArray) {
-      console.log(`🚀 Binary transfer for ${plyData.fileName} (${plyData.vertexCount} vertices)`);
+    for (const spatialData of spatialDataArray) {
+      console.log(
+        `🚀 Binary transfer for ${spatialData.fileName} (${spatialData.vertexCount} vertices)`
+      );
       const startTime = performance.now();
 
       try {
-        await this.sendBinaryData(webviewPanel, plyData, messageType);
+        await this.sendBinaryData(webviewPanel, spatialData, messageType);
         const transferTime = performance.now() - startTime;
         console.log(`⚡ Binary transfer complete: ${transferTime.toFixed(1)}ms`);
       } catch (error) {
         console.log(
-          `⚠️ Binary transfer failed for ${plyData.fileName}, falling back to chunking...`
+          `⚠️ Binary transfer failed for ${spatialData.fileName}, falling back to chunking...`
         );
-        await this.sendLargeFileInChunksOptimized(webviewPanel, plyData, messageType);
+        await this.sendLargeFileInChunksOptimized(webviewPanel, spatialData, messageType);
       }
     }
   }
 
   private async sendBinaryData(
     webviewPanel: vscode.WebviewPanel,
-    plyData: any,
+    spatialData: any,
     messageType: string
   ): Promise<void> {
     // Check if we have direct TypedArrays (ultra-fast path)
-    const vertexCount = plyData.vertexCount;
-    const hasColors = plyData.hasColors;
-    const hasNormals = plyData.hasNormals;
+    const vertexCount = spatialData.vertexCount;
+    const hasColors = spatialData.hasColors;
+    const hasNormals = spatialData.hasNormals;
 
     let positionBuffer: Float32Array;
     let colorBuffer: Uint8Array | null = null;
     let normalBuffer: Float32Array | null = null;
 
-    if (plyData.useTypedArrays) {
+    if (spatialData.useTypedArrays) {
       // Ultra-fast: Use TypedArrays directly (zero-copy)
       console.log(`🚀 Using direct TypedArrays for binary transfer - ZERO COPY!`);
-      positionBuffer = plyData.positionsArray;
-      colorBuffer = plyData.colorsArray;
-      normalBuffer = plyData.normalsArray;
+      positionBuffer = spatialData.positionsArray;
+      colorBuffer = spatialData.colorsArray;
+      normalBuffer = spatialData.normalsArray;
     } else {
       // Fallback: Convert vertex objects to TypedArrays
       console.log(`🔄 Converting vertex objects to TypedArrays for binary transfer...`);
-      const vertices = plyData.vertices;
+      const vertices = spatialData.vertices;
 
       // Create typed arrays for vertices (always 3 floats: x, y, z)
       positionBuffer = new Float32Array(vertexCount * 3);
@@ -1730,8 +1732,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // Handle faces if present
     let indexBuffer: Uint32Array | null = null;
-    if (plyData.faces && plyData.faces.length > 0) {
-      const faces = plyData.faces;
+    if (spatialData.faces && spatialData.faces.length > 0) {
+      const faces = spatialData.faces;
       indexBuffer = new Uint32Array(faces.length * 3); // Assuming triangles
 
       for (let i = 0; i < faces.length; i++) {
@@ -1755,15 +1757,15 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // Send metadata + binary buffers
     webviewPanel.webview.postMessage({
-      type: 'binaryPlyData',
+      type: 'binarySpatialData',
       messageType: messageType,
-      fileName: plyData.fileName,
+      fileName: spatialData.fileName,
       vertexCount: vertexCount,
-      faceCount: plyData.faceCount,
+      faceCount: spatialData.faceCount,
       hasColors: hasColors,
       hasNormals: hasNormals,
-      format: plyData.format,
-      comments: plyData.comments,
+      format: spatialData.format,
+      comments: spatialData.comments,
       // Binary buffers (will be transferred efficiently)
       positionBuffer: positionBuffer.buffer,
       colorBuffer: colorBuffer ? colorBuffer.buffer : null,
@@ -1774,20 +1776,20 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
   private async sendLargeFileInChunksOptimized(
     webviewPanel: vscode.WebviewPanel,
-    plyData: any,
+    spatialData: any,
     messageType: string
   ): Promise<void> {
     // ULTRA-AGGRESSIVE chunking for maximum transfer speed
     const CHUNK_SIZE = 1000000; // 1M vertices per chunk!
-    const totalVertices = plyData.vertexCount;
-    const vertices = plyData.vertices;
-    const colors = plyData.colors;
-    const normals = plyData.normals;
-    const faces = plyData.faces;
+    const totalVertices = spatialData.vertexCount;
+    const vertices = spatialData.vertices;
+    const colors = spatialData.colors;
+    const normals = spatialData.normals;
+    const faces = spatialData.faces;
 
     const totalChunks = Math.ceil(totalVertices / CHUNK_SIZE);
     console.log(
-      `🚀 Ultra-fast chunking: ${plyData.fileName} (${totalVertices} vertices, ${totalChunks} chunks)`
+      `🚀 Ultra-fast chunking: ${spatialData.fileName} (${totalVertices} vertices, ${totalChunks} chunks)`
     );
 
     const startTime = performance.now();
@@ -1796,14 +1798,14 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     // Send start message
     webviewPanel.webview.postMessage({
       type: 'startLargeFile',
-      fileName: plyData.fileName,
+      fileName: spatialData.fileName,
       totalVertices: totalVertices,
       totalChunks: totalChunks,
-      hasColors: plyData.hasColors,
-      hasNormals: plyData.hasNormals,
+      hasColors: spatialData.hasColors,
+      hasNormals: spatialData.hasNormals,
       faces: faces,
-      format: plyData.format,
-      comments: plyData.comments,
+      format: spatialData.format,
+      comments: spatialData.comments,
       messageType: messageType,
     });
 
@@ -1820,7 +1822,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
       webviewPanel.webview.postMessage({
         type: 'largeFileChunk',
-        fileName: plyData.fileName,
+        fileName: spatialData.fileName,
         chunkIndex: i,
         totalChunks: totalChunks,
         vertices: chunkVertices,
@@ -1841,7 +1843,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     // Send completion message
     webviewPanel.webview.postMessage({
       type: 'largeFileComplete',
-      fileName: plyData.fileName,
+      fileName: spatialData.fileName,
       messageType: messageType,
     });
 
@@ -2386,7 +2388,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     }
   }
 
-  private async handleSavePlyFile(webviewPanel: vscode.WebviewPanel, message: any): Promise<void> {
+  private async handleSaveSpatialFile(
+    webviewPanel: vscode.WebviewPanel,
+    message: any
+  ): Promise<void> {
     try {
       console.log(`📁 Handling PLY save request for: ${message.defaultFileName}`);
 
@@ -2777,7 +2782,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   }
 }
 
-class PlyDocument implements vscode.CustomDocument {
+class SpatialDocument implements vscode.CustomDocument {
   constructor(public readonly uri: vscode.Uri) {}
 
   dispose(): void {

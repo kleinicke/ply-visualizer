@@ -1,5 +1,5 @@
 /**
- * VS Code Theme System for PLY Visualizer Website
+ * VS Code Theme System for 3D Visualizer Website
  *
  * This module provides a theme system that allows switching between different
  * VS Code color themes. Themes are loaded dynamically from JSON files.

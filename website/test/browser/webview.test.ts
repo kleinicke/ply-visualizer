@@ -63,7 +63,7 @@ end_header
         );
 
         try {
-          // Open with the PLY visualizer
+          // Open with the 3D Visualizer
           await vscode.commands.executeCommand('vscode.openWith', uri, 'plyViewer.plyEditor');
 
           // Wait for webview to initialize

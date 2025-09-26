@@ -1,4 +1,4 @@
-export interface PlyVertex {
+export interface SpatialVertex {
   x: number;
   y: number;
   z: number;
@@ -11,13 +11,13 @@ export interface PlyVertex {
   nz?: number;
 }
 
-export interface PlyFace {
+export interface SpatialFace {
   indices: number[];
 }
 
-export interface PlyData {
-  vertices: PlyVertex[];
-  faces: PlyFace[];
+export interface SpatialData {
+  vertices: SpatialVertex[];
+  faces: SpatialFace[];
   format: 'ascii' | 'binary_little_endian' | 'binary_big_endian';
   version: string;
   comments: string[];
@@ -34,12 +34,12 @@ export class PlyParser {
   private offset = 0;
   private littleEndian = true;
 
-  async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<PlyData> {
+  async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<SpatialData> {
     const parseStartTime = performance.now();
     const log = timingCallback || console.log;
     log(`📋 Parser: Starting PLY/XYZ parsing (${data.length} bytes)...`);
 
-    const result: PlyData = {
+    const result: SpatialData = {
       vertices: [],
       faces: [],
       format: 'ascii',
@@ -205,7 +205,7 @@ export class PlyParser {
   private parseAsciiDataOptimized(
     data: Uint8Array,
     startPos: number,
-    result: PlyData,
+    result: SpatialData,
     vertexProperties: Array<{ name: string; type: string }>,
     faceProperties: Array<{ name: string; type: string }>,
     log: (message: string) => void = console.log
@@ -226,7 +226,7 @@ export class PlyParser {
     // Parse vertices with optimized approach
     for (let i = 0; i < result.vertexCount && lineIndex < lines.length; i++, lineIndex++) {
       const values = lines[lineIndex].trim().split(/\s+/);
-      const vertex: PlyVertex = { x: 0, y: 0, z: 0 };
+      const vertex: SpatialVertex = { x: 0, y: 0, z: 0 };
 
       // Use direct indexing instead of searching
       const xIdx = propMap.get('x');
@@ -302,7 +302,7 @@ export class PlyParser {
   private parseAsciiDataStreaming(
     data: Uint8Array,
     startPos: number,
-    result: PlyData,
+    result: SpatialData,
     vertexProperties: Array<{ name: string; type: string }>,
     faceProperties: Array<{ name: string; type: string }>,
     log: (message: string) => void = console.log
@@ -481,7 +481,7 @@ export class PlyParser {
   private parseBinaryDataOptimized(
     data: Uint8Array,
     startPos: number,
-    result: PlyData,
+    result: SpatialData,
     vertexProperties: Array<{ name: string; type: string }>,
     faceProperties: Array<{ name: string; type: string }>,
     log: (message: string) => void = console.log
@@ -726,7 +726,7 @@ export class PlyParser {
     data: Uint8Array,
     timingCallback?: (message: string) => void
   ): Promise<{
-    headerInfo: PlyData;
+    headerInfo: SpatialData;
     binaryDataStart: number;
     vertexStride: number;
     propertyOffsets: Map<string, { offset: number; type: string }>;
@@ -738,7 +738,7 @@ export class PlyParser {
     log(`🚀 ULTIMATE: Header-only parsing for direct binary streaming...`);
 
     // Same header parsing as before
-    const result: PlyData = {
+    const result: SpatialData = {
       vertices: [],
       faces: [],
       format: 'ascii',
@@ -903,7 +903,11 @@ export class PlyParser {
     };
   }
 
-  private parseXyzData(data: Uint8Array, result: PlyData, log: (message: string) => void): PlyData {
+  private parseXyzData(
+    data: Uint8Array,
+    result: SpatialData,
+    log: (message: string) => void
+  ): SpatialData {
     const decoder = new TextDecoder('utf-8');
     const text = decoder.decode(data);
     const lines = text.split('\n').filter(line => line.trim());
@@ -911,7 +915,7 @@ export class PlyParser {
     log(`📝 Parser: XYZ format detected, parsing ${lines.length} lines...`);
 
     // Collect valid vertices instead of pre-allocating
-    const validVertices: PlyVertex[] = [];
+    const validVertices: SpatialVertex[] = [];
     let skippedLines = 0;
 
     // Parse each line as X Y Z [R] [G] [B]
@@ -940,7 +944,7 @@ export class PlyParser {
         continue;
       }
 
-      const vertex: PlyVertex = { x, y, z };
+      const vertex: SpatialVertex = { x, y, z };
 
       // Check for RGB values (optional)
       if (values.length >= 6) {

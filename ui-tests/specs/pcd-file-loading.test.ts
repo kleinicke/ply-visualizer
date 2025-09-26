@@ -58,7 +58,7 @@ describe('PCD File Loading UI Tests', function () {
     console.log('✅ Found sample_pointcloud.pcd in explorer');
   });
 
-  it('should open PCD file with PLY Visualizer', async function () {
+  it('should open PCD file with 3D Visualizer', async function () {
     const sideBar = new SideBarView();
     const explorer = await sideBar.getContent().getSection('Explorer');
 
@@ -81,21 +81,21 @@ describe('PCD File Loading UI Tests', function () {
     await pcdFile.click(2); // Right click
     await driver.sleep(1000);
 
-    // Look for "Open with PLY Visualizer" option
+    // Look for "Open with 3D Visualizer" option
     const contextMenu = await driver.findElement({ css: '.context-view' });
     const menuItems = await contextMenu.findElements({ css: '.action-item' });
 
     let visualizerOption = null;
     for (const item of menuItems) {
       const text = await item.getText();
-      if (text.includes('PLY Visualizer') || text.includes('Open with PLY Visualizer')) {
+      if (text.includes('3D Visualizer') || text.includes('Open with 3D Visualizer')) {
         visualizerOption = item;
         break;
       }
     }
 
     if (!visualizerOption) {
-      throw new Error('PLY Visualizer option not found in context menu for PCD files');
+      throw new Error('3D Visualizer option not found in context menu for PCD files');
     }
 
     await visualizerOption.click();
@@ -209,14 +209,14 @@ describe('PCD File Loading UI Tests', function () {
     await pcdFile.click(2); // Right click
     await driver.sleep(1000);
 
-    // Verify PCD files show up in "Open with PLY Visualizer" context menu
+    // Verify PCD files show up in "Open with 3D Visualizer" context menu
     const contextMenu = await driver.findElement({ css: '.context-view' });
     const menuItems = await contextMenu.findElements({ css: '.action-item' });
 
     let pcdMenuOption = null;
     for (const item of menuItems) {
       const text = await item.getText();
-      if (text.includes('Open with PLY Visualizer')) {
+      if (text.includes('Open with 3D Visualizer')) {
         pcdMenuOption = item;
         console.log(`✅ Found PCD context menu option: ${text}`);
         break;
@@ -260,7 +260,7 @@ describe('PCD File Loading UI Tests', function () {
       throw new Error('sample_pointcloud.pcd not found');
     }
 
-    // Double-click to open (should use default PCD handler which is PLY Visualizer)
+    // Double-click to open (should use default PCD handler which is 3D Visualizer)
     await pcdFile.click();
     await driver.sleep(1000);
     await pcdFile.click(); // Double click

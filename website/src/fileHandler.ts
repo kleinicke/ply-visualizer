@@ -81,7 +81,7 @@ export interface UnifiedFileData {
 // Parser result interface
 export interface ParseResult {
   data: UnifiedFileData;
-  type: string; // 'plyData', 'stlData', 'objData', etc.
+  type: string; // 'spatialData', 'stlData', 'objData', etc.
 }
 
 // Error handling interface
@@ -198,13 +198,13 @@ export async function parseFileData(
   switch (extension) {
     case 'ply':
       const plyParser = new PlyParser();
-      const plyData = await plyParser.parse(data, timingCallback);
+      const spatialData = await plyParser.parse(data, timingCallback);
       return {
         data: {
-          ...plyData,
+          ...spatialData,
           fileName,
         },
-        type: 'plyData',
+        type: 'spatialData',
       };
 
     case 'stl':
@@ -949,5 +949,5 @@ export async function convertDepthToUnified(
     (unified as any).depthDimensions = { width: result.width, height: result.height };
   }
 
-  return { data: unified, type: 'plyData' };
+  return { data: unified, type: 'spatialData' };
 }

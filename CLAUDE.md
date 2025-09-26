@@ -158,7 +158,8 @@ This architecture enables:
 - Webview → Extension: Save requests, error handling, progress updates, camera
   parameter requests
 
-**Unified File Management**: Single `PLYVisualizer` class in webview manages:
+**Unified File Management**: Single `SpatialVisualizer` class in webview
+manages:
 
 - Multiple files simultaneously (point clouds, meshes, wireframes)
 - Individual transformation matrices per file
@@ -328,6 +329,6 @@ file associations:
    - `testfiles/stl/` for triangle mesh testing
    - `testfiles/ply/` for point cloud testing
    - `testfiles/np/` for depth-to-pointcloud conversion
-3. Right-click test files → "Open with PLY Visualizer"
+3. Right-click test files → "Open with 3D Visualizer"
 4. Verify 3D rendering and interaction controls
 5. Test edge cases and performance with large files in root directory

@@ -197,7 +197,7 @@ class PointCloudVisualizerAdvancedUtils {
     return header;
   }
 
-  static formatPlyVertex(vertex: {
+  static formatSpatialVertex(vertex: {
     x: number;
     y: number;
     z: number;
@@ -473,22 +473,22 @@ suite('Point Cloud Visualizer Advanced Test Suite', () => {
   test('Should format PLY vertices correctly', () => {
     // Basic vertex
     const basicVertex = { x: 1.5, y: 2.5, z: 3.5 };
-    const basicFormatted = PointCloudVisualizerAdvancedUtils.formatPlyVertex(basicVertex);
+    const basicFormatted = PointCloudVisualizerAdvancedUtils.formatSpatialVertex(basicVertex);
     assert.strictEqual(basicFormatted, '1.5 2.5 3.5');
 
     // Vertex with colors
     const colorVertex = { x: 1, y: 2, z: 3, red: 255, green: 128, blue: 0 };
-    const colorFormatted = PointCloudVisualizerAdvancedUtils.formatPlyVertex(colorVertex);
+    const colorFormatted = PointCloudVisualizerAdvancedUtils.formatSpatialVertex(colorVertex);
     assert.ok(colorFormatted.includes('255 128 0'));
 
     // Vertex with normals
     const normalVertex = { x: 1, y: 2, z: 3, nx: 0.5, ny: -0.5, nz: 0.707 };
-    const normalFormatted = PointCloudVisualizerAdvancedUtils.formatPlyVertex(normalVertex);
+    const normalFormatted = PointCloudVisualizerAdvancedUtils.formatSpatialVertex(normalVertex);
     assert.ok(normalFormatted.includes('0.5 -0.5 0.707'));
 
     // Vertex with everything
     const fullVertex = { x: 1, y: 2, z: 3, nx: 1, ny: 0, nz: 0, red: 255, green: 0, blue: 0 };
-    const fullFormatted = PointCloudVisualizerAdvancedUtils.formatPlyVertex(fullVertex);
+    const fullFormatted = PointCloudVisualizerAdvancedUtils.formatSpatialVertex(fullVertex);
     assert.ok(fullFormatted.includes('1 2 3'));
     assert.ok(fullFormatted.includes('1 0 0'));
     assert.ok(fullFormatted.includes('255 0 0'));

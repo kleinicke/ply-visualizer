@@ -2,7 +2,7 @@ import * as assert from 'assert';
 
 suite('Webview Integration Advanced Test Suite', () => {
   // Mock advanced webview components
-  class TestPLYVisualizer {
+  class TestSpatialVisualizer {
     private files: Map<string, any> = new Map();
     public camera: any = null;
     private scene: any = null;
@@ -241,10 +241,10 @@ suite('Webview Integration Advanced Test Suite', () => {
     }
   }
 
-  let visualizer: TestPLYVisualizer;
+  let visualizer: TestSpatialVisualizer;
 
   setup(() => {
-    visualizer = new TestPLYVisualizer();
+    visualizer = new TestSpatialVisualizer();
   });
 
   test('Should load multiple point cloud files simultaneously', async () => {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Generate test files in all formats supported by Open3D
-Creates point clouds and meshes for testing the PLY Visualizer extension
+Creates point clouds and meshes for testing the 3D Visualizer extension
 """
 
 import open3d as o3d

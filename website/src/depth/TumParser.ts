@@ -65,7 +65,7 @@ export class TumParser {
   }
 
   /**
-   * Convert to PLY Visualizer camera format
+   * Convert to 3D Visualizer camera format
    */
   static toCameraFormat(result: TumCalibrationResult): { cameras: Record<string, any> } {
     const cameras: Record<string, any> = {};

@@ -83,7 +83,7 @@ class MainGeometryMathUtils {
     return intersection.point.clone();
   }
 
-  // From createGeometryFromPlyData method - vertex processing
+  // From createGeometryFromSpatialData method - vertex processing
   static processVerticesForGeometry(
     vertices: Array<{
       x: number;

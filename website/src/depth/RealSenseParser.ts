@@ -136,7 +136,7 @@ export class RealSenseParser {
   }
 
   /**
-   * Convert to PLY Visualizer camera format
+   * Convert to 3D Visualizer camera format
    */
   static toCameraFormat(result: RealSenseCalibrationResult): { cameras: Record<string, any> } {
     return { cameras: result.cameras };

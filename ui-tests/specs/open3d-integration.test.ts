@@ -76,7 +76,7 @@ describe('Open3D File Format Integration Tests', function () {
 
       console.log(`📁 Found test file: ${format.file}`);
 
-      // 3. Right-click and select "Open with PLY Visualizer"
+      // 3. Right-click and select "Open with 3D Visualizer"
       await testFile.click(2); // Right click
       await driver.sleep(2000);
 
@@ -103,14 +103,14 @@ describe('Open3D File Format Integration Tests', function () {
         return;
       }
 
-      // Look for PLY Visualizer option
+      // Look for 3D Visualizer option
       const menuItems = await contextMenu.findElements(By.css('.action-item'));
       let visualizerOption = null;
 
       for (const item of menuItems) {
         try {
           const text = await item.getText();
-          if (text.includes('PLY Visualizer') || text.includes('Open with PLY Visualizer')) {
+          if (text.includes('3D Visualizer') || text.includes('Open with 3D Visualizer')) {
             visualizerOption = item;
             console.log(`📋 Found context menu option: ${text}`);
             break;
@@ -121,12 +121,12 @@ describe('Open3D File Format Integration Tests', function () {
       }
 
       if (!visualizerOption) {
-        throw new Error(`PLY Visualizer option not found in context menu for ${format.ext} files`);
+        throw new Error(`3D Visualizer option not found in context menu for ${format.ext} files`);
       }
 
-      // 4. Click the option to open with PLY Visualizer
+      // 4. Click the option to open with 3D Visualizer
       await visualizerOption.click();
-      console.log(`🖱️  Clicked "Open with PLY Visualizer" for ${format.ext}`);
+      console.log(`🖱️  Clicked "Open with 3D Visualizer" for ${format.ext}`);
 
       // 5. Wait for the custom editor to load
       await driver.sleep(10000); // Give extra time for parsing and rendering
@@ -242,7 +242,9 @@ describe('Open3D File Format Integration Tests', function () {
       const testfilesFolder = await explorer.findItem('testfiles');
       const open3dFolder = await testfilesFolder?.findChildItem('open3d');
 
-      if (!open3dFolder) {continue;}
+      if (!open3dFolder) {
+        continue;
+      }
       await open3dFolder.expand();
 
       const testFile = await open3dFolder.findChildItem(fileName);

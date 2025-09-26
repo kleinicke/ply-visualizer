@@ -1,4 +1,4 @@
-import { PlyData, PlyVertex } from './plyParser';
+import { SpatialData, SpatialVertex } from './plyParser';
 
 /**
  * NPY Parser for point cloud data (arrays ending with dimension 3 containing XYZ coordinates)
@@ -100,7 +100,7 @@ export function isNpyPointCloudData(arrayBuffer: ArrayBuffer): boolean {
 }
 
 export class NpyParser {
-  async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<PlyData> {
+  async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<SpatialData> {
     const parseStartTime = performance.now();
     const log = timingCallback || console.log;
     log(`📋 Parser: Starting NPY point cloud parsing (${data.length} bytes)...`);
@@ -239,7 +239,7 @@ export class NpyParser {
     }
 
     // Convert raw data to vertices
-    const vertices: PlyVertex[] = [];
+    const vertices: SpatialVertex[] = [];
     for (let i = 0; i < numPoints; i++) {
       const idx = i * 3;
       vertices.push({
@@ -254,7 +254,7 @@ export class NpyParser {
       `✅ Parser: NPY point cloud parsing completed in ${(parseEndTime - parseStartTime).toFixed(2)}ms`
     );
 
-    const result: PlyData = {
+    const result: SpatialData = {
       vertices,
       faces: [],
       format: 'ascii', // NPY is technically binary but we'll call it ascii for consistency

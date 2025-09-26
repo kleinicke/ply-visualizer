@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Create test PNG depth images for testing the PLY Visualizer PNG depth support.
+Create test PNG depth images for testing the 3D Visualizer PNG depth support.
 """
 
 import numpy as np
@@ -72,7 +72,7 @@ def create_test_depth_png():
     print(f"Created depth PNG with invalid pixels (0 values)")
     
     print(f"\nTest PNG files created in {output_dir}/")
-    print("Use these files to test PNG depth support in PLY Visualizer:")
+    print("Use these files to test PNG depth support in 3D Visualizer:")
     print("- test_depth_16bit_mm.png: 16-bit depth in millimeters")
     print("- test_disparity_256.png: Disparity values (divide by 256)")
     print("- test_depth_meters_1000.png: Depth in meters (divide by 1000)")

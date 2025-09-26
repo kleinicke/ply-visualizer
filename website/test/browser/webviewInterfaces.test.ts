@@ -1,16 +1,16 @@
 import * as assert from 'assert';
 import {
-  PlyVertex,
-  PlyFace,
-  PlyData,
+  SpatialVertex,
+  SpatialFace,
+  SpatialData,
   CameraParams,
   DepthConversionResult,
 } from '../../src/interfaces';
 
 suite('Webview Interfaces', () => {
-  suite('PlyVertex', () => {
-    test('should create PlyVertex with required coordinates', () => {
-      const vertex: PlyVertex = {
+  suite('SpatialVertex', () => {
+    test('should create SpatialVertex with required coordinates', () => {
+      const vertex: SpatialVertex = {
         x: 1.5,
         y: 2.5,
         z: 3.5,
@@ -21,8 +21,8 @@ suite('Webview Interfaces', () => {
       assert.strictEqual(vertex.z, 3.5);
     });
 
-    test('should create PlyVertex with optional color properties', () => {
-      const vertex: PlyVertex = {
+    test('should create SpatialVertex with optional color properties', () => {
+      const vertex: SpatialVertex = {
         x: 1.0,
         y: 2.0,
         z: 3.0,
@@ -38,8 +38,8 @@ suite('Webview Interfaces', () => {
       assert.strictEqual(vertex.alpha, 200);
     });
 
-    test('should create PlyVertex with optional normal properties', () => {
-      const vertex: PlyVertex = {
+    test('should create SpatialVertex with optional normal properties', () => {
+      const vertex: SpatialVertex = {
         x: 1.0,
         y: 2.0,
         z: 3.0,
@@ -53,8 +53,8 @@ suite('Webview Interfaces', () => {
       assert.strictEqual(vertex.nz, 0.0);
     });
 
-    test('should create PlyVertex with all optional properties', () => {
-      const vertex: PlyVertex = {
+    test('should create SpatialVertex with all optional properties', () => {
+      const vertex: SpatialVertex = {
         x: 1.0,
         y: 2.0,
         z: 3.0,
@@ -80,9 +80,9 @@ suite('Webview Interfaces', () => {
     });
   });
 
-  suite('PlyFace', () => {
-    test('should create PlyFace with triangle indices', () => {
-      const face: PlyFace = {
+  suite('SpatialFace', () => {
+    test('should create SpatialFace with triangle indices', () => {
+      const face: SpatialFace = {
         indices: [0, 1, 2],
       };
 
@@ -90,8 +90,8 @@ suite('Webview Interfaces', () => {
       assert.strictEqual(face.indices.length, 3);
     });
 
-    test('should create PlyFace with quad indices', () => {
-      const face: PlyFace = {
+    test('should create SpatialFace with quad indices', () => {
+      const face: SpatialFace = {
         indices: [0, 1, 2, 3],
       };
 
@@ -99,8 +99,8 @@ suite('Webview Interfaces', () => {
       assert.strictEqual(face.indices.length, 4);
     });
 
-    test('should create PlyFace with polygon indices', () => {
-      const face: PlyFace = {
+    test('should create SpatialFace with polygon indices', () => {
+      const face: SpatialFace = {
         indices: [0, 1, 2, 3, 4, 5],
       };
 
@@ -109,7 +109,7 @@ suite('Webview Interfaces', () => {
     });
 
     test('should handle empty face indices', () => {
-      const face: PlyFace = {
+      const face: SpatialFace = {
         indices: [],
       };
 
@@ -118,9 +118,9 @@ suite('Webview Interfaces', () => {
     });
   });
 
-  suite('PlyData', () => {
-    test('should create minimal PlyData structure', () => {
-      const plyData: PlyData = {
+  suite('SpatialData', () => {
+    test('should create minimal SpatialData structure', () => {
+      const spatialData: SpatialData = {
         vertices: [],
         faces: [],
         format: 'ascii',
@@ -132,19 +132,19 @@ suite('Webview Interfaces', () => {
         hasNormals: false,
       };
 
-      assert.deepStrictEqual(plyData.vertices, []);
-      assert.deepStrictEqual(plyData.faces, []);
-      assert.strictEqual(plyData.format, 'ascii');
-      assert.strictEqual(plyData.version, '1.0');
-      assert.deepStrictEqual(plyData.comments, []);
-      assert.strictEqual(plyData.vertexCount, 0);
-      assert.strictEqual(plyData.faceCount, 0);
-      assert.strictEqual(plyData.hasColors, false);
-      assert.strictEqual(plyData.hasNormals, false);
+      assert.deepStrictEqual(spatialData.vertices, []);
+      assert.deepStrictEqual(spatialData.faces, []);
+      assert.strictEqual(spatialData.format, 'ascii');
+      assert.strictEqual(spatialData.version, '1.0');
+      assert.deepStrictEqual(spatialData.comments, []);
+      assert.strictEqual(spatialData.vertexCount, 0);
+      assert.strictEqual(spatialData.faceCount, 0);
+      assert.strictEqual(spatialData.hasColors, false);
+      assert.strictEqual(spatialData.hasNormals, false);
     });
 
-    test('should create PlyData with binary little endian format', () => {
-      const plyData: PlyData = {
+    test('should create SpatialData with binary little endian format', () => {
+      const spatialData: SpatialData = {
         vertices: [{ x: 1, y: 2, z: 3 }],
         faces: [{ indices: [0, 1, 2] }],
         format: 'binary_little_endian',
@@ -156,14 +156,14 @@ suite('Webview Interfaces', () => {
         hasNormals: true,
       };
 
-      assert.strictEqual(plyData.format, 'binary_little_endian');
-      assert.strictEqual(plyData.hasColors, true);
-      assert.strictEqual(plyData.hasNormals, true);
-      assert.deepStrictEqual(plyData.comments, ['Test comment']);
+      assert.strictEqual(spatialData.format, 'binary_little_endian');
+      assert.strictEqual(spatialData.hasColors, true);
+      assert.strictEqual(spatialData.hasNormals, true);
+      assert.deepStrictEqual(spatialData.comments, ['Test comment']);
     });
 
-    test('should create PlyData with binary big endian format', () => {
-      const plyData: PlyData = {
+    test('should create SpatialData with binary big endian format', () => {
+      const spatialData: SpatialData = {
         vertices: [],
         faces: [],
         format: 'binary_big_endian',
@@ -175,11 +175,11 @@ suite('Webview Interfaces', () => {
         hasNormals: false,
       };
 
-      assert.strictEqual(plyData.format, 'binary_big_endian');
+      assert.strictEqual(spatialData.format, 'binary_big_endian');
     });
 
-    test('should create PlyData with optional fileName and fileIndex', () => {
-      const plyData: PlyData = {
+    test('should create SpatialData with optional fileName and fileIndex', () => {
+      const spatialData: SpatialData = {
         vertices: [],
         faces: [],
         format: 'ascii',
@@ -193,19 +193,19 @@ suite('Webview Interfaces', () => {
         fileIndex: 1,
       };
 
-      assert.strictEqual(plyData.fileName, 'test.ply');
-      assert.strictEqual(plyData.fileIndex, 1);
+      assert.strictEqual(spatialData.fileName, 'test.ply');
+      assert.strictEqual(spatialData.fileIndex, 1);
     });
 
     test('should validate vertex and face data consistency', () => {
-      const vertices: PlyVertex[] = [
+      const vertices: SpatialVertex[] = [
         { x: 0, y: 0, z: 0 },
         { x: 1, y: 0, z: 0 },
         { x: 0, y: 1, z: 0 },
       ];
-      const faces: PlyFace[] = [{ indices: [0, 1, 2] }];
+      const faces: SpatialFace[] = [{ indices: [0, 1, 2] }];
 
-      const plyData: PlyData = {
+      const spatialData: SpatialData = {
         vertices,
         faces,
         format: 'ascii',
@@ -217,8 +217,8 @@ suite('Webview Interfaces', () => {
         hasNormals: false,
       };
 
-      assert.strictEqual(plyData.vertices.length, plyData.vertexCount);
-      assert.strictEqual(plyData.faces.length, plyData.faceCount);
+      assert.strictEqual(spatialData.vertices.length, spatialData.vertexCount);
+      assert.strictEqual(spatialData.faces.length, spatialData.faceCount);
     });
   });
 

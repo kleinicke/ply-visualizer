@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { PlyVertex, PlyFace, PlyData, CameraParams, DepthConversionResult } from './interfaces';
+import {
+  SpatialVertex,
+  SpatialFace,
+  SpatialData,
+  CameraParams,
+  DepthConversionResult,
+} from './interfaces';
 import { CameraModel, DepthMetadata } from './depth/types';
 import { CalibTxtParser } from './depth/CalibTxtParser';
 import { YamlCalibrationParser } from './depth/YamlCalibrationParser';
@@ -94,7 +100,7 @@ class PointCloudVisualizer {
   private lastScalingUpdate: number = 0;
 
   // Unified file management
-  private plyFiles: PlyData[] = [];
+  private spatialFiles: SpatialData[] = [];
   private meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
   private normalsVisualizers: (THREE.LineSegments | null)[] = [];
   private vertexPointsObjects: (THREE.Points | null)[] = []; // Vertex points for triangle meshes
@@ -201,10 +207,10 @@ class PointCloudVisualizer {
       totalVertices: number;
       totalChunks: number;
       receivedChunks: number;
-      vertices: PlyVertex[];
+      vertices: SpatialVertex[];
       hasColors: boolean;
       hasNormals: boolean;
-      faces: PlyFace[];
+      faces: SpatialFace[];
       format: string;
       comments: string[];
       messageType: string;
@@ -767,7 +773,7 @@ class PointCloudVisualizer {
       }
     } catch (error) {
       this.showError(
-        `Failed to initialize PLY Visualizer: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to initialize 3D Visualizer: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
@@ -1276,10 +1282,10 @@ class PointCloudVisualizer {
   private rebuildAllColorAttributesForCurrentGammaSetting(): void {
     // Update colors for all meshes based on current convertSrgbToLinear flag
     try {
-      for (let i = 0; i < this.plyFiles.length && i < this.meshes.length; i++) {
-        const plyData = this.plyFiles[i];
+      for (let i = 0; i < this.spatialFiles.length && i < this.meshes.length; i++) {
+        const spatialData = this.spatialFiles[i];
         const mesh = this.meshes[i];
-        if (!mesh || !plyData || !plyData.hasColors) {
+        if (!mesh || !spatialData || !spatialData.hasColors) {
           continue;
         }
         const geometry = mesh.geometry as THREE.BufferGeometry;
@@ -1293,7 +1299,7 @@ class PointCloudVisualizer {
         let filled = false;
 
         // Prefer original byte colors when available (typed arrays path)
-        const typedColors: Uint8Array | null = (plyData as any).colorsArray || null;
+        const typedColors: Uint8Array | null = (spatialData as any).colorsArray || null;
         if (typedColors && typedColors.length === colorsFloat.length) {
           if (this.convertSrgbToLinear) {
             this.ensureSrgbLUT();
@@ -1310,10 +1316,10 @@ class PointCloudVisualizer {
         }
 
         // Fallback: derive from per-vertex properties if present
-        if (!filled && Array.isArray((plyData as any).vertices)) {
-          const verts: any[] = (plyData as any).vertices;
+        if (!filled && Array.isArray((spatialData as any).vertices)) {
+          const verts: any[] = (spatialData as any).vertices;
           const count = Math.min(vertexCount, verts.length);
-          const isDepthDerived = (plyData as any).isDepthDerived;
+          const isDepthDerived = (spatialData as any).isDepthDerived;
 
           // Depth-derived colors are already linear, so don't apply gamma correction
           if (isDepthDerived) {
@@ -1728,7 +1734,7 @@ class PointCloudVisualizer {
     }
 
     // Handle poses
-    const poseIndex = fileIndex - this.plyFiles.length;
+    const poseIndex = fileIndex - this.spatialFiles.length;
     if (poseIndex >= 0 && poseIndex < this.poseGroups.length) {
       const group = this.poseGroups[poseIndex];
       if (group) {
@@ -1739,7 +1745,7 @@ class PointCloudVisualizer {
     }
 
     // Handle cameras
-    const cameraIndex = fileIndex - this.plyFiles.length - this.poseGroups.length;
+    const cameraIndex = fileIndex - this.spatialFiles.length - this.poseGroups.length;
     if (cameraIndex >= 0 && cameraIndex < this.cameraGroups.length) {
       const group = this.cameraGroups[cameraIndex];
       if (group) {
@@ -2284,7 +2290,7 @@ class PointCloudVisualizer {
     }, 2000);
   }
 
-  private createGeometryFromPlyData(data: PlyData): THREE.BufferGeometry {
+  private createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
 
     const startTime = performance.now();
@@ -2800,7 +2806,7 @@ class PointCloudVisualizer {
       this.scene.remove(obj);
     }
     this.meshes = [];
-    this.plyFiles = [];
+    this.spatialFiles = [];
     // Load first frame
     if (files.length > 0) {
       this.loadSequenceFrame(0);
@@ -2870,7 +2876,7 @@ class PointCloudVisualizer {
 
   private async sequenceHandleUltimate(message: any): Promise<void> {
     const plyMsg = { ...message, type: 'ultimateRawBinaryData', messageType: 'addFiles' };
-    const startFilesLen = this.plyFiles.length;
+    const startFilesLen = this.spatialFiles.length;
     await this.handleUltimateRawBinaryData(plyMsg);
     const created = this.meshes[this.meshes.length - 1];
     if (created) {
@@ -2884,7 +2890,7 @@ class PointCloudVisualizer {
   }
 
   private async sequenceHandlePly(message: any): Promise<void> {
-    const startFilesLen = this.plyFiles.length;
+    const startFilesLen = this.spatialFiles.length;
     await this.displayFiles([message.data]);
     const created = this.meshes[this.meshes.length - 1];
     if (created) {
@@ -2898,7 +2904,7 @@ class PointCloudVisualizer {
   }
 
   private async sequenceHandleXyz(message: any): Promise<void> {
-    const startFilesLen = this.plyFiles.length;
+    const startFilesLen = this.spatialFiles.length;
     await this.handleXyzData({
       type: 'xyzData',
       fileName: message.fileName,
@@ -2917,7 +2923,7 @@ class PointCloudVisualizer {
   }
 
   private async sequenceHandleObj(message: any): Promise<void> {
-    const startFilesLen = this.plyFiles.length;
+    const startFilesLen = this.spatialFiles.length;
     await this.handleObjData({
       type: 'objData',
       fileName: message.fileName,
@@ -2936,7 +2942,7 @@ class PointCloudVisualizer {
   }
 
   private async sequenceHandleStl(message: any): Promise<void> {
-    const startFilesLen = this.plyFiles.length;
+    const startFilesLen = this.spatialFiles.length;
     await this.handleStlData({
       type: 'stlData',
       fileName: message.fileName,
@@ -2955,7 +2961,7 @@ class PointCloudVisualizer {
   }
 
   private async sequenceHandleDepth(message: any): Promise<void> {
-    const startFilesLen = this.plyFiles.length;
+    const startFilesLen = this.spatialFiles.length;
     await this.handleDepthData({
       type: 'depthData',
       fileName: message.fileName,
@@ -2970,8 +2976,8 @@ class PointCloudVisualizer {
   }
 
   private trimNormalModeArraysFrom(startIndex: number): void {
-    if (this.plyFiles.length > startIndex) {
-      this.plyFiles.splice(startIndex);
+    if (this.spatialFiles.length > startIndex) {
+      this.spatialFiles.splice(startIndex);
     }
     if (this.multiMaterialGroups.length > startIndex) {
       this.multiMaterialGroups.splice(startIndex);
@@ -3248,8 +3254,8 @@ class PointCloudVisualizer {
   }
 
   private rebuildAllPlyMaterials(): void {
-    for (let i = 0; i < this.meshes.length && i < this.plyFiles.length; i++) {
-      const data = this.plyFiles[i];
+    for (let i = 0; i < this.meshes.length && i < this.spatialFiles.length; i++) {
+      const data = this.spatialFiles[i];
       const mesh = this.meshes[i];
       if (!data || !mesh) {
         continue;
@@ -3614,8 +3620,8 @@ class PointCloudVisualizer {
         case 'loadingError':
           this.showError(`Failed to load PLY file: ${message.error}`);
           break;
-        case 'plyData':
-        case 'multiPlyData':
+        case 'spatialData':
+        case 'multiSpatialData':
           try {
             // Both single and multi-file data are handled the same way now
             const dataArray = Array.isArray(message.data) ? message.data : [message.data];
@@ -3650,9 +3656,9 @@ class PointCloudVisualizer {
             );
           }
           break;
-        case 'binaryPlyData':
+        case 'binarySpatialData':
           try {
-            await this.handleBinaryPlyData(message);
+            await this.handleBinarySpatialData(message);
           } catch (error) {
             console.error('Error handling binary PLY data:', error);
             this.showError(
@@ -3759,7 +3765,7 @@ class PointCloudVisualizer {
           this.handleCameraParamsError(message.error, message.requestId);
           break;
         case 'savePlyFileResult':
-          this.handleSavePlyFileResult(message);
+          this.handleSaveSpatialFileResult(message);
           break;
         case 'colorImageData':
           this.handleColorImageData(message);
@@ -4002,9 +4008,9 @@ class PointCloudVisualizer {
         }
       });
 
-      const plyDataArray: PlyData[] = [];
+      const spatialDataArray: SpatialData[] = [];
       // Remember starting index to map newly added files
-      const baseIndexStart = this.plyFiles.length;
+      const baseIndexStart = this.spatialFiles.length;
       // Track depth metadata to populate fileDepthData after display
       const depthMetaRecords: Array<{
         localIndex: number;
@@ -4029,9 +4035,9 @@ class PointCloudVisualizer {
           },
         });
 
-        // Convert parse results to PlyData format
+        // Convert parse results to SpatialData format
         parseResults.forEach(result => {
-          plyDataArray.push(result.data as PlyData);
+          spatialDataArray.push(result.data as SpatialData);
         });
       }
 
@@ -4058,15 +4064,15 @@ class PointCloudVisualizer {
             depthScale: params.depthScale,
             depthBias: params.depthBias,
           });
-          const data = parse.data as PlyData;
+          const data = parse.data as SpatialData;
           (data as any).isDepthDerived = true;
           // Record dimensions if provided
           const dims = (parse.data as any).depthDimensions;
           if (dims) {
             (data as any).depthDimensions = dims;
           }
-          const localIndex = plyDataArray.length;
-          plyDataArray.push(data);
+          const localIndex = spatialDataArray.length;
+          spatialDataArray.push(data);
           depthMetaRecords.push({
             localIndex,
             fileName: depthFile.name,
@@ -4108,8 +4114,8 @@ class PointCloudVisualizer {
         }
       }
 
-      if (plyDataArray.length > 0) {
-        await this.displayFiles(plyDataArray);
+      if (spatialDataArray.length > 0) {
+        await this.displayFiles(spatialDataArray);
 
         // Populate fileDepthData for newly added depth-derived files
         for (const rec of depthMetaRecords) {
@@ -4136,7 +4142,7 @@ class PointCloudVisualizer {
 
   // # VSCode changes: the functions above are used in the browser and were not used for the extension
 
-  private async displayFiles(dataArray: PlyData[]): Promise<void> {
+  private async displayFiles(dataArray: SpatialData[]): Promise<void> {
     // concise summary printed separately
     // In sequence mode: do not auto-fit camera or heavy UI work
     if (this.sequenceMode) {
@@ -4182,7 +4188,7 @@ class PointCloudVisualizer {
     return new Promise(resolve => setTimeout(resolve, 0));
   }
 
-  private createMaterialForFile(data: PlyData, fileIndex: number): THREE.Material {
+  private createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material {
     const colorMode = this.individualColorModes[fileIndex] || 'assigned';
 
     if (data.faceCount > 0) {
@@ -4346,7 +4352,7 @@ class PointCloudVisualizer {
     }
 
     if (
-      this.plyFiles.length === 0 &&
+      this.spatialFiles.length === 0 &&
       this.poseGroups.length === 0 &&
       this.cameraGroups.length === 0
     ) {
@@ -4360,11 +4366,11 @@ class PointCloudVisualizer {
     }
 
     if (
-      this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length === 1 &&
-      this.plyFiles.length === 1
+      this.spatialFiles.length + this.poseGroups.length + this.cameraGroups.length === 1 &&
+      this.spatialFiles.length === 1
     ) {
       // Single file view
-      const data = this.plyFiles[0];
+      const data = this.spatialFiles[0];
       const renderingMode = data.faceCount === 0 ? 'Points' : 'Mesh';
       statsDiv.innerHTML = `
                 <div><strong>Vertices:</strong> ${data.vertexCount.toLocaleString()}</div>
@@ -4377,18 +4383,19 @@ class PointCloudVisualizer {
             `;
     } else {
       // Multiple files view
-      const totalVertices = this.plyFiles.reduce(
-        (sum: number, data: PlyData) => sum + data.vertexCount,
+      const totalVertices = this.spatialFiles.reduce(
+        (sum: number, data: SpatialData) => sum + data.vertexCount,
         0
       );
-      const totalFaces = this.plyFiles.reduce(
-        (sum: number, data: PlyData) => sum + data.faceCount,
+      const totalFaces = this.spatialFiles.reduce(
+        (sum: number, data: SpatialData) => sum + data.faceCount,
         0
       );
-      const totalObjects = this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length;
+      const totalObjects =
+        this.spatialFiles.length + this.poseGroups.length + this.cameraGroups.length;
 
       statsDiv.innerHTML = `
-                <div><strong>Total Objects:</strong> ${totalObjects} (Pointclouds: ${this.plyFiles.length}, Poses: ${this.poseGroups.length}, Cameras: ${this.cameraGroups.length})</div>
+                <div><strong>Total Objects:</strong> ${totalObjects} (Pointclouds: ${this.spatialFiles.length}, Poses: ${this.poseGroups.length}, Cameras: ${this.cameraGroups.length})</div>
                 <div><strong>Total Vertices:</strong> ${totalVertices.toLocaleString()}</div>
                 <div><strong>Total Faces:</strong> ${totalFaces.toLocaleString()}</div>
             `;
@@ -4406,7 +4413,7 @@ class PointCloudVisualizer {
     }
 
     if (
-      this.plyFiles.length === 0 &&
+      this.spatialFiles.length === 0 &&
       this.poseGroups.length === 0 &&
       this.cameraGroups.length === 0
     ) {
@@ -4436,8 +4443,8 @@ class PointCloudVisualizer {
     }
 
     // Render point clouds and meshes
-    for (let i = 0; i < this.plyFiles.length; i++) {
-      const data = this.plyFiles[i];
+    for (let i = 0; i < this.spatialFiles.length; i++) {
+      const data = this.spatialFiles[i];
 
       // Color indicator
       let colorIndicator = '';
@@ -4878,7 +4885,7 @@ class PointCloudVisualizer {
     }
 
     // Render pose entries appended after point clouds
-    const baseIndex = this.plyFiles.length;
+    const baseIndex = this.spatialFiles.length;
     for (let p = 0; p < this.poseGroups.length; p++) {
       const i = baseIndex + p;
       const meta = this.poseMeta[p];
@@ -4997,7 +5004,7 @@ class PointCloudVisualizer {
 
     // Render camera profiles (like poses)
     for (let c = 0; c < this.cameraGroups.length; c++) {
-      const i = this.plyFiles.length + this.poseGroups.length + c; // Unified index
+      const i = this.spatialFiles.length + this.poseGroups.length + c; // Unified index
       const cameraProfileName = this.cameraNames[c];
       const color = this.fileColors[i % this.fileColors.length];
       const colorHex = `#${Math.round(color[0] * 255)
@@ -5076,7 +5083,8 @@ class PointCloudVisualizer {
     fileListDiv.innerHTML = html;
 
     // Add event listeners after setting innerHTML
-    const totalEntries = this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length;
+    const totalEntries =
+      this.spatialFiles.length + this.poseGroups.length + this.cameraGroups.length;
     for (let i = 0; i < totalEntries; i++) {
       const checkbox = document.getElementById(`file-${i}`);
       if (checkbox) {
@@ -5338,7 +5346,7 @@ class PointCloudVisualizer {
       const cameraLabelCb = document.getElementById(`camera-show-labels-${i}`) as HTMLInputElement;
       if (cameraLabelCb) {
         cameraLabelCb.addEventListener('change', () => {
-          const cameraProfileIndex = i - this.plyFiles.length - this.poseGroups.length;
+          const cameraProfileIndex = i - this.spatialFiles.length - this.poseGroups.length;
           this.toggleCameraProfileLabels(cameraProfileIndex, cameraLabelCb.checked);
         });
       }
@@ -5346,16 +5354,17 @@ class PointCloudVisualizer {
       const cameraCoordsCb = document.getElementById(`camera-show-coords-${i}`) as HTMLInputElement;
       if (cameraCoordsCb) {
         cameraCoordsCb.addEventListener('change', () => {
-          const cameraProfileIndex = i - this.plyFiles.length - this.poseGroups.length;
+          const cameraProfileIndex = i - this.spatialFiles.length - this.poseGroups.length;
           this.toggleCameraProfileCoordinates(cameraProfileIndex, cameraCoordsCb.checked);
         });
       }
 
       // Add size slider listeners for point clouds and OBJ files
       const sizeSlider = document.getElementById(`size-${i}`) as HTMLInputElement;
-      const isPose = i >= this.plyFiles.length && i < this.plyFiles.length + this.poseGroups.length;
-      const isCamera = i >= this.plyFiles.length + this.poseGroups.length;
-      const isObjFile = !isPose && !isCamera && (this.plyFiles[i] as any).isObjFile;
+      const isPose =
+        i >= this.spatialFiles.length && i < this.spatialFiles.length + this.poseGroups.length;
+      const isCamera = i >= this.spatialFiles.length + this.poseGroups.length;
+      const isObjFile = !isPose && !isCamera && (this.spatialFiles[i] as any).isObjFile;
       if (sizeSlider) {
         sizeSlider.addEventListener('input', e => {
           const newSize = parseFloat((e.target as HTMLInputElement).value);
@@ -5383,10 +5392,10 @@ class PointCloudVisualizer {
         colorSelector.addEventListener('change', () => {
           const value = colorSelector.value;
           this.individualColorModes[i] = value;
-          const isPose = i >= this.plyFiles.length;
+          const isPose = i >= this.spatialFiles.length;
           if (isPose) {
             // Update pose group material color
-            const poseIndex = i - this.plyFiles.length;
+            const poseIndex = i - this.spatialFiles.length;
             const group = this.poseGroups[poseIndex];
             if (group) {
               const colorIdx = value === 'assigned' ? i % this.fileColors.length : parseInt(value);
@@ -5408,7 +5417,7 @@ class PointCloudVisualizer {
           } else if (i < this.meshes.length) {
             // Recreate material for point clouds/OBJ
             const oldMaterial = this.meshes[i].material as any;
-            const newMaterial = this.createMaterialForFile(this.plyFiles[i], i);
+            const newMaterial = this.createMaterialForFile(this.spatialFiles[i], i);
             (this.meshes[i] as any).material = newMaterial;
             if (oldMaterial) {
               if (Array.isArray(oldMaterial)) {
@@ -5423,8 +5432,9 @@ class PointCloudVisualizer {
 
       // Depth settings toggle and controls
       if (
-        this.plyFiles[i] &&
-        (this.isDepthDerivedFile(this.plyFiles[i]) || (this.plyFiles[i] as any).isDepthDerived)
+        this.spatialFiles[i] &&
+        (this.isDepthDerivedFile(this.spatialFiles[i]) ||
+          (this.spatialFiles[i] as any).isDepthDerived)
       ) {
         const depthToggleBtn = document.querySelector(
           `.depth-settings-toggle[data-file-index="${i}"]`
@@ -5828,7 +5838,7 @@ class PointCloudVisualizer {
       return;
     }
     // Pose entries are appended after meshes
-    const poseIndex = fileIndex - this.plyFiles.length;
+    const poseIndex = fileIndex - this.spatialFiles.length;
     if (poseIndex >= 0 && poseIndex < this.poseGroups.length) {
       const group = this.poseGroups[poseIndex];
       if (group) {
@@ -5842,7 +5852,7 @@ class PointCloudVisualizer {
     }
 
     // Camera entries are appended after poses
-    const cameraIndex = fileIndex - this.plyFiles.length - this.poseGroups.length;
+    const cameraIndex = fileIndex - this.spatialFiles.length - this.poseGroups.length;
     if (cameraIndex >= 0 && cameraIndex < this.cameraGroups.length) {
       const group = this.cameraGroups[cameraIndex];
       if (group) {
@@ -5857,12 +5867,14 @@ class PointCloudVisualizer {
    */
   private toggleUniversalRenderMode(fileIndex: number, mode: string): void {
     console.log(`🔄 toggleUniversalRenderMode called: fileIndex=${fileIndex}, mode=${mode}`);
-    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
-      console.log(`❌ Invalid fileIndex: ${fileIndex}, plyFiles.length=${this.plyFiles.length}`);
+    if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
+      console.log(
+        `❌ Invalid fileIndex: ${fileIndex}, spatialFiles.length=${this.spatialFiles.length}`
+      );
       return;
     }
 
-    const data = this.plyFiles[fileIndex];
+    const data = this.spatialFiles[fileIndex];
     console.log(`📋 File data:`, data?.fileName);
 
     switch (mode) {
@@ -5886,13 +5898,13 @@ class PointCloudVisualizer {
   }
 
   private toggleSolidRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+    if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
       return;
     }
 
     // Ensure array is properly sized with default values
     while (this.solidVisible.length <= fileIndex) {
-      const data = this.plyFiles[this.solidVisible.length];
+      const data = this.spatialFiles[this.solidVisible.length];
       const defaultValue = data && data.faceCount > 0; // Default true for meshes, false for point clouds
       this.solidVisible.push(defaultValue);
     }
@@ -5906,7 +5918,7 @@ class PointCloudVisualizer {
   }
 
   private toggleWireframeRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+    if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
       return;
     }
 
@@ -5924,13 +5936,13 @@ class PointCloudVisualizer {
   }
 
   private togglePointsRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+    if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
       return;
     }
 
     // Ensure array is properly sized with default values
     while (this.pointsVisible.length <= fileIndex) {
-      const data = this.plyFiles[this.pointsVisible.length];
+      const data = this.spatialFiles[this.pointsVisible.length];
       const defaultValue = !data || data.faceCount === 0; // Default true for point clouds, false for meshes
       this.pointsVisible.push(defaultValue);
     }
@@ -6137,7 +6149,7 @@ class PointCloudVisualizer {
   }
 
   private toggleNormalsRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+    if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
       return;
     }
 
@@ -6158,40 +6170,40 @@ class PointCloudVisualizer {
 
     if (!normalsVisualizer && this.normalsVisible[fileIndex]) {
       // Try to create normals visualizer
-      const plyData = this.plyFiles[fileIndex];
+      const spatialData = this.spatialFiles[fileIndex];
       const mesh = this.meshes[fileIndex];
 
       console.log(
-        `Creating normals for file ${fileIndex}: hasNormals=${plyData?.hasNormals}, faceCount=${plyData?.faceCount}, meshType=${mesh?.type}`
+        `Creating normals for file ${fileIndex}: hasNormals=${spatialData?.hasNormals}, faceCount=${spatialData?.faceCount}, meshType=${mesh?.type}`
       );
 
-      if (plyData && mesh) {
+      if (spatialData && mesh) {
         // Try to create normals visualizer in multiple ways:
 
         // 1. For PLY point clouds, try to use original normals data first
-        if (plyData.fileName?.toLowerCase().endsWith('.ply') && mesh.type === 'Points') {
-          if (plyData.hasNormals && plyData.vertices.length > 0) {
-            normalsVisualizer = this.createNormalsVisualizer(plyData);
+        if (spatialData.fileName?.toLowerCase().endsWith('.ply') && mesh.type === 'Points') {
+          if (spatialData.hasNormals && spatialData.vertices.length > 0) {
+            normalsVisualizer = this.createNormalsVisualizer(spatialData);
           } else {
             // Try to extract normals from Points geometry
-            normalsVisualizer = this.createPointCloudNormalsVisualizer(plyData, mesh);
+            normalsVisualizer = this.createPointCloudNormalsVisualizer(spatialData, mesh);
           }
         }
         // 2. For PLY triangle meshes, use computed normals from mesh geometry
-        else if (plyData.fileName?.toLowerCase().endsWith('.ply')) {
-          normalsVisualizer = this.createComputedNormalsVisualizer(plyData, mesh);
+        else if (spatialData.fileName?.toLowerCase().endsWith('.ply')) {
+          normalsVisualizer = this.createComputedNormalsVisualizer(spatialData, mesh);
         }
         // 3. If PLY data has explicit normals and populated vertices array
-        else if (plyData.hasNormals && plyData.vertices.length > 0) {
-          normalsVisualizer = this.createNormalsVisualizer(plyData);
+        else if (spatialData.hasNormals && spatialData.vertices.length > 0) {
+          normalsVisualizer = this.createNormalsVisualizer(spatialData);
         }
         // 4. If it's a triangle mesh, compute from geometry
         else if (mesh.type !== 'Points') {
-          normalsVisualizer = this.createComputedNormalsVisualizer(plyData, mesh);
+          normalsVisualizer = this.createComputedNormalsVisualizer(spatialData, mesh);
         }
         // 5. Fallback: try any available data
-        else if (plyData.faceCount > 0) {
-          normalsVisualizer = this.createComputedNormalsVisualizer(plyData, mesh);
+        else if (spatialData.faceCount > 0) {
+          normalsVisualizer = this.createComputedNormalsVisualizer(spatialData, mesh);
         }
 
         if (normalsVisualizer) {
@@ -6419,13 +6431,13 @@ class PointCloudVisualizer {
     });
   }
 
-  private addNewFiles(newFiles: PlyData[]): void {
+  private addNewFiles(newFiles: SpatialData[]): void {
     for (const data of newFiles) {
       // Assign new file index
-      data.fileIndex = this.plyFiles.length;
+      data.fileIndex = this.spatialFiles.length;
 
       // Add to data array
-      this.plyFiles.push(data);
+      this.spatialFiles.push(data);
 
       // Initialize visibility states based on file type
       const isObjFile = (data as any).isObjFile;
@@ -6463,7 +6475,7 @@ class PointCloudVisualizer {
       // debug
 
       // Create geometry and material
-      const geometry = this.createGeometryFromPlyData(data);
+      const geometry = this.createGeometryFromSpatialData(data);
       const material = this.createMaterialForFile(data, data.fileIndex);
 
       // Check if this is an OBJ file and handle different rendering modes
@@ -6760,7 +6772,7 @@ class PointCloudVisualizer {
     }
 
     // Determine if this index refers to a camera profile, pose, or pointcloud/mesh
-    const cameraStartIndex = this.plyFiles.length + this.poseGroups.length;
+    const cameraStartIndex = this.spatialFiles.length + this.poseGroups.length;
 
     if (fileIndex >= cameraStartIndex) {
       // Camera profile removal
@@ -6804,9 +6816,9 @@ class PointCloudVisualizer {
       return;
     }
 
-    if (fileIndex >= this.plyFiles.length) {
+    if (fileIndex >= this.spatialFiles.length) {
       // Pose removal
-      const poseIndex = fileIndex - this.plyFiles.length;
+      const poseIndex = fileIndex - this.spatialFiles.length;
       if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
         return;
       }
@@ -6906,7 +6918,7 @@ class PointCloudVisualizer {
     }
 
     // Remove from arrays
-    this.plyFiles.splice(fileIndex, 1);
+    this.spatialFiles.splice(fileIndex, 1);
     this.meshes.splice(fileIndex, 1);
     this.normalsVisualizers.splice(fileIndex, 1); // Remove normals visualizer for this file
     this.vertexPointsObjects.splice(fileIndex, 1); // Remove vertex points object for this file
@@ -6943,8 +6955,8 @@ class PointCloudVisualizer {
     this.fileDepthData = newdepthData;
 
     // Reassign file indices
-    for (let i = 0; i < this.plyFiles.length; i++) {
-      this.plyFiles[i].fileIndex = i;
+    for (let i = 0; i < this.spatialFiles.length; i++) {
+      this.spatialFiles[i].fileIndex = i;
     }
 
     // Update UI (preserve depth panel states)
@@ -7090,7 +7102,7 @@ class PointCloudVisualizer {
     console.log(`Load: parse ${message.fileName} ${(parseTime - startTime).toFixed(1)}ms`);
 
     // Create PLY data object with TypedArrays
-    const plyData: PlyData = {
+    const spatialData: SpatialData = {
       vertices: [], // Empty - not used
       faces: [],
       format: message.format,
@@ -7104,10 +7116,10 @@ class PointCloudVisualizer {
     };
 
     // Attach TypedArrays
-    (plyData as any).useTypedArrays = true;
-    (plyData as any).positionsArray = positions;
-    (plyData as any).colorsArray = colors;
-    (plyData as any).normalsArray = normals;
+    (spatialData as any).useTypedArrays = true;
+    (spatialData as any).positionsArray = positions;
+    (spatialData as any).colorsArray = colors;
+    (spatialData as any).normalsArray = normals;
 
     // Faces: if face info was provided in header, read faces after vertex block
     // Note: rawBinaryData starts at vertex buffer; if faces follow, they are after vertexStride * vertexCount bytes
@@ -7183,7 +7195,7 @@ class PointCloudVisualizer {
             indices[j] = res.val >>> 0;
             offs = res.next;
           }
-          plyData.faces.push({ indices });
+          spatialData.faces.push({ indices });
         }
       }
     }
@@ -7192,10 +7204,10 @@ class PointCloudVisualizer {
 
     // Process as normal
     const displayStartTime = performance.now();
-    if (message.messageType === 'multiPlyData') {
-      await this.displayFiles([plyData]);
+    if (message.messageType === 'multiSpatialData') {
+      await this.displayFiles([spatialData]);
     } else if (message.messageType === 'addFiles') {
-      this.addNewFiles([plyData]);
+      this.addNewFiles([spatialData]);
     }
 
     // Normals visualizer will be created on-demand when user clicks normals button
@@ -7236,7 +7248,7 @@ class PointCloudVisualizer {
     const startTime = performance.now();
 
     // Create PLY data object with direct TypedArrays
-    const plyData: PlyData = {
+    const spatialData: SpatialData = {
       vertices: [], // Empty - not used
       faces: [],
       format: message.format,
@@ -7250,28 +7262,28 @@ class PointCloudVisualizer {
     };
 
     // Attach direct TypedArrays
-    (plyData as any).useTypedArrays = true;
-    (plyData as any).positionsArray = new Float32Array(message.positionsBuffer);
-    (plyData as any).colorsArray = message.colorsBuffer
+    (spatialData as any).useTypedArrays = true;
+    (spatialData as any).positionsArray = new Float32Array(message.positionsBuffer);
+    (spatialData as any).colorsArray = message.colorsBuffer
       ? new Uint8Array(message.colorsBuffer)
       : null;
-    (plyData as any).normalsArray = message.normalsBuffer
+    (spatialData as any).normalsArray = message.normalsBuffer
       ? new Float32Array(message.normalsBuffer)
       : null;
 
     console.log(`Load: typedarray ${(performance.now() - startTime).toFixed(1)}ms`);
 
     // Process as normal - but now with TypedArrays!
-    if (message.messageType === 'multiPlyData') {
-      await this.displayFiles([plyData]);
+    if (message.messageType === 'multiSpatialData') {
+      await this.displayFiles([spatialData]);
     } else if (message.messageType === 'addFiles') {
-      this.addNewFiles([plyData]);
+      this.addNewFiles([spatialData]);
     }
 
     // Normals visualizer will be created on-demand when user clicks normals button
   }
 
-  private async handleBinaryPlyData(message: any): Promise<void> {
+  private async handleBinarySpatialData(message: any): Promise<void> {
     const receiveTime = performance.now();
     // For add files, we don't have a loadingStartTime, so use receiveTime as reference
     const loadingStartTime = (window as any).loadingStartTime || receiveTime;
@@ -7282,7 +7294,7 @@ class PointCloudVisualizer {
     const startTime = performance.now();
 
     // Convert binary ArrayBuffers back to PLY data format
-    const plyData: PlyData = {
+    const spatialData: SpatialData = {
       vertices: [],
       faces: [],
       format: message.format,
@@ -7312,7 +7324,7 @@ class PointCloudVisualizer {
 
     // Reconstruct vertices from binary data
     for (let i = 0; i < message.vertexCount; i++) {
-      const vertex: PlyVertex = {
+      const vertex: SpatialVertex = {
         x: positionArray[i * 3],
         y: positionArray[i * 3 + 1],
         z: positionArray[i * 3 + 2],
@@ -7332,7 +7344,7 @@ class PointCloudVisualizer {
         vertex.nz = normalArray[i * 3 + 2];
       }
 
-      plyData.vertices.push(vertex);
+      spatialData.vertices.push(vertex);
     }
 
     // Convert face buffer if present
@@ -7340,7 +7352,7 @@ class PointCloudVisualizer {
       const indexArray = new Uint32Array(message.indexBuffer);
       // The buffer already represents triangulated indices; push as triples
       for (let i = 0; i < indexArray.length; i += 3) {
-        plyData.faces.push({
+        spatialData.faces.push({
           indices: [indexArray[i], indexArray[i + 1], indexArray[i + 2]],
         });
       }
@@ -7351,9 +7363,9 @@ class PointCloudVisualizer {
 
     // Handle based on message type
     if (message.messageType === 'addFiles') {
-      this.addNewFiles([plyData]);
+      this.addNewFiles([spatialData]);
     } else {
-      await this.displayFiles([plyData]);
+      await this.displayFiles([spatialData]);
     }
 
     // Normals visualizer will be created on-demand when user clicks normals button
@@ -7491,7 +7503,7 @@ class PointCloudVisualizer {
   • Chunks: ${fileState.totalChunks} (${(transferTime / fileState.totalChunks).toFixed(2)}ms avg)`);
 
     // Create complete PLY data object
-    const plyData: PlyData = {
+    const spatialData: SpatialData = {
       vertices: fileState.vertices,
       faces: fileState.faces,
       format: fileState.format as any,
@@ -7509,10 +7521,10 @@ class PointCloudVisualizer {
 
     // Process the completed file based on original message type
     const processStartTime = performance.now();
-    if (message.messageType === 'multiPlyData') {
-      await this.displayFiles([plyData]);
+    if (message.messageType === 'multiSpatialData') {
+      await this.displayFiles([spatialData]);
     } else if (message.messageType === 'addFiles') {
-      this.addNewFiles([plyData]);
+      this.addNewFiles([spatialData]);
     }
 
     // Normals visualizer will be created on-demand when user clicks normals button
@@ -7537,10 +7549,10 @@ class PointCloudVisualizer {
       this.pointSizes[fileIndex] = newSize;
 
       const isPose =
-        fileIndex >= this.plyFiles.length &&
-        fileIndex < this.plyFiles.length + this.poseGroups.length;
-      const isCamera = fileIndex >= this.plyFiles.length + this.poseGroups.length;
-      const data = !isPose && !isCamera ? this.plyFiles[fileIndex] : (undefined as any);
+        fileIndex >= this.spatialFiles.length &&
+        fileIndex < this.spatialFiles.length + this.poseGroups.length;
+      const isCamera = fileIndex >= this.spatialFiles.length + this.poseGroups.length;
+      const data = !isPose && !isCamera ? this.spatialFiles[fileIndex] : (undefined as any);
       const isObjFile = data ? (data as any).isObjFile : false;
 
       if (isCamera) {
@@ -7548,7 +7560,7 @@ class PointCloudVisualizer {
         this.applyTransformationMatrix(fileIndex);
       } else if (isPose) {
         // Update instanced sphere scale in pose group if stored using PointsMaterial size semantics is different.
-        const poseIndex = fileIndex - this.plyFiles.length;
+        const poseIndex = fileIndex - this.spatialFiles.length;
         const group = this.poseGroups[poseIndex];
         if (group) {
           group.traverse(obj => {
@@ -7603,7 +7615,7 @@ class PointCloudVisualizer {
       } else {
         // Handle regular point clouds and mesh files (PLY, STL, etc.)
         const mesh = this.meshes[fileIndex];
-        const data = this.plyFiles[fileIndex];
+        const data = this.spatialFiles[fileIndex];
 
         if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
           // Point cloud files
@@ -7686,7 +7698,7 @@ class PointCloudVisualizer {
 
   // ===== Pose feature updaters =====
   private updatePoseAppearance(fileIndex: number): void {
-    const poseIndex = fileIndex - this.plyFiles.length;
+    const poseIndex = fileIndex - this.spatialFiles.length;
     if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
       return;
     }
@@ -7758,7 +7770,7 @@ class PointCloudVisualizer {
   }
 
   private updatePoseLabels(fileIndex: number): void {
-    const poseIndex = fileIndex - this.plyFiles.length;
+    const poseIndex = fileIndex - this.spatialFiles.length;
     if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
       return;
     }
@@ -7813,7 +7825,7 @@ class PointCloudVisualizer {
   }
 
   private updatePoseScaling(fileIndex: number): void {
-    const poseIndex = fileIndex - this.plyFiles.length;
+    const poseIndex = fileIndex - this.spatialFiles.length;
     if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
       return;
     }
@@ -7857,7 +7869,7 @@ class PointCloudVisualizer {
   }
 
   private applyPoseConvention(fileIndex: number, conv: 'opengl' | 'opencv'): void {
-    const poseIndex = fileIndex - this.plyFiles.length;
+    const poseIndex = fileIndex - this.spatialFiles.length;
     if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
       return;
     }
@@ -7874,7 +7886,7 @@ class PointCloudVisualizer {
   }
 
   private applyPoseFilters(fileIndex: number): void {
-    const poseIndex = fileIndex - this.plyFiles.length;
+    const poseIndex = fileIndex - this.spatialFiles.length;
     if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
       return;
     }
@@ -7971,7 +7983,7 @@ class PointCloudVisualizer {
 
   private soloPointCloud(fileIndex: number): void {
     // Hide all objects (point clouds and poses)
-    const totalEntries = this.plyFiles.length + this.poseGroups.length;
+    const totalEntries = this.spatialFiles.length + this.poseGroups.length;
     for (let i = 0; i < totalEntries; i++) {
       this.fileVisibility[i] = false;
       if (i < this.meshes.length) {
@@ -7980,7 +7992,7 @@ class PointCloudVisualizer {
           obj.visible = false;
         }
       } else {
-        const poseIndex = i - this.plyFiles.length;
+        const poseIndex = i - this.spatialFiles.length;
         const group = this.poseGroups[poseIndex];
         if (group) {
           group.visible = false;
@@ -7995,7 +8007,7 @@ class PointCloudVisualizer {
         obj.visible = true;
       }
     } else {
-      const poseIndex = fileIndex - this.plyFiles.length;
+      const poseIndex = fileIndex - this.spatialFiles.length;
       const group = this.poseGroups[poseIndex];
       if (group) {
         group.visible = true;
@@ -9032,7 +9044,7 @@ class PointCloudVisualizer {
     try {
       // Try different parsers based on file extension and content
 
-      // JSON formats (PLY Visualizer, RealSense)
+      // JSON formats (3D Visualizer, RealSense)
       if (lowerFileName.endsWith('.json')) {
         // Check if it's RealSense format
         if (RealSenseParser.isRealSenseFormat(content)) {
@@ -9040,8 +9052,8 @@ class PointCloudVisualizer {
           const result = RealSenseParser.parse(content);
           return RealSenseParser.toCameraFormat(result);
         } else {
-          // Standard PLY Visualizer JSON format
-          console.log('🔍 Detected PLY Visualizer JSON format');
+          // Standard 3D Visualizer JSON format
+          console.log('🔍 Detected 3D Visualizer JSON format');
           return JSON.parse(content);
         }
       }
@@ -9118,7 +9130,7 @@ class PointCloudVisualizer {
         return null;
       } else {
         alert(
-          `Unsupported calibration file format: ${fileName}\n\nSupported formats:\n• JSON (.json) - PLY Visualizer, RealSense\n• YAML (.yml, .yaml) - OpenCV, ROS, Stereo, Kalibr\n• TXT (.txt) - Middlebury calib.txt, COLMAP cameras.txt, TUM camera.txt\n• CONF (.conf) - ZED calibration`
+          `Unsupported calibration file format: ${fileName}\n\nSupported formats:\n• JSON (.json) - 3D Visualizer, RealSense\n• YAML (.yml, .yaml) - OpenCV, ROS, Stereo, Kalibr\n• TXT (.txt) - Middlebury calib.txt, COLMAP cameras.txt, TUM camera.txt\n• CONF (.conf) - ZED calibration`
         );
         return null;
       }
@@ -9478,9 +9490,9 @@ class PointCloudVisualizer {
     const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : isPng ? 'PNG' : 'TIF';
 
     // Create PLY data structure with vertices converted from typed arrays
-    const vertices: PlyVertex[] = [];
+    const vertices: SpatialVertex[] = [];
     for (let i = 0; i < result.pointCount; i++) {
-      const vertex: PlyVertex = {
+      const vertex: SpatialVertex = {
         x: result.vertices[i * 3],
         y: result.vertices[i * 3 + 1],
         z: result.vertices[i * 3 + 2],
@@ -9493,7 +9505,7 @@ class PointCloudVisualizer {
       vertices.push(vertex);
     }
 
-    const plyData: PlyData = {
+    const spatialData: SpatialData = {
       vertices: vertices,
       faces: [],
       vertexCount: result.pointCount,
@@ -9501,7 +9513,7 @@ class PointCloudVisualizer {
       hasNormals: false,
       faceCount: 0,
       fileName: depthFileData.fileName,
-      fileIndex: depthFileData.isAddFile ? this.plyFiles.length : 0,
+      fileIndex: depthFileData.isAddFile ? this.spatialFiles.length : 0,
       format: 'binary_little_endian',
       version: '1.0',
       comments: [
@@ -9517,21 +9529,21 @@ class PointCloudVisualizer {
     };
 
     // Mark explicitly as depth-derived so the UI always shows the depth panel later
-    (plyData as any).isDepthDerived = true;
+    (spatialData as any).isDepthDerived = true;
 
     console.log(`${fileType} to PLY conversion complete: ${result.pointCount} points`);
 
     // Add to scene
     if (depthFileData.isAddFile) {
-      this.addNewFiles([plyData]);
+      this.addNewFiles([spatialData]);
     } else {
-      await this.displayFiles([plyData]);
+      await this.displayFiles([spatialData]);
     }
 
     // Auto-open Depth Settings panel for newly created depth-derived file in browser
     setTimeout(() => {
       try {
-        const idx = plyData.fileIndex || 0;
+        const idx = spatialData.fileIndex || 0;
         const panel = document.getElementById(`depth-panel-${idx}`);
         const toggleBtn = document.querySelector(
           `.depth-settings-toggle[data-file-index="${idx}"]`
@@ -9547,7 +9559,7 @@ class PointCloudVisualizer {
     }, 0);
 
     // Cache the depth file data for later reprocessing (using the file index)
-    const fileIndex = plyData.fileIndex || 0;
+    const fileIndex = spatialData.fileIndex || 0;
     const dimensions = {
       width: (result as any).width || 0,
       height: (result as any).height || 0,
@@ -9758,7 +9770,7 @@ class PointCloudVisualizer {
       );
 
       // Convert OBJ vertices to PLY format
-      const vertices: PlyVertex[] = objData.vertices.map((v: any) => ({
+      const vertices: SpatialVertex[] = objData.vertices.map((v: any) => ({
         x: v.x,
         y: v.y,
         z: v.z,
@@ -9768,7 +9780,7 @@ class PointCloudVisualizer {
       }));
 
       // Convert OBJ faces to PLY format if they exist
-      const faces: PlyFace[] = [];
+      const faces: SpatialFace[] = [];
       if (hasFaces) {
         for (const objFace of objData.faces) {
           if (objFace.indices.length >= 3) {
@@ -9780,7 +9792,7 @@ class PointCloudVisualizer {
       }
 
       // Create PLY data structure
-      const plyData: PlyData = {
+      const spatialData: SpatialData = {
         vertices,
         faces,
         format: 'ascii',
@@ -9791,31 +9803,31 @@ class PointCloudVisualizer {
         hasColors: true,
         hasNormals: objData.hasNormals,
         fileName: message.fileName, // Keep original OBJ filename
-        fileIndex: this.plyFiles.length,
+        fileIndex: this.spatialFiles.length,
       };
 
       // Store OBJ-specific data for enhanced rendering
-      (plyData as any).objData = objData;
-      (plyData as any).isObjFile = true;
-      (plyData as any).objRenderType = hasFaces ? 'mesh' : 'wireframe';
+      (spatialData as any).objData = objData;
+      (spatialData as any).isObjFile = true;
+      (spatialData as any).objRenderType = hasFaces ? 'mesh' : 'wireframe';
 
       // Store line data for wireframe rendering (either as primary or secondary visualization)
       if (hasLines) {
-        (plyData as any).objLines = objData.lines;
-        (plyData as any).hasWireframe = true;
+        (spatialData as any).objLines = objData.lines;
+        (spatialData as any).hasWireframe = true;
       }
 
       // Store point data for point rendering
       if (hasPoints) {
-        (plyData as any).objPoints = objData.points;
-        (plyData as any).hasPoints = true;
+        (spatialData as any).objPoints = objData.points;
+        (spatialData as any).hasPoints = true;
       }
 
       // Add to visualization
       if (message.isAddFile) {
-        this.addNewFiles([plyData]);
+        this.addNewFiles([spatialData]);
       } else {
-        await this.displayFiles([plyData]);
+        await this.displayFiles([spatialData]);
       }
 
       // Status message based on what was loaded
@@ -9863,7 +9875,7 @@ class PointCloudVisualizer {
         this.showStatus(`STL: Empty mesh loaded (${message.fileName})`);
 
         // Create minimal PLY data for empty mesh
-        const plyData: PlyData = {
+        const spatialData: SpatialData = {
           vertices: [],
           faces: [],
           format: stlData.format === 'binary' ? 'binary_little_endian' : 'ascii',
@@ -9878,22 +9890,22 @@ class PointCloudVisualizer {
           hasColors: false,
           hasNormals: false,
           fileName: message.fileName.replace(/\.stl$/i, '_empty.ply'),
-          fileIndex: this.plyFiles.length,
+          fileIndex: this.spatialFiles.length,
         };
 
         // Add to visualization (even empty files should be tracked)
         if (message.isAddFile) {
-          this.addNewFiles([plyData]);
+          this.addNewFiles([spatialData]);
         } else {
-          await this.displayFiles([plyData]);
+          await this.displayFiles([spatialData]);
         }
 
         return;
       }
 
       // Convert STL triangles to PLY vertices and faces
-      const vertices: PlyVertex[] = [];
-      const faces: PlyFace[] = [];
+      const vertices: SpatialVertex[] = [];
+      const faces: SpatialFace[] = [];
       const vertexMap = new Map<string, number>(); // For deduplication
 
       let vertexIndex = 0;
@@ -9913,7 +9925,7 @@ class PointCloudVisualizer {
             vIndex = vertexIndex++;
             vertexMap.set(key, vIndex);
 
-            const plyVertex: PlyVertex = {
+            const plyVertex: SpatialVertex = {
               x: vertex.x,
               y: vertex.y,
               z: vertex.z,
@@ -9947,7 +9959,7 @@ class PointCloudVisualizer {
       }
 
       // Create PLY data structure
-      const plyData: PlyData = {
+      const spatialData: SpatialData = {
         vertices,
         faces,
         format: stlData.format === 'binary' ? 'binary_little_endian' : 'ascii',
@@ -9963,20 +9975,20 @@ class PointCloudVisualizer {
         hasColors: true,
         hasNormals: true,
         fileName: message.fileName.replace(/\.stl$/i, '_mesh.ply'),
-        fileIndex: this.plyFiles.length,
+        fileIndex: this.spatialFiles.length,
       };
 
       // Store STL-specific data for enhanced rendering
-      (plyData as any).stlData = stlData;
-      (plyData as any).isStlFile = true;
-      (plyData as any).stlFormat = stlData.format;
-      (plyData as any).stlTriangleCount = stlData.triangleCount;
+      (spatialData as any).stlData = stlData;
+      (spatialData as any).isStlFile = true;
+      (spatialData as any).stlFormat = stlData.format;
+      (spatialData as any).stlTriangleCount = stlData.triangleCount;
 
       // Add to visualization
       if (message.isAddFile) {
-        this.addNewFiles([plyData]);
+        this.addNewFiles([spatialData]);
       } else {
-        await this.displayFiles([plyData]);
+        await this.displayFiles([spatialData]);
       }
 
       // Status message
@@ -10008,7 +10020,7 @@ class PointCloudVisualizer {
       const text = decoder.decode(message.data);
       const lines = text.split('\n').filter(line => line.trim().length > 0);
 
-      const vertices: PlyVertex[] = [];
+      const vertices: SpatialVertex[] = [];
       let hasColors = false;
 
       for (const line of lines) {
@@ -10019,7 +10031,7 @@ class PointCloudVisualizer {
           const z = parseFloat(parts[2]);
 
           if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
-            const vertex: PlyVertex = { x, y, z };
+            const vertex: SpatialVertex = { x, y, z };
 
             // Check for color data (RGB values)
             if (parts.length >= 6) {
@@ -10045,7 +10057,7 @@ class PointCloudVisualizer {
       }
 
       // Create PLY data structure
-      const plyData: PlyData = {
+      const spatialData: SpatialData = {
         vertices,
         faces: [],
         format: 'ascii',
@@ -10056,14 +10068,14 @@ class PointCloudVisualizer {
         hasColors,
         hasNormals: false,
         fileName: message.fileName.replace(/\.xyz$/i, '_pointcloud.ply'),
-        fileIndex: this.plyFiles.length,
+        fileIndex: this.spatialFiles.length,
       };
 
       // Add to visualization
       if (message.isAddFile) {
-        this.addNewFiles([plyData]);
+        this.addNewFiles([spatialData]);
       } else {
-        await this.displayFiles([plyData]);
+        await this.displayFiles([spatialData]);
       }
 
       this.showStatus(
@@ -10113,7 +10125,7 @@ class PointCloudVisualizer {
 
   private loadSavedCameraParams(): CameraParams | null {
     try {
-      const saved = localStorage.getItem('plyVisualizerCameraParams');
+      const saved = localStorage.getItem('SpatialVisualizerCameraParams');
       if (saved) {
         return JSON.parse(saved);
       }
@@ -10125,7 +10137,7 @@ class PointCloudVisualizer {
 
   private saveCameraParams(params: CameraParams): void {
     try {
-      localStorage.setItem('plyVisualizerCameraParams', JSON.stringify(params));
+      localStorage.setItem('SpatialVisualizerCameraParams', JSON.stringify(params));
       console.log('Camera parameters saved for future use');
     } catch (error) {
       console.warn('Failed to save camera parameters:', error);
@@ -10160,7 +10172,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private handleSavePlyFileResult(message: any): void {
+  private handleSaveSpatialFileResult(message: any): void {
     if (message.success) {
       this.showStatus(`PLY file saved successfully: ${message.filePath}`);
       console.log(`✅ PLY file saved: ${message.filePath}`);
@@ -10185,7 +10197,7 @@ class PointCloudVisualizer {
       );
 
       // Convert PCD data to PLY format for rendering
-      const plyData: PlyData = {
+      const spatialData: SpatialData = {
         vertices: pcdData.vertices,
         faces: [], // PCD files are point clouds, no faces
         format: pcdData.format === 'binary' ? 'binary_little_endian' : 'ascii',
@@ -10205,17 +10217,17 @@ class PointCloudVisualizer {
       };
 
       if (message.isAddFile) {
-        this.addNewFiles([plyData]);
+        this.addNewFiles([spatialData]);
       } else {
-        await this.displayFiles([plyData]);
+        await this.displayFiles([spatialData]);
       }
 
       // Create normals visualizer if PCD has normals
-      if (plyData.hasNormals) {
-        const normalsVisualizer = this.createNormalsVisualizer(plyData);
+      if (spatialData.hasNormals) {
+        const normalsVisualizer = this.createNormalsVisualizer(spatialData);
 
         // Set initial visibility based on stored state (default true)
-        const fileIndex = plyData.fileIndex || this.plyFiles.length - 1;
+        const fileIndex = spatialData.fileIndex || this.spatialFiles.length - 1;
         const initialVisible = this.normalsVisible[fileIndex] !== false;
         normalsVisualizer.visible = initialVisible;
 
@@ -10248,26 +10260,26 @@ class PointCloudVisualizer {
       );
 
       // NPY data is already in PLY format from the parser
-      const plyData: PlyData = {
+      const spatialData: SpatialData = {
         ...npyData,
         fileName: message.fileName,
       };
 
       if (message.isAddFile) {
-        plyData.fileIndex = this.plyFiles.length;
+        spatialData.fileIndex = this.spatialFiles.length;
       }
 
-      await this.displayFiles([plyData]);
+      await this.displayFiles([spatialData]);
 
       // Handle normals visualization if available
-      const fileIndex = plyData.fileIndex!;
+      const fileIndex = spatialData.fileIndex!;
       if (npyData.hasNormals) {
         // Ensure normalsVisualizers array is properly sized
         while (this.normalsVisualizers.length <= fileIndex) {
           this.normalsVisualizers.push(null);
         }
 
-        const normalsVisualizer = this.createNormalsVisualizer(plyData);
+        const normalsVisualizer = this.createNormalsVisualizer(spatialData);
         if (normalsVisualizer) {
           this.scene.add(normalsVisualizer);
         }
@@ -10300,7 +10312,7 @@ class PointCloudVisualizer {
       );
 
       // Convert PTS data to PLY format for rendering
-      const plyData: PlyData = {
+      const spatialData: SpatialData = {
         vertices: ptsData.vertices,
         faces: [], // PTS files are point clouds, no faces
         format: 'ascii',
@@ -10318,17 +10330,17 @@ class PointCloudVisualizer {
       };
 
       if (message.isAddFile) {
-        this.addNewFiles([plyData]);
+        this.addNewFiles([spatialData]);
       } else {
-        await this.displayFiles([plyData]);
+        await this.displayFiles([spatialData]);
       }
 
       // Create normals visualizer if PTS has normals
-      if (plyData.hasNormals) {
-        const normalsVisualizer = this.createNormalsVisualizer(plyData);
+      if (spatialData.hasNormals) {
+        const normalsVisualizer = this.createNormalsVisualizer(spatialData);
 
         // Set initial visibility based on stored state (default true)
-        const fileIndex = plyData.fileIndex || this.plyFiles.length - 1;
+        const fileIndex = spatialData.fileIndex || this.spatialFiles.length - 1;
         const initialVisible = this.normalsVisible[fileIndex] !== false;
         normalsVisualizer.visible = initialVisible;
 
@@ -10361,7 +10373,7 @@ class PointCloudVisualizer {
       );
 
       // Convert OFF data to PLY format for rendering
-      const plyData: PlyData = {
+      const spatialData: SpatialData = {
         vertices: offData.vertices,
         faces: offData.faces,
         format: 'ascii',
@@ -10379,17 +10391,17 @@ class PointCloudVisualizer {
       };
 
       if (message.isAddFile) {
-        this.addNewFiles([plyData]);
+        this.addNewFiles([spatialData]);
       } else {
-        await this.displayFiles([plyData]);
+        await this.displayFiles([spatialData]);
       }
 
       // Create normals visualizer if OFF has normals (for both meshes and point clouds)
-      if (plyData.hasNormals) {
-        const normalsVisualizer = this.createNormalsVisualizer(plyData);
+      if (spatialData.hasNormals) {
+        const normalsVisualizer = this.createNormalsVisualizer(spatialData);
 
         // Set initial visibility based on stored state (default true)
-        const fileIndex = plyData.fileIndex || this.plyFiles.length - 1;
+        const fileIndex = spatialData.fileIndex || this.spatialFiles.length - 1;
         const initialVisible = this.normalsVisible[fileIndex] !== false;
         normalsVisualizer.visible = initialVisible;
 
@@ -10425,7 +10437,7 @@ class PointCloudVisualizer {
       );
 
       // Convert GLTF data to PLY format for rendering
-      const plyData: PlyData = {
+      const spatialData: SpatialData = {
         vertices: gltfData.vertices,
         faces: gltfData.faces,
         format: 'ascii',
@@ -10444,9 +10456,9 @@ class PointCloudVisualizer {
       };
 
       if (message.isAddFile) {
-        this.addNewFiles([plyData]);
+        this.addNewFiles([spatialData]);
       } else {
-        await this.displayFiles([plyData]);
+        await this.displayFiles([spatialData]);
       }
 
       const meshType = gltfData.faceCount > 0 ? 'mesh' : 'point cloud';
@@ -10467,19 +10479,19 @@ class PointCloudVisualizer {
       this.showStatus(`XYZ: processing ${message.fileName} (${message.variant})`);
 
       // Parse XYZ variant data
-      const plyData = this.parseXyzVariantData(message.data, message.variant, message.fileName);
+      const spatialData = this.parseXyzVariantData(message.data, message.variant, message.fileName);
 
       if (message.isAddFile) {
-        this.addNewFiles([plyData]);
+        this.addNewFiles([spatialData]);
       } else {
-        await this.displayFiles([plyData]);
+        await this.displayFiles([spatialData]);
       }
 
-      if (plyData.hasNormals) {
-        const normalsVisualizer = this.createNormalsVisualizer(plyData);
+      if (spatialData.hasNormals) {
+        const normalsVisualizer = this.createNormalsVisualizer(spatialData);
 
         // Set initial visibility based on stored state (default true)
-        const fileIndex = plyData.fileIndex || this.plyFiles.length - 1;
+        const fileIndex = spatialData.fileIndex || this.spatialFiles.length - 1;
         const initialVisible = this.normalsVisible[fileIndex] !== false;
         normalsVisualizer.visible = initialVisible;
 
@@ -10493,7 +10505,7 @@ class PointCloudVisualizer {
       }
 
       this.showStatus(
-        `${message.variant.toUpperCase()}: loaded ${plyData.vertexCount} points from ${message.fileName}`
+        `${message.variant.toUpperCase()}: loaded ${spatialData.vertexCount} points from ${message.fileName}`
       );
     } catch (error) {
       console.error('Error handling XYZ variant data:', error);
@@ -10503,12 +10515,12 @@ class PointCloudVisualizer {
     }
   }
 
-  private parseXyzVariantData(data: ArrayBuffer, variant: string, fileName: string): PlyData {
+  private parseXyzVariantData(data: ArrayBuffer, variant: string, fileName: string): SpatialData {
     const decoder = new TextDecoder('utf-8');
     const text = decoder.decode(data);
     const lines = text.split('\n').filter(line => line.trim() !== '');
 
-    const vertices: PlyVertex[] = [];
+    const vertices: SpatialVertex[] = [];
     let hasColors = false;
     let hasNormals = false;
 
@@ -10524,7 +10536,7 @@ class PointCloudVisualizer {
         continue;
       }
 
-      const vertex: PlyVertex = {
+      const vertex: SpatialVertex = {
         x: parseFloat(parts[0]),
         y: parseFloat(parts[1]),
         z: parseFloat(parts[2]),
@@ -10570,7 +10582,7 @@ class PointCloudVisualizer {
     };
   }
 
-  private createNormalsVisualizer(data: PlyData): THREE.LineSegments {
+  private createNormalsVisualizer(data: SpatialData): THREE.LineSegments {
     const normalsGeometry = new THREE.BufferGeometry();
     const lines = [];
     const normalLength = 0.1; // Controls how long the normal lines are
@@ -10617,7 +10629,7 @@ class PointCloudVisualizer {
   }
 
   private createComputedNormalsVisualizer(
-    data: PlyData,
+    data: SpatialData,
     mesh: THREE.Object3D
   ): THREE.LineSegments | null {
     // Compute normals from the mesh geometry for triangle meshes
@@ -10702,7 +10714,7 @@ class PointCloudVisualizer {
   }
 
   private createPointCloudNormalsVisualizer(
-    data: PlyData,
+    data: SpatialData,
     mesh: THREE.Object3D
   ): THREE.LineSegments | null {
     // Extract normals from Three.js Points geometry for point clouds
@@ -10804,15 +10816,15 @@ class PointCloudVisualizer {
       await this.applyColorToDepthResult(result, imageData, depthData);
 
       // Update the PLY data
-      const plyData = this.plyFiles[fileIndex];
-      plyData.vertices = this.convertDepthResultToVertices(result);
-      plyData.hasColors = true;
+      const spatialData = this.spatialFiles[fileIndex];
+      spatialData.vertices = this.convertDepthResultToVertices(result);
+      spatialData.hasColors = true;
       // Mark as depth-derived so gamma correction knows these are already linear colors
-      (plyData as any).isDepthDerived = true;
+      (spatialData as any).isDepthDerived = true;
 
       // Update the mesh with colored data
       const oldMaterial = this.meshes[fileIndex].material;
-      const newMaterial = this.createMaterialForFile(plyData, fileIndex);
+      const newMaterial = this.createMaterialForFile(spatialData, fileIndex);
       this.meshes[fileIndex].material = newMaterial;
 
       // Ensure point size is correctly applied to the new material
@@ -10831,9 +10843,9 @@ class PointCloudVisualizer {
       const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
 
       // Create position array
-      const positions = new Float32Array(plyData.vertices.length * 3);
-      for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-        const vertex = plyData.vertices[i];
+      const positions = new Float32Array(spatialData.vertices.length * 3);
+      for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
+        const vertex = spatialData.vertices[i];
         positions[i3] = vertex.x;
         positions[i3 + 1] = vertex.y;
         positions[i3 + 2] = vertex.z;
@@ -10843,12 +10855,12 @@ class PointCloudVisualizer {
       positionAttribute.needsUpdate = true;
 
       // Create color array
-      const colors = new Float32Array(plyData.vertices.length * 3);
+      const colors = new Float32Array(spatialData.vertices.length * 3);
       if (this.convertSrgbToLinear) {
         this.ensureSrgbLUT();
         const lut = this.srgbToLinearLUT!;
-        for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-          const v = plyData.vertices[i];
+        for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
+          const v = spatialData.vertices[i];
           const r8 = (v.red || 0) & 255;
           const g8 = (v.green || 0) & 255;
           const b8 = (v.blue || 0) & 255;
@@ -10857,8 +10869,8 @@ class PointCloudVisualizer {
           colors[i3 + 2] = lut[b8];
         }
       } else {
-        for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-          const v = plyData.vertices[i];
+        for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
+          const v = spatialData.vertices[i];
           colors[i3] = ((v.red || 0) & 255) / 255;
           colors[i3 + 1] = ((v.green || 0) & 255) / 255;
           colors[i3 + 2] = ((v.blue || 0) & 255) / 255;
@@ -11122,12 +11134,12 @@ class PointCloudVisualizer {
   /**
    * Convert Depth processing result to PLY vertex format
    */
-  private convertDepthResultToVertices(result: DepthConversionResult): PlyVertex[] {
-    const vertices: PlyVertex[] = [];
+  private convertDepthResultToVertices(result: DepthConversionResult): SpatialVertex[] {
+    const vertices: SpatialVertex[] = [];
 
     for (let i = 0; i < result.pointCount; i++) {
       const i3 = i * 3;
-      const vertex: PlyVertex = {
+      const vertex: SpatialVertex = {
         x: result.vertices[i3],
         y: result.vertices[i3 + 1],
         z: result.vertices[i3 + 2],
@@ -11463,7 +11475,7 @@ class PointCloudVisualizer {
     return true;
   }
 
-  private isDepthDerivedFile(data: PlyData): boolean {
+  private isDepthDerivedFile(data: SpatialData): boolean {
     const comments = (data as any)?.comments;
     if (!Array.isArray(comments)) {
       return false;
@@ -11483,7 +11495,7 @@ class PointCloudVisualizer {
     });
   }
 
-  private isPngDerivedFile(data: PlyData): boolean {
+  private isPngDerivedFile(data: SpatialData): boolean {
     const comments = (data as any)?.comments;
     if (!Array.isArray(comments)) {
       return false;
@@ -11494,7 +11506,7 @@ class PointCloudVisualizer {
     );
   }
 
-  private getPngScaleFactor(data: PlyData): number {
+  private getPngScaleFactor(data: SpatialData): number {
     const comments = (data as any)?.comments;
     if (!Array.isArray(comments)) {
       return 1000;
@@ -11511,7 +11523,7 @@ class PointCloudVisualizer {
     return 1000; // Default to millimeters
   }
 
-  private getDepthSetting(data: PlyData, setting: 'camera' | 'depth'): string {
+  private getDepthSetting(data: SpatialData, setting: 'camera' | 'depth'): string {
     const comments = (data as any)?.comments;
     if (!Array.isArray(comments)) {
       if (setting === 'camera') {
@@ -11540,7 +11552,7 @@ class PointCloudVisualizer {
     return '';
   }
 
-  private getDepthFx(data: PlyData): number {
+  private getDepthFx(data: SpatialData): number {
     const comments = (data as any)?.comments;
     if (!Array.isArray(comments)) {
       return this.defaultDepthSettings.fx;
@@ -11559,7 +11571,7 @@ class PointCloudVisualizer {
     return this.defaultDepthSettings.fx;
   }
 
-  private getDepthFy(data: PlyData): string {
+  private getDepthFy(data: SpatialData): string {
     const comments = (data as any)?.comments;
     if (!Array.isArray(comments)) {
       return this.defaultDepthSettings.fy?.toString() || '';
@@ -11573,7 +11585,7 @@ class PointCloudVisualizer {
     return this.defaultDepthSettings.fy?.toString() || '';
   }
 
-  private getDepthBaseline(data: PlyData): number {
+  private getDepthBaseline(data: SpatialData): number {
     const comments = (data as any)?.comments;
     if (!Array.isArray(comments)) {
       return this.defaultDepthSettings.baseline || 50;
@@ -11587,7 +11599,7 @@ class PointCloudVisualizer {
     return this.defaultDepthSettings.baseline || 50; // Use default baseline
   }
 
-  private getDepthCx(data: PlyData, fileIndex?: number): string {
+  private getDepthCx(data: SpatialData, fileIndex?: number): string {
     // First try to get dimensions from stored depth data using file index
     if (fileIndex !== undefined) {
       const depthData = this.fileDepthData.get(fileIndex);
@@ -11614,7 +11626,7 @@ class PointCloudVisualizer {
     return ''; // Empty = will be auto-calculated once image is processed
   }
 
-  private getDepthCy(data: PlyData, fileIndex?: number): string {
+  private getDepthCy(data: SpatialData, fileIndex?: number): string {
     // First try to get dimensions from stored depth data using file index
     if (fileIndex !== undefined) {
       const depthData = this.fileDepthData.get(fileIndex);
@@ -11641,7 +11653,7 @@ class PointCloudVisualizer {
     return ''; // Empty = will be auto-calculated once image is processed
   }
 
-  private getDepthConvention(data: PlyData): 'opengl' | 'opencv' {
+  private getDepthConvention(data: SpatialData): 'opengl' | 'opencv' {
     // Check if this file was processed with a specific convention
     const comments = (data as any)?.comments;
     if (Array.isArray(comments)) {
@@ -11763,13 +11775,13 @@ class PointCloudVisualizer {
       }
 
       // Update the PLY data
-      const plyData = this.plyFiles[fileIndex];
-      plyData.vertices = this.convertDepthResultToVertices(result);
-      plyData.vertexCount = result.pointCount;
-      plyData.hasColors = !!result.colors;
+      const spatialData = this.spatialFiles[fileIndex];
+      spatialData.vertices = this.convertDepthResultToVertices(result);
+      spatialData.vertexCount = result.pointCount;
+      spatialData.hasColors = !!result.colors;
       // Mark as depth-derived so gamma correction knows these are already linear colors
-      (plyData as any).isDepthDerived = true;
-      plyData.comments = [
+      (spatialData as any).isDepthDerived = true;
+      spatialData.comments = [
         `Converted from ${fileType} depth image: ${depthData.fileName}`,
         `Camera: ${newCameraParams.cameraModel}`,
         `Depth type: ${newCameraParams.depthType}`,
@@ -11782,7 +11794,7 @@ class PointCloudVisualizer {
 
       // Update the mesh with new data
       const oldMaterial = this.meshes[fileIndex].material;
-      const newMaterial = this.createMaterialForFile(plyData, fileIndex);
+      const newMaterial = this.createMaterialForFile(spatialData, fileIndex);
       this.meshes[fileIndex].material = newMaterial;
 
       // Ensure point size is correctly applied to the new material
@@ -11823,9 +11835,9 @@ class PointCloudVisualizer {
       this.scene.add(newMesh);
 
       // Create position array
-      const positions = new Float32Array(plyData.vertices.length * 3);
-      for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-        const vertex = plyData.vertices[i];
+      const positions = new Float32Array(spatialData.vertices.length * 3);
+      for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
+        const vertex = spatialData.vertices[i];
         positions[i3] = vertex.x;
         positions[i3 + 1] = vertex.y;
         positions[i3 + 2] = vertex.z;
@@ -11835,14 +11847,14 @@ class PointCloudVisualizer {
       // CRITICAL FIX: Mark position attribute as needing update
       positionAttribute.needsUpdate = true;
 
-      if (plyData.hasColors) {
+      if (spatialData.hasColors) {
         // Create color array
-        const colors = new Float32Array(plyData.vertices.length * 3);
+        const colors = new Float32Array(spatialData.vertices.length * 3);
         if (this.convertSrgbToLinear) {
           this.ensureSrgbLUT();
           const lut = this.srgbToLinearLUT!;
-          for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-            const v = plyData.vertices[i];
+          for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
+            const v = spatialData.vertices[i];
             const r8 = (v.red || 0) & 255;
             const g8 = (v.green || 0) & 255;
             const b8 = (v.blue || 0) & 255;
@@ -11851,8 +11863,8 @@ class PointCloudVisualizer {
             colors[i3 + 2] = lut[b8];
           }
         } else {
-          for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-            const v = plyData.vertices[i];
+          for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
+            const v = spatialData.vertices[i];
             colors[i3] = ((v.red || 0) & 255) / 255;
             colors[i3 + 1] = ((v.green || 0) & 255) / 255;
             colors[i3 + 2] = ((v.blue || 0) & 255) / 255;
@@ -11927,8 +11939,8 @@ class PointCloudVisualizer {
 
   private refreshDepthFileFormsWithDefaults(): void {
     // Update existing depth file forms to use the new default settings
-    for (let i = 0; i < this.plyFiles.length; i++) {
-      const data = this.plyFiles[i];
+    for (let i = 0; i < this.spatialFiles.length; i++) {
+      const data = this.spatialFiles[i];
       if (this.isDepthDerivedFile(data)) {
         console.log(`🔄 Refreshing depth form ${i} with new defaults`);
         this.updateDepthFormWithDefaults(i);
@@ -12105,7 +12117,7 @@ class PointCloudVisualizer {
       const currentScale = currentParams.pngScaleFactor;
       const defaultScale = this.defaultDepthSettings.pngScaleFactor;
       const isPngFile =
-        fileIndex < this.plyFiles.length && this.isPngDerivedFile(this.plyFiles[fileIndex]);
+        fileIndex < this.spatialFiles.length && this.isPngDerivedFile(this.spatialFiles[fileIndex]);
       const pngScaleFactorMatch = !isPngFile
         ? true // For non-PNG files, scale factor is irrelevant
         : currentScale === undefined && defaultScale === undefined
@@ -12456,15 +12468,15 @@ class PointCloudVisualizer {
       );
 
       // Update the PLY data
-      const plyData = this.plyFiles[fileIndex];
-      plyData.vertices = this.convertDepthResultToVertices(result);
-      plyData.hasColors = !!result.colors;
+      const spatialData = this.spatialFiles[fileIndex];
+      spatialData.vertices = this.convertDepthResultToVertices(result);
+      spatialData.hasColors = !!result.colors;
       // Mark as depth-derived so gamma correction knows these are already linear colors
-      (plyData as any).isDepthDerived = true;
+      (spatialData as any).isDepthDerived = true;
 
       // Update the mesh with default colors
       const oldMaterial = this.meshes[fileIndex].material;
-      const newMaterial = this.createMaterialForFile(plyData, fileIndex);
+      const newMaterial = this.createMaterialForFile(spatialData, fileIndex);
       this.meshes[fileIndex].material = newMaterial;
 
       // Ensure point size is correctly applied to the new material
@@ -12483,9 +12495,9 @@ class PointCloudVisualizer {
       const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
 
       // Create position array
-      const positions = new Float32Array(plyData.vertices.length * 3);
-      for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-        const vertex = plyData.vertices[i];
+      const positions = new Float32Array(spatialData.vertices.length * 3);
+      for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
+        const vertex = spatialData.vertices[i];
         positions[i3] = vertex.x;
         positions[i3 + 1] = vertex.y;
         positions[i3 + 2] = vertex.z;
@@ -12494,11 +12506,11 @@ class PointCloudVisualizer {
       geometry.setAttribute('position', positionAttribute);
       positionAttribute.needsUpdate = true;
 
-      if (plyData.hasColors) {
+      if (spatialData.hasColors) {
         // Create color array with default grayscale colors
-        const colors = new Float32Array(plyData.vertices.length * 3);
-        for (let i = 0, i3 = 0; i < plyData.vertices.length; i++, i3 += 3) {
-          const vertex = plyData.vertices[i];
+        const colors = new Float32Array(spatialData.vertices.length * 3);
+        for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
+          const vertex = spatialData.vertices[i];
           colors[i3] = (vertex.red || 0) / 255;
           colors[i3 + 1] = (vertex.green || 0) / 255;
           colors[i3 + 2] = (vertex.blue || 0) / 255;
@@ -12539,18 +12551,18 @@ class PointCloudVisualizer {
 
   private savePlyFile(fileIndex: number): void {
     try {
-      if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+      if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
         throw new Error('Invalid file index');
       }
 
-      const plyData = this.plyFiles[fileIndex];
-      this.showStatus(`Generating PLY file for ${plyData.fileName}...`);
+      const spatialData = this.spatialFiles[fileIndex];
+      this.showStatus(`Generating PLY file for ${spatialData.fileName}...`);
 
       // Generate PLY file content with current state (including transformations and colors)
-      const plyContent = this.generatePlyFileContent(plyData, fileIndex);
+      const plyContent = this.generatePlyFileContent(spatialData, fileIndex);
 
       // Use VS Code save dialog instead of automatic download
-      const defaultFileName = plyData.fileName || `pointcloud_${fileIndex + 1}.ply`;
+      const defaultFileName = spatialData.fileName || `pointcloud_${fileIndex + 1}.ply`;
 
       this.vscode.postMessage({
         type: 'savePlyFile',
@@ -12568,7 +12580,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private generatePlyFileContent(plyData: PlyData, fileIndex: number): string {
+  private generatePlyFileContent(spatialData: SpatialData, fileIndex: number): string {
     // Get current transformed vertices from the actual geometry
     const mesh = this.meshes[fileIndex];
     const geometry = mesh.geometry as THREE.BufferGeometry;
@@ -12582,10 +12594,10 @@ class PointCloudVisualizer {
     content += `format ascii 1.0\n`;
 
     // Add comments including transformation info
-    content += `comment Generated from ${plyData.fileName || 'point cloud'}\n`;
+    content += `comment Generated from ${spatialData.fileName || 'point cloud'}\n`;
     content += `comment Coordinate system: OpenGL (Y-up, Z-backward)\n`;
-    if (plyData.comments.length > 0) {
-      plyData.comments.forEach(comment => {
+    if (spatialData.comments.length > 0) {
+      spatialData.comments.forEach(comment => {
         content += `comment ${comment}\n`;
       });
     }
@@ -12603,15 +12615,15 @@ class PointCloudVisualizer {
       content += 'property uchar blue\n';
     }
 
-    if (plyData.hasNormals) {
+    if (spatialData.hasNormals) {
       content += 'property float nx\n';
       content += 'property float ny\n';
       content += 'property float nz\n';
     }
 
     // Face element definition (if any)
-    if (plyData.faceCount > 0) {
-      content += `element face ${plyData.faceCount}\n`;
+    if (spatialData.faceCount > 0) {
+      content += `element face ${spatialData.faceCount}\n`;
       content += 'property list uchar int vertex_indices\n';
     }
 
@@ -12633,8 +12645,8 @@ class PointCloudVisualizer {
         content += ` ${r} ${g} ${b}`;
       }
 
-      if (plyData.hasNormals && plyData.vertices[i]) {
-        const vertex = plyData.vertices[i];
+      if (spatialData.hasNormals && spatialData.vertices[i]) {
+        const vertex = spatialData.vertices[i];
         content += ` ${vertex.nx || 0} ${vertex.ny || 0} ${vertex.nz || 0}`;
       }
 
@@ -12642,7 +12654,7 @@ class PointCloudVisualizer {
     }
 
     // Face data (if any) - these don't change with transformations
-    plyData.faces.forEach(face => {
+    spatialData.faces.forEach(face => {
       content += `${face.indices.length}`;
       face.indices.forEach(index => {
         content += ` ${index}`;
@@ -12708,7 +12720,7 @@ class PointCloudVisualizer {
             jointScores,
             jointUncertainties: jointUnc,
           });
-          const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
+          const unifiedIndex = this.spatialFiles.length + (this.poseGroups.length - 1);
           this.fileVisibility[unifiedIndex] = true;
           this.pointSizes[unifiedIndex] = 0.02; // 20x larger for 2cm joint radius
           this.individualColorModes[unifiedIndex] = 'assigned';
@@ -12772,8 +12784,8 @@ class PointCloudVisualizer {
           jointScores,
           jointUncertainties: jointUnc,
         });
-        // Initialize UI state slots aligned after plyFiles
-        const unifiedIndex = this.plyFiles.length + (this.poseGroups.length - 1);
+        // Initialize UI state slots aligned after spatialFiles
+        const unifiedIndex = this.spatialFiles.length + (this.poseGroups.length - 1);
         this.fileVisibility[unifiedIndex] = true;
         this.pointSizes[unifiedIndex] = 0.02; // 20x larger for 2cm joint radius
         this.individualColorModes[unifiedIndex] = 'assigned';
@@ -12835,7 +12847,7 @@ class PointCloudVisualizer {
 
         // Initialize as single file entry (like poses)
         const unifiedIndex =
-          this.plyFiles.length + this.poseGroups.length + this.cameraGroups.length - 1;
+          this.spatialFiles.length + this.poseGroups.length + this.cameraGroups.length - 1;
         this.fileVisibility[unifiedIndex] = true;
         this.pointSizes[unifiedIndex] = 1.0; // Default camera scale (different from point size)
         this.individualColorModes[unifiedIndex] = 'assigned';
@@ -13430,7 +13442,7 @@ class PointCloudVisualizer {
     edges: Array<[number, number]>;
   }): THREE.Group {
     const group = new THREE.Group();
-    const unifiedIndex = this.plyFiles.length + this.poseGroups.length;
+    const unifiedIndex = this.spatialFiles.length + this.poseGroups.length;
     // Default pose color: use assigned color for this index
     const colorMode = this.individualColorModes[unifiedIndex] ?? 'assigned';
     let baseRGB: [number, number, number];
@@ -13521,12 +13533,12 @@ class PointCloudVisualizer {
       console.log('MTL data structure:', mtlData);
       console.log('Available materials:', Object.keys(mtlData.materials || {}));
 
-      if (fileIndex < 0 || fileIndex >= this.plyFiles.length) {
+      if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
         console.error('Invalid file index for MTL data:', fileIndex);
         return;
       }
 
-      const objFile = this.plyFiles[fileIndex];
+      const objFile = this.spatialFiles[fileIndex];
       const isObjFile = (objFile as any).isObjFile || (objFile as any).isObjWireframe;
 
       console.log('OBJ file data:', {
@@ -14055,7 +14067,7 @@ class PointCloudVisualizer {
     depthData: Uint8Array,
     fileName: string,
     cameraParams: CameraParams
-  ): Promise<PlyData | null> {
+  ): Promise<SpatialData | null> {
     try {
       console.log(`🖼️ Converting depth image ${fileName} to point cloud...`);
 
@@ -14135,7 +14147,7 @@ class PointCloudVisualizer {
         vertices.push(vertex);
       }
 
-      const plyData: PlyData = {
+      const spatialData: SpatialData = {
         vertices,
         faces: [],
         format: 'ascii',
@@ -14150,7 +14162,7 @@ class PointCloudVisualizer {
       };
 
       console.log(`✅ Created PLY data with ${vertices.length} vertices from depth image`);
-      return plyData;
+      return spatialData;
     } catch (error) {
       console.error(`❌ Error converting depth image ${fileName}:`, error);
       throw error;

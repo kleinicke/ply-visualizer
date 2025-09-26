@@ -53,7 +53,7 @@ suite('PointCloudVisualizer Core Methods Test Suite', () => {
 
   suite('File Management', () => {
     test('Should handle PLY file data structure', () => {
-      const mockPlyData = {
+      const mockSpatialData = {
         vertices: [
           { x: 0, y: 0, z: 0, red: 255, green: 0, blue: 0 },
           { x: 1, y: 1, z: 1, red: 0, green: 255, blue: 0 },
@@ -67,10 +67,10 @@ suite('PointCloudVisualizer Core Methods Test Suite', () => {
         fileName: 'test.ply',
       };
 
-      assert.strictEqual(mockPlyData.vertices.length, 2);
-      assert.ok(mockPlyData.hasColors);
-      assert.ok(!mockPlyData.hasNormals);
-      assert.strictEqual(mockPlyData.vertexCount, 2);
+      assert.strictEqual(mockSpatialData.vertices.length, 2);
+      assert.ok(mockSpatialData.hasColors);
+      assert.ok(!mockSpatialData.hasNormals);
+      assert.strictEqual(mockSpatialData.vertexCount, 2);
     });
 
     test('Should manage multiple files in arrays', () => {

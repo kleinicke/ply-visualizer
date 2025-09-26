@@ -58,7 +58,7 @@ describe('Playwright PLY File Loading UI Tests', function () {
     console.log('✅ Found sample_mesh.ply in testfiles/open3d');
   });
 
-  it('should open sample_mesh.ply with PLY Visualizer via context menu', async function () {
+  it('should open sample_mesh.ply with 3D Visualizer via context menu', async function () {
     const sideBar = new SideBarView();
     const explorer = await sideBar.getContent().getSection('Explorer');
 
@@ -81,21 +81,21 @@ describe('Playwright PLY File Loading UI Tests', function () {
     await plyFile.click(2); // Right click
     await driver.sleep(1000);
 
-    // Look for "Open with PLY Visualizer" option
+    // Look for "Open with 3D Visualizer" option
     const contextMenu = await driver.findElement({ css: '.context-view' });
     const menuItems = await contextMenu.findElements({ css: '.action-item' });
 
     let visualizerOption = null;
     for (const item of menuItems) {
       const text = await item.getText();
-      if (text.includes('PLY Visualizer') || text.includes('Open with PLY Visualizer')) {
+      if (text.includes('3D Visualizer') || text.includes('Open with 3D Visualizer')) {
         visualizerOption = item;
         break;
       }
     }
 
     if (!visualizerOption) {
-      throw new Error('PLY Visualizer option not found in context menu');
+      throw new Error('3D Visualizer option not found in context menu');
     }
 
     await visualizerOption.click();
