@@ -2039,14 +2039,223 @@ class PointCloudVisualizer {
     const mouseScreenX = event.clientX - rect.left;
     const mouseScreenY = event.clientY - rect.top;
 
-    // Find all visible meshes
-    const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
+    console.log(`🖱️ Double-click at (${mouseScreenX.toFixed(1)}, ${mouseScreenY.toFixed(1)})`);
 
-    if (visibleMeshes.length === 0) {
+    // Try selection in order of priority: camera profiles, poses, triangle meshes, point clouds
+    let selectedPoint = null;
+
+    // 1. Check camera profiles first (highest priority for precision)
+    selectedPoint = this.selectCameraProfile(mouseScreenX, mouseScreenY, canvas);
+    if (selectedPoint) {
+      console.log(
+        `📷 Selected camera profile at distance ${this.camera.position.distanceTo(selectedPoint).toFixed(4)}m`
+      );
+      this.setRotationCenter(selectedPoint);
+      this.updateRotationOriginButtonState();
       return;
     }
 
-    // Separate meshes from point clouds for different intersection approaches
+    // 2. Check pose data (body poses/keypoints)
+    selectedPoint = this.selectPoseKeypoint(mouseScreenX, mouseScreenY, canvas);
+    if (selectedPoint) {
+      console.log(
+        `🕺 Selected pose keypoint at distance ${this.camera.position.distanceTo(selectedPoint).toFixed(4)}m`
+      );
+      this.setRotationCenter(selectedPoint);
+      this.updateRotationOriginButtonState();
+      return;
+    }
+
+    // 3. Check triangle meshes with raycasting (more precise for surfaces)
+    selectedPoint = this.selectTriangleMesh(mouseScreenX, mouseScreenY, canvas);
+    if (selectedPoint) {
+      console.log(
+        `🔷 Selected triangle mesh surface at distance ${this.camera.position.distanceTo(selectedPoint).toFixed(4)}m`
+      );
+      this.setRotationCenter(selectedPoint);
+      this.updateRotationOriginButtonState();
+      return;
+    }
+
+    // 4. Check point clouds with size-aware selection
+    const pointResult = this.selectPointCloudWithLogging(mouseScreenX, mouseScreenY, canvas);
+    if (pointResult) {
+      selectedPoint = pointResult.point;
+      console.log(`⚫ Selected point cloud: ${pointResult.info}`);
+      this.setRotationCenter(selectedPoint);
+      this.updateRotationOriginButtonState();
+      return;
+    }
+
+    // If no point found, log the failure
+    console.log(
+      `❌ No selectable object found at (${mouseScreenX.toFixed(1)}, ${mouseScreenY.toFixed(1)})`
+    );
+  }
+
+  private selectCameraProfile(
+    mouseScreenX: number,
+    mouseScreenY: number,
+    canvas: HTMLCanvasElement
+  ): THREE.Vector3 | null {
+    const cameraStartIndex = this.spatialFiles.length + this.poseGroups.length;
+
+    for (let i = 0; i < this.cameraGroups.length; i++) {
+      const unifiedIndex = cameraStartIndex + i;
+      if (!this.fileVisibility[unifiedIndex]) {continue;}
+
+      const cameraGroup = this.cameraGroups[i];
+      const cameraScale = this.pointSizes[unifiedIndex] || 1.0;
+
+      // Check each camera in the profile
+      for (const cameraChild of cameraGroup.children) {
+        if (cameraChild instanceof THREE.Group && cameraChild.name.startsWith('camera_')) {
+          const selectedPoint = this.selectCameraObject(
+            cameraChild,
+            mouseScreenX,
+            mouseScreenY,
+            canvas,
+            cameraScale
+          );
+          if (selectedPoint) {return selectedPoint;}
+        }
+      }
+    }
+    return null;
+  }
+
+  private selectCameraObject(
+    cameraGroup: THREE.Group,
+    mouseScreenX: number,
+    mouseScreenY: number,
+    canvas: HTMLCanvasElement,
+    scale: number
+  ): THREE.Vector3 | null {
+    const mouse = new THREE.Vector2();
+    mouse.x = (mouseScreenX / canvas.clientWidth) * 2 - 1;
+    mouse.y = -(mouseScreenY / canvas.clientHeight) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, this.camera);
+
+    // Check intersection with camera visualization objects
+    const intersects = raycaster.intersectObject(cameraGroup, true);
+    if (intersects.length > 0) {
+      const intersectionPoint = intersects[0].point;
+      const distance = this.camera.position.distanceTo(intersectionPoint);
+      if (distance >= 0.0001) {
+        return intersectionPoint;
+      }
+    }
+
+    // Fallback: check proximity to camera center
+    const cameraPosition = new THREE.Vector3();
+    cameraPosition.setFromMatrixPosition(cameraGroup.matrixWorld);
+
+    const screenPosition = cameraPosition.clone().project(this.camera);
+    const screenX = (screenPosition.x * 0.5 + 0.5) * canvas.clientWidth;
+    const screenY = (screenPosition.y * -0.5 + 0.5) * canvas.clientHeight;
+
+    // Use camera scale to determine selection radius (minimum 10 pixels, maximum 50 pixels)
+    const selectionRadius = Math.max(10, Math.min(50, scale * 15));
+    const pixelDistance = Math.sqrt(
+      Math.pow(screenX - mouseScreenX, 2) + Math.pow(screenY - mouseScreenY, 2)
+    );
+
+    if (pixelDistance <= selectionRadius) {
+      const distance = this.camera.position.distanceTo(cameraPosition);
+      if (distance >= 0.0001) {
+        return cameraPosition;
+      }
+    }
+
+    return null;
+  }
+
+  private selectPoseKeypoint(
+    mouseScreenX: number,
+    mouseScreenY: number,
+    canvas: HTMLCanvasElement
+  ): THREE.Vector3 | null {
+    for (let i = 0; i < this.poseGroups.length; i++) {
+      const unifiedIndex = this.spatialFiles.length + i;
+      if (!this.fileVisibility[unifiedIndex]) {continue;}
+
+      const poseGroup = this.poseGroups[i];
+      const poseScale = this.pointSizes[unifiedIndex] || 1.0;
+
+      // Check keypoint spheres and connection lines
+      const selectedPoint = this.selectPoseObject(
+        poseGroup,
+        mouseScreenX,
+        mouseScreenY,
+        canvas,
+        poseScale
+      );
+      if (selectedPoint) {return selectedPoint;}
+    }
+    return null;
+  }
+
+  private selectPoseObject(
+    poseGroup: THREE.Group,
+    mouseScreenX: number,
+    mouseScreenY: number,
+    canvas: HTMLCanvasElement,
+    scale: number
+  ): THREE.Vector3 | null {
+    const mouse = new THREE.Vector2();
+    mouse.x = (mouseScreenX / canvas.clientWidth) * 2 - 1;
+    mouse.y = -(mouseScreenY / canvas.clientHeight) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, this.camera);
+
+    // First try raycasting for precise intersection
+    const intersects = raycaster.intersectObject(poseGroup, true);
+    if (intersects.length > 0) {
+      const intersectionPoint = intersects[0].point;
+      const distance = this.camera.position.distanceTo(intersectionPoint);
+      if (distance >= 0.0001) {
+        return intersectionPoint;
+      }
+    }
+
+    // Fallback: check proximity to keypoint positions
+    poseGroup.traverse(child => {
+      if (child instanceof THREE.Mesh && child.geometry instanceof THREE.SphereGeometry) {
+        const keypointPosition = new THREE.Vector3();
+        keypointPosition.setFromMatrixPosition(child.matrixWorld);
+
+        const screenPosition = keypointPosition.clone().project(this.camera);
+        const screenX = (screenPosition.x * 0.5 + 0.5) * canvas.clientWidth;
+        const screenY = (screenPosition.y * -0.5 + 0.5) * canvas.clientHeight;
+
+        // Use pose scale to determine selection radius
+        const selectionRadius = Math.max(8, Math.min(30, scale * 10));
+        const pixelDistance = Math.sqrt(
+          Math.pow(screenX - mouseScreenX, 2) + Math.pow(screenY - mouseScreenY, 2)
+        );
+
+        if (pixelDistance <= selectionRadius) {
+          const distance = this.camera.position.distanceTo(keypointPosition);
+          if (distance >= 0.0001) {
+            return keypointPosition;
+          }
+        }
+      }
+    });
+
+    return null;
+  }
+
+  private selectTriangleMesh(
+    mouseScreenX: number,
+    mouseScreenY: number,
+    canvas: HTMLCanvasElement
+  ): THREE.Vector3 | null {
+    // Find all visible triangle meshes
+    const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
     const triangleMeshes = visibleMeshes.filter(mesh => {
       const geometry = mesh.geometry as THREE.BufferGeometry;
       const indexAttribute = geometry.getIndex();
@@ -2054,6 +2263,40 @@ class PointCloudVisualizer {
       return indexAttribute && indexAttribute.count > 0;
     });
 
+    if (triangleMeshes.length === 0) {return null;}
+
+    const mouse = new THREE.Vector2();
+    mouse.x = (mouseScreenX / canvas.clientWidth) * 2 - 1;
+    mouse.y = -(mouseScreenY / canvas.clientHeight) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, this.camera);
+
+    const intersects = raycaster.intersectObjects(triangleMeshes, false);
+
+    if (intersects.length > 0) {
+      // Found mesh surface intersection - use the exact intersection point on the surface
+      const intersectionPoint = intersects[0].point;
+
+      // Check if the point is too close to the camera
+      const distance = this.camera.position.distanceTo(intersectionPoint);
+      const minDistance = 0.0001;
+
+      if (distance >= minDistance) {
+        return intersectionPoint;
+      }
+    }
+
+    return null;
+  }
+
+  private selectPointCloud(
+    mouseScreenX: number,
+    mouseScreenY: number,
+    canvas: HTMLCanvasElement
+  ): THREE.Vector3 | null {
+    // Find all visible point cloud meshes
+    const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
     const pointCloudMeshes = visibleMeshes.filter(mesh => {
       const geometry = mesh.geometry as THREE.BufferGeometry;
       const indexAttribute = geometry.getIndex();
@@ -2061,71 +2304,50 @@ class PointCloudVisualizer {
       return !indexAttribute || indexAttribute.count === 0;
     });
 
-    // First try ray casting for triangle meshes only (more precise for triangular surfaces)
-    if (triangleMeshes.length > 0) {
-      const mouse = new THREE.Vector2();
-      mouse.x = (mouseScreenX / canvas.clientWidth) * 2 - 1;
-      mouse.y = -(mouseScreenY / canvas.clientHeight) * 2 + 1;
+    if (pointCloudMeshes.length === 0) {return null;}
 
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(mouse, this.camera);
-
-      const intersects = raycaster.intersectObjects(triangleMeshes, false);
-
-      if (intersects.length > 0) {
-        // Found mesh surface intersection - use the exact intersection point on the surface
-        const intersectionPoint = intersects[0].point;
-
-        // Check if the point is too close to the camera
-        const distance = this.camera.position.distanceTo(intersectionPoint);
-        const minDistance = 0.005;
-
-        if (distance >= minDistance) {
-          this.setRotationCenter(intersectionPoint);
-          this.updateRotationOriginButtonState();
-          return; // Successfully set rotation center on mesh surface
-        }
-      }
-    }
-
-    // Use pixel-based point detection for point clouds and fallback for meshes
-    // Pixel-based point detection within 5 pixels
-    const pixelRadius = 5;
     let closestPoint: THREE.Vector3 | null = null;
     let closestPixelDistance = Infinity;
     let foundPoint = false;
 
-    // Create a temporary vector for screen position calculations
+    // Create temporary vectors for calculations
     const screenPosition = new THREE.Vector3();
     const worldPosition = new THREE.Vector3();
+    const clickNDCX = (mouseScreenX / canvas.clientWidth) * 2 - 1;
+    const clickNDCY = -((mouseScreenY / canvas.clientHeight) * 2 - 1);
 
-    // Check point clouds and any remaining meshes
+    // Frustum culling setup
+    const cameraFrustum = new THREE.Frustum();
+    const cameraMatrix = new THREE.Matrix4();
+    cameraMatrix.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    cameraFrustum.setFromProjectionMatrix(cameraMatrix);
+
+    // Check each point cloud mesh
     for (let meshIndex = 0; meshIndex < pointCloudMeshes.length; meshIndex++) {
       const mesh = pointCloudMeshes[meshIndex];
       const geometry = mesh.geometry as THREE.BufferGeometry;
       const positionAttribute = geometry.getAttribute('position');
 
-      if (!positionAttribute) {
-        continue;
-      }
+      if (!positionAttribute) {continue;}
+
+      // Get the actual file index for this mesh
+      const fileIndex = this.meshes.indexOf(mesh);
+
+      // Get material for point size calculation
+      const material = mesh.material as THREE.PointsMaterial;
+      if (!material) {continue;}
+
+      // Pre-calculate common values for performance
+      const materialSize = material.size;
+      const sizeAttenuation = material.sizeAttenuation;
+
+      // Calculate a reasonable maximum selection radius for early NDC rejection
+      // Use a conservative estimate: largest possible point size + padding
+      const maxPossibleRadius = Math.min(50, materialSize * 2 + 10); // Cap at 50px for sanity
+      const maxRadiusNDC = (maxPossibleRadius / canvas.clientWidth) * 2;
+      const maxRadiusNDCSquared = maxRadiusNDC * maxRadiusNDC;
 
       const pointCount = positionAttribute.count;
-
-      // Fast spatial culling approach - check all points but with early rejection
-
-      // Convert click area to normalized device coordinates for fast comparison
-      const clickNDCX = (mouseScreenX / canvas.clientWidth) * 2 - 1;
-      const clickNDCY = -((mouseScreenY / canvas.clientHeight) * 2 - 1);
-
-      // Calculate NDC radius for 5-pixel radius
-      const pixelRadiusNDC = (pixelRadius / canvas.clientWidth) * 2;
-      const pixelRadiusNDCSquared = pixelRadiusNDC * pixelRadiusNDC;
-
-      // Frustum culling: get camera frustum for coarse rejection
-      const cameraFrustum = new THREE.Frustum();
-      const cameraMatrix = new THREE.Matrix4();
-      cameraMatrix.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
-      cameraFrustum.setFromProjectionMatrix(cameraMatrix);
 
       for (let i = 0; i < pointCount; i++) {
         // Get world position of the point
@@ -2137,30 +2359,72 @@ class PointCloudVisualizer {
           continue;
         }
 
-        // Early rejection 2: Distance culling - skip points too far behind camera
+        // Early rejection 2: Distance culling - skip points behind camera
         const cameraToPoint = worldPosition.clone().sub(this.camera.position);
         const dotProduct = cameraToPoint.dot(this.camera.getWorldDirection(new THREE.Vector3()));
-        if (dotProduct < 0.1) {
-          // Point is behind camera
+        if (dotProduct < 0.0001) {
+          // Only reject points actually behind camera (0.1mm threshold)
           continue;
         }
 
-        // Project to NDC space for fast comparison
+        // Project to NDC space for fast culling
         screenPosition.copy(worldPosition);
         screenPosition.project(this.camera);
 
-        // Early rejection 3: Fast NDC-space distance check (cheaper than pixel conversion)
+        // Early rejection 3: Fast NDC-space distance check with conservative radius
         const ndcDistanceSquared =
           Math.pow(screenPosition.x - clickNDCX, 2) + Math.pow(screenPosition.y - clickNDCY, 2);
 
-        if (ndcDistanceSquared > pixelRadiusNDCSquared) {
-          continue; // Point is outside pixel radius
+        if (ndcDistanceSquared > maxRadiusNDCSquared) {
+          continue; // Point is definitely too far away
         }
 
-        // Only do expensive pixel conversion for points that passed all culling tests
+        // Convert to screen coordinates
         const screenX = (screenPosition.x * 0.5 + 0.5) * canvas.clientWidth;
         const screenY = (screenPosition.y * -0.5 + 0.5) * canvas.clientHeight;
 
+        // Calculate distance to this specific point for size calculations
+        const pointDistance = this.camera.position.distanceTo(worldPosition);
+
+        // Use the actual current material size that Three.js is using for rendering
+        // This accounts for all size modifications (screen-space scaling, attenuation, etc.)
+        let renderedPointSize = materialSize;
+
+        if (sizeAttenuation) {
+          // For very large rendered points, we need to account for the fact that Three.js
+          // applies distance-based scaling. Let's be more aggressive about large point detection.
+
+          // Check if screen-space scaling is enabled (which modifies material.size)
+          if (this.screenSpaceScaling) {
+            // Material size is already modified by screen-space scaling
+            renderedPointSize = materialSize;
+          } else {
+            // Standard Three.js size attenuation formula
+            // Based on Three.js WebGLRenderer point size calculation
+            const scale = canvas.clientHeight * 0.5;
+            renderedPointSize = (materialSize * scale) / Math.max(pointDistance, 0.001);
+
+            // For very close points, be extra generous with selection area
+            if (pointDistance < 1.0) {
+              renderedPointSize *= 1.5; // 50% larger selection area for very close points
+            }
+          }
+        }
+
+        // Point size is diameter in pixels, so radius is half + generous padding for large points
+        const basePadding = 3;
+        const extraPadding = Math.min(20, renderedPointSize * 0.2); // Up to 20px extra for very large points
+
+        // For very close points (distance < 0.01), be extremely generous with selection area
+        let pixelRadius = renderedPointSize * 0.5 + basePadding + extraPadding;
+        if (pointDistance < 0.01) {
+          // For very close points, make the entire rendered area + 50% extra clickable
+          pixelRadius = Math.max(pixelRadius, renderedPointSize * 0.75);
+        }
+        // Cap maximum radius at 150px to prevent excessive selection areas
+        // pixelRadius = Math.min(150, pixelRadius);
+
+        // Check if click is within this point's rendered area
         const pixelDistance = Math.sqrt(
           Math.pow(screenX - mouseScreenX, 2) + Math.pow(screenY - mouseScreenY, 2)
         );
@@ -2173,21 +2437,171 @@ class PointCloudVisualizer {
       }
     }
 
-    // If we found a point within pixel radius, use it
+    // Return the closest point found, if any
     if (foundPoint && closestPoint) {
-      // Check if the point is too close to the camera
-      const minDistance = 0.005;
+      const minDistance = 0.0001;
       const distance3D = this.camera.position.distanceTo(closestPoint);
 
-      if (distance3D < minDistance) {
-        return; // Don't set rotation center for points too close
+      if (distance3D >= minDistance) {
+        return closestPoint;
       }
-
-      // Set this point as the new rotation center
-      this.setRotationCenter(closestPoint);
-      this.updateRotationOriginButtonState();
     }
-    // If no point found within pixel radius, do nothing (ignore empty clicks)
+
+    return null;
+  }
+
+  private selectPointCloudWithLogging(
+    mouseScreenX: number,
+    mouseScreenY: number,
+    canvas: HTMLCanvasElement
+  ): { point: THREE.Vector3; info: string } | null {
+    // Find all visible point cloud meshes
+    const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
+    const pointCloudMeshes = visibleMeshes.filter(mesh => {
+      const geometry = mesh.geometry as THREE.BufferGeometry;
+      const indexAttribute = geometry.getIndex();
+      // Point clouds typically don't have indices
+      return !indexAttribute || indexAttribute.count === 0;
+    });
+
+    if (pointCloudMeshes.length === 0) {return null;}
+
+    let closestPoint: THREE.Vector3 | null = null;
+    let closestPixelDistance = Infinity;
+    let foundPoint = false;
+    let bestSelectionInfo = '';
+
+    // Create temporary vectors for calculations
+    const screenPosition = new THREE.Vector3();
+    const worldPosition = new THREE.Vector3();
+    const clickNDCX = (mouseScreenX / canvas.clientWidth) * 2 - 1;
+    const clickNDCY = -((mouseScreenY / canvas.clientHeight) * 2 - 1);
+
+    // Frustum culling setup
+    const cameraFrustum = new THREE.Frustum();
+    const cameraMatrix = new THREE.Matrix4();
+    cameraMatrix.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    cameraFrustum.setFromProjectionMatrix(cameraMatrix);
+
+    // Check each point cloud mesh
+    for (let meshIndex = 0; meshIndex < pointCloudMeshes.length; meshIndex++) {
+      const mesh = pointCloudMeshes[meshIndex];
+      const geometry = mesh.geometry as THREE.BufferGeometry;
+      const positionAttribute = geometry.getAttribute('position');
+
+      if (!positionAttribute) {continue;}
+
+      // Get the actual file index for this mesh
+      const fileIndex = this.meshes.indexOf(mesh);
+
+      // Get material for point size calculation
+      const material = mesh.material as THREE.PointsMaterial;
+      if (!material) {continue;}
+
+      // Pre-calculate common values for performance
+      const materialSize = material.size;
+      const sizeAttenuation = material.sizeAttenuation;
+
+      const pointCount = positionAttribute.count;
+
+      for (let i = 0; i < pointCount; i++) {
+        // Get world position of the point
+        worldPosition.fromBufferAttribute(positionAttribute, i);
+        worldPosition.applyMatrix4(mesh.matrixWorld);
+
+        // Early rejection 1: Frustum culling - skip points outside camera view
+        if (!cameraFrustum.containsPoint(worldPosition)) {
+          continue;
+        }
+
+        // Early rejection 2: Distance culling - skip points behind camera
+        const cameraToPoint = worldPosition.clone().sub(this.camera.position);
+        const dotProduct = cameraToPoint.dot(this.camera.getWorldDirection(new THREE.Vector3()));
+        if (dotProduct < 0.0001) {
+          // Only reject points actually behind camera (0.1mm threshold)
+          continue;
+        }
+
+        // Project to NDC space
+        screenPosition.copy(worldPosition);
+        screenPosition.project(this.camera);
+
+        // Convert to screen coordinates
+        const screenX = (screenPosition.x * 0.5 + 0.5) * canvas.clientWidth;
+        const screenY = (screenPosition.y * -0.5 + 0.5) * canvas.clientHeight;
+
+        // Calculate distance to this specific point for size calculations
+        const pointDistance = this.camera.position.distanceTo(worldPosition);
+
+        // Use the actual current material size that Three.js is using for rendering
+        // This accounts for all size modifications (screen-space scaling, attenuation, etc.)
+        let renderedPointSize = materialSize;
+
+        if (sizeAttenuation) {
+          // For very large rendered points, we need to account for the fact that Three.js
+          // applies distance-based scaling. Let's be more aggressive about large point detection.
+
+          // Check if screen-space scaling is enabled (which modifies material.size)
+          if (this.screenSpaceScaling) {
+            // Material size is already modified by screen-space scaling
+            renderedPointSize = materialSize;
+          } else {
+            // Standard Three.js size attenuation formula
+            // Based on Three.js WebGLRenderer point size calculation
+            const scale = canvas.clientHeight * 0.5;
+            renderedPointSize = (materialSize * scale) / Math.max(pointDistance, 0.001);
+
+            // For very close points, be extra generous with selection area
+            if (pointDistance < 1.0) {
+              renderedPointSize *= 1.5; // 50% larger selection area for very close points
+            }
+          }
+        }
+
+        // Point size is diameter in pixels, so radius is half + generous padding for large points
+        const basePadding = 3;
+        const extraPadding = Math.min(20, renderedPointSize * 0.2); // Up to 20px extra for very large points
+
+        // For very close points (distance < 0.01), be extremely generous with selection area
+        let pixelRadius = renderedPointSize * 0.5 + basePadding + extraPadding;
+        if (pointDistance < 0.01) {
+          // For very close points, make the entire rendered area + 50% extra clickable
+          pixelRadius = Math.max(pixelRadius, renderedPointSize * 0.75);
+        }
+        // Cap maximum radius at 150px to prevent excessive selection areas
+        pixelRadius = Math.min(150, pixelRadius);
+
+        // Check if click is within this point's rendered area
+        const pixelDistance = Math.sqrt(
+          Math.pow(screenX - mouseScreenX, 2) + Math.pow(screenY - mouseScreenY, 2)
+        );
+
+        if (pixelDistance <= pixelRadius && pixelDistance < closestPixelDistance) {
+          closestPixelDistance = pixelDistance;
+          closestPoint = worldPosition.clone();
+          foundPoint = true;
+
+          // Create detailed selection info
+          bestSelectionInfo =
+            `point #${i} in mesh ${fileIndex}, distance=${pointDistance.toFixed(4)}m, ` +
+            `materialSize=${materialSize.toFixed(1)}px, renderedSize=${renderedPointSize.toFixed(1)}px, ` +
+            `pixelRadius=${pixelRadius.toFixed(1)}px, clickOffset=${pixelDistance.toFixed(1)}px, ` +
+            `sizeAttenuation=${sizeAttenuation}, screenSpaceScaling=${this.screenSpaceScaling}`;
+        }
+      }
+    }
+
+    // Return the closest point found, if any
+    if (foundPoint && closestPoint) {
+      const minDistance = 0.0001;
+      const distance3D = this.camera.position.distanceTo(closestPoint);
+
+      if (distance3D >= minDistance) {
+        return { point: closestPoint, info: bestSelectionInfo };
+      }
+    }
+
+    return null;
   }
 
   private setRotationCenter(point: THREE.Vector3): void {
@@ -2200,7 +2614,7 @@ class PointCloudVisualizer {
     // Check if the point is too close to the camera or behind it
     const cameraToPoint = point.clone().sub(this.camera.position);
     const distance = cameraToPoint.length();
-    const minDistance = 0.01; // Minimum distance to prevent issues
+    const minDistance = 0.0001; // Minimum distance to prevent issues
 
     // If point is too close or behind camera, adjust it
     if (distance < minDistance) {
