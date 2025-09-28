@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PLY Visualizer - Svelte Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: #1e1e1e;
+            color: white;
+        }
+        #test-info {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div id="test-info">
+        <h3>PLY Visualizer - Phase 2 Test</h3>
+        <p>Status: <span id="status">Loading...</span></p>
+        <p>ThreeManager: <span id="three-status">Initializing...</span></p>
+    </div>
+
+    <script src="./out/webview/main.js"></script>
+    <script>
+        // Test script to verify Svelte app loads
+        window.addEventListener('load', () => {
+            const statusEl = document.getElementById('status');
+            const threeStatusEl = document.getElementById('three-status');
+            
+            setTimeout(() => {
+                statusEl.textContent = 'Svelte app loaded';
+                
+                // Check if ThreeManager created a canvas
+                const canvas = document.querySelector('canvas');
+                if (canvas) {
+                    threeStatusEl.textContent = 'ThreeManager initialized with canvas';
+                    threeStatusEl.style.color = '#00ff00';
+                } else {
+                    threeStatusEl.textContent = 'No canvas found';
+                    threeStatusEl.style.color = '#ff0000';
+                }
+                
+                statusEl.style.color = '#00ff00';
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
