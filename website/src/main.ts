@@ -17,6 +17,7 @@ import { RealSenseParser } from './depth/RealSenseParser';
 import { TumParser } from './depth/TumParser';
 import { CustomArcballControls, TurntableControls } from './controls';
 import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
+import { ThreeManager } from './lib/three-manager';
 
 declare const GeoTIFF: any;
 declare const acquireVsCodeApi: () => any;
@@ -63,6 +64,11 @@ class PointCloudVisualizer {
 
   // Browser file handler
   private browserFileHandler: BrowserMessageHandler | null = null;
+
+  // Phase 2: ThreeManager integration - gradually replacing direct Three.js usage
+  private threeManager: ThreeManager = new ThreeManager();
+
+  // Legacy Three.js properties (gradually being phased out)
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private renderer!: THREE.WebGLRenderer;
@@ -779,63 +785,30 @@ class PointCloudVisualizer {
   }
 
   private initThreeJS(): void {
-    // Scene
-    this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x222222);
-
-    // Camera
+    // Phase 2: Initialize using ThreeManager
     const container = document.getElementById('viewer-container');
     if (!container) {
       throw new Error('Viewer container not found');
     }
 
-    this.camera = new THREE.PerspectiveCamera(
-      75,
-      container.clientWidth / container.clientHeight,
-      0.001,
-      1000000 // Further increased far plane for disparity files
-    );
-    this.camera.position.set(1, 1, 1);
+    // Initialize ThreeManager with container
+    this.threeManager.initialize(container);
 
-    // Initialize last camera state for change detection
+    // Create legacy references for compatibility (will be removed in later phases)
+    this.scene = this.threeManager.scene;
+    this.camera = this.threeManager.camera;
+    this.renderer = this.threeManager.renderer;
+    this.controls = this.threeManager.controls;
+
+    // Initialize last camera state for change detection (still needed for compatibility)
     this.lastCameraPosition.copy(this.camera.position);
     this.lastCameraQuaternion.copy(this.camera.quaternion);
 
-    // Renderer
-    const canvas = document.getElementById('three-canvas') as HTMLCanvasElement;
-    if (!canvas) {
-      throw new Error('Canvas not found');
-    }
-
-    this.renderer = new THREE.WebGLRenderer({
-      canvas: canvas,
-      antialias: true, // Re-enable antialiasing for quality
-      alpha: true,
-      preserveDrawingBuffer: false, // better performance
-      powerPreference: 'high-performance', // Keep discrete GPU preference
-    });
-    this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true; // Re-enable shadows
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-    // Initialize GPU timing if supported
+    // Initialize GPU timing if supported (legacy method - TODO: move to ThreeManager)
     this.initGPUTiming();
 
-    // Re-enable object sorting for better visual quality
-    this.renderer.sortObjects = true;
-
-    // Set initial color space based on preference
+    // Set initial color space based on preference (legacy method - TODO: move to ThreeManager)
     this.updateRendererColorSpace();
-
-    // Initialize controls
-    this.initializeControls();
-
-    // Lighting
-    this.initSceneLighting();
-
-    // Add coordinate axes helper with labels
-    this.addAxesHelper();
 
     // Window resize with ResizeObserver for comprehensive dimension change detection
     window.addEventListener('resize', this.onWindowResize.bind(this));
@@ -1603,16 +1576,19 @@ class PointCloudVisualizer {
   }
 
   private startRenderLoop(): void {
+    // Phase 2: Use ThreeManager for render loop
+    this.threeManager.startRenderLoop();
+    // Keep legacy tracking for compatibility
     if (this.animationId === null) {
-      this.animate();
+      this.animationId = 1; // Dummy value to indicate running
     }
   }
 
   private stopRenderLoop(): void {
-    if (this.animationId !== null) {
-      cancelAnimationFrame(this.animationId);
-      this.animationId = null;
-    }
+    // Phase 2: Use ThreeManager for render loop
+    this.threeManager.stopRenderLoop();
+    // Update legacy tracking
+    this.animationId = null;
   }
 
   private checkMeshVisibility(): void {

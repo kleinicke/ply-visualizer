@@ -1,24 +1,40 @@
-// ThreeManager class - Core Three.js functionality extracted from main.ts
+/**
+ * ThreeManager - Phase 2: Three.js functionality extraction
+ *
+ * This class extracts the core Three.js rendering functionality from the monolithic
+ * main.ts file, making it reusable and easier to manage. This is the first step
+ * in the Svelte migration process.
+ *
+ * Phase 2 Goal: Extract Three.js functionality without changing any behavior
+ */
+
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { CustomArcballControls, TurntableControls } from '../controls';
 
 export class ThreeManager {
-  private scene!: THREE.Scene;
-  private camera!: THREE.PerspectiveCamera;
-  private renderer!: THREE.WebGLRenderer;
-  private controls!: TrackballControls | OrbitControls | CustomArcballControls | TurntableControls;
-  private container: HTMLElement | null = null;
+  // Core Three.js objects
+  public scene!: THREE.Scene;
+  public camera!: THREE.PerspectiveCamera;
+  public renderer!: THREE.WebGLRenderer;
+  public controls!: any; // Union type of different control types
 
-  // Camera control state
+  // Animation and rendering state
+  private animationId: number | null = null;
+  private needsRender: boolean = false;
+
+  // Control type selection
   private controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare' =
     'trackball';
   private useFlatLighting: boolean = false;
 
-  // On-demand rendering state
-  private needsRender: boolean = false;
-  private animationId: number | null = null;
+  // Event callbacks
+  private onRenderCallback?: () => void;
+  private onCameraChangeCallback?: () => void;
+
+  // Container reference
+  private container: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
 
   // FPS tracking
@@ -224,7 +240,9 @@ export class ThreeManager {
   }
 
   private setupResizeObserver(): void {
-    if (!this.container) {return;}
+    if (!this.container) {
+      return;
+    }
 
     this.resizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
@@ -237,7 +255,9 @@ export class ThreeManager {
   }
 
   private onWindowResize(): void {
-    if (!this.container) {return;}
+    if (!this.container) {
+      return;
+    }
 
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
@@ -249,7 +269,9 @@ export class ThreeManager {
   }
 
   private setupEventListeners(): void {
-    if (!this.container) {return;}
+    if (!this.container) {
+      return;
+    }
 
     // Double-click event handling can be added here
     this.renderer.domElement.addEventListener('dblclick', event => {
@@ -324,22 +346,26 @@ export class ThreeManager {
   }
 
   private startGPUTiming(): void {
-    if (!this.gpuTimerExtension) {return;}
+    if (!this.gpuTimerExtension) {
+      return;
+    }
     // GPU timing implementation
   }
 
   private endGPUTiming(): void {
-    if (!this.gpuTimerExtension) {return;}
+    if (!this.gpuTimerExtension) {
+      return;
+    }
     // GPU timing implementation
   }
 
-  private startRenderLoop(): void {
+  public startRenderLoop(): void {
     if (this.animationId === null) {
       this.animate();
     }
   }
 
-  private stopRenderLoop(): void {
+  public stopRenderLoop(): void {
     if (this.animationId !== null) {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
