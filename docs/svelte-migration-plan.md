@@ -1764,3 +1764,104 @@ npm run test:migration-safety:full   # Complete test suite
 
 This comprehensive test suite acts as a safety net throughout the entire
 migration process, ensuring we never break working functionality.
+
+## Known Issues to Address in Later Phases
+
+### Rendering Frequency Optimization Issue
+
+**Status**: Identified during Phase 2 ThreeManager integration **Priority**:
+Medium - affects performance but not core functionality
+
+**Problem**: After moving the animation loop to ThreeManager, the rendering
+frequency limitation is not working properly. The app shows constant 16ms frame
+times instead of stopping rendering when camera movement ends (including
+damping/momentum completion).
+
+**Root Cause Analysis**:
+
+- FPS calculation may be broken - showing constant 16ms instead of 0ms when idle
+- Rendering optimization logic may be working but timing display is incorrect
+- Original implementation had sophisticated damping detection that was lost
+
+**Previous Implementation Approach**: The original code used:
+
+- `needsRender` flag to control when rendering was necessary
+- Camera change detection with velocity tracking
+- Control-specific damping detection (OrbitControls vs TrackballControls)
+- Frame cooldown period after movement stopped
+
+**Attempted Fix (Phase 2)**:
+
+- Added movement history tracking with velocity calculation
+- Implemented render cooldown (10 frames after movement stops)
+- Added `isControlsMoving()` method for momentum detection
+- **Result**: Fix didn't resolve the issue - still shows constant 16ms frame
+  times
+
+**To Fix in Phase 3 or 4**:
+
+1. Investigate if the issue is with FPS display calculation or actual rendering
+2. Check if ThreeManager is properly stopping render calls when idle
+3. Verify that the original damping detection logic is properly translated
+4. Consider implementing Svelte-based reactive performance monitoring
+5. Test with different control types (trackball vs orbit) to isolate the issue
+
+**Test Case for Verification**:
+
+- Load a point cloud file
+- Move camera and stop
+- After damping finishes, FPS should drop to 0 and frame time should show N/A or
+  0ms
+- Currently shows constant 16ms instead of dropping to 0
+
+**Impact**: Performance overhead from unnecessary rendering when camera is idle.
+
+### Camera Controls Inversion Issue
+
+**Status**: Identified during Phase 3 testing **Priority**: High - affects core
+user interaction
+
+**Problem**: Default trackball camera controls are inverted compared to the
+original implementation. The rotation direction is opposite to what users expect
+and how it worked before the ThreeManager migration.
+
+**Root Cause Analysis**: During Phase 2 ThreeManager extraction, the custom
+rotation inversion logic was not moved from main.ts. The original implementation
+overrides the TrackballControls `_rotateCamera` method with complex quaternion
+inversion:
+
+```typescript
+// Original custom inversion logic (lines 1006-1066 in main.ts)
+(controls as any)._rotateCamera = function () {
+  // ... complex rotation logic ...
+  // Apply normal rotation to camera position
+  this._eye.applyQuaternion(_quaternion);
+  // Apply inverted rotation to up vector
+  this.object.up.applyQuaternion(_quaternion.clone().invert());
+};
+```
+
+**Missing Implementation**: ThreeManager currently uses standard
+TrackballControls without the custom `_rotateCamera` override that inverts the
+up vector rotation while keeping normal camera position rotation.
+
+**To Fix in Phase 4**:
+
+1. Move the custom `_rotateCamera` override logic to ThreeManager
+2. Apply the inversion logic in the `initializeControls()` method for trackball
+   controls
+3. Ensure the inversion only affects the default trackball mode, not other
+   control types
+4. Test that the rotation direction matches the original behavior
+5. Verify that all control types (orbit, inverse-trackball, arcball,
+   cloudcompare) work correctly
+
+**Test Case for Verification**:
+
+- Load a point cloud file
+- Use default trackball controls
+- Drag mouse horizontally left → camera should rotate right around the target
+- Drag mouse vertically up → camera should rotate up/over the target
+- Compare behavior to original implementation
+
+**Impact**: Core user interaction is frustrating due to inverted controls.

@@ -81,8 +81,7 @@ class PointCloudVisualizer {
   private allowTransparency: boolean = false;
 
   // On-demand rendering state
-  private needsRender: boolean = false;
-  private animationId: number | null = null;
+  // Phase 2: needsRender and animationId now handled by ThreeManager
   private resizeObserver: ResizeObserver | null = null;
 
   // FPS tracking
@@ -794,6 +793,11 @@ class PointCloudVisualizer {
     // Initialize ThreeManager with container
     this.threeManager.initialize(container);
 
+    // Set up callback for camera change business logic
+    this.threeManager.setOnCameraChangeCallback(() => {
+      this.handleCameraChange();
+    });
+
     // Create legacy references for compatibility (will be removed in later phases)
     this.scene = this.threeManager.scene;
     this.camera = this.threeManager.camera;
@@ -1412,15 +1416,9 @@ class PointCloudVisualizer {
     this.trackRender();
   }
 
-  private animate(): void {
-    this.animationId = requestAnimationFrame(this.animate.bind(this));
-
-    // Update FPS calculation (always, to decay to 0 when no renders)
-    this.updateFPSCalculation();
-
-    // Update controls
-    this.controls.update();
-
+  // Phase 2: Business logic extracted from old animate() method
+  // This method is called by ThreeManager's render callback to handle camera changes
+  private handleCameraChange(): void {
     // Check if camera position, rotation, or rotation center has changed
     const positionChanged = !this.camera.position.equals(this.lastCameraPosition);
     const rotationChanged = !this.camera.quaternion.equals(this.lastCameraQuaternion);
@@ -1454,8 +1452,6 @@ class PointCloudVisualizer {
       // Update last known position and rotation
       this.lastCameraPosition.copy(this.camera.position);
       this.lastCameraQuaternion.copy(this.camera.quaternion);
-
-      this.needsRender = true;
     }
 
     // Handle rotation center changes separately
@@ -1471,35 +1467,12 @@ class PointCloudVisualizer {
 
       // Update last known rotation center
       this.lastRotationCenter.copy(this.controls.target);
-
-      this.needsRender = true;
-    }
-
-    // Always render when needed (this covers camera damping/momentum)
-    if (this.needsRender) {
-      const now = performance.now();
-      // Measure full frame time (time between actual renders)
-      if (this.lastFrameTime > 0) {
-        this.trackFrameTime(now - this.lastFrameTime);
-      }
-      this.lastFrameTime = now;
-
-      // Start GPU timing
-      const gpuQuery = this.startGPUTiming();
-      this.renderer.render(this.scene, this.camera);
-      this.endGPUTiming(gpuQuery);
-
-      // Update GPU timing results
-      this.updateGPUTiming();
-
-      this.needsRender = false;
-      // Track render event
-      this.trackRender();
     }
   }
 
   private requestRender(): void {
-    this.needsRender = true;
+    // Phase 2: Delegate to ThreeManager
+    this.threeManager.requestRender();
   }
 
   private trackRender(): void {
@@ -1578,17 +1551,11 @@ class PointCloudVisualizer {
   private startRenderLoop(): void {
     // Phase 2: Use ThreeManager for render loop
     this.threeManager.startRenderLoop();
-    // Keep legacy tracking for compatibility
-    if (this.animationId === null) {
-      this.animationId = 1; // Dummy value to indicate running
-    }
   }
 
   private stopRenderLoop(): void {
     // Phase 2: Use ThreeManager for render loop
     this.threeManager.stopRenderLoop();
-    // Update legacy tracking
-    this.animationId = null;
   }
 
   private checkMeshVisibility(): void {

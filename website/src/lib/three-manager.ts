@@ -57,6 +57,12 @@ export class ThreeManager {
   private lastCameraQuaternion = new THREE.Quaternion();
   private lastRotationCenter = new THREE.Vector3();
 
+  // Movement tracking for render optimization
+  private movementHistory: { position: THREE.Vector3; rotation: THREE.Quaternion; time: number }[] =
+    [];
+  private lastRenderTime: number = 0;
+  private renderCooldown: number = 0; // Frames to skip after movement stops
+
   // References to scene objects
   private axesGroup: THREE.Group | null = null;
   private axesHelper: THREE.AxesHelper | null = null;
@@ -294,15 +300,51 @@ export class ThreeManager {
     const rotationChanged = !this.camera.quaternion.equals(this.lastCameraQuaternion);
     const rotationCenterChanged = !this.controls.target.equals(this.lastRotationCenter);
 
-    // Only render when needed or camera changes
-    if (this.needsRender || positionChanged || rotationChanged || rotationCenterChanged) {
+    const now = performance.now();
+    const hasMovement = positionChanged || rotationChanged || rotationCenterChanged;
+
+    // Track movement for velocity-based rendering optimization
+    if (hasMovement) {
+      // Record current state for velocity tracking
+      this.movementHistory.push({
+        position: this.camera.position.clone(),
+        rotation: this.camera.quaternion.clone(),
+        time: now,
+      });
+
+      // Keep only last 5 frames for velocity calculation
+      if (this.movementHistory.length > 5) {
+        this.movementHistory.shift();
+      }
+
+      this.renderCooldown = 0; // Reset cooldown on movement
+    } else if (this.renderCooldown > 0) {
+      this.renderCooldown--; // Countdown frames after movement stops
+    }
+
+    // Determine if we should render based on movement and momentum
+    const shouldRender =
+      this.needsRender || hasMovement || this.renderCooldown > 0 || this.isControlsMoving();
+
+    if (shouldRender) {
+      // Call business logic callback for camera changes
+      if (hasMovement && this.onCameraChangeCallback) {
+        this.onCameraChangeCallback();
+      }
+
       this.render();
       this.needsRender = false;
+      this.lastRenderTime = now;
 
       // Update camera state
       this.lastCameraPosition.copy(this.camera.position);
       this.lastCameraQuaternion.copy(this.camera.quaternion);
       this.lastRotationCenter.copy(this.controls.target);
+
+      // Set cooldown frames after movement to catch damping tail
+      if (hasMovement) {
+        this.renderCooldown = 10; // Render for 10 more frames after movement stops
+      }
     }
   }
 
@@ -359,6 +401,34 @@ export class ThreeManager {
     // GPU timing implementation
   }
 
+  private isControlsMoving(): boolean {
+    // Check if controls have internal momentum/damping still active
+    if (this.controlType === 'orbit' && this.controls) {
+      // OrbitControls has damping - check if it's still moving
+      const orbitControls = this.controls as any;
+      if (orbitControls.enableDamping) {
+        // If damping is enabled, check if there's significant movement in recent history
+        if (this.movementHistory.length >= 2) {
+          const recent = this.movementHistory[this.movementHistory.length - 1];
+          const previous = this.movementHistory[this.movementHistory.length - 2];
+          const timeDiff = recent.time - previous.time;
+
+          if (timeDiff > 0) {
+            const positionDelta = recent.position.distanceTo(previous.position);
+            const velocity = (positionDelta / timeDiff) * 1000; // pixels per second
+
+            // If velocity is very low, consider movement stopped
+            return velocity > 0.001; // Threshold for "still moving"
+          }
+        }
+      }
+    }
+
+    // For trackball controls, we rely on the cooldown period
+    // since they don't have built-in damping detection
+    return false;
+  }
+
   public startRenderLoop(): void {
     if (this.animationId === null) {
       this.animate();
@@ -394,6 +464,10 @@ export class ThreeManager {
       this.axesGroup.visible = visible;
       this.requestRender();
     }
+  }
+
+  setOnCameraChangeCallback(callback: () => void): void {
+    this.onCameraChangeCallback = callback;
   }
 
   fitToView(): void {
