@@ -47,7 +47,7 @@ module.exports = [
     },
     devtool: 'nosources-source-map',
     resolve: {
-      extensions: ['.ts', '.js'],
+      extensions: ['.ts', '.js', '.svelte'],
       alias: {
         // Force single Three.js instance to prevent multiple imports
         three: path.resolve(__dirname, 'node_modules/three'),
@@ -60,8 +60,18 @@ module.exports = [
     module: {
       rules: [
         {
+          test: /\.svelte$/,
+          use: {
+            loader: 'svelte-loader',
+            options: {
+              emitCss: false,
+              hotReload: false,
+            },
+          },
+        },
+        {
           test: /\.ts$/,
-          exclude: [/node_modules/, /src\/test\/ui/],
+          exclude: [/node_modules/, /src\/test\/ui/, /\.test\.ts$/],
           use: [
             {
               loader: 'ts-loader',

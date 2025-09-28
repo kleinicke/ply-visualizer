@@ -220,6 +220,7 @@
     "test:ui": "npm run compile && cd ui-tests && npx tsc && cd .. && node ./out/ui-tests/ui-test-runner.js",
     "test:all": "npm run test && npm run test:ui",
     "test:stl": "node test-stl.js",
+    "test:migration-safety": "npx mocha tests/migration-safety.test.js --timeout 30000",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky"
@@ -241,6 +242,8 @@
     "mocha": "^10.2.0",
     "nyc": "^17.1.0",
     "prettier": "^3.6.2",
+    "svelte": "^5.39.6",
+    "svelte-loader": "^3.2.4",
     "ts-loader": "^9.5.1",
     "typescript": "^4.9.4",
     "vscode-extension-tester": "^8.17.0",
