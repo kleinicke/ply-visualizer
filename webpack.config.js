@@ -1,4 +1,5 @@
 const path = require('path');
+const CopyPlugin = require('copy-webpack-plugin');
 
 module.exports = [
   // Extension source
@@ -16,6 +17,19 @@ module.exports = [
     externals: {
       vscode: 'commonjs vscode',
     },
+    plugins: [
+      new CopyPlugin({
+        patterns: [
+          {
+            from: 'node_modules/7zip-bin/**/*',
+            to: '7zip-bin/',
+            globOptions: {
+              ignore: ['**/package.json', '**/README.md'],
+            },
+          },
+        ],
+      }),
+    ],
     resolve: {
       extensions: ['.ts', '.js'],
       alias: {
