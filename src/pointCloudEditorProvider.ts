@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { DatasetManager } from './dataset/datasetManager';
 import { PlyParser } from '@website/parsers/plyParser';
 import { ObjParser } from '@website/parsers/objParser';
 import { MtlParser } from '@website/parsers/mtlParser';
@@ -25,8 +26,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   private activePanels = new Set<vscode.WebviewPanel>();
   private pathToPanel = new Map<string, vscode.WebviewPanel>();
   private panelToPath = new Map<vscode.WebviewPanel, string>();
+  private datasetManager: DatasetManager;
 
-  constructor(private readonly context: vscode.ExtensionContext) {}
+  constructor(private readonly context: vscode.ExtensionContext) {
+    this.datasetManager = new DatasetManager(context);
+  }
 
   public async openCustomDocument(
     uri: vscode.Uri,
@@ -150,6 +154,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             ms: +(fileReadTime - loadStartTime).toFixed(1),
           });
 
+          // Check for dataset scene metadata
+          const sceneMetadata = await this.datasetManager.getSceneMetadata(document.uri.fsPath);
+
           // Send depth data to webview for conversion
           webviewPanel.webview.postMessage({
             type: 'depthData',
@@ -158,6 +165,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
               depthData.byteOffset,
               depthData.byteOffset + depthData.byteLength
             ),
+            sceneMetadata: sceneMetadata || undefined,
           });
 
           return; // Exit early for depth files
@@ -689,6 +697,23 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'addFileFromPath':
           await this.handleAddFileFromPath(webviewPanel, message.path as string);
+          break;
+        case 'requestDatasetTexture':
+          await this.handleRequestDatasetTexture(webviewPanel, message);
+          break;
+        case 'loadDatasetCalibration':
+          await this.loadCalibrationFileAutomatically(
+            webviewPanel,
+            message.calibrationPath,
+            message.fileIndex
+          );
+          break;
+        case 'loadDatasetImage':
+          await this.loadColorImageAutomatically(
+            webviewPanel,
+            message.imagePath,
+            message.fileIndex
+          );
           break;
       }
     });
@@ -2529,6 +2554,116 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       vscode.window.showErrorMessage(
         `Failed to select color image: ${error instanceof Error ? error.message : String(error)}`
       );
+    }
+  }
+
+  private async handleRequestDatasetTexture(
+    webviewPanel: vscode.WebviewPanel,
+    message: any
+  ): Promise<void> {
+    try {
+      console.log(`🖼️ Loading dataset texture: ${message.texturePath} for ${message.sceneName}`);
+
+      // Read the texture file
+      const textureUri = vscode.Uri.file(message.texturePath);
+      const textureData = await vscode.workspace.fs.readFile(textureUri);
+      const fileName = path.basename(message.texturePath);
+
+      // Send texture data to webview
+      webviewPanel.webview.postMessage({
+        type: 'datasetTexture',
+        fileName: fileName,
+        sceneName: message.sceneName,
+        data: textureData.buffer.slice(
+          textureData.byteOffset,
+          textureData.byteOffset + textureData.byteLength
+        ),
+      });
+
+      console.log(`✅ Dataset texture loaded: ${fileName} for ${message.sceneName}`);
+    } catch (error) {
+      console.error('❌ Error loading dataset texture:', error);
+      vscode.window.showErrorMessage(
+        `Failed to load dataset texture: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  // Helper function to load calibration file programmatically (no dialog)
+  private async loadCalibrationFileAutomatically(
+    webviewPanel: vscode.WebviewPanel,
+    calibPath: string,
+    fileIndex: number
+  ): Promise<void> {
+    try {
+      console.log(`📁 Auto-loading calibration file: ${calibPath}`);
+
+      // Read the calibration file data
+      const fileData = await vscode.workspace.fs.readFile(vscode.Uri.file(calibPath));
+      const fileName = path.basename(calibPath);
+      const fileContent = Buffer.from(fileData).toString('utf-8');
+
+      // Send calibration file data to webview (same format as manual selection)
+      webviewPanel.webview.postMessage({
+        type: 'calibrationFileSelected',
+        fileIndex: fileIndex,
+        fileName: fileName,
+        content: fileContent,
+      });
+
+      console.log(`✅ Auto-loaded calibration file: ${fileName} for file index ${fileIndex}`);
+    } catch (error) {
+      console.error('❌ Error auto-loading calibration file:', error);
+      throw error;
+    }
+  }
+
+  // Helper function to load color image programmatically (no dialog)
+  private async loadColorImageAutomatically(
+    webviewPanel: vscode.WebviewPanel,
+    imagePath: string,
+    fileIndex: number
+  ): Promise<void> {
+    try {
+      console.log(`📷 Auto-loading color image: ${imagePath}`);
+
+      // Read the image file data
+      const fileData = await vscode.workspace.fs.readFile(vscode.Uri.file(imagePath));
+      const fileName = path.basename(imagePath);
+
+      // Determine MIME type based on extension
+      const ext = path.extname(fileName).toLowerCase();
+      let mimeType = 'image/png';
+      switch (ext) {
+        case '.jpg':
+        case '.jpeg':
+          mimeType = 'image/jpeg';
+          break;
+        case '.png':
+          mimeType = 'image/png';
+          break;
+        case '.gif':
+          mimeType = 'image/gif';
+          break;
+        case '.tif':
+        case '.tiff':
+          mimeType = 'image/tiff';
+          break;
+      }
+
+      // Send image data to webview (same format as manual selection)
+      webviewPanel.webview.postMessage({
+        type: 'colorImageData',
+        fileIndex: fileIndex,
+        data: fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength),
+        fileName: fileName,
+        mimeType: mimeType,
+      });
+
+      console.log(`✅ Auto-loaded color image: ${fileName} for file index ${fileIndex}`);
+    } catch (error) {
+      console.error('❌ Error auto-loading color image:', error);
+      throw error;
     }
   }
 

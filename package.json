@@ -145,6 +145,16 @@
         "command": "plyViewer.resetSettings",
         "title": "Reset All Settings",
         "category": "3D Visualizer"
+      },
+      {
+        "command": "plyViewer.selectDataset",
+        "title": "Select Dataset Scene",
+        "category": "3D Visualizer"
+      },
+      {
+        "command": "plyViewer.clearDatasetCache",
+        "title": "Clear Dataset Cache",
+        "category": "3D Visualizer"
       }
     ],
     "menus": {

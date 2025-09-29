@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { PointCloudEditorProvider } from './pointCloudEditorProvider';
+import { DatasetManager } from './dataset/datasetManager';
 import { glob } from 'glob';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -164,6 +165,23 @@ export function activate(context: vscode.ExtensionContext) {
           `Failed to reset settings: ${error instanceof Error ? error.message : String(error)}`
         );
       }
+    })
+  );
+
+  // Initialize dataset manager
+  const datasetManager = new DatasetManager(context);
+
+  // Register command for dataset selection
+  context.subscriptions.push(
+    vscode.commands.registerCommand('plyViewer.selectDataset', async () => {
+      await datasetManager.showDatasetPicker();
+    })
+  );
+
+  // Register command for clearing dataset cache
+  context.subscriptions.push(
+    vscode.commands.registerCommand('plyViewer.clearDatasetCache', async () => {
+      await datasetManager.clearAllCache();
     })
   );
 

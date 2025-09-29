@@ -231,6 +231,18 @@ class PointCloudVisualizer {
       fileName: string;
       isAddFile: boolean;
       requestId: string;
+      sceneMetadata?: any;
+    }
+  > = new Map();
+
+  // Dataset texture storage for later application to point clouds
+  private datasetTextures: Map<
+    string,
+    {
+      fileName: string;
+      sceneName: string;
+      data: ArrayBuffer;
+      arrayBuffer: ArrayBuffer;
     }
   > = new Map();
 
@@ -2367,15 +2379,21 @@ class PointCloudVisualizer {
     const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
     const pointCloudMeshes = visibleMeshes.filter(mesh => {
       // Only target THREE.Points instances with PointsMaterial and no index buffer
-      if (!(mesh instanceof THREE.Points)) {return false;}
-      if (!(mesh.material instanceof THREE.PointsMaterial)) {return false;}
+      if (!(mesh instanceof THREE.Points)) {
+        return false;
+      }
+      if (!(mesh.material instanceof THREE.PointsMaterial)) {
+        return false;
+      }
 
       const geometry = mesh.geometry;
       const indexAttribute = geometry.getIndex();
       return !indexAttribute || indexAttribute.count === 0;
     });
 
-    if (pointCloudMeshes.length === 0) {return null;}
+    if (pointCloudMeshes.length === 0) {
+      return null;
+    }
 
     // Use efficient raycast with dynamic radius calculation
     return this.efficientRaycastPointSelection(
@@ -2410,7 +2428,9 @@ class PointCloudVisualizer {
       const geometry = mesh.geometry;
       const positionAttribute = geometry.getAttribute('position');
 
-      if (!positionAttribute) {continue;}
+      if (!positionAttribute) {
+        continue;
+      }
 
       // Calculate an approximate distance to this mesh for initial radius estimation
       geometry.computeBoundingSphere();
@@ -2535,7 +2555,9 @@ class PointCloudVisualizer {
       const geometry = mesh.geometry;
       const positionAttribute = geometry.getAttribute('position');
 
-      if (!positionAttribute) {continue;}
+      if (!positionAttribute) {
+        continue;
+      }
 
       const pointCount = positionAttribute.count;
 
@@ -2545,14 +2567,20 @@ class PointCloudVisualizer {
         worldPosition.applyMatrix4(mesh.matrixWorld);
 
         // Safety checks
-        if (!cameraFrustum.containsPoint(worldPosition)) {continue;}
+        if (!cameraFrustum.containsPoint(worldPosition)) {
+          continue;
+        }
 
         const distance = this.camera.position.distanceTo(worldPosition);
-        if (distance < 0.0001) {continue;} // Minimum distance check
+        if (distance < 0.0001) {
+          continue;
+        } // Minimum distance check
 
         const cameraToPoint = worldPosition.clone().sub(this.camera.position);
         const dotProduct = cameraToPoint.dot(this.camera.getWorldDirection(new THREE.Vector3()));
-        if (dotProduct < 0.0001) {continue;} // Behind camera check
+        if (dotProduct < 0.0001) {
+          continue;
+        } // Behind camera check
 
         // Project to screen coordinates
         screenPosition.copy(worldPosition);
@@ -2626,7 +2654,9 @@ class PointCloudVisualizer {
       const geometry = mesh.geometry;
       const positionAttribute = geometry.getAttribute('position');
 
-      if (!positionAttribute) {continue;}
+      if (!positionAttribute) {
+        continue;
+      }
 
       const pointCount = positionAttribute.count;
 
@@ -2636,14 +2666,20 @@ class PointCloudVisualizer {
         worldPosition.applyMatrix4(mesh.matrixWorld);
 
         // Safety checks
-        if (!cameraFrustum.containsPoint(worldPosition)) {continue;}
+        if (!cameraFrustum.containsPoint(worldPosition)) {
+          continue;
+        }
 
         const distance = this.camera.position.distanceTo(worldPosition);
-        if (distance < 0.0001) {continue;} // Minimum distance check
+        if (distance < 0.0001) {
+          continue;
+        } // Minimum distance check
 
         const cameraToPoint = worldPosition.clone().sub(this.camera.position);
         const dotProduct = cameraToPoint.dot(this.camera.getWorldDirection(new THREE.Vector3()));
-        if (dotProduct < 0.0001) {continue;} // Behind camera check
+        if (dotProduct < 0.0001) {
+          continue;
+        } // Behind camera check
 
         // Project to screen coordinates
         screenPosition.copy(worldPosition);
@@ -2693,15 +2729,21 @@ class PointCloudVisualizer {
     const visibleMeshes = this.meshes.filter((mesh, index) => this.fileVisibility[index]);
     const pointCloudMeshes = visibleMeshes.filter(mesh => {
       // Only target THREE.Points instances with PointsMaterial and no index buffer
-      if (!(mesh instanceof THREE.Points)) {return false;}
-      if (!(mesh.material instanceof THREE.PointsMaterial)) {return false;}
+      if (!(mesh instanceof THREE.Points)) {
+        return false;
+      }
+      if (!(mesh.material instanceof THREE.PointsMaterial)) {
+        return false;
+      }
 
       const geometry = mesh.geometry;
       const indexAttribute = geometry.getIndex();
       return !indexAttribute || indexAttribute.count === 0;
     });
 
-    if (pointCloudMeshes.length === 0) {return null;}
+    if (pointCloudMeshes.length === 0) {
+      return null;
+    }
 
     // Use efficient raycast with detailed logging
     return this.efficientRaycastPointSelectionWithLogging(
@@ -2737,7 +2779,9 @@ class PointCloudVisualizer {
       const geometry = mesh.geometry;
       const positionAttribute = geometry.getAttribute('position');
 
-      if (!positionAttribute) {continue;}
+      if (!positionAttribute) {
+        continue;
+      }
 
       // Get the actual file index for this mesh
       const fileIndex = this.meshes.indexOf(mesh);
@@ -2879,7 +2923,9 @@ class PointCloudVisualizer {
       const geometry = mesh.geometry;
       const positionAttribute = geometry.getAttribute('position');
 
-      if (!positionAttribute) {continue;}
+      if (!positionAttribute) {
+        continue;
+      }
 
       // Get the actual file index for this mesh
       const fileIndex = this.meshes.indexOf(mesh);
@@ -2891,14 +2937,20 @@ class PointCloudVisualizer {
         worldPosition.applyMatrix4(mesh.matrixWorld);
 
         // Safety checks
-        if (!cameraFrustum.containsPoint(worldPosition)) {continue;}
+        if (!cameraFrustum.containsPoint(worldPosition)) {
+          continue;
+        }
 
         const distance = this.camera.position.distanceTo(worldPosition);
-        if (distance < 0.0001) {continue;} // Minimum distance check
+        if (distance < 0.0001) {
+          continue;
+        } // Minimum distance check
 
         const cameraToPoint = worldPosition.clone().sub(this.camera.position);
         const dotProduct = cameraToPoint.dot(this.camera.getWorldDirection(new THREE.Vector3()));
-        if (dotProduct < 0.0001) {continue;} // Behind camera check
+        if (dotProduct < 0.0001) {
+          continue;
+        } // Behind camera check
 
         // Project to screen coordinates
         screenPosition.copy(worldPosition);
@@ -2986,7 +3038,9 @@ class PointCloudVisualizer {
       const geometry = mesh.geometry;
       const positionAttribute = geometry.getAttribute('position');
 
-      if (!positionAttribute) {continue;}
+      if (!positionAttribute) {
+        continue;
+      }
 
       // Get the actual file index for this mesh
       const fileIndex = this.meshes.indexOf(mesh);
@@ -2998,14 +3052,20 @@ class PointCloudVisualizer {
         worldPosition.applyMatrix4(mesh.matrixWorld);
 
         // Safety checks
-        if (!cameraFrustum.containsPoint(worldPosition)) {continue;}
+        if (!cameraFrustum.containsPoint(worldPosition)) {
+          continue;
+        }
 
         const distance = this.camera.position.distanceTo(worldPosition);
-        if (distance < 0.0001) {continue;} // Minimum distance check
+        if (distance < 0.0001) {
+          continue;
+        } // Minimum distance check
 
         const cameraToPoint = worldPosition.clone().sub(this.camera.position);
         const dotProduct = cameraToPoint.dot(this.camera.getWorldDirection(new THREE.Vector3()));
-        if (dotProduct < 0.0001) {continue;} // Behind camera check
+        if (dotProduct < 0.0001) {
+          continue;
+        } // Behind camera check
 
         // Project to screen coordinates
         screenPosition.copy(worldPosition);
@@ -4626,6 +4686,9 @@ class PointCloudVisualizer {
           break;
         case 'cameraParamsCancelled':
           this.handleCameraParamsCancelled(message.requestId);
+          break;
+        case 'datasetTexture':
+          this.handleDatasetTexture(message);
           break;
         case 'cameraParamsError':
           this.handleCameraParamsError(message.error, message.requestId);
@@ -10023,6 +10086,23 @@ class PointCloudVisualizer {
 
       // Display calibration file info and populate camera selection
       this.displayCalibrationInfo(calibrationData, fileName, fileIndex);
+
+      // Check if this is part of a dataset workflow and trigger next step
+      const pendingFiles = Array.from(this.pendingDepthFiles.values());
+      const datasetFile = pendingFiles.find(f => f.sceneMetadata && f.sceneMetadata.isDatasetScene);
+
+      if (datasetFile && datasetFile.sceneMetadata) {
+        console.log(`🎯 Dataset calibration loaded - triggering Step 3: color image loading...`);
+
+        // Step 3: Trigger color image loading after brief delay
+        setTimeout(async () => {
+          await this.triggerDatasetImageLoading(datasetFile.sceneMetadata);
+        }, 1000);
+
+        this.showStatus(
+          `📁 Step 2: Calibration loaded for ${datasetFile.sceneMetadata.sceneName} - loading color image next...`
+        );
+      }
     } catch (error) {
       console.error('Error processing calibration file:', error);
       alert(
@@ -10192,8 +10272,23 @@ class PointCloudVisualizer {
         requestId: requestId,
       });
 
+      // Check if this is a dataset scene - store metadata but let UI load normally
+      if (message.sceneMetadata && message.sceneMetadata.isDatasetScene) {
+        console.log(
+          '🎯 Dataset scene detected - will auto-load calibration and image after UI loads...'
+        );
+
+        // Store dataset metadata for step-by-step processing
+        this.pendingDepthFiles.get(requestId)!.sceneMetadata = message.sceneMetadata;
+
+        console.log('📋 Will show depth UI normally, then auto-trigger calibration loading...');
+        // Continue to normal depth handling to show UI
+      }
+
       // Determine how to handle depth conversion based on environment
-      const depthHandling = shouldRequestDepthParams(isVSCode);
+      // For dataset scenes, always use local UI to enable calibration auto-loading
+      const isDatasetScene = message.sceneMetadata && message.sceneMetadata.isDatasetScene;
+      const depthHandling = isDatasetScene ? 'local' : shouldRequestDepthParams(isVSCode);
 
       if (depthHandling === 'extension') {
         // Request camera parameters from VS Code extension
@@ -10206,7 +10301,11 @@ class PointCloudVisualizer {
         return; // Exit early - extension will respond with camera params
       } else if (depthHandling === 'local') {
         // Show local UI to collect camera parameters
-        console.log('📋 Showing local camera parameter UI...');
+        console.log(
+          isDatasetScene
+            ? '📋 Showing local UI for dataset scene (enables auto-calibration)...'
+            : '📋 Showing local camera parameter UI...'
+        );
         this.showDepthConversionUI(message.fileName, requestId);
         return; // Exit early - UI will call processDepthWithParams when ready
       } else {
@@ -10251,6 +10350,18 @@ class PointCloudVisualizer {
     // Use shared prompt-based UI to collect camera parameters in browser mode
     (async () => {
       try {
+        // Check if this is a dataset scene and trigger step-by-step loading
+        if (depthFileData.sceneMetadata && depthFileData.sceneMetadata.isDatasetScene) {
+          console.log('🎯 Dataset scene detected - starting step-by-step calibration loading...');
+
+          // Trigger calibration loading after a short delay to let UI settle
+          setTimeout(async () => {
+            await this.triggerDatasetCalibrationLoading(depthFileData.sceneMetadata);
+          }, 500);
+
+          // Continue with normal UI flow - don't return early
+        }
+
         // Probe image size to center cx/cy (quick path: read header via depth pipeline)
         const tmpId = `tmp_${requestId}`;
         // We don't have direct readers here; rely on defaults for cx/cy and let processing update
@@ -10398,6 +10509,27 @@ class PointCloudVisualizer {
     (spatialData as any).isDepthDerived = true;
 
     console.log(`${fileType} to PLY conversion complete: ${result.pointCount} points`);
+
+    // Check for dataset texture to apply
+    if (depthFileData.sceneMetadata && depthFileData.sceneMetadata.isDatasetScene) {
+      const sceneName = depthFileData.sceneMetadata.sceneName;
+      const textureData = this.datasetTextures.get(sceneName);
+
+      if (textureData) {
+        console.log(`🖼️ Applying dataset texture ${textureData.fileName} to point cloud`);
+
+        // Add texture info to spatial data
+        (spatialData as any).datasetTexture = {
+          fileName: textureData.fileName,
+          data: textureData.arrayBuffer,
+          sceneName: sceneName,
+        };
+
+        this.showStatus(
+          `📷 Applied dataset texture: ${textureData.fileName} to ${depthFileData.fileName}`
+        );
+      }
+    }
 
     // Add to scene
     if (depthFileData.isAddFile) {
@@ -11767,6 +11899,19 @@ class PointCloudVisualizer {
       this.updateFileList();
       this.restoreDepthPanelStates(openPanelStates);
       this.showStatus(`Color image "${message.fileName}" applied successfully!`);
+
+      // Check if this is part of a dataset workflow
+      const pendingFiles = Array.from(this.pendingDepthFiles.values());
+      const datasetFile = pendingFiles.find(f => f.sceneMetadata && f.sceneMetadata.isDatasetScene);
+
+      if (datasetFile && datasetFile.sceneMetadata) {
+        console.log(
+          `🎯 Dataset workflow complete - all files loaded for ${datasetFile.sceneMetadata.sceneName}`
+        );
+        this.showStatus(
+          `✅ Dataset workflow complete for ${datasetFile.sceneMetadata.sceneName} - ready to apply!`
+        );
+      }
     } catch (error) {
       console.error('Error handling color image data:', error);
       this.showError(
@@ -15048,6 +15193,91 @@ class PointCloudVisualizer {
         element.removeAttribute('title');
       }
     });
+  }
+
+  private async loadDatasetTexture(texturePath: string, sceneName: string): Promise<void> {
+    try {
+      console.log(`🖼️ Loading dataset texture for ${sceneName}: ${texturePath}`);
+
+      // Request texture file from VS Code extension
+      this.vscode.postMessage({
+        type: 'requestDatasetTexture',
+        texturePath: texturePath,
+        sceneName: sceneName,
+      });
+    } catch (error) {
+      console.error('Error loading dataset texture:', error);
+      this.showError(
+        `Failed to load texture for ${sceneName}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async triggerDatasetCalibrationLoading(sceneMetadata: any): Promise<void> {
+    try {
+      console.log('📁 Step 1: Triggering calibration file loading...');
+
+      // Step 1: Load calibration file using VS Code extension
+      this.vscode.postMessage({
+        type: 'loadDatasetCalibration',
+        calibrationPath: sceneMetadata.calibrationPath,
+        fileIndex: 0, // Assuming depth file is file index 0
+        sceneName: sceneMetadata.sceneName,
+      });
+
+      // Note: We'll trigger next steps when we receive the calibration response
+    } catch (error) {
+      console.error('Error triggering dataset calibration loading:', error);
+      this.showError(
+        `Failed to load dataset calibration: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async triggerDatasetImageLoading(sceneMetadata: any): Promise<void> {
+    try {
+      console.log('📷 Step 3: Triggering color image loading...');
+
+      // Step 3: Load color image using VS Code extension
+      this.vscode.postMessage({
+        type: 'loadDatasetImage',
+        imagePath: sceneMetadata.texturePath,
+        fileIndex: 0, // Assuming depth file is file index 0
+        sceneName: sceneMetadata.sceneName,
+      });
+    } catch (error) {
+      console.error('Error triggering dataset image loading:', error);
+      this.showError(
+        `Failed to load dataset image: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async handleDatasetTexture(message: any): Promise<void> {
+    try {
+      console.log(`📷 Received dataset texture: ${message.fileName} for ${message.sceneName}`);
+
+      // Store texture data for later use when depth conversion happens
+      // Don't add as a separate file - it will be applied to the point cloud
+      const textureData = {
+        fileName: message.fileName,
+        sceneName: message.sceneName,
+        data: message.data,
+        arrayBuffer: message.data,
+      };
+
+      // Store in a class property for later use
+      this.datasetTextures.set(message.sceneName, textureData);
+
+      this.showStatus(
+        `📷 Pre-loaded dataset texture: ${message.fileName} for ${message.sceneName} (will apply during depth conversion)`
+      );
+    } catch (error) {
+      console.error('Error handling dataset texture:', error);
+      this.showError(
+        `Failed to handle texture: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 }
 
