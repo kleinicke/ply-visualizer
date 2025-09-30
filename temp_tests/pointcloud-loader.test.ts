@@ -82,7 +82,7 @@ describe('Point Cloud Loading Tests', () => {
     });
 
     it('should create proper Three.js geometry from point cloud data', async () => {
-      const { createThreeObjectFromData } = await import('./test-helpers');
+      const { createThreeObjectFromData } = await import('../website/src/lib/test-helpers');
 
       const sampleData = {
         vertices: generateSampleVertices(100), // Smaller test set

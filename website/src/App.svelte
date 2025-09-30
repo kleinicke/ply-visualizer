@@ -16,10 +16,10 @@
   let { vscode = null }: Props = $props();
   
   let threeJSViewer: ThreeJSViewer;
-  let status = 'Phase 4: Initializing Svelte + ThreeManager...';
+  let status = $state('Phase 4: Initializing Svelte + ThreeManager...');
   
-  // Use traditional Svelte approach to avoid runes issues
-  let currentTheme = 'dark';
+  // Use Svelte 5 $state for better reactivity
+  let currentTheme = $state('dark');
   
   let unsubscribeVisualizer: (() => void) | undefined;
   let unsubscribeUI: (() => void) | undefined;

@@ -6,31 +6,29 @@
  * starting migration work.
  */
 
-const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
+import { describe, it, expect } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import { execSync } from 'child_process';
 
-describe('Migration Safety - Build System', function () {
-  this.timeout(60000); // 60 second timeout for builds
-
-  it('Extension webpack build succeeds', function () {
+describe('Migration Safety - Build System', () => {
+  it('Extension webpack build succeeds', async () => {
     // Run build and check for output files
     try {
       execSync('npm run compile', { stdio: 'pipe' });
 
       // Check that required files exist
-      assert(fs.existsSync('out/extension.js'), 'Extension bundle should exist');
-      assert(fs.existsSync('out/webview/main.js'), 'Webview bundle should exist');
+      expect(fs.existsSync('out/extension.js')).toBe(true);
+      expect(fs.existsSync('out/webview/main.js')).toBe(true);
 
       // Check file sizes are reasonable (not empty)
       const extensionSize = fs.statSync('out/extension.js').size;
       const webviewSize = fs.statSync('out/webview/main.js').size;
 
-      assert(extensionSize > 1000, 'Extension bundle should be substantial');
-      assert(webviewSize > 10000, 'Webview bundle should be substantial');
+      expect(extensionSize).toBeGreaterThan(1000);
+      expect(webviewSize).toBeGreaterThan(10000);
     } catch (error) {
-      assert.fail(`Build failed: ${error.message}`);
+      throw new Error(`Build failed: ${error.message}`);
     }
   });
 

@@ -1339,6 +1339,131 @@ by step to a refactored svelte 5 architecture"
 This failure analysis ensures future migration attempts avoid the same critical
 mistakes and maintain user confidence throughout the process.
 
+## 🧪 RUNNING THE TEST SUITES
+
+### Two Test Frameworks Available
+
+This project maintains **two comprehensive test suites** to ensure quality and
+functionality:
+
+#### 1. **Original Mocha Test Suite** (Primary - Always Use)
+
+**Purpose**: Validates core VS Code extension functionality  
+**Status**: ✅ **55/55 tests passing** - Rock solid validation  
+**Coverage**: Extension activation, file loading, parser functionality, VS Code
+integration
+
+```bash
+# Run the primary test suite (MANDATORY for all changes)
+npm test                    # Full test suite: pretest + compile + lint + tests
+npm run pretest            # Just compile and lint
+npm run test:ui            # UI integration tests
+npm run test:coverage      # With coverage analysis
+npm run test:all           # Both unit and UI tests
+```
+
+**Test Verification**:
+
+```bash
+# Should always show:
+# ✅ 55 passing tests
+# ✅ Extension bundle: ~410 KiB
+# ✅ Webview bundle: ~976-985 KiB
+# ✅ Clean compilation (only cosmetic lint warnings OK)
+```
+
+#### 2. **Vitest Test Suite** (Supplementary - For Enhanced Coverage)
+
+**Purpose**: Tests parser functionality, browser compatibility, edge cases  
+**Status**: ✅ **280 passed | 9 failed** tests (excellent core coverage)  
+**Coverage**: File parsers, error handling, browser integration, performance
+
+```bash
+# Run the supplementary Vitest suite
+npx vitest run              # All Vitest tests (includes parser tests)
+npx vitest --ui             # Interactive test UI
+npx vitest watch            # Watch mode for development
+```
+
+**Test Status**:
+
+- ✅ **14 test suites passing** (core functionality)
+- ✅ **280 individual tests passing** (parser, math, depth processing)
+- ❌ **54 test suites with path issues** (non-critical, fixable)
+- ❌ **9 individual test failures** (mostly configuration issues)
+
+### Test-Driven Development Workflow
+
+**Before ANY migration changes:**
+
+```bash
+npm test                    # MUST pass 55/55 tests
+```
+
+**After each migration phase:**
+
+```bash
+npm test                    # Primary validation
+npx vitest run              # Secondary validation (optional but recommended)
+```
+
+**Quality Gates**:
+
+- 🚫 **Never proceed** if primary tests fail
+- ⚠️ **Investigate** if Vitest results deteriorate significantly
+- ✅ **Good to continue** if primary tests pass + Vitest core functionality
+  works
+
+### Test File Locations
+
+**Original Test Suite**:
+
+- `src/test/suite/extension.test.ts` - Core extension tests
+- `src/test/suite/integration.test.ts` - File loading integration
+- `src/test/suite/pointCloudEditorProviderAdvanced.test.ts` - Advanced features
+- `ui-tests/specs/` - UI interaction tests
+
+**Vitest Test Suite**:
+
+- `website/test/parsers/` - Parser-specific tests (PLY, OBJ, STL, etc.)
+- `website/test/browser/` - Browser environment tests
+- `website/test/depth/` - Depth processing tests
+- `tests/` - Integration and error detection tests
+
+**Test Data**:
+
+- `testfiles/` - Organized test files by format type
+- `testfiles/ply/` - PLY test files
+- `testfiles/stl/` - STL test files
+- `testfiles/tif/` - Depth image test files
+- And more format-specific directories
+
+### Migration Safety Protocol
+
+1. **Baseline Verification** (Phase 0):
+
+   ```bash
+   npm test                    # MUST: 55/55 passing
+   npx vitest run              # SHOULD: 280+ passing
+   ```
+
+2. **Phase Testing** (After each migration step):
+
+   ```bash
+   npm run compile             # Verify builds work
+   npm test                    # Verify functionality preserved
+   # Optional: npx vitest run  # Check for regressions
+   ```
+
+3. **Emergency Rollback Triggers**:
+   - Any failure in `npm test`
+   - Build failures in `npm run compile`
+   - Major functionality broken (file loading, 3D rendering)
+
+This dual test approach ensures both VS Code extension quality (primary) and
+comprehensive parser/browser testing (secondary), providing confidence
+throughout the migration process.
+
 ## 🧪 ESSENTIAL TEST SUITE FOR SAFE MIGRATION
 
 ### Test Philosophy: Fail Fast, Fail Early

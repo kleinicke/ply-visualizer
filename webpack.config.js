@@ -48,6 +48,7 @@ module.exports = [
     devtool: 'nosources-source-map',
     resolve: {
       extensions: ['.ts', '.js', '.svelte'],
+      conditionNames: ['svelte', 'browser', 'import'],
       alias: {
         // Force single Three.js instance to prevent multiple imports
         three: path.resolve(__dirname, 'node_modules/three'),

@@ -22,11 +22,11 @@
     style = '' 
   }: Props = $props();
   
-  // Component state - use traditional variables to avoid runes issues
+  // Component state - use Svelte 5 $state for better reactivity
   let canvasContainer: HTMLElement;
   let threeManager: ThreeManager;
-  let isInitialized = false;
-  let status = 'Initializing Three.js...';
+  let isInitialized = $state(false);
+  let status = $state('Initializing Three.js...');
   
   // Simplified store handling - avoid $effect for now
   let unsubscribeVisualizer: (() => void) | undefined;

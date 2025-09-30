@@ -289,9 +289,6 @@ export class ThreeManager {
   private animate(): void {
     this.animationId = requestAnimationFrame(this.animate.bind(this));
 
-    // Update FPS calculation
-    this.updateFPSCalculation();
-
     // Update controls
     this.controls.update();
 
@@ -327,6 +324,9 @@ export class ThreeManager {
       this.needsRender || hasMovement || this.renderCooldown > 0 || this.isControlsMoving();
 
     if (shouldRender) {
+      // Update FPS calculation only when actually rendering
+      this.updateFPSCalculation();
+
       // Call business logic callback for camera changes
       if (hasMovement && this.onCameraChangeCallback) {
         this.onCameraChangeCallback();
@@ -484,7 +484,9 @@ export class ThreeManager {
       this.scene.remove(object);
       // Dispose geometry and material if they exist
       if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
-        if (object.geometry) {object.geometry.dispose();}
+        if (object.geometry) {
+          object.geometry.dispose();
+        }
         if (object.material) {
           if (Array.isArray(object.material)) {
             object.material.forEach(mat => mat.dispose());
@@ -550,6 +552,19 @@ export class ThreeManager {
 
   getCurrentFps(): number {
     return this.currentFps;
+  }
+
+  getLastFrameTime(): number | null {
+    if (this.frameRenderTimes.length === 0) {
+      return null; // No recent rendering
+    }
+    return this.frameRenderTimes[this.frameRenderTimes.length - 1];
+  }
+
+  isRendering(): boolean {
+    // Check if we've rendered in the last 100ms
+    const now = performance.now();
+    return now - this.lastRenderTime < 100;
   }
 
   dispose(): void {

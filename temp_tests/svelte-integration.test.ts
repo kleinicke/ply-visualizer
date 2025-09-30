@@ -14,7 +14,7 @@ describe('Svelte 5 Integration Tests', () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       try {
-        const AppModule = await import('../App.svelte');
+        const AppModule = await import('../website/src/App.svelte');
         expect(AppModule.default).toBeDefined();
         expect(typeof AppModule.default).toBe('function');
 
@@ -31,7 +31,7 @@ describe('Svelte 5 Integration Tests', () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       try {
-        const ViewerModule = await import('../components/threejs/ThreeJSViewer.svelte');
+        const ViewerModule = await import('../website/src/components/threejs/ThreeJSViewer.svelte');
         expect(ViewerModule.default).toBeDefined();
         expect(typeof ViewerModule.default).toBe('function');
 
