@@ -9,13 +9,18 @@
   import { ThreeManager } from '../../lib/three-manager';
   import { visualizerStore, visualizerActions } from '../../stores';
   
-  // Traditional Svelte props instead of runes
-  export let className = '';
-  export let style = '';
+  // Svelte 5 props syntax
+  interface Props {
+    class?: string;
+    className?: string;
+    style?: string;
+  }
   
-  // Handle the 'class' attribute which is reserved in HTML
-  let cls = '';
-  export { cls as class };
+  let { 
+    class: cls = '', 
+    className = '', 
+    style = '' 
+  }: Props = $props();
   
   // Component state - use traditional variables to avoid runes issues
   let canvasContainer: HTMLElement;

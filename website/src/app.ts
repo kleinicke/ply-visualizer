@@ -7,6 +7,7 @@
  */
 
 import App from './App.svelte';
+import { mount } from 'svelte';
 import * as THREE from 'three';
 // Re-enable the original working visualizer
 import SpatialVisualizer from './main';
@@ -20,8 +21,8 @@ console.log('Environment:', isVSCode ? 'VS Code Extension' : 'Standalone Website
 // Acquire VS Code API only once if available
 const vscode = isVSCode ? acquireVsCodeApi() : null;
 
-// Initialize the Svelte app FIRST
-const app = new App({
+// Initialize the Svelte app FIRST using Svelte 5 mount() function
+const app = mount(App, {
   target: document.body,
   props: {
     vscode: vscode,

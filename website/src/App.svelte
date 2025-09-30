@@ -8,8 +8,12 @@
   import ThreeJSViewer from './components/threejs/ThreeJSViewer.svelte';
   import { visualizerStore, uiStore } from './stores';
   
-  // Traditional Svelte props instead of runes
-  export let vscode = null;
+  // Svelte 5 props syntax
+  interface Props {
+    vscode?: any;
+  }
+  
+  let { vscode = null }: Props = $props();
   
   let threeJSViewer: ThreeJSViewer;
   let status = 'Phase 4: Initializing Svelte + ThreeManager...';
