@@ -40,7 +40,7 @@ module.exports = [
   {
     target: 'web',
     mode: 'production',
-    entry: './website/src/main.ts',
+    entry: './website/src/app.ts', // Phase 4: Use Svelte entry point
     output: {
       path: path.resolve(__dirname, 'out', 'webview'),
       filename: 'main.js',
@@ -66,6 +66,11 @@ module.exports = [
             options: {
               emitCss: false,
               hotReload: false,
+              compilerOptions: {
+                compatibility: {
+                  componentApi: 4,
+                },
+              },
             },
           },
         },

@@ -470,6 +470,42 @@ export class ThreeManager {
     this.onCameraChangeCallback = callback;
   }
 
+  // Scene management methods for spatial data
+  clearScene(): void {
+    // Remove all objects except lights and helpers
+    const objectsToRemove = this.scene.children.filter(
+      child =>
+        !(child instanceof THREE.Light) &&
+        !(child instanceof THREE.AxesHelper) &&
+        child !== this.axesGroup
+    );
+
+    objectsToRemove.forEach(object => {
+      this.scene.remove(object);
+      // Dispose geometry and material if they exist
+      if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
+        if (object.geometry) {object.geometry.dispose();}
+        if (object.material) {
+          if (Array.isArray(object.material)) {
+            object.material.forEach(mat => mat.dispose());
+          } else {
+            object.material.dispose();
+          }
+        }
+      }
+    });
+
+    this.requestRender();
+  }
+
+  addToScene(object: THREE.Object3D, name?: string): void {
+    if (name) {
+      object.name = name;
+    }
+    this.scene.add(object);
+    this.requestRender();
+  }
+
   fitToView(): void {
     // Calculate bounding box of all objects in scene
     const box = new THREE.Box3();

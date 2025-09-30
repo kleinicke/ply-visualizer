@@ -52,15 +52,24 @@ import { PngReader } from './depth/readers/PngReader';
  */
 
 class PointCloudVisualizer {
-  private vscode: any = isVSCode
-    ? acquireVsCodeApi()
-    : {
-        // Mock VS Code API for browser version - fully functional
-        postMessage: (message: any) => {
-          console.log('🌐 Browser mode handling:', message.type);
-          this.handleBrowserMessage(message);
-        },
-      };
+  private vscode: any;
+
+  constructor(vsCodeApi?: any) {
+    this.vscode =
+      vsCodeApi ||
+      (isVSCode
+        ? acquireVsCodeApi()
+        : {
+            // Mock VS Code API for browser version - fully functional
+            postMessage: (message: any) => {
+              console.log('🌐 Browser mode handling:', message.type);
+              this.handleBrowserMessage(message);
+            },
+          });
+
+    // Initialize the visualizer
+    this.init();
+  }
 
   // Browser file handler
   private browserFileHandler: BrowserMessageHandler | null = null;
@@ -753,10 +762,6 @@ class PointCloudVisualizer {
 
   // Predefined colors for different files - use shared constants
   private readonly fileColors: [number, number, number][] = DEFAULT_COLORS.FILE_COLORS;
-
-  constructor() {
-    this.init();
-  }
 
   private async init(): Promise<void> {
     try {

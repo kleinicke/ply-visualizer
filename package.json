@@ -214,6 +214,8 @@
     "clean": "rm -rf out/",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
+    "test:vite": "vitest",
+    "test:vite:ui": "vitest --ui",
     "test:coverage": "npm run pretest && NODE_V8_COVERAGE=coverage npm run test",
     "coverage": "npm run test:coverage && npm run coverage:report",
     "coverage:report": "node --experimental-loader ./analyze-coverage.mjs",
@@ -226,6 +228,7 @@
     "prepare": "husky"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
     "@types/glob": "^8.0.0",
     "@types/mocha": "^10.0.1",
     "@types/node": "16.x",
@@ -234,10 +237,12 @@
     "@types/vscode": "^1.74.0",
     "@typescript-eslint/eslint-plugin": "^5.45.0",
     "@typescript-eslint/parser": "^5.45.0",
+    "@vitest/ui": "^3.2.4",
     "@vscode/test-electron": "^2.2.0",
     "eslint": "^8.28.0",
     "glob": "^8.1.0",
     "husky": "^9.1.7",
+    "jsdom": "^27.0.0",
     "lint-staged": "^16.1.6",
     "mocha": "^10.2.0",
     "nyc": "^17.1.0",
@@ -246,6 +251,7 @@
     "svelte-loader": "^3.2.4",
     "ts-loader": "^9.5.1",
     "typescript": "^4.9.4",
+    "vitest": "^3.2.4",
     "vscode-extension-tester": "^8.17.0",
     "webpack": "^5.89.0",
     "webpack-cli": "^5.1.4"
