@@ -98,14 +98,22 @@ export class ThreeManager {
     this.lastCameraPosition.copy(this.camera.position);
     this.lastCameraQuaternion.copy(this.camera.quaternion);
 
-    // Renderer - look for existing canvas or create container
+    // Renderer - look for existing canvas or create new one
     let canvas = this.container.querySelector('canvas') as HTMLCanvasElement;
     if (!canvas) {
+      console.log('📐 Creating new canvas');
       canvas = document.createElement('canvas');
       canvas.style.width = '100%';
       canvas.style.height = '100%';
       this.container.appendChild(canvas);
+    } else {
+      console.log('📐 Using existing canvas, initial size:', canvas.width, 'x', canvas.height);
+      // Ensure existing canvas has proper sizing styles
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
     }
+
+    console.log('📐 Container size:', this.container.clientWidth, 'x', this.container.clientHeight);
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: canvas,
@@ -116,6 +124,13 @@ export class ThreeManager {
     });
     this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    console.log(
+      '📐 Canvas after WebGLRenderer setup:',
+      this.renderer.domElement.width,
+      'x',
+      this.renderer.domElement.height
+    );
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.sortObjects = true;
@@ -268,9 +283,25 @@ export class ThreeManager {
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
 
+    console.log('📐 Resize: container', width, 'x', height);
+    console.log(
+      '📐 Canvas before resize:',
+      this.renderer.domElement.width,
+      'x',
+      this.renderer.domElement.height
+    );
+
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+
+    console.log(
+      '📐 Canvas after resize:',
+      this.renderer.domElement.width,
+      'x',
+      this.renderer.domElement.height
+    );
+
     this.requestRender();
   }
 
@@ -511,12 +542,16 @@ export class ThreeManager {
   fitToView(): void {
     // Calculate bounding box of all objects in scene
     const box = new THREE.Box3();
+    let objectCount = 0;
     this.scene.traverse(object => {
       if (object instanceof THREE.Mesh || object instanceof THREE.Points) {
         const objectBox = new THREE.Box3().setFromObject(object);
         box.union(objectBox);
+        objectCount++;
       }
     });
+
+    console.log('📐 FitToView: found', objectCount, 'objects, box empty:', box.isEmpty());
 
     if (!box.isEmpty()) {
       const center = box.getCenter(new THREE.Vector3());
@@ -525,11 +560,22 @@ export class ThreeManager {
       const fov = this.camera.fov * (Math.PI / 180);
       const distance = maxDim / (2 * Math.tan(fov / 2));
 
+      console.log('📐 Box center:', center.toArray(), 'size:', size.toArray(), 'maxDim:', maxDim);
+      console.log('📐 Camera distance:', distance, 'new position:', [
+        center.x,
+        center.y,
+        center.z + distance * 1.5,
+      ]);
+
       this.camera.position.copy(center);
       this.camera.position.z += distance * 1.5;
       this.controls.target.copy(center);
       this.controls.update();
       this.requestRender();
+
+      console.log('📐 Camera positioned at:', this.camera.position.toArray());
+    } else {
+      console.warn('⚠️ Cannot fit to view - bounding box is empty!');
     }
   }
 

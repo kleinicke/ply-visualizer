@@ -6,17 +6,20 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import ThreeJSViewer from './components/threejs/ThreeJSViewer.svelte';
+  import PerformanceMonitor from './components/ui/PerformanceMonitor.svelte';
+  // import SequencePlayer from './components/ui/SequencePlayer.svelte'; // TODO: Re-enable later
+  import DepthConverter from './components/ui/DepthConverter.svelte';
   import { visualizerStore, uiStore } from './stores';
-  
+
   // Svelte 5 props syntax
   interface Props {
     vscode?: any;
   }
-  
+
   let { vscode = null }: Props = $props();
   
   let threeJSViewer: ThreeJSViewer;
-  let status = $state('Phase 4: Initializing Svelte + ThreeManager...');
+  let status = $state('Phase 5: Advanced Components Active');
   
   // Use Svelte 5 $state for better reactivity
   let currentTheme = $state('dark');
@@ -30,7 +33,7 @@
     // Subscribe to stores the traditional way
     unsubscribeVisualizer = visualizerStore.subscribe(value => {
       if (value.isInitialized) {
-        status = 'Phase 4: Ready - Svelte + ThreeManager active';
+        status = 'Phase 5: Ready - Advanced Components Active';
       }
     });
     
@@ -68,9 +71,18 @@
   <div class="migration-status">
     {status}
   </div>
-  
+
+  <!-- Phase 5: Performance Monitor -->
+  <PerformanceMonitor />
+
+  <!-- Phase 5: Depth Converter -->
+  <DepthConverter />
+
+  <!-- Phase 5: Sequence Player - TODO: Re-enable later -->
+  <!-- <SequencePlayer /> -->
+
   <!-- Phase 4: ThreeJSViewer component with ThreeManager -->
-  <ThreeJSViewer 
+  <ThreeJSViewer
     bind:this={threeJSViewer}
     class="main-viewer"
   />

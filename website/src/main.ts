@@ -54,7 +54,7 @@ import { PngReader } from './depth/readers/PngReader';
 class PointCloudVisualizer {
   private vscode: any;
 
-  constructor(vsCodeApi?: any) {
+  constructor(vsCodeApi?: any, sharedThreeManager?: ThreeManager) {
     this.vscode =
       vsCodeApi ||
       (isVSCode
@@ -67,6 +67,13 @@ class PointCloudVisualizer {
             },
           });
 
+    // Phase 5: Use shared ThreeManager from Svelte if provided
+    if (sharedThreeManager) {
+      console.log('✅ Using shared ThreeManager from Svelte');
+      this.threeManager = sharedThreeManager;
+      this.isUsingSharedThreeManager = true;
+    }
+
     // Initialize the visualizer
     this.init();
   }
@@ -76,6 +83,7 @@ class PointCloudVisualizer {
 
   // Phase 2: ThreeManager integration - gradually replacing direct Three.js usage
   private threeManager: ThreeManager = new ThreeManager();
+  private isUsingSharedThreeManager: boolean = false;
 
   // Legacy Three.js properties (gradually being phased out)
   private scene!: THREE.Scene;
@@ -770,7 +778,8 @@ class PointCloudVisualizer {
 
       if (isVSCode) {
         // VSCode extension environment
-        this.setupMessageHandler();
+        // NOTE: Message handling is now done by app.ts to avoid double-loading
+        // this.setupMessageHandler(); // DISABLED - app.ts handles messages
         console.log('📤 Requesting default depth settings from extension...');
         this.vscode.postMessage({
           type: 'requestDefaultDepthSettings',
@@ -789,14 +798,19 @@ class PointCloudVisualizer {
   }
 
   private initThreeJS(): void {
-    // Phase 2: Initialize using ThreeManager
-    const container = document.getElementById('viewer-container');
-    if (!container) {
-      throw new Error('Viewer container not found');
-    }
+    // Phase 5: Skip ThreeManager initialization if using shared one from Svelte
+    if (this.isUsingSharedThreeManager) {
+      console.log('✅ Skipping ThreeManager initialization - using shared instance');
+    } else {
+      // Phase 2: Initialize using ThreeManager
+      const container = document.getElementById('viewer-container');
+      if (!container) {
+        throw new Error('Viewer container not found');
+      }
 
-    // Initialize ThreeManager with container
-    this.threeManager.initialize(container);
+      // Initialize ThreeManager with container
+      this.threeManager.initialize(container);
+    }
 
     // Set up callback for camera change business logic
     this.threeManager.setOnCameraChangeCallback(() => {
@@ -4410,7 +4424,7 @@ class PointCloudVisualizer {
 
   // # VSCode changes: the functions above are used in the browser and were not used for the extension
 
-  private async displayFiles(dataArray: SpatialData[]): Promise<void> {
+  public async displayFiles(dataArray: SpatialData[]): Promise<void> {
     // concise summary printed separately
     // In sequence mode: do not auto-fit camera or heavy UI work
     if (this.sequenceMode) {
@@ -7237,7 +7251,7 @@ class PointCloudVisualizer {
     this.requestRender();
   }
 
-  private async handleUltimateRawBinaryData(message: any): Promise<void> {
+  public async handleUltimateRawBinaryData(message: any): Promise<void> {
     const startTime = performance.now();
 
     // Parse raw binary data directly in webview
@@ -14510,10 +14524,12 @@ function setupThemeSwitcher() {
   }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initializeVisualizer);
-} else {
-  initializeVisualizer();
-}
+// Phase 5: Disable auto-initialization - now handled by app.ts with Svelte
+// The PointCloudVisualizer is instantiated in app.ts after ThreeManager is ready
+// if (document.readyState === 'loading') {
+//   document.addEventListener('DOMContentLoaded', initializeVisualizer);
+// } else {
+//   initializeVisualizer();
+// }
 
 export default PointCloudVisualizer;

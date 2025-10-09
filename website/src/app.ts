@@ -29,21 +29,42 @@ const app = mount(App, {
   },
 });
 
-// Initialize the original working SpatialVisualizer alongside Svelte
-console.log('💡 Re-enabling original SpatialVisualizer alongside Svelte');
-// Pass the vscode API to avoid dual acquisition
-const spatialVisualizer = new SpatialVisualizer(vscode);
-if (typeof window !== 'undefined') {
-  (window as any).spatialVisualizer = spatialVisualizer;
-}
-
 // Make the app globally available for debugging and extension integration
 if (typeof window !== 'undefined') {
   (window as any).svelteApp = app;
-
-  // For VS Code extension compatibility, we'll expose methods once the app is mounted
-  // The App component will set up the global references to ThreeManager
 }
+
+// Message queue for messages that arrive before SpatialVisualizer is ready
+const messageQueue: any[] = [];
+let spatialVisualizerReady = false;
+
+// Wait for ThreeManager to be initialized by Svelte, then create SpatialVisualizer
+console.log('⏳ Waiting for ThreeManager to initialize...');
+const waitForThreeManager = setInterval(() => {
+  const threeManager = (window as any).threeManager;
+  if (threeManager) {
+    clearInterval(waitForThreeManager);
+    console.log('✅ ThreeManager ready, initializing SpatialVisualizer...');
+
+    // Initialize the original working SpatialVisualizer with the Svelte ThreeManager
+    const spatialVisualizer = new SpatialVisualizer(vscode, threeManager);
+    if (typeof window !== 'undefined') {
+      (window as any).spatialVisualizer = spatialVisualizer;
+    }
+    console.log('✅ SpatialVisualizer initialized with shared ThreeManager');
+
+    // Mark as ready and process queued messages
+    spatialVisualizerReady = true;
+    if (messageQueue.length > 0) {
+      console.log(`📦 Processing ${messageQueue.length} queued messages...`);
+      messageQueue.forEach(msg => {
+        // Re-dispatch the message
+        window.dispatchEvent(new MessageEvent('message', { data: msg }));
+      });
+      messageQueue.length = 0; // Clear the queue
+    }
+  }
+}, 50); // Check every 50ms
 
 // Setup message handling for VS Code extension
 if (isVSCode && vscode) {
@@ -67,44 +88,74 @@ if (isVSCode && vscode) {
         message.fileName || 'unknown file'
       );
 
+      // Queue messages if SpatialVisualizer isn't ready yet
+      if (!spatialVisualizerReady) {
+        console.log('📥 Queueing message (SpatialVisualizer not ready):', message.type);
+        messageQueue.push(message);
+        return;
+      }
+
+      // Route all messages to SpatialVisualizer
+      const spatialVis = (window as any).spatialVisualizer;
+      if (!spatialVis) {
+        console.error('❌ SpatialVisualizer missing despite being marked ready!');
+        return;
+      }
+
       switch (message.type) {
         case 'spatialData':
         case 'multiSpatialData':
-          console.log('📊 Processing spatial data in Svelte app');
-          if (threeManager && message.positions) {
-            await handleSpatialData(threeManager, message);
-          }
+          console.log('📊 Processing spatial data using SpatialVisualizer');
+          const dataArray = Array.isArray(message.data) ? message.data : [message.data];
+          await spatialVis.displayFiles(dataArray);
           break;
         case 'binarySpatialData':
         case 'directTypedArrayData':
         case 'ultimateRawBinaryData':
-          console.log('💾 Processing binary spatial data in Svelte app');
-          console.log('🔍 ThreeManager available:', !!threeManager);
-          if (threeManager) {
-            await handleBinaryData(threeManager, message);
-          } else {
-            console.error('❌ ThreeManager not available for binary data processing');
-            // Wait for ThreeManager to be available
+          console.log('💾 Processing binary spatial data using SpatialVisualizer');
+          await spatialVis.handleUltimateRawBinaryData(message);
+          // Ensure camera is positioned to view the point cloud
+          const threeManager = (window as any).threeManager;
+          if (threeManager && threeManager.fitToView) {
+            console.log('📷 Fitting camera to view point cloud');
+            console.log('🔍 Scene children count:', threeManager.scene?.children?.length || 0);
+            console.log(
+              '🔍 Scene children:',
+              threeManager.scene?.children?.map((c: any) => c.type) || []
+            );
+            console.log('🔍 Canvas elements on page:', document.querySelectorAll('canvas').length);
+            document.querySelectorAll('canvas').forEach((c, i) => {
+              console.log(
+                `  Canvas ${i}: ${c.width}x${c.height}, visible: ${c.offsetWidth}x${c.offsetHeight}, parent: ${c.parentElement?.id || 'no-id'}`
+              );
+            });
+            console.log(
+              '🔍 ThreeManager renderer canvas:',
+              threeManager.renderer?.domElement === document.querySelectorAll('canvas')[0]
+                ? 'Canvas 0'
+                : threeManager.renderer?.domElement === document.querySelectorAll('canvas')[1]
+                  ? 'Canvas 1'
+                  : 'Unknown'
+            );
+            threeManager.fitToView();
+            // Force a render
+            threeManager.requestRender();
+            console.log('🔍 Requested render after fit to view');
+            // Force continuous rendering for debugging
             setTimeout(() => {
-              const retryThreeManager = (window as any).threeManager;
-              if (retryThreeManager) {
-                console.log('🔄 Retrying with ThreeManager after delay');
-                handleBinaryData(retryThreeManager, message);
+              console.log('🔍 Forcing continuous render...');
+              for (let i = 0; i < 10; i++) {
+                setTimeout(() => threeManager.requestRender(), i * 100);
               }
             }, 100);
           }
           break;
         case 'startLoading':
-          console.log('🔄 Loading started for:', message.fileName);
-          break;
         case 'defaultDepthSettings':
-          console.log('⚙️  Received depth settings:', message.settings);
-          break;
         case 'timing':
-          console.log('⏱️ Timing:', message.phase, message.ms + 'ms');
-          break;
         case 'timingUpdate':
-          // Don't log timing updates to reduce console noise
+          // These are handled internally by SpatialVisualizer
+          // Just pass through without logging
           break;
         default:
           console.log('🔄 Other message type received:', message.type);
@@ -117,87 +168,7 @@ if (isVSCode && vscode) {
   console.log('📡 VS Code message handler set up');
 }
 
-console.log('✅ Phase 4 Svelte App initialized successfully');
-
-// Spatial data handling functions
-async function handleSpatialData(threeManager: any, message: any) {
-  console.log('🎯 Loading spatial data:', {
-    fileName: message.fileName,
-    vertexCount: message.positions?.length / 3,
-    hasColors: !!message.colors,
-    hasNormals: !!message.normals,
-  });
-
-  try {
-    // Clear existing scene
-    threeManager.clearScene();
-
-    // Create geometry from spatial data
-    const geometry = new THREE.BufferGeometry();
-
-    if (message.positions) {
-      geometry.setAttribute('position', new THREE.BufferAttribute(message.positions, 3));
-    }
-
-    if (message.colors) {
-      geometry.setAttribute('color', new THREE.BufferAttribute(message.colors, 3));
-    }
-
-    if (message.normals) {
-      geometry.setAttribute('normal', new THREE.BufferAttribute(message.normals, 3));
-    }
-
-    // Create point cloud material
-    const material = new THREE.PointsMaterial({
-      size: 2,
-      vertexColors: !!message.colors,
-      color: message.colors ? 0xffffff : 0x00ff00,
-    });
-
-    // Create and add point cloud to scene
-    const pointCloud = new THREE.Points(geometry, material);
-    threeManager.addToScene(pointCloud, message.fileName);
-
-    // Fit camera to view
-    threeManager.fitToView();
-
-    console.log('✅ Spatial data loaded successfully');
-  } catch (error) {
-    console.error('❌ Error loading spatial data:', error);
-  }
-}
-
-async function handleBinaryData(threeManager: any, message: any) {
-  console.log('🎯 Loading binary spatial data using original method:', {
-    fileName: message.fileName,
-    vertexCount: message.vertexCount,
-    faceCount: message.faceCount,
-    hasColors: !!message.hasColors,
-    dataSize: message.rawBinaryData?.byteLength || message.binaryData?.byteLength,
-  });
-
-  try {
-    // Use the original working method from main.ts
-    // Get the global SpatialVisualizer instance that should be available
-    const spatialVisualizer = (window as any).spatialVisualizer;
-    if (spatialVisualizer && spatialVisualizer.handleUltimateRawBinaryData) {
-      console.log('🔄 Using original SpatialVisualizer.handleUltimateRawBinaryData method');
-      await spatialVisualizer.handleUltimateRawBinaryData(message);
-    } else {
-      console.error(
-        '❌ SpatialVisualizer not available, falling back to ThreeManager direct processing'
-      );
-      // Fallback: Tell the user to refresh or try again
-      console.log(
-        '💡 The original visualization system is not available. Please refresh the extension.'
-      );
-    }
-
-    console.log('✅ Binary spatial data processed using original method');
-  } catch (error) {
-    console.error('❌ Error loading binary spatial data:', error);
-  }
-}
+console.log('✅ Phase 5 Svelte App initialized successfully');
 
 export default app;
 
