@@ -1911,7 +1911,7 @@ class PointCloudVisualizer {
                     <div class="camera-controls-section">
                         <label style="font-size:10px;">Field of View:</label><br>
                         <input type="range" id="camera-fov" min="10" max="150" step="1" value="${this.camera.fov}" style="width:100%;margin:2px 0;">
-                        <span id="fov-value" style="font-size:10px;">${this.camera.fov.toFixed(1)}°</span>
+                        <input type="text" id="fov-input" value="${this.camera.fov.toFixed(2)}" style="font-size: 10px; width: 30px; border: none; background: transparent; color: var(--vscode-foreground); text-align: left; padding: 0; margin: 0; outline: none; cursor: text;"><span style="font-size:10px;">°</span>
                     </div>
                     
                     <div class="camera-controls-section">
@@ -1946,17 +1946,54 @@ class PointCloudVisualizer {
 
   private setupCameraControlEventListeners(matrixStr: string): void {
     const fovSlider = document.getElementById('camera-fov') as HTMLInputElement;
-    const fovValue = document.getElementById('fov-value');
-    if (fovSlider && fovValue) {
+    const fovInput = document.getElementById('fov-input') as HTMLInputElement;
+
+    // Update FOV from slider
+    if (fovSlider) {
       fovSlider.addEventListener('input', e => {
         const newFov = parseFloat((e.target as HTMLInputElement).value);
         this.camera.fov = newFov;
         this.camera.updateProjectionMatrix();
-        if (fovValue) {
-          fovValue.textContent = newFov.toFixed(1) + '°';
+        if (fovInput) {
+          fovInput.value = newFov.toFixed(2);
         }
         this.requestRender();
-        // this.requestRender();
+      });
+    }
+
+    // Update FOV from text input
+    if (fovInput) {
+      const updateFromInput = () => {
+        const newFov = parseFloat(fovInput.value);
+        if (!isNaN(newFov) && newFov > 0) {
+          this.camera.fov = newFov;
+          this.camera.updateProjectionMatrix();
+
+          // Always update slider by clamping to its range
+          if (fovSlider) {
+            const min = parseFloat(fovSlider.min);
+            const max = parseFloat(fovSlider.max);
+            const clampedValue = Math.max(min, Math.min(max, newFov));
+            fovSlider.value = clampedValue.toString();
+          }
+          this.requestRender();
+        } else {
+          // Reset to current value if invalid
+          fovInput.value = this.camera.fov.toFixed(2);
+        }
+      };
+
+      fovInput.addEventListener('blur', updateFromInput);
+      fovInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') {
+          updateFromInput();
+          fovInput.blur();
+        }
+      });
+
+      // Select text on focus
+      fovInput.addEventListener('focus', () => {
+        fovInput.select();
       });
     }
 
@@ -5773,7 +5810,7 @@ class PointCloudVisualizer {
                           // Universal point size slider for all file types
                           const sizeValue = currentSize || 0.001;
                           return `<input type="range" id="size-${i}" min="0.0001" max="0.1" step="0.0001" value="${sizeValue}" class="size-slider" style="width: 100%;">
-                            <span class="size-value" style="font-size: 10px;">${sizeValue.toFixed(4)}</span>`;
+                            <input type="text" id="size-input-${i}" class="size-input" value="${sizeValue.toFixed(4)}" style="font-size: 10px; width: 30px; border: none; background: transparent; color: var(--vscode-foreground); text-align: left; padding: 0; margin: 0; outline: none; cursor: text;">`;
                         })()}
                     </div>
                     
@@ -5918,7 +5955,7 @@ class PointCloudVisualizer {
                     <div class="point-size-control">
                         <label for="size-${i}">Joint Radius (m):</label>
                         <input type="range" id="size-${i}" min="0.001" max="0.1" step="0.001" value="${sizeVal}" class="size-slider">
-                        <span class="size-value">${sizeVal.toFixed(3)}</span>
+                        <input type="text" id="size-input-${i}" class="size-input" value="${sizeVal.toFixed(3)}" style="font-size: 10px; width: 30px; border: none; background: transparent; color: var(--vscode-foreground); text-align: left; padding: 0; margin: 0; outline: none; cursor: text;">
                     </div>
                     <div class="color-control">
                         <label for="color-${i}">Color:</label>
@@ -5983,7 +6020,7 @@ class PointCloudVisualizer {
                     <div class="size-control">
                         <label for="size-${i}">Scale:</label>
                         <input type="range" id="size-${i}" min="0.1" max="5.0" step="0.1" value="${sizeVal}">
-                        <span id="size-value-${i}">${sizeVal.toFixed(1)}</span>
+                        <input type="text" id="size-input-${i}" class="size-input" value="${sizeVal.toFixed(1)}" style="font-size: 10px; width: 20px; border: none; background: transparent; color: var(--vscode-foreground); text-align: left; padding: 0; margin: 0; outline: none; cursor: text;">
                     </div>
                     <!-- Transform Panel (First) -->
                     <div class="transformation-panel" style="margin-top:8px;">
@@ -6290,28 +6327,70 @@ class PointCloudVisualizer {
 
       // Add size slider listeners for point clouds and OBJ files
       const sizeSlider = document.getElementById(`size-${i}`) as HTMLInputElement;
+      const sizeInput = document.getElementById(`size-input-${i}`) as HTMLInputElement;
       const isPose =
         i >= this.spatialFiles.length && i < this.spatialFiles.length + this.poseGroups.length;
       const isCamera = i >= this.spatialFiles.length + this.poseGroups.length;
       const isObjFile = !isPose && !isCamera && (this.spatialFiles[i] as any).isObjFile;
+
+      // Determine precision based on type
+      const getPrecision = () => {
+        if (isPose) {return 3;} // Joint radius precision
+        if (isCamera) {return 1;} // Camera scale precision
+        return 4; // Universal point size precision
+      };
+
       if (sizeSlider) {
         sizeSlider.addEventListener('input', e => {
           const newSize = parseFloat((e.target as HTMLInputElement).value);
           this.updatePointSize(i, newSize);
           this.requestRender();
-          // this.requestRender();
 
-          // Update the displayed value
-          const sizeValue = document.querySelector(`#size-${i} + .size-value`) as HTMLElement;
-          if (sizeValue) {
-            if (isPose) {
-              sizeValue.textContent = newSize.toFixed(3); // Joint radius precision
-            } else if (isCamera) {
-              sizeValue.textContent = newSize.toFixed(1); // Camera scale precision
-            } else {
-              sizeValue.textContent = newSize.toFixed(4); // Universal point size precision
-            }
+          // Update the number input
+          if (sizeInput) {
+            sizeInput.value = newSize.toFixed(getPrecision());
           }
+        });
+      }
+
+      // Add text input listener to allow manual entry beyond slider limits
+      if (sizeInput) {
+        // Update on blur or Enter key
+        const updateFromInput = () => {
+          const newSize = parseFloat(sizeInput.value);
+          if (!isNaN(newSize) && newSize > 0) {
+            this.updatePointSize(i, newSize);
+            this.requestRender();
+
+            // Format the value with proper precision
+            sizeInput.value = newSize.toFixed(getPrecision());
+
+            // Update slider if value is within slider range
+            if (sizeSlider) {
+              const min = parseFloat(sizeSlider.min);
+              const max = parseFloat(sizeSlider.max);
+              if (newSize >= min && newSize <= max) {
+                sizeSlider.value = newSize.toString();
+              }
+            }
+          } else {
+            // Reset to current value if invalid
+            const currentSize = this.pointSizes[i] || 0.001;
+            sizeInput.value = currentSize.toFixed(getPrecision());
+          }
+        };
+
+        sizeInput.addEventListener('blur', updateFromInput);
+        sizeInput.addEventListener('keydown', e => {
+          if (e.key === 'Enter') {
+            updateFromInput();
+            sizeInput.blur();
+          }
+        });
+
+        // Select text on focus for easy editing
+        sizeInput.addEventListener('focus', () => {
+          sizeInput.select();
         });
       }
 
