@@ -88,12 +88,30 @@ Code-specific integration code.
 │   └── *Parser.ts          # Lightweight parser wrappers for extension host
 ├── website/                 # Shared core functionality + standalone website
 │   ├── src/                # Core visualization engine (shared code)
-│   │   ├── main.ts         # Main 3D visualization engine (~9000+ lines)
-│   │   ├── parsers/        # Complete format parsers (PLY, OBJ, STL, etc.)
-│   │   ├── depth/          # Depth-to-pointcloud processing pipeline
-│   │   ├── controls.ts     # Camera control systems
-│   │   └── themes/         # UI themes and styling
-│   ├── index.html          # Standalone website entry point
+│   │   ├── main.ts         # Main 3D visualization engine (~15,576 lines - TOO BIG!)
+│   │   ├── fileHandler.ts  # Shared file handling logic (USE THIS!)
+│   │   ├── controls.ts     # Camera control systems (USE THIS!)
+│   │   ├── interfaces.ts   # Shared type definitions
+│   │   ├── parsers/        # Complete format parsers (ADD NEW PARSERS HERE!)
+│   │   │   ├── plyParser.ts
+│   │   │   ├── objParser.ts
+│   │   │   ├── stlParser.ts
+│   │   │   └── ...
+│   │   ├── depth/          # Depth-to-pointcloud processing (ADD DEPTH FEATURES HERE!)
+│   │   │   ├── DepthRegistry.ts
+│   │   │   ├── DepthProjector.ts
+│   │   │   ├── readers/    # Format-specific readers (ADD NEW READERS HERE!)
+│   │   │   └── ...
+│   │   ├── themes/         # UI themes and styling (ADD THEME FEATURES HERE!)
+│   │   │   ├── darkModern.ts
+│   │   │   └── ...
+│   │   ├── ui/             # UI generation modules (CREATE IF NEEDED)
+│   │   │   ├── dialogs.ts  # Dialog HTML generators (proposed)
+│   │   │   └── ...
+│   │   └── utils/          # Utility modules (CREATE IF NEEDED)
+│   │       ├── math.ts     # Math/geometry helpers (proposed)
+│   │       └── ...
+│   ├── index.html          # Standalone website entry point (SINGLE SOURCE OF TRUTH!)
 │   └── webpack.config.js   # Website-specific build configuration
 ├── media/                  # Shared static assets (CSS, external libraries)
 └── testfiles/             # Test data organized by format type
@@ -250,6 +268,167 @@ supporting:
 - `lint-staged` configuration in package.json for automatic formatting and
   linting
 - Coverage thresholds enforced via nyc configuration (80% minimum)
+
+## Critical Coding Guidelines
+
+### Preventing Code Bloat in main.ts
+
+**IMPORTANT**: `website/src/main.ts` is currently **15,576 lines (603KB)** - one
+of the largest files in the project. To prevent further growth:
+
+**DO:**
+
+- ✅ **Move code OUT of main.ts** - Always prefer existing appropriate files
+  over adding to main.ts
+- ✅ **Use existing modular directories first**: Check if your code fits in
+  `website/src/parsers/`, `website/src/depth/`, `website/src/themes/`,
+  `website/src/controls.ts`, `website/src/fileHandler.ts`
+- ✅ **Add new parsers** in `website/src/parsers/` directory (follow existing
+  parser patterns)
+- ✅ **Add new depth readers** in `website/src/depth/readers/` (implement reader
+  interface)
+- ✅ **Add camera/control features** to `website/src/controls.ts` (already
+  modular)
+- ✅ **Add file handling logic** to `website/src/fileHandler.ts` (already
+  shared)
+- ✅ **Only create NEW files** if no appropriate existing file exists (e.g., new
+  `website/src/ui/` or `website/src/utils/` modules)
+
+**DON'T:**
+
+- ❌ **Never add new methods** to the `PointCloudVisualizer` class unless
+  absolutely necessary
+- ❌ **Never add large HTML generation code** inline - extract to functions or
+  templates
+- ❌ **Never duplicate code** between main.ts and other files
+- ❌ **Avoid adding utility functions** to main.ts - check if they fit in
+  existing modules first
+
+**Why This Matters:**
+
+- Previous refactoring attempts (5+ abandoned branches) have failed due to tight
+  coupling
+- The `PointCloudVisualizer` class has 231 private methods and ~80 state
+  variables
+- AI-assisted development tends to add code to existing files rather than
+  creating new ones
+- File will become unmaintainable if it continues growing at current rate (~24
+  commits in 3 months)
+
+**Single Source of Truth:**
+
+- `website/index.html` is the **canonical UI definition** for both website and
+  VSCode extension
+- `src/pointCloudEditorProvider.ts` reads and modifies this HTML at runtime
+- **Never duplicate HTML** between these files - modify index.html only
+
+### Code Organization Strategy
+
+**Decision Tree for Adding Code:**
+
+1. **Is it parser-related?** → Add to existing file in `website/src/parsers/` or
+   create new parser following pattern
+2. **Is it depth/camera-related?** → Add to `website/src/depth/` directory
+   (DepthProjector, readers, etc.)
+3. **Is it camera controls?** → Add to `website/src/controls.ts` (already
+   modular)
+4. **Is it file detection/handling?** → Add to `website/src/fileHandler.ts`
+   (already shared)
+5. **Is it theme-related?** → Add to `website/src/themes/` directory
+6. **Is it UI generation?** → Create in `website/src/ui/` directory (new module)
+7. **Is it a utility function?** → Create in `website/src/utils/` directory (new
+   module)
+8. **Is it core visualization logic?** → Only then consider adding to main.ts
+   (last resort)
+
+**For New Features - Prioritize Existing Files:**
+
+1. **First**: Look for existing appropriate file (parsers/, depth/, controls.ts,
+   fileHandler.ts, themes/)
+2. **Second**: If no fit, create new file in appropriate directory
+3. **Last resort**: Add to main.ts only if it's core visualization logic that
+   can't be separated
+
+**Example - Good Pattern:**
+
+```typescript
+// website/src/ui/transformDialog.ts
+export function createTransformDialog(fileData: SpatialData): string {
+  return `<div class="transform-dialog">...</div>`;
+}
+
+// website/src/main.ts
+import { createTransformDialog } from './ui/transformDialog';
+// Use it without defining inline
+```
+
+**Example - Bad Pattern:**
+
+```typescript
+// website/src/main.ts
+private showTransformDialog() {
+  const html = `<div>...</div>`; // 200 lines of HTML inline
+  dialog.innerHTML = html;
+}
+```
+
+### Proposed Future Structure (Target State)
+
+**Goal**: Reduce main.ts from 15,576 lines to ~2,000 lines by extracting into
+modules:
+
+```
+website/src/
+├── main.ts                    # Coordinator only (~2,000 lines target)
+├── fileHandler.ts             # File detection/handling (EXISTS - use it!)
+├── controls.ts                # Camera controls (EXISTS - use it!)
+├── interfaces.ts              # Type definitions (EXISTS)
+│
+├── parsers/                   # Format parsers (EXISTS - add new ones here!)
+│   ├── plyParser.ts
+│   ├── objParser.ts
+│   ├── stlParser.ts
+│   └── ...
+│
+├── depth/                     # Depth processing (EXISTS - extend here!)
+│   ├── DepthRegistry.ts
+│   ├── DepthProjector.ts
+│   ├── readers/
+│   └── ...
+│
+├── themes/                    # Themes (EXISTS - extend here!)
+│   ├── darkModern.ts
+│   └── ...
+│
+├── ui/                        # UI generators (PROPOSED - create as needed)
+│   ├── dialogs.ts            # Dialog HTML generation
+│   ├── fileList.ts           # File list rendering
+│   ├── cameraPanel.ts        # Camera controls panel
+│   ├── statsPanel.ts         # Statistics display
+│   └── transformUI.ts        # Transformation dialogs
+│
+├── visualization/             # 3D rendering (PROPOSED - future refactor)
+│   ├── SceneManager.ts       # Scene setup/management
+│   ├── MeshBuilder.ts        # Mesh creation
+│   ├── PointCloudRenderer.ts # Point cloud rendering
+│   └── LightingManager.ts    # Lighting setup
+│
+└── utils/                     # Utilities (PROPOSED - create as needed)
+    ├── math.ts               # Math/geometry helpers
+    ├── matrix.ts             # Matrix operations
+    └── three.ts              # Three.js helpers
+```
+
+**Migration Strategy:**
+
+- ✅ **Phase 1** (Now): Stop adding to main.ts, use existing modules
+- ⏳ **Phase 2** (Future): Extract UI generation to `ui/` modules
+- ⏳ **Phase 3** (Future): Extract rendering logic to `visualization/` modules
+- ⏳ **Phase 4** (Future): Extract utilities to `utils/` modules
+
+**Note**: Don't attempt big-bang refactoring! Previous attempts (5+ branches)
+failed. Instead, follow "strangler fig" pattern - new code goes in modules, old
+code stays until naturally updated.
 
 ## Important Development Notes
 

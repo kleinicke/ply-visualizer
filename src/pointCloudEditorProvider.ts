@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { DatasetManager } from './dataset/datasetManager';
 import { PlyParser } from '@website/parsers/plyParser';
 import { ObjParser } from '@website/parsers/objParser';
@@ -743,14 +744,19 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   }
 
   private getHtmlForWebview(webview: vscode.Webview): string {
-    // Get the local path to bundled webview script
+    // Read the shared index.html file (single source of truth)
+    const htmlPath = vscode.Uri.joinPath(this.context.extensionUri, 'website', 'index.html');
+    const htmlPathOnDisk = htmlPath.fsPath;
+    let html = fs.readFileSync(htmlPathOnDisk, 'utf8');
+
+    // Get URIs for VSCode webview resources
     const scriptPathOnDisk = vscode.Uri.joinPath(
       this.context.extensionUri,
       'out',
       'webview',
       'main.js'
     );
-    const scriptUri = webview.asWebviewUri(scriptPathOnDisk);
+    const scriptUri = webview.asWebviewUri(scriptPathOnDisk).toString();
 
     const stylePathOnDisk = vscode.Uri.joinPath(
       this.context.extensionUri,
@@ -758,9 +764,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       'media',
       'style.css'
     );
-    const styleUri = webview.asWebviewUri(stylePathOnDisk);
+    const styleUri = webview.asWebviewUri(stylePathOnDisk).toString();
 
-    // Add GeoTIFF library for TIF support
     const geotiffPathOnDisk = vscode.Uri.joinPath(
       this.context.extensionUri,
       'website',
@@ -772,217 +777,28 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     // Use a nonce to only allow specific scripts to be run
     const nonce = getNonce();
 
-    return `<!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <link href="${styleUri}" rel="stylesheet">
-                <title>3D Visualizer</title>
-            </head>
-            <body>
-                <div id="loading" class="loading">
-                    <div class="spinner"></div>
-                    <p>Loading PLY file...</p>
-                </div>
-                <div id="error" class="error hidden">
-                    <div class="error-header">
-                        <h3>Error</h3>
-                        <button id="error-close" class="error-close-btn" title="Close error message">✕</button>
-                    </div>
-                    <p id="error-message"></p>
-                </div>
-                
-                <!-- Main UI Panel -->
-                <div id="main-ui-panel" class="main-ui-panel">
-                    <!-- Tab Navigation -->
-                    <div class="tab-navigation">
-                        <button class="tab-button active" data-tab="files">Files</button>
-                        <button class="tab-button" data-tab="camera">Camera</button>
-                        <button class="tab-button" data-tab="controls">Controls</button>
-                        <button class="tab-button" data-tab="info">Info</button>
-                    </div>
-                    
-                    <!-- Tab Content -->
-                    <div class="tab-content">
-                        <!-- Files Tab -->
-                        <div id="files-tab" class="tab-panel active">
-                            <div class="panel-section">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                    <h4 style="margin: 0;">File Management</h4>
-                                    <div id="performance-stats" style="font-size: 10px; color: var(--vscode-descriptionForeground); font-family: monospace;">60 fps / 16.7 ms</div>
-                                </div>
-                                <div class="file-controls">
-                                    <button id="add-file" class="primary-button">+ Add Point Cloud</button>
-                                </div>
-                                <div id="file-list"></div>
-                            </div>
-                        </div>
-                        
-                        <!-- Camera Tab -->
-                        <div id="camera-tab" class="tab-panel">
-                            <div class="panel-section">
-                                <h4>Camera Settings</h4>
-                                <div id="camera-controls-panel"></div>
-                            </div>
-                        </div>
-                        
-                        <!-- Controls Tab -->
-                        <div id="controls-tab" class="tab-panel">
-                            <div class="panel-section">
-                                <h4>View Controls</h4>
-                                <div class="control-buttons">
-                                    <button id="fit-camera" class="control-button">Fit to View <span class="button-shortcut">F</span></button>
-                                    <button id="reset-camera" class="control-button">Reset Camera <span class="button-shortcut">R</span></button>
-                                    <button id="toggle-axes" class="control-button">Toggle Axes <span class="button-shortcut">A</span></button>
-                                    <button id="toggle-cameras" class="control-button active">Show Cameras</button>
-                                    <button id="set-rotation-origin" class="control-button">Set Rotation Center to Origin <span class="button-shortcut">W</span></button>
-                                </div>
-                            </div>
-                            <div class="panel-section">
-                                <h4>Camera Conventions</h4>
-                                <div class="control-buttons camera-conventions">
-                                    <button id="opencv-convention" class="control-button">OpenCV (Y down) <span class="button-shortcut">C</span></button>
-                                    <button id="opengl-convention" class="control-button">OpenGL (Y up) <span class="button-shortcut">B</span></button>
-                                </div>
-                            </div>
-                            <div class="panel-section">
-                                <h4>Control Type</h4>
-                                <div class="control-buttons">
-                                    <button id="trackball-controls" class="control-button">Trackball <span class="button-shortcut">T</span></button>
-                                    <button id="orbit-controls" class="control-button">Orbit <span class="button-shortcut">O</span></button>
-                                    <button id="inverse-trackball-controls" class="control-button">Inverse <span class="button-shortcut">I</span></button>
-                                    <button id="arcball-controls" class="control-button">Arcball <span class="button-shortcut">K</span></button>
-                                </div>
-                            </div>
-                            <!-- Arcball settings UI removed per request -->
-                            <div class="panel-section">
-                                <h4>Color & Lighting</h4>
-                                <div class="control-buttons">
-                                    <button id="toggle-gamma-correction" class="control-button">Toggle Gamma Correction <span class="button-shortcut">G</span></button>
-                                </div>
-                                <p class="setting-description">Gamma affects original vertex colors. Unlit PLY ignores scene lights. Choose Normal or Flat lighting for scene illumination.</p>
-                                <div class="control-buttons">
-                                    <button id="toggle-unlit-ply" class="control-button">Use Unlit PLY (Uniform)</button>
-                                    <button id="use-normal-lighting" class="control-button">Use Normal Lighting</button>
-                                    <button id="use-flat-lighting" class="control-button">Use Flat Lighting</button>
-                                </div>
-                                <p class="setting-description">Shading options are only effecting PLY files with faces.</p>
-                            </div>
-                            <div class="panel-section">
-                                <h4>Performance</h4>
-                                <div class="control-buttons">
-                                    <button id="toggle-screenspace-scaling" class="control-button">Screen-Space Scaling <span class="button-shortcut">S</span></button>
-                                    <button id="toggle-transparency" class="control-button">Allow Transparency <span class="button-shortcut">T</span></button>
-                                </div>
-                                <p class="setting-description">Screen-Space Scaling: Distance-based point sizes for better visuals. Allow Transparency: Re-enables alpha blending (impacts performance).</p>
-                            </div>
-                        </div>
-                        
-                        <!-- Info Tab -->
-                        <div id="info-tab" class="tab-panel">
-                            <div class="panel-section">
-                                <h4>Statistics</h4>
-                                <div id="file-stats"></div>
-                            </div>
-                            <div class="panel-section">
-                                <h4>Keyboard Shortcuts</h4>
-                                <div class="shortcuts-list">
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">Double-click</span>
-                                        <span class="shortcut-desc">Set rotation center</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">Shift + Click</span>
-                                        <span class="shortcut-desc">Solo point cloud</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">Mouse wheel</span>
-                                        <span class="shortcut-desc">Zoom</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">Drag</span>
-                                        <span class="shortcut-desc">Rotate/Pan</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">F</span>
-                                        <span class="shortcut-desc">Fit to view</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">R</span>
-                                        <span class="shortcut-desc">Reset camera</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">A</span>
-                                        <span class="shortcut-desc">Toggle axes</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">C</span>
-                                        <span class="shortcut-desc">OpenCV convention (Y down)</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">B</span>
-                                        <span class="shortcut-desc">OpenGL convention (Y up)</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">T</span>
-                                        <span class="shortcut-desc">Trackball controls</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">O</span>
-                                        <span class="shortcut-desc">Orbit controls</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">I</span>
-                                        <span class="shortcut-desc">Inverse trackball</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">X/Y/Z</span>
-                                        <span class="shortcut-desc">Set up vector</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">W</span>
-                                        <span class="shortcut-desc">Set rotation center to origin</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">G</span>
-                                        <span class="shortcut-desc">Toggle gamma correction</span>
-                                    </div>
-                                    <div class="shortcut-item">
-                                        <span class="shortcut-key">H</span>
-                                        <span class="shortcut-desc">Show this help</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+    // VSCode-specific modifications to the HTML:
+    // 1. Add Content Security Policy
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
+    html = html.replace('<meta name="viewport"', `${cspMeta}\n    <meta name="viewport"`);
 
-                    </div>
-                </div>
+    // 2. Replace resource URLs with webview URIs
+    html = html.replace(/href="media\/style\.css"/, `href="${styleUri}"`);
+    html = html.replace(/src="media\/geotiff\.min\.js"/, `nonce="${nonce}" src="${geotiffUri}"`);
+    html = html.replace(/src="bundle\.js"/, `nonce="${nonce}" src="${scriptUri}"`);
 
-                <!-- Sequence Overlay (hidden by default) -->
-                <div id="sequence-overlay" class="sequence-overlay hidden">
-                    <div class="seq-row">
-                        <input id="seq-wildcard" type="text" readonly placeholder="Wildcard" class="seq-wildcard" />
-                        <button id="seq-play" class="seq-btn">▶</button>
-                        <button id="seq-pause" class="seq-btn">⏸</button>
-                        <button id="seq-stop" class="seq-btn">⏹</button>
-                        <button id="seq-prev" class="seq-btn">◀</button>
-                        <button id="seq-next" class="seq-btn">▶</button>
-                        <input id="seq-slider" type="range" min="0" max="0" value="0" class="seq-slider" />
-                        <span id="seq-label" class="seq-label">0 / 0</span>
-                    </div>
-                </div>
+    // 3. Remove browser-specific elements (file input, theme selector, navigation links)
+    html = html.replace(
+      /<input[^>]*id="hiddenFileInput"[^>]*>/,
+      '<!-- File input removed in VSCode -->'
+    );
+    html = html.replace(
+      /<div class="panel-section">\s*<h4>Theme<\/h4>[\s\S]*?<\/div>\s*(?=\s*<div class="panel-section">)/,
+      ''
+    );
+    html = html.replace(/<div class="bottom-right-nav">[\s\S]*?<\/div>/, '');
 
-                <div id="viewer-container">
-                    <canvas id="three-canvas"></canvas>
-                </div>
-                
-                <script nonce="${nonce}" src="${geotiffUri}"></script>
-                <!-- Load bundled webview script with Three.js -->
-                <script nonce="${nonce}" src="${scriptUri}"></script>
-            </body>
-            </html>`;
+    return html;
   }
 
   private async handleAddFile(webviewPanel: vscode.WebviewPanel): Promise<void> {

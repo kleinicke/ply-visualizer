@@ -1,8 +1,11 @@
 # Change Log
 
-## [1.4.0]
+## [1.4.0] - 2025-11-??
 
-- Add support for npy point clouds (dimension [...,3])
+- **Npy point clouds**: Add support for npy point clouds (dimension [...,3])
+- **Collapsible File Items**: Added collapse/expand arrows to each point cloud, mesh, pose, and camera entry for cleaner UI organization
+- **Resizable Panel**: Main UI panel can now be resized by dragging from the bottom edge 
+
 
 ## [1.3.0] - 2025-09-16
 
@@ -53,21 +56,21 @@
 - Improved error messages and TIF processing stability
 - Enhanced TIF controls UI with color mapping support
 
-## [0.0.12]
+## [0.0.12] - 2025-07-17
 
 - Added TIF to Point Cloud conversion feature
 - Support for pinhole and fisheye camera models
 - Interactive camera parameter prompts
 - Seamless integration with PLY visualization workflow
 
-## [0.0.11] - 2024-12-19
+## [0.0.11] - 2025-07-16
 
 - Added multi-file support for simultaneous PLY visualization
 - Implemented file management with visibility controls
 - Performance optimization with binary data transfer
 - Advanced camera controls and coordinate conventions
 
-## [0.0.1]
+## [0.0.1] - 2025-06-29
 
 - Initial release of PLY Visualizer extension
 - Support for PLY file visualization using Three.js
