@@ -186,6 +186,7 @@ body {
   position: absolute;
   top: 10px;
   right: 10px;
+  bottom: auto;
   background-color: var(--vscode-sideBar-background);
   border: 1px solid var(--vscode-sideBar-border);
   border-radius: 6px;
@@ -194,6 +195,8 @@ body {
   font-size: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Tab Navigation */
@@ -201,6 +204,7 @@ body {
   display: flex;
   background-color: var(--vscode-tab-inactiveBackground);
   border-bottom: 1px solid var(--vscode-sideBar-border);
+  flex-shrink: 0;
 }
 
 .tab-button {
@@ -230,6 +234,9 @@ body {
 .tab-content {
   max-height: 70vh;
   overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  min-height: 0;
 }
 
 .tab-panel {
@@ -358,6 +365,36 @@ body {
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;
+}
+
+.collapse-toggle {
+  background: none;
+  border: none;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 10px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.collapse-toggle:hover {
+  background-color: var(--vscode-list-hoverBackground);
+  border-radius: 2px;
+}
+
+.collapse-icon {
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+}
+
+.file-item-content {
+  transition: all 0.2s ease;
 }
 
 .file-item input[type='checkbox'] {

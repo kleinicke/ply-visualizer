@@ -959,7 +959,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
                     </div>
                 </div>
-                
+
                 <!-- Sequence Overlay (hidden by default) -->
                 <div id="sequence-overlay" class="sequence-overlay hidden">
                     <div class="seq-row">

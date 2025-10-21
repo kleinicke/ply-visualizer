@@ -197,6 +197,9 @@ class PointCloudVisualizer {
   // Lighting/material toggles
   private useUnlitPly: boolean = false;
   private useFlatLighting: boolean = false;
+
+  // UI state for collapsible file sections
+  private fileItemsCollapsed: boolean[] = [];
   private lightingMode: 'normal' | 'flat' | 'unlit' = 'normal';
 
   // Large file chunked loading state
@@ -769,6 +772,9 @@ class PointCloudVisualizer {
     try {
       this.initThreeJS();
       this.setupEventListeners();
+
+      // Setup drag handle in both environments
+      this.setupPanelResizeAndDrag();
 
       if (isVSCode) {
         // VSCode extension environment
@@ -4868,6 +4874,106 @@ class PointCloudVisualizer {
 
   // # VSCode changes: the functions below are used in the browser and were not used for the extension
   // Browser file handling methods
+  private setupPanelResizeAndDrag(): void {
+    const mainPanel = document.getElementById('main-ui-panel');
+    const tabContent = document.querySelector('.tab-content') as HTMLElement;
+
+    if (!mainPanel || !tabContent) {
+      console.warn('⚠️ Main panel or tab content not found');
+      return;
+    }
+
+    console.log('✅ Panel resize setup initialized');
+
+    // Panel resize functionality - drag from bottom edge
+    let isDragging = false;
+    let startY = 0;
+    let startHeight = 0;
+    const resizeZone = 10; // 10px from bottom edge for easier grabbing
+
+    // Helper to check if mouse is in resize zone
+    const isInResizeZone = (e: MouseEvent): boolean => {
+      const rect = mainPanel.getBoundingClientRect();
+      const mouseY = e.clientY;
+      const bottomEdge = rect.bottom;
+      return mouseY >= bottomEdge - resizeZone && mouseY <= bottomEdge + 2;
+    };
+
+    // Update cursor when hovering over resize zone
+    mainPanel.addEventListener('mousemove', (e: MouseEvent) => {
+      if (!isDragging) {
+        if (isInResizeZone(e)) {
+          mainPanel.style.cursor = 'ns-resize';
+        } else {
+          mainPanel.style.cursor = '';
+        }
+      }
+    });
+
+    mainPanel.addEventListener('mouseleave', () => {
+      if (!isDragging) {
+        mainPanel.style.cursor = '';
+      }
+    });
+
+    // Start dragging
+    mainPanel.addEventListener('mousedown', (e: MouseEvent) => {
+      if (isInResizeZone(e)) {
+        isDragging = true;
+        startY = e.clientY;
+
+        // Get current ACTUAL height (not max-height from CSS)
+        const currentMaxHeight = tabContent.style.maxHeight;
+        if (currentMaxHeight && currentMaxHeight !== '') {
+          // Already has an inline style - use it
+          if (currentMaxHeight.includes('vh')) {
+            const vh = parseFloat(currentMaxHeight);
+            startHeight = (vh / 100) * window.innerHeight;
+          } else {
+            startHeight = parseInt(currentMaxHeight);
+          }
+        } else {
+          // No inline style yet - get the actual computed height
+          const computedHeight = tabContent.getBoundingClientRect().height;
+          startHeight = computedHeight;
+          console.log('📏 Using computed height:', computedHeight);
+        }
+
+        mainPanel.style.cursor = 'ns-resize';
+        document.body.style.cursor = 'ns-resize';
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('🖱️ Drag started, initial height:', startHeight);
+      }
+    });
+
+    // Handle dragging
+    document.addEventListener('mousemove', (e: MouseEvent) => {
+      if (isDragging) {
+        const deltaY = e.clientY - startY;
+        const newHeight = startHeight + deltaY;
+
+        // Clamp height between reasonable values (in pixels)
+        const minHeight = 150; // Minimum 150px
+        const maxHeight = window.innerHeight * 0.9; // Maximum 90vh
+        const clampedHeight = Math.max(minHeight, Math.min(maxHeight, newHeight));
+
+        tabContent.style.maxHeight = `${clampedHeight}px`;
+        e.preventDefault();
+      }
+    });
+
+    // Stop dragging
+    document.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        mainPanel.style.cursor = '';
+        document.body.style.cursor = '';
+        console.log('🖱️ Drag ended');
+      }
+    });
+  }
+
   private setupBrowserFileHandlers(): void {
     const fileInput = document.getElementById('hiddenFileInput') as HTMLInputElement;
     const addFileButton = document.getElementById('add-file');
@@ -5437,14 +5543,19 @@ class PointCloudVisualizer {
         matrixStr += row.join(' ') + '\n';
       }
 
+      const isCollapsed = this.fileItemsCollapsed[i] ?? false;
       html += `
                 <div class="file-item">
                     <div class="file-item-main">
+                        <button class="collapse-toggle" data-file-index="${i}" title="${isCollapsed ? 'Expand' : 'Collapse'}">
+                            <span class="collapse-icon">${isCollapsed ? '▶' : '▼'}</span>
+                        </button>
                         <input type="checkbox" id="file-${i}" ${this.fileVisibility[i] ? 'checked' : ''}>
                         ${colorIndicator}
                         <label for="file-${i}" class="file-name">${data.fileName || `File ${i + 1}`}</label>
                         <button class="remove-file" data-file-index="${i}" title="Remove file">✕</button>
                     </div>
+                    <div class="file-item-content" id="file-content-${i}" style="display: ${isCollapsed ? 'none' : 'block'}">
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
                     
                     ${
@@ -5846,6 +5957,7 @@ class PointCloudVisualizer {
                             ${this.getColorOptions(i)}
                         </select>
                     </div>
+                    </div><!-- close file-item-content -->
                 </div>
             `;
     }
@@ -5874,14 +5986,19 @@ class PointCloudVisualizer {
         poseMatrixStr += row.join(' ') + '\n';
       }
 
+      const isPoseCollapsed = this.fileItemsCollapsed[i] ?? false;
       html += `
                 <div class="file-item">
                     <div class="file-item-main">
+                        <button class="collapse-toggle" data-file-index="${i}" title="${isPoseCollapsed ? 'Expand' : 'Collapse'}">
+                            <span class="collapse-icon">${isPoseCollapsed ? '▶' : '▼'}</span>
+                        </button>
                         <input type="checkbox" id="file-${i}" ${visible ? 'checked' : ''}>
                         ${colorIndicator}
                         <label for="file-${i}" class="file-name">${meta.fileName || `Pose ${p + 1}`}</label>
                         <button class="remove-file" data-file-index="${i}" title="Remove object">✕</button>
                     </div>
+                    <div class="file-item-content" id="file-content-${i}" style="display: ${isPoseCollapsed ? 'none' : 'block'}">
                     <div class="file-info">${meta.jointCount} joints, ${meta.edgeCount} edges${meta.invalidJoints ? `, ${meta.invalidJoints} invalid` : ''}</div>
                     <div class="panel-section" style="margin-top:6px;">
                         <div class="control-buttons">
@@ -5964,6 +6081,7 @@ class PointCloudVisualizer {
                             ${this.getColorOptions(i)}
                         </select>
                     </div>
+                    </div><!-- close file-item-content -->
                 </div>
             `;
     }
@@ -5996,14 +6114,19 @@ class PointCloudVisualizer {
         cameraMatrixStr += row.join(' ') + '\n';
       }
 
+      const isCameraCollapsed = this.fileItemsCollapsed[i] ?? false;
       html += `
                 <div class="file-item">
                     <div class="file-item-main">
+                        <button class="collapse-toggle" data-file-index="${i}" title="${isCameraCollapsed ? 'Expand' : 'Collapse'}">
+                            <span class="collapse-icon">${isCameraCollapsed ? '▶' : '▼'}</span>
+                        </button>
                         <input type="checkbox" id="file-${i}" ${visible ? 'checked' : ''}>
                         ${colorIndicator}
                         <label for="file-${i}" class="file-name">📷 ${cameraProfileName}</label>
                         <button class="remove-file" data-file-index="${i}" title="Remove camera profile">✕</button>
                     </div>
+                    <div class="file-item-content" id="file-content-${i}" style="display: ${isCameraCollapsed ? 'none' : 'block'}">
                     <div class="file-info">${cameraCount} cameras</div>
                     <div class="panel-section" style="margin-top:6px;">
                         <div class="control-buttons">
@@ -6042,6 +6165,7 @@ class PointCloudVisualizer {
                             </div>
                         </div>
                     </div>
+                    </div><!-- close file-item-content -->
                 </div>
             `;
     }
@@ -6075,6 +6199,28 @@ class PointCloudVisualizer {
 
     // Add tooltips only to truncated filenames
     this.addTooltipsToTruncatedFilenames();
+
+    // Collapse toggle logic for file items
+    for (let i = 0; i < totalEntries; i++) {
+      const collapseBtn = document.querySelector(`.collapse-toggle[data-file-index="${i}"]`);
+      if (collapseBtn) {
+        collapseBtn.addEventListener('click', e => {
+          e.stopPropagation(); // Prevent triggering other events
+          const content = document.getElementById(`file-content-${i}`);
+          const icon = collapseBtn.querySelector('.collapse-icon');
+
+          if (content && icon) {
+            const isCollapsed = content.style.display === 'none';
+            content.style.display = isCollapsed ? 'block' : 'none';
+            icon.textContent = isCollapsed ? '▼' : '▶';
+            this.fileItemsCollapsed[i] = !isCollapsed;
+
+            // Update tooltip
+            collapseBtn.setAttribute('title', isCollapsed ? 'Collapse' : 'Expand');
+          }
+        });
+      }
+    }
 
     // Transform toggle logic with improved UI (handle both point clouds and cameras)
     for (let i = 0; i < totalEntries; i++) {
@@ -6335,8 +6481,12 @@ class PointCloudVisualizer {
 
       // Determine precision based on type
       const getPrecision = () => {
-        if (isPose) {return 3;} // Joint radius precision
-        if (isCamera) {return 1;} // Camera scale precision
+        if (isPose) {
+          return 3;
+        } // Joint radius precision
+        if (isCamera) {
+          return 1;
+        } // Camera scale precision
         return 4; // Universal point size precision
       };
 
