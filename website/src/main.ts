@@ -18,6 +18,7 @@ import { TumParser } from './depth/TumParser';
 import { CustomArcballControls, TurntableControls } from './controls';
 import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
 import { RotationCenterManager, RotationCenterMode } from './RotationCenterManager';
+import { MeasurementManager } from './MeasurementManager';
 
 declare const GeoTIFF: any;
 declare const acquireVsCodeApi: () => any;
@@ -75,6 +76,7 @@ class PointCloudVisualizer {
   private screenSpaceScaling: boolean = false;
   private allowTransparency: boolean = false;
   private rotationCenterManager: RotationCenterManager = new RotationCenterManager();
+  private measurementManager: MeasurementManager | null = null;
 
   // On-demand rendering state
   private needsRender: boolean = false;
@@ -851,6 +853,9 @@ class PointCloudVisualizer {
     // Initialize controls
     this.initializeControls();
 
+    // Initialize measurement manager
+    this.measurementManager = new MeasurementManager(this.scene, this.camera, this.renderer);
+
     // Lighting
     this.initSceneLighting();
 
@@ -1415,6 +1420,12 @@ class PointCloudVisualizer {
       this.resizeObserver = null;
     }
 
+    // Clean up measurements
+    if (this.measurementManager) {
+      this.measurementManager.dispose();
+      this.measurementManager = null;
+    }
+
     // Clean up controls
     if (this.controls) {
       this.controls.dispose();
@@ -1472,6 +1483,11 @@ class PointCloudVisualizer {
 
     // Update controls
     this.controls.update();
+
+    // Update measurement label positions
+    if (this.measurementManager) {
+      this.measurementManager.updateLabelPositions();
+    }
 
     // Check if camera position, rotation, or rotation center has changed
     const positionChanged = !this.camera.position.equals(this.lastCameraPosition);
@@ -2112,8 +2128,17 @@ class PointCloudVisualizer {
       console.log(
         `📷 Selected camera profile at distance ${this.camera.position.distanceTo(selectedPoint).toFixed(4)}m`
       );
-      this.setRotationCenter(selectedPoint);
-      this.updateRotationOriginButtonState();
+
+      // If Shift is pressed, measure distance to rotation center
+      if (event.shiftKey && this.measurementManager) {
+        const rotationCenter = this.controls.target.clone();
+        this.measurementManager.addMeasurement(rotationCenter, selectedPoint);
+        console.log(`📏 Measurement added from rotation center to selected point`);
+        this.requestRender();
+      } else {
+        this.setRotationCenter(selectedPoint);
+        this.updateRotationOriginButtonState();
+      }
       return;
     }
 
@@ -2123,8 +2148,17 @@ class PointCloudVisualizer {
       console.log(
         `🕺 Selected pose keypoint at distance ${this.camera.position.distanceTo(selectedPoint).toFixed(4)}m`
       );
-      this.setRotationCenter(selectedPoint);
-      this.updateRotationOriginButtonState();
+
+      // If Shift is pressed, measure distance to rotation center
+      if (event.shiftKey && this.measurementManager) {
+        const rotationCenter = this.controls.target.clone();
+        this.measurementManager.addMeasurement(rotationCenter, selectedPoint);
+        console.log(`📏 Measurement added from rotation center to selected point`);
+        this.requestRender();
+      } else {
+        this.setRotationCenter(selectedPoint);
+        this.updateRotationOriginButtonState();
+      }
       return;
     }
 
@@ -2134,8 +2168,17 @@ class PointCloudVisualizer {
       console.log(
         `🔷 Selected triangle mesh surface at distance ${this.camera.position.distanceTo(selectedPoint).toFixed(4)}m`
       );
-      this.setRotationCenter(selectedPoint);
-      this.updateRotationOriginButtonState();
+
+      // If Shift is pressed, measure distance to rotation center
+      if (event.shiftKey && this.measurementManager) {
+        const rotationCenter = this.controls.target.clone();
+        this.measurementManager.addMeasurement(rotationCenter, selectedPoint);
+        console.log(`📏 Measurement added from rotation center to selected point`);
+        this.requestRender();
+      } else {
+        this.setRotationCenter(selectedPoint);
+        this.updateRotationOriginButtonState();
+      }
       return;
     }
 
@@ -2144,8 +2187,17 @@ class PointCloudVisualizer {
     if (pointResult) {
       selectedPoint = pointResult.point;
       console.log(`⚫ Selected point cloud: ${pointResult.info}`);
-      this.setRotationCenter(selectedPoint);
-      this.updateRotationOriginButtonState();
+
+      // If Shift is pressed, measure distance to rotation center
+      if (event.shiftKey && this.measurementManager) {
+        const rotationCenter = this.controls.target.clone();
+        this.measurementManager.addMeasurement(rotationCenter, selectedPoint);
+        console.log(`📏 Measurement added from rotation center to selected point`);
+        this.requestRender();
+      } else {
+        this.setRotationCenter(selectedPoint);
+        this.updateRotationOriginButtonState();
+      }
       return;
     }
 
@@ -3462,6 +3514,29 @@ class PointCloudVisualizer {
       setRotationOriginBtn.addEventListener('click', () => {
         this.setRotationCenterToOrigin();
         this.updateRotationOriginButtonState();
+      });
+    }
+
+    // Measurement buttons
+    const clearMeasurementsBtn = document.getElementById('clear-measurements');
+    if (clearMeasurementsBtn) {
+      clearMeasurementsBtn.addEventListener('click', () => {
+        if (this.measurementManager) {
+          this.measurementManager.clearAll();
+          this.requestRender();
+          this.showStatus('All measurements cleared');
+        }
+      });
+    }
+
+    const removeLastMeasurementBtn = document.getElementById('remove-last-measurement');
+    if (removeLastMeasurementBtn) {
+      removeLastMeasurementBtn.addEventListener('click', () => {
+        if (this.measurementManager) {
+          this.measurementManager.removeLastMeasurement();
+          this.requestRender();
+          this.showStatus('Last measurement removed');
+        }
       });
     }
 
