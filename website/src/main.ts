@@ -17,6 +17,7 @@ import { RealSenseParser } from './depth/RealSenseParser';
 import { TumParser } from './depth/TumParser';
 import { CustomArcballControls, TurntableControls } from './controls';
 import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
+import { RotationCenterManager, RotationCenterMode } from './RotationCenterManager';
 
 declare const GeoTIFF: any;
 declare const acquireVsCodeApi: () => any;
@@ -73,7 +74,7 @@ class PointCloudVisualizer {
     'trackball';
   private screenSpaceScaling: boolean = false;
   private allowTransparency: boolean = false;
-  private rotationCenterMode: 'move-camera' | 'keep-camera' | 'keep-distance' = 'move-camera'; // Default: camera moves laterally
+  private rotationCenterManager: RotationCenterManager = new RotationCenterManager();
 
   // On-demand rendering state
   private needsRender: boolean = false;
@@ -1300,33 +1301,7 @@ class PointCloudVisualizer {
   }
 
   private updateRotationCenterModeButtons(): void {
-    const moveCameraBtn = document.getElementById('rotation-center-move-camera');
-    const keepCameraBtn = document.getElementById('rotation-center-keep-camera');
-    const keepDistanceBtn = document.getElementById('rotation-center-keep-distance');
-
-    if (moveCameraBtn) {
-      if (this.rotationCenterMode === 'move-camera') {
-        moveCameraBtn.classList.add('active');
-      } else {
-        moveCameraBtn.classList.remove('active');
-      }
-    }
-
-    if (keepCameraBtn) {
-      if (this.rotationCenterMode === 'keep-camera') {
-        keepCameraBtn.classList.add('active');
-      } else {
-        keepCameraBtn.classList.remove('active');
-      }
-    }
-
-    if (keepDistanceBtn) {
-      if (this.rotationCenterMode === 'keep-distance') {
-        keepDistanceBtn.classList.add('active');
-      } else {
-        keepDistanceBtn.classList.remove('active');
-      }
-    }
+    this.rotationCenterManager.updateModeButtons();
   }
 
   private rebuildAllColorAttributesForCurrentGammaSetting(): void {
@@ -3192,109 +3167,13 @@ class PointCloudVisualizer {
   }
 
   private setRotationCenter(point: THREE.Vector3): void {
-    // Temporarily remove change listener to prevent continuous rendering
-    const changeHandler = () => this.requestRender();
-    if (this.controls) {
-      (this.controls as any).removeEventListener('change', changeHandler);
-    }
+    const axesGroup = (this as any).axesGroup;
 
-    // Check if the point is too close to the camera or behind it
-    const cameraToPoint = point.clone().sub(this.camera.position);
-    const distance = cameraToPoint.length();
-    const minDistance = 0.0001; // Minimum distance to prevent issues
-
-    // If point is too close or behind camera, adjust it
-    if (distance < minDistance) {
-      // debug
-
-      // Move the point away from camera along the camera's forward direction
-      const cameraDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-      const adjustedPoint = this.camera.position
-        .clone()
-        .add(cameraDirection.multiplyScalar(minDistance));
-
-      // Set the adjusted point as rotation center
-      this.controls.target.copy(adjustedPoint);
-
-      // Update axes position
-      const axesGroup = (this as any).axesGroup;
-      if (axesGroup) {
-        axesGroup.position.copy(adjustedPoint);
-      }
-
-      // debug
-      this.updateRotationOriginButtonState();
-    } else {
-      // Point is at a safe distance, use it directly
-
-      if (this.rotationCenterMode === 'move-camera') {
-        // Default behavior: Camera moves laterally on its view plane
-        // The clicked point becomes centered in view without changing camera distance to view plane
-
-        // Get camera's forward direction (view direction)
-        const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-
-        // Get vector from old target to new point
-        const targetShift = point.clone().sub(this.controls.target);
-
-        // Project the shift onto the plane perpendicular to camera forward
-        // This ensures we only move laterally (parallel to view plane)
-        const projectedShift = targetShift
-          .clone()
-          .sub(cameraForward.clone().multiplyScalar(targetShift.dot(cameraForward)));
-
-        // Set new rotation center
-        this.controls.target.copy(point);
-
-        // Move camera by the same lateral shift to keep it on the same view plane
-        this.camera.position.add(projectedShift);
-      } else if (this.rotationCenterMode === 'keep-distance') {
-        // Keep distance behavior: Camera moves to maintain the same distance from new center
-        // Calculate the current direction from camera to target
-        const currentDirection = this.controls.target.clone().sub(this.camera.position).normalize();
-        const currentDistance = this.camera.position.distanceTo(this.controls.target);
-
-        // Set new rotation center
-        this.controls.target.copy(point);
-
-        // Move camera to maintain the same relative position and viewing direction
-        // Keep the same distance from the new target
-        const newCameraPosition = point
-          .clone()
-          .sub(currentDirection.multiplyScalar(currentDistance));
-        this.camera.position.copy(newCameraPosition);
-      } else {
-        // Keep camera behavior: Keep camera position fixed
-        // Only the rotation target changes, camera stays in place
-        this.controls.target.copy(point);
-      }
-
-      // Update axes position to the new rotation center
-      const axesGroup = (this as any).axesGroup;
-      if (axesGroup) {
-        axesGroup.position.copy(point);
-      }
-
-      // debug
-      this.updateRotationOriginButtonState();
-    }
-
-    // Show axes temporarily for 1 second to indicate new rotation center
-    const showAxesTemporarily = (this as any).showAxesTemporarily;
-    if (showAxesTemporarily) {
-      showAxesTemporarily();
-    }
-
-    // Update controls
-    this.controls.update();
-
-    // Re-add change listener
-    if (this.controls) {
-      (this.controls as any).addEventListener('change', changeHandler);
-    }
-
-    // Single render request for the rotation center change
-    this.requestRender();
+    this.rotationCenterManager.setRotationCenter(point, this.camera, this.controls, axesGroup, {
+      updateRotationOriginButtonState: () => this.updateRotationOriginButtonState(),
+      showAxesTemporarily: (this as any).showAxesTemporarily,
+      requestRender: () => this.requestRender(),
+    });
 
     // Visual feedback
     this.showRotationCenterFeedback(this.controls.target);
@@ -3634,7 +3513,7 @@ class PointCloudVisualizer {
     const rotationCenterMoveCameraBtn = document.getElementById('rotation-center-move-camera');
     if (rotationCenterMoveCameraBtn) {
       rotationCenterMoveCameraBtn.addEventListener('click', () => {
-        this.rotationCenterMode = 'move-camera';
+        this.rotationCenterManager.setMode('move-camera');
         this.updateRotationCenterModeButtons();
         this.showStatus('Rotation center: Camera moves laterally');
       });
@@ -3643,7 +3522,7 @@ class PointCloudVisualizer {
     const rotationCenterKeepCameraBtn = document.getElementById('rotation-center-keep-camera');
     if (rotationCenterKeepCameraBtn) {
       rotationCenterKeepCameraBtn.addEventListener('click', () => {
-        this.rotationCenterMode = 'keep-camera';
+        this.rotationCenterManager.setMode('keep-camera');
         this.updateRotationCenterModeButtons();
         this.showStatus('Rotation center: Camera stays in place');
       });
@@ -3652,7 +3531,7 @@ class PointCloudVisualizer {
     const rotationCenterKeepDistanceBtn = document.getElementById('rotation-center-keep-distance');
     if (rotationCenterKeepDistanceBtn) {
       rotationCenterKeepDistanceBtn.addEventListener('click', () => {
-        this.rotationCenterMode = 'keep-distance';
+        this.rotationCenterManager.setMode('keep-distance');
         this.updateRotationCenterModeButtons();
         this.showStatus('Rotation center: Camera keeps distance');
       });
