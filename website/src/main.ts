@@ -73,6 +73,7 @@ class PointCloudVisualizer {
     'trackball';
   private screenSpaceScaling: boolean = false;
   private allowTransparency: boolean = false;
+  private rotationCenterMode: 'move-camera' | 'keep-camera' | 'keep-distance' = 'move-camera'; // Default: camera moves laterally
 
   // On-demand rendering state
   private needsRender: boolean = false;
@@ -1231,6 +1232,7 @@ class PointCloudVisualizer {
       this.updateGammaButtonState();
       this.updateAxesButtonState();
       this.updateLightingButtonsState();
+      this.updateRotationCenterModeButtons();
     }, 0);
   }
 
@@ -1295,6 +1297,36 @@ class PointCloudVisualizer {
       btn.classList.remove('active');
     }
     // Keep label text unchanged per request
+  }
+
+  private updateRotationCenterModeButtons(): void {
+    const moveCameraBtn = document.getElementById('rotation-center-move-camera');
+    const keepCameraBtn = document.getElementById('rotation-center-keep-camera');
+    const keepDistanceBtn = document.getElementById('rotation-center-keep-distance');
+
+    if (moveCameraBtn) {
+      if (this.rotationCenterMode === 'move-camera') {
+        moveCameraBtn.classList.add('active');
+      } else {
+        moveCameraBtn.classList.remove('active');
+      }
+    }
+
+    if (keepCameraBtn) {
+      if (this.rotationCenterMode === 'keep-camera') {
+        keepCameraBtn.classList.add('active');
+      } else {
+        keepCameraBtn.classList.remove('active');
+      }
+    }
+
+    if (keepDistanceBtn) {
+      if (this.rotationCenterMode === 'keep-distance') {
+        keepDistanceBtn.classList.add('active');
+      } else {
+        keepDistanceBtn.classList.remove('active');
+      }
+    }
   }
 
   private rebuildAllColorAttributesForCurrentGammaSetting(): void {
@@ -3195,17 +3227,47 @@ class PointCloudVisualizer {
     } else {
       // Point is at a safe distance, use it directly
 
-      // Calculate the current direction from camera to target
-      const currentDirection = this.controls.target.clone().sub(this.camera.position).normalize();
-      const currentDistance = this.camera.position.distanceTo(this.controls.target);
+      if (this.rotationCenterMode === 'move-camera') {
+        // Default behavior: Camera moves laterally on its view plane
+        // The clicked point becomes centered in view without changing camera distance to view plane
 
-      // Set new rotation center
-      this.controls.target.copy(point);
+        // Get camera's forward direction (view direction)
+        const cameraForward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
 
-      // Move camera to maintain the same relative position and viewing direction
-      // Keep the same distance from the new target
-      const newCameraPosition = point.clone().sub(currentDirection.multiplyScalar(currentDistance));
-      this.camera.position.copy(newCameraPosition);
+        // Get vector from old target to new point
+        const targetShift = point.clone().sub(this.controls.target);
+
+        // Project the shift onto the plane perpendicular to camera forward
+        // This ensures we only move laterally (parallel to view plane)
+        const projectedShift = targetShift
+          .clone()
+          .sub(cameraForward.clone().multiplyScalar(targetShift.dot(cameraForward)));
+
+        // Set new rotation center
+        this.controls.target.copy(point);
+
+        // Move camera by the same lateral shift to keep it on the same view plane
+        this.camera.position.add(projectedShift);
+      } else if (this.rotationCenterMode === 'keep-distance') {
+        // Keep distance behavior: Camera moves to maintain the same distance from new center
+        // Calculate the current direction from camera to target
+        const currentDirection = this.controls.target.clone().sub(this.camera.position).normalize();
+        const currentDistance = this.camera.position.distanceTo(this.controls.target);
+
+        // Set new rotation center
+        this.controls.target.copy(point);
+
+        // Move camera to maintain the same relative position and viewing direction
+        // Keep the same distance from the new target
+        const newCameraPosition = point
+          .clone()
+          .sub(currentDirection.multiplyScalar(currentDistance));
+        this.camera.position.copy(newCameraPosition);
+      } else {
+        // Keep camera behavior: Keep camera position fixed
+        // Only the rotation target changes, camera stays in place
+        this.controls.target.copy(point);
+      }
 
       // Update axes position to the new rotation center
       const axesGroup = (this as any).axesGroup;
@@ -3565,6 +3627,34 @@ class PointCloudVisualizer {
     if (arcballBtn) {
       arcballBtn.addEventListener('click', () => {
         this.switchToArcballControls();
+      });
+    }
+
+    // Rotation center mode buttons
+    const rotationCenterMoveCameraBtn = document.getElementById('rotation-center-move-camera');
+    if (rotationCenterMoveCameraBtn) {
+      rotationCenterMoveCameraBtn.addEventListener('click', () => {
+        this.rotationCenterMode = 'move-camera';
+        this.updateRotationCenterModeButtons();
+        this.showStatus('Rotation center: Camera moves laterally');
+      });
+    }
+
+    const rotationCenterKeepCameraBtn = document.getElementById('rotation-center-keep-camera');
+    if (rotationCenterKeepCameraBtn) {
+      rotationCenterKeepCameraBtn.addEventListener('click', () => {
+        this.rotationCenterMode = 'keep-camera';
+        this.updateRotationCenterModeButtons();
+        this.showStatus('Rotation center: Camera stays in place');
+      });
+    }
+
+    const rotationCenterKeepDistanceBtn = document.getElementById('rotation-center-keep-distance');
+    if (rotationCenterKeepDistanceBtn) {
+      rotationCenterKeepDistanceBtn.addEventListener('click', () => {
+        this.rotationCenterMode = 'keep-distance';
+        this.updateRotationCenterModeButtons();
+        this.showStatus('Rotation center: Camera keeps distance');
       });
     }
 

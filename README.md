@@ -59,6 +59,9 @@ Load two point clouds and switch between them imediatly pressing shift and click
   use those for depth images for intrinsics and extrinsics for point clouds
 - **Improve npz file interpretation**: These files can have different
   structures. Offer some options to visualize them
+- **Crashes for too many points** After loading multiple point clouds also in
+  multiple files in parallel it crashes, rendering all views with this extension
+  gray.
 
 ## Feature Requests and Issues
 
