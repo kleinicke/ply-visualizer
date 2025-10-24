@@ -1,13 +1,18 @@
+# IDE and development files
 .vscode/**
 .vscode-test/**
 .github/**
 .claude/**
 src/**
 temp/
+
+# Website files (only include necessary runtime files)
 website/**
 !website/src/**
 !website/media/**
 !website/index.html
+
+# Config files
 .gitignore
 .editorconfig
 .yarnrc
@@ -18,32 +23,55 @@ vsc-extension-quickstart.md
 **/.eslintignore
 **/.prettierrc
 **/.prettierignore
+
+# Build artifacts
 **/*.map
 **/*.tsbuildinfo
 **/*.ts
+
+# Dependencies
 node_modules/**
+
+# Logs and temp files
 npm-debug.log
 *.vsix
 *.tgz
 *.code-workspace
-*.ply
-*.xyz
 .DS_Store
 .env
 .env.*
+
+# Test and coverage files
 coverage/
+.nyc_output/**
+test/**
+out/test/**
+ui-tests/**
+testfiles/**
+dataset/**
+*.ply
+*.xyz
 test_pc1.ply
 test_pc2.ply
 test_simple.ply
-DEBUG_GUIDE.md
-DEMO_INSTRUCTIONS.md
-QUICK_FIXES.md
+
+# Development scripts and tools
+analyze-calls.mjs
+analyze-coverage.mjs
+build-call-graph.mjs
+test-*.js
+*.py
+
+# Git hooks
+.husky/**
+
+# Documentation (keep only essential)
 *.md
 !README.md
-!CHANGELOG.md 
+!CHANGELOG.md
+
+# Implementation and example files
 implementation/**
-test/**
-out/test/**
-*.py
-testfiles/**
-dataset/**
+docs/**
+assets/**
+template
