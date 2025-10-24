@@ -7,6 +7,7 @@ temp/
 website/**
 !website/src/**
 !website/media/**
+!website/index.html
 .gitignore
 .editorconfig
 .yarnrc
