@@ -44,11 +44,11 @@ import {
 } from './fileHandler';
 
 // Depth processing modules
-import { registerDefaultReaders, readDepth, registerReader } from './depth/DepthRegistry';
+import { registerDefaultReaders, readDepth } from './depth/DepthRegistry';
 import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
-import { PngReader } from './depth/readers/PngReader';
 import { ColorImageLoader } from './colorImageLoader';
 import { ColorProcessor } from './colorProcessor';
+import { DepthConverter } from './depth/DepthConverter';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
@@ -158,6 +158,9 @@ class PointCloudVisualizer {
 
   // Calibration data storage for each depth file
   private calibrationData?: Map<number, any>;
+
+  // Depth converter instance
+  private depthConverter: DepthConverter = new DepthConverter();
 
   // Pose entries managed like files but stored as Object3D groups
   private poseGroups: THREE.Group[] = [];
@@ -3076,6 +3079,7 @@ class PointCloudVisualizer {
   }
 
   private getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
+    console.log(`📋 getDepthSettingsFromFileUI(${fileIndex}) called`);
     const cameraModelSelect = document.getElementById(
       `camera-model-${fileIndex}`
     ) as HTMLSelectElement;
@@ -3129,12 +3133,6 @@ class PointCloudVisualizer {
       p1Input?.value && p1Input.value.trim() !== '' ? parseFloat(p1Input.value) : undefined;
     const p2 =
       p2Input?.value && p2Input.value.trim() !== '' ? parseFloat(p2Input.value) : undefined;
-
-    // Log the focal length and principle point values read from form
-    console.log(`📐 Reading camera parameters from form for file ${fileIndex}:
-   Focal lengths: fx = ${fx}, fy = ${fy || 'same as fx'}
-   Principle point: cx = ${cx}, cy = ${cy}
-   Distortion coefficients: k1=${k1}, k2=${k2}, k3=${k3}, k4=${k4}, k5=${k5}, p1=${p1}, p2=${p2}`);
 
     return {
       cameraModel: (cameraModelSelect?.value as any) || 'pinhole-ideal',
@@ -4425,6 +4423,7 @@ class PointCloudVisualizer {
   }
 
   private updateFileList(): void {
+    console.log(`🔄 updateFileList() called - regenerating file list UI`);
     const fileListDiv = document.getElementById('file-list');
     if (!fileListDiv) {
       return;
@@ -9641,21 +9640,14 @@ class PointCloudVisualizer {
     const isPng = /\.png$/i.test(depthFileData.fileName);
     const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : isPng ? 'PNG' : 'TIF';
 
-    // Create PLY data structure with vertices converted from typed arrays
-    const vertices: SpatialVertex[] = [];
-    for (let i = 0; i < result.pointCount; i++) {
-      const vertex: SpatialVertex = {
-        x: result.vertices[i * 3],
-        y: result.vertices[i * 3 + 1],
-        z: result.vertices[i * 3 + 2],
-      };
-      if (result.colors) {
-        vertex.red = Math.round(result.colors[i * 3] * 255);
-        vertex.green = Math.round(result.colors[i * 3 + 1] * 255);
-        vertex.blue = Math.round(result.colors[i * 3 + 2] * 255);
-      }
-      vertices.push(vertex);
-    }
+    // Store dimensions FIRST before creating spatial data
+    const dimensions = {
+      width: (result as any).width || 0,
+      height: (result as any).height || 0,
+    };
+
+    // Convert Float32Arrays to vertex array using utility method
+    const vertices = DepthConverter.convertResultToVertices(result);
 
     const spatialData: SpatialData = {
       vertices: vertices,
@@ -9682,6 +9674,8 @@ class PointCloudVisualizer {
 
     // Mark explicitly as depth-derived so the UI always shows the depth panel later
     (spatialData as any).isDepthDerived = true;
+    // Attach dimensions so they're available when rendering UI
+    (spatialData as any).depthDimensions = dimensions;
 
     console.log(`${fileType} to PLY conversion complete: ${result.pointCount} points`);
 
@@ -9706,7 +9700,17 @@ class PointCloudVisualizer {
       }
     }
 
-    // Add to scene
+    // Cache the depth file data for later reprocessing BEFORE displaying
+    // This ensures dimensions are available when the UI is rendered
+    const fileIndex = spatialData.fileIndex || 0;
+    this.fileDepthData.set(fileIndex, {
+      originalData: depthFileData.data,
+      fileName: depthFileData.fileName,
+      cameraParams: cameraParams,
+      depthDimensions: dimensions,
+    });
+
+    // Add to scene - dimensions are now available in spatialData and fileDepthData
     if (depthFileData.isAddFile) {
       this.addNewFiles([spatialData]);
     } else {
@@ -9731,28 +9735,6 @@ class PointCloudVisualizer {
       } catch {}
     }, 0);
 
-    // Cache the depth file data for later reprocessing (using the file index)
-    const fileIndex = spatialData.fileIndex || 0;
-    const dimensions = {
-      width: (result as any).width || 0,
-      height: (result as any).height || 0,
-    };
-
-    // Log depth image dimensions when storing
-    console.log(
-      `📐 Storing depth data for file ${fileIndex} (${fileType}):\n   Dimensions: ${dimensions.width} × ${dimensions.height}\n   Computed principle point would be: cx = ${(dimensions.width - 1) / 2}, cy = ${(dimensions.height - 1) / 2}`
-    );
-
-    this.fileDepthData.set(fileIndex, {
-      originalData: depthFileData.data,
-      fileName: depthFileData.fileName,
-      cameraParams: cameraParams,
-      depthDimensions: dimensions,
-    });
-
-    // Update the cx/cy form fields with the actual computed values
-    this.updatePrinciplePointFields(fileIndex, dimensions);
-
     // Clean up
     this.pendingDepthFiles.delete(requestId);
     this.showStatus(`${fileType} to point cloud conversion complete: ${result.pointCount} points`);
@@ -9763,169 +9745,8 @@ class PointCloudVisualizer {
     fileName: string,
     cameraParams: CameraParams
   ): Promise<DepthConversionResult> {
-    // Using static imports instead of dynamic imports for VSCode compatibility
-    try {
-      // DEBUG: Log what parameters we received
-      console.log(
-        `🔬 PROCESS DEPTH DEBUG for ${fileName}:\n  Received cameraParams: ${JSON.stringify(cameraParams, null, 2)}\n  depthType specifically: ${cameraParams.depthType}\n  baseline specifically: ${cameraParams.baseline}`
-      );
-
-      registerDefaultReaders();
-
-      // Configure PNG reader with scale factor if processing PNG file
-      if (/\.png$/i.test(fileName) && cameraParams.pngScaleFactor) {
-        // Using static import instead of dynamic import
-        const pngReader = new PngReader();
-        pngReader.setConfig({
-          pngScaleFactor: cameraParams.pngScaleFactor,
-          invalidValue: 0,
-        });
-
-        // Re-register the configured PNG reader
-        // Using static import instead of dynamic import
-        registerReader(pngReader);
-        console.log(`🎯 Configured PNG reader with scale factor: ${cameraParams.pngScaleFactor}`);
-      }
-
-      const { image, meta: baseMeta } = await readDepth(fileName, depthData);
-
-      // Update cx/cy with computed values if they are still placeholder values
-      const computedCx = (image.width - 1) / 2;
-      const computedCy = (image.height - 1) / 2;
-
-      // If cx/cy are not provided, replace with computed values
-      const shouldUpdateCx = cameraParams.cx === undefined;
-      const shouldUpdateCy = cameraParams.cy === undefined;
-
-      if (shouldUpdateCx) {
-        cameraParams.cx = computedCx;
-        console.log(`📐 Updated cx from placeholder to computed value: ${computedCx}`);
-      }
-
-      if (shouldUpdateCy) {
-        cameraParams.cy = computedCy;
-        console.log(`📐 Updated cy from placeholder to computed value: ${computedCy}`);
-      }
-
-      // Log image dimensions and principle point information
-      console.log(
-        `📐 Depth image loaded: ${fileName}\n   Image dimensions: ${image.width} × ${image.height} pixels\n   Auto-computed principle point: cx = ${computedCx}, cy = ${computedCy}\n   Using cx/cy values from camera parameters: cx = ${cameraParams.cx}, cy = ${cameraParams.cy}\n   🎯 Camera parameters are the source of truth for principle point`
-      );
-
-      // Set up camera parameters (use values from camera parameters, which may have been updated)
-      const fx = cameraParams.fx;
-      const fy = cameraParams.fy || cameraParams.fx; // Use fx if fy is not provided
-      const cx = cameraParams.cx !== undefined ? cameraParams.cx : (image.width - 1) / 2; // Use provided value or auto-calculate
-      const cy = cameraParams.cy !== undefined ? cameraParams.cy : (image.height - 1) / 2; // Use provided value or auto-calculate
-
-      // Override depth kind based on UI selection
-      const meta: any = { ...baseMeta };
-      console.log(
-        `  📋 Original baseMeta.kind: ${baseMeta.kind}\n  ⚙️ Checking depthType: ${cameraParams.depthType}`
-      );
-
-      if (cameraParams.depthType === 'disparity') {
-        const fxOk = !!cameraParams.fx && cameraParams.fx > 0;
-        const blOk = !!cameraParams.baseline && cameraParams.baseline > 0;
-        console.log(
-          `  🔍 Disparity checks: fxOk=${fxOk} (${cameraParams.fx}), blOk=${blOk} (${cameraParams.baseline})`
-        );
-        if (fxOk && blOk) {
-          meta.kind = 'disparity';
-          meta.baseline = cameraParams.baseline! / 1000; // Convert mm to meters
-          meta.disparityOffset = cameraParams.disparityOffset || 0; // Default to 0
-          console.log(
-            `  ✅ Set meta.kind to 'disparity', baseline=${meta.baseline}m, offset=${meta.disparityOffset}`
-          );
-        } else {
-          console.warn(
-            'Disparity selected but baseline/focal missing; keeping original kind:',
-            baseMeta.kind
-          );
-        }
-      } else if (cameraParams.depthType === 'orthogonal') {
-        meta.kind = 'z';
-        console.log(`  ✅ Set meta.kind to 'z' (orthogonal)`);
-      } else if (cameraParams.depthType === 'euclidean') {
-        meta.kind = 'depth';
-        console.log(`  ✅ Set meta.kind to 'depth' (euclidean)`);
-      } else if (cameraParams.depthType === 'inverse_depth') {
-        meta.kind = 'inverse_depth';
-        console.log(`  ✅ Set meta.kind to 'inverse_depth'`);
-      }
-
-      console.log(`  📋 Final meta.kind: ${meta.kind}`);
-
-      const norm = normalizeDepth(image, {
-        ...meta,
-        fx,
-        fy,
-        cx,
-        cy,
-        baseline: meta.baseline,
-        depthScale: cameraParams.depthScale,
-        depthBias: cameraParams.depthBias,
-      });
-
-      // Prepare projection parameters
-      const projectionParams = {
-        kind: meta.kind,
-        fx,
-        fy,
-        cx,
-        cy,
-        cameraModel: cameraParams.cameraModel,
-        convention: cameraParams.convention || 'opengl',
-        k1: cameraParams.k1 ? parseFloat(cameraParams.k1.toString()) : undefined,
-        k2: cameraParams.k2 ? parseFloat(cameraParams.k2.toString()) : undefined,
-        k3: cameraParams.k3 ? parseFloat(cameraParams.k3.toString()) : undefined,
-        k4: cameraParams.k4 ? parseFloat(cameraParams.k4.toString()) : undefined,
-        k5: cameraParams.k5 ? parseFloat(cameraParams.k5.toString()) : undefined,
-        p1: cameraParams.p1 ? parseFloat(cameraParams.p1.toString()) : undefined,
-        p2: cameraParams.p2 ? parseFloat(cameraParams.p2.toString()) : undefined,
-      };
-
-      // 🚀 DETAILED LOGGING: All parameters used for point cloud computation
-      console.log(`🚀 DEPTH-TO-POINT-CLOUD CONVERSION
-📁 File: ${fileName}
-📏 Image Dimensions: ${norm.width}×${norm.height}
-🎯 Depth Type (kind): ${meta.kind}
-📷 Camera Model: ${projectionParams.cameraModel}
-🔧 Coordinate Convention: ${projectionParams.convention}
-🔍 Intrinsic Parameters:
-  - fx (focal length x): ${fx}
-  - fy (focal length y): ${fy}
-  - cx (principal point x): ${cx}
-  - cy (principal point y): ${cy}
-📐 Distortion Coefficients:
-  - k1 (radial): ${projectionParams.k1 ?? 'not set'}
-  - k2 (radial): ${projectionParams.k2 ?? 'not set'}
-  - k3 (radial): ${projectionParams.k3 ?? 'not set'}
-  - k4 (radial): ${projectionParams.k4 ?? 'not set'}
-  - k5 (radial): ${projectionParams.k5 ?? 'not set'}
-  - p1 (tangential): ${projectionParams.p1 ?? 'not set'}
-  - p2 (tangential): ${projectionParams.p2 ?? 'not set'}
-💾 Normalization Parameters:
-  - baseline: ${meta.baseline ?? 'not set'}
-  - depthScale: ${cameraParams.depthScale ?? 'not set'}
-  - depthBias: ${cameraParams.depthBias ?? 'not set'}`);
-
-      const result = projectToPointCloud(norm, projectionParams);
-
-      // 🎉 CONVERSION RESULTS LOGGING
-      console.log(`🎉 DEPTH-TO-POINT-CLOUD CONVERSION COMPLETED
-📊 Results:
-  - Points generated: ${result.pointCount}
-  - Has colors: ${!!result.colors}
-  - Vertices array size: ${result.vertices.length}
-  - Colors array size: ${result.colors?.length ?? 0}`);
-
-      return result as unknown as DepthConversionResult;
-    } catch (error) {
-      throw new Error(
-        `Failed to process depth file: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    // Delegate to the depth converter
+    return this.depthConverter.processDepthToPointCloud(depthData, fileName, cameraParams);
   }
 
   private async handleObjData(message: any): Promise<void> {
@@ -10993,7 +10814,7 @@ class PointCloudVisualizer {
 
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
-      spatialData.vertices = this.convertDepthResultToVertices(result);
+      spatialData.vertices = DepthConverter.convertResultToVertices(result);
       spatialData.hasColors = true;
       // Mark as depth-derived so gamma correction knows these are already linear colors
       (spatialData as any).isDepthDerived = true;
@@ -11101,249 +10922,6 @@ class PointCloudVisualizer {
    * Convert depth image to 3D point cloud
    * Based on the Python reference implementation
    */
-  private depthToPointCloud(
-    depthData: Float32Array,
-    width: number,
-    height: number,
-    fx: number,
-    fy: number,
-    cx: number,
-    cy: number,
-    cameraModel: CameraModel,
-    depthType: 'euclidean' | 'orthogonal' | 'disparity' | 'inverse_depth' = 'euclidean',
-    baseline?: number,
-    disparityOffset?: number
-  ): DepthConversionResult {
-    // Pre-allocate typed arrays for better performance
-    const totalPixels = width * height;
-    const tempPoints = new Float32Array(totalPixels * 3); // Pre-allocate max size
-    const tempColors = new Float32Array(totalPixels * 3);
-    const tempPixelCoords = new Float32Array(totalPixels * 2);
-    const tempLogDepths = new Float32Array(totalPixels);
-
-    let pointIndex = 0; // Track actual points added
-
-    // Track depth statistics for debugging disappearing point clouds
-    let minDepth = Infinity;
-    let maxDepth = -Infinity;
-    let validPointCount = 0;
-    let skippedPoints = 0;
-
-    if (cameraModel === 'fisheye-equidistant') {
-      // Fisheye (equidistant) projection model
-      for (let i = 0; i < width; i++) {
-        for (let j = 0; j < height; j++) {
-          const depthIndex = j * width + i; // Note: j*width + i for proper indexing
-          const depth = depthData[depthIndex];
-
-          // Skip invalid depth values (NaN, 0, ±Infinity)
-          if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
-            skippedPoints++;
-            continue;
-          }
-
-          // Track depth statistics for fisheye
-          minDepth = Math.min(minDepth, depth);
-          maxDepth = Math.max(maxDepth, depth);
-          validPointCount++;
-
-          // Compute offset from principal point
-          const u = i - cx;
-          const v = j - cy;
-          const r = Math.sqrt(u * u + v * v);
-
-          const pointBase = pointIndex * 3;
-          const pixelBase = pointIndex * 2;
-
-          if (r === 0) {
-            // Handle center point with coordinate conversion
-            tempPoints[pointBase] = 0;
-            tempPoints[pointBase + 1] = 0;
-            tempPoints[pointBase + 2] = -depth; // Apply Z flip immediately
-          } else {
-            // Normalize offset
-            const u_norm = u / r;
-            const v_norm = v / r;
-
-            // Compute angle for equidistant fisheye
-            const theta = r / fx;
-
-            // Create 3D unit vector and scale by depth with coordinate conversion
-            tempPoints[pointBase] = u_norm * Math.sin(theta) * depth;
-            tempPoints[pointBase + 1] = -v_norm * Math.sin(theta) * depth; // Apply Y flip immediately
-            tempPoints[pointBase + 2] = -Math.cos(theta) * depth; // Apply Z flip immediately
-          }
-
-          // Store original pixel coordinates (i,j) for this point
-          tempPixelCoords[pixelBase] = i;
-          tempPixelCoords[pixelBase + 1] = j;
-
-          // Store log depth for color mapping
-          tempLogDepths[pointIndex] = Math.log(depth);
-          pointIndex++;
-        }
-      }
-    } else {
-      // Pinhole camera model
-      for (let v = 0; v < height; v++) {
-        for (let u = 0; u < width; u++) {
-          const depthIndex = v * width + u;
-          let depth = depthData[depthIndex];
-
-          // Skip invalid depth values (NaN, 0, ±Infinity)
-          if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
-            skippedPoints++;
-            continue;
-          }
-
-          // Convert disparity to depth if needed
-          if (depthType === 'disparity') {
-            if (!baseline || baseline <= 0) {
-              console.warn('Baseline is required for disparity conversion, skipping point');
-              skippedPoints++;
-              continue;
-            }
-
-            const originalDisparity = depth;
-            // Convert disparity to depth: Z = baseline * fx / (disparity + disparityOffset)
-            const dWithOffset = depth + (disparityOffset || 0);
-            depth = (baseline * fx) / dWithOffset;
-
-            // Log conversion for debugging (only for first few pixels)
-            if (v === 0 && u < 5) {
-              console.log(
-                `🔄 Disparity conversion: disparity=${originalDisparity} → depth=${depth} (baseline=${baseline}, fx=${fx})`
-              );
-            }
-
-            // Re-validate depth after conversion (disparity could be 0 → depth = Infinity)
-            if (isNaN(depth) || !isFinite(depth) || depth <= 0) {
-              skippedPoints++;
-              continue;
-            }
-          }
-
-          // Track depth statistics
-          minDepth = Math.min(minDepth, depth);
-          maxDepth = Math.max(maxDepth, depth);
-          validPointCount++;
-
-          // Compute normalized pixel coordinates
-          const X = (u - cx) / fx;
-          const Y = (v - cy) / fy;
-          const Z = 1.0;
-
-          let dirX = X;
-          let dirY = Y;
-          let dirZ = Z;
-
-          if (depthType === 'euclidean') {
-            // For euclidean depth, normalize the direction vector
-            const norm = Math.sqrt(X * X + Y * Y + Z * Z);
-            dirX = X / norm;
-            dirY = Y / norm;
-            dirZ = Z / norm;
-          }
-          // For orthogonal depth, use direction vector as-is (no normalization)
-
-          const pointBase = pointIndex * 3;
-          const pixelBase = pointIndex * 2;
-
-          // Store 3D point directly with coordinate conversion
-          tempPoints[pointBase] = dirX * depth;
-          tempPoints[pointBase + 1] = -dirY * depth; // Apply Y flip immediately
-          tempPoints[pointBase + 2] = -dirZ * depth; // Apply Z flip immediately
-
-          // Store original pixel coordinates (u,v) for this point
-          tempPixelCoords[pixelBase] = u;
-          tempPixelCoords[pixelBase + 1] = v;
-
-          // Store log depth for color mapping
-          tempLogDepths[pointIndex] = Math.log(depth);
-          pointIndex++;
-        }
-      }
-    }
-
-    // Compute log-normalized, gamma-corrected grayscale colors directly to typed array
-    if (pointIndex > 0) {
-      const logMin = Math.log(minDepth);
-      const logMax = Math.log(maxDepth);
-      const denom = logMax - logMin;
-      const invDenom = denom > 0 ? 1 / denom : 0;
-      const gamma = 2.2; // standard display gamma
-      const minGray = 0.2; // lift darkest values to 0.2
-
-      for (let i = 0; i < pointIndex; i++) {
-        const colorBase = i * 3;
-        const s = denom > 0 ? (tempLogDepths[i] - logMin) * invDenom : 1.0;
-        const g = Math.pow(s, 1 / gamma);
-        const mapped = minGray + (1 - minGray) * g;
-        tempColors[colorBase] = mapped;
-        tempColors[colorBase + 1] = mapped;
-        tempColors[colorBase + 2] = mapped;
-      }
-    }
-
-    console.log(
-      `Generated ${pointIndex} points from ${width}x${height} depth image\n📊 Depth statistics: min=${minDepth.toFixed(3)}, max=${maxDepth.toFixed(3)}, valid=${validPointCount}, skipped=${skippedPoints}\n🎥 Camera range: near=${0.001}, far=${1000000}`
-    );
-
-    // Check for potential clipping issues
-    if (minDepth < 0.001) {
-      console.warn(
-        `⚠️ Some points (${minDepth.toFixed(6)}) are closer than camera near plane (0.001) - may be clipped!`
-      );
-    }
-    if (maxDepth > 100000) {
-      console.warn(
-        `⚠️ Some points (${maxDepth.toFixed(3)}) are farther than camera far plane (100000) - may be clipped!`
-      );
-    }
-
-    // Coordinate conversion already applied during processing for better performance
-    console.log(
-      '🔄 Coordinates already converted from OpenCV to OpenGL/Three.js convention (Y↑, Z←)'
-    );
-
-    // Create properly sized arrays from the pre-allocated ones
-    const actualVertices = tempPoints.slice(0, pointIndex * 3);
-    const actualColors = tempColors.slice(0, pointIndex * 3);
-    const actualPixelCoords = tempPixelCoords.slice(0, pointIndex * 2);
-
-    return {
-      vertices: actualVertices,
-      colors: actualColors,
-      pixelCoords: actualPixelCoords,
-      pointCount: pointIndex,
-    };
-  }
-
-  /**
-   * Convert Depth processing result to PLY vertex format
-   */
-  private convertDepthResultToVertices(result: DepthConversionResult): SpatialVertex[] {
-    const vertices: SpatialVertex[] = [];
-
-    for (let i = 0; i < result.pointCount; i++) {
-      const i3 = i * 3;
-      const vertex: SpatialVertex = {
-        x: result.vertices[i3],
-        y: result.vertices[i3 + 1],
-        z: result.vertices[i3 + 2],
-      };
-
-      if (result.colors) {
-        vertex.red = Math.round(result.colors[i3] * 255);
-        vertex.green = Math.round(result.colors[i3 + 1] * 255);
-        vertex.blue = Math.round(result.colors[i3 + 2] * 255);
-      }
-
-      vertices.push(vertex);
-    }
-
-    return vertices;
-  }
 
   private showStatus(message: string): void {
     const ts = new Date().toISOString();
@@ -11537,9 +11115,6 @@ class PointCloudVisualizer {
       const depthData = this.fileDepthData.get(fileIndex);
       if (depthData?.depthDimensions?.width) {
         const cx = (depthData.depthDimensions.width - 1) / 2;
-        console.log(
-          `📐 Using stored dimensions for file ${fileIndex}: ${depthData.depthDimensions.width}×${depthData.depthDimensions.height}, computed cx = ${cx}`
-        );
         return cx.toString();
       }
     }
@@ -11548,13 +11123,9 @@ class PointCloudVisualizer {
     const dimensions = (data as any)?.depthDimensions;
     if (dimensions && dimensions.width) {
       const cx = (dimensions.width - 1) / 2;
-      console.log(
-        `📐 Image dimensions: ${dimensions.width}×${dimensions.height}, computed cx = ${cx}`
-      );
       return cx.toString();
     }
     // Return empty string when dimensions aren't available yet (will be auto-calculated)
-    console.log('📐 Image dimensions not yet available, will auto-calculate cx');
     return ''; // Empty = will be auto-calculated once image is processed
   }
 
@@ -11564,9 +11135,6 @@ class PointCloudVisualizer {
       const depthData = this.fileDepthData.get(fileIndex);
       if (depthData?.depthDimensions?.height) {
         const cy = (depthData.depthDimensions.height - 1) / 2;
-        console.log(
-          `📐 Using stored dimensions for file ${fileIndex}: ${depthData.depthDimensions.width}×${depthData.depthDimensions.height}, computed cy = ${cy}`
-        );
         return cy.toString();
       }
     }
@@ -11575,13 +11143,9 @@ class PointCloudVisualizer {
     const dimensions = (data as any)?.depthDimensions;
     if (dimensions && dimensions.height) {
       const cy = (dimensions.height - 1) / 2;
-      console.log(
-        `📐 Image dimensions: ${dimensions.width}×${dimensions.height}, computed cy = ${cy}`
-      );
       return cy.toString();
     }
     // Return empty string when dimensions aren't available yet (will be auto-calculated)
-    console.log('📐 Image dimensions not yet available, will auto-calculate cy');
     return ''; // Empty = will be auto-calculated once image is processed
   }
 
@@ -11710,7 +11274,7 @@ class PointCloudVisualizer {
 
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
-      spatialData.vertices = this.convertDepthResultToVertices(result);
+      spatialData.vertices = DepthConverter.convertResultToVertices(result);
       spatialData.vertexCount = result.pointCount;
       spatialData.hasColors = !!result.colors;
       // Mark as depth-derived so gamma correction knows these are already linear colors
@@ -11976,29 +11540,20 @@ class PointCloudVisualizer {
 
     if (cxInput) {
       cxInput.value = computedCx.toString();
-      console.log(
-        `📐 Updated cx field for file ${fileIndex}: ${computedCx} (from ${dimensions.width}×${dimensions.height})`
-      );
     }
 
     if (cyInput) {
       cyInput.value = computedCy.toString();
-      console.log(
-        `📐 Updated cy field for file ${fileIndex}: ${computedCy} (from ${dimensions.width}×${dimensions.height})`
-      );
     }
 
     // Update image size display
     const imageSizeDiv = document.getElementById(`image-size-${fileIndex}`);
     if (imageSizeDiv) {
       imageSizeDiv.textContent = `Image Size: Width: ${dimensions.width}, Height: ${dimensions.height}`;
-      console.log(
-        `📐 Updated image size display for file ${fileIndex}: ${dimensions.width}×${dimensions.height}`
-      );
     }
 
-    // Update button state since form values changed
-    this.updateSingleDefaultButtonState(fileIndex);
+    // Note: Not calling updateSingleDefaultButtonState() here to avoid duplicate calls
+    // It will be called by updateFileList() which renders the UI
   }
 
   private updateDefaultButtonState(): void {
@@ -12010,6 +11565,7 @@ class PointCloudVisualizer {
   }
 
   private updateSingleDefaultButtonState(fileIndex: number): void {
+    console.log(`🔍 updateSingleDefaultButtonState(${fileIndex}) called`);
     const button = document.querySelector(
       `.use-as-default-settings[data-file-index="${fileIndex}"]`
     ) as HTMLButtonElement;
@@ -12020,11 +11576,6 @@ class PointCloudVisualizer {
     try {
       // Get current form values
       const currentParams = this.getDepthSettingsFromFileUI(fileIndex);
-
-      // Debug logging
-      console.log(
-        `🔍 Button state check for file ${fileIndex}:\n  Current params: ${JSON.stringify(currentParams, null, 2)}\n  Default settings: ${JSON.stringify(this.defaultDepthSettings, null, 2)}`
-      );
 
       // Check if current settings match defaults
       const fxMatch = currentParams.fx === this.defaultDepthSettings.fx;
@@ -12290,7 +11841,7 @@ class PointCloudVisualizer {
 
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
-      spatialData.vertices = this.convertDepthResultToVertices(result);
+      spatialData.vertices = DepthConverter.convertResultToVertices(result);
       spatialData.hasColors = !!result.colors;
       // Mark as depth-derived so gamma correction knows these are already linear colors
       (spatialData as any).isDepthDerived = true;
