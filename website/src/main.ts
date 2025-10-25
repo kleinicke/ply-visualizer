@@ -11511,12 +11511,18 @@ class PointCloudVisualizer {
             const imageData = ctx!.createImageData(width, height);
             const data = imageData.data;
 
-            // Detect bit depth and data range for proper normalization
+            // Detect bit depth and sample format for proper normalization
             const bitsPerSample = image.getBitsPerSample();
-            const bitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 8;
-            const maxValue = bitDepth === 16 ? 65535 : 255;
+            const reportedBitDepth =
+              bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 8;
+            const sampleFormat = image.getSampleFormat();
 
-            console.log(`TIF color image bit depth: ${bitDepth}, max value: ${maxValue}`);
+            // Sample format: 1 = uint, 2 = int, 3 = float
+            const isFloat = sampleFormat && sampleFormat.length > 0 && sampleFormat[0] === 3;
+
+            console.log(
+              `TIF color image reported bit depth: ${reportedBitDepth}, sample format: ${sampleFormat?.[0] || 'unknown'}, isFloat: ${isFloat}`
+            );
 
             if (rasters.length >= 3) {
               // RGB TIF - handle different data types with proper normalization
@@ -11524,25 +11530,129 @@ class PointCloudVisualizer {
               const g = rasters[1];
               const b = rasters[2];
 
-              for (let i = 0; i < width * height; i++) {
-                // Normalize from actual bit depth range to 0-255 range
-                data[i * 4] = Math.min(255, Math.max(0, Math.round((r[i] / maxValue) * 255)));
-                data[i * 4 + 1] = Math.min(255, Math.max(0, Math.round((g[i] / maxValue) * 255)));
-                data[i * 4 + 2] = Math.min(255, Math.max(0, Math.round((b[i] / maxValue) * 255)));
-                data[i * 4 + 3] = 255; // Alpha
+              if (isFloat) {
+                // Float data (float16/float32) - assume normalized [0, 1] range
+                console.log('🎨 Processing float color image (assuming [0, 1] range)');
+                for (let i = 0; i < width * height; i++) {
+                  data[i * 4] = Math.min(255, Math.max(0, Math.round(r[i] * 255)));
+                  data[i * 4 + 1] = Math.min(255, Math.max(0, Math.round(g[i] * 255)));
+                  data[i * 4 + 2] = Math.min(255, Math.max(0, Math.round(b[i] * 255)));
+                  data[i * 4 + 3] = 255; // Alpha
+                }
+              } else {
+                // Integer data (uint8/uint16) - find actual min/max to detect value range
+                let minR = Infinity,
+                  maxR = -Infinity;
+                let minG = Infinity,
+                  maxG = -Infinity;
+                let minB = Infinity,
+                  maxB = -Infinity;
+
+                // Sample first to check actual range
+                for (let i = 0; i < r.length; i++) {
+                  minR = Math.min(minR, r[i]);
+                  maxR = Math.max(maxR, r[i]);
+                  minG = Math.min(minG, g[i]);
+                  maxG = Math.max(maxG, g[i]);
+                  minB = Math.min(minB, b[i]);
+                  maxB = Math.max(maxB, b[i]);
+                }
+
+                const actualMaxValue = Math.max(maxR, maxG, maxB);
+
+                // Auto-detect actual bit depth from data range (getBitsPerSample is unreliable)
+                let detectedBitDepth: number;
+                let maxPossibleValue: number;
+                if (actualMaxValue <= 255) {
+                  detectedBitDepth = 8;
+                  maxPossibleValue = 255;
+                } else if (actualMaxValue <= 65535) {
+                  detectedBitDepth = 16;
+                  maxPossibleValue = 65535;
+                } else {
+                  detectedBitDepth = 32;
+                  maxPossibleValue = 4294967295;
+                }
+
+                console.log(`🎨 Processing uint color image (RGB):`);
+                console.log(`   Reported bit depth: ${reportedBitDepth}`);
+                console.log(`   Detected bit depth from data: ${detectedBitDepth}`);
+                console.log(
+                  `   Actual value range - R: [${minR}, ${maxR}], G: [${minG}, ${maxG}], B: [${minB}, ${maxB}]`
+                );
+                console.log(`   Actual max: ${actualMaxValue}`);
+                console.log(`   Using max possible value for normalization: ${maxPossibleValue}`);
+
+                for (let i = 0; i < width * height; i++) {
+                  // Normalize from max possible value to 0-255
+                  data[i * 4] = Math.min(
+                    255,
+                    Math.max(0, Math.round((r[i] / maxPossibleValue) * 255))
+                  );
+                  data[i * 4 + 1] = Math.min(
+                    255,
+                    Math.max(0, Math.round((g[i] / maxPossibleValue) * 255))
+                  );
+                  data[i * 4 + 2] = Math.min(
+                    255,
+                    Math.max(0, Math.round((b[i] / maxPossibleValue) * 255))
+                  );
+                  data[i * 4 + 3] = 255; // Alpha
+                }
               }
             } else {
               // Grayscale TIF - handle different data types with proper normalization
               const gray = rasters[0];
-              for (let i = 0; i < width * height; i++) {
-                const grayValue = Math.min(
-                  255,
-                  Math.max(0, Math.round((gray[i] / maxValue) * 255))
-                );
-                data[i * 4] = grayValue;
-                data[i * 4 + 1] = grayValue;
-                data[i * 4 + 2] = grayValue;
-                data[i * 4 + 3] = 255; // Alpha
+
+              if (isFloat) {
+                // Float data (float16/float32) - assume normalized [0, 1] range
+                console.log('🎨 Processing float grayscale color image (assuming [0, 1] range)');
+                for (let i = 0; i < width * height; i++) {
+                  const grayValue = Math.min(255, Math.max(0, Math.round(gray[i] * 255)));
+                  data[i * 4] = grayValue;
+                  data[i * 4 + 1] = grayValue;
+                  data[i * 4 + 2] = grayValue;
+                  data[i * 4 + 3] = 255; // Alpha
+                }
+              } else {
+                // Integer data (uint8/uint16) - find actual min/max to detect value range
+                let minGray = Infinity,
+                  maxGray = -Infinity;
+                for (let i = 0; i < gray.length; i++) {
+                  minGray = Math.min(minGray, gray[i]);
+                  maxGray = Math.max(maxGray, gray[i]);
+                }
+
+                // Auto-detect actual bit depth from data range (getBitsPerSample is unreliable)
+                let detectedBitDepth: number;
+                let maxPossibleValue: number;
+                if (maxGray <= 255) {
+                  detectedBitDepth = 8;
+                  maxPossibleValue = 255;
+                } else if (maxGray <= 65535) {
+                  detectedBitDepth = 16;
+                  maxPossibleValue = 65535;
+                } else {
+                  detectedBitDepth = 32;
+                  maxPossibleValue = 4294967295;
+                }
+
+                console.log(`🎨 Processing uint grayscale color image:`);
+                console.log(`   Reported bit depth: ${reportedBitDepth}`);
+                console.log(`   Detected bit depth from data: ${detectedBitDepth}`);
+                console.log(`   Actual value range: [${minGray}, ${maxGray}]`);
+                console.log(`   Using max possible value for normalization: ${maxPossibleValue}`);
+
+                for (let i = 0; i < width * height; i++) {
+                  const grayValue = Math.min(
+                    255,
+                    Math.max(0, Math.round((gray[i] / maxPossibleValue) * 255))
+                  );
+                  data[i * 4] = grayValue;
+                  data[i * 4 + 1] = grayValue;
+                  data[i * 4 + 2] = grayValue;
+                  data[i * 4 + 3] = 255; // Alpha
+                }
               }
             }
 
