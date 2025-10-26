@@ -2,6 +2,7 @@ import { CameraParams, DepthConversionResult, SpatialVertex } from '../interface
 import { registerDefaultReaders, readDepth, registerReader } from './DepthRegistry';
 import { normalizeDepth, projectToPointCloud } from './DepthProjector';
 import { PngReader } from './readers/PngReader';
+import { TifReader } from './readers/TifReader';
 
 /**
  * Handles depth image to point cloud conversion
@@ -50,14 +51,39 @@ export class DepthConverter {
 
       registerDefaultReaders();
 
-      // Configure PNG reader with scale factor if processing PNG file
-      if (/\.png$/i.test(fileName) && cameraParams.pngScaleFactor) {
+      // RGB24 conversion settings from user
+      const rgb24ConversionMode = cameraParams.rgb24ConversionMode || 'shift';
+      const rgb24ScaleFactor = cameraParams.rgb24ScaleFactor || 1000;
+      const rgb24InvalidValue = cameraParams.rgb24InvalidValue;
+
+      // Configure PNG reader with user settings
+      if (/\.png$/i.test(fileName)) {
         const pngReader = new PngReader();
         pngReader.setConfig({
-          pngScaleFactor: cameraParams.pngScaleFactor,
+          pngScaleFactor: cameraParams.pngScaleFactor || 1000,
           invalidValue: 0,
+          rgb24ConversionMode,
+          rgb24ScaleFactor,
+          rgb24InvalidValue,
         });
         registerReader(pngReader);
+        console.log(
+          `[DepthConverter] Configured PngReader: pngScale=${cameraParams.pngScaleFactor || 1000}, rgb24Scale=${rgb24ScaleFactor}, rgb24Mode=${rgb24ConversionMode}`
+        );
+      }
+
+      // Configure TIF reader with user settings
+      if (/\.tif(f)?$/i.test(fileName)) {
+        const tifReader = new TifReader();
+        tifReader.setConfig({
+          rgb24ConversionMode,
+          rgb24ScaleFactor,
+          rgb24InvalidValue,
+        });
+        registerReader(tifReader);
+        console.log(
+          `[DepthConverter] Configured TifReader: rgb24Scale=${rgb24ScaleFactor}, rgb24Mode=${rgb24ConversionMode}`
+        );
       }
 
       const { image, meta: baseMeta } = await readDepth(fileName, depthData);

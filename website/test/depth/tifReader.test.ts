@@ -292,9 +292,9 @@ suite('TifReader', () => {
       assert.strictEqual(isDepth, true);
     });
 
-    test('should reject multi-channel images', () => {
+    test('should accept 3-channel RGB images', () => {
       const isDepth = (reader as any).isDepthTifImage(3, 3, [8, 8, 8]); // RGB image
-      assert.strictEqual(isDepth, false);
+      assert.strictEqual(isDepth, true); // Now we support RGB24 depth encoding
     });
 
     test('should reject 8-bit integer format', () => {
@@ -302,7 +302,7 @@ suite('TifReader', () => {
       assert.strictEqual(isDepth, false);
     });
 
-    test('should throw error for invalid depth image format', async () => {
+    test('should accept 3-channel image (potential RGB24 depth)', async () => {
       // Mock a 3-channel RGB image
       const mockImage = new MockTiffImage(10, 10, 3, 1, [8, 8, 8]);
 
@@ -315,12 +315,11 @@ suite('TifReader', () => {
 
       const buffer = new ArrayBuffer(100);
 
-      try {
-        await reader.read(buffer);
-        assert.fail('Should have thrown for non-depth image');
-      } catch (error: any) {
-        assert.ok(error.message.includes('Not a depth TIF image'));
-      }
+      // 3-channel images are now accepted as potential RGB24 depth images
+      const result = await reader.read(buffer);
+      assert.strictEqual(result.image.width, 10);
+      assert.strictEqual(result.image.height, 10);
+      assert.ok(result.image.data instanceof Float32Array);
 
       mockGeoTIFF.fromArrayBuffer = originalFromArrayBuffer;
     });
@@ -431,9 +430,9 @@ suite('TifReader', () => {
       assert.strictEqual(isDepth, true);
     });
 
-    test('should reject multi-channel', () => {
+    test('should accept 3-channel RGB images for RGB24 encoding', () => {
       const isDepth = (reader as any).isDepthTifImage(3, 3, [8, 8, 8]);
-      assert.strictEqual(isDepth, false);
+      assert.strictEqual(isDepth, true); // 3-channel images are now supported for RGB24 depth
     });
 
     test('should reject low bit depth integers', () => {

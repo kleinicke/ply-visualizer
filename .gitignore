@@ -8,6 +8,7 @@ out
 *.vsix
 package-lock.json
 testfiles/new_formats/**
+testfiles
 dataset/
 coverage/
 .nyc_output/

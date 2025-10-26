@@ -3102,6 +3102,12 @@ class PointCloudVisualizer {
     const pngScaleFactorInput = document.getElementById(
       `png-scale-factor-${fileIndex}`
     ) as HTMLInputElement;
+    const rgb24ConversionModeSelect = document.getElementById(
+      `rgb24-conversion-mode-${fileIndex}`
+    ) as HTMLSelectElement;
+    const rgb24ScaleFactorInput = document.getElementById(
+      `rgb24-scale-factor-${fileIndex}`
+    ) as HTMLInputElement;
 
     // Get distortion coefficient inputs
     const k1Input = document.getElementById(`k1-${fileIndex}`) as HTMLInputElement;
@@ -3158,6 +3164,12 @@ class PointCloudVisualizer {
       convention: (conventionSelect?.value as 'opengl' | 'opencv') || 'opengl',
       pngScaleFactor: pngScaleFactorInput
         ? parseFloat(pngScaleFactorInput.value || '1000') || 1000
+        : undefined,
+      rgb24ConversionMode:
+        (rgb24ConversionModeSelect?.value as 'shift' | 'multiply' | 'red' | 'green' | 'blue') ||
+        'shift',
+      rgb24ScaleFactor: rgb24ScaleFactorInput
+        ? parseFloat(rgb24ScaleFactorInput.value || '1000') || 1000
         : undefined,
       k1: k1,
       k2: k2,
@@ -4726,6 +4738,26 @@ class PointCloudVisualizer {
                             `
                                 : ''
                             }
+                            <div class="depth-group" style="margin-bottom: 8px;">
+                                <button class="depth-section-toggle" data-section="rgb24-params-${i}" style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
+                                    <span class="toggle-icon" style="font-size: 8px;">▶</span> RGB to 24bit Conversion Mode
+                                </button>
+                                <div class="depth-section-content" id="rgb24-params-${i}" style="display: none; margin-top: 4px;">
+                                    <label for="rgb24-conversion-mode-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Conversion Mode:</label>
+                                    <select id="rgb24-conversion-mode-${i}" style="width: 100%; padding: 2px; font-size: 11px;">
+                                        <option value="shift" ${this.getRgb24ConversionMode(data) === 'shift' ? 'selected' : ''}>RGB as 24-bit</option>
+                                        <option value="multiply" ${this.getRgb24ConversionMode(data) === 'multiply' ? 'selected' : ''}>Shift 255</option>
+                                        <option value="red" ${this.getRgb24ConversionMode(data) === 'red' ? 'selected' : ''}>Red Channel Only</option>
+                                        <option value="green" ${this.getRgb24ConversionMode(data) === 'green' ? 'selected' : ''}>Green Channel Only</option>
+                                        <option value="blue" ${this.getRgb24ConversionMode(data) === 'blue' ? 'selected' : ''}>Blue Channel Only</option>
+                                    </select>
+                                    <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">How to extract depth from RGB channels (only used if image is RGB)</div>
+
+                                    <label for="rgb24-scale-factor-${i}" style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px; margin-top: 8px;">RGB24 Scale Factor:</label>
+                                    <input type="number" id="rgb24-scale-factor-${i}" value="${this.getRgb24ScaleFactor(data)}" style="width: 100%; padding: 2px; font-size: 11px;" step="1" min="1" />
+                                    <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Divider for 24 bit image (e.g., 1000, so max value is 16777.215)</div>
+                                </div>
+                            </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
                                 <button class="depth-section-toggle" data-section="coordinate-convention-${i}" style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;">
                                     <span class="toggle-icon" style="font-size: 8px;">▶</span> Coordinate Convention ⭐
@@ -10121,18 +10153,6 @@ class PointCloudVisualizer {
     }
   }
 
-  private loadSavedCameraParams(): CameraParams | null {
-    try {
-      const saved = localStorage.getItem('SpatialVisualizerCameraParams');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch (error) {
-      console.warn('Failed to load saved camera parameters:', error);
-    }
-    return null;
-  }
-
   private saveCameraParams(params: CameraParams): void {
     try {
       localStorage.setItem('SpatialVisualizerCameraParams', JSON.stringify(params));
@@ -11020,6 +11040,52 @@ class PointCloudVisualizer {
     );
   }
 
+  private isRgbDerivedFile(data: SpatialData): boolean {
+    const comments = (data as any)?.comments;
+    if (!Array.isArray(comments)) {
+      return false;
+    }
+    return comments.some(
+      (comment: string) => typeof comment === 'string' && comment.includes('RGB24 depth image')
+    );
+  }
+
+  private getRgb24ScaleFactor(data: SpatialData): number {
+    const comments = (data as any)?.comments;
+    if (!Array.isArray(comments)) {
+      return 1000;
+    }
+
+    for (const comment of comments) {
+      if (typeof comment === 'string' && comment.includes('rgb24Scale=')) {
+        const match = comment.match(/rgb24Scale=(\d+(?:\.\d+)?)/);
+        if (match) {
+          return parseFloat(match[1]);
+        }
+      }
+    }
+    return 1000; // Default to millimeters
+  }
+
+  private getRgb24ConversionMode(
+    data: SpatialData
+  ): 'shift' | 'multiply' | 'red' | 'green' | 'blue' {
+    const comments = (data as any)?.comments;
+    if (!Array.isArray(comments)) {
+      return 'shift';
+    }
+
+    for (const comment of comments) {
+      if (typeof comment === 'string' && comment.includes('rgb24Mode=')) {
+        const match = comment.match(/rgb24Mode=(shift|multiply|red|green|blue)/);
+        if (match) {
+          return match[1] as 'shift' | 'multiply' | 'red' | 'green' | 'blue';
+        }
+      }
+    }
+    return 'shift'; // Default to standard shift mode
+  }
+
   private getPngScaleFactor(data: SpatialData): number {
     const comments = (data as any)?.comments;
     if (!Array.isArray(comments)) {
@@ -11283,13 +11349,22 @@ class PointCloudVisualizer {
       spatialData.hasColors = !!result.colors;
       // Mark as depth-derived so gamma correction knows these are already linear colors
       (spatialData as any).isDepthDerived = true;
-      spatialData.comments = [
+      const comments: string[] = [
         `Converted from ${fileType} depth image: ${depthData.fileName}`,
         `Camera: ${newCameraParams.cameraModel}`,
         `Depth type: ${newCameraParams.depthType}`,
         `fx: ${newCameraParams.fx}px${newCameraParams.fy ? `, fy: ${newCameraParams.fy}px` : ''}`,
         ...(newCameraParams.baseline ? [`Baseline: ${newCameraParams.baseline}mm`] : []),
       ];
+
+      // Add RGB24-specific settings if this is an RGB image
+      if (fileType === 'PNG' && newCameraParams.rgb24ScaleFactor) {
+        comments.push(`RGB24 depth image`);
+        comments.push(`rgb24Scale=${newCameraParams.rgb24ScaleFactor}`);
+        comments.push(`rgb24Mode=${newCameraParams.rgb24ConversionMode || 'shift'}`);
+      }
+
+      spatialData.comments = comments;
 
       // Update cached parameters
       depthData.cameraParams = newCameraParams;

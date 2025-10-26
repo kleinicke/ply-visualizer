@@ -4,8 +4,9 @@
 
 - **Npy point clouds**: Add support for npy point clouds (dimension [...,3])
 - **Collapsible File Items**: Added collapse/expand arrows to each point cloud, mesh, pose, and camera entry for cleaner UI organization
-- **Resizable Panel**: Main UI panel can now be resized by dragging from the bottom edge 
-
+- **Resizable Panel**: Main UI panel can now be resized by dragging from the bottom edge
+- **Distance Measuring**: Measure the distance between a shift double click selected point and the rotation center
+- **24 bit mode**: Can convert 8 bit rgb images into 24 bit depth images to display as a point cloud
 
 ## [1.3.0] - 2025-09-16
 

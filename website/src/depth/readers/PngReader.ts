@@ -1,8 +1,12 @@
 import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata, DepthKind } from '../types';
+import { Rgb24Converter } from './Rgb24Reader';
 
 export interface PngDepthConfig {
   pngScaleFactor: number; // Depth/disparity is divided to get applied value in meters/disparities (1000 for mm, 256 for disparity, 1 for meters)
   invalidValue?: number; // Value representing invalid pixels (default: 0)
+  rgb24ConversionMode?: 'shift' | 'multiply' | 'red' | 'green' | 'blue';
+  rgb24ScaleFactor?: number;
+  rgb24InvalidValue?: number;
 }
 
 export class PngReader implements DepthReader {
@@ -140,18 +144,39 @@ export class PngReader implements DepthReader {
   private async parse16BitPng(data: Uint8Array): Promise<DepthImage> {
     const pngInfo = this.detectPngFormat(data);
 
-    if (pngInfo.colorType !== 0) {
-      throw new Error('Only grayscale PNG images are supported for depth');
+    // Allow grayscale (0) or RGB (2)
+    if (pngInfo.colorType !== 0 && pngInfo.colorType !== 2) {
+      throw new Error('Only grayscale or RGB PNG images are supported for depth');
     }
 
     // For now, use a simplified approach with canvas API and scale values
     // This will lose 16-bit precision but provides basic functionality
     const imageData = await this.decodePng(data);
+
+    // Check if this is an RGB image (not grayscale)
+    if (Rgb24Converter.isRgbImage(imageData)) {
+      console.log(
+        `PNG Reader: Processing 16-bit RGB PNG with fallback to canvas (8-bit precision)`
+      );
+      const depthData = Rgb24Converter.convertRgbToDepth(imageData, {
+        conversionMode: this.config.rgb24ConversionMode || 'shift',
+        scaleFactor: this.config.rgb24ScaleFactor || 1000,
+        invalidValue: this.config.rgb24InvalidValue,
+      });
+      return {
+        width: pngInfo.width,
+        height: pngInfo.height,
+        data: depthData,
+      };
+    }
+
     const depthData = new Float32Array(pngInfo.width * pngInfo.height);
 
     // Since canvas API converts to 8-bit, we need to handle this limitation
     // The scaling factor should account for the original 16-bit range
-    console.log(`PNG Reader: Processing 16-bit PNG with fallback to canvas (8-bit precision)`);
+    console.log(
+      `PNG Reader: Processing 16-bit grayscale PNG with fallback to canvas (8-bit precision)`
+    );
 
     // Convert 8-bit canvas data to depth values, scaling up to simulate 16-bit range
     for (let i = 0; i < pngInfo.width * pngInfo.height; i++) {
@@ -181,7 +206,25 @@ export class PngReader implements DepthReader {
   }
 
   private convertCanvasToDepth(imageData: ImageData): DepthImage {
-    const { width, height, data } = imageData;
+    const { width, height } = imageData;
+
+    // Check if this is an RGB image (not grayscale)
+    if (Rgb24Converter.isRgbImage(imageData)) {
+      console.log('[PngReader] Detected RGB image, applying RGB24 conversion');
+      const depthData = Rgb24Converter.convertRgbToDepth(imageData, {
+        conversionMode: this.config.rgb24ConversionMode || 'shift',
+        scaleFactor: this.config.rgb24ScaleFactor || 1000,
+        invalidValue: this.config.rgb24InvalidValue,
+      });
+      return {
+        width,
+        height,
+        data: depthData,
+      };
+    }
+
+    // Grayscale image
+    const { data } = imageData;
     const depthData = new Float32Array(width * height);
 
     // Convert RGBA to depth values
