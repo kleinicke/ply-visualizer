@@ -1022,6 +1022,7 @@ class PointCloudVisualizer {
 
         if (axesGroup && !axesPermanentlyVisible) {
           axesGroup.visible = false;
+          this.requestRender();
         }
         axesHideTimeout = null;
       }, 500);
@@ -2157,6 +2158,7 @@ class PointCloudVisualizer {
       this.scene.remove(sphere);
       geometry.dispose();
       material.dispose();
+      this.requestRender();
     }, 2000);
   }
 
@@ -3430,6 +3432,7 @@ class PointCloudVisualizer {
     setTimeout(() => {
       this.scene.remove(arrowHelper);
       arrowHelper.dispose();
+      this.requestRender();
     }, 2000);
   }
 
@@ -8307,6 +8310,7 @@ class PointCloudVisualizer {
     setTimeout(() => {
       this.scene.remove(arrowHelper);
       arrowHelper.dispose();
+      this.requestRender();
     }, 2000);
   }
 
