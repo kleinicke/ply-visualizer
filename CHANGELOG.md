@@ -7,6 +7,7 @@
 - **Resizable Panel**: Main UI panel can now be resized by dragging from the bottom edge
 - **Distance Measuring**: Measure the distance between a shift double click selected point and the rotation center
 - **24 bit mode**: Can convert 8 bit rgb images into 24 bit depth images to display as a point cloud
+- **Name adaptation** Now the extension is called: 3D Point Cloud and Mesh Visualizer (PLY, ...)
 
 ## [1.3.0] - 2025-09-16
 
@@ -28,6 +29,7 @@
 - Add support for some camera position profiles
 - Add support for some body pose estimations
 - Easier application of translation, quaternion or angle axis.
+- The name of the extension is now: 3D Point Cloud Visualizer (PLY, ...)
 
 ## [1.1.0] - 2025-08-11
 
@@ -70,6 +72,7 @@
 - Implemented file management with visibility controls
 - Performance optimization with binary data transfer
 - Advanced camera controls and coordinate conventions
+- The name of the extension is now PLY Pointcloud Visualizer
 
 ## [0.0.1] - 2025-06-29
 
@@ -77,3 +80,4 @@
 - Support for PLY file visualization using Three.js
 - Interactive 3D controls and multiple rendering modes
 - Complete PLY parser with ASCII and binary format support
+
