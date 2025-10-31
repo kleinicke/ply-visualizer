@@ -40,7 +40,15 @@
           <button id="error-close" class="error-close-btn" title="Close error message">✕</button>
         </div>
       </div>
-      <p id="error-message" style="user-select: text; -webkit-user-select: text; -moz-user-select: text; -ms-user-select: text;"></p>
+      <p
+        id="error-message"
+        style="
+          user-select: text;
+          -webkit-user-select: text;
+          -moz-user-select: text;
+          -ms-user-select: text;
+        "
+      ></p>
     </div>
 
     <!-- Main UI Panel -->
@@ -79,7 +87,13 @@
               </div>
             </div>
             <div class="file-controls">
-              <button id="add-file" class="primary-button" title="Supported 3D File Formats: ply, xyz(n/rgb), pcd, pts, obj, stl, off, gltf, glb.&#10;Supported Depth images formats that are converted to 3D: tif, png, pfm, npy and npz.">+ Add Point Cloud</button>
+              <button
+                id="add-file"
+                class="primary-button"
+                title="Supported 3D File Formats: ply, xyz(n/rgb), pcd, pts, obj, stl, off, gltf, glb.&#10;Supported Depth images formats that are converted to 3D: tif, png, pfm, npy and npz."
+              >
+                + Add Point Cloud
+              </button>
             </div>
             <div id="file-list"></div>
           </div>
@@ -127,14 +141,14 @@
           <div class="panel-section">
             <h4>Measurements</h4>
             <div class="control-buttons">
-              <button id="clear-measurements" class="control-button">
-                Clear All Measurements
-              </button>
+              <button id="clear-measurements" class="control-button">Clear All Measurements</button>
               <button id="remove-last-measurement" class="control-button">
                 Remove Last Measurement
               </button>
             </div>
-            <div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 8px;">
+            <div
+              style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 8px"
+            >
               Tip: Shift + Double-click to measure distance from rotation center
             </div>
           </div>
@@ -168,9 +182,7 @@
           </div>
           <div class="panel-section">
             <h4>Rotation Center Behavior</h4>
-            <p class="setting-description">
-              When double-clicking to set rotation center:
-            </p>
+            <p class="setting-description">When double-clicking to set rotation center:</p>
             <div class="control-buttons">
               <button id="rotation-center-move-camera" class="control-button active">
                 Move Camera (Lateral)
@@ -183,9 +195,9 @@
               </button>
             </div>
             <p class="setting-description">
-              Move Camera: Camera slides on view plane to center clicked point.
-              Keep Camera: Only rotation target changes, camera stays in place.
-              Keep Distance: Camera moves to maintain same distance from new center.
+              Move Camera: Camera slides on view plane to center clicked point. Keep Camera: Only
+              rotation target changes, camera stays in place. Keep Distance: Camera moves to
+              maintain same distance from new center.
             </p>
           </div>
           <div class="panel-section">
@@ -232,7 +244,56 @@
             <div id="file-stats"></div>
           </div>
           <div class="panel-section">
-            <h4>Keyboard Shortcuts</h4>
+            <h4>Important Shortcuts</h4>
+            <div class="shortcuts-list">
+              <div
+                class="shortcut-item"
+                style="
+                  background-color: rgba(255, 193, 7, 0.1);
+                  padding: 6px;
+                  margin-bottom: 4px;
+                  border-radius: 3px;
+                  border-left: 3px solid #ffc107;
+                "
+              >
+                <span class="shortcut-key"
+                  >Shift + <br />
+                  Double-click</span
+                >
+                <span class="shortcut-desc">Measure distance to rotation center</span>
+              </div>
+              <div
+                class="shortcut-item"
+                style="
+                  background-color: rgba(255, 193, 7, 0.1);
+                  padding: 6px;
+                  margin-bottom: 4px;
+                  border-radius: 3px;
+                  border-left: 3px solid #ffc107;
+                "
+              >
+                <span class="shortcut-key">W</span>
+                <span class="shortcut-desc">Set rotation center to world origin</span>
+              </div>
+              <div
+                class="shortcut-item"
+                style="
+                  background-color: rgba(255, 193, 7, 0.1);
+                  padding: 6px;
+                  margin-bottom: 4px;
+                  border-radius: 3px;
+                  border-left: 3px solid #ffc107;
+                "
+              >
+                <span class="shortcut-key">G</span>
+                <span class="shortcut-desc"
+                  >Toggle gamma correction <br />(makes point clouds brighter)</span
+                >
+              </div>
+            </div>
+          </div>
+          <div class="panel-section">
+            <h4>All Keyboard Shortcuts</h4>
             <div class="shortcuts-list">
               <div class="shortcut-item">
                 <span class="shortcut-key">Double-click</span>
@@ -287,16 +348,8 @@
                 <span class="shortcut-desc">Arcball controls</span>
               </div>
               <div class="shortcut-item">
-                <span class="shortcut-key">G</span>
-                <span class="shortcut-desc">Toggle gamma correction</span>
-              </div>
-              <div class="shortcut-item">
                 <span class="shortcut-key">S</span>
                 <span class="shortcut-desc">Screen-space scaling</span>
-              </div>
-              <div class="shortcut-item">
-                <span class="shortcut-key">W</span>
-                <span class="shortcut-desc">Set rotation center to origin</span>
               </div>
             </div>
           </div>

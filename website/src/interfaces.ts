@@ -28,6 +28,7 @@ export interface SpatialData {
   hasNormals: boolean;
   fileName?: string;
   fileIndex?: number;
+  fileSizeInBytes?: number;
 }
 
 export interface CameraParams {

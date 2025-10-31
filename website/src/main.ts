@@ -4376,6 +4376,18 @@ class PointCloudVisualizer {
     }
   }
 
+  private formatFileSize(bytes: number | undefined): string {
+    if (!bytes) {return 'Unknown';}
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    return `${size.toFixed(2)} ${units[unitIndex]}`;
+  }
+
   private updateFileStats(): void {
     const statsDiv = document.getElementById('file-stats');
     if (!statsDiv) {
@@ -4404,6 +4416,7 @@ class PointCloudVisualizer {
       const data = this.spatialFiles[0];
       const renderingMode = data.faceCount === 0 ? 'Points' : 'Mesh';
       statsDiv.innerHTML = `
+                <div><strong>File Size:</strong> ${this.formatFileSize(data.fileSizeInBytes)}</div>
                 <div><strong>Vertices:</strong> ${data.vertexCount.toLocaleString()}</div>
                 <div><strong>Faces:</strong> ${data.faceCount.toLocaleString()}</div>
                 <div><strong>Format:</strong> ${data.format}</div>
@@ -4422,11 +4435,16 @@ class PointCloudVisualizer {
         (sum: number, data: SpatialData) => sum + data.faceCount,
         0
       );
+      const totalSize = this.spatialFiles.reduce(
+        (sum: number, data: SpatialData) => sum + (data.fileSizeInBytes || 0),
+        0
+      );
       const totalObjects =
         this.spatialFiles.length + this.poseGroups.length + this.cameraGroups.length;
 
       statsDiv.innerHTML = `
                 <div><strong>Total Objects:</strong> ${totalObjects} (Pointclouds: ${this.spatialFiles.length}, Poses: ${this.poseGroups.length}, Cameras: ${this.cameraGroups.length})</div>
+                <div><strong>Total Size:</strong> ${this.formatFileSize(totalSize)}</div>
                 <div><strong>Total Vertices:</strong> ${totalVertices.toLocaleString()}</div>
                 <div><strong>Total Faces:</strong> ${totalFaces.toLocaleString()}</div>
             `;
@@ -7251,6 +7269,7 @@ class PointCloudVisualizer {
       hasColors: message.hasColors,
       hasNormals: message.hasNormals,
       fileName: message.fileName,
+      fileSizeInBytes: message.fileSizeInBytes,
     };
 
     // Attach TypedArrays
@@ -9834,6 +9853,7 @@ class PointCloudVisualizer {
         hasNormals: objData.hasNormals,
         fileName: message.fileName, // Keep original OBJ filename
         fileIndex: this.spatialFiles.length,
+        fileSizeInBytes: message.fileSizeInBytes,
       };
 
       // Store OBJ-specific data for enhanced rendering
@@ -9921,6 +9941,7 @@ class PointCloudVisualizer {
           hasNormals: false,
           fileName: message.fileName.replace(/\.stl$/i, '_empty.ply'),
           fileIndex: this.spatialFiles.length,
+          fileSizeInBytes: message.fileSizeInBytes,
         };
 
         // Add to visualization (even empty files should be tracked)
@@ -10006,6 +10027,7 @@ class PointCloudVisualizer {
         hasNormals: true,
         fileName: message.fileName.replace(/\.stl$/i, '_mesh.ply'),
         fileIndex: this.spatialFiles.length,
+        fileSizeInBytes: message.fileSizeInBytes,
       };
 
       // Store STL-specific data for enhanced rendering
@@ -10232,6 +10254,7 @@ class PointCloudVisualizer {
         hasColors: pcdData.hasColors,
         hasNormals: pcdData.hasNormals,
         fileName: message.fileName,
+        fileSizeInBytes: message.fileSizeInBytes,
       };
 
       if (message.isAddFile) {
@@ -10345,6 +10368,7 @@ class PointCloudVisualizer {
         hasColors: ptsData.hasColors,
         hasNormals: ptsData.hasNormals,
         fileName: message.fileName,
+        fileSizeInBytes: message.fileSizeInBytes,
       };
 
       if (message.isAddFile) {
@@ -10406,6 +10430,7 @@ class PointCloudVisualizer {
         hasColors: offData.hasColors,
         hasNormals: offData.hasNormals,
         fileName: message.fileName,
+        fileSizeInBytes: message.fileSizeInBytes,
       };
 
       if (message.isAddFile) {
@@ -10471,6 +10496,7 @@ class PointCloudVisualizer {
         hasColors: gltfData.hasColors,
         hasNormals: gltfData.hasNormals,
         fileName: message.fileName,
+        fileSizeInBytes: message.fileSizeInBytes,
       };
 
       if (message.isAddFile) {
@@ -10497,7 +10523,12 @@ class PointCloudVisualizer {
       this.showStatus(`XYZ: processing ${message.fileName} (${message.variant})`);
 
       // Parse XYZ variant data
-      const spatialData = this.parseXyzVariantData(message.data, message.variant, message.fileName);
+      const spatialData = this.parseXyzVariantData(
+        message.data,
+        message.variant,
+        message.fileName,
+        message.fileSizeInBytes
+      );
 
       if (message.isAddFile) {
         this.addNewFiles([spatialData]);
@@ -10533,7 +10564,12 @@ class PointCloudVisualizer {
     }
   }
 
-  private parseXyzVariantData(data: ArrayBuffer, variant: string, fileName: string): SpatialData {
+  private parseXyzVariantData(
+    data: ArrayBuffer,
+    variant: string,
+    fileName: string,
+    fileSizeInBytes?: number
+  ): SpatialData {
     const decoder = new TextDecoder('utf-8');
     const text = decoder.decode(data);
     const lines = text.split('\n').filter(line => line.trim() !== '');
@@ -10597,6 +10633,7 @@ class PointCloudVisualizer {
       hasColors,
       hasNormals,
       fileName: fileName,
+      fileSizeInBytes,
     };
   }
 
