@@ -127,6 +127,7 @@ export class SelectionManager {
 
   /**
    * Select a camera profile at the given screen coordinates
+   * Returns the closest camera origin if multiple cameras are selectable
    */
   private selectCameraProfile(
     mouseScreenX: number,
@@ -134,6 +135,11 @@ export class SelectionManager {
     canvas: HTMLCanvasElement
   ): THREE.Vector3 | null {
     const cameraStartIndex = this.context.spatialFiles.length + this.context.poseGroups.length;
+
+    let closestCamera: THREE.Vector3 | null = null;
+    let closestDistance = Infinity;
+    let camerasChecked = 0;
+    let camerasHit = 0;
 
     for (let i = 0; i < this.context.cameraGroups.length; i++) {
       const unifiedIndex = cameraStartIndex + i;
@@ -147,6 +153,7 @@ export class SelectionManager {
       // Check each camera in the profile
       for (const cameraChild of cameraGroup.children) {
         if (cameraChild instanceof THREE.Group && cameraChild.name.startsWith('camera_')) {
+          camerasChecked++;
           const selectedPoint = this.selectCameraObject(
             cameraChild,
             mouseScreenX,
@@ -155,16 +162,27 @@ export class SelectionManager {
             cameraScale
           );
           if (selectedPoint) {
-            return selectedPoint;
+            camerasHit++;
+            // Calculate distance from viewer camera to this camera
+            const distance = this.context.camera.position.distanceTo(selectedPoint);
+            if (distance < closestDistance) {
+              closestDistance = distance;
+              closestCamera = selectedPoint;
+            }
           }
         }
       }
     }
-    return null;
+    console.log(
+      `📷 Camera profile check: ${camerasChecked} cameras checked, ${camerasHit} cameras hit`
+    );
+    return closestCamera;
   }
 
   /**
    * Select a specific camera object
+   * Returns the camera's origin position (0,0,0 in its local coordinate system)
+   * Uses screen-space proximity check (like pose keypoint selection) for accurate detection
    */
   private selectCameraObject(
     cameraGroup: THREE.Group,
@@ -173,42 +191,37 @@ export class SelectionManager {
     canvas: HTMLCanvasElement,
     scale: number
   ): THREE.Vector3 | null {
-    const mouse = new THREE.Vector2();
-    mouse.x = (mouseScreenX / canvas.clientWidth) * 2 - 1;
-    mouse.y = -(mouseScreenY / canvas.clientHeight) * 2 + 1;
-
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouse, this.context.camera);
-
-    // Check intersection with camera visualization objects
-    const intersects = raycaster.intersectObject(cameraGroup, true);
-    if (intersects.length > 0) {
-      const intersectionPoint = intersects[0].point;
-      const distance = this.context.camera.position.distanceTo(intersectionPoint);
-      if (distance >= 0.0001) {
-        return intersectionPoint;
-      }
-    }
-
-    // Fallback: check proximity to camera center
+    // Get the camera's origin position (0,0,0 in world space)
     const cameraPosition = new THREE.Vector3();
     cameraPosition.setFromMatrixPosition(cameraGroup.matrixWorld);
 
+    // Project camera position to screen space
     const screenPosition = cameraPosition.clone().project(this.context.camera);
     const screenX = (screenPosition.x * 0.5 + 0.5) * canvas.clientWidth;
     const screenY = (screenPosition.y * -0.5 + 0.5) * canvas.clientHeight;
 
-    // Use camera scale to determine selection radius (minimum 10 pixels, maximum 50 pixels)
-    const selectionRadius = Math.max(10, Math.min(50, scale * 15));
+    // Calculate selection radius based on camera scale (same approach as pose keypoints)
+    // This ensures the selection area scales with the camera visualization
+    const selectionRadius = Math.max(15, Math.min(60, scale * 20));
+
+    // Calculate pixel distance from click to camera center
     const pixelDistance = Math.sqrt(
       Math.pow(screenX - mouseScreenX, 2) + Math.pow(screenY - mouseScreenY, 2)
     );
 
+    // Only select if click is within selection radius
     if (pixelDistance <= selectionRadius) {
       const distance = this.context.camera.position.distanceTo(cameraPosition);
       if (distance >= 0.0001) {
+        console.log(
+          `🎯 Selected camera ${cameraGroup.name} (pixel distance: ${pixelDistance.toFixed(1)}px)`
+        );
         return cameraPosition;
       }
+    } else {
+      console.log(
+        `✗ Camera ${cameraGroup.name} too far (pixel distance: ${pixelDistance.toFixed(1)}px, radius: ${selectionRadius}px)`
+      );
     }
 
     return null;
@@ -319,7 +332,9 @@ export class SelectionManager {
     );
     const triangleMeshes = visibleMeshes.filter(mesh => {
       const geometry = (mesh as THREE.Mesh).geometry;
-      if (!geometry) {return false;}
+      if (!geometry) {
+        return false;
+      }
       const indexAttribute = geometry.getIndex();
       // Triangle meshes have indices (faces), point clouds typically don't
       return indexAttribute && indexAttribute.count > 0;

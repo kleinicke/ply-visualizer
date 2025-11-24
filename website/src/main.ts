@@ -4377,7 +4377,9 @@ class PointCloudVisualizer {
   }
 
   private formatFileSize(bytes: number | undefined): string {
-    if (!bytes) {return 'Unknown';}
+    if (!bytes) {
+      return 'Unknown';
+    }
     const units = ['B', 'KB', 'MB', 'GB'];
     let size = bytes;
     let unitIndex = 0;
@@ -6626,11 +6628,24 @@ class PointCloudVisualizer {
       this.vertexPointsObjects.push(null);
 
       // Initialize color mode before creating material
+      // Ensure the individualColorModes array is large enough for this file's index
+      // (it might have camera/pose entries that extend beyond spatialFiles)
       const initialColorMode = this.useOriginalColors ? 'original' : 'assigned';
-      this.individualColorModes.push(initialColorMode);
+      while (this.individualColorModes.length <= data.fileIndex) {
+        this.individualColorModes.push('assigned'); // Placeholder for non-existent files
+      }
+      this.individualColorModes[data.fileIndex] = initialColorMode;
+
+      // Ensure pointSizes array is large enough and set correct default for this PLY
+      while (this.pointSizes.length <= data.fileIndex) {
+        this.pointSizes.push(0.001); // Placeholder for non-existent files
+      }
+      // IMPORTANT: Always set PLY file point size to 0.001, overwriting any placeholder values
+      this.pointSizes[data.fileIndex] = 0.001;
       // debug
 
       // Create geometry and material
+      // Use data.fileIndex which is the spatialFiles array index
       const geometry = this.createGeometryFromSpatialData(data);
       const material = this.createMaterialForFile(data, data.fileIndex);
 
@@ -6902,7 +6917,10 @@ class PointCloudVisualizer {
       }
       const isObjFile3 = (data as any).isObjFile;
       // Universal default point size for all file types (now that all use world-space sizing)
-      this.pointSizes.push(0.001);
+      // Note: pointSizes array is pre-allocated in the material creation step above
+      if (this.pointSizes.length <= data.fileIndex) {
+        this.pointSizes.push(0.001);
+      }
       this.appliedMtlColors.push(null); // No MTL color applied initially
       this.appliedMtlNames.push(null); // No MTL material applied initially
       this.appliedMtlData.push(null); // No MTL data applied initially
@@ -12334,8 +12352,18 @@ class PointCloudVisualizer {
         this.cameraNames.push(fileName); // Store filename instead of individual camera names
 
         // Initialize as single file entry (like poses)
-        const unifiedIndex =
-          this.spatialFiles.length + this.poseGroups.length + this.cameraGroups.length - 1;
+        // Use camera-specific index arrays instead of unified arrays to avoid conflicts with spatialFiles
+        const cameraIndex = this.cameraGroups.length - 1;
+
+        // Ensure visibility array has enough space
+        while (
+          this.fileVisibility.length <=
+          this.spatialFiles.length + this.poseGroups.length + cameraIndex
+        ) {
+          this.fileVisibility.push(false);
+        }
+
+        const unifiedIndex = this.spatialFiles.length + this.poseGroups.length + cameraIndex;
         this.fileVisibility[unifiedIndex] = true;
         this.pointSizes[unifiedIndex] = 1.0; // Default camera scale (different from point size)
         this.individualColorModes[unifiedIndex] = 'assigned';
@@ -12399,9 +12427,9 @@ class PointCloudVisualizer {
     const cameraBody = this.createCameraBodyGeometry();
     group.add(cameraBody);
 
-    // Create direction line
-    const directionLine = this.createDirectionArrow();
-    group.add(directionLine);
+    // Create up arrow on the flat side of the pyramid
+    const upArrow = this.createCameraUpArrow();
+    group.add(upArrow);
 
     // Create text label
     const textLabel = this.createCameraLabel(cameraName);
@@ -12436,6 +12464,8 @@ class PointCloudVisualizer {
     const mesh = new THREE.Mesh(geometry, material);
     // Orient pyramid to extend forward along +Z with tip anchored at origin
     mesh.rotation.x = -Math.PI / 2;
+    // Rotate pyramid 180 degrees so flat side faces forward (camera look direction)
+    mesh.rotation.z = Math.PI;
 
     return mesh;
   }
@@ -12457,6 +12487,41 @@ class PointCloudVisualizer {
     const line = new THREE.Line(geometry, material);
     line.name = 'directionLine'; // Add name for identification
     return line;
+  }
+
+  private createCameraUpArrow(): THREE.Group {
+    // Create a red arrow on the flat side of the pyramid pointing in the camera's up direction (+Y in local camera space)
+    const group = new THREE.Group();
+    const arrowLength = 0.012; // 1.2cm arrow length
+    const arrowColor = 0xff0000; // Red
+
+    // Create arrow shaft (line) - starts at origin and extends upward
+    const shaftGeometry = new THREE.BufferGeometry();
+    const shaftPositions = new Float32Array([0, 0, 0, 0, arrowLength, 0]); // Starts at origin
+    shaftGeometry.setAttribute('position', new THREE.BufferAttribute(shaftPositions, 3));
+
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: arrowColor,
+      linewidth: 2,
+    });
+
+    const shaft = new THREE.Line(shaftGeometry, lineMaterial);
+    group.add(shaft);
+
+    // Create arrow head (cone)
+    const headGeometry = new THREE.ConeGeometry(0.003, 0.005, 8); // Small cone for arrowhead
+    const headMaterial = new THREE.MeshBasicMaterial({ color: arrowColor });
+
+    // Position arrowhead at the tip of the shaft
+    headGeometry.translate(0, arrowLength, 0);
+    const arrowHead = new THREE.Mesh(headGeometry, headMaterial);
+    group.add(arrowHead);
+
+    // Arrow origin stays at (0,0,0) where the camera is located
+    // The flat side of the pyramid faces forward along +Z
+
+    group.name = 'upArrow';
+    return group;
   }
 
   private createCameraLabel(cameraName: string): THREE.Sprite {
