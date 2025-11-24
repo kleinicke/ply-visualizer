@@ -1,6 +1,6 @@
 # Change Log
 
-## [1.4.0] - 2025-11-??
+## [1.4.0] - 2025-11-24
 
 - **Npy point clouds**: Add support for npy point clouds (dimension [...,3])
 - **Collapsible File Items**: Added collapse/expand arrows to each point cloud, mesh, pose, and camera entry for cleaner UI organization
