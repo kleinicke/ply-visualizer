@@ -26,11 +26,13 @@ body {
   border-radius: 6px;
   padding: 8px;
 }
+
 .seq-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
+
 .seq-wildcard {
   flex: 2;
   padding: 6px;
@@ -38,6 +40,7 @@ body {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
 }
+
 .seq-btn {
   padding: 4px 8px;
   border: 1px solid var(--vscode-button-border);
@@ -46,13 +49,16 @@ body {
   border-radius: 3px;
   cursor: pointer;
 }
+
 .seq-btn:disabled {
   opacity: 0.6;
   cursor: default;
 }
+
 .seq-slider {
   flex: 4;
 }
+
 .seq-label {
   min-width: 70px;
   text-align: right;
@@ -88,6 +94,7 @@ body {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
@@ -1120,6 +1127,16 @@ body {
 .nav-button:active {
   background-color: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
+}
+
+/* Mobile override for navigation buttons - must come after base styles */
+@media (max-width: 768px) {
+  .bottom-right-nav {
+    bottom: auto;
+    top: 10px;
+    right: auto;
+    left: 10px;
+  }
 }
 
 /* Measurement labels */
