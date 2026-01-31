@@ -15,11 +15,13 @@ fi
 
 echo "✅ Build completed successfully!"
 
-# Copy HTML and assets
-cp index.html dist/
-cp -r media/ dist/media/
+# Webpack CopyPlugin handles all file copying with path transformations:
+# - /index.html → About page (profile)
+# - /3d-visualizer/index.html → 3D Visualizer
+# - /about/impressum.html, /about/datenschutz.html → Legal pages
+# - /media/ → Static assets
 
-echo "📦 Files copied to dist/ directory:"
+echo "📦 Files in dist/ directory:"
 ls -la dist/
 
 echo ""

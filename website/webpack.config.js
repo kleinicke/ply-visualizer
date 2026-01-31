@@ -37,21 +37,60 @@ module.exports = {
   plugins: [
     new CopyWebpackPlugin({
       patterns: [
+        // 3D Visualizer goes to /3d-visualizer/ path
         {
           from: 'index.html',
+          to: '3d-visualizer/index.html',
+          transform(content) {
+            return (
+              content
+                .toString()
+                // Update paths to be relative from 3d-visualizer subdirectory
+                .replace(/src="bundle\.js"/g, 'src="../bundle.js"')
+                .replace(/src="media\//g, 'src="../media/')
+                .replace(/href="media\//g, 'href="../media/')
+                // Update navigation: About button goes to root (about page is now at root)
+                .replace(
+                  /<a href="about\/" class="nav-button">About<\/a>/g,
+                  '<a href="../" class="nav-button">About</a>'
+                )
+                // Other about/ links go to ../about/ (impressum, etc.)
+                .replace(/href="about\//g, 'href="../about/')
+            );
+          },
+        },
+        // About page becomes the root index
+        {
+          from: 'about/index.html',
           to: 'index.html',
+          transform(content) {
+            return (
+              content
+                .toString()
+                // Update link back to 3D visualizer
+                .replace(/href="\.\.\/"/g, 'href="3d-visualizer/"')
+                // Update footer links to point to about subdirectory
+                .replace(/href="impressum\.html"/g, 'href="about/impressum.html"')
+                .replace(/href="datenschutz\.html"/g, 'href="about/datenschutz.html"')
+            );
+          },
         },
         {
           from: 'media',
           to: 'media',
         },
+        // Keep about subpages (impressum, datenschutz) in about/
         {
           from: 'about',
           to: 'about',
+          globOptions: {
+            ignore: ['**/index.html'], // Don't copy index.html, it goes to root
+          },
         },
+        // Copy themes to 3d-visualizer/media/themes (themes are fetched relative to HTML location)
         {
-          from: 'src/themes',
-          to: 'src/themes',
+          from: 'media/themes',
+          to: '3d-visualizer/media/themes',
         },
       ],
     }),

@@ -18,12 +18,12 @@ const THEME_CONFIGS = [
   {
     name: 'dark-modern',
     displayName: 'Dark Modern',
-    file: 'themes/dark-modern.json',
+    file: 'dark-modern.json',
   },
   {
     name: 'light-modern',
     displayName: 'Light Modern',
-    file: 'themes/light-modern.json',
+    file: 'light-modern.json',
   },
   // Add more themes here:
   // {
@@ -48,7 +48,7 @@ async function loadThemeFromFile(config: (typeof THEME_CONFIGS)[0]): Promise<VSC
   }
 
   try {
-    const response = await fetch(`src/${config.file}`);
+    const response = await fetch(`media/themes/${config.file}`);
     if (!response.ok) {
       throw new Error(`Failed to load theme: ${response.statusText}`);
     }
