@@ -87,10 +87,14 @@ module.exports = {
             ignore: ['**/index.html'], // Don't copy index.html, it goes to root
           },
         },
-        // Copy themes to 3d-visualizer/media/themes (themes are fetched relative to HTML location)
         {
-          from: 'media/themes',
-          to: '3d-visualizer/media/themes',
+          from: 'src/themes',
+          to: 'src/themes',
+        },
+        // Also copy themes for 3d-visualizer subdirectory (themes are fetched relative to HTML location)
+        {
+          from: 'src/themes',
+          to: '3d-visualizer/src/themes',
         },
       ],
     }),
