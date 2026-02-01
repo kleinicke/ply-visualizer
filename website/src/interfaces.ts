@@ -27,6 +27,7 @@ export interface SpatialData {
   hasColors: boolean;
   hasNormals: boolean;
   fileName?: string;
+  shortPath?: string; // parent/grandparent/filename for tooltip display
   fileIndex?: number;
   fileSizeInBytes?: number;
 }

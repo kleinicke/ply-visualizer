@@ -243,6 +243,7 @@ class PointCloudVisualizer {
     {
       data: ArrayBuffer;
       fileName: string;
+      shortPath?: string;
       isAddFile: boolean;
       requestId: string;
       sceneMetadata?: any;
@@ -4476,15 +4477,17 @@ class PointCloudVisualizer {
     let html = '';
     // In sequence mode, show only the current frame information
     if (this.sequenceMode && this.sequenceFiles.length > 0) {
-      const name =
-        this.sequenceFiles[this.sequenceIndex]?.split(/[\\/]/).pop() ||
-        `Frame ${this.sequenceIndex + 1}`;
+      const fullPath = this.sequenceFiles[this.sequenceIndex] || '';
+      const pathParts = fullPath.split(/[\\/]/);
+      const name = pathParts.pop() || `Frame ${this.sequenceIndex + 1}`;
+      // Get up to 3 parts: grandparent/parent/filename
+      const shortPath = pathParts.slice(-2).concat(name).join('/');
       html += `
                 <div class="file-item">
                     <div class="file-item-main">
                         <input type="checkbox" id="file-0" checked disabled>
                         <span class="color-indicator" style="background-color: #888"></span>
-                        <label for="file-0" class="file-name">${name}</label>
+                        <label for="file-0" class="file-name" data-short-path="${shortPath}">${name}</label>
                     </div>
                     <div class="file-info">Frame ${this.sequenceIndex + 1} of ${this.sequenceFiles.length}</div>
                 </div>
@@ -4532,7 +4535,7 @@ class PointCloudVisualizer {
                         </button>
                         <input type="checkbox" id="file-${i}" ${this.fileVisibility[i] ? 'checked' : ''}>
                         ${colorIndicator}
-                        <label for="file-${i}" class="file-name">${data.fileName || `File ${i + 1}`}</label>
+                        <label for="file-${i}" class="file-name" data-short-path="${data.shortPath || data.fileName || ''}">${data.fileName || `File ${i + 1}`}</label>
                         <button class="remove-file" data-file-index="${i}" title="Remove file">✕</button>
                     </div>
                     <div class="file-item-content" id="file-content-${i}" style="display: ${isCollapsed ? 'none' : 'block'}">
@@ -4995,7 +4998,7 @@ class PointCloudVisualizer {
                         </button>
                         <input type="checkbox" id="file-${i}" ${visible ? 'checked' : ''}>
                         ${colorIndicator}
-                        <label for="file-${i}" class="file-name">${meta.fileName || `Pose ${p + 1}`}</label>
+                        <label for="file-${i}" class="file-name" data-short-path="${(meta as any).shortPath || meta.fileName || ''}">${meta.fileName || `Pose ${p + 1}`}</label>
                         <button class="remove-file" data-file-index="${i}" title="Remove object">✕</button>
                     </div>
                     <div class="file-item-content" id="file-content-${i}" style="display: ${isPoseCollapsed ? 'none' : 'block'}">
@@ -5123,7 +5126,7 @@ class PointCloudVisualizer {
                         </button>
                         <input type="checkbox" id="file-${i}" ${visible ? 'checked' : ''}>
                         ${colorIndicator}
-                        <label for="file-${i}" class="file-name">📷 ${cameraProfileName}</label>
+                        <label for="file-${i}" class="file-name" data-short-path="${cameraProfileName}">📷 ${cameraProfileName}</label>
                         <button class="remove-file" data-file-index="${i}" title="Remove camera profile">✕</button>
                     </div>
                     <div class="file-item-content" id="file-content-${i}" style="display: ${isCameraCollapsed ? 'none' : 'block'}">
@@ -7287,6 +7290,7 @@ class PointCloudVisualizer {
       hasColors: message.hasColors,
       hasNormals: message.hasNormals,
       fileName: message.fileName,
+      shortPath: message.shortPath,
       fileSizeInBytes: message.fileSizeInBytes,
     };
 
@@ -7434,6 +7438,7 @@ class PointCloudVisualizer {
       hasColors: message.hasColors,
       hasNormals: message.hasNormals,
       fileName: message.fileName,
+      shortPath: message.shortPath,
     };
 
     // Attach direct TypedArrays
@@ -7480,6 +7485,7 @@ class PointCloudVisualizer {
       hasColors: message.hasColors,
       hasNormals: message.hasNormals,
       fileName: message.fileName,
+      shortPath: message.shortPath,
     };
 
     // Convert position buffer
@@ -9515,6 +9521,7 @@ class PointCloudVisualizer {
       this.pendingDepthFiles.set(requestId, {
         data: message.data,
         fileName: message.fileName,
+        shortPath: message.shortPath,
         isAddFile: message.isAddFile || false,
         requestId: requestId,
       });
@@ -9730,6 +9737,7 @@ class PointCloudVisualizer {
       hasNormals: false,
       faceCount: 0,
       fileName: depthFileData.fileName,
+      shortPath: depthFileData.shortPath,
       fileIndex: depthFileData.isAddFile ? this.spatialFiles.length : 0,
       format: 'binary_little_endian',
       version: '1.0',
@@ -9870,6 +9878,7 @@ class PointCloudVisualizer {
         hasColors: true,
         hasNormals: objData.hasNormals,
         fileName: message.fileName, // Keep original OBJ filename
+        shortPath: message.shortPath,
         fileIndex: this.spatialFiles.length,
         fileSizeInBytes: message.fileSizeInBytes,
       };
@@ -9958,6 +9967,7 @@ class PointCloudVisualizer {
           hasColors: false,
           hasNormals: false,
           fileName: message.fileName.replace(/\.stl$/i, '_empty.ply'),
+          shortPath: message.shortPath,
           fileIndex: this.spatialFiles.length,
           fileSizeInBytes: message.fileSizeInBytes,
         };
@@ -10044,6 +10054,7 @@ class PointCloudVisualizer {
         hasColors: true,
         hasNormals: true,
         fileName: message.fileName.replace(/\.stl$/i, '_mesh.ply'),
+        shortPath: message.shortPath,
         fileIndex: this.spatialFiles.length,
         fileSizeInBytes: message.fileSizeInBytes,
       };
@@ -10138,6 +10149,7 @@ class PointCloudVisualizer {
         hasColors,
         hasNormals: false,
         fileName: message.fileName.replace(/\.xyz$/i, '_pointcloud.ply'),
+        shortPath: message.shortPath,
         fileIndex: this.spatialFiles.length,
       };
 
@@ -10272,6 +10284,7 @@ class PointCloudVisualizer {
         hasColors: pcdData.hasColors,
         hasNormals: pcdData.hasNormals,
         fileName: message.fileName,
+        shortPath: message.shortPath,
         fileSizeInBytes: message.fileSizeInBytes,
       };
 
@@ -10322,6 +10335,7 @@ class PointCloudVisualizer {
       const spatialData: SpatialData = {
         ...npyData,
         fileName: message.fileName,
+        shortPath: message.shortPath,
       };
 
       if (message.isAddFile) {
@@ -10386,6 +10400,7 @@ class PointCloudVisualizer {
         hasColors: ptsData.hasColors,
         hasNormals: ptsData.hasNormals,
         fileName: message.fileName,
+        shortPath: message.shortPath,
         fileSizeInBytes: message.fileSizeInBytes,
       };
 
@@ -10448,6 +10463,7 @@ class PointCloudVisualizer {
         hasColors: offData.hasColors,
         hasNormals: offData.hasNormals,
         fileName: message.fileName,
+        shortPath: message.shortPath,
         fileSizeInBytes: message.fileSizeInBytes,
       };
 
@@ -10514,6 +10530,7 @@ class PointCloudVisualizer {
         hasColors: gltfData.hasColors,
         hasNormals: gltfData.hasNormals,
         fileName: message.fileName,
+        shortPath: message.shortPath,
         fileSizeInBytes: message.fileSizeInBytes,
       };
 
@@ -10545,7 +10562,8 @@ class PointCloudVisualizer {
         message.data,
         message.variant,
         message.fileName,
-        message.fileSizeInBytes
+        message.fileSizeInBytes,
+        message.shortPath
       );
 
       if (message.isAddFile) {
@@ -10586,7 +10604,8 @@ class PointCloudVisualizer {
     data: ArrayBuffer,
     variant: string,
     fileName: string,
-    fileSizeInBytes?: number
+    fileSizeInBytes?: number,
+    shortPath?: string
   ): SpatialData {
     const decoder = new TextDecoder('utf-8');
     const text = decoder.decode(data);
@@ -10651,6 +10670,7 @@ class PointCloudVisualizer {
       hasColors,
       hasNormals,
       fileName: fileName,
+      shortPath,
       fileSizeInBytes,
     };
   }
@@ -13726,12 +13746,14 @@ class PointCloudVisualizer {
     const fileNameLabels = document.querySelectorAll('.file-name');
     fileNameLabels.forEach(label => {
       const element = label as HTMLElement;
-      // Check if the element is truncated
-      if (element.scrollWidth > element.clientWidth) {
-        // Element is truncated, add tooltip with the full text
+      // Always show short path (grandparent/parent/filename) in tooltip
+      const shortPath = element.getAttribute('data-short-path');
+      if (shortPath) {
+        element.title = shortPath;
+      } else if (element.scrollWidth > element.clientWidth) {
+        // Fallback: if no short path, show full text when truncated
         element.title = element.textContent || '';
       } else {
-        // Element is not truncated, remove any existing tooltip
         element.removeAttribute('title');
       }
     });

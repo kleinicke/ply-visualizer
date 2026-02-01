@@ -33,6 +33,16 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     this.datasetManager = new DatasetManager(context);
   }
 
+  /**
+   * Creates a short path showing grandparent/parent/filename for tooltip display
+   */
+  private getShortPath(filePath: string): string {
+    const parts = filePath.split(/[\\/]/);
+    // Get up to 3 parts: grandparent/parent/filename
+    const relevantParts = parts.slice(-3);
+    return relevantParts.join('/');
+  }
+
   public async openCustomDocument(
     uri: vscode.Uri,
     openContext: vscode.CustomDocumentOpenContext,
@@ -162,6 +172,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           webviewPanel.webview.postMessage({
             type: 'depthData',
             fileName: path.basename(document.uri.fsPath),
+            shortPath: this.getShortPath(document.uri.fsPath),
             data: depthData.buffer.slice(
               depthData.byteOffset,
               depthData.byteOffset + depthData.byteLength
@@ -200,6 +211,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           webviewPanel.webview.postMessage({
             type: 'npyData',
             fileName: path.basename(document.uri.fsPath),
+            shortPath: this.getShortPath(document.uri.fsPath),
             data: parsedData,
           });
           return; // Exit early for NPY point cloud files
@@ -242,6 +254,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           webviewPanel.webview.postMessage({
             type: 'objData',
             fileName: path.basename(document.uri.fsPath),
+            shortPath: this.getShortPath(document.uri.fsPath),
             fileSizeInBytes: objData.byteLength,
             data: parsedData,
           });
@@ -289,6 +302,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           webviewPanel.webview.postMessage({
             type: 'stlData',
             fileName: path.basename(document.uri.fsPath),
+            shortPath: this.getShortPath(document.uri.fsPath),
             fileSizeInBytes: stlData.byteLength,
             data: parsedData,
           });
@@ -333,6 +347,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           webviewPanel.webview.postMessage({
             type: 'pcdData',
             fileName: path.basename(document.uri.fsPath),
+            shortPath: this.getShortPath(document.uri.fsPath),
             fileSizeInBytes: pcdData.byteLength,
             data: parsedData,
           });
@@ -377,6 +392,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           webviewPanel.webview.postMessage({
             type: 'ptsData',
             fileName: path.basename(document.uri.fsPath),
+            shortPath: this.getShortPath(document.uri.fsPath),
             fileSizeInBytes: ptsData.byteLength,
             data: parsedData,
           });
@@ -421,6 +437,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           webviewPanel.webview.postMessage({
             type: 'offData',
             fileName: path.basename(document.uri.fsPath),
+            shortPath: this.getShortPath(document.uri.fsPath),
             fileSizeInBytes: offData.byteLength,
             data: parsedData,
           });
@@ -465,6 +482,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           webviewPanel.webview.postMessage({
             type: 'gltfData',
             fileName: path.basename(document.uri.fsPath),
+            shortPath: this.getShortPath(document.uri.fsPath),
             fileSizeInBytes: gltfData.byteLength,
             data: parsedData,
           });
@@ -492,6 +510,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           webviewPanel.webview.postMessage({
             type: 'xyzVariantData',
             fileName: path.basename(document.uri.fsPath),
+            shortPath: this.getShortPath(document.uri.fsPath),
             fileSizeInBytes: xyzData.byteLength,
             data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength),
             variant: fileType?.extension === 'xyzn' ? 'xyzn' : 'xyzrgb',
@@ -522,6 +541,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel.webview.postMessage({
               type: 'poseData',
               fileName: path.basename(document.uri.fsPath),
+              shortPath: this.getShortPath(document.uri.fsPath),
               data: parsed,
             });
             return; // Exit early for JSON pose files
@@ -585,6 +605,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
           // Add file info
           parsedData.fileName = path.basename(document.uri.fsPath);
+          parsedData.shortPath = this.getShortPath(document.uri.fsPath);
           parsedData.fileIndex = 0;
 
           webviewPanel.webview.postMessage({
@@ -633,6 +654,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
           // Add file info
           parsedData.fileName = path.basename(document.uri.fsPath);
+          parsedData.shortPath = this.getShortPath(document.uri.fsPath);
           parsedData.fileIndex = 0;
           (parsedData as any).fileSizeInBytes = spatialData.byteLength;
 
@@ -837,6 +859,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         try {
           const fileStartTime = performance.now();
           const fileName = path.basename(files[i].fsPath);
+          const shortPath = this.getShortPath(files[i].fsPath);
           const fileExtension = path.extname(files[i].fsPath).toLowerCase();
           console.log(`🚀 ULTIMATE: Processing add file ${fileName} (${fileExtension})`);
 
@@ -857,6 +880,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel.webview.postMessage({
               type: 'depthData',
               fileName: fileName,
+              shortPath: shortPath,
               data: depthData.buffer.slice(
                 depthData.byteOffset,
                 depthData.byteOffset + depthData.byteLength
@@ -887,6 +911,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
               // Add file info
               headerResult.headerInfo.fileName = fileName;
+              headerResult.headerInfo.shortPath = shortPath;
               headerResult.headerInfo.fileIndex = i;
 
               // Send ultimate raw binary data
@@ -905,6 +930,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
               // Add file info
               parsedData.fileName = fileName;
+              parsedData.shortPath = shortPath;
               parsedData.fileIndex = i;
 
               // Send via traditional method (will use binary transfer if possible)
@@ -926,6 +952,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel.webview.postMessage({
               type: 'xyzData',
               fileName: fileName,
+              shortPath: shortPath,
               data: xyzData.buffer.slice(
                 xyzData.byteOffset,
                 xyzData.byteOffset + xyzData.byteLength
@@ -946,6 +973,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel.webview.postMessage({
               type: 'objData',
               fileName: fileName,
+              shortPath: shortPath,
               data: parsedData,
               isAddFile: true,
             });
@@ -966,6 +994,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel.webview.postMessage({
               type: 'stlData',
               fileName: fileName,
+              shortPath: shortPath,
               data: parsedData,
               isAddFile: true,
             });
@@ -993,6 +1022,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
               webviewPanel.webview.postMessage({
                 type: 'poseData',
                 fileName: fileName,
+                shortPath: shortPath,
                 data: parsed,
                 isAddFile: true,
               });
@@ -1014,6 +1044,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel.webview.postMessage({
               type: 'pcdData',
               fileName: fileName,
+              shortPath: shortPath,
               data: parsedData,
               isAddFile: true,
             });
@@ -1031,6 +1062,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel.webview.postMessage({
               type: 'ptsData',
               fileName: fileName,
+              shortPath: shortPath,
               data: parsedData,
               isAddFile: true,
             });
@@ -1048,6 +1080,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel.webview.postMessage({
               type: 'offData',
               fileName: fileName,
+              shortPath: shortPath,
               data: parsedData,
               isAddFile: true,
             });
@@ -1065,6 +1098,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel.webview.postMessage({
               type: 'gltfData',
               fileName: fileName,
+              shortPath: shortPath,
               data: parsedData,
               isAddFile: true,
             });
@@ -1080,6 +1114,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             webviewPanel.webview.postMessage({
               type: 'xyzVariantData',
               fileName: fileName,
+              shortPath: shortPath,
               data: xyzData.buffer.slice(
                 xyzData.byteOffset,
                 xyzData.byteOffset + xyzData.byteLength
@@ -1115,6 +1150,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     try {
       const fileUri = vscode.Uri.file(filePathStr);
       const fileName = path.basename(fileUri.fsPath);
+      const shortPath = this.getShortPath(fileUri.fsPath);
       const ext = path.extname(fileUri.fsPath).toLowerCase();
 
       if (
@@ -1130,6 +1166,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         webviewPanel.webview.postMessage({
           type: 'depthData',
           fileName,
+          shortPath,
           data: depthData.buffer.slice(
             depthData.byteOffset,
             depthData.byteOffset + depthData.byteLength
@@ -1145,6 +1182,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         if (isBinary) {
           const headerResult = await parser.parseHeaderOnly(spatialData);
           headerResult.headerInfo.fileName = fileName;
+          headerResult.headerInfo.shortPath = shortPath;
           await this.sendUltimateRawBinary(
             webviewPanel,
             headerResult.headerInfo,
@@ -1155,6 +1193,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         } else {
           const parsedData = await parser.parse(spatialData);
           parsedData.fileName = fileName;
+          parsedData.shortPath = shortPath;
           await this.sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
         }
         return;
@@ -1164,6 +1203,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         webviewPanel.webview.postMessage({
           type: 'xyzData',
           fileName,
+          shortPath,
           data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength),
           isAddFile: true,
         });
@@ -1176,6 +1216,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         webviewPanel.webview.postMessage({
           type: 'objData',
           fileName,
+          shortPath,
           data: parsedData,
           isAddFile: true,
         });
@@ -1189,6 +1230,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         webviewPanel.webview.postMessage({
           type: 'stlData',
           fileName,
+          shortPath,
           data: parsedData,
           isAddFile: true,
         });
@@ -1201,6 +1243,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         webviewPanel.webview.postMessage({
           type: 'pcdData',
           fileName,
+          shortPath,
           data: parsedData,
           isAddFile: true,
         });
@@ -1213,6 +1256,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         webviewPanel.webview.postMessage({
           type: 'ptsData',
           fileName,
+          shortPath,
           data: parsedData,
           isAddFile: true,
         });
@@ -1225,6 +1269,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         webviewPanel.webview.postMessage({
           type: 'offData',
           fileName,
+          shortPath,
           data: parsedData,
           isAddFile: true,
         });
@@ -1237,6 +1282,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         webviewPanel.webview.postMessage({
           type: 'gltfData',
           fileName,
+          shortPath,
           data: parsedData,
           isAddFile: true,
         });
@@ -1247,6 +1293,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         webviewPanel.webview.postMessage({
           type: 'xyzVariantData',
           fileName,
+          shortPath,
           data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength),
           variant: ext.substring(1),
           isAddFile: true,
@@ -1472,6 +1519,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       type: 'ultimateRawBinaryData',
       messageType: messageType,
       fileName: parsedData.fileName,
+      shortPath: parsedData.shortPath,
       fileSizeInBytes: rawFileData.byteLength,
       vertexCount: parsedData.vertexCount,
       faceCount: parsedData.faceCount,
@@ -1610,6 +1658,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       type: 'binarySpatialData',
       messageType: messageType,
       fileName: spatialData.fileName,
+      shortPath: spatialData.shortPath,
       vertexCount: vertexCount,
       faceCount: spatialData.faceCount,
       hasColors: hasColors,
@@ -1649,6 +1698,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     webviewPanel.webview.postMessage({
       type: 'startLargeFile',
       fileName: spatialData.fileName,
+      shortPath: spatialData.shortPath,
       totalVertices: totalVertices,
       totalChunks: totalChunks,
       hasColors: spatialData.hasColors,
