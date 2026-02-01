@@ -13862,12 +13862,15 @@ class PointCloudVisualizer {
 let visualizer: PointCloudVisualizer | null = null;
 
 async function initializeVisualizer() {
-  // Initialize themes first
-  await initializeThemes();
-  console.log('✅ Theme system initialized');
+  // Initialize themes first - only for browser version
+  // VSCode handles theming natively via CSS variables
+  if (!isVSCode) {
+    await initializeThemes();
+    console.log('✅ Theme system initialized');
 
-  // Initialize theme switcher
-  setupThemeSwitcher();
+    // Initialize theme switcher
+    setupThemeSwitcher();
+  }
 
   if (!visualizer) {
     visualizer = new PointCloudVisualizer();

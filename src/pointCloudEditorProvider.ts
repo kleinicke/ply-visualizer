@@ -809,7 +809,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // VSCode-specific modifications to the HTML:
     // 1. Add Content Security Policy
-    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; connect-src ${webview.cspSource} https:; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
     html = html.replace('<meta name="viewport"', `${cspMeta}\n    <meta name="viewport"`);
 
     // 2. Replace resource URLs with webview URIs
@@ -817,14 +817,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     html = html.replace(/src="media\/geotiff\.min\.js"/, `nonce="${nonce}" src="${geotiffUri}"`);
     html = html.replace(/src="bundle\.js"/, `nonce="${nonce}" src="${scriptUri}"`);
 
-    // 3. Remove browser-specific elements (file input, theme selector, navigation links)
+    // 3. Remove browser-specific elements (file input, navigation links)
+    // Note: Theme selector is now handled by JS (checking isVSCode) rather than removing HTML
     html = html.replace(
       /<input[^>]*id="hiddenFileInput"[^>]*>/,
       '<!-- File input removed in VSCode -->'
-    );
-    html = html.replace(
-      /<div class="panel-section">\s*<h4>Theme<\/h4>[\s\S]*?<\/div>\s*(?=\s*<div class="panel-section">)/,
-      ''
     );
     html = html.replace(/<div class="bottom-right-nav">[\s\S]*?<\/div>/, '');
 
