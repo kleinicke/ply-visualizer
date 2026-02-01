@@ -54,8 +54,9 @@ module.exports = {
                   /<a href="about\/" class="nav-button">About<\/a>/g,
                   '<a href="../" class="nav-button">About</a>'
                 )
-                // Other about/ links go to ../about/ (impressum, etc.)
-                .replace(/href="about\//g, 'href="../about/')
+                // Impressum and Datenschutz are at root level, need ../ from 3d-visualizer/
+                .replace(/href="impressum\.html"/g, 'href="../impressum.html"')
+                .replace(/href="datenschutz\.html"/g, 'href="../datenschutz.html"')
             );
           },
         },
@@ -69,9 +70,6 @@ module.exports = {
                 .toString()
                 // Update link back to 3D visualizer
                 .replace(/href="\.\.\/"/g, 'href="3d-visualizer/"')
-                // Update footer links to point to about subdirectory
-                .replace(/href="impressum\.html"/g, 'href="about/impressum.html"')
-                .replace(/href="datenschutz\.html"/g, 'href="about/datenschutz.html"')
             );
           },
         },
@@ -79,13 +77,14 @@ module.exports = {
           from: 'media',
           to: 'media',
         },
-        // Keep about subpages (impressum, datenschutz) in about/
+        // Impressum and Datenschutz at root level
         {
-          from: 'about',
-          to: 'about',
-          globOptions: {
-            ignore: ['**/index.html'], // Don't copy index.html, it goes to root
-          },
+          from: 'impressum.html',
+          to: 'impressum.html',
+        },
+        {
+          from: 'datenschutz.html',
+          to: 'datenschutz.html',
         },
         {
           from: 'src/themes',
