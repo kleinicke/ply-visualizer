@@ -129,9 +129,13 @@ export class ColorProcessor {
     const width = imageData.width;
     const height = imageData.height;
 
-    // Create color array for vertices
-    const colors = new Float32Array(result.pointCount * 3);
+    // Create color array for vertices - use Uint8Array for memory efficiency (1/4 of Float32Array)
+    // ImageData is always 8-bit per channel, so we keep it as Uint8Array
+    const colors = new Uint8Array(result.pointCount * 3);
     let colorIndex = 0;
+
+    // Default gray value for out-of-bounds or invalid points
+    const defaultGray = 128;
 
     // Use stored pixel coordinates instead of reprojecting 3D points
     if (result.pixelCoords && result.pixelCoords.length === result.pointCount * 2) {
@@ -145,19 +149,31 @@ export class ColorProcessor {
         // Check bounds and get color from original 2D pixel position
         if (u >= 0 && u < width && v >= 0 && v < height) {
           const colorPixelIndex = (v * width + u) * 4;
-          colors[colorIndex++] = colorData[colorPixelIndex] / 255.0; // R
-          colors[colorIndex++] = colorData[colorPixelIndex + 1] / 255.0; // G
-          colors[colorIndex++] = colorData[colorPixelIndex + 2] / 255.0; // B
+          colors[colorIndex++] = colorData[colorPixelIndex]; // R
+          colors[colorIndex++] = colorData[colorPixelIndex + 1]; // G
+          colors[colorIndex++] = colorData[colorPixelIndex + 2]; // B
         } else {
           // Default gray for out-of-bounds (shouldn't happen with stored coords)
-          colors[colorIndex++] = 0.5;
-          colors[colorIndex++] = 0.5;
-          colors[colorIndex++] = 0.5;
+          colors[colorIndex++] = defaultGray;
+          colors[colorIndex++] = defaultGray;
+          colors[colorIndex++] = defaultGray;
         }
       }
     } else {
-      // Fallback: use the old 3D-to-2D reprojection method (for backwards compatibility)
-      console.log('⚠️ Falling back to 3D-to-2D reprojection for color mapping');
+      // Fallback: use 3D-to-2D reprojection method
+      // Determine coordinate convention (default to 'opengl' as that's the standard for Three.js)
+      const convention = cameraParams.convention || 'opengl';
+      const isOpenGL = convention === 'opengl';
+
+      console.log(
+        `⚠️ Falling back to 3D-to-2D reprojection for color mapping (convention: ${convention})`
+      );
+
+      // Get camera intrinsics
+      const fx = cameraParams.fx;
+      const fy = cameraParams.fy || cameraParams.fx;
+      const cx = cameraParams.cx!;
+      const cy = cameraParams.cy!;
 
       for (let i = 0; i < result.pointCount; i++) {
         const vertexIndex = i * 3;
@@ -165,66 +181,59 @@ export class ColorProcessor {
         let y = result.vertices[vertexIndex + 1];
         let z = result.vertices[vertexIndex + 2];
 
-        // Skip invalid points (NaN, 0, ±Infinity)
-        // In OpenGL convention, negative Z values are valid (pointing backward into scene)
-        if (
-          z >= 0 ||
-          isNaN(x) ||
-          isNaN(y) ||
-          isNaN(z) ||
-          !isFinite(x) ||
-          !isFinite(y) ||
-          !isFinite(z)
-        ) {
-          colors[colorIndex++] = 0.5;
-          colors[colorIndex++] = 0.5;
-          colors[colorIndex++] = 0.5;
+        // Skip invalid points (NaN, ±Infinity)
+        if (isNaN(x) || isNaN(y) || isNaN(z) || !isFinite(x) || !isFinite(y) || !isFinite(z)) {
+          colors[colorIndex++] = defaultGray;
+          colors[colorIndex++] = defaultGray;
+          colors[colorIndex++] = defaultGray;
           continue;
         }
 
-        // Convert back from OpenGL convention to OpenCV convention for color lookup
-        // (Undo the Y and Z flip that was applied in depthToPointCloud)
-        y = -y; // Flip Y back: Y-up → Y-down
-        z = -z; // Flip Z back: Z-backward → Z-forward (now positive, valid in OpenCV)
+        // Check for valid depth based on convention
+        // OpenGL: -Z is forward (valid Z < 0), OpenCV: +Z is forward (valid Z > 0)
+        const validDepth = isOpenGL ? z < 0 : z > 0;
+        if (!validDepth) {
+          colors[colorIndex++] = defaultGray;
+          colors[colorIndex++] = defaultGray;
+          colors[colorIndex++] = defaultGray;
+          continue;
+        }
 
-        // Project 3D point to image coordinates (using original OpenCV coordinates)
+        // Convert to OpenCV convention for reprojection if needed
+        // OpenGL → OpenCV: flip Y (up→down) and Z (backward→forward)
+        let xCV = x;
+        let yCV = isOpenGL ? -y : y;
+        let zCV = isOpenGL ? -z : z;
+
+        // Project 3D point to image coordinates
         let u, v;
         if (cameraParams.cameraModel === 'fisheye-equidistant') {
-          // Fisheye projection - use the actual camera parameters that were used for depth processing
-          const fx = cameraParams.fx;
-          const fy = cameraParams.fy || cameraParams.fx;
-          const cx = cameraParams.cx!;
-          const cy = cameraParams.cy!;
-
-          const r = Math.sqrt(x * x + y * y);
-          const theta = Math.atan2(r, z);
-          const phi = Math.atan2(y, x);
+          // Fisheye equidistant projection: r = f * theta
+          const r = Math.sqrt(xCV * xCV + yCV * yCV);
+          const theta = Math.atan2(r, zCV);
+          const phi = Math.atan2(yCV, xCV);
 
           const rFish = fx * theta;
           u = Math.round(cx + rFish * Math.cos(phi));
           v = Math.round(cy + rFish * Math.sin(phi));
         } else {
-          // Pinhole projection - use the actual camera parameters that were used for depth processing
-          const fx = cameraParams.fx;
-          const fy = cameraParams.fy || cameraParams.fx;
-          const cx = cameraParams.cx!;
-          const cy = cameraParams.cy!;
-
-          u = Math.round(fx * (x / z) + cx);
-          v = Math.round(fy * (y / z) + cy);
+          // Pinhole projection (ideal, no distortion)
+          // For distorted models, pixelCoords should be used instead
+          u = Math.round(fx * (xCV / zCV) + cx);
+          v = Math.round(fy * (yCV / zCV) + cy);
         }
 
         // Check bounds and get color
         if (u >= 0 && u < width && v >= 0 && v < height) {
           const pixelIndex = (v * width + u) * 4;
-          colors[colorIndex++] = colorData[pixelIndex] / 255.0; // R
-          colors[colorIndex++] = colorData[pixelIndex + 1] / 255.0; // G
-          colors[colorIndex++] = colorData[pixelIndex + 2] / 255.0; // B
+          colors[colorIndex++] = colorData[pixelIndex]; // R
+          colors[colorIndex++] = colorData[pixelIndex + 1]; // G
+          colors[colorIndex++] = colorData[pixelIndex + 2]; // B
         } else {
           // Default gray for out-of-bounds
-          colors[colorIndex++] = 0.5;
-          colors[colorIndex++] = 0.5;
-          colors[colorIndex++] = 0.5;
+          colors[colorIndex++] = defaultGray;
+          colors[colorIndex++] = defaultGray;
+          colors[colorIndex++] = defaultGray;
         }
       }
     }

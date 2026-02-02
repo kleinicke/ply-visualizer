@@ -16,6 +16,9 @@ export class DepthConverter {
   static convertResultToVertices(result: DepthConversionResult): SpatialVertex[] {
     const vertices: SpatialVertex[] = [];
 
+    // Detect if colors are Uint8Array (0-255) or Float32Array (0-1)
+    const colorsAreUint8 = result.colors instanceof Uint8Array;
+
     for (let i = 0; i < result.pointCount; i++) {
       const i3 = i * 3;
       const vertex: SpatialVertex = {
@@ -25,9 +28,17 @@ export class DepthConverter {
       };
 
       if (result.colors) {
-        vertex.red = Math.round(result.colors[i3] * 255);
-        vertex.green = Math.round(result.colors[i3 + 1] * 255);
-        vertex.blue = Math.round(result.colors[i3 + 2] * 255);
+        if (colorsAreUint8) {
+          // Uint8Array: values are already 0-255
+          vertex.red = result.colors[i3];
+          vertex.green = result.colors[i3 + 1];
+          vertex.blue = result.colors[i3 + 2];
+        } else {
+          // Float32Array: values are 0-1, convert to 0-255
+          vertex.red = Math.round(result.colors[i3] * 255);
+          vertex.green = Math.round(result.colors[i3 + 1] * 255);
+          vertex.blue = Math.round(result.colors[i3 + 2] * 255);
+        }
       }
 
       vertices.push(vertex);

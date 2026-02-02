@@ -1422,7 +1422,9 @@ class PointCloudVisualizer {
 
   private showLoading(show: boolean, message?: string): void {
     const loadingEl = document.getElementById('loading');
-    if (!loadingEl) {return;}
+    if (!loadingEl) {
+      return;
+    }
 
     this.isFileLoading = show;
 
@@ -1442,7 +1444,9 @@ class PointCloudVisualizer {
 
   private updateWelcomeMessageVisibility(): void {
     const welcomeEl = document.getElementById('welcome-message');
-    if (!welcomeEl) {return;}
+    if (!welcomeEl) {
+      return;
+    }
 
     // Show welcome message ONLY if:
     // 1. No files are currently loaded (spatialFiles.length === 0)
@@ -6708,6 +6712,9 @@ class PointCloudVisualizer {
         this.individualColorModes.push('assigned'); // Placeholder for non-existent files
       }
       this.individualColorModes[data.fileIndex] = initialColorMode;
+      console.log(
+        `🎨 addNewFiles - fileIndex: ${data.fileIndex}, hasColors: ${data.hasColors}, colorMode: ${initialColorMode}, useOriginalColors: ${this.useOriginalColors}`
+      );
 
       // Ensure pointSizes array is large enough and set correct default for this PLY
       while (this.pointSizes.length <= data.fileIndex) {
@@ -11064,6 +11071,9 @@ class PointCloudVisualizer {
         }
       }
 
+      // Trigger re-render to display the updated colors
+      this.needsRender = true;
+
       // Update UI (preserve depth panel states)
       const openPanelStates = this.captureDepthPanelStates();
       this.updateFileStats();
@@ -11520,6 +11530,10 @@ class PointCloudVisualizer {
 
       // Update the mesh with new data
       const oldMaterial = this.meshes[fileIndex].material;
+      const colorMode = this.individualColorModes[fileIndex] || 'assigned';
+      console.log(
+        `🎨 Depth settings apply - fileIndex: ${fileIndex}, hasColors: ${spatialData.hasColors}, colorMode: ${colorMode}, vertexCount: ${spatialData.vertexCount}`
+      );
       const newMaterial = this.createMaterialForFile(spatialData, fileIndex);
       this.meshes[fileIndex].material = newMaterial;
 

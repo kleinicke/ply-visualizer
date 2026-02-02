@@ -74,7 +74,9 @@ export interface CameraParams {
 
 export interface DepthConversionResult {
   vertices: Float32Array;
-  colors?: Float32Array;
-  pixelCoords?: Float32Array; // Original 2D pixel coordinates (u,v) for each point - length = pointCount * 2
+  /** RGB colors - Uint8Array [0-255] for 8-bit images, Float32Array [0-1] for HDR */
+  colors?: Float32Array | Uint8Array;
+  /** Original 2D pixel coordinates (u,v) for each point - length = pointCount * 2. Uint16Array for memory efficiency. */
+  pixelCoords?: Float32Array | Uint16Array;
   pointCount: number;
 }

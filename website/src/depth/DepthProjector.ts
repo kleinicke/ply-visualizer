@@ -6,6 +6,8 @@ export interface PointCloudResult {
   pointCount: number;
   width?: number;
   height?: number;
+  /** Original pixel coordinates (u,v) for each point - used for color mapping with distorted camera models */
+  pixelCoords?: Uint16Array;
 }
 
 export function projectToPointCloud(
@@ -30,6 +32,14 @@ export function projectToPointCloud(
   const tempVertices = new Float32Array(totalPixels * 3);
   const tempColors = new Float32Array(totalPixels * 3);
   const tempLogDepths = new Float32Array(totalPixels);
+
+  // For distorted camera models, store pixel coordinates for accurate color mapping
+  // Reprojection is error-prone for distorted models, so we store the original (u,v)
+  const needsPixelCoords =
+    cameraModel === 'pinhole-opencv' ||
+    cameraModel === 'fisheye-opencv' ||
+    cameraModel === 'fisheye-kannala-brandt';
+  const tempPixelCoords = needsPixelCoords ? new Uint16Array(totalPixels * 2) : null;
 
   let pointIndex = 0;
   let minDepth = Infinity;
@@ -139,6 +149,12 @@ export function projectToPointCloud(
           maxDepth = Math.max(maxDepth, depth);
           tempLogDepths[pointIndex] = Math.log(depth);
         }
+        // Store pixel coordinates for color mapping (distorted model)
+        if (tempPixelCoords) {
+          const pixelBase = pointIndex * 2;
+          tempPixelCoords[pixelBase] = u;
+          tempPixelCoords[pixelBase + 1] = v;
+        }
         pointIndex++;
       }
     }
@@ -233,6 +249,12 @@ export function projectToPointCloud(
         minDepth = Math.min(minDepth, depth);
         maxDepth = Math.max(maxDepth, depth);
         tempLogDepths[pointIndex] = Math.log(depth);
+        // Store pixel coordinates for color mapping (distorted model)
+        if (tempPixelCoords) {
+          const pixelBase = pointIndex * 2;
+          tempPixelCoords[pixelBase] = u;
+          tempPixelCoords[pixelBase + 1] = v;
+        }
         pointIndex++;
       }
     }
@@ -306,6 +328,12 @@ export function projectToPointCloud(
         minDepth = Math.min(minDepth, depth);
         maxDepth = Math.max(maxDepth, depth);
         tempLogDepths[pointIndex] = Math.log(depth);
+        // Store pixel coordinates for color mapping (distorted model)
+        if (tempPixelCoords) {
+          const pixelBase = pointIndex * 2;
+          tempPixelCoords[pixelBase] = u;
+          tempPixelCoords[pixelBase + 1] = v;
+        }
         pointIndex++;
       }
     }
@@ -385,6 +413,8 @@ export function projectToPointCloud(
   // Create properly sized arrays from the pre-allocated ones
   const vertices = tempVertices.slice(0, pointIndex * 3);
   const colors = pointIndex > 0 ? tempColors.slice(0, pointIndex * 3) : undefined;
+  const pixelCoords =
+    tempPixelCoords && pointIndex > 0 ? tempPixelCoords.slice(0, pointIndex * 2) : undefined;
 
   return {
     vertices,
@@ -392,6 +422,7 @@ export function projectToPointCloud(
     pointCount: pointIndex,
     width,
     height,
+    pixelCoords,
   };
 }
 
