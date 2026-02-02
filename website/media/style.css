@@ -681,12 +681,13 @@ body {
 @media (max-width: 768px) {
   .main-ui-panel {
     position: fixed;
-    top: auto;
-    bottom: 10px;
+    top: 10px;
+    bottom: auto;
     right: 10px;
-    left: 10px;
-    max-width: none;
-    max-height: 50vh;
+    left: auto;
+    width: 300px;
+    max-width: calc(100vw - 20px);
+    max-height: 80vh;
   }
 
   .tab-content {
