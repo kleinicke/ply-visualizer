@@ -87,6 +87,9 @@ class PointCloudVisualizer {
   private animationId: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
 
+  // Welcome message state
+  private isFileLoading: boolean = false;
+
   // FPS tracking
   private fpsFrameTimes: number[] = [];
   private lastFpsUpdate: number = 0;
@@ -781,6 +784,17 @@ class PointCloudVisualizer {
         this.showColorMappingStatus(message, type);
       });
 
+      // Setup welcome message interactivity
+      const welcomeAddBtn = document.getElementById('welcome-add-cloud');
+      if (welcomeAddBtn) {
+        welcomeAddBtn.addEventListener('click', () => {
+          this.triggerOpenFile();
+        });
+      }
+
+      // Initial check for formatted welcome message
+      this.updateWelcomeMessageVisibility();
+
       // Setup drag handle in both environments
       this.setupPanelResizeAndDrag();
 
@@ -844,6 +858,9 @@ class PointCloudVisualizer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true; // Re-enable shadows
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // Initial check for formatted welcome message
+    this.updateWelcomeMessageVisibility();
 
     // Initialize GPU timing if supported
     this.initGPUTiming();
@@ -1400,6 +1417,53 @@ class PointCloudVisualizer {
     // Clean up renderer
     if (this.renderer) {
       this.renderer.dispose();
+    }
+  }
+
+  private showLoading(show: boolean, message?: string): void {
+    const loadingEl = document.getElementById('loading');
+    if (!loadingEl) {return;}
+
+    this.isFileLoading = show;
+
+    if (show) {
+      loadingEl.classList.remove('hidden');
+      const msgEl = loadingEl.querySelector('p');
+      if (msgEl && message) {
+        msgEl.textContent = message;
+      }
+    } else {
+      loadingEl.classList.add('hidden');
+    }
+
+    // Update welcome message state based on loading status
+    this.updateWelcomeMessageVisibility();
+  }
+
+  private updateWelcomeMessageVisibility(): void {
+    const welcomeEl = document.getElementById('welcome-message');
+    if (!welcomeEl) {return;}
+
+    // Show welcome message ONLY if:
+    // 1. No files are currently loaded (spatialFiles.length === 0)
+    // 2. We are NOT currently loading a file (!this.isFileLoading)
+    if (this.spatialFiles.length === 0 && !this.isFileLoading) {
+      welcomeEl.classList.remove('hidden');
+    } else {
+      welcomeEl.classList.add('hidden');
+    }
+  }
+
+  private triggerOpenFile(): void {
+    if (isVSCode) {
+      this.vscode.postMessage({
+        type: 'addFile',
+      });
+    } else {
+      const fileInput = document.getElementById('hiddenFileInput');
+      if (fileInput) {
+        fileInput.click();
+      }
     }
   }
 
@@ -4211,7 +4275,7 @@ class PointCloudVisualizer {
     this.rebuildAllColorAttributesForCurrentGammaSetting();
 
     this.fitCameraToAllObjects();
-    (document.getElementById('loading') as HTMLElement)?.classList.add('hidden');
+    this.showLoading(false);
     this.clearError();
     const absStart = (window as any).absoluteStartTime || performance.now();
     this.lastAbsoluteMs = performance.now() - absStart;
@@ -6446,6 +6510,9 @@ class PointCloudVisualizer {
     const uiStartTime = performance.now();
     console.log(`Load: UI start ${fileName} at ${uiStartTime.toFixed(1)}ms`);
 
+    this.isFileLoading = true;
+    this.updateWelcomeMessageVisibility();
+
     // Store timing for complete analysis
     (window as any).loadingStartTime = uiStartTime;
     (window as any).absoluteStartTime = uiStartTime;
@@ -6599,6 +6666,9 @@ class PointCloudVisualizer {
 
       // Add to data array
       this.spatialFiles.push(data);
+
+      // Update welcome message visibility
+      this.updateWelcomeMessageVisibility();
 
       // Initialize visibility states based on file type
       const isObjFile = (data as any).isObjFile;
@@ -7141,6 +7211,7 @@ class PointCloudVisualizer {
     this.updateFileList();
     this.restoreDepthPanelStates(openPanelStates);
     this.updateFileStats();
+    this.updateWelcomeMessageVisibility();
 
     // Request render to update the display after removing objects
     this.requestRender();
@@ -7593,6 +7664,9 @@ class PointCloudVisualizer {
     console.log(
       `Starting chunked loading for ${message.fileName} (${message.totalVertices} vertices, ${message.totalChunks} chunks)`
     );
+
+    this.isFileLoading = true;
+    this.updateWelcomeMessageVisibility();
 
     // Show loading progress
     const loadingEl = document.getElementById('loading');

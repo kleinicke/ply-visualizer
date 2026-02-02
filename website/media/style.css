@@ -798,6 +798,65 @@ body {
   margin-top: 8px;
 }
 
+/* Welcome Message */
+.welcome-message {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  z-index: 50;
+  /* Below loading/error (1000) and panels (100) but above canvas */
+  pointer-events: none;
+  /* Let clicks pass through background */
+  width: 100%;
+  max-width: 600px;
+  padding: 20px;
+}
+
+.welcome-content {
+  background-color: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-sideBar-border);
+  border-radius: 8px;
+  padding: 32px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  pointer-events: auto;
+  /* Re-enable clicks for content */
+  display: inline-block;
+}
+
+.welcome-content h2 {
+  margin-top: 0;
+  color: var(--vscode-foreground);
+  font-size: 24px;
+  margin-bottom: 16px;
+}
+
+.welcome-content p {
+  color: var(--vscode-descriptionForeground);
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.welcome-content .highlight {
+  margin-top: 24px;
+  color: var(--vscode-foreground);
+  font-size: 15px;
+}
+
+.clickable-text {
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  transition: color 0.2s;
+  border-bottom: 1px dashed var(--vscode-textLink-foreground);
+}
+
+.clickable-text:hover {
+  color: var(--vscode-textLink-activeForeground);
+  border-bottom-style: solid;
+}
+
 /* Camera Controls Sections */
 .camera-controls-section {
   margin-bottom: 16px;
