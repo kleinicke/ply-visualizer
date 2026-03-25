@@ -717,6 +717,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         case 'saveDefaultDepthSettings':
           await this.handleSaveDefaultDepthSettings(message);
           break;
+        case 'saveCameraConvention':
+          await this.context.globalState.update('defaultCameraConvention', message.convention);
+          break;
         case 'requestDefaultDepthSettings':
           await this.handleRequestDefaultDepthSettings(webviewPanel);
           break;
@@ -2713,13 +2716,23 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             convention: 'opengl',
           };
 
+      const viewConvention = this.context.globalState.get('defaultCameraConvention') as
+        | string
+        | undefined;
+
       // Send settings back to webview
       webviewPanel.webview.postMessage({
         type: 'defaultDepthSettings',
         settings: filteredSettings,
+        viewConvention,
       });
 
-      console.log('Sent default depth settings to webview:', filteredSettings);
+      console.log(
+        'Sent default depth settings to webview:',
+        filteredSettings,
+        'viewConvention:',
+        viewConvention
+      );
     } catch (error) {
       console.error('Failed to load default depth settings:', error);
       // Send default fallback settings
