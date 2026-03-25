@@ -1,27 +1,20 @@
 /**
- * Parser for PTS format (Point cloud data with various line formats)
- * Supports multiple line formats:
- * - x y z
- * - x y z intensity
- * - x y z r g b
- * - x y z intensity r g b
- * - x y z nx ny nz
- * - x y z r g b nx ny nz
+ * Parser for PTS format (point cloud with optional intensity/colour/normals).
+ *
+ * Supported column layouts (auto-detected from first data line):
+ *   3  → x y z
+ *   4  → x y z intensity
+ *   6  → x y z r g b
+ *   7  → x y z intensity r g b   ← Open3D default
+ *   9  → x y z r g b nx ny nz
+ *
+ * Uses ByteLineReader to process lines one at a time — no full-file decode.
+ * Output is typed arrays (positionsArray / colorsArray / normalsArray).
  */
 
+import { ByteLineReader } from '../utils/byteLineReader';
+
 export interface PtsData {
-  vertices: Array<{
-    x: number;
-    y: number;
-    z: number;
-    red?: number;
-    green?: number;
-    blue?: number;
-    nx?: number;
-    ny?: number;
-    nz?: number;
-    intensity?: number;
-  }>;
   vertexCount: number;
   hasColors: boolean;
   hasNormals: boolean;
@@ -31,79 +24,66 @@ export interface PtsData {
   fileIndex?: number;
   comments: string[];
   detectedFormat: string;
+  // Typed array output — always populated
+  positionsArray: Float32Array;
+  colorsArray: Uint8Array | null;
+  normalsArray: Float32Array | null;
+  useTypedArrays: true;
+  // Legacy — always empty
+  vertices: never[];
 }
 
 export class PtsParser {
   async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<PtsData> {
     const startTime = performance.now();
-    timingCallback?.('🔍 PTS: Starting parsing...');
+    timingCallback?.('🔍 PTS: Scanning header...');
 
-    const decoder = new TextDecoder('utf-8');
-    const text = decoder.decode(data);
-    const lines = text.split('\n').filter(line => line.trim() !== '');
-
-    const vertices: Array<{
-      x: number;
-      y: number;
-      z: number;
-      red?: number;
-      green?: number;
-      blue?: number;
-      nx?: number;
-      ny?: number;
-      nz?: number;
-      intensity?: number;
-    }> = [];
+    const reader = new ByteLineReader(data);
     const comments: string[] = [];
+
+    // ── 1. Skip comment / count lines ───────────────────────────────────────
+    let knownCount = -1; // point count declared in file header, if any
+    let firstDataLine: string | null = null;
+
+    while (!reader.done) {
+      const line = reader.nextLine();
+      if (line === null) {
+        break;
+      }
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      if (trimmed.startsWith('#') || trimmed.startsWith('//')) {
+        comments.push(trimmed.slice(1).trim());
+        continue;
+      }
+
+      // A lone integer on its own line is the point count
+      if (/^\d+$/.test(trimmed)) {
+        knownCount = parseInt(trimmed, 10);
+        continue;
+      }
+
+      // This is the first real data line
+      firstDataLine = trimmed;
+      break;
+    }
+
+    if (!firstDataLine) {
+      throw new Error('PTS file contains no data lines');
+    }
+
+    // ── 2. Detect column layout from first data line ─────────────────────────
+    const colCount = firstDataLine.split(/\s+/).length;
 
     let hasColors = false;
     let hasNormals = false;
     let hasIntensity = false;
-    let detectedFormat = 'unknown';
-    let formatDetected = false;
+    let detectedFormat: string;
 
-    // Process header lines (comments, etc.)
-    let dataStartLine = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (line.startsWith('#') || line.startsWith('//')) {
-        comments.push(line.substring(1).trim());
-        dataStartLine = i + 1;
-      } else if (line.match(/^\d+$/)) {
-        // Sometimes PTS files start with point count
-        dataStartLine = i + 1;
-      } else {
-        // Found data line
-        break;
-      }
-    }
-
-    timingCallback?.(`📝 PTS: Processing ${lines.length - dataStartLine} data lines...`);
-
-    // Analyze first few data lines to detect format
-    const sampleLines = lines.slice(dataStartLine, Math.min(dataStartLine + 10, lines.length));
-    const sampleCounts = new Map<number, number>();
-
-    for (const line of sampleLines) {
-      const parts = line.trim().split(/\s+/);
-      const count = parts.length;
-      if (count >= 3) {
-        sampleCounts.set(count, (sampleCounts.get(count) || 0) + 1);
-      }
-    }
-
-    // Determine most common format
-    let mostCommonCount = 0;
-    let maxOccurrences = 0;
-    for (const [count, occurrences] of sampleCounts) {
-      if (occurrences > maxOccurrences) {
-        maxOccurrences = occurrences;
-        mostCommonCount = count;
-      }
-    }
-
-    // Determine format based on column count
-    switch (mostCommonCount) {
+    switch (colCount) {
       case 3:
         detectedFormat = 'x y z';
         break;
@@ -126,100 +106,118 @@ export class PtsParser {
         hasNormals = true;
         break;
       default:
-        // Try to auto-detect based on value ranges
-        if (mostCommonCount >= 6) {
-          // Assume colors if we have at least 6 columns
-          detectedFormat = `x y z r g b (${mostCommonCount} columns)`;
-          hasColors = true;
-          if (mostCommonCount >= 9) {
-            hasNormals = true;
-          }
-        } else {
-          detectedFormat = `x y z (${mostCommonCount} columns)`;
-        }
-        break;
+        detectedFormat =
+          colCount >= 6 ? `x y z r g b (${colCount} cols)` : `x y z (${colCount} cols)`;
+        hasColors = colCount >= 6;
+        hasNormals = colCount >= 9;
     }
 
-    formatDetected = true;
-    timingCallback?.(`🎯 PTS: Detected format - ${detectedFormat}`);
+    timingCallback?.(`🎯 PTS: detected format "${detectedFormat}"`);
 
-    // Parse data lines
-    let processedLines = 0;
-    for (let i = dataStartLine; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (line === '') {
-        continue;
+    // ── 3. Allocate typed arrays ─────────────────────────────────────────────
+    // Use knownCount if available, otherwise grow dynamically.
+    const INITIAL_CAPACITY = knownCount > 0 ? knownCount : 1_000_000;
+
+    let capacity = INITIAL_CAPACITY;
+    let positions = new Float32Array(capacity * 3);
+    let colors = hasColors ? new Uint8Array(capacity * 3) : null;
+    let normals = hasNormals ? new Float32Array(capacity * 3) : null;
+    let parsed = 0;
+
+    const grow = () => {
+      capacity *= 2;
+      const p2 = new Float32Array(capacity * 3);
+      p2.set(positions);
+      positions = p2;
+      if (colors) {
+        const c2 = new Uint8Array(capacity * 3);
+        c2.set(colors);
+        colors = c2;
       }
+      if (normals) {
+        const n2 = new Float32Array(capacity * 3);
+        n2.set(normals);
+        normals = n2;
+      }
+    };
 
-      const parts = line.split(/\s+/);
+    // ── 4. Parse helper ──────────────────────────────────────────────────────
+    const parseLine = (trimmed: string) => {
+      const parts = trimmed.split(/\s+/);
       if (parts.length < 3) {
+        return;
+      }
+
+      if (parsed >= capacity) {
+        grow();
+      }
+
+      const i3 = parsed * 3;
+      positions[i3] = parseFloat(parts[0]);
+      positions[i3 + 1] = parseFloat(parts[1]);
+      positions[i3 + 2] = parseFloat(parts[2]);
+
+      if (colors) {
+        let rCol: number, gCol: number, bCol: number;
+        if (colCount === 6) {
+          rCol = parseFloat(parts[3]);
+          gCol = parseFloat(parts[4]);
+          bCol = parseFloat(parts[5]);
+        } else {
+          // 7-column: intensity at index 3, rgb at 4-5-6
+          // 9-column: rgb at 3-4-5
+          const base = colCount === 7 ? 4 : 3;
+          rCol = parseFloat(parts[base]);
+          gCol = parseFloat(parts[base + 1]);
+          bCol = parseFloat(parts[base + 2]);
+        }
+        colors[i3] = Math.min(255, Math.max(0, Math.round(rCol)));
+        colors[i3 + 1] = Math.min(255, Math.max(0, Math.round(gCol)));
+        colors[i3 + 2] = Math.min(255, Math.max(0, Math.round(bCol)));
+      }
+
+      if (normals) {
+        // 9-column: normals at indices 6-7-8
+        normals[i3] = parseFloat(parts[6]);
+        normals[i3 + 1] = parseFloat(parts[7]);
+        normals[i3 + 2] = parseFloat(parts[8]);
+      }
+
+      parsed++;
+    };
+
+    // Process the first data line we already read
+    parseLine(firstDataLine);
+
+    const logEvery = Math.max(1, knownCount > 0 ? Math.floor(knownCount / 10) : 500_000);
+
+    while (!reader.done) {
+      const line = reader.nextLine();
+      if (line === null) {
+        break;
+      }
+      const trimmed = line.trim();
+      if (!trimmed) {
         continue;
       }
 
-      const values = parts.map(val => {
-        const num = parseFloat(val);
-        return isNaN(num) ? 0 : num;
-      });
+      parseLine(trimmed);
 
-      const vertex: any = {
-        x: values[0] || 0,
-        y: values[1] || 0,
-        z: values[2] || 0,
-      };
-
-      // Parse additional columns based on detected format
-      if (mostCommonCount === 4) {
-        // x y z intensity
-        vertex.intensity = values[3];
-      } else if (mostCommonCount === 6) {
-        // x y z r g b
-        vertex.red = Math.round(Math.min(255, Math.max(0, values[3])));
-        vertex.green = Math.round(Math.min(255, Math.max(0, values[4])));
-        vertex.blue = Math.round(Math.min(255, Math.max(0, values[5])));
-      } else if (mostCommonCount === 7) {
-        // x y z intensity r g b
-        vertex.intensity = values[3];
-        vertex.red = Math.round(Math.min(255, Math.max(0, values[4])));
-        vertex.green = Math.round(Math.min(255, Math.max(0, values[5])));
-        vertex.blue = Math.round(Math.min(255, Math.max(0, values[6])));
-      } else if (mostCommonCount === 9) {
-        // x y z r g b nx ny nz
-        vertex.red = Math.round(Math.min(255, Math.max(0, values[3])));
-        vertex.green = Math.round(Math.min(255, Math.max(0, values[4])));
-        vertex.blue = Math.round(Math.min(255, Math.max(0, values[5])));
-        vertex.nx = values[6];
-        vertex.ny = values[7];
-        vertex.nz = values[8];
-      } else if (values.length >= 6) {
-        // Generic: assume colors in positions 3,4,5
-        vertex.red = Math.round(Math.min(255, Math.max(0, values[3])));
-        vertex.green = Math.round(Math.min(255, Math.max(0, values[4])));
-        vertex.blue = Math.round(Math.min(255, Math.max(0, values[5])));
-
-        // If more columns, assume normals
-        if (values.length >= 9) {
-          vertex.nx = values[6];
-          vertex.ny = values[7];
-          vertex.nz = values[8];
-        }
-      }
-
-      vertices.push(vertex);
-      processedLines++;
-
-      if (processedLines % 100000 === 0) {
-        timingCallback?.(`📊 PTS: Processed ${processedLines} points...`);
+      if (parsed % logEvery === 0) {
+        timingCallback?.(`📊 PTS: ${parsed.toLocaleString()} points...`);
       }
     }
 
-    const totalTime = performance.now() - startTime;
-    timingCallback?.(
-      `✅ PTS: Parsing complete - ${vertices.length} points in ${totalTime.toFixed(1)}ms`
-    );
+    // ── 5. Trim typed arrays to actual size ──────────────────────────────────
+    const finalPositions = positions.subarray(0, parsed * 3);
+    const finalColors = colors ? colors.subarray(0, parsed * 3) : null;
+    const finalNormals = normals ? normals.subarray(0, parsed * 3) : null;
+
+    const elapsed = (performance.now() - startTime).toFixed(1);
+    timingCallback?.(`✅ PTS: parsed ${parsed.toLocaleString()} points in ${elapsed} ms`);
 
     return {
-      vertices,
-      vertexCount: vertices.length,
+      vertexCount: parsed,
       hasColors,
       hasNormals,
       hasIntensity,
@@ -227,6 +225,11 @@ export class PtsParser {
       fileName: '',
       comments,
       detectedFormat,
+      positionsArray: finalPositions,
+      colorsArray: finalColors,
+      normalsArray: finalNormals,
+      useTypedArrays: true,
+      vertices: [],
     };
   }
 }
