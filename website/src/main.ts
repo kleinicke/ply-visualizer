@@ -47,6 +47,7 @@ import {
 import { registerDefaultReaders, readDepth } from './depth/DepthRegistry';
 import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
 import { ColorImageLoader } from './colorImageLoader';
+import { ByteLineReader } from './utils/byteLineReader';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 
@@ -10349,8 +10350,8 @@ class PointCloudVisualizer {
 
       // Convert PCD data to PLY format for rendering
       const spatialData: SpatialData = {
-        vertices: pcdData.vertices,
-        faces: [], // PCD files are point clouds, no faces
+        vertices: [],
+        faces: [],
         format: pcdData.format === 'binary' ? 'binary_little_endian' : 'ascii',
         version: '1.0',
         comments: [
@@ -10368,6 +10369,10 @@ class PointCloudVisualizer {
         shortPath: message.shortPath,
         fileSizeInBytes: message.fileSizeInBytes,
       };
+      (spatialData as any).useTypedArrays = true;
+      (spatialData as any).positionsArray = pcdData.positionsArray;
+      (spatialData as any).colorsArray = pcdData.colorsArray;
+      (spatialData as any).normalsArray = pcdData.normalsArray;
 
       if (message.isAddFile) {
         this.addNewFiles([spatialData]);
@@ -10467,8 +10472,8 @@ class PointCloudVisualizer {
 
       // Convert PTS data to PLY format for rendering
       const spatialData: SpatialData = {
-        vertices: ptsData.vertices,
-        faces: [], // PTS files are point clouds, no faces
+        vertices: [],
+        faces: [],
         format: 'ascii',
         version: '1.0',
         comments: [
@@ -10484,6 +10489,10 @@ class PointCloudVisualizer {
         shortPath: message.shortPath,
         fileSizeInBytes: message.fileSizeInBytes,
       };
+      (spatialData as any).useTypedArrays = true;
+      (spatialData as any).positionsArray = ptsData.positionsArray;
+      (spatialData as any).colorsArray = ptsData.colorsArray;
+      (spatialData as any).normalsArray = ptsData.normalsArray;
 
       if (message.isAddFile) {
         this.addNewFiles([spatialData]);
@@ -10688,57 +10697,87 @@ class PointCloudVisualizer {
     fileSizeInBytes?: number,
     shortPath?: string
   ): SpatialData {
-    const decoder = new TextDecoder('utf-8');
-    const text = decoder.decode(data);
-    const lines = text.split('\n').filter(line => line.trim() !== '');
+    const hasColors = variant === 'xyzrgb';
+    const hasNormals = variant === 'xyzn';
 
-    const vertices: SpatialVertex[] = [];
-    let hasColors = false;
-    let hasNormals = false;
+    // Grow dynamically — XYZ files have no point count header
+    let capacity = 1_000_000;
+    let positions = new Float32Array(capacity * 3);
+    let colors = hasColors ? new Uint8Array(capacity * 3) : null;
+    let normals = hasNormals ? new Float32Array(capacity * 3) : null;
+    let parsed = 0;
 
-    if (variant === 'xyzn') {
-      hasNormals = true;
-    } else if (variant === 'xyzrgb') {
-      hasColors = true;
-    }
+    const grow = () => {
+      capacity *= 2;
+      const p2 = new Float32Array(capacity * 3);
+      p2.set(positions);
+      positions = p2;
+      if (colors) {
+        const c2 = new Uint8Array(capacity * 3);
+        c2.set(colors);
+        colors = c2;
+      }
+      if (normals) {
+        const n2 = new Float32Array(capacity * 3);
+        n2.set(normals);
+        normals = n2;
+      }
+    };
 
-    for (const line of lines) {
-      const parts = line.trim().split(/\s+/);
+    const bytes = new Uint8Array(data);
+    const reader = new ByteLineReader(bytes);
+
+    while (!reader.done) {
+      const line = reader.nextLine();
+      if (!line) {
+        continue;
+      }
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      const parts = trimmed.split(/\s+/);
       if (parts.length < 3) {
         continue;
       }
 
-      const vertex: SpatialVertex = {
-        x: parseFloat(parts[0]),
-        y: parseFloat(parts[1]),
-        z: parseFloat(parts[2]),
-      };
+      if (parsed >= capacity) {
+        grow();
+      }
 
-      if (variant === 'xyzn' && parts.length >= 6) {
-        vertex.nx = parseFloat(parts[3]);
-        vertex.ny = parseFloat(parts[4]);
-        vertex.nz = parseFloat(parts[5]);
-      } else if (variant === 'xyzrgb' && parts.length >= 6) {
+      const i3 = parsed * 3;
+      positions[i3] = parseFloat(parts[0]);
+      positions[i3 + 1] = parseFloat(parts[1]);
+      positions[i3 + 2] = parseFloat(parts[2]);
+
+      if (normals && parts.length >= 6) {
+        normals[i3] = parseFloat(parts[3]);
+        normals[i3 + 1] = parseFloat(parts[4]);
+        normals[i3 + 2] = parseFloat(parts[5]);
+      }
+
+      if (colors && parts.length >= 6) {
         const r = parseFloat(parts[3]);
         const g = parseFloat(parts[4]);
         const b = parseFloat(parts[5]);
-
+        // Open3D writes 0-1 floats; raw integer otherwise
         if (r <= 1.0 && g <= 1.0 && b <= 1.0) {
-          vertex.red = Math.round(r * 255);
-          vertex.green = Math.round(g * 255);
-          vertex.blue = Math.round(b * 255);
+          colors[i3] = Math.round(r * 255);
+          colors[i3 + 1] = Math.round(g * 255);
+          colors[i3 + 2] = Math.round(b * 255);
         } else {
-          vertex.red = Math.round(Math.min(255, Math.max(0, r)));
-          vertex.green = Math.round(Math.min(255, Math.max(0, g)));
-          vertex.blue = Math.round(Math.min(255, Math.max(0, b)));
+          colors[i3] = Math.min(255, Math.max(0, Math.round(r)));
+          colors[i3 + 1] = Math.min(255, Math.max(0, Math.round(g)));
+          colors[i3 + 2] = Math.min(255, Math.max(0, Math.round(b)));
         }
       }
 
-      vertices.push(vertex);
+      parsed++;
     }
 
-    return {
-      vertices,
+    const spatialData: SpatialData = {
+      vertices: [],
       faces: [],
       format: 'ascii',
       version: '1.0',
@@ -10746,7 +10785,7 @@ class PointCloudVisualizer {
         `Converted from ${variant.toUpperCase()}: ${fileName}`,
         `Format variant: ${variant}`,
       ],
-      vertexCount: vertices.length,
+      vertexCount: parsed,
       faceCount: 0,
       hasColors,
       hasNormals,
@@ -10754,6 +10793,13 @@ class PointCloudVisualizer {
       shortPath,
       fileSizeInBytes,
     };
+
+    (spatialData as any).useTypedArrays = true;
+    (spatialData as any).positionsArray = positions.subarray(0, parsed * 3);
+    (spatialData as any).colorsArray = colors ? colors.subarray(0, parsed * 3) : null;
+    (spatialData as any).normalsArray = normals ? normals.subarray(0, parsed * 3) : null;
+
+    return spatialData;
   }
 
   private createNormalsVisualizer(data: SpatialData): THREE.LineSegments {
