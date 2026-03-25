@@ -2523,6 +2523,9 @@ class PointCloudVisualizer {
     if (opencvBtn) {
       opencvBtn.addEventListener('click', () => {
         this.setOpenCVCameraConvention();
+        if (this.vscode) {
+          this.vscode.postMessage({ type: 'saveCameraConvention', convention: 'opencv' });
+        }
       });
     }
 
@@ -2530,6 +2533,9 @@ class PointCloudVisualizer {
     if (openglBtn) {
       openglBtn.addEventListener('click', () => {
         this.setOpenGLCameraConvention();
+        if (this.vscode) {
+          this.vscode.postMessage({ type: 'saveCameraConvention', convention: 'opengl' });
+        }
       });
     }
 
@@ -2691,10 +2697,16 @@ class PointCloudVisualizer {
           break;
         case 'c':
           this.setOpenCVCameraConvention();
+          if (this.vscode) {
+            this.vscode.postMessage({ type: 'saveCameraConvention', convention: 'opencv' });
+          }
           e.preventDefault();
           break;
         case 'b':
           this.setOpenGLCameraConvention();
+          if (this.vscode) {
+            this.vscode.postMessage({ type: 'saveCameraConvention', convention: 'opengl' });
+          }
           e.preventDefault();
           break;
         case 't':
@@ -11713,6 +11725,13 @@ class PointCloudVisualizer {
         depthBias: message.settings.depthBias !== undefined ? message.settings.depthBias : 0.0,
       };
       console.log('✅ Loaded default depth settings from extension:', this.defaultDepthSettings);
+
+      // Apply saved camera view convention if present
+      if (message.viewConvention === 'opencv') {
+        this.setOpenCVCameraConvention();
+      } else if (message.viewConvention === 'opengl') {
+        this.setOpenGLCameraConvention();
+      }
 
       // Update any existing depth file forms to use new defaults
       this.refreshDepthFileFormsWithDefaults();
