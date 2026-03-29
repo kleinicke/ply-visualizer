@@ -452,10 +452,11 @@
         </ul>
         <div class="extension-links">
           <a href="https://marketplace.visualstudio.com/items?itemName=kleinicke.ply-visualizer" class="btn btn-primary"
-            target="_blank">
+            target="_blank" id="ply-vscode-btn">
             Install VS Code Extension
           </a>
-          <a href="https://open-vsx.org/extension/kleinicke/ply-visualizer" class="btn btn-secondary" target="_blank">
+          <a href="https://open-vsx.org/extension/kleinicke/ply-visualizer" class="btn btn-secondary" target="_blank"
+            id="ply-openvsx-btn">
             Open VSX
           </a>
           <a href="https://github.com/kleinicke/ply-visualizer" class="btn btn-secondary" target="_blank">
@@ -485,10 +486,11 @@
         </ul>
         <div class="extension-links">
           <a href="https://marketplace.visualstudio.com/items?itemName=kleinicke.tiff-visualizer"
-            class="btn btn-primary" target="_blank">
+            class="btn btn-primary" target="_blank" id="tiff-vscode-btn">
             Install VS Code Extension
           </a>
-          <a href="https://open-vsx.org/extension/kleinicke/tiff-visualizer" class="btn btn-secondary" target="_blank">
+          <a href="https://open-vsx.org/extension/kleinicke/tiff-visualizer" class="btn btn-secondary" target="_blank"
+            id="tiff-openvsx-btn">
             Open VSX
           </a>
           <a href="https://github.com/kleinicke/tiff-visualizer" class="btn btn-secondary" target="_blank">
@@ -527,6 +529,107 @@
       </ul>
     </div>
   </footer>
+  <script>
+    async function fetchExtensionStats() {
+      const extensions = [
+        {
+          id: 'kleinicke.ply-visualizer',
+          vscodeBtnId: 'ply-vscode-btn',
+          openVsxBtnId: 'ply-openvsx-btn'
+        },
+        {
+          id: 'kleinicke.tiff-visualizer',
+          vscodeBtnId: 'tiff-vscode-btn',
+          openVsxBtnId: 'tiff-openvsx-btn'
+        }
+      ];
+
+      for (const ext of extensions) {
+        // Fetch Open VSX
+        try {
+          const response = await fetch(`https://open-vsx.org/api/${ext.id.replace('.', '/')}`);
+          if (response.ok) {
+            const data = await response.json();
+            const btn = document.getElementById(ext.openVsxBtnId);
+            if (btn && data.downloadCount && !btn.hasAttribute('data-updated')) {
+              const count = formatCount(data.downloadCount);
+              const originalText = btn.textContent.trim();
+              btn.innerHTML = `
+                <div style="display: flex; flex-direction: column; align-items: center; line-height: 1.2;">
+                  <span>${originalText}</span>
+                  <span style="font-size: 0.8em; opacity: 0.8; font-weight: normal;">${count} downloads</span>
+                </div>
+              `;
+              btn.setAttribute('data-updated', 'true');
+            }
+          }
+        } catch (e) {
+          console.error(`Failed to fetch Open VSX stats for ${ext.id}`, e);
+        }
+
+        // Fetch VS Code Marketplace
+        try {
+          const response = await fetch('https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json;api-version=3.0-preview.1'
+            },
+            body: JSON.stringify({
+              filters: [{
+                criteria: [{
+                  filterType: 7,
+                  value: ext.id
+                }]
+              }],
+              flags: 914
+            })
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.results[0].extensions[0]) {
+              const extension = data.results[0].extensions[0];
+              const installStat = extension.statistics.find(s => s.statisticName === 'install');
+              if (installStat) {
+                const btn = document.getElementById(ext.vscodeBtnId);
+                if (btn && !btn.hasAttribute('data-updated')) {
+                  const count = formatCount(installStat.value);
+                  const originalText = btn.textContent.trim();
+                  btn.innerHTML = `
+                    <div style="display: flex; flex-direction: column; align-items: center; line-height: 1.2;">
+                      <span>${originalText}</span>
+                      <span style="font-size: 0.8em; opacity: 0.8; font-weight: normal;">${count} downloads</span>
+                    </div>
+                  `;
+                  btn.setAttribute('data-updated', 'true');
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`Failed to fetch Marketplace stats for ${ext.id}`, e);
+        }
+      }
+    }
+
+    function formatCount(num) {
+      if (num >= 1000000) {
+        return (num / 1000000).toFixed(1) + 'M';
+      }
+      if (num >= 1000) {
+        return (num / 1000).toFixed(1) + 'k';
+      }
+      return num.toString();
+    }
+
+    // Run after DOM load
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', fetchExtensionStats);
+    } else {
+      fetchExtensionStats();
+    }
+  </script>
 </body>
 
 </html>
