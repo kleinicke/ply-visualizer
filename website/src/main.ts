@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
+import { EDLPass } from './postprocessing/EDLPass';
 import {
   SpatialVertex,
   SpatialFace,
@@ -79,6 +81,13 @@ class PointCloudVisualizer {
     'trackball';
   private screenSpaceScaling: boolean = false;
   private allowTransparency: boolean = false;
+
+  // Eye Dome Lighting (EDL) state
+  private edlEnabled: boolean = false;
+  private edlStrength: number = 1.0;
+  private edlRadius: number = 1.4;
+  private effectComposer: EffectComposer | null = null;
+  private edlPass: EDLPass | null = null;
   private rotationCenterManager: RotationCenterManager = new RotationCenterManager();
   private measurementManager: MeasurementManager | null = null;
   private selectionManager: SelectionManager | null = null;
@@ -869,6 +878,9 @@ class PointCloudVisualizer {
     // Re-enable object sorting for better visual quality
     this.renderer.sortObjects = true;
 
+    // Initialize EDL post-processing pipeline
+    this.initEDLComposer();
+
     // Set initial color space based on preference
     this.updateRendererColorSpace();
 
@@ -1410,6 +1422,15 @@ class PointCloudVisualizer {
       this.measurementManager = null;
     }
 
+    // Clean up EDL resources
+    if (this.edlPass) {
+      this.edlPass.dispose();
+      this.edlPass = null;
+    }
+    if (this.effectComposer) {
+      this.effectComposer = null;
+    }
+
     // Clean up controls
     if (this.controls) {
       this.controls.dispose();
@@ -1482,6 +1503,14 @@ class PointCloudVisualizer {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(container.clientWidth, container.clientHeight);
 
+    // Update EDL composer and render targets on resize
+    if (this.effectComposer) {
+      this.effectComposer.setSize(container.clientWidth, container.clientHeight);
+    }
+    if (this.edlPass) {
+      this.edlPass.setSize(container.clientWidth, container.clientHeight);
+    }
+
     // Update controls based on type
     if (this.controlType === 'trackball') {
       const trackballControls = this.controls as TrackballControls;
@@ -1502,7 +1531,7 @@ class PointCloudVisualizer {
 
     // Start GPU timing for resize render
     const gpuQuery = this.startGPUTiming();
-    this.renderer.render(this.scene, this.camera);
+    this.performRender();
     this.endGPUTiming(gpuQuery);
     this.updateGPUTiming();
 
@@ -1589,7 +1618,7 @@ class PointCloudVisualizer {
 
       // Start GPU timing
       const gpuQuery = this.startGPUTiming();
-      this.renderer.render(this.scene, this.camera);
+      this.performRender();
       this.endGPUTiming(gpuQuery);
 
       // Update GPU timing results
@@ -1603,6 +1632,80 @@ class PointCloudVisualizer {
 
   private requestRender(): void {
     this.needsRender = true;
+  }
+
+  /**
+   * Centralized render method — routes through EDL EffectComposer when enabled,
+   * falls back to direct renderer.render() when disabled for zero overhead.
+   */
+  private performRender(): void {
+    if (this.edlEnabled && this.effectComposer) {
+      this.effectComposer.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  /**
+   * Initialize the EDL post-processing pipeline.
+   * Creates the EffectComposer with a RenderPass and EDLPass.
+   * The composer is only used when EDL is enabled.
+   */
+  private initEDLComposer(): void {
+    const container = document.getElementById('viewer-container');
+    if (!container) {return;}
+
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    // EffectComposer manages the post-processing pipeline
+    this.effectComposer = new EffectComposer(this.renderer);
+
+    // EDLPass handles both scene rendering and the EDL effect in one pass
+    this.edlPass = new EDLPass(this.scene, this.camera, width, height, {
+      strength: this.edlStrength,
+      radius: this.edlRadius,
+    });
+    this.edlPass.renderToScreen = true;
+    this.effectComposer.addPass(this.edlPass);
+
+    console.log('🔦 EDL post-processing pipeline initialized');
+  }
+
+  /**
+   * Toggle Eye Dome Lighting on/off.
+   */
+  private toggleEDL(): void {
+    this.edlEnabled = !this.edlEnabled;
+    this.updateEDLButtonState();
+    this.updateEDLSettingsVisibility();
+    this.requestRender();
+    this.showStatus(`Eye Dome Lighting: ${this.edlEnabled ? 'ON' : 'OFF'}`);
+    console.log(`🔦 EDL ${this.edlEnabled ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
+   * Update EDL button active state.
+   */
+  private updateEDLButtonState(): void {
+    const btn = document.getElementById('toggle-edl');
+    if (btn) {
+      if (this.edlEnabled) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    }
+  }
+
+  /**
+   * Show/hide the EDL strength and radius sliders.
+   */
+  private updateEDLSettingsVisibility(): void {
+    const settings = document.getElementById('edl-settings');
+    if (settings) {
+      settings.style.display = this.edlEnabled ? 'block' : 'none';
+    }
   }
 
   private trackRender(): void {
@@ -2663,6 +2766,36 @@ class PointCloudVisualizer {
       });
     }
 
+    // Eye Dome Lighting controls
+    const toggleEDLBtn = document.getElementById('toggle-edl');
+    if (toggleEDLBtn) {
+      toggleEDLBtn.addEventListener('click', () => {
+        this.toggleEDL();
+      });
+    }
+    const edlStrengthSlider = document.getElementById('edl-strength-slider') as HTMLInputElement;
+    const edlStrengthValue = document.getElementById('edl-strength-value');
+    if (edlStrengthSlider) {
+      edlStrengthSlider.addEventListener('input', () => {
+        const val = parseFloat(edlStrengthSlider.value);
+        this.edlStrength = val;
+        if (this.edlPass) {this.edlPass.edlStrength = val;}
+        if (edlStrengthValue) {edlStrengthValue.textContent = val.toFixed(1);}
+        this.requestRender();
+      });
+    }
+    const edlRadiusSlider = document.getElementById('edl-radius-slider') as HTMLInputElement;
+    const edlRadiusValue = document.getElementById('edl-radius-value');
+    if (edlRadiusSlider) {
+      edlRadiusSlider.addEventListener('input', () => {
+        const val = parseFloat(edlRadiusSlider.value);
+        this.edlRadius = val;
+        if (this.edlPass) {this.edlPass.edlRadius = val;}
+        if (edlRadiusValue) {edlRadiusValue.textContent = val.toFixed(1);}
+        this.requestRender();
+      });
+    }
+
     // Keyboard shortcuts
     document.addEventListener('keydown', e => {
       // Only handle shortcuts when not typing in input fields
@@ -2761,6 +2894,10 @@ class PointCloudVisualizer {
           break;
         case 's':
           this.toggleScreenSpaceScaling();
+          e.preventDefault();
+          break;
+        case 'e':
+          this.toggleEDL();
           e.preventDefault();
           break;
         case 't':
@@ -11685,7 +11822,7 @@ class PointCloudVisualizer {
       }
 
       // Force immediate render to show updated geometry
-      this.renderer.render(this.scene, this.camera);
+      this.performRender();
 
       // Dispose old material
       if (oldMaterial) {

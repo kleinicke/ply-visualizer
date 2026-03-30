@@ -214,6 +214,31 @@
                     <p class="setting-description">
                         Shading options are only effecting PLY files with faces.
                     </p>
+                    <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border, rgba(255,255,255,0.1));">
+                        <div class="control-buttons">
+                            <button id="toggle-edl" class="control-button">
+                                Eye Dome Lighting <span class="button-shortcut">E</span>
+                            </button>
+                        </div>
+                        <p class="setting-description">
+                            Eye Dome Lighting enhances depth perception by darkening edges and silhouettes.
+                            Works with all geometry types and combines with any lighting mode.
+                        </p>
+                        <div id="edl-settings" style="display: none; margin-top: 8px;">
+                            <div class="control-group" style="margin-bottom: 6px;">
+                                <label for="edl-strength-slider" style="font-size: 11px;">Strength:</label>
+                                <input id="edl-strength-slider" type="range" min="0.1" max="5.0" step="0.1" value="1.0"
+                                    class="control-input" style="flex: 1; margin: 0 8px;" />
+                                <span id="edl-strength-value" style="font-size: 11px; min-width: 28px; text-align: right;">1.0</span>
+                            </div>
+                            <div class="control-group">
+                                <label for="edl-radius-slider" style="font-size: 11px;">Radius:</label>
+                                <input id="edl-radius-slider" type="range" min="0.5" max="5.0" step="0.1" value="1.4"
+                                    class="control-input" style="flex: 1; margin: 0 8px;" />
+                                <span id="edl-radius-value" style="font-size: 11px; min-width: 28px; text-align: right;">1.4</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div class="panel-section">
                     <h4>Performance</h4>
@@ -333,6 +358,10 @@
                         <div class="shortcut-item">
                             <span class="shortcut-key">S</span>
                             <span class="shortcut-desc">Screen-space scaling</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">E</span>
+                            <span class="shortcut-desc">Toggle Eye Dome Lighting</span>
                         </div>
                     </div>
                 </div>
