@@ -13,7 +13,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
-    "@types/three": "^0.178.0",
+    "@types/three": "^0.178.1",
     "copy-webpack-plugin": "^13.0.1",
     "ts-loader": "^9.5.1",
     "typescript": "^4.9.4",

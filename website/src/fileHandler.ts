@@ -155,7 +155,7 @@ export function detectFileTypeWithContent(
       const arrayBuffer = fileData.buffer.slice(
         fileData.byteOffset,
         fileData.byteOffset + fileData.byteLength
-      );
+      ) as ArrayBuffer;
       if (isNpyPointCloudData(arrayBuffer)) {
         // NPY contains XYZ point cloud data - route to point cloud pipeline
         return {

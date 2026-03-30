@@ -2,7 +2,7 @@
   "name": "ply-visualizer",
   "displayName": "3D Point Cloud and Mesh Visualizer (PLY, ...)",
   "description": "A 3D visualizer for point cloud and mesh files like the PLY format using Three.js. Supports 13+ formats: PLY, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth to point cloud conversions.",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "publisher": "kleinicke",
   "icon": "icon.png",
   "repository": {
@@ -239,7 +239,7 @@
     "@types/mocha": "^10.0.1",
     "@types/node": "16.x",
     "@types/pako": "^2.0.4",
-    "@types/three": "^0.158.3",
+    "@types/three": "^0.178.1",
     "@types/vscode": "^1.74.0",
     "@typescript-eslint/eslint-plugin": "^5.45.0",
     "@typescript-eslint/parser": "^5.45.0",
