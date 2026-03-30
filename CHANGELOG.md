@@ -1,5 +1,10 @@
 # Change Log
 
+## [1.5.0] - 2026
+
+- Fix pts, psd and xyz implementation to support bigger point clouds
+- Add eye-dome-lightening option
+
 ## [1.4.0] - 2025-11-24
 
 - **Npy point clouds**: Add support for npy point clouds (dimension [...,3])

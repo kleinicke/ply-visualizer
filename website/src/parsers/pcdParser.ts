@@ -12,7 +12,7 @@ export interface PcdData {
   vertexCount: number;
   hasColors: boolean;
   hasNormals: boolean;
-  format: 'ascii' | 'binary';
+  format: 'ascii' | 'binary' | 'binary_compressed';
   fileName: string;
   fileIndex?: number;
   comments: string[];
@@ -55,7 +55,7 @@ export class PcdParser {
     let type: string[] = [];
     let count: number[] = [];
     let viewpoint: number[] = [0, 0, 0, 1, 0, 0, 0];
-    let format: 'ascii' | 'binary' = 'ascii';
+    let format: 'ascii' | 'binary' | 'binary_compressed' = 'ascii';
     const comments: string[] = [];
 
     for (const rawLine of headerLines) {
@@ -94,7 +94,7 @@ export class PcdParser {
           points = parseInt(parts[1]);
           break;
         case 'DATA':
-          format = parts[1].toLowerCase() as 'ascii' | 'binary';
+          format = parts[1].toLowerCase() as 'ascii' | 'binary' | 'binary_compressed';
           break;
       }
     }
@@ -131,7 +131,30 @@ export class PcdParser {
     const normalsArray = hasNormals ? new Float32Array(vertexCount * 3) : null;
 
     // ── 4. Parse data ────────────────────────────────────────────────────────
-    if (format === 'binary') {
+    if (format === 'binary_compressed') {
+      const uncompressed = this.decompressBinaryCompressed(data, dataOffset, vertexCount);
+      this.parseBinaryCompressedColumns(
+        uncompressed,
+        vertexCount,
+        fields,
+        size,
+        type,
+        count,
+        xI,
+        yI,
+        zI,
+        rgbI,
+        rI,
+        gI,
+        bI,
+        nxI,
+        nyI,
+        nzI,
+        positionsArray,
+        colorsArray,
+        normalsArray
+      );
+    } else if (format === 'binary') {
       this.parseBinary(
         data,
         dataOffset,
@@ -177,11 +200,26 @@ export class PcdParser {
       );
     }
 
+    // ── 5. Strip NaN points (PCL marks invalid depth pixels with NaN coords) ───
+    const finalVertexCount = this.compactNaN(
+      positionsArray,
+      colorsArray,
+      normalsArray,
+      vertexCount
+    );
+
+    // Trim to exact valid size so Three.js BufferAttribute gets the correct length
+    const finalPositions = positionsArray.slice(0, finalVertexCount * 3);
+    const finalColors = colorsArray ? colorsArray.slice(0, finalVertexCount * 3) : null;
+    const finalNormals = normalsArray ? normalsArray.slice(0, finalVertexCount * 3) : null;
+
     const elapsed = (performance.now() - startTime).toFixed(1);
-    timingCallback?.(`✅ PCD: parsed ${vertexCount.toLocaleString()} points in ${elapsed} ms`);
+    timingCallback?.(
+      `✅ PCD: ${finalVertexCount.toLocaleString()} valid points (${(vertexCount - finalVertexCount).toLocaleString()} NaN filtered) in ${elapsed} ms`
+    );
 
     return {
-      vertexCount,
+      vertexCount: finalVertexCount,
       hasColors,
       hasNormals,
       format,
@@ -194,12 +232,167 @@ export class PcdParser {
       type,
       count,
       viewpoint,
-      positionsArray,
-      colorsArray,
-      normalsArray,
+      positionsArray: finalPositions,
+      colorsArray: finalColors,
+      normalsArray: finalNormals,
       useTypedArrays: true,
       vertices: [],
     };
+  }
+
+  // ── Binary-compressed parsing ───────────────────────────────────────────────
+
+  /**
+   * LZF decompressor used by PCL's binary_compressed format.
+   * After the DATA line the file has:
+   *   uint32 compressed_size
+   *   uint32 uncompressed_size
+   *   <compressed bytes>
+   * The decompressed output is in column-major order (all values for field 0,
+   * then all values for field 1, …).
+   */
+  private decompressBinaryCompressed(
+    data: Uint8Array,
+    dataOffset: number,
+    vertexCount: number
+  ): Uint8Array {
+    if (data.length < dataOffset + 8) {
+      throw new Error('PCD binary_compressed: header too short');
+    }
+    const dv = new DataView(data.buffer, data.byteOffset + dataOffset);
+    const compressedSize = dv.getUint32(0, true);
+    const uncompressedSize = dv.getUint32(4, true);
+
+    const input = data.subarray(dataOffset + 8, dataOffset + 8 + compressedSize);
+    const output = new Uint8Array(uncompressedSize);
+
+    let ip = 0; // input position
+    let op = 0; // output position
+
+    while (ip < input.length) {
+      const ctrl = input[ip++];
+
+      if (ctrl < 32) {
+        // Literal run: copy ctrl+1 bytes
+        const len = ctrl + 1;
+        for (let i = 0; i < len; i++) {
+          output[op++] = input[ip++];
+        }
+      } else {
+        // Back-reference
+        let len = ctrl >> 5;
+        if (len === 7) {
+          len += input[ip++];
+        }
+        len += 2; // minimum match is 2
+
+        // Distance is 1-based
+        const dist = ((ctrl & 0x1f) << 8) | input[ip++];
+        let ref = op - dist - 1;
+
+        for (let i = 0; i < len; i++) {
+          output[op++] = output[ref++];
+        }
+      }
+    }
+
+    if (op !== uncompressedSize) {
+      throw new Error(
+        `PCD binary_compressed: decompressed ${op} bytes, expected ${uncompressedSize}`
+      );
+    }
+
+    return output;
+  }
+
+  /**
+   * Parse decompressed binary_compressed data.
+   * Layout: column-major — all values for field 0, then field 1, …
+   * Each field block is size[f] * count[f] * vertexCount bytes.
+   */
+  private parseBinaryCompressedColumns(
+    data: Uint8Array,
+    vertexCount: number,
+    fields: string[],
+    size: number[],
+    type: string[],
+    count: number[],
+    xI: number,
+    yI: number,
+    zI: number,
+    rgbI: number,
+    rI: number,
+    gI: number,
+    bI: number,
+    nxI: number,
+    nyI: number,
+    nzI: number,
+    positions: Float32Array,
+    colors: Uint8Array | null,
+    normals: Float32Array | null
+  ): void {
+    // Compute byte offset of each field's column block
+    const fieldStart: number[] = [];
+    let offset = 0;
+    for (let f = 0; f < fields.length; f++) {
+      fieldStart.push(offset);
+      offset += size[f] * (count[f] || 1) * vertexCount;
+    }
+
+    const readValue = (fieldIdx: number, pointIdx: number): number => {
+      if (fieldIdx < 0) {return 0;}
+      const s = size[fieldIdx];
+      const t = type[fieldIdx];
+      const byteOff = fieldStart[fieldIdx] + pointIdx * s;
+      const dv = new DataView(data.buffer, data.byteOffset + byteOff, s);
+      if (t === 'F') {return s === 4 ? dv.getFloat32(0, true) : dv.getFloat64(0, true);}
+      if (t === 'U') {
+        if (s === 1) {return dv.getUint8(0);}
+        if (s === 2) {return dv.getUint16(0, true);}
+        return dv.getUint32(0, true);
+      }
+      if (t === 'I') {
+        if (s === 1) {return dv.getInt8(0);}
+        if (s === 2) {return dv.getInt16(0, true);}
+        return dv.getInt32(0, true);
+      }
+      return 0;
+    };
+
+    for (let i = 0; i < vertexCount; i++) {
+      const i3 = i * 3;
+
+      positions[i3] = readValue(xI, i);
+      positions[i3 + 1] = readValue(yI, i);
+      positions[i3 + 2] = readValue(zI, i);
+
+      if (colors) {
+        if (rgbI !== -1) {
+          const raw = readValue(rgbI, i);
+          let packed: number;
+          if (type[rgbI] === 'F') {
+            const buf = new ArrayBuffer(4);
+            new Float32Array(buf)[0] = raw;
+            packed = new Uint32Array(buf)[0];
+          } else {
+            packed = raw >>> 0;
+          }
+          colors[i3] = (packed >> 16) & 0xff;
+          colors[i3 + 1] = (packed >> 8) & 0xff;
+          colors[i3 + 2] = packed & 0xff;
+        } else {
+          colors[i3] = Math.min(255, Math.max(0, Math.round(readValue(rI, i))));
+          colors[i3 + 1] = Math.min(255, Math.max(0, Math.round(readValue(gI, i))));
+          colors[i3 + 2] = Math.min(255, Math.max(0, Math.round(readValue(bI, i))));
+        }
+      }
+
+      if (normals) {
+        normals[i3] = readValue(nxI, i);
+        normals[i3 + 1] = readValue(nyI, i);
+        normals[i3 + 2] = readValue(nzI, i);
+      }
+    }
   }
 
   // ── Binary parsing ──────────────────────────────────────────────────────────
@@ -284,11 +477,16 @@ export class PcdParser {
 
       if (colors) {
         if (rgbI !== -1) {
-          // Packed float RGB — reinterpret float bits as uint32
-          const rawFloat = readField(base, rgbI);
-          const buf = new ArrayBuffer(4);
-          new Float32Array(buf)[0] = rawFloat;
-          const packed = new Uint32Array(buf)[0];
+          const raw = readField(base, rgbI);
+          // Type 'F': float bits encode packed RGB. Type 'U'/'I': already a packed uint32.
+          let packed: number;
+          if (type[rgbI] === 'F') {
+            const buf = new ArrayBuffer(4);
+            new Float32Array(buf)[0] = raw;
+            packed = new Uint32Array(buf)[0];
+          } else {
+            packed = raw >>> 0;
+          }
           colors[i3] = (packed >> 16) & 0xff;
           colors[i3 + 1] = (packed >> 8) & 0xff;
           colors[i3 + 2] = packed & 0xff;
@@ -305,6 +503,46 @@ export class PcdParser {
         normals[i3 + 2] = readField(base, nzI);
       }
     }
+  }
+
+  // ── NaN compaction ─────────────────────────────────────────────────────────
+
+  /**
+   * Remove points where any coordinate is NaN (PCL invalid-point sentinel).
+   * Compacts positionsArray, colorsArray, and normalsArray in-place and
+   * returns the new valid point count.
+   */
+  private compactNaN(
+    positions: Float32Array,
+    colors: Uint8Array | null,
+    normals: Float32Array | null,
+    vertexCount: number
+  ): number {
+    let writeIdx = 0;
+    for (let i = 0; i < vertexCount; i++) {
+      const i3 = i * 3;
+      if (isNaN(positions[i3]) || isNaN(positions[i3 + 1]) || isNaN(positions[i3 + 2])) {
+        continue;
+      }
+      if (writeIdx !== i) {
+        const w3 = writeIdx * 3;
+        positions[w3] = positions[i3];
+        positions[w3 + 1] = positions[i3 + 1];
+        positions[w3 + 2] = positions[i3 + 2];
+        if (colors) {
+          colors[w3] = colors[i3];
+          colors[w3 + 1] = colors[i3 + 1];
+          colors[w3 + 2] = colors[i3 + 2];
+        }
+        if (normals) {
+          normals[w3] = normals[i3];
+          normals[w3 + 1] = normals[i3 + 1];
+          normals[w3 + 2] = normals[i3 + 2];
+        }
+      }
+      writeIdx++;
+    }
+    return writeIdx;
   }
 
   // ── ASCII parsing ───────────────────────────────────────────────────────────
