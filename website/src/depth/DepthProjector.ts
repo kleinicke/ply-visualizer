@@ -1,4 +1,4 @@
-import { CameraModel, DepthImage, DepthMetadata } from './types';
+import { CameraModel, DepthImage, DepthMetadata } from './types.js';
 
 export interface PointCloudResult {
   vertices: Float32Array;

@@ -1,8 +1,8 @@
-import { CameraParams, DepthConversionResult, SpatialVertex } from '../interfaces';
-import { registerDefaultReaders, readDepth, registerReader } from './DepthRegistry';
-import { normalizeDepth, projectToPointCloud } from './DepthProjector';
-import { PngReader } from './readers/PngReader';
-import { TifReader } from './readers/TifReader';
+import { CameraParams, DepthConversionResult, SpatialVertex } from '../interfaces.js';
+import { registerDefaultReaders, readDepth, registerReader } from './DepthRegistry.js';
+import { normalizeDepth, projectToPointCloud } from './DepthProjector.js';
+import { PngReader } from './readers/PngReader.js';
+import { TifReader } from './readers/TifReader.js';
 
 /**
  * Handles depth image to point cloud conversion

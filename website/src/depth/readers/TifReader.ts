@@ -1,5 +1,5 @@
-import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata } from '../types';
-import { Rgb24Converter, Rgb24ConversionConfig } from './Rgb24Reader';
+import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata } from '../types.js';
+import { Rgb24Converter, Rgb24ConversionConfig } from './Rgb24Reader.js';
 
 // Use the global GeoTIFF that's already loaded
 declare const GeoTIFF: any;

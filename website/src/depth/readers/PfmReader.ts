@@ -1,4 +1,4 @@
-import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata } from '../types';
+import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata } from '../types.js';
 
 function readAsciiLine(view: DataView, offset: number): { line: string; next: number } {
   const bytes: number[] = [];

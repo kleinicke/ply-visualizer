@@ -1,4 +1,4 @@
-import { DepthReader, DepthReaderResult } from './types';
+import { DepthReader, DepthReaderResult } from './types.js';
 
 const readers: DepthReader[] = [];
 

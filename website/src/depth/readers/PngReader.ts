@@ -1,5 +1,5 @@
-import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata, DepthKind } from '../types';
-import { Rgb24Converter } from './Rgb24Reader';
+import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata, DepthKind } from '../types.js';
+import { Rgb24Converter } from './Rgb24Reader.js';
 
 export interface PngDepthConfig {
   pngScaleFactor: number; // Depth/disparity is divided to get applied value in meters/disparities (1000 for mm, 256 for disparity, 1 for meters)

@@ -11,6 +11,9 @@ module.exports = {
   },
   resolve: {
     extensions: ['.ts', '.js'],
+    extensionAlias: {
+      '.js': ['.ts', '.js'],
+    },
     alias: {
       // Map webview imports to the actual source files
       '../../src/webview': path.resolve(__dirname, '../src/webview'),

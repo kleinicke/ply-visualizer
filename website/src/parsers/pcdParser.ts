@@ -6,7 +6,7 @@
  * header as text, leaving binary payloads untouched.
  */
 
-import { ByteLineReader, findPcdDataOffset } from '../utils/byteLineReader';
+import { ByteLineReader, findPcdDataOffset } from '../utils/byteLineReader.js';
 
 export interface PcdData {
   vertexCount: number;
@@ -340,20 +340,32 @@ export class PcdParser {
     }
 
     const readValue = (fieldIdx: number, pointIdx: number): number => {
-      if (fieldIdx < 0) {return 0;}
+      if (fieldIdx < 0) {
+        return 0;
+      }
       const s = size[fieldIdx];
       const t = type[fieldIdx];
       const byteOff = fieldStart[fieldIdx] + pointIdx * s;
       const dv = new DataView(data.buffer, data.byteOffset + byteOff, s);
-      if (t === 'F') {return s === 4 ? dv.getFloat32(0, true) : dv.getFloat64(0, true);}
+      if (t === 'F') {
+        return s === 4 ? dv.getFloat32(0, true) : dv.getFloat64(0, true);
+      }
       if (t === 'U') {
-        if (s === 1) {return dv.getUint8(0);}
-        if (s === 2) {return dv.getUint16(0, true);}
+        if (s === 1) {
+          return dv.getUint8(0);
+        }
+        if (s === 2) {
+          return dv.getUint16(0, true);
+        }
         return dv.getUint32(0, true);
       }
       if (t === 'I') {
-        if (s === 1) {return dv.getInt8(0);}
-        if (s === 2) {return dv.getInt16(0, true);}
+        if (s === 1) {
+          return dv.getInt8(0);
+        }
+        if (s === 2) {
+          return dv.getInt16(0, true);
+        }
         return dv.getInt32(0, true);
       }
       return 0;

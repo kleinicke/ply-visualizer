@@ -12,7 +12,7 @@
  * Output is typed arrays (positionsArray / colorsArray / normalsArray).
  */
 
-import { ByteLineReader } from '../utils/byteLineReader';
+import { ByteLineReader } from '../utils/byteLineReader.js';
 
 export interface PtsData {
   vertexCount: number;

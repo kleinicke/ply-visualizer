@@ -2,6 +2,7 @@
   "name": "ply-visualizer-web",
   "version": "1.0.0",
   "description": "Standalone web version of 3D Point Cloud Visualizer",
+  "type": "module",
   "main": "src/main.ts",
   "scripts": {
     "build": "webpack --mode=production",

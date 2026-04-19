@@ -1,27 +1,27 @@
 import * as THREE from 'three';
-import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer';
-import { EDLPass } from './postprocessing/EDLPass';
+import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { EDLPass } from './postprocessing/EDLPass.js';
 import {
   SpatialVertex,
   SpatialFace,
   SpatialData,
   CameraParams,
   DepthConversionResult,
-} from './interfaces';
-import { CameraModel, DepthMetadata } from './depth/types';
-import { CalibTxtParser } from './depth/CalibTxtParser';
-import { YamlCalibrationParser } from './depth/YamlCalibrationParser';
-import { ColmapParser } from './depth/ColmapParser';
-import { ZedParser } from './depth/ZedParser';
-import { RealSenseParser } from './depth/RealSenseParser';
-import { TumParser } from './depth/TumParser';
-import { CustomArcballControls, TurntableControls } from './controls';
-import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
-import { RotationCenterManager, RotationCenterMode } from './RotationCenterManager';
-import { MeasurementManager } from './MeasurementManager';
-import { SelectionManager, SelectionContext } from './SelectionManager';
+} from './interfaces.js';
+import { CameraModel, DepthMetadata } from './depth/types.js';
+import { CalibTxtParser } from './depth/CalibTxtParser.js';
+import { YamlCalibrationParser } from './depth/YamlCalibrationParser.js';
+import { ColmapParser } from './depth/ColmapParser.js';
+import { ZedParser } from './depth/ZedParser.js';
+import { RealSenseParser } from './depth/RealSenseParser.js';
+import { TumParser } from './depth/TumParser.js';
+import { CustomArcballControls, TurntableControls } from './controls.js';
+import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes.js';
+import { RotationCenterManager, RotationCenterMode } from './RotationCenterManager.js';
+import { MeasurementManager } from './MeasurementManager.js';
+import { SelectionManager, SelectionContext } from './SelectionManager.js';
 
 declare const GeoTIFF: any;
 declare const acquireVsCodeApi: () => any;
@@ -43,15 +43,15 @@ import {
   BrowserMessageHandler,
   collectCameraParamsForBrowserPrompt,
   convertDepthToUnified,
-} from './fileHandler';
+} from './fileHandler.js';
 
 // Depth processing modules
-import { registerDefaultReaders, readDepth } from './depth/DepthRegistry';
-import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
-import { ColorImageLoader } from './colorImageLoader';
-import { ByteLineReader } from './utils/byteLineReader';
-import { ColorProcessor } from './colorProcessor';
-import { DepthConverter } from './depth/DepthConverter';
+import { registerDefaultReaders, readDepth } from './depth/DepthRegistry.js';
+import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector.js';
+import { ColorImageLoader } from './colorImageLoader.js';
+import { ByteLineReader } from './utils/byteLineReader.js';
+import { ColorProcessor } from './colorProcessor.js';
+import { DepthConverter } from './depth/DepthConverter.js';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing

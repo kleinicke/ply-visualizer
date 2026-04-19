@@ -1,3 +1,3 @@
-export * from './types';
-export * from './DepthProjector';
-export * from './DepthRegistry';
+export * from './types.js';
+export * from './DepthProjector.js';
+export * from './DepthRegistry.js';

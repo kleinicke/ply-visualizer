@@ -9,7 +9,7 @@
  */
 
 import * as THREE from 'three';
-import { SpatialData, CameraParams, DepthConversionResult } from './interfaces';
+import { SpatialData, CameraParams, DepthConversionResult } from './interfaces.js';
 
 export class ColorProcessor {
   private srgbToLinearLUT: Float32Array | null = null;

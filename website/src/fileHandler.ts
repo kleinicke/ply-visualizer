@@ -3,14 +3,14 @@
  * Provides unified file type detection, parsing, and error handling
  */
 
-import { PlyParser } from './parsers/plyParser';
-import { ObjParser } from './parsers/objParser';
-import { StlParser } from './parsers/stlParser';
-import { PcdParser } from './parsers/pcdParser';
-import { PtsParser } from './parsers/ptsParser';
-import { OffParser } from './parsers/offParser';
-import { GltfParser } from './parsers/gltfParser';
-import { NpyParser, isNpyPointCloudData } from './parsers/npyParser';
+import { PlyParser } from './parsers/plyParser.js';
+import { ObjParser } from './parsers/objParser.js';
+import { StlParser } from './parsers/stlParser.js';
+import { PcdParser } from './parsers/pcdParser.js';
+import { PtsParser } from './parsers/ptsParser.js';
+import { OffParser } from './parsers/offParser.js';
+import { GltfParser } from './parsers/gltfParser.js';
+import { NpyParser, isNpyPointCloudData } from './parsers/npyParser.js';
 
 // Shared constants for consistent behavior across extension and website
 export const DEFAULT_COLORS = {
@@ -830,10 +830,10 @@ export async function convertDepthToUnified(
   cameraParams: CameraParams & { depthScale?: number; depthBias?: number }
 ): Promise<ParseResult> {
   const { registerDefaultReaders, registerReader, readDepth } = await import(
-    './depth/DepthRegistry'
+    './depth/DepthRegistry.js'
   );
-  const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
-  const { PngReader } = await import('./depth/readers/PngReader');
+  const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector.js');
+  const { PngReader } = await import('./depth/readers/PngReader.js');
 
   registerDefaultReaders();
 

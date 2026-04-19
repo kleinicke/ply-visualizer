@@ -1,4 +1,4 @@
-import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata, DepthKind } from '../types';
+import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata, DepthKind } from '../types.js';
 
 /**
  * Minimal NPY header parser - extracts shape and dtype information

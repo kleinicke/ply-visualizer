@@ -1,4 +1,4 @@
-import { SpatialData, SpatialVertex } from './plyParser';
+import { SpatialData, SpatialVertex } from './plyParser.js';
 
 /**
  * NPY Parser for point cloud data (arrays ending with dimension 3 containing XYZ coordinates)
