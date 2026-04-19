@@ -39,6 +39,11 @@ Load two point clouds and switch between them imediatly pressing shift and click
   transparencies by default to save power
 - **Measure distance**: Shift double click measures the distance between the
   rotation center and the selected point
+- **Trackpad and mouse friendly**: Simply change the rotation point and your
+  position by double clicking onto a point of the cloud. Additionally the
+  position with the same rotation can be changed by right clicking onto a mouse
+  or shift holding? And its also possible to manually enter the position of the
+  camera, the rotation center and the angle.
 
 ## Roadmap
 

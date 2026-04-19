@@ -13,6 +13,8 @@
     "vscode": "^1.74.0"
   },
   "categories": [
+    "Data Science",
+    "Visualization",
     "Other"
   ],
   "keywords": [
@@ -38,19 +40,14 @@
     "pointcloud",
     "mesh",
     "open3d",
-    "stereolithography",
     "depth",
     "disparity",
     "visualization",
     "viewer",
     "three.js",
-    "camera",
-    "pose",
     "depth image",
     "depth map",
-    "computer vision",
-    "CloudCompare",
-    "Cloud"
+    "CloudCompare"
   ],
   "main": "./out/extension.js",
   "contributes": {

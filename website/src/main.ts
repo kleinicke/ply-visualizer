@@ -1653,7 +1653,9 @@ class PointCloudVisualizer {
    */
   private initEDLComposer(): void {
     const container = document.getElementById('viewer-container');
-    if (!container) {return;}
+    if (!container) {
+      return;
+    }
 
     const width = container.clientWidth;
     const height = container.clientHeight;
@@ -2779,8 +2781,12 @@ class PointCloudVisualizer {
       edlStrengthSlider.addEventListener('input', () => {
         const val = parseFloat(edlStrengthSlider.value);
         this.edlStrength = val;
-        if (this.edlPass) {this.edlPass.edlStrength = val;}
-        if (edlStrengthValue) {edlStrengthValue.textContent = val.toFixed(1);}
+        if (this.edlPass) {
+          this.edlPass.edlStrength = val;
+        }
+        if (edlStrengthValue) {
+          edlStrengthValue.textContent = val.toFixed(1);
+        }
         this.requestRender();
       });
     }
@@ -2790,8 +2796,12 @@ class PointCloudVisualizer {
       edlRadiusSlider.addEventListener('input', () => {
         const val = parseFloat(edlRadiusSlider.value);
         this.edlRadius = val;
-        if (this.edlPass) {this.edlPass.edlRadius = val;}
-        if (edlRadiusValue) {edlRadiusValue.textContent = val.toFixed(1);}
+        if (this.edlPass) {
+          this.edlPass.edlRadius = val;
+        }
+        if (edlRadiusValue) {
+          edlRadiusValue.textContent = val.toFixed(1);
+        }
         this.requestRender();
       });
     }
@@ -3766,7 +3776,9 @@ class PointCloudVisualizer {
           }
           break;
         case 'loadingError':
-          this.showError(`Failed to load PLY file: ${message.error}`);
+          const fileType = message.fileType || 'point cloud';
+          const fileName = message.fileName ? ` (${message.fileName})` : '';
+          this.showError(`Failed to load ${fileType} file${fileName}: ${message.error}`);
           break;
         case 'spatialData':
         case 'multiSpatialData':
@@ -10523,10 +10535,40 @@ class PointCloudVisualizer {
       (spatialData as any).colorsArray = pcdData.colorsArray;
       (spatialData as any).normalsArray = pcdData.normalsArray;
 
+      // Carry the PCD viewpoint so we can set the initial transform after the
+      // file is registered (at which point we know the fileIndex).
+      const vp: number[] = pcdData.viewpoint ?? [0, 0, 0, 1, 0, 0, 0];
+      const isIdentityViewpoint =
+        vp[0] === 0 &&
+        vp[1] === 0 &&
+        vp[2] === 0 &&
+        vp[3] === 1 &&
+        vp[4] === 0 &&
+        vp[5] === 0 &&
+        vp[6] === 0;
+
       if (message.isAddFile) {
         this.addNewFiles([spatialData]);
       } else {
         await this.displayFiles([spatialData]);
+      }
+
+      // Apply PCD VIEWPOINT as the initial object transform (skip identity — it's the default).
+      // The point coordinates are stored as-is from the file (no axis conversion), so the
+      // viewpoint quaternion/translation is applied in the same PCL coordinate space.
+      // The user's OpenCV/OpenGL convention toggle handles the overall viewing perspective
+      // on top of this, just as it does for all other PCD data.
+      if (!isIdentityViewpoint) {
+        const fileIndex = spatialData.fileIndex ?? this.spatialFiles.length - 1;
+        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
+          // PCD viewpoint: tx ty tz  qw qx qy qz
+          const [tx, ty, tz, qw, qx, qy, qz] = vp;
+          const q = new THREE.Quaternion(qx, qy, qz, qw).normalize();
+          const viewpointMatrix = new THREE.Matrix4();
+          viewpointMatrix.makeRotationFromQuaternion(q);
+          viewpointMatrix.setPosition(tx, ty, tz);
+          this.setTransformationMatrix(fileIndex, viewpointMatrix);
+        }
       }
 
       // Create normals visualizer if PCD has normals

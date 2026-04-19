@@ -548,6 +548,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           } catch (err) {
             webviewPanel.webview.postMessage({
               type: 'loadingError',
+              fileName: path.basename(document.uri.fsPath),
+              fileType: 'JSON',
               error: err instanceof Error ? err.message : String(err),
             });
             return;
@@ -671,8 +673,27 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         });
       } catch (error) {
         console.error(`Extension: PLY processing failed:`, error);
+        const ext = path.extname(document.uri.fsPath).toLowerCase();
+        const fileTypeMap: Record<string, string> = {
+          '.ply': 'PLY',
+          '.pcd': 'PCD',
+          '.stl': 'STL',
+          '.obj': 'OBJ',
+          '.xyz': 'XYZ',
+          '.pts': 'PTS',
+          '.tif': 'TIFF',
+          '.tiff': 'TIFF',
+          '.pfm': 'PFM',
+          '.npy': 'NPY',
+          '.npz': 'NPZ',
+          '.png': 'PNG',
+          '.json': 'JSON',
+        };
+        const fileType = fileTypeMap[ext] || ext.toUpperCase().slice(1) || 'point cloud';
         webviewPanel.webview.postMessage({
           type: 'loadingError',
+          fileName: path.basename(document.uri.fsPath),
+          fileType,
           error: error instanceof Error ? error.message : String(error),
         });
       }
