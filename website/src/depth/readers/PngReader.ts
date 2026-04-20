@@ -60,7 +60,10 @@ export class PngReader implements DepthReader {
         return;
       }
 
-      const blob = new Blob([data], { type: 'image/png' });
+      // Ensure Blob receives an ArrayBuffer-backed view (not SharedArrayBuffer-backed)
+      const pngBytes = new Uint8Array(data.byteLength);
+      pngBytes.set(data);
+      const blob = new Blob([pngBytes], { type: 'image/png' });
       const url = URL.createObjectURL(blob);
       const img = new Image();
 

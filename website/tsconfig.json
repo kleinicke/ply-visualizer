@@ -8,13 +8,12 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    "rootDir": ".",
     "declaration": false,
     "outDir": "./dist",
-    "baseUrl": "./",
-    "paths": {
-      "../../src/webview/*": ["../src/webview/*"]
-    }
+    "types": ["three"],
+    "typeRoots": ["./node_modules/@types", "../node_modules/@types"]
   },
-  "include": ["src/**/*", "../src/webview/**/*"],
+  "include": ["src/**/*", "src/**/*.d.ts"],
   "exclude": ["node_modules", "dist", "**/*.test.ts", "test/**/*"]
 }

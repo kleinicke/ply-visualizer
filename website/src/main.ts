@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { EDLPass } from './postprocessing/EDLPass.js';
 import {
   SpatialVertex,
@@ -380,7 +380,7 @@ class PointCloudVisualizer {
     // Update multi-material groups
     this.multiMaterialGroups.forEach(group => {
       if (group) {
-        group.traverse(child => {
+        group.traverse((child: THREE.Object3D) => {
           if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
             const material = child.material as THREE.PointsMaterial;
             if (this.allowTransparency) {
@@ -434,7 +434,7 @@ class PointCloudVisualizer {
     const box = new THREE.Box3();
 
     // Calculate overall scene bounding box
-    this.scene.traverse(object => {
+    this.scene.traverse((object: THREE.Object3D) => {
       if (object instanceof THREE.Points || object instanceof THREE.Mesh) {
         const geometry = object.geometry;
         if (geometry) {
@@ -476,7 +476,7 @@ class PointCloudVisualizer {
     // Update multi-material groups
     this.multiMaterialGroups.forEach((group, index) => {
       if (group) {
-        group.traverse(child => {
+        group.traverse((child: THREE.Object3D) => {
           if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
             const material = child.material as THREE.PointsMaterial;
             const baseSize = this.pointSizes[index] || 0.001;
@@ -516,7 +516,7 @@ class PointCloudVisualizer {
 
     this.multiMaterialGroups.forEach((group, index) => {
       if (group) {
-        group.traverse(child => {
+        group.traverse((child: THREE.Object3D) => {
           if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
             const material = child.material as THREE.PointsMaterial;
             material.size = this.pointSizes[index] || 0.001;
@@ -1251,12 +1251,12 @@ class PointCloudVisualizer {
   private initSceneLighting(): void {
     // Remove existing lights
     const lightsToRemove = this.scene.children.filter(
-      child =>
+      (child: THREE.Object3D) =>
         child instanceof THREE.AmbientLight ||
         child instanceof THREE.DirectionalLight ||
         child instanceof THREE.HemisphereLight
     );
-    lightsToRemove.forEach(light => this.scene.remove(light));
+    lightsToRemove.forEach((light: THREE.Object3D) => this.scene.remove(light));
 
     // Add fresh lighting based on mode
     if (this.useFlatLighting) {
@@ -5842,7 +5842,7 @@ class PointCloudVisualizer {
               const color = isNaN(colorIdx)
                 ? this.fileColors[i % this.fileColors.length]
                 : this.fileColors[colorIdx];
-              group.traverse(obj => {
+              group.traverse((obj: THREE.Object3D) => {
                 if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
                   const material = obj.material as THREE.MeshBasicMaterial;
                   material.color.setRGB(color[0], color[1], color[2]);
@@ -6463,7 +6463,7 @@ class PointCloudVisualizer {
     } else if (mesh && mesh.material) {
       // Handle regular single mesh
       if (Array.isArray(mesh.material)) {
-        mesh.material.forEach(material => {
+        mesh.material.forEach((material: THREE.Material) => {
           if (
             material instanceof THREE.MeshBasicMaterial ||
             material instanceof THREE.MeshLambertMaterial
@@ -6525,7 +6525,7 @@ class PointCloudVisualizer {
       geometry = mesh.geometry as THREE.BufferGeometry;
     } else if (mesh instanceof THREE.Group) {
       // For groups, find the first mesh child
-      mesh.traverse(child => {
+      mesh.traverse((child: THREE.Object3D) => {
         if (child instanceof THREE.Mesh && !geometry) {
           geometry = child.geometry as THREE.BufferGeometry;
         }
@@ -7326,7 +7326,7 @@ class PointCloudVisualizer {
     }
     if (mesh.material) {
       if (Array.isArray(mesh.material)) {
-        mesh.material.forEach(mat => mat.dispose());
+        mesh.material.forEach((mat: THREE.Material) => mat.dispose());
       } else {
         mesh.material.dispose();
       }
@@ -7341,7 +7341,7 @@ class PointCloudVisualizer {
       }
       if (normalsVisualizer.material) {
         if (Array.isArray(normalsVisualizer.material)) {
-          normalsVisualizer.material.forEach(mat => mat.dispose());
+          normalsVisualizer.material.forEach((mat: THREE.Material) => mat.dispose());
         } else {
           normalsVisualizer.material.dispose();
         }
@@ -7357,7 +7357,7 @@ class PointCloudVisualizer {
       }
       if (vertexPoints.material) {
         if (Array.isArray(vertexPoints.material)) {
-          vertexPoints.material.forEach(mat => mat.dispose());
+          vertexPoints.material.forEach((mat: THREE.Material) => mat.dispose());
         } else {
           vertexPoints.material.dispose();
         }
@@ -8045,7 +8045,7 @@ class PointCloudVisualizer {
         const poseIndex = fileIndex - this.spatialFiles.length;
         const group = this.poseGroups[poseIndex];
         if (group) {
-          group.traverse(obj => {
+          group.traverse((obj: THREE.Object3D) => {
             if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
               // Rebuild or update instance matrices scaling
               const count = obj.count;
@@ -8188,7 +8188,7 @@ class PointCloudVisualizer {
     const meta = this.poseMeta[poseIndex];
     const useDataset = this.poseUseDatasetColors[fileIndex];
     const paletteColor = this.fileColors[fileIndex % this.fileColors.length];
-    group.traverse(obj => {
+    group.traverse((obj: THREE.Object3D) => {
       if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
         const material = obj.material as THREE.MeshBasicMaterial;
         if (useDataset && meta.jointColors && meta.jointColors.length > 0) {
@@ -8318,7 +8318,7 @@ class PointCloudVisualizer {
     // Fetch scores/uncertainties if available
     const meta = this.poseMeta[poseIndex];
     // Traverse instances and update scales
-    group.traverse(obj => {
+    group.traverse((obj: THREE.Object3D) => {
       if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
         const count = obj.count;
         const dummy = new THREE.Object3D();
@@ -8380,7 +8380,7 @@ class PointCloudVisualizer {
     const uncMag = (meta.jointUncertainties || []).map(u =>
       Math.sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2])
     );
-    group.traverse(obj => {
+    group.traverse((obj: THREE.Object3D) => {
       if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
         const count = obj.count;
         const dummy = new THREE.Object3D();
@@ -11122,7 +11122,7 @@ class PointCloudVisualizer {
       geometry = mesh.geometry as THREE.BufferGeometry;
     } else if (mesh instanceof THREE.Group) {
       // For groups, find the first mesh child
-      mesh.traverse(child => {
+      mesh.traverse((child: THREE.Object3D) => {
         if (child instanceof THREE.Mesh && !geometry) {
           geometry = child.geometry as THREE.BufferGeometry;
         }
@@ -13029,7 +13029,7 @@ class PointCloudVisualizer {
 
     const profileGroup = this.cameraGroups[cameraProfileIndex];
     // Iterate through all cameras in the profile
-    profileGroup.children.forEach(child => {
+    profileGroup.children.forEach((child: THREE.Object3D) => {
       if (child instanceof THREE.Group && child.name.startsWith('camera_')) {
         const label = child.getObjectByName('cameraLabel');
         if (label) {
@@ -13049,7 +13049,7 @@ class PointCloudVisualizer {
 
     const profileGroup = this.cameraGroups[cameraProfileIndex];
     // Iterate through all cameras in the profile
-    profileGroup.children.forEach(child => {
+    profileGroup.children.forEach((child: THREE.Object3D) => {
       if (child instanceof THREE.Group && child.name.startsWith('camera_')) {
         if (showCoords) {
           // Create or update coordinate label
@@ -13091,10 +13091,10 @@ class PointCloudVisualizer {
 
     const profileGroup = this.cameraGroups[cameraProfileIndex];
     // Apply scale to each individual camera's visual elements
-    profileGroup.children.forEach(child => {
+    profileGroup.children.forEach((child: THREE.Object3D) => {
       if (child instanceof THREE.Group && child.name.startsWith('camera_')) {
         // Scale all visual elements including text labels
-        child.children.forEach(visualElement => {
+        child.children.forEach((visualElement: THREE.Object3D) => {
           // Reset scale to 1.0 first to prevent accumulation
           visualElement.scale.setScalar(1.0);
 

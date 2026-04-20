@@ -15,7 +15,7 @@
  */
 
 import * as THREE from 'three';
-import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 
 /** 8-direction neighbor kernel for depth sampling */
 const NEIGHBOR_OFFSETS: [number, number][] = [

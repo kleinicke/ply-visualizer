@@ -860,15 +860,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const files = await vscode.window.showOpenDialog({
       canSelectMany: true,
       filters: {
-        // eslint-disable-next-line @typescript-eslint/naming-convention
         'Point Cloud & Pose Files': [...ALL_SUPPORTED_EXTENSIONS],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
         'Point Clouds': [...SUPPORTED_EXTENSIONS.pointClouds],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
         Meshes: [...SUPPORTED_EXTENSIONS.meshes],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
         'Depth Images': [...SUPPORTED_EXTENSIONS.depthImages],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
         'Pose Data': [...SUPPORTED_EXTENSIONS.poseData],
       },
       title: 'Select point cloud files to add',
@@ -2575,7 +2570,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       const files = await vscode.window.showOpenDialog({
         canSelectMany: false,
         filters: {
-          // eslint-disable-next-line @typescript-eslint/naming-convention
           'MTL Material Files': ['mtl'],
         },
         title: 'Select MTL material file',

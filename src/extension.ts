@@ -91,15 +91,7 @@ export function activate(context: vscode.ExtensionContext) {
             cancellable: false,
           },
           async () => {
-            // Callback API wrapped in a Promise to obtain a clean string[]
-            const files = await new Promise<string[]>((resolve, reject) => {
-              glob(wildcard, { nodir: true } as any, (err: Error | null, matches: string[]) => {
-                if (err) {
-                  return reject(err);
-                }
-                resolve(matches);
-              });
-            });
+            const files = await glob(wildcard, { nodir: true });
             files.sort((a: string, b: string) => a.localeCompare(b, undefined, { numeric: true }));
             return files;
           }
