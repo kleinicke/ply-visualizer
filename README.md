@@ -1,88 +1,102 @@
-# 3D Point Cloud and Mesh Visualizer (PLY, ...)
+# 3D Point Cloud and Mesh Visualizer for VS Code
 
-This extension visualizes:
+View, compare and inspect point clouds, meshes, depth maps and disparity images
+directly inside VS Code.
 
-- **Point Clouds** in the formats: ASCII and binary PLY files, XYZ, XYZN,
-  XYZRGB, PCD, PTS and NPY
-- **Meshes** in the formats: ASCII and binary PLY files, OBJ, STL, OFF and
-  GLTF/GLB
-- **Depth and disparity images** are transformed on the fly to point clouds for
-  the formats: TIFF, PNG, PFM, NPY and NPZ
+![Depth image converted to a point cloud](https://github.com/kleinicke/ply-visualizer/releases/download/v1.0.0/disp2pc.gif)
 
-New features are added frequently. You can simply request features that support
-your workflow or new file formats on
-[GitHub](https://github.com/kleinicke/ply-visualizer/issues).
+## Highlights
+
+- Open large point clouds quickly, including files with millions of points
+- Compare multiple point clouds in one view and toggle them independently
+- Convert depth and disparity images into point clouds
+- Inspect meshes as surfaces, wireframes, points and normals
+- Use Eye-Dome Lighting and brightness correction for clearer uncolored geometry
+- Measure distances and adjust camera, rotation center and view parameters
+- Use the same viewer outside VS Code on the static website:
+  https://f-kleinicke.de
+
+## Supported formats
+
+| Type                   | Formats                               |
+| ---------------------- | ------------------------------------- |
+| Point clouds           | PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY |
+| Meshes                 | PLY, OBJ, STL, OFF, GLTF, GLB         |
+| Depth/disparity images | TIFF, PNG, PFM, NPY, NPZ              |
+| 3D Body Poses          | JSON pose data (experimental)         |
+| Camera Profiles        | JSON pose data (experimental)         |
+
+## Quick start
+
+1. Open a supported file in VS Code.
+2. Use the default custom editor, or right-click the file and choose **Open with
+   3D Visualizer**.
+3. For depth and disparity images, use the conversion command for the file type
+   and adjust the camera parameters when prompted.
+
+The extension also adds commands for opening multiple point clouds, playing a
+point cloud sequence and converting depth files to point clouds.
 
 ## Features
 
-Interpret depth/disparity images as point clouds
-![tifPC](https://github.com/kleinicke/ply-visualizer/releases/download/v1.0.0/disp2pc.gif)
+### Depth and Disparity to Point Cloud
 
-Use Eye-Dome Lighting
-![eyeDome](https://github.com/kleinicke/ply-visualizer/releases/download/v1.0.0/EyeDome.gif)
+Convert depth or disparity images into point clouds directly from VS Code.
+Projection settings include `fx`, `fy`, `cx`, `cy`, camera distortion models,
+mono depth scale and bias, PNG int16 scale and disparity offset.
 
-Load two point clouds and switch between them immediately by pressing Shift and
-clicking
-![load-two](https://github.com/kleinicke/ply-visualizer/releases/download/v0.0.14/load2.gif)
+### Eye-Dome Lighting
 
-- **Compare Multiple Point Clouds**: Multiple point clouds can be loaded in the
-  same view and activated and deactivated independently
-- **Fast Loading of Big Point Clouds**: Even point clouds with 5 million points
-  load in around a second
-- **Rotation of points**: Apply rotation matrices for single point clouds
-- **Depth to point cloud settings**: Allows setting the fx, fy, cx, cy,
-  different camera distortion models, mono depth scale and bias parameters, PNG
-  int16 scale parameters, disparity offset...
-- **Pose estimations**: Support is currently in development for 3D pose
-  estimations in JSON files
-- **Buttons for meshes**: Easily activate wireframe, mesh, points and normals
-- **Corresponding website**: All features can also be used without VS Code using
-  the static website https://f-kleinicke.de
-- **Frame rate visualization**: Shows the current frame rate. When the point
-  cloud is not moving, no more frames are generated to save power.
-  Transparencies are also ignored by default to save power
-- **Measure distance**: Shift-double-click measures the distance between the
-  rotation center and the selected point
-- **Brightness correction**: Use Eye-Dome Lighting or simple brightness
-  correction
-- **Eye-Dome Lighting**: Improve perception of uncolored point clouds
-- **Trackpad and mouse friendly**: Simply change the rotation point and your
-  position by double-clicking a point in the cloud. Additionally, the position
-  can be changed while keeping the same rotation by right-clicking or holding
-  Shift. It is also possible to manually enter the position of the camera, the
-  rotation center and the angle.
+Use Eye-Dome Lighting to improve depth perception, especially for uncolored
+point clouds.
+
+![Eye-Dome Lighting](https://github.com/kleinicke/ply-visualizer/releases/download/v1.0.0/EyeDome.gif)
+
+### Multiple Point Clouds
+
+Load multiple point clouds into the same view, toggle them independently and
+switch between them with Shift-click.
+
+![Multiple point clouds](https://github.com/kleinicke/ply-visualizer/releases/download/v0.0.14/load2.gif)
+
+### Mesh Inspection
+
+Inspect mesh files with controls for surface, wireframe, points and normals.
+This is useful when checking geometry, topology or exported reconstruction
+results without leaving the editor.
+
+### Distance Measurement Tools and Camera Manipulation
+
+**Shift-double-click** measures the distance between the rotation center and the
+selected point.
+
+### Navigation
+
+**Double-click** a point to change the rotation center. This allows for easy
+navigation using a mouse or a trackpad. You can also manually enter the camera
+position, rotation center and viewing angle.
+
+### Performance-Aware Rendering
+
+The viewer shows the current frame rate. When the point cloud is not moving, no
+more frames are generated, which helps reduce power usage.
+
+## NPY file structure options
+
+- As a depth image: `[X,Y]`
+- As a point cloud: `[...,3]` with the three values `X,Y,Z`
+
+## Feature requests and issues
+
+If you have a workflow that would benefit from new features or file formats,
+please open an issue on the
+[GitHub repository](https://github.com/kleinicke/ply-visualizer/issues). Example
+files are especially helpful when adding support for new formats.
 
 ## Roadmap
 
-- **Wrong direction of rotation**: When rotating the point cloud, the direction
-  is inverted. It's unclear how to fix this.
-- **Drag and Drop**: Add more point clouds to a given point cloud using drag and
-  drop instead of adding them in an extra window
-- **Add new file formats**: Body pose JSON files for 3D body pose, FBX files can
-  contain meshes or animations, EXR files can contain float depth images or
-  complete point clouds, gaussian splats
-- **Dataset support**: Add images from Middlebury stereo and ETH3D as example
-  images
-- **Automatic usage of calibration files**: extrinsics/intrinsics files next to
-  the depth images can contain all required parameters for a depth to point
-  cloud conversion. Automatically use those for depth images for intrinsics and
-  extrinsics for point clouds
-- **Crashes for too many points**: After loading multiple point clouds in
-  multiple files in parallel, it crashes, rendering all views with this
-  extension gray.
-
-## Feature Requests and Issues
-
-If you have use cases that would be helpful for others or find problems, feel
-free to suggest them on the
-[GitHub repository](https://github.com/kleinicke/ply-visualizer/issues). If you
-know how to fix bugs or how to implement certain features, feel free to
-contribute. If you provide an example file, I can implement support for it in
-the extension.
-
-## Required structures of certain file formats
-
-NPY files:
-
-- As depth image: [X,Y]
-- As point cloud: [...,3] with the three values X,Y,Z
+- Add support for more file formats, including FBX and Gaussian splats
+- Improve dataset support with example images from Middlebury stereo and ETH3D
+- Use calibration files next to depth images automatically when available
+  (example files needed)
+- Accept 3d body pose files (example files needed)

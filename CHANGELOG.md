@@ -1,10 +1,11 @@
 # Change Log
 
-## [1.5.0] - 2026
+## [1.5.0] - 2026-05-02
 
 - Fix pts, psd and xyz implementation to support bigger point clouds
 - Add Eye-Dome Lighting
 - Add brightness sliders for objects and background
+- Drop an additional pc using shift plus drag and drop into the scene.
 
 ## [1.4.0] - 2025-11-24
 

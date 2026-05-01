@@ -753,6 +753,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         case 'addFileFromPath':
           await this.handleAddFileFromPath(webviewPanel, message.path as string);
           break;
+        case 'addDroppedFiles':
+          await this.handleDroppedFilesFromWebview(webviewPanel, message.files || []);
+          break;
         case 'requestDatasetTexture':
           await this.handleRequestDatasetTexture(webviewPanel, message);
           break;
@@ -860,15 +863,14 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const files = await vscode.window.showOpenDialog({
       canSelectMany: true,
       filters: {
-         
         'Point Cloud & Pose Files': [...ALL_SUPPORTED_EXTENSIONS],
-         
+
         'Point Clouds': [...SUPPORTED_EXTENSIONS.pointClouds],
-         
+
         Meshes: [...SUPPORTED_EXTENSIONS.meshes],
-         
+
         'Depth Images': [...SUPPORTED_EXTENSIONS.depthImages],
-         
+
         'Pose Data': [...SUPPORTED_EXTENSIONS.poseData],
       },
       title: 'Select point cloud files to add',
@@ -1326,6 +1328,204 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         `Failed to add file from path: ${error instanceof Error ? error.message : String(error)}`
       );
     }
+  }
+
+  private async handleDroppedFilesFromWebview(
+    webviewPanel: vscode.WebviewPanel,
+    files: Array<{ name?: string; data?: ArrayBuffer | Uint8Array }>
+  ): Promise<void> {
+    for (let i = 0; i < files.length; i++) {
+      const droppedFile = files[i];
+      const fileName = path.basename(droppedFile.name || `dropped-file-${i + 1}`);
+
+      try {
+        if (!droppedFile.data) {
+          throw new Error('Dropped file did not include readable data');
+        }
+
+        const fileData = this.toUint8Array(droppedFile.data);
+        const shortPath = fileName;
+        const ext = path.extname(fileName).toLowerCase();
+        const fileType = detectFileTypeWithContent(fileName, fileData);
+
+        if (!fileType) {
+          webviewPanel.webview.postMessage({
+            type: 'loadingError',
+            fileName,
+            fileType: ext || 'file',
+            error: `Unsupported dropped file type: ${ext || 'unknown'}`,
+          });
+          continue;
+        }
+
+        if (fileType.extension === 'npy' && fileType.category === 'pointCloud') {
+          const npyParser = new NpyParser();
+          const parsedData = await npyParser.parse(fileData);
+          webviewPanel.webview.postMessage({
+            type: 'npyData',
+            fileName,
+            shortPath,
+            data: parsedData,
+            isAddFile: true,
+          });
+          continue;
+        }
+
+        if (fileType.isDepthFile) {
+          webviewPanel.webview.postMessage({
+            type: 'depthData',
+            fileName,
+            shortPath,
+            data: this.toArrayBuffer(fileData),
+            isAddFile: true,
+          });
+          continue;
+        }
+
+        if (ext === '.ply') {
+          const parser = new PlyParser();
+          const isBinary = isPlyBinary(fileData);
+          if (isBinary) {
+            const headerResult = await parser.parseHeaderOnly(fileData);
+            headerResult.headerInfo.fileName = fileName;
+            headerResult.headerInfo.shortPath = shortPath;
+            await this.sendUltimateRawBinary(
+              webviewPanel,
+              headerResult.headerInfo,
+              headerResult,
+              fileData,
+              'addFiles'
+            );
+          } else {
+            const parsedData = await parser.parse(fileData);
+            parsedData.fileName = fileName;
+            parsedData.shortPath = shortPath;
+            await this.sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
+          }
+          continue;
+        }
+
+        if (ext === '.xyz') {
+          webviewPanel.webview.postMessage({
+            type: 'xyzData',
+            fileName,
+            shortPath,
+            data: this.toArrayBuffer(fileData),
+            isAddFile: true,
+          });
+          continue;
+        }
+
+        if (ext === '.obj') {
+          const objParser = new ObjParser();
+          const parsedData = await objParser.parse(fileData);
+          webviewPanel.webview.postMessage({
+            type: 'objData',
+            fileName,
+            shortPath,
+            data: parsedData,
+            isAddFile: true,
+          });
+          continue;
+        }
+
+        if (ext === '.stl') {
+          const stlParser = new StlParser();
+          const parsedData = await stlParser.parse(fileData);
+          webviewPanel.webview.postMessage({
+            type: 'stlData',
+            fileName,
+            shortPath,
+            data: parsedData,
+            isAddFile: true,
+          });
+          continue;
+        }
+
+        if (ext === '.pcd') {
+          const pcdParser = new PcdParser();
+          const parsedData = await pcdParser.parse(fileData);
+          webviewPanel.webview.postMessage({
+            type: 'pcdData',
+            fileName,
+            shortPath,
+            data: parsedData,
+            isAddFile: true,
+          });
+          continue;
+        }
+
+        if (ext === '.pts') {
+          const ptsParser = new PtsParser();
+          const parsedData = await ptsParser.parse(fileData);
+          webviewPanel.webview.postMessage({
+            type: 'ptsData',
+            fileName,
+            shortPath,
+            data: parsedData,
+            isAddFile: true,
+          });
+          continue;
+        }
+
+        if (ext === '.off') {
+          const offParser = new OffParser();
+          const parsedData = await offParser.parse(fileData);
+          webviewPanel.webview.postMessage({
+            type: 'offData',
+            fileName,
+            shortPath,
+            data: parsedData,
+            isAddFile: true,
+          });
+          continue;
+        }
+
+        if (ext === '.gltf' || ext === '.glb') {
+          const gltfParser = new GltfParser();
+          const parsedData = await gltfParser.parse(fileData);
+          webviewPanel.webview.postMessage({
+            type: 'gltfData',
+            fileName,
+            shortPath,
+            data: parsedData,
+            isAddFile: true,
+          });
+          continue;
+        }
+
+        if (ext === '.xyzn' || ext === '.xyzrgb') {
+          webviewPanel.webview.postMessage({
+            type: 'xyzVariantData',
+            fileName,
+            shortPath,
+            data: this.toArrayBuffer(fileData),
+            variant: ext.substring(1),
+            isAddFile: true,
+          });
+          continue;
+        }
+      } catch (error) {
+        webviewPanel.webview.postMessage({
+          type: 'loadingError',
+          fileName,
+          fileType: path.extname(fileName).slice(1).toUpperCase() || 'file',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  private toUint8Array(data: ArrayBuffer | Uint8Array): Uint8Array {
+    if (data instanceof Uint8Array) {
+      return data;
+    }
+
+    return new Uint8Array(data);
+  }
+
+  private toArrayBuffer(data: Uint8Array): ArrayBuffer {
+    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
   }
 
   private async handleSequenceRequestFile(
@@ -2575,7 +2775,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       const files = await vscode.window.showOpenDialog({
         canSelectMany: false,
         filters: {
-           
           'MTL Material Files': ['mtl'],
         },
         title: 'Select MTL material file',

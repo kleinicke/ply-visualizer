@@ -811,6 +811,7 @@ class PointCloudVisualizer {
 
       // Setup drag handle in both environments
       this.setupPanelResizeAndDrag();
+      this.setupBrowserFileHandlers();
 
       if (isVSCode) {
         // VSCode extension environment
@@ -821,7 +822,6 @@ class PointCloudVisualizer {
         });
       } else {
         // Browser environment
-        this.setupBrowserFileHandlers();
         this.initializeBrowserFileHandler();
         console.log('🌐 Initializing standalone browser version...');
       }
@@ -4286,7 +4286,7 @@ class PointCloudVisualizer {
       fileInput.addEventListener('change', event => {
         const files = (event.target as HTMLInputElement).files;
         if (files) {
-          this.handleBrowserFiles(Array.from(files));
+          this.handleDroppedFiles(Array.from(files));
         }
       });
     }
@@ -4294,7 +4294,7 @@ class PointCloudVisualizer {
     // Add drag & drop support to the Add Point Cloud button
     if (addFileButton) {
       addFileButton.addEventListener('dragover', event => {
-        event.preventDefault();
+        this.handleDragOver(event);
         addFileButton.style.backgroundColor = '#1177bb';
         addFileButton.style.transform = 'scale(1.02)';
       });
@@ -4305,34 +4305,26 @@ class PointCloudVisualizer {
       });
 
       addFileButton.addEventListener('drop', event => {
-        event.preventDefault();
         addFileButton.style.backgroundColor = '';
         addFileButton.style.transform = '';
-        const files = Array.from(event.dataTransfer?.files || []);
-        this.handleBrowserFiles(files);
+        void this.handleDropEvent(event);
       });
     }
 
     // Also add drag & drop to the entire main UI panel as fallback
     if (mainPanel) {
       mainPanel.addEventListener('dragover', event => {
-        event.preventDefault();
-        event.dataTransfer!.dropEffect = 'copy';
+        this.handleDragOver(event);
       });
 
       mainPanel.addEventListener('drop', event => {
-        event.preventDefault();
-        const files = Array.from(event.dataTransfer?.files || []);
-        if (files.length > 0) {
-          this.handleBrowserFiles(files);
-        }
+        void this.handleDropEvent(event);
       });
     }
 
     // Add drag & drop support to the entire window
     document.addEventListener('dragover', event => {
-      event.preventDefault();
-      event.dataTransfer!.dropEffect = 'copy';
+      this.handleDragOver(event);
       // Add visual feedback to the entire window
       document.body.style.backgroundColor = 'rgba(0, 95, 184, 0.1)';
     });
@@ -4345,13 +4337,109 @@ class PointCloudVisualizer {
     });
 
     document.addEventListener('drop', event => {
-      event.preventDefault();
       document.body.style.backgroundColor = '';
-      const files = Array.from(event.dataTransfer?.files || []);
-      if (files.length > 0) {
-        this.handleBrowserFiles(files);
-      }
+      void this.handleDropEvent(event);
     });
+  }
+
+  private handleDragOver(event: DragEvent): void {
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
+  }
+
+  private async handleDropEvent(event: DragEvent): Promise<void> {
+    event.preventDefault();
+    event.stopPropagation();
+    document.body.style.backgroundColor = '';
+
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (files.length > 0) {
+      await this.handleDroppedFiles(files);
+      return;
+    }
+
+    if (isVSCode) {
+      const filePaths = this.extractDroppedFilePaths(event.dataTransfer);
+      if (filePaths.length > 0) {
+        this.showImmediateLoading({ fileName: `${filePaths.length} dropped file(s)` });
+        filePaths.forEach(filePath => {
+          this.vscode.postMessage({
+            type: 'addFileFromPath',
+            path: filePath,
+          });
+        });
+        return;
+      }
+    }
+  }
+
+  private extractDroppedFilePaths(dataTransfer: DataTransfer | null): string[] {
+    if (!dataTransfer) {
+      return [];
+    }
+
+    const rawValues = [
+      dataTransfer.getData('text/uri-list'),
+      dataTransfer.getData('text/plain'),
+    ].filter(Boolean);
+
+    const paths: string[] = [];
+    for (const rawValue of rawValues) {
+      for (const rawLine of rawValue.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) {
+          continue;
+        }
+
+        if (line.startsWith('file://')) {
+          try {
+            const url = new URL(line);
+            let pathName = decodeURIComponent(url.pathname);
+            if (/^\/[A-Za-z]:\//.test(pathName)) {
+              pathName = pathName.slice(1);
+            }
+            paths.push(pathName);
+          } catch {
+            // Ignore malformed drag payloads and keep checking other entries.
+          }
+        } else if (/^(\/|[A-Za-z]:\\)/.test(line)) {
+          paths.push(line);
+        }
+      }
+    }
+
+    return Array.from(new Set(paths));
+  }
+
+  private async handleDroppedFiles(files: File[]): Promise<void> {
+    if (files.length === 0) {
+      return;
+    }
+
+    if (isVSCode) {
+      this.showImmediateLoading({ fileName: `${files.length} dropped file(s)` });
+      try {
+        const droppedFiles = await Promise.all(
+          files.map(async file => ({
+            name: file.name,
+            data: await file.arrayBuffer(),
+          }))
+        );
+        this.vscode.postMessage({
+          type: 'addDroppedFiles',
+          files: droppedFiles,
+        });
+      } catch (error) {
+        this.showError(
+          `Failed to read dropped file: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+      return;
+    }
+
+    await this.handleBrowserFiles(files);
   }
 
   private async handleBrowserFiles(files: File[]) {
@@ -7290,6 +7378,7 @@ class PointCloudVisualizer {
     this.updateFileList();
     this.restoreDepthPanelStates(openPanelStates);
     this.updateFileStats();
+    this.showLoading(false);
 
     // debug
   }
