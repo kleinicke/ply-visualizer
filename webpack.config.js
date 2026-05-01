@@ -81,6 +81,7 @@ module.exports = [
               loader: 'ts-loader',
               options: {
                 configFile: 'website/src/tsconfig.json',
+                compiler: path.resolve(__dirname, 'website/node_modules/typescript'),
               },
             },
           ],
