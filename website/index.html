@@ -112,7 +112,7 @@
             <!-- Controls Tab -->
             <div id="controls-tab" class="tab-panel">
                 <div class="panel-section">
-                    <h4>Brightness & Eye Dome</h4>
+                    <h4>Brightness & Background</h4>
                     <div>
                         <div class="control-group" style="margin-bottom: 8px;">
                             <label for="brightness-slider" style="font-size: 11px;">Brightness:</label>
@@ -121,8 +121,16 @@
                             <span id="brightness-value"
                                 style="font-size: 11px; min-width: 32px; text-align: right;">0.0</span>
                         </div>
+                        <div class="control-group" style="margin-bottom: 8px;">
+                            <label for="background-brightness-slider" style="font-size: 11px;">Background:</label>
+                            <input id="background-brightness-slider" type="range" min="0" max="100" step="1" value="13"
+                                class="control-input" style="flex: 1; margin: 0 8px;" />
+                            <span id="background-brightness-value"
+                                style="font-size: 11px; min-width: 88px; text-align: right;">13% (#222222)</span>
+                        </div>
                         <p class="setting-description" style="margin-top: 0;">
-                            Exposure-like brightness offset. 0.0 is neutral.
+                            Brightness adjusts the rendered geometry. Background adjusts only the neutral backdrop.
+                            Double-click a slider to reset it.
                         </p>
                     </div>
                     <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--vscode-panel-border, rgba(255,255,255,0.1));">

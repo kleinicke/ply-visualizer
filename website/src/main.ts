@@ -88,6 +88,7 @@ class PointCloudVisualizer {
   private edlRadius: number = 1.4;
   private edlSecondRingWeight: number = 0.0;
   private brightnessStops: number = 0.0;
+  private backgroundBrightness: number = 13;
   private effectComposer: EffectComposer | null = null;
   private edlPass: EDLPass | null = null;
   private rotationCenterManager: RotationCenterManager = new RotationCenterManager();
@@ -834,7 +835,7 @@ class PointCloudVisualizer {
   private initThreeJS(): void {
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x222222);
+    this.applyBackgroundBrightness();
 
     // Camera
     const container = document.getElementById('viewer-container');
@@ -869,7 +870,8 @@ class PointCloudVisualizer {
     });
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.applyBrightnessToCanvas();
+    this.applySceneBrightness();
+    this.applyBackgroundBrightness();
     this.renderer.shadowMap.enabled = true; // Re-enable shadows
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -1316,10 +1318,34 @@ class PointCloudVisualizer {
     // concise summary already printed elsewhere
   }
 
-  private applyBrightnessToCanvas(): void {
-    // Apply post-display brightness in exposure stops: factor = 2^stops.
-    const factor = Math.pow(2, this.brightnessStops);
-    this.renderer.domElement.style.filter = `brightness(${factor.toFixed(4)})`;
+  private applySceneBrightness(): void {
+    // Exposure affects rendered geometry, while the renderer clear/background color stays separate.
+    this.renderer.toneMapping = THREE.LinearToneMapping;
+    this.renderer.toneMappingExposure = Math.pow(2, this.brightnessStops);
+  }
+
+  private getBackgroundCssColor(): string {
+    const channel = THREE.MathUtils.clamp(
+      Math.round((this.backgroundBrightness / 100) * 255),
+      0,
+      255
+    );
+    return `#${channel.toString(16).padStart(2, '0').repeat(3)}`;
+  }
+
+  private getBackgroundBrightnessLabel(): string {
+    return `${Math.round(this.backgroundBrightness)}% (${this.getBackgroundCssColor()})`;
+  }
+
+  private applyBackgroundBrightness(): void {
+    const backgroundColor = this.getBackgroundCssColor();
+    this.scene.background = null;
+    if (this.renderer) {
+      this.renderer.setClearColor(0x000000, 0);
+      this.renderer.setClearAlpha(0);
+      this.renderer.domElement.style.backgroundColor = backgroundColor;
+      this.renderer.domElement.style.filter = '';
+    }
   }
 
   private applyEnvironmentSpecificUI(): void {
@@ -2558,6 +2584,22 @@ class PointCloudVisualizer {
       slider.addEventListener('input', () => this.seekSequence(parseInt(slider.value, 10) || 0));
     }
 
+    document.addEventListener('dblclick', e => {
+      const slider = e.target;
+      if (!(slider instanceof HTMLInputElement) || slider.type !== 'range') {
+        return;
+      }
+
+      const resetValue = slider.defaultValue || slider.getAttribute('value');
+      if (resetValue === null || resetValue === '') {
+        return;
+      }
+
+      e.preventDefault();
+      slider.value = resetValue;
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
     // Tab navigation
     const tabButtons = document.querySelectorAll('.tab-button');
     tabButtons.forEach(button => {
@@ -2854,13 +2896,37 @@ class PointCloudVisualizer {
     const brightnessSlider = document.getElementById('brightness-slider') as HTMLInputElement;
     const brightnessValue = document.getElementById('brightness-value');
     if (brightnessSlider) {
+      brightnessSlider.value = this.brightnessStops.toFixed(1);
+      if (brightnessValue) {
+        brightnessValue.textContent = this.brightnessStops.toFixed(1);
+      }
       brightnessSlider.addEventListener('input', () => {
         const val = parseFloat(brightnessSlider.value);
         this.brightnessStops = Number.isFinite(val) ? val : 0;
         if (brightnessValue) {
           brightnessValue.textContent = this.brightnessStops.toFixed(1);
         }
-        this.applyBrightnessToCanvas();
+        this.applySceneBrightness();
+        this.requestRender();
+      });
+    }
+
+    const backgroundSlider = document.getElementById(
+      'background-brightness-slider'
+    ) as HTMLInputElement;
+    const backgroundValue = document.getElementById('background-brightness-value');
+    if (backgroundSlider) {
+      backgroundSlider.value = this.backgroundBrightness.toString();
+      if (backgroundValue) {
+        backgroundValue.textContent = this.getBackgroundBrightnessLabel();
+      }
+      backgroundSlider.addEventListener('input', () => {
+        const val = parseFloat(backgroundSlider.value);
+        this.backgroundBrightness = Number.isFinite(val) ? val : 13;
+        if (backgroundValue) {
+          backgroundValue.textContent = this.getBackgroundBrightnessLabel();
+        }
+        this.applyBackgroundBrightness();
         this.requestRender();
       });
     }
