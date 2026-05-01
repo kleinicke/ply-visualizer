@@ -9,11 +9,8 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
-    "paths": {
-      "@website/*": ["website/src/*"]
-    }
+    "types": ["node", "vscode"],
+    "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*", "website/src/parsers/**/*", "website/src/interfaces.ts"],
   "exclude": [

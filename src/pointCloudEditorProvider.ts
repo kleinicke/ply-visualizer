@@ -2,15 +2,15 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { DatasetManager } from './dataset/datasetManager';
-import { PlyParser } from '@website/parsers/plyParser';
-import { ObjParser } from '@website/parsers/objParser';
-import { MtlParser } from '@website/parsers/mtlParser';
-import { StlParser } from '@website/parsers/stlParser';
-import { PcdParser } from '@website/parsers/pcdParser';
-import { PtsParser } from '@website/parsers/ptsParser';
-import { OffParser } from '@website/parsers/offParser';
-import { GltfParser } from '@website/parsers/gltfParser';
-import { NpyParser, isNpyPointCloudData } from '@website/parsers/npyParser';
+import { PlyParser } from '../website/src/parsers/plyParser';
+import { ObjParser } from '../website/src/parsers/objParser';
+import { MtlParser } from '../website/src/parsers/mtlParser';
+import { StlParser } from '../website/src/parsers/stlParser';
+import { PcdParser } from '../website/src/parsers/pcdParser';
+import { PtsParser } from '../website/src/parsers/ptsParser';
+import { OffParser } from '../website/src/parsers/offParser';
+import { GltfParser } from '../website/src/parsers/gltfParser';
+import { NpyParser } from '../website/src/parsers/npyParser';
 
 // Shared file handling functionality
 import {
@@ -860,15 +860,15 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const files = await vscode.window.showOpenDialog({
       canSelectMany: true,
       filters: {
-        // eslint-disable-next-line @typescript-eslint/naming-convention
+         
         'Point Cloud & Pose Files': [...ALL_SUPPORTED_EXTENSIONS],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
+         
         'Point Clouds': [...SUPPORTED_EXTENSIONS.pointClouds],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
+         
         Meshes: [...SUPPORTED_EXTENSIONS.meshes],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
+         
         'Depth Images': [...SUPPORTED_EXTENSIONS.depthImages],
-        // eslint-disable-next-line @typescript-eslint/naming-convention
+         
         'Pose Data': [...SUPPORTED_EXTENSIONS.poseData],
       },
       title: 'Select point cloud files to add',
@@ -2575,7 +2575,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       const files = await vscode.window.showOpenDialog({
         canSelectMany: false,
         filters: {
-          // eslint-disable-next-line @typescript-eslint/naming-convention
+           
           'MTL Material Files': ['mtl'],
         },
         title: 'Select MTL material file',

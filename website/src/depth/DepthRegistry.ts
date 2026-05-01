@@ -1,4 +1,8 @@
 import { DepthReader, DepthReaderResult } from './types';
+import { NpyReader } from './readers/NpyReader';
+import { PfmReader } from './readers/PfmReader';
+import { PngReader } from './readers/PngReader';
+import { TifReader } from './readers/TifReader';
 
 const readers: DepthReader[] = [];
 
@@ -8,15 +12,6 @@ export function registerReader(reader: DepthReader): void {
 
 export function registerDefaultReaders(): void {
   // Register depth format readers
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { PfmReader } = require('./readers/PfmReader');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { TifReader } = require('./readers/TifReader');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { NpyReader } = require('./readers/NpyReader');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { PngReader } = require('./readers/PngReader');
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   // const { ExrReader } = require('./readers/ExrReader');
 
   registerReader(new PfmReader());
