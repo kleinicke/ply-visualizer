@@ -3,7 +3,8 @@
 ## [1.5.0] - 2026
 
 - Fix pts, psd and xyz implementation to support bigger point clouds
-- Add eye-dome-lightening option
+- Add Eye-Dome Lighting
+- Add brightness sliders for objects and background
 
 ## [1.4.0] - 2025-11-24
 
