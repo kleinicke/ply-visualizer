@@ -267,7 +267,7 @@ supporting:
 - `.husky/pre-commit` - Runs lint-staged on git commits
 - `lint-staged` configuration in package.json for automatic formatting and
   linting
-- Coverage thresholds enforced via nyc configuration (80% minimum)
+- Coverage target reported via c8 and the custom analyzer (80% minimum)
 
 ## Critical Coding Guidelines
 

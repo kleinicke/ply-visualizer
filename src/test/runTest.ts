@@ -3,6 +3,8 @@ import { runTests } from '@vscode/test-electron';
 
 async function main() {
   try {
+    delete process.env.ELECTRON_RUN_AS_NODE;
+
     // The folder containing the Extension Manifest package.json
     // Passed to `--extensionDevelopmentPath`
     // __dirname at runtime is .../out/src/test
