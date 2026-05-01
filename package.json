@@ -11,7 +11,7 @@
     "url": "https://github.com/kleinicke/ply-visualizer.git"
   },
   "engines": {
-    "vscode": "^1.74.0"
+    "vscode": "^1.98.0"
   },
   "categories": [
     "Data Science",
@@ -235,10 +235,10 @@
   "devDependencies": {
     "@types/glob": "^8.0.0",
     "@types/mocha": "^10.0.1",
-    "@types/node": "^16.18.126",
+    "@types/node": "20.17.57",
     "@types/pako": "^2.0.4",
-    "@types/three": "^0.178.1",
-    "@types/vscode": "^1.74.0",
+    "@types/three": "^0.184.0",
+    "@types/vscode": "1.98.0",
     "@typescript-eslint/eslint-plugin": "^8.58.2",
     "@typescript-eslint/parser": "^8.58.2",
     "@vscode/test-electron": "^2.2.0",
