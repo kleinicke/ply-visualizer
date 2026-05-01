@@ -1551,9 +1551,6 @@ class PointCloudVisualizer {
     if (this.effectComposer) {
       this.effectComposer.setSize(container.clientWidth, container.clientHeight);
     }
-    if (this.edlPass) {
-      this.edlPass.setSize(container.clientWidth, container.clientHeight);
-    }
 
     // Update controls based on type
     if (this.controlType === 'trackball') {

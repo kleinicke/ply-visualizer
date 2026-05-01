@@ -52,6 +52,7 @@ uniform float cameraFar;
 uniform float responseScale;
 uniform float emptyPixelBoost;
 uniform float secondRingWeight;
+uniform float exposure;
 
 // 8-direction neighbor offsets
 uniform vec2 neighbours[8];
@@ -134,7 +135,7 @@ void main() {
   // Exponential falloff produces natural-looking shadows
   float shade = exp(-response * responseScale * edlStrength);
 
-  gl_FragColor = vec4(color.rgb * shade, color.a);
+  gl_FragColor = vec4(color.rgb * exposure * shade, color.a);
 }
 `;
 
@@ -209,6 +210,7 @@ export class EDLPass extends Pass {
         responseScale: { value: 300.0 },
         emptyPixelBoost: { value: 100.0 },
         secondRingWeight: { value: this.secondRingWeight },
+        exposure: { value: 1.0 },
         cameraNear: { value: 0.001 },
         cameraFar: { value: 1000000 },
         neighbours: { value: neighbourUniforms },
@@ -246,6 +248,7 @@ export class EDLPass extends Pass {
     this.edlMaterial.uniforms.responseScale.value = 300.0;
     this.edlMaterial.uniforms.emptyPixelBoost.value = 100.0;
     this.edlMaterial.uniforms.secondRingWeight.value = this.secondRingWeight;
+    this.edlMaterial.uniforms.exposure.value = renderer.toneMappingExposure;
     this.edlMaterial.uniforms.screenWidth.value = this._width;
     this.edlMaterial.uniforms.screenHeight.value = this._height;
 
