@@ -73,9 +73,16 @@ export interface UnifiedFileData {
   faceCount: number;
   hasColors: boolean;
   hasNormals: boolean;
+  hasIntensity?: boolean;
   fileName: string;
   fileIndex?: number;
   triangles?: any[]; // For STL format
+  positionsArray?: Float32Array;
+  colorsArray?: Uint8Array | null;
+  normalsArray?: Float32Array | null;
+  intensityArray?: Float32Array | null;
+  scalarFields?: Record<string, Float32Array>;
+  useTypedArrays?: boolean;
 }
 
 // Parser result interface
@@ -373,18 +380,30 @@ export function convertToUnifiedFormat(data: any, fileName: string): UnifiedFile
     console.log(`✅ STL conversion: ${vertices.length} unique vertices, ${faces.length} faces`);
   }
 
-  return {
+  const unified: UnifiedFileData = {
     vertices: vertices,
     faces: faces,
     format: data.format || 'ascii',
     version: data.version || '1.0',
     comments: data.comments || [],
-    vertexCount: vertices.length,
+    vertexCount: data.vertexCount ?? vertices.length,
     faceCount: faces.length,
     hasColors: data.hasColors || false,
-    hasNormals: data.hasNormals || true, // Most formats have normals
+    hasNormals: data.hasNormals ?? !!data.triangles,
+    hasIntensity: data.hasIntensity || false,
     fileName: fileName,
   };
+
+  if (data.useTypedArrays) {
+    unified.useTypedArrays = true;
+    unified.positionsArray = data.positionsArray;
+    unified.colorsArray = data.colorsArray ?? null;
+    unified.normalsArray = data.normalsArray ?? null;
+    unified.intensityArray = data.intensityArray ?? null;
+    unified.scalarFields = data.scalarFields ?? {};
+  }
+
+  return unified;
 }
 
 /**
@@ -829,9 +848,8 @@ export async function convertDepthToUnified(
   data: ArrayBuffer,
   cameraParams: CameraParams & { depthScale?: number; depthBias?: number }
 ): Promise<ParseResult> {
-  const { registerDefaultReaders, registerReader, readDepth } = await import(
-    './depth/DepthRegistry'
-  );
+  const { registerDefaultReaders, registerReader, readDepth } =
+    await import('./depth/DepthRegistry');
   const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
   const { PngReader } = await import('./depth/readers/PngReader');
 

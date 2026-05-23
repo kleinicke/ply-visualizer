@@ -10,6 +10,7 @@ export interface SpatialVertex {
   nx?: number;
   ny?: number;
   nz?: number;
+  intensity?: number;
 }
 
 export interface SpatialFace {
@@ -26,10 +27,17 @@ export interface SpatialData {
   faceCount: number;
   hasColors: boolean;
   hasNormals: boolean;
+  hasIntensity?: boolean;
   fileName?: string;
   shortPath?: string; // parent/grandparent/filename for tooltip display
   fileIndex?: number;
   fileSizeInBytes?: number;
+  positionsArray?: Float32Array;
+  colorsArray?: Uint8Array | null;
+  normalsArray?: Float32Array | null;
+  intensityArray?: Float32Array | null;
+  scalarFields?: Record<string, Float32Array>;
+  useTypedArrays?: boolean;
 }
 
 export interface CameraParams {

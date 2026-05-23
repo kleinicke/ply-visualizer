@@ -1,5 +1,9 @@
 # Change Log
 
+## [1.6.0] - 2026-
+
+- Add support for intensity values (for ply, pcd, pts and xyz)
+
 ## [1.5.0] - 2026-05-02
 
 - Fix pts, psd and xyz implementation to support bigger point clouds

@@ -26,17 +26,6 @@ directly inside VS Code.
 | 3D Body Poses          | JSON pose data (experimental)         |
 | Camera Profiles        | JSON pose data (experimental)         |
 
-## Quick start
-
-1. Open a supported file in VS Code.
-2. Use the default custom editor, or right-click the file and choose **Open with
-   3D Visualizer**.
-3. For depth and disparity images, use the conversion command for the file type
-   and adjust the camera parameters when prompted.
-
-The extension also adds commands for opening multiple point clouds, playing a
-point cloud sequence and converting depth files to point clouds.
-
 ## Features
 
 ### Depth and Disparity to Point Cloud
@@ -65,6 +54,13 @@ Inspect mesh files with controls for surface, wireframe, points and normals.
 This is useful when checking geometry, topology or exported reconstruction
 results without leaving the editor.
 
+### Point Cloud Attributes
+
+Point cloud files can include positions, RGB colors, normals and scalar fields.
+The viewer uses positions for geometry, original RGB values when available,
+normals for inspection, and intensity/reflectivity fields for optional scalar
+coloring.
+
 ### Distance Measurement Tools and Camera Manipulation
 
 **Shift-double-click** measures the distance between the rotation center and the
@@ -85,6 +81,17 @@ more frames are generated, which helps reduce power usage.
 
 - As a depth image: `[X,Y]`
 - As a point cloud: `[...,3]` with the three values `X,Y,Z`
+
+## Quick start
+
+1. Open a supported file in VS Code.
+2. Use the default custom editor, or right-click the file and choose **Open with
+   3D Visualizer**.
+3. For depth and disparity images, use the conversion command for the file type
+   and adjust the camera parameters when prompted.
+
+The extension also adds commands for opening multiple point clouds, playing a
+point cloud sequence and converting depth files to point clouds.
 
 ## Feature requests and issues
 

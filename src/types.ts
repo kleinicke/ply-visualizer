@@ -9,6 +9,7 @@ export interface BaseVertex {
   nx?: number;
   ny?: number;
   nz?: number;
+  intensity?: number;
 }
 
 export interface BaseFace {
@@ -20,7 +21,14 @@ export interface BaseParserData {
   vertexCount: number;
   hasColors: boolean;
   hasNormals: boolean;
+  hasIntensity?: boolean;
   fileName: string;
   fileIndex?: number;
   comments: string[];
+  positionsArray?: Float32Array;
+  colorsArray?: Uint8Array | null;
+  normalsArray?: Float32Array | null;
+  intensityArray?: Float32Array | null;
+  scalarFields?: Record<string, Float32Array>;
+  useTypedArrays?: boolean;
 }

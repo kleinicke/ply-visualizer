@@ -12,6 +12,7 @@ export interface PcdData {
   vertexCount: number;
   hasColors: boolean;
   hasNormals: boolean;
+  hasIntensity: boolean;
   format: 'ascii' | 'binary' | 'binary_compressed';
   fileName: string;
   fileIndex?: number;
@@ -27,6 +28,8 @@ export interface PcdData {
   positionsArray: Float32Array;
   colorsArray: Uint8Array | null;
   normalsArray: Float32Array | null;
+  intensityArray: Float32Array | null;
+  scalarFields: Record<string, Float32Array>;
   useTypedArrays: true;
   // Legacy — always empty
   vertices: never[];
@@ -117,9 +120,16 @@ export class PcdParser {
     const nxI = fIdx('normal_x') === -1 ? fIdx('nx') : fIdx('normal_x');
     const nyI = fIdx('normal_y') === -1 ? fIdx('ny') : fIdx('normal_y');
     const nzI = fIdx('normal_z') === -1 ? fIdx('nz') : fIdx('normal_z');
+    const intensityI = this.findScalarFieldIndex(fields, [
+      'intensity',
+      'reflectivity',
+      'reflectance',
+      'remission',
+    ]);
 
     const hasColors = rgbI !== -1 || (rI !== -1 && gI !== -1 && bI !== -1);
     const hasNormals = nxI !== -1 && nyI !== -1 && nzI !== -1;
+    const hasIntensity = intensityI !== -1;
 
     timingCallback?.(
       `📊 PCD: ${vertexCount.toLocaleString()} points, ${format}, fields: ${fields.join(' ')}`
@@ -129,6 +139,7 @@ export class PcdParser {
     const positionsArray = new Float32Array(vertexCount * 3);
     const colorsArray = hasColors ? new Uint8Array(vertexCount * 3) : null;
     const normalsArray = hasNormals ? new Float32Array(vertexCount * 3) : null;
+    const intensityArray = hasIntensity ? new Float32Array(vertexCount) : null;
 
     // ── 4. Parse data ────────────────────────────────────────────────────────
     if (format === 'binary_compressed') {
@@ -150,9 +161,11 @@ export class PcdParser {
         nxI,
         nyI,
         nzI,
+        intensityI,
         positionsArray,
         colorsArray,
-        normalsArray
+        normalsArray,
+        intensityArray
       );
     } else if (format === 'binary') {
       this.parseBinary(
@@ -173,9 +186,11 @@ export class PcdParser {
         nxI,
         nyI,
         nzI,
+        intensityI,
         positionsArray,
         colorsArray,
-        normalsArray
+        normalsArray,
+        intensityArray
       );
     } else {
       this.parseAscii(
@@ -193,9 +208,11 @@ export class PcdParser {
         nxI,
         nyI,
         nzI,
+        intensityI,
         positionsArray,
         colorsArray,
         normalsArray,
+        intensityArray,
         timingCallback
       );
     }
@@ -205,6 +222,7 @@ export class PcdParser {
       positionsArray,
       colorsArray,
       normalsArray,
+      intensityArray,
       vertexCount
     );
 
@@ -212,6 +230,10 @@ export class PcdParser {
     const finalPositions = positionsArray.slice(0, finalVertexCount * 3);
     const finalColors = colorsArray ? colorsArray.slice(0, finalVertexCount * 3) : null;
     const finalNormals = normalsArray ? normalsArray.slice(0, finalVertexCount * 3) : null;
+    const finalIntensity = intensityArray ? intensityArray.slice(0, finalVertexCount) : null;
+    const scalarFields: Record<string, Float32Array> = finalIntensity
+      ? { intensity: finalIntensity }
+      : {};
 
     const elapsed = (performance.now() - startTime).toFixed(1);
     timingCallback?.(
@@ -222,6 +244,7 @@ export class PcdParser {
       vertexCount: finalVertexCount,
       hasColors,
       hasNormals,
+      hasIntensity,
       format,
       fileName: '',
       comments,
@@ -235,9 +258,16 @@ export class PcdParser {
       positionsArray: finalPositions,
       colorsArray: finalColors,
       normalsArray: finalNormals,
+      intensityArray: finalIntensity,
+      scalarFields,
       useTypedArrays: true,
       vertices: [],
     };
+  }
+
+  private findScalarFieldIndex(fields: string[], aliases: string[]): number {
+    const lowerAliases = new Set(aliases.map(alias => alias.toLowerCase()));
+    return fields.findIndex(field => lowerAliases.has(field.toLowerCase()));
   }
 
   // ── Binary-compressed parsing ───────────────────────────────────────────────
@@ -327,9 +357,11 @@ export class PcdParser {
     nxI: number,
     nyI: number,
     nzI: number,
+    intensityI: number,
     positions: Float32Array,
     colors: Uint8Array | null,
-    normals: Float32Array | null
+    normals: Float32Array | null,
+    intensity: Float32Array | null
   ): void {
     // Compute byte offset of each field's column block
     const fieldStart: number[] = [];
@@ -340,20 +372,32 @@ export class PcdParser {
     }
 
     const readValue = (fieldIdx: number, pointIdx: number): number => {
-      if (fieldIdx < 0) {return 0;}
+      if (fieldIdx < 0) {
+        return 0;
+      }
       const s = size[fieldIdx];
       const t = type[fieldIdx];
       const byteOff = fieldStart[fieldIdx] + pointIdx * s;
       const dv = new DataView(data.buffer, data.byteOffset + byteOff, s);
-      if (t === 'F') {return s === 4 ? dv.getFloat32(0, true) : dv.getFloat64(0, true);}
+      if (t === 'F') {
+        return s === 4 ? dv.getFloat32(0, true) : dv.getFloat64(0, true);
+      }
       if (t === 'U') {
-        if (s === 1) {return dv.getUint8(0);}
-        if (s === 2) {return dv.getUint16(0, true);}
+        if (s === 1) {
+          return dv.getUint8(0);
+        }
+        if (s === 2) {
+          return dv.getUint16(0, true);
+        }
         return dv.getUint32(0, true);
       }
       if (t === 'I') {
-        if (s === 1) {return dv.getInt8(0);}
-        if (s === 2) {return dv.getInt16(0, true);}
+        if (s === 1) {
+          return dv.getInt8(0);
+        }
+        if (s === 2) {
+          return dv.getInt16(0, true);
+        }
         return dv.getInt32(0, true);
       }
       return 0;
@@ -392,6 +436,10 @@ export class PcdParser {
         normals[i3 + 1] = readValue(nyI, i);
         normals[i3 + 2] = readValue(nzI, i);
       }
+
+      if (intensity) {
+        intensity[i] = readValue(intensityI, i);
+      }
     }
   }
 
@@ -415,9 +463,11 @@ export class PcdParser {
     nxI: number,
     nyI: number,
     nzI: number,
+    intensityI: number,
     positions: Float32Array,
     colors: Uint8Array | null,
-    normals: Float32Array | null
+    normals: Float32Array | null,
+    intensity: Float32Array | null
   ): void {
     // Byte stride per point
     let stride = 0;
@@ -502,6 +552,10 @@ export class PcdParser {
         normals[i3 + 1] = readField(base, nyI);
         normals[i3 + 2] = readField(base, nzI);
       }
+
+      if (intensity) {
+        intensity[i] = readField(base, intensityI);
+      }
     }
   }
 
@@ -516,6 +570,7 @@ export class PcdParser {
     positions: Float32Array,
     colors: Uint8Array | null,
     normals: Float32Array | null,
+    intensity: Float32Array | null,
     vertexCount: number
   ): number {
     let writeIdx = 0;
@@ -538,6 +593,9 @@ export class PcdParser {
           normals[w3] = normals[i3];
           normals[w3 + 1] = normals[i3 + 1];
           normals[w3 + 2] = normals[i3 + 2];
+        }
+        if (intensity) {
+          intensity[writeIdx] = intensity[i];
         }
       }
       writeIdx++;
@@ -562,9 +620,11 @@ export class PcdParser {
     nxI: number,
     nyI: number,
     nzI: number,
+    intensityI: number,
     positions: Float32Array,
     colors: Uint8Array | null,
     normals: Float32Array | null,
+    intensity: Float32Array | null,
     timingCallback?: (msg: string) => void
   ): void {
     const reader = new ByteLineReader(data, dataOffset);
@@ -608,6 +668,10 @@ export class PcdParser {
         normals[i3] = parseFloat(parts[nxI] ?? '0');
         normals[i3 + 1] = parseFloat(parts[nyI] ?? '0');
         normals[i3 + 2] = parseFloat(parts[nzI] ?? '0');
+      }
+
+      if (intensity) {
+        intensity[parsed] = parseFloat(parts[intensityI] ?? '0');
       }
 
       parsed++;

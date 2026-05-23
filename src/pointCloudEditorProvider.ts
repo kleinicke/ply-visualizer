@@ -1559,6 +1559,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             faceCount: header.headerInfo.faceCount,
             hasColors: header.headerInfo.hasColors,
             hasNormals: header.headerInfo.hasNormals,
+            hasIntensity: header.headerInfo.hasIntensity,
             format: header.headerInfo.format,
             comments: header.headerInfo.comments,
             vertexStride: header.vertexStride,
@@ -1746,6 +1747,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       faceCount: parsedData.faceCount,
       hasColors: parsedData.hasColors,
       hasNormals: parsedData.hasNormals,
+      hasIntensity: parsedData.hasIntensity,
       format: parsedData.format,
       comments: parsedData.comments,
 

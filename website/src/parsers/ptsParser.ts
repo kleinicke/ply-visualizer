@@ -28,6 +28,8 @@ export interface PtsData {
   positionsArray: Float32Array;
   colorsArray: Uint8Array | null;
   normalsArray: Float32Array | null;
+  intensityArray: Float32Array | null;
+  scalarFields: Record<string, Float32Array>;
   useTypedArrays: true;
   // Legacy — always empty
   vertices: never[];
@@ -122,6 +124,7 @@ export class PtsParser {
     let positions = new Float32Array(capacity * 3);
     let colors = hasColors ? new Uint8Array(capacity * 3) : null;
     let normals = hasNormals ? new Float32Array(capacity * 3) : null;
+    let intensity = hasIntensity ? new Float32Array(capacity) : null;
     let parsed = 0;
 
     const grow = () => {
@@ -138,6 +141,11 @@ export class PtsParser {
         const n2 = new Float32Array(capacity * 3);
         n2.set(normals);
         normals = n2;
+      }
+      if (intensity) {
+        const i2 = new Float32Array(capacity);
+        i2.set(intensity);
+        intensity = i2;
       }
     };
 
@@ -156,6 +164,10 @@ export class PtsParser {
       positions[i3] = parseFloat(parts[0]);
       positions[i3 + 1] = parseFloat(parts[1]);
       positions[i3 + 2] = parseFloat(parts[2]);
+
+      if (intensity) {
+        intensity[parsed] = parseFloat(parts[3]);
+      }
 
       if (colors) {
         let rCol: number, gCol: number, bCol: number;
@@ -212,6 +224,10 @@ export class PtsParser {
     const finalPositions = positions.subarray(0, parsed * 3);
     const finalColors = colors ? colors.subarray(0, parsed * 3) : null;
     const finalNormals = normals ? normals.subarray(0, parsed * 3) : null;
+    const finalIntensity = intensity ? intensity.subarray(0, parsed) : null;
+    const scalarFields: Record<string, Float32Array> = finalIntensity
+      ? { intensity: finalIntensity }
+      : {};
 
     const elapsed = (performance.now() - startTime).toFixed(1);
     timingCallback?.(`✅ PTS: parsed ${parsed.toLocaleString()} points in ${elapsed} ms`);
@@ -228,6 +244,8 @@ export class PtsParser {
       positionsArray: finalPositions,
       colorsArray: finalColors,
       normalsArray: finalNormals,
+      intensityArray: finalIntensity,
+      scalarFields,
       useTypedArrays: true,
       vertices: [],
     };

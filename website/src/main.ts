@@ -1401,21 +1401,13 @@ class PointCloudVisualizer {
           continue;
         }
         const geometry = mesh.geometry;
+        const colorMode = this.individualColorModes[i] || 'assigned';
 
-        // Use ColorProcessor to rebuild color attributes
-        const success = this.colorProcessor.rebuildColorAttributes(
-          spatialData,
-          geometry,
-          this.convertSrgbToLinear
-        );
+        this.applyColorModeToGeometry(spatialData, geometry, colorMode);
 
-        // Ensure material uses vertex colors if rebuild was successful
-        if (
-          success &&
-          mesh instanceof THREE.Points &&
-          mesh.material instanceof THREE.PointsMaterial
-        ) {
-          mesh.material.vertexColors = true;
+        if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
+          mesh.material.vertexColors = this.shouldUseVertexColors(spatialData, colorMode);
+          mesh.material.needsUpdate = true;
         }
       }
     } catch (err) {
@@ -2379,6 +2371,203 @@ class PointCloudVisualizer {
     }, 2000);
   }
 
+  private getIntensityArray(data: SpatialData): Float32Array | null {
+    const direct = (data as any).intensityArray as Float32Array | null | undefined;
+    if (direct) {
+      return direct;
+    }
+
+    const scalarFields = (data as any).scalarFields as Record<string, Float32Array> | undefined;
+    if (scalarFields) {
+      return (
+        scalarFields.intensity ||
+        scalarFields.reflectivity ||
+        scalarFields.reflectance ||
+        scalarFields.remission ||
+        null
+      );
+    }
+
+    if ((data as any).hasIntensity && data.vertices?.length) {
+      const values = new Float32Array(data.vertices.length);
+      for (let i = 0; i < data.vertices.length; i++) {
+        values[i] = data.vertices[i].intensity ?? 0;
+      }
+      (data as any).intensityArray = values;
+      (data as any).scalarFields = {
+        ...((data as any).scalarFields || {}),
+        intensity: values,
+      };
+      return values;
+    }
+
+    return null;
+  }
+
+  private hasIntensityData(data: SpatialData): boolean {
+    return !!this.getIntensityArray(data);
+  }
+
+  private buildIntensityColorArrayForMode(
+    values: Float32Array,
+    pointCount: number,
+    colorMode: string
+  ): Float32Array {
+    const colors = new Float32Array(pointCount * 3);
+    let min = Infinity;
+    let max = -Infinity;
+
+    for (let i = 0; i < pointCount && i < values.length; i++) {
+      const value = values[i];
+      if (Number.isFinite(value)) {
+        min = Math.min(min, value);
+        max = Math.max(max, value);
+      }
+    }
+
+    const hasRange = Number.isFinite(min) && Number.isFinite(max) && max > min;
+    const mapName =
+      colorMode === 'intensity-viridis'
+        ? 'viridis'
+        : colorMode === 'intensity-colors'
+          ? 'colors'
+          : 'grayscale';
+
+    for (let i = 0; i < pointCount; i++) {
+      const value = i < values.length ? values[i] : 0;
+      const normalized = hasRange && Number.isFinite(value) ? (value - min) / (max - min) : 0.75;
+      const clamped = Math.min(1, Math.max(0, normalized));
+      const [r, g, b] = this.mapIntensityValue(clamped, mapName);
+      const i3 = i * 3;
+      colors[i3] = r;
+      colors[i3 + 1] = g;
+      colors[i3 + 2] = b;
+    }
+
+    return colors;
+  }
+
+  private mapIntensityValue(
+    value: number,
+    mapName: 'grayscale' | 'viridis' | 'colors'
+  ): [number, number, number] {
+    if (mapName === 'grayscale') {
+      return [value, value, value];
+    }
+
+    const viridis: [number, number, number][] = [
+      [0.267004, 0.004874, 0.329415],
+      [0.282623, 0.140926, 0.457517],
+      [0.253935, 0.265254, 0.529983],
+      [0.206756, 0.371758, 0.553117],
+      [0.163625, 0.471133, 0.558148],
+      [0.127568, 0.566949, 0.550556],
+      [0.134692, 0.658636, 0.517649],
+      [0.266941, 0.748751, 0.440573],
+      [0.477504, 0.821444, 0.318195],
+      [0.741388, 0.873449, 0.149561],
+      [0.993248, 0.906157, 0.143936],
+    ];
+
+    const colors: [number, number, number][] = [
+      [0.0, 0.0, 1.0],
+      [0.0, 1.0, 0.0],
+      [1.0, 1.0, 0.0],
+      [1.0, 0.0, 0.0],
+    ];
+
+    const stops = mapName === 'viridis' ? viridis : colors;
+    const scaled = value * (stops.length - 1);
+    const index = Math.min(stops.length - 2, Math.max(0, Math.floor(scaled)));
+    const t = scaled - index;
+    const a = stops[index];
+    const b = stops[index + 1];
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  }
+
+  private buildOriginalColorArray(data: SpatialData): Float32Array | null {
+    const typedColors = (data as any).colorsArray as Uint8Array | null | undefined;
+    if (typedColors && data.hasColors) {
+      const colorFloats = new Float32Array(typedColors.length);
+      if (this.convertSrgbToLinear) {
+        const lut = this.colorProcessor.ensureSrgbLUT();
+        for (let i = 0; i < typedColors.length; i++) {
+          colorFloats[i] = lut[typedColors[i]];
+        }
+      } else {
+        for (let i = 0; i < typedColors.length; i++) {
+          colorFloats[i] = typedColors[i] / 255;
+        }
+      }
+      return colorFloats;
+    }
+
+    if (!data.hasColors || !data.vertices?.length) {
+      return null;
+    }
+
+    const colors = new Float32Array(data.vertices.length * 3);
+    for (let i = 0, i3 = 0; i < data.vertices.length; i++, i3 += 3) {
+      const vertex = data.vertices[i];
+      const r8 = (vertex.red || 0) & 255;
+      const g8 = (vertex.green || 0) & 255;
+      const b8 = (vertex.blue || 0) & 255;
+      if (this.convertSrgbToLinear) {
+        const lut = this.colorProcessor.ensureSrgbLUT();
+        colors[i3] = lut[r8];
+        colors[i3 + 1] = lut[g8];
+        colors[i3 + 2] = lut[b8];
+      } else {
+        colors[i3] = r8 / 255;
+        colors[i3 + 1] = g8 / 255;
+        colors[i3 + 2] = b8 / 255;
+      }
+    }
+    return colors;
+  }
+
+  private applyColorModeToGeometry(
+    data: SpatialData,
+    geometry: THREE.BufferGeometry,
+    colorMode: string
+  ): void {
+    const pointCount = data.vertexCount || geometry.getAttribute('position')?.count || 0;
+
+    if (colorMode.startsWith('intensity')) {
+      const intensity = this.getIntensityArray(data);
+      if (intensity) {
+        const colorAttribute = new THREE.BufferAttribute(
+          this.buildIntensityColorArrayForMode(intensity, pointCount, colorMode),
+          3
+        );
+        geometry.setAttribute('color', colorAttribute);
+        colorAttribute.needsUpdate = true;
+        return;
+      }
+    }
+
+    if (colorMode === 'original' && data.hasColors) {
+      const colors = this.buildOriginalColorArray(data);
+      if (colors) {
+        const colorAttribute = new THREE.BufferAttribute(colors, 3);
+        geometry.setAttribute('color', colorAttribute);
+        colorAttribute.needsUpdate = true;
+        return;
+      }
+    }
+
+    if (geometry.getAttribute('color')) {
+      geometry.deleteAttribute('color');
+    }
+  }
+
+  private shouldUseVertexColors(data: SpatialData, colorMode: string): boolean {
+    return (
+      (colorMode === 'original' && data.hasColors) ||
+      (colorMode.startsWith('intensity') && this.hasIntensityData(data))
+    );
+  }
+
   private createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
 
@@ -2467,6 +2656,12 @@ class PointCloudVisualizer {
         geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       }
     }
+
+    const colorMode =
+      data.fileIndex !== undefined
+        ? this.individualColorModes[data.fileIndex] || 'assigned'
+        : 'assigned';
+    this.applyColorModeToGeometry(data, geometry, colorMode);
 
     // Optimized face processing
     if (data.faces.length > 0) {
@@ -4665,28 +4860,7 @@ class PointCloudVisualizer {
         material.flatShading = !data.hasNormals;
       }
 
-      if (colorMode === 'original' && data.hasColors) {
-        // Use original colors from the PLY file
-        const colors = new Float32Array(data.vertices.length * 3);
-        if (this.convertSrgbToLinear) {
-          const lut = this.colorProcessor.ensureSrgbLUT();
-          for (let i = 0; i < data.vertices.length; i++) {
-            const v = data.vertices[i];
-            const r8 = (v.red || 0) & 255;
-            const g8 = (v.green || 0) & 255;
-            const b8 = (v.blue || 0) & 255;
-            colors[i * 3] = lut[r8];
-            colors[i * 3 + 1] = lut[g8];
-            colors[i * 3 + 2] = lut[b8];
-          }
-        } else {
-          for (let i = 0; i < data.vertices.length; i++) {
-            const v = data.vertices[i];
-            colors[i * 3] = ((v.red || 0) & 255) / 255;
-            colors[i * 3 + 1] = ((v.green || 0) & 255) / 255;
-            colors[i * 3 + 2] = ((v.blue || 0) & 255) / 255;
-          }
-        }
+      if (this.shouldUseVertexColors(data, colorMode)) {
         material.vertexColors = true;
         material.color = new THREE.Color(1, 1, 1); // White base color
       } else if (colorMode === 'assigned') {
@@ -4717,20 +4891,12 @@ class PointCloudVisualizer {
       material.sizeAttenuation = true; // Always use distance-based scaling
 
       // Apply point count-based optimizations
-      const pointCount = data.vertices?.length || 0;
+      const pointCount = data.vertexCount || data.vertices?.length || 0;
       this.optimizeForPointCount(material, pointCount);
 
       // debug
 
-      if (colorMode === 'original' && data.hasColors) {
-        // Use original colors from the PLY file
-        const colors = new Float32Array(data.vertices.length * 3);
-        for (let i = 0; i < data.vertices.length; i++) {
-          const vertex = data.vertices[i];
-          colors[i * 3] = (vertex.red || 0) / 255;
-          colors[i * 3 + 1] = (vertex.green || 0) / 255;
-          colors[i * 3 + 2] = (vertex.blue || 0) / 255;
-        }
+      if (this.shouldUseVertexColors(data, colorMode)) {
         material.vertexColors = true;
         material.color = new THREE.Color(1, 1, 1); // White base color
       } else if (colorMode === 'assigned') {
@@ -4854,6 +5020,7 @@ class PointCloudVisualizer {
                 <div><strong>Faces:</strong> ${data.faceCount.toLocaleString()}</div>
                 <div><strong>Format:</strong> ${data.format}</div>
                 <div><strong>Colors:</strong> ${data.hasColors ? 'Yes' : 'No'}</div>
+                <div><strong>Intensity:</strong> ${this.hasIntensityData(data) ? 'Yes' : 'No'}</div>
                 <div><strong>Normals:</strong> ${data.hasNormals ? 'Yes' : 'No'}</div>
                 <div><strong>Rendering Mode:</strong> ${renderingMode}</div>
                 ${Array.isArray((data as any).comments) && (data as any).comments.length > 0 ? `<div><strong>Comments:</strong><br>${(data as any).comments.join('<br>')}</div>` : ''}
@@ -4936,6 +5103,12 @@ class PointCloudVisualizer {
       if (this.individualColorModes[i] === 'original' && data.hasColors) {
         colorIndicator =
           '<span class="color-indicator" style="background: linear-gradient(45deg, #ff0000, #00ff00, #0000ff); border: 1px solid #666;"></span>';
+      } else if (
+        this.individualColorModes[i]?.startsWith('intensity') &&
+        this.hasIntensityData(data)
+      ) {
+        colorIndicator =
+          '<span class="color-indicator" style="background: linear-gradient(90deg, #111, #fff); border: 1px solid #666;"></span>';
       } else {
         const color = this.fileColors[i % this.fileColors.length];
         const colorHex = `#${Math.round(color[0] * 255)
@@ -5386,6 +5559,14 @@ class PointCloudVisualizer {
                         <label for="color-${i}">Color:</label>
                         <select id="color-${i}" class="color-selector">
                             ${data.hasColors ? `<option value="original" ${this.individualColorModes[i] === 'original' ? 'selected' : ''}>Original</option>` : ''}
+                            ${
+                              this.hasIntensityData(data)
+                                ? `
+                            <option value="intensity" ${this.individualColorModes[i] === 'intensity' ? 'selected' : ''}>Intensity</option>
+                            <option value="intensity-viridis" ${this.individualColorModes[i] === 'intensity-viridis' ? 'selected' : ''}>Intensity (Viridis)</option>
+                            <option value="intensity-colors" ${this.individualColorModes[i] === 'intensity-colors' ? 'selected' : ''}>Intensity (Colors)</option>`
+                                : ''
+                            }
                             <option value="assigned" ${this.individualColorModes[i] === 'assigned' ? 'selected' : ''}>Assigned (${this.getColorName(i)})</option>
                             ${this.getColorOptions(i)}
                         </select>
@@ -6007,6 +6188,15 @@ class PointCloudVisualizer {
             }
           } else if (i < this.meshes.length) {
             // Recreate material for point clouds/OBJ
+            const mesh = this.meshes[i] as any;
+            const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
+            if (geometry) {
+              this.applyColorModeToGeometry(this.spatialFiles[i], geometry, value);
+              const originalGeometry = mesh.originalGeometry as THREE.BufferGeometry | undefined;
+              if (originalGeometry) {
+                this.applyColorModeToGeometry(this.spatialFiles[i], originalGeometry, value);
+              }
+            }
             const oldMaterial = this.meshes[i].material as any;
             const newMaterial = this.createMaterialForFile(this.spatialFiles[i], i);
             (this.meshes[i] as any).material = newMaterial;
@@ -7069,7 +7259,12 @@ class PointCloudVisualizer {
       // Initialize color mode before creating material
       // Ensure the individualColorModes array is large enough for this file's index
       // (it might have camera/pose entries that extend beyond spatialFiles)
-      const initialColorMode = this.useOriginalColors ? 'original' : 'assigned';
+      const initialColorMode =
+        this.useOriginalColors && data.hasColors
+          ? 'original'
+          : this.hasIntensityData(data)
+            ? 'intensity'
+            : 'assigned';
       while (this.individualColorModes.length <= data.fileIndex) {
         this.individualColorModes.push('assigned'); // Placeholder for non-existent files
       }
@@ -7615,6 +7810,7 @@ class PointCloudVisualizer {
     const positions = new Float32Array(vertexCount * 3);
     const colors = message.hasColors ? new Uint8Array(vertexCount * 3) : null;
     const normals = message.hasNormals ? new Float32Array(vertexCount * 3) : null;
+    const intensity = message.hasIntensity ? new Float32Array(vertexCount) : null;
 
     // Get property offsets
     const xOffset = propertyOffsets.get('x');
@@ -7626,6 +7822,26 @@ class PointCloudVisualizer {
     const nxOffset = propertyOffsets.get('nx');
     const nyOffset = propertyOffsets.get('ny');
     const nzOffset = propertyOffsets.get('nz');
+    const getPropertyOffset = (names: string[]) => {
+      for (const name of names) {
+        const direct = propertyOffsets.get(name);
+        if (direct) {
+          return direct;
+        }
+      }
+      for (const [field, offset] of propertyOffsets.entries()) {
+        if (names.includes(String(field).toLowerCase())) {
+          return offset;
+        }
+      }
+      return undefined;
+    };
+    const intensityOffset = getPropertyOffset([
+      'intensity',
+      'reflectivity',
+      'reflectance',
+      'remission',
+    ]);
 
     // Helper function to read binary value based on type
     const readBinaryValue = (offset: number, type: string): number => {
@@ -7723,6 +7939,13 @@ class PointCloudVisualizer {
           (nzOffset as any).type
         );
       }
+
+      if (intensity && intensityOffset) {
+        intensity[i] = readBinaryValue(
+          vertexOffset + (intensityOffset as any).offset,
+          (intensityOffset as any).type
+        );
+      }
     }
 
     const parseTime = performance.now();
@@ -7739,6 +7962,7 @@ class PointCloudVisualizer {
       faceCount: message.faceCount,
       hasColors: message.hasColors,
       hasNormals: message.hasNormals,
+      hasIntensity: message.hasIntensity,
       fileName: message.fileName,
       shortPath: message.shortPath,
       fileSizeInBytes: message.fileSizeInBytes,
@@ -7749,6 +7973,8 @@ class PointCloudVisualizer {
     (spatialData as any).positionsArray = positions;
     (spatialData as any).colorsArray = colors;
     (spatialData as any).normalsArray = normals;
+    (spatialData as any).intensityArray = intensity;
+    (spatialData as any).scalarFields = intensity ? { intensity } : {};
 
     // Faces: if face info was provided in header, read faces after vertex block
     // Note: rawBinaryData starts at vertex buffer; if faces follow, they are after vertexStride * vertexCount bytes
@@ -10716,7 +10942,7 @@ class PointCloudVisualizer {
 
       const pcdData = message.data;
       console.log(
-        `PCD: ${pcdData.vertexCount} points, format=${pcdData.format}, colors=${pcdData.hasColors}, normals=${pcdData.hasNormals}`
+        `PCD: ${pcdData.vertexCount} points, format=${pcdData.format}, colors=${pcdData.hasColors}, normals=${pcdData.hasNormals}, intensity=${pcdData.hasIntensity}`
       );
 
       // Convert PCD data to PLY format for rendering
@@ -10736,6 +10962,7 @@ class PointCloudVisualizer {
         faceCount: 0,
         hasColors: pcdData.hasColors,
         hasNormals: pcdData.hasNormals,
+        hasIntensity: pcdData.hasIntensity,
         fileName: message.fileName,
         shortPath: message.shortPath,
         fileSizeInBytes: message.fileSizeInBytes,
@@ -10744,6 +10971,8 @@ class PointCloudVisualizer {
       (spatialData as any).positionsArray = pcdData.positionsArray;
       (spatialData as any).colorsArray = pcdData.colorsArray;
       (spatialData as any).normalsArray = pcdData.normalsArray;
+      (spatialData as any).intensityArray = pcdData.intensityArray;
+      (spatialData as any).scalarFields = pcdData.scalarFields ?? {};
 
       // Carry the PCD viewpoint so we can set the initial transform after the
       // file is registered (at which point we know the fileIndex).
@@ -10886,6 +11115,7 @@ class PointCloudVisualizer {
         faceCount: 0,
         hasColors: ptsData.hasColors,
         hasNormals: ptsData.hasNormals,
+        hasIntensity: ptsData.hasIntensity,
         fileName: message.fileName,
         shortPath: message.shortPath,
         fileSizeInBytes: message.fileSizeInBytes,
@@ -10894,6 +11124,8 @@ class PointCloudVisualizer {
       (spatialData as any).positionsArray = ptsData.positionsArray;
       (spatialData as any).colorsArray = ptsData.colorsArray;
       (spatialData as any).normalsArray = ptsData.normalsArray;
+      (spatialData as any).intensityArray = ptsData.intensityArray;
+      (spatialData as any).scalarFields = ptsData.scalarFields ?? {};
 
       if (message.isAddFile) {
         this.addNewFiles([spatialData]);

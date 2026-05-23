@@ -9,6 +9,7 @@ export interface SpatialVertex {
   nx?: number;
   ny?: number;
   nz?: number;
+  intensity?: number;
 }
 
 export interface SpatialFace {
@@ -25,15 +26,33 @@ export interface SpatialData {
   faceCount: number;
   hasColors: boolean;
   hasNormals: boolean;
+  hasIntensity?: boolean;
   fileName?: string;
   shortPath?: string; // parent/grandparent/filename for tooltip display
   fileIndex?: number;
+  positionsArray?: Float32Array;
+  colorsArray?: Uint8Array | null;
+  normalsArray?: Float32Array | null;
+  intensityArray?: Float32Array | null;
+  scalarFields?: Record<string, Float32Array>;
+  useTypedArrays?: boolean;
 }
 
 export class PlyParser {
   private dataView: DataView | null = null;
   private offset = 0;
   private littleEndian = true;
+  private static readonly intensityAliases = [
+    'intensity',
+    'reflectivity',
+    'reflectance',
+    'remission',
+  ];
+
+  private static isIntensityField(name: string): boolean {
+    const normalized = name.toLowerCase();
+    return PlyParser.intensityAliases.includes(normalized);
+  }
 
   async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<SpatialData> {
     const parseStartTime = performance.now();
@@ -50,6 +69,7 @@ export class PlyParser {
       faceCount: 0,
       hasColors: false,
       hasNormals: false,
+      hasIntensity: false,
     };
 
     // Only decode enough bytes to find the header (major optimization!)
@@ -159,6 +179,7 @@ export class PlyParser {
     // Check for colors and normals
     result.hasColors = vertexProperties.some(p => ['red', 'green', 'blue'].includes(p.name));
     result.hasNormals = vertexProperties.some(p => ['nx', 'ny', 'nz'].includes(p.name));
+    result.hasIntensity = vertexProperties.some(p => PlyParser.isIntensityField(p.name));
 
     // Find data start position
     const headerEndPos = headerEndIndex + 'end_header'.length;
@@ -261,6 +282,15 @@ export class PlyParser {
         }
       }
 
+      if (result.hasIntensity) {
+        const intensityIdx = vertexProperties.findIndex(prop =>
+          PlyParser.isIntensityField(prop.name)
+        );
+        if (intensityIdx !== -1) {
+          vertex.intensity = parseFloat(values[intensityIdx]);
+        }
+      }
+
       // Only parse normals if they exist
       if (result.hasNormals) {
         const nxIdx = propMap.get('nx');
@@ -311,12 +341,14 @@ export class PlyParser {
     // Pre-allocate typed arrays to avoid massive object graphs
     const useColors = result.hasColors;
     const useNormals = result.hasNormals;
+    const useIntensity = !!result.hasIntensity;
     const vertexCount = result.vertexCount;
     const faceCount = result.faceCount;
 
     const positions = new Float32Array(vertexCount * 3);
     const colors = useColors ? new Uint8Array(vertexCount * 3) : null;
     const normals = useNormals ? new Float32Array(vertexCount * 3) : null;
+    const intensity = useIntensity ? new Float32Array(vertexCount) : null;
 
     // Build fast property index map
     const propIndex = new Map<string, number>();
@@ -330,6 +362,9 @@ export class PlyParser {
     const nxIdx = useNormals ? propIndex.get('nx') : undefined;
     const nyIdx = useNormals ? propIndex.get('ny') : undefined;
     const nzIdx = useNormals ? propIndex.get('nz') : undefined;
+    const intensityIdx = useIntensity
+      ? vertexProperties.findIndex(prop => PlyParser.isIntensityField(prop.name))
+      : -1;
 
     // Stream-decode ASCII payload to avoid gigantic intermediate strings
     const decoder = new TextDecoder('utf-8');
@@ -396,6 +431,11 @@ export class PlyParser {
             normals[base + 2] = values[nzIdx] !== undefined ? parseFloat(values[nzIdx]) : 0;
           }
 
+          if (intensity && intensityIdx !== -1) {
+            intensity[verticesParsed] =
+              values[intensityIdx] !== undefined ? parseFloat(values[intensityIdx]) : 0;
+          }
+
           verticesParsed++;
 
           if (verticesParsed % 1000000 === 0) {
@@ -450,6 +490,10 @@ export class PlyParser {
             normals[base + 1] = values[nyIdx] !== undefined ? parseFloat(values[nyIdx]) : 0;
             normals[base + 2] = values[nzIdx] !== undefined ? parseFloat(values[nzIdx]) : 0;
           }
+          if (intensity && intensityIdx !== -1) {
+            intensity[verticesParsed] =
+              values[intensityIdx] !== undefined ? parseFloat(values[intensityIdx]) : 0;
+          }
           verticesParsed++;
         } else if (faceCount > 0 && facesParsed < faceCount) {
           const tokens = line.split(/\s+/);
@@ -475,6 +519,8 @@ export class PlyParser {
     (result as any).positionsArray = positions;
     (result as any).colorsArray = colors;
     (result as any).normalsArray = normals;
+    (result as any).intensityArray = intensity;
+    (result as any).scalarFields = intensity ? { intensity } : {};
     (result as any).useTypedArrays = true;
     result.vertices = [];
   }
@@ -544,6 +590,7 @@ export class PlyParser {
     const positions = new Float32Array(result.vertexCount * 3);
     const colors = result.hasColors ? new Uint8Array(result.vertexCount * 3) : null;
     const normals = result.hasNormals ? new Float32Array(result.vertexCount * 3) : null;
+    const intensity = result.hasIntensity ? new Float32Array(result.vertexCount) : null;
 
     // Find property indices once
     const xIdx = propIndices.get('x') ?? -1;
@@ -555,6 +602,7 @@ export class PlyParser {
     const nxIdx = propIndices.get('nx') ?? -1;
     const nyIdx = propIndices.get('ny') ?? -1;
     const nzIdx = propIndices.get('nz') ?? -1;
+    const intensityIdx = vertexProperties.findIndex(prop => PlyParser.isIntensityField(prop.name));
 
     // Lightning-fast direct binary parsing
     for (let i = 0; i < result.vertexCount; i++) {
@@ -583,6 +631,8 @@ export class PlyParser {
           normals[i3 + 1] = value;
         } else if (normals && propIdx === nzIdx) {
           normals[i3 + 2] = value;
+        } else if (intensity && propIdx === intensityIdx) {
+          intensity[i] = value;
         }
       }
     }
@@ -594,6 +644,8 @@ export class PlyParser {
     (result as any).positionsArray = positions;
     (result as any).colorsArray = colors;
     (result as any).normalsArray = normals;
+    (result as any).intensityArray = intensity;
+    (result as any).scalarFields = intensity ? { intensity } : {};
     (result as any).useTypedArrays = true;
 
     // Create minimal vertex array for compatibility (only if really needed)
@@ -749,6 +801,7 @@ export class PlyParser {
       faceCount: 0,
       hasColors: false,
       hasNormals: false,
+      hasIntensity: false,
     };
 
     const headerStartTime = performance.now();
@@ -835,6 +888,7 @@ export class PlyParser {
 
     result.hasColors = vertexProperties.some(p => ['red', 'green', 'blue'].includes(p.name));
     result.hasNormals = vertexProperties.some(p => ['nx', 'ny', 'nz'].includes(p.name));
+    result.hasIntensity = vertexProperties.some(p => PlyParser.isIntensityField(p.name));
 
     // Calculate binary data start position
     const headerEndPos = headerEndIndex + 'end_header'.length;
@@ -946,6 +1000,14 @@ export class PlyParser {
       }
 
       const vertex: SpatialVertex = { x, y, z };
+
+      if (values.length === 4) {
+        const intensity = parseFloat(values[3]);
+        if (!isNaN(intensity)) {
+          vertex.intensity = intensity;
+          result.hasIntensity = true;
+        }
+      }
 
       // Check for RGB values (optional)
       if (values.length >= 6) {
