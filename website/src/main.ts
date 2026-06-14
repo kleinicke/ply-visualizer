@@ -251,7 +251,6 @@ class PointCloudVisualizer {
   > = new Map();
 
   // Adaptive decimation tracking
-  private lastCameraDistance: number = 0;
 
   // Depth processing state - support multiple pending Depth files
   private pendingDepthFiles: Map<
@@ -658,126 +657,7 @@ class PointCloudVisualizer {
 
     const points = new THREE.Points(geometry, material);
 
-    // Add adaptive decimation for large point clouds
-    if (positions && positions.count > 100000) {
-      (points as any).originalGeometry = geometry.clone(); // Store full geometry
-      (points as any).hasAdaptiveDecimation = true;
-      points.frustumCulled = false;
-    }
-
     return points;
-  }
-
-  private decimateGeometryByDistance(
-    originalGeometry: THREE.BufferGeometry,
-    cameraDistance: number
-  ): THREE.BufferGeometry {
-    const positions = originalGeometry.getAttribute('position') as THREE.BufferAttribute;
-    const colors = originalGeometry.getAttribute('color') as THREE.BufferAttribute;
-
-    let decimationFactor = 1;
-
-    // Aggressive decimation when zoomed out (high camera distance)
-    if (cameraDistance > 50) {
-      decimationFactor = 10;
-    } // Keep every 10th point
-    else if (cameraDistance > 20) {
-      decimationFactor = 5;
-    } // Keep every 5th point
-    else if (cameraDistance > 10) {
-      decimationFactor = 3;
-    } // Keep every 3rd point
-    else if (cameraDistance > 5) {
-      decimationFactor = 2;
-    } // Keep every 2nd point
-
-    if (decimationFactor === 1) {
-      return originalGeometry;
-    }
-
-    const totalPoints = positions.count;
-    const decimatedCount = Math.floor(totalPoints / decimationFactor);
-
-    const newPositions = new Float32Array(decimatedCount * 3);
-    const newColors = colors ? new Float32Array(decimatedCount * 3) : null;
-
-    let writeIndex = 0;
-    for (let i = 0; i < totalPoints; i += decimationFactor) {
-      // Copy position
-      newPositions[writeIndex * 3] = positions.array[i * 3];
-      newPositions[writeIndex * 3 + 1] = positions.array[i * 3 + 1];
-      newPositions[writeIndex * 3 + 2] = positions.array[i * 3 + 2];
-
-      // Copy color if available
-      if (newColors && colors) {
-        newColors[writeIndex * 3] = colors.array[i * 3];
-        newColors[writeIndex * 3 + 1] = colors.array[i * 3 + 1];
-        newColors[writeIndex * 3 + 2] = colors.array[i * 3 + 2];
-      }
-
-      writeIndex++;
-    }
-
-    const newGeometry = new THREE.BufferGeometry();
-    newGeometry.setAttribute('position', new THREE.BufferAttribute(newPositions, 3));
-    if (newColors) {
-      newGeometry.setAttribute('color', new THREE.BufferAttribute(newColors, 3));
-    }
-
-    return newGeometry;
-  }
-
-  private updateAdaptiveDecimation(): void {
-    // Calculate average distance to all point clouds
-    let totalDistance = 0;
-    let pointCloudCount = 0;
-
-    for (let i = 0; i < this.meshes.length; i++) {
-      const mesh = this.meshes[i];
-      if (mesh && mesh instanceof THREE.Points && (mesh as any).hasAdaptiveDecimation) {
-        if (mesh.geometry.boundingBox) {
-          const center = mesh.geometry.boundingBox.getCenter(new THREE.Vector3());
-          center.applyMatrix4(mesh.matrixWorld);
-          totalDistance += this.camera.position.distanceTo(center);
-          pointCloudCount++;
-        }
-      }
-    }
-
-    if (pointCloudCount === 0) {
-      return;
-    }
-
-    const avgDistance = totalDistance / pointCloudCount;
-
-    // Update geometries if distance changed significantly
-    const distanceThreshold = 2.0; // Only update if camera moved significantly
-    if (Math.abs(avgDistance - this.lastCameraDistance) > distanceThreshold) {
-      let decimationLog = `🔄 Adaptive decimation: distance=${avgDistance.toFixed(1)}`;
-
-      for (let i = 0; i < this.meshes.length; i++) {
-        const mesh = this.meshes[i];
-        if (mesh && mesh instanceof THREE.Points && (mesh as any).hasAdaptiveDecimation) {
-          const originalGeometry = (mesh as any).originalGeometry;
-          if (originalGeometry) {
-            const decimatedGeometry = this.decimateGeometryByDistance(
-              originalGeometry,
-              avgDistance
-            );
-
-            // Update mesh geometry
-            mesh.geometry.dispose();
-            mesh.geometry = decimatedGeometry;
-
-            decimationLog += `\n📊 File ${i}: ${originalGeometry.getAttribute('position').count} → ${decimatedGeometry.getAttribute('position').count} points`;
-          }
-        }
-      }
-
-      console.log(decimationLog);
-
-      this.lastCameraDistance = avgDistance;
-    }
   }
 
   // Predefined colors for different files - use shared constants
@@ -1595,9 +1475,6 @@ class PointCloudVisualizer {
     if (positionChanged || rotationChanged) {
       this.updateCameraMatrix();
       this.updateCameraControlsPanel();
-
-      // Apply adaptive decimation based on camera distance
-      // this.updateAdaptiveDecimation();
 
       // Update screen-space scaling if enabled
       if (this.screenSpaceScaling) {
@@ -6192,10 +6069,6 @@ class PointCloudVisualizer {
             const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
             if (geometry) {
               this.applyColorModeToGeometry(this.spatialFiles[i], geometry, value);
-              const originalGeometry = mesh.originalGeometry as THREE.BufferGeometry | undefined;
-              if (originalGeometry) {
-                this.applyColorModeToGeometry(this.spatialFiles[i], originalGeometry, value);
-              }
             }
             const oldMaterial = this.meshes[i].material as any;
             const newMaterial = this.createMaterialForFile(this.spatialFiles[i], i);
