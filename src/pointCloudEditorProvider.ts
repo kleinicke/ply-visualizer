@@ -28,9 +28,57 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   private pathToPanel = new Map<string, vscode.WebviewPanel>();
   private panelToPath = new Map<vscode.WebviewPanel, string>();
   private datasetManager: DatasetManager;
+  private readonly perfChannel: vscode.OutputChannel;
+  private perfChannelRevealed = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.datasetManager = new DatasetManager(context);
+    this.perfChannel = vscode.window.createOutputChannel('3D Visualizer');
+    context.subscriptions.push(this.perfChannel);
+  }
+
+  /**
+   * Wrap a panel's postMessage once so every data-bearing message (type ending
+   * in "Data") is stamped with a wall-clock `postedAt` just before it is sent.
+   * This lets the webview measure the cross-process transfer cost for ALL
+   * formats without editing each of the ~30 send sites. Best-effort: if the
+   * property can't be reassigned, transfer timing is simply omitted.
+   */
+  private stampTransferTimestamps(webviewPanel: vscode.WebviewPanel): void {
+    try {
+      const webview = webviewPanel.webview;
+      const original = webview.postMessage.bind(webview);
+      (webview as any).postMessage = (msg: any) => {
+        if (
+          msg &&
+          typeof msg === 'object' &&
+          typeof msg.type === 'string' &&
+          msg.type.endsWith('Data') &&
+          msg.postedAt === undefined
+        ) {
+          msg.postedAt = Date.now();
+        }
+        return original(msg);
+      };
+    } catch {
+      /* transfer timing is optional; never block loading over it */
+    }
+  }
+
+  /** Append a timestamped line to the "3D Visualizer" Output channel. */
+  private logPerf(line: string): void {
+    const t = new Date();
+    const ts = `${t.toTimeString().split(' ')[0]}.${t
+      .getMilliseconds()
+      .toString()
+      .padStart(3, '0')}`;
+    this.perfChannel.appendLine(`[${ts}] ${line}`);
+    // Reveal the panel once per session (without stealing editor focus) so the
+    // timing output is discoverable; afterwards it stays where the user put it.
+    if (!this.perfChannelRevealed) {
+      this.perfChannelRevealed = true;
+      this.perfChannel.show(true);
+    }
   }
 
   /**
@@ -59,6 +107,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     this.activePanels.add(webviewPanel);
     this.pathToPanel.set(document.uri.fsPath, webviewPanel);
     this.panelToPath.set(webviewPanel, document.uri.fsPath);
+    this.stampTransferTimestamps(webviewPanel);
     webviewPanel.onDidDispose(() => {
       this.activePanels.delete(webviewPanel);
       this.pathToPanel.delete(document.uri.fsPath);
@@ -171,6 +220,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           // Send depth data to webview for conversion
           webviewPanel.webview.postMessage({
             type: 'depthData',
+            // Wall-clock epoch for measuring cross-process transfer cost in the webview.
+            postedAt: Date.now(),
             fileName: path.basename(document.uri.fsPath),
             shortPath: this.getShortPath(document.uri.fsPath),
             data: depthData.buffer.slice(
@@ -707,6 +758,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'info':
           vscode.window.showInformationMessage(message.message);
+          break;
+        case 'perfLog':
+          this.logPerf(message.line);
           break;
         case 'addFile':
           await this.handleAddFile(webviewPanel);
@@ -1734,12 +1788,24 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     console.log(`🚀 ULTIMATE: Sending raw binary data for ${parsedData.fileName}`);
 
     // Extract just the binary vertex data
+    const copyStart = performance.now();
     const binaryVertexData = rawFileData.slice(headerResult.binaryDataStart);
+    const slicedBuffer = binaryVertexData.buffer.slice(
+      binaryVertexData.byteOffset,
+      binaryVertexData.byteOffset + binaryVertexData.byteLength
+    );
+    const copyMs = performance.now() - copyStart;
+    this.logPerf(
+      `⏱️ PERF[ply/ext] copy ${copyMs.toFixed(1)}ms (2x ${(binaryVertexData.byteLength / 1048576).toFixed(1)}MB) for ${parsedData.fileName}`
+    );
 
     // Send raw binary data + parsing metadata
     webviewPanel.webview.postMessage({
       type: 'ultimateRawBinaryData',
       messageType: messageType,
+      // Wall-clock epoch stamped right before postMessage so the webview can
+      // measure the cross-process serialization+IPC "transfer" cost.
+      postedAt: Date.now(),
       fileName: parsedData.fileName,
       shortPath: parsedData.shortPath,
       fileSizeInBytes: rawFileData.byteLength,
@@ -1752,10 +1818,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       comments: parsedData.comments,
 
       // Raw binary data + parsing info
-      rawBinaryData: binaryVertexData.buffer.slice(
-        binaryVertexData.byteOffset,
-        binaryVertexData.byteOffset + binaryVertexData.byteLength
-      ),
+      rawBinaryData: slicedBuffer,
       vertexStride: headerResult.vertexStride,
       propertyOffsets: Array.from(headerResult.propertyOffsets.entries()),
       littleEndian: headerResult.headerInfo.format === 'binary_little_endian',

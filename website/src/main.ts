@@ -50,6 +50,7 @@ import { registerDefaultReaders, readDepth } from './depth/DepthRegistry';
 import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
 import { ColorImageLoader } from './colorImageLoader';
 import { ByteLineReader } from './utils/byteLineReader';
+import { PerfTimer, perfLog, setPerfSink } from './utils/perfLog';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 
@@ -664,6 +665,10 @@ class PointCloudVisualizer {
   private readonly fileColors: [number, number, number][] = DEFAULT_COLORS.FILE_COLORS;
 
   constructor() {
+    // Forward PERF lines to the extension's "3D Visualizer" Output channel.
+    if (isVSCode) {
+      setPerfSink((line: string) => this.vscode.postMessage({ type: 'perfLog', line }));
+    }
     this.init();
   }
 
@@ -3969,7 +3974,7 @@ class PointCloudVisualizer {
           try {
             // Both single and multi-file data are handled the same way now
             const dataArray = Array.isArray(message.data) ? message.data : [message.data];
-            await this.displayFiles(dataArray);
+            await this.loadWithPerf('ply', message, () => this.displayFiles(dataArray));
           } catch (error) {
             console.error('Error displaying PLY data:', error);
             this.showError(
@@ -3991,7 +3996,7 @@ class PointCloudVisualizer {
           break;
         case 'directTypedArrayData':
           try {
-            await this.handleDirectTypedArrayData(message);
+            await this.loadWithPerf('ply', message, () => this.handleDirectTypedArrayData(message));
           } catch (error) {
             console.error('Error handling direct TypedArray data:', error);
             this.showError(
@@ -4002,7 +4007,7 @@ class PointCloudVisualizer {
           break;
         case 'binarySpatialData':
           try {
-            await this.handleBinarySpatialData(message);
+            await this.loadWithPerf('ply', message, () => this.handleBinarySpatialData(message));
           } catch (error) {
             console.error('Error handling binary PLY data:', error);
             this.showError(
@@ -4073,31 +4078,31 @@ class PointCloudVisualizer {
           this.handleDepthData(message);
           break;
         case 'objData':
-          this.handleObjData(message);
+          await this.loadWithPerf('obj', message, () => this.handleObjData(message));
           break;
         case 'stlData':
-          this.handleStlData(message);
+          await this.loadWithPerf('stl', message, () => this.handleStlData(message));
           break;
         case 'xyzData':
-          this.handleXyzData(message);
+          await this.loadWithPerf('xyz', message, () => this.handleXyzData(message));
           break;
         case 'pcdData':
-          this.handlePcdData(message);
+          await this.loadWithPerf('pcd', message, () => this.handlePcdData(message));
           break;
         case 'ptsData':
-          this.handlePtsData(message);
+          await this.loadWithPerf('pts', message, () => this.handlePtsData(message));
           break;
         case 'offData':
-          this.handleOffData(message);
+          await this.loadWithPerf('off', message, () => this.handleOffData(message));
           break;
         case 'gltfData':
-          this.handleGltfData(message);
+          await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
           break;
         case 'npyData':
-          this.handleNpyData(message);
+          await this.loadWithPerf('npy', message, () => this.handleNpyData(message));
           break;
         case 'xyzVariantData':
-          this.handleXyzVariantData(message);
+          await this.loadWithPerf('xyz', message, () => this.handleXyzVariantData(message));
           break;
         case 'cameraParams':
           this.handleCameraParams(message);
@@ -7664,8 +7669,38 @@ class PointCloudVisualizer {
     this.requestRender();
   }
 
+  /**
+   * Generic timing wrapper for format handlers that don't self-report detailed
+   * phases (OBJ, STL, PCD, PTS, OFF, GLTF, NPY, XYZ, ...). Captures the
+   * cross-process transfer cost plus the handler (parse + geometry + display)
+   * as a single comparable PERF line. Errors propagate; the summary still
+   * fires via finally so failed loads are still timed.
+   */
+  private async loadWithPerf(
+    kind: string,
+    message: any,
+    fn: () => void | Promise<void>
+  ): Promise<void> {
+    const perf = new PerfTimer(kind);
+    perf.transferSince(message.postedAt);
+    try {
+      await fn();
+    } finally {
+      perf.mark('handle');
+      if (message.fileName) {
+        perf.note('file', String(message.fileName));
+      }
+      if (typeof message.fileSizeInBytes === 'number') {
+        perf.note('MB', (message.fileSizeInBytes / 1048576).toFixed(2));
+      }
+      perf.summary();
+    }
+  }
+
   private async handleUltimateRawBinaryData(message: any): Promise<void> {
     const startTime = performance.now();
+    const perf = new PerfTimer('ply');
+    perf.transferSince(message.postedAt);
 
     // Parse raw binary data directly in webview
     const rawData = new Uint8Array(message.rawBinaryData);
@@ -7822,6 +7857,7 @@ class PointCloudVisualizer {
     }
 
     const parseTime = performance.now();
+    perf.mark('parse');
     console.log(`Load: parse ${message.fileName} ${(parseTime - startTime).toFixed(1)}ms`);
 
     // Create PLY data object with TypedArrays
@@ -7930,6 +7966,10 @@ class PointCloudVisualizer {
 
     console.log(`Load: total ${(performance.now() - startTime).toFixed(1)}ms`);
 
+    if (message.faceCount) {
+      perf.mark('faces');
+    }
+
     // Process as normal
     const displayStartTime = performance.now();
     if (message.messageType === 'multiSpatialData') {
@@ -7937,6 +7977,7 @@ class PointCloudVisualizer {
     } else if (message.messageType === 'addFiles') {
       this.addNewFiles([spatialData]);
     }
+    perf.mark('geometry+display');
 
     // Normals visualizer will be created on-demand when user clicks normals button
     // This ensures vertices are fully parsed before creating normals
@@ -7969,6 +8010,13 @@ class PointCloudVisualizer {
     const verticesPerSecond = Math.round(totalVertices / (absoluteCompleteTime / 1000));
     const modeLabel = message.messageType === 'addFiles' ? 'ADD FILE' : 'ULTIMATE';
     // concise metrics printed above
+
+    perf.note('verts', totalVertices);
+    perf.note('MB', (message.fileSizeInBytes / 1048576).toFixed(1));
+    if (message.hasColors) {
+      perf.note('rgb', 1);
+    }
+    perf.summary();
   }
 
   private async handleDirectTypedArrayData(message: any): Promise<void> {
@@ -10065,6 +10113,13 @@ class PointCloudVisualizer {
   private async handleDepthData(message: any): Promise<void> {
     try {
       console.log('Received depth data for processing:', message.fileName);
+      if (typeof message.postedAt === 'number') {
+        const transferMs = Math.max(0, Date.now() - message.postedAt);
+        const bytes = (message.data && message.data.byteLength) || 0;
+        perfLog(
+          `⏱️ PERF[tiff] transfer ${transferMs.toFixed(1)}ms (${(bytes / 1048576).toFixed(2)}MB raw file)`
+        );
+      }
 
       // Generate unique request ID for this depth file using shared function
       const requestId = generateDepthRequestId();
@@ -14290,12 +14345,15 @@ class PointCloudVisualizer {
   ): Promise<SpatialData | null> {
     try {
       console.log(`🖼️ Converting depth image ${fileName} to point cloud...`);
+      const perf = new PerfTimer('tiff');
 
       // Register depth readers if not already registered
       registerDefaultReaders();
 
-      // Read the depth image
+      // Read the depth image (format decode: GeoTIFF/PNG/NPY/PFM)
       const { image, meta } = await readDepth(fileName, depthData.buffer as ArrayBuffer);
+      perf.mark('decode');
+      perf.note('px', `${image.width}x${image.height}`);
       console.log(`📐 Depth image loaded: ${image.width}x${image.height}, kind: ${meta.kind}`);
 
       // Determine the depth kind based on user selection
@@ -14325,6 +14383,7 @@ class PointCloudVisualizer {
 
       // Normalize depth values
       const normalizedImage = normalizeDepth(image, updatedMeta);
+      perf.mark('normalize');
 
       // Project to point cloud
       const projectionMeta = {
@@ -14335,6 +14394,8 @@ class PointCloudVisualizer {
         cameraModel: updatedMeta.cameraModel!,
       };
       const pointCloudResult = projectToPointCloud(normalizedImage, projectionMeta);
+      perf.mark('project');
+      perf.note('model', updatedMeta.cameraModel || 'pinhole-ideal');
 
       console.log(`✅ Converted ${pointCloudResult.pointCount} depth pixels to points`);
 
@@ -14380,6 +14441,10 @@ class PointCloudVisualizer {
         fileName,
         fileIndex: 0,
       };
+
+      perf.mark('build-vertices');
+      perf.note('verts', pointCount);
+      perf.summary();
 
       console.log(`✅ Created PLY data with ${vertices.length} vertices from depth image`);
       return spatialData;
