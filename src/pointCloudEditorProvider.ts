@@ -1787,16 +1787,21 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   ): Promise<void> {
     console.log(`🚀 ULTIMATE: Sending raw binary data for ${parsedData.fileName}`);
 
-    // Extract just the binary vertex data
+    // Extract exactly the binary vertex bytes into a standalone ArrayBuffer.
+    // NOTE: vscode.workspace.fs.readFile returns a Node Buffer, whose .slice()
+    // is a *view* over the whole file's ArrayBuffer — so we must slice .buffer
+    // by byteOffset/byteLength to copy out just the vertex region. Sending the
+    // raw .buffer instead would ship the whole file from offset 0 (header bytes
+    // read as float32 → garbage geometry).
     const copyStart = performance.now();
-    const binaryVertexData = rawFileData.slice(headerResult.binaryDataStart);
+    const binaryVertexData = rawFileData.subarray(headerResult.binaryDataStart);
     const slicedBuffer = binaryVertexData.buffer.slice(
       binaryVertexData.byteOffset,
       binaryVertexData.byteOffset + binaryVertexData.byteLength
     );
     const copyMs = performance.now() - copyStart;
     this.logPerf(
-      `⏱️ PERF[ply/ext] copy ${copyMs.toFixed(1)}ms (2x ${(binaryVertexData.byteLength / 1048576).toFixed(1)}MB) for ${parsedData.fileName}`
+      `⏱️ PERF[ply/ext] copy ${copyMs.toFixed(1)}ms (${(binaryVertexData.byteLength / 1048576).toFixed(1)}MB) for ${parsedData.fileName}`
     );
 
     // Send raw binary data + parsing metadata

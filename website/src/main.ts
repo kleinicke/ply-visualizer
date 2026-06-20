@@ -2458,26 +2458,16 @@ class PointCloudVisualizer {
     // Check if we have direct TypedArrays (new ultra-fast path)
     if ((data as any).useTypedArrays) {
       const positions = (data as any).positionsArray as Float32Array;
-      const colors = (data as any).colorsArray as Uint8Array | null;
       const normals = (data as any).normalsArray as Float32Array | null;
 
       // Direct assignment - zero copying, zero processing!
       geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
-      if (colors && data.hasColors) {
-        const colorFloats = new Float32Array(colors.length);
-        if (this.convertSrgbToLinear) {
-          const lut = this.colorProcessor.ensureSrgbLUT();
-          for (let i = 0; i < colors.length; i++) {
-            colorFloats[i] = lut[colors[i]];
-          }
-        } else {
-          for (let i = 0; i < colors.length; i++) {
-            colorFloats[i] = colors[i] / 255;
-          }
-        }
-        geometry.setAttribute('color', new THREE.BufferAttribute(colorFloats, 3));
-      }
+      // NOTE: the 'color' attribute is intentionally NOT built here. The
+      // unconditional applyColorModeToGeometry() call below fully determines the
+      // final color attribute for every mode (original/intensity rebuild it,
+      // assigned deletes it), so building it here was a redundant full-size
+      // Float32 allocation + per-channel loop on every colored load.
 
       if (normals && data.hasNormals) {
         geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
@@ -7783,81 +7773,141 @@ class PointCloudVisualizer {
       }
     };
 
-    // Ultra-fast direct binary parsing with proper type handling
-    for (let i = 0; i < vertexCount; i++) {
-      const vertexOffset = i * vertexStride;
-      const i3 = i * 3;
+    // Fast path: the overwhelmingly common PLY layout is float32 x/y/z, uint8
+    // r/g/b, float32 normals, float32 intensity. When every present property
+    // matches that, we read directly from the DataView in a tight loop with no
+    // per-property function call and no string-`switch` (the previous version
+    // did ~6 calls × N vertices, which dominated parse time on large clouds).
+    const isF32 = (t?: string) => t === 'float' || t === 'float32';
+    const isU8 = (t?: string) => t === 'uchar' || t === 'uint8';
+    const hasC = !!(colors && redOffset && greenOffset && blueOffset);
+    const hasN = !!(normals && nxOffset && nyOffset && nzOffset);
+    const hasI = !!(intensity && intensityOffset);
+    const fastEligible =
+      !!xOffset &&
+      !!yOffset &&
+      !!zOffset &&
+      isF32((xOffset as any).type) &&
+      isF32((yOffset as any).type) &&
+      isF32((zOffset as any).type) &&
+      (!hasC ||
+        (isU8((redOffset as any).type) &&
+          isU8((greenOffset as any).type) &&
+          isU8((blueOffset as any).type))) &&
+      (!hasN ||
+        (isF32((nxOffset as any).type) &&
+          isF32((nyOffset as any).type) &&
+          isF32((nzOffset as any).type))) &&
+      (!hasI || isF32((intensityOffset as any).type));
 
-      // Read positions with correct data type
-      if (xOffset) {
-        positions[i3] = readBinaryValue(
-          vertexOffset + (xOffset as any).offset,
-          (xOffset as any).type
-        );
-      }
-      if (yOffset) {
-        positions[i3 + 1] = readBinaryValue(
-          vertexOffset + (yOffset as any).offset,
-          (yOffset as any).type
-        );
-      }
-      if (zOffset) {
-        positions[i3 + 2] = readBinaryValue(
-          vertexOffset + (zOffset as any).offset,
-          (zOffset as any).type
-        );
-      }
+    if (fastEligible) {
+      const le = littleEndian;
+      const xo = (xOffset as any).offset;
+      const yo = (yOffset as any).offset;
+      const zo = (zOffset as any).offset;
+      const ro = hasC ? (redOffset as any).offset : 0;
+      const go = hasC ? (greenOffset as any).offset : 0;
+      const bo = hasC ? (blueOffset as any).offset : 0;
+      const nxo = hasN ? (nxOffset as any).offset : 0;
+      const nyo = hasN ? (nyOffset as any).offset : 0;
+      const nzo = hasN ? (nzOffset as any).offset : 0;
+      const io = hasI ? (intensityOffset as any).offset : 0;
 
-      // Read colors with correct data type
-      if (colors && redOffset) {
-        colors[i3] = readBinaryValue(
-          vertexOffset + (redOffset as any).offset,
-          (redOffset as any).type
-        );
+      for (let i = 0; i < vertexCount; i++) {
+        const vo = i * vertexStride;
+        const i3 = i * 3;
+        positions[i3] = dataView.getFloat32(vo + xo, le);
+        positions[i3 + 1] = dataView.getFloat32(vo + yo, le);
+        positions[i3 + 2] = dataView.getFloat32(vo + zo, le);
+        if (hasC) {
+          colors![i3] = dataView.getUint8(vo + ro);
+          colors![i3 + 1] = dataView.getUint8(vo + go);
+          colors![i3 + 2] = dataView.getUint8(vo + bo);
+        }
+        if (hasN) {
+          normals![i3] = dataView.getFloat32(vo + nxo, le);
+          normals![i3 + 1] = dataView.getFloat32(vo + nyo, le);
+          normals![i3 + 2] = dataView.getFloat32(vo + nzo, le);
+        }
+        if (hasI) {
+          intensity![i] = dataView.getFloat32(vo + io, le);
+        }
       }
-      if (colors && greenOffset) {
-        colors[i3 + 1] = readBinaryValue(
-          vertexOffset + (greenOffset as any).offset,
-          (greenOffset as any).type
-        );
-      }
-      if (colors && blueOffset) {
-        colors[i3 + 2] = readBinaryValue(
-          vertexOffset + (blueOffset as any).offset,
-          (blueOffset as any).type
-        );
-      }
+    } else {
+      // Generic fallback for mixed/exotic property types.
+      for (let i = 0; i < vertexCount; i++) {
+        const vertexOffset = i * vertexStride;
+        const i3 = i * 3;
 
-      // Read normals with correct data type
-      if (normals && nxOffset) {
-        normals[i3] = readBinaryValue(
-          vertexOffset + (nxOffset as any).offset,
-          (nxOffset as any).type
-        );
-      }
-      if (normals && nyOffset) {
-        normals[i3 + 1] = readBinaryValue(
-          vertexOffset + (nyOffset as any).offset,
-          (nyOffset as any).type
-        );
-      }
-      if (normals && nzOffset) {
-        normals[i3 + 2] = readBinaryValue(
-          vertexOffset + (nzOffset as any).offset,
-          (nzOffset as any).type
-        );
-      }
+        if (xOffset) {
+          positions[i3] = readBinaryValue(
+            vertexOffset + (xOffset as any).offset,
+            (xOffset as any).type
+          );
+        }
+        if (yOffset) {
+          positions[i3 + 1] = readBinaryValue(
+            vertexOffset + (yOffset as any).offset,
+            (yOffset as any).type
+          );
+        }
+        if (zOffset) {
+          positions[i3 + 2] = readBinaryValue(
+            vertexOffset + (zOffset as any).offset,
+            (zOffset as any).type
+          );
+        }
 
-      if (intensity && intensityOffset) {
-        intensity[i] = readBinaryValue(
-          vertexOffset + (intensityOffset as any).offset,
-          (intensityOffset as any).type
-        );
+        if (colors && redOffset) {
+          colors[i3] = readBinaryValue(
+            vertexOffset + (redOffset as any).offset,
+            (redOffset as any).type
+          );
+        }
+        if (colors && greenOffset) {
+          colors[i3 + 1] = readBinaryValue(
+            vertexOffset + (greenOffset as any).offset,
+            (greenOffset as any).type
+          );
+        }
+        if (colors && blueOffset) {
+          colors[i3 + 2] = readBinaryValue(
+            vertexOffset + (blueOffset as any).offset,
+            (blueOffset as any).type
+          );
+        }
+
+        if (normals && nxOffset) {
+          normals[i3] = readBinaryValue(
+            vertexOffset + (nxOffset as any).offset,
+            (nxOffset as any).type
+          );
+        }
+        if (normals && nyOffset) {
+          normals[i3 + 1] = readBinaryValue(
+            vertexOffset + (nyOffset as any).offset,
+            (nyOffset as any).type
+          );
+        }
+        if (normals && nzOffset) {
+          normals[i3 + 2] = readBinaryValue(
+            vertexOffset + (nzOffset as any).offset,
+            (nzOffset as any).type
+          );
+        }
+
+        if (intensity && intensityOffset) {
+          intensity[i] = readBinaryValue(
+            vertexOffset + (intensityOffset as any).offset,
+            (intensityOffset as any).type
+          );
+        }
       }
     }
 
     const parseTime = performance.now();
     perf.mark('parse');
+    perf.note('fast', fastEligible ? 1 : 0);
     console.log(`Load: parse ${message.fileName} ${(parseTime - startTime).toFixed(1)}ms`);
 
     // Create PLY data object with TypedArrays
@@ -10117,7 +10167,7 @@ class PointCloudVisualizer {
         const transferMs = Math.max(0, Date.now() - message.postedAt);
         const bytes = (message.data && message.data.byteLength) || 0;
         perfLog(
-          `⏱️ PERF[tiff] transfer ${transferMs.toFixed(1)}ms (${(bytes / 1048576).toFixed(2)}MB raw file)`
+          `⏱️ PERF[tiff] transfer ${transferMs.toFixed(1)}ms (${(bytes / 1048576).toFixed(2)}MB raw file) (file=${message.fileName})`
         );
       }
 
@@ -14444,6 +14494,7 @@ class PointCloudVisualizer {
 
       perf.mark('build-vertices');
       perf.note('verts', pointCount);
+      perf.note('file', fileName);
       perf.summary();
 
       console.log(`✅ Created PLY data with ${vertices.length} vertices from depth image`);
