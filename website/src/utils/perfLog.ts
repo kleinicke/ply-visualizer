@@ -83,14 +83,44 @@ export class PerfTimer {
     this.extra[key] = value;
   }
 
+  private e2eStart?: number;
+
+  /**
+   * Record an absolute end-to-end start (a webview performance.now() epoch,
+   * typically window.absoluteStartTime captured when the load began) so the
+   * reported `total` reflects the WHOLE load — including work the extension did
+   * before this timer started (file read + parse). Surfaced as an `ext` phase.
+   * Ignored if the start is missing or not earlier than this timer's t0.
+   */
+  endToEnd(startMs?: number): void {
+    if (typeof startMs === 'number' && isFinite(startMs) && startMs <= this.t0) {
+      this.e2eStart = startMs;
+    }
+  }
+
   /** Emit (and return) the consolidated summary line. */
   summary(): string {
-    const total = (performance.now() - this.t0).toFixed(1);
-    const phases = this.marks.map(([p, ms]) => `${p} ${ms}ms`).join('  ');
+    const now = performance.now();
+    const phaseMarks: Array<[string, number]> = [...this.marks];
+    let totalMs = now - this.t0;
+    if (this.e2eStart != null) {
+      totalMs = now - this.e2eStart;
+      // Everything before this timer started is the extension's read+parse plus
+      // the data crossing (transfer or fetch, already shown as their own marks).
+      // Subtract those so `ext` is just the extension's read+parse, made visible.
+      const markMs = (name: string) => {
+        const m = this.marks.find(([p]) => p === name);
+        return m ? m[1] : 0;
+      };
+      const beforeT0 = markMs('transfer') + markMs('fetch');
+      const extMs = Math.max(0, this.t0 - this.e2eStart - beforeT0);
+      phaseMarks.unshift(['ext', +extMs.toFixed(1)]);
+    }
+    const phases = phaseMarks.map(([p, ms]) => `${p} ${ms}ms`).join('  ');
     const extras = Object.entries(this.extra)
       .map(([k, v]) => `${k}=${v}`)
       .join(' ');
-    const line = `⏱️ PERF[${this.kind}] ${phases}  | total ${total}ms${
+    const line = `⏱️ PERF[${this.kind}] ${phases}  | total ${totalMs.toFixed(1)}ms${
       extras ? `  (${extras})` : ''
     }`;
     perfLog(line);

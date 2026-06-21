@@ -49,7 +49,6 @@ import {
 import { registerDefaultReaders, readDepth } from './depth/DepthRegistry';
 import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
 import { ColorImageLoader } from './colorImageLoader';
-import { ByteLineReader } from './utils/byteLineReader';
 import { PerfTimer, perfLog, setPerfSink } from './utils/perfLog';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -7680,6 +7679,12 @@ class PointCloudVisualizer {
       await fn();
     } finally {
       perf.mark('handle');
+      // Honest end-to-end total (includes the extension's read+parse, shown as
+      // the `ext` phase). Skip for add-file loads, which have no fresh
+      // startLoading and would measure from a previous load's start.
+      if (!message.isAddFile) {
+        perf.endToEnd((window as any).absoluteStartTime);
+      }
       if (message.fileName) {
         perf.note('file', String(message.fileName));
       }
@@ -7812,23 +7817,31 @@ class PointCloudVisualizer {
       }
     };
 
-    // Fast path: the overwhelmingly common PLY layout is float32 x/y/z, uint8
-    // r/g/b, float32 normals, float32 intensity. When every present property
-    // matches that, we read directly from the DataView in a tight loop with no
-    // per-property function call and no string-`switch` (the previous version
-    // did ~6 calls × N vertices, which dominated parse time on large clouds).
+    // Fast path: the overwhelmingly common PLY layouts are float32 (or float64)
+    // x/y/z, uint8 r/g/b, float32 normals, float32 intensity. When every present
+    // property matches that, we read directly from the DataView in a tight loop
+    // with no per-property function call and no string-`switch` (the previous
+    // version did ~6 calls × N vertices, which dominated parse time). Open3D
+    // commonly writes double (float64) positions, so both widths are supported.
     const isF32 = (t?: string) => t === 'float' || t === 'float32';
+    const isF64 = (t?: string) => t === 'double' || t === 'float64';
     const isU8 = (t?: string) => t === 'uchar' || t === 'uint8';
     const hasC = !!(colors && redOffset && greenOffset && blueOffset);
     const hasN = !!(normals && nxOffset && nyOffset && nzOffset);
     const hasI = !!(intensity && intensityOffset);
+    const posF32 =
+      isF32((xOffset as any)?.type) &&
+      isF32((yOffset as any)?.type) &&
+      isF32((zOffset as any)?.type);
+    const posF64 =
+      isF64((xOffset as any)?.type) &&
+      isF64((yOffset as any)?.type) &&
+      isF64((zOffset as any)?.type);
     const fastEligible =
       !!xOffset &&
       !!yOffset &&
       !!zOffset &&
-      isF32((xOffset as any).type) &&
-      isF32((yOffset as any).type) &&
-      isF32((zOffset as any).type) &&
+      (posF32 || posF64) &&
       (!hasC ||
         (isU8((redOffset as any).type) &&
           isU8((greenOffset as any).type) &&
@@ -7855,9 +7868,15 @@ class PointCloudVisualizer {
       for (let i = 0; i < vertexCount; i++) {
         const vo = i * vertexStride;
         const i3 = i * 3;
-        positions[i3] = dataView.getFloat32(vo + xo, le);
-        positions[i3 + 1] = dataView.getFloat32(vo + yo, le);
-        positions[i3 + 2] = dataView.getFloat32(vo + zo, le);
+        if (posF64) {
+          positions[i3] = dataView.getFloat64(vo + xo, le);
+          positions[i3 + 1] = dataView.getFloat64(vo + yo, le);
+          positions[i3 + 2] = dataView.getFloat64(vo + zo, le);
+        } else {
+          positions[i3] = dataView.getFloat32(vo + xo, le);
+          positions[i3 + 1] = dataView.getFloat32(vo + yo, le);
+          positions[i3 + 2] = dataView.getFloat32(vo + zo, le);
+        }
         if (hasC) {
           colors![i3] = dataView.getUint8(vo + ro);
           colors![i3 + 1] = dataView.getUint8(vo + go);
@@ -8100,6 +8119,9 @@ class PointCloudVisualizer {
     const modeLabel = message.messageType === 'addFiles' ? 'ADD FILE' : 'ULTIMATE';
     // concise metrics printed above
 
+    if (message.messageType !== 'addFiles') {
+      perf.endToEnd((window as any).absoluteStartTime);
+    }
     perf.note('verts', totalVertices);
     perf.note('MB', (message.fileSizeInBytes / 1048576).toFixed(1));
     if (message.hasColors) {
@@ -11329,14 +11351,34 @@ class PointCloudVisualizer {
       console.log(`Load: recv XYZ variant (${message.variant}) ${message.fileName}`);
       this.showStatus(`XYZ: processing ${message.fileName} (${message.variant})`);
 
-      // Parse XYZ variant data
-      const spatialData = this.parseXyzVariantData(
-        message.data,
-        message.variant,
-        message.fileName,
-        message.fileSizeInBytes,
-        message.shortPath
-      );
+      // Data is already parsed into typed arrays by the extension (XyzVariantParser).
+      const xyzData = message.data;
+      const spatialData: SpatialData = {
+        vertices: [],
+        faces: [],
+        format: 'ascii',
+        version: '1.0',
+        comments: [
+          `Converted from ${message.variant.toUpperCase()}: ${message.fileName}`,
+          `Format variant: ${message.variant}`,
+        ],
+        vertexCount: xyzData.vertexCount,
+        faceCount: 0,
+        hasColors: xyzData.hasColors,
+        hasNormals: xyzData.hasNormals,
+        hasIntensity: xyzData.hasIntensity,
+        fileName: message.fileName,
+        shortPath: message.shortPath,
+        fileSizeInBytes: message.fileSizeInBytes,
+      };
+      (spatialData as any).useTypedArrays = true;
+      (spatialData as any).positionsArray = xyzData.positionsArray;
+      (spatialData as any).colorsArray = xyzData.colorsArray;
+      (spatialData as any).normalsArray = xyzData.normalsArray;
+      (spatialData as any).intensityArray = xyzData.intensityArray;
+      (spatialData as any).scalarFields = xyzData.intensityArray
+        ? { intensity: xyzData.intensityArray }
+        : {};
 
       if (message.isAddFile) {
         this.addNewFiles([spatialData]);
@@ -11370,118 +11412,6 @@ class PointCloudVisualizer {
         `${message.variant.toUpperCase()} processing failed: ${error instanceof Error ? error.message : String(error)}`
       );
     }
-  }
-
-  private parseXyzVariantData(
-    data: ArrayBuffer,
-    variant: string,
-    fileName: string,
-    fileSizeInBytes?: number,
-    shortPath?: string
-  ): SpatialData {
-    const hasColors = variant === 'xyzrgb';
-    const hasNormals = variant === 'xyzn';
-
-    // Grow dynamically — XYZ files have no point count header
-    let capacity = 1_000_000;
-    let positions = new Float32Array(capacity * 3);
-    let colors = hasColors ? new Uint8Array(capacity * 3) : null;
-    let normals = hasNormals ? new Float32Array(capacity * 3) : null;
-    let parsed = 0;
-
-    const grow = () => {
-      capacity *= 2;
-      const p2 = new Float32Array(capacity * 3);
-      p2.set(positions);
-      positions = p2;
-      if (colors) {
-        const c2 = new Uint8Array(capacity * 3);
-        c2.set(colors);
-        colors = c2;
-      }
-      if (normals) {
-        const n2 = new Float32Array(capacity * 3);
-        n2.set(normals);
-        normals = n2;
-      }
-    };
-
-    const bytes = new Uint8Array(data);
-    const reader = new ByteLineReader(bytes);
-
-    while (!reader.done) {
-      const line = reader.nextLine();
-      if (!line) {
-        continue;
-      }
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-
-      const parts = trimmed.split(/\s+/);
-      if (parts.length < 3) {
-        continue;
-      }
-
-      if (parsed >= capacity) {
-        grow();
-      }
-
-      const i3 = parsed * 3;
-      positions[i3] = parseFloat(parts[0]);
-      positions[i3 + 1] = parseFloat(parts[1]);
-      positions[i3 + 2] = parseFloat(parts[2]);
-
-      if (normals && parts.length >= 6) {
-        normals[i3] = parseFloat(parts[3]);
-        normals[i3 + 1] = parseFloat(parts[4]);
-        normals[i3 + 2] = parseFloat(parts[5]);
-      }
-
-      if (colors && parts.length >= 6) {
-        const r = parseFloat(parts[3]);
-        const g = parseFloat(parts[4]);
-        const b = parseFloat(parts[5]);
-        // Open3D writes 0-1 floats; raw integer otherwise
-        if (r <= 1.0 && g <= 1.0 && b <= 1.0) {
-          colors[i3] = Math.round(r * 255);
-          colors[i3 + 1] = Math.round(g * 255);
-          colors[i3 + 2] = Math.round(b * 255);
-        } else {
-          colors[i3] = Math.min(255, Math.max(0, Math.round(r)));
-          colors[i3 + 1] = Math.min(255, Math.max(0, Math.round(g)));
-          colors[i3 + 2] = Math.min(255, Math.max(0, Math.round(b)));
-        }
-      }
-
-      parsed++;
-    }
-
-    const spatialData: SpatialData = {
-      vertices: [],
-      faces: [],
-      format: 'ascii',
-      version: '1.0',
-      comments: [
-        `Converted from ${variant.toUpperCase()}: ${fileName}`,
-        `Format variant: ${variant}`,
-      ],
-      vertexCount: parsed,
-      faceCount: 0,
-      hasColors,
-      hasNormals,
-      fileName: fileName,
-      shortPath,
-      fileSizeInBytes,
-    };
-
-    (spatialData as any).useTypedArrays = true;
-    (spatialData as any).positionsArray = positions.subarray(0, parsed * 3);
-    (spatialData as any).colorsArray = colors ? colors.subarray(0, parsed * 3) : null;
-    (spatialData as any).normalsArray = normals ? normals.subarray(0, parsed * 3) : null;
-
-    return spatialData;
   }
 
   private createNormalsVisualizer(data: SpatialData): THREE.LineSegments {

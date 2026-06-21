@@ -11,6 +11,7 @@ import { PtsParser } from '../website/src/parsers/ptsParser';
 import { OffParser } from '../website/src/parsers/offParser';
 import { GltfParser } from '../website/src/parsers/gltfParser';
 import { NpyParser } from '../website/src/parsers/npyParser';
+import { XyzVariantParser } from '../website/src/parsers/xyzVariantParser';
 
 // Shared file handling functionality
 import {
@@ -155,7 +156,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const isPtsFile = fileType?.extension === 'pts';
     const isOffFile = fileType?.extension === 'off';
     const isGltfFile = fileType?.extension === 'gltf' || fileType?.extension === 'glb';
-    const isXyzVariant = fileType?.extension === 'xyzn' || fileType?.extension === 'xyzrgb';
+    const isXyzVariant =
+      fileType?.extension === 'xyzn' ||
+      fileType?.extension === 'xyzrgb' ||
+      fileType?.extension === 'xyz';
     const isJsonFile = fileType?.extension === 'json';
     const isNpyPointCloud = fileType?.extension === 'npy' && fileType?.category === 'pointCloud';
 
@@ -553,22 +557,41 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             timestamp: loadStartTime,
           });
 
-          const xyzData = await vscode.workspace.fs.readFile(document.uri);
+          const xyzReadStart = performance.now();
+          const xyzData = await this.readFileFast(document.uri);
           const fileReadTime = performance.now();
+          this.logPerf(
+            `⏱️ PERF[xyz/ext] read ${(fileReadTime - xyzReadStart).toFixed(1)}ms (${(xyzData.byteLength / 1048576).toFixed(1)}MB) for ${path.basename(document.uri.fsPath)}`
+          );
           webviewPanel.webview.postMessage({
             type: 'timingUpdate',
             message: `📁 Extension: XYZ variant file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
             timestamp: fileReadTime,
           });
 
-          // Send XYZ variant data to webview for parsing
+          // Parse in the extension (like PCD/PTS/PLY) and ship compact typed
+          // arrays, instead of sending the raw multi-hundred-MB ASCII text and
+          // parsing in the webview. This shrinks the transfer ~5x and keeps the
+          // webview responsive.
+          const xyzVariant =
+            fileType?.extension === 'xyzn'
+              ? 'xyzn'
+              : fileType?.extension === 'xyzrgb'
+                ? 'xyzrgb'
+                : 'xyz';
+          const xyzParser = new XyzVariantParser();
+          const xyzParsed = xyzParser.parse(xyzData, xyzVariant);
+          this.logPerf(
+            `⏱️ PERF[xyz/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${xyzParsed.vertexCount} pts) for ${path.basename(document.uri.fsPath)}`
+          );
+
           webviewPanel.webview.postMessage({
             type: 'xyzVariantData',
             fileName: path.basename(document.uri.fsPath),
             shortPath: this.getShortPath(document.uri.fsPath),
             fileSizeInBytes: xyzData.byteLength,
-            data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength),
-            variant: fileType?.extension === 'xyzn' ? 'xyzn' : 'xyzrgb',
+            data: xyzParsed,
+            variant: xyzVariant,
           });
 
           return; // Exit early for XYZ variant files
@@ -722,6 +745,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           );
           const parsedData = await parser.parse(spatialData, timingCallback);
           const parseTime = performance.now();
+          const isXyz = /\.xyz$/i.test(document.uri.fsPath);
+          this.logPerf(
+            `⏱️ PERF[${isXyz ? 'xyz' : 'ply'}/ext] parse ${(parseTime - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts) for ${path.basename(document.uri.fsPath)}`
+          );
           webviewPanel.webview.postMessage({
             type: 'timing',
             phase: 'parse',
@@ -1644,6 +1671,23 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
   private toArrayBuffer(data: Uint8Array): ArrayBuffer {
     return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  }
+
+  /**
+   * Read a file's bytes. For local files this uses Node's fs directly, which is
+   * markedly faster than vscode.workspace.fs on large files (the latter routes
+   * through the FS-provider abstraction). Falls back to workspace.fs for
+   * non-local/virtual schemes.
+   */
+  private async readFileFast(uri: vscode.Uri): Promise<Uint8Array> {
+    if (uri.scheme === 'file') {
+      try {
+        return await fs.promises.readFile(uri.fsPath);
+      } catch {
+        /* fall back to the workspace filesystem */
+      }
+    }
+    return vscode.workspace.fs.readFile(uri);
   }
 
   private async handleSequenceRequestFile(
