@@ -10360,6 +10360,11 @@ class PointCloudVisualizer {
     console.log('Processing depth with camera params:', cameraParams);
     this.showStatus('Converting depth image to point cloud...');
 
+    // Complete-load timing for depth → point cloud (the wasm/geotiff decode is
+    // logged separately inside the reader; `convert` here includes it).
+    const perfKind = /\.(tif|tiff)$/i.test(depthFileData.fileName) ? 'tiff' : 'depth';
+    const perf = new PerfTimer(perfKind);
+
     // Store original data for re-processing
     this.originalDepthFileName = depthFileData.fileName;
     this.currentCameraParams = cameraParams;
@@ -10370,6 +10375,7 @@ class PointCloudVisualizer {
       depthFileData.fileName,
       cameraParams
     );
+    perf.mark('convert');
 
     const isPfm = /\.pfm$/i.test(depthFileData.fileName);
     const isTif = /\.(tif|tiff)$/i.test(depthFileData.fileName);
@@ -10383,11 +10389,27 @@ class PointCloudVisualizer {
       height: (result as any).height || 0,
     };
 
-    // Convert Float32Arrays to vertex array using utility method
-    const vertices = DepthConverter.convertResultToVertices(result);
+    // Typed-array fast path: the projector already produced Float32 position
+    // and color arrays, so attach them directly (zero-copy) instead of
+    // materializing N vertex objects and then rebuilding typed arrays inside
+    // createGeometryFromSpatialData. The useTypedArrays geometry path expects
+    // colors as Uint8 (0-255); convert once if the projector gave 0-1 floats.
+    let colorsU8: Uint8Array | null = null;
+    if (result.colors) {
+      if (result.colors instanceof Uint8Array) {
+        colorsU8 = result.colors;
+      } else {
+        const src = result.colors;
+        colorsU8 = new Uint8Array(src.length);
+        for (let i = 0; i < src.length; i++) {
+          colorsU8[i] = Math.round(src[i] * 255);
+        }
+      }
+    }
+    perf.mark('build-colors');
 
     const spatialData: SpatialData = {
-      vertices: vertices,
+      vertices: [],
       faces: [],
       vertexCount: result.pointCount,
       hasColors: !!result.colors,
@@ -10409,6 +10431,12 @@ class PointCloudVisualizer {
           : []),
       ],
     };
+    (spatialData as any).useTypedArrays = true;
+    (spatialData as any).positionsArray = result.vertices;
+    (spatialData as any).colorsArray = colorsU8;
+    (spatialData as any).normalsArray = null;
+    (spatialData as any).intensityArray = null;
+    (spatialData as any).scalarFields = {};
 
     // Mark explicitly as depth-derived so the UI always shows the depth panel later
     (spatialData as any).isDepthDerived = true;
@@ -10454,6 +10482,10 @@ class PointCloudVisualizer {
     } else {
       await this.displayFiles([spatialData]);
     }
+    perf.mark('geometry+display');
+    perf.note('verts', result.pointCount);
+    perf.note('file', depthFileData.fileName);
+    perf.summary();
 
     // Auto-open Depth Settings panel for newly created depth-derived file in browser
     setTimeout(() => {
@@ -11652,6 +11684,12 @@ class PointCloudVisualizer {
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
       spatialData.vertices = DepthConverter.convertResultToVertices(result);
+      // Reprocess paths rebuild geometry inline from these objects; clear the
+      // initial-load typed-array view so later color-mode rebuilds / geometry
+      // recreation use these fresh objects rather than stale arrays.
+      (spatialData as any).useTypedArrays = false;
+      (spatialData as any).positionsArray = undefined;
+      (spatialData as any).colorsArray = undefined;
       spatialData.hasColors = true;
       // Mark as depth-derived so gamma correction knows these are already linear colors
       (spatialData as any).isDepthDerived = true;
@@ -12161,6 +12199,12 @@ class PointCloudVisualizer {
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
       spatialData.vertices = DepthConverter.convertResultToVertices(result);
+      // Reprocess paths rebuild geometry inline from these objects; clear the
+      // initial-load typed-array view so later color-mode rebuilds / geometry
+      // recreation use these fresh objects rather than stale arrays.
+      (spatialData as any).useTypedArrays = false;
+      (spatialData as any).positionsArray = undefined;
+      (spatialData as any).colorsArray = undefined;
       spatialData.vertexCount = result.pointCount;
       spatialData.hasColors = !!result.colors;
       // Mark as depth-derived so gamma correction knows these are already linear colors
@@ -12748,6 +12792,12 @@ class PointCloudVisualizer {
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
       spatialData.vertices = DepthConverter.convertResultToVertices(result);
+      // Reprocess paths rebuild geometry inline from these objects; clear the
+      // initial-load typed-array view so later color-mode rebuilds / geometry
+      // recreation use these fresh objects rather than stale arrays.
+      (spatialData as any).useTypedArrays = false;
+      (spatialData as any).positionsArray = undefined;
+      (spatialData as any).colorsArray = undefined;
       spatialData.hasColors = !!result.colors;
       // Mark as depth-derived so gamma correction knows these are already linear colors
       (spatialData as any).isDepthDerived = true;

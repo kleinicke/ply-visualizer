@@ -885,17 +885,53 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     );
     const geotiffUri = webview.asWebviewUri(geotiffPathOnDisk).toString();
 
+    // Rust/WASM TIFF decoder (drop-in accelerator for geotiff.js, mirrors the
+    // tiff-visualizer sister extension). The glue defines a global wasm_bindgen;
+    // the webview fetches the .wasm binary from this URI at init time.
+    const tiffWasmGlueOnDisk = vscode.Uri.joinPath(
+      this.context.extensionUri,
+      'website',
+      'media',
+      'wasm',
+      'tiff_wasm.js'
+    );
+    const tiffWasmGlueUri = webview.asWebviewUri(tiffWasmGlueOnDisk).toString();
+    const tiffWasmBinaryOnDisk = vscode.Uri.joinPath(
+      this.context.extensionUri,
+      'website',
+      'media',
+      'wasm',
+      'tiff_wasm_bg.wasm'
+    );
+    const tiffWasmBinaryUri = webview.asWebviewUri(tiffWasmBinaryOnDisk).toString();
+
     // Use a nonce to only allow specific scripts to be run
     const nonce = getNonce();
 
     // VSCode-specific modifications to the HTML:
-    // 1. Add Content Security Policy
-    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; connect-src ${webview.cspSource} https:; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
+    // 1. Add Content Security Policy. 'wasm-unsafe-eval' is required to compile
+    //    the TIFF decoder WebAssembly module; connect-src already allows
+    //    fetching the .wasm binary from the webview resource origin.
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; connect-src ${webview.cspSource} https:; script-src 'nonce-${nonce}' 'wasm-unsafe-eval'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
     html = html.replace('<meta name="viewport"', `${cspMeta}\n    <meta name="viewport"`);
 
     // 2. Replace resource URLs with webview URIs
     html = html.replace(/href="media\/style\.css"/, `href="${styleUri}"`);
     html = html.replace(/src="media\/geotiff\.min\.js"/, `nonce="${nonce}" src="${geotiffUri}"`);
+    html = html.replace(
+      /src="media\/wasm\/tiff_wasm\.js"/,
+      `nonce="${nonce}" src="${tiffWasmGlueUri}"`
+    );
+    // Point the webview at the webview-resource URI for the .wasm binary.
+    html = html.replace(
+      /window\.__TIFF_WASM_URL__ = window\.__TIFF_WASM_URL__ \|\| 'media\/wasm\/tiff_wasm_bg\.wasm';/,
+      `window.__TIFF_WASM_URL__ = '${tiffWasmBinaryUri}';`
+    );
+    // Add the nonce to the inline bootstrap script that sets __TIFF_WASM_URL__.
+    html = html.replace(
+      /<script>\s*\n\s*\/\/ Default WASM binary location/,
+      `<script nonce="${nonce}">\n      // Default WASM binary location`
+    );
     html = html.replace(/src="bundle\.js"/, `nonce="${nonce}" src="${scriptUri}"`);
 
     // 3. Remove browser-specific elements (file input, navigation links)
@@ -1579,7 +1615,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   }
 
   private toArrayBuffer(data: Uint8Array): ArrayBuffer {
-    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
   }
 
   private async handleSequenceRequestFile(

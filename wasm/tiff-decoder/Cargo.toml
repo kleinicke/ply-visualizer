@@ -1,0 +1,40 @@
+[package]
+name = "tiff-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Fast TIFF decoder for WebAssembly"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+tiff = { version = "0.11.3", features = ["webp"] }
+exr = { version = "1.74", default-features = false }
+png = { version = "0.17", default-features = false }
+ruzstd = "0.8"
+zune-jpeg = "0.5"
+hayro-ccitt = "0.3"
+console_error_panic_hook = { version = "0.1.6", optional = true }
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console"] }
+wide = "0.7"  # Portable SIMD library for WASM
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[profile.release]
+# Optimize for speed, not size
+opt-level = 3
+lto = true
+codegen-units = 1
+
+# wasm-opt (binaryen) is an optional post-processing step. Disable it so the
+# build does not depend on downloading the binaryen toolchain at build time;
+# the release profile above already optimizes the generated code.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
