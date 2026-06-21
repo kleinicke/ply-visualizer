@@ -118,6 +118,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       localResourceRoots: [
         vscode.Uri.joinPath(this.context.extensionUri, 'website', 'media'),
         vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview'),
+        // The document's directory so the webview can fetch the file bytes
+        // directly (transfer-via-fetch), avoiding the postMessage copy for
+        // large binary PLYs.
+        vscode.Uri.joinPath(document.uri, '..'),
       ],
     };
 
@@ -683,13 +687,34 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             message: `Header face types: count=${headerResult.faceCountType || 'n/a'}, index=${headerResult.faceIndexType || 'n/a'}`,
             timestamp: performance.now(),
           });
-          await this.sendUltimateRawBinary(
-            webviewPanel,
-            parsedData,
-            headerResult,
-            spatialData,
-            'multiSpatialData'
-          );
+          // Transfer-via-fetch: send only header metadata + a webview URI for
+          // the file. The webview fetches the bytes directly, avoiding the
+          // multi-hundred-ms structured-clone of the full vertex buffer. On a
+          // fetch failure the webview asks the extension to resend over
+          // postMessage (see the 'plyFetchFailed' handler, which re-reads).
+          webviewPanel.webview.postMessage({
+            type: 'ultimateRawBinaryUri',
+            messageType: 'multiSpatialData',
+            postedAt: Date.now(),
+            fileUri: webviewPanel.webview.asWebviewUri(document.uri).toString(),
+            docUri: document.uri.toString(),
+            binaryDataStart: headerResult.binaryDataStart,
+            fileName: parsedData.fileName,
+            shortPath: parsedData.shortPath,
+            fileSizeInBytes: spatialData.byteLength,
+            vertexCount: parsedData.vertexCount,
+            faceCount: parsedData.faceCount,
+            hasColors: parsedData.hasColors,
+            hasNormals: parsedData.hasNormals,
+            hasIntensity: parsedData.hasIntensity,
+            format: parsedData.format,
+            comments: parsedData.comments,
+            vertexStride: headerResult.vertexStride,
+            propertyOffsets: Array.from(headerResult.propertyOffsets.entries()),
+            littleEndian: headerResult.headerInfo.format === 'binary_little_endian',
+            faceCountType: headerResult.faceCountType,
+            faceIndexType: headerResult.faceIndexType,
+          });
         } else {
           // ASCII PLY - use traditional parsing
           console.log(
@@ -761,6 +786,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'perfLog':
           this.logPerf(message.line);
+          break;
+        case 'plyFetchFailed':
+          await this.handlePlyFetchFallback(message);
           break;
         case 'addFile':
           await this.handleAddFile(webviewPanel);
@@ -1811,6 +1839,40 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         fileName,
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+  }
+
+  /**
+   * Fallback for transfer-via-fetch: the webview couldn't fetch the file
+   * directly, so resend the vertex bytes over postMessage (the original path).
+   * Uses the retained header + bytes when available, otherwise re-reads.
+   */
+  private async handlePlyFetchFallback(message: any): Promise<void> {
+    const key = message.docUri as string;
+    this.logPerf(`⏱️ PERF[ply/ext] fetch fallback → postMessage for ${message.fileName || key}`);
+    try {
+      const uri = vscode.Uri.parse(key);
+      const panel = this.pathToPanel.get(uri.fsPath);
+      if (!panel) {
+        return;
+      }
+      // Re-read and reparse from the URI, then resend over the proven path.
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      const parser = new PlyParser();
+      const headerResult = await parser.parseHeaderOnly(bytes);
+      const parsedData = headerResult.headerInfo;
+      parsedData.fileName = path.basename(uri.fsPath);
+      parsedData.shortPath = this.getShortPath(uri.fsPath);
+      parsedData.fileIndex = 0;
+      await this.sendUltimateRawBinary(
+        panel,
+        parsedData,
+        headerResult,
+        bytes,
+        message.messageType || 'multiSpatialData'
+      );
+    } catch (error) {
+      console.error('PLY fetch fallback failed:', error);
     }
   }
 

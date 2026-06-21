@@ -3984,6 +3984,9 @@ class PointCloudVisualizer {
             );
           }
           break;
+        case 'ultimateRawBinaryUri':
+          await this.handleUltimateRawBinaryUri(message);
+          break;
         case 'directTypedArrayData':
           try {
             await this.loadWithPerf('ply', message, () => this.handleDirectTypedArrayData(message));
@@ -7687,10 +7690,46 @@ class PointCloudVisualizer {
     }
   }
 
+  /**
+   * Transfer-via-fetch entry: instead of receiving the vertex buffer over
+   * postMessage (a multi-hundred-ms structured clone for large clouds), fetch
+   * the file directly from its webview URI, slice out the vertex bytes, and
+   * hand off to the normal parser. On any fetch failure, ask the extension to
+   * resend over postMessage (the proven path) so loading never breaks.
+   */
+  private async handleUltimateRawBinaryUri(message: any): Promise<void> {
+    try {
+      const fetchStart = performance.now();
+      const response = await fetch(message.fileUri);
+      if (!response.ok) {
+        throw new Error(`fetch failed: ${response.status}`);
+      }
+      const full = await response.arrayBuffer();
+      const fetchMs = performance.now() - fetchStart;
+      // Extract the vertex region, matching what the extension would have sliced.
+      message.rawBinaryData = full.slice(message.binaryDataStart);
+      message.fetchMs = fetchMs;
+      // The fetch replaces the cross-process transfer; don't also report it.
+      message.postedAt = undefined;
+      await this.handleUltimateRawBinaryData(message);
+    } catch (error) {
+      console.warn('[PLY] fetch path failed, requesting postMessage fallback:', error);
+      this.vscode.postMessage({
+        type: 'plyFetchFailed',
+        docUri: message.docUri,
+        fileName: message.fileName,
+        messageType: message.messageType,
+      });
+    }
+  }
+
   private async handleUltimateRawBinaryData(message: any): Promise<void> {
     const startTime = performance.now();
     const perf = new PerfTimer('ply');
     perf.transferSince(message.postedAt);
+    if (message.fetchMs != null) {
+      perf.add('fetch', message.fetchMs);
+    }
 
     // Parse raw binary data directly in webview
     const rawData = new Uint8Array(message.rawBinaryData);
