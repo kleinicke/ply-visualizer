@@ -12,6 +12,7 @@ import { OffParser } from '../website/src/parsers/offParser';
 import { GltfParser } from '../website/src/parsers/gltfParser';
 import { NpyParser } from '../website/src/parsers/npyParser';
 import { XyzVariantParser } from '../website/src/parsers/xyzVariantParser';
+import { parseXyzWasm, parseAsciiPlyWasm, parsePcdAsciiWasm } from './wasmPointcloud';
 
 // Shared file handling functionality
 import {
@@ -377,13 +378,35 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             timestamp: loadStartTime,
           });
 
-          const pcdData = await vscode.workspace.fs.readFile(document.uri);
+          const pcdData = await this.readFileFast(document.uri);
           const fileReadTime = performance.now();
           webviewPanel.webview.postMessage({
             type: 'timingUpdate',
             message: `📁 Extension: PCD file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
             timestamp: fileReadTime,
           });
+
+          // Fast path: Rust/WASM for ASCII PCD point clouds with an identity
+          // viewpoint. parse_pcd_ascii returns null for binary PCD; the
+          // viewpoint guard keeps clouds that need the VIEWPOINT transform on
+          // the JS path. Anything else falls through to the JS parser below.
+          if (this.pcdViewpointIsIdentity(pcdData)) {
+            const pcdWasm = parsePcdAsciiWasm(pcdData);
+            if (pcdWasm) {
+              this.logPerf(
+                `⏱️ PERF[pcd/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${pcdWasm.vertexCount} pts, wasm) for ${path.basename(document.uri.fsPath)}`
+              );
+              webviewPanel.webview.postMessage({
+                type: 'xyzVariantData',
+                fileName: path.basename(document.uri.fsPath),
+                shortPath: this.getShortPath(document.uri.fsPath),
+                fileSizeInBytes: pcdData.byteLength,
+                data: pcdWasm,
+                variant: 'pcd',
+              });
+              return;
+            }
+          }
 
           const pcdParser = new PcdParser();
           const timingCallback = (message: string) => {
@@ -579,10 +602,12 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
               : fileType?.extension === 'xyzrgb'
                 ? 'xyzrgb'
                 : 'xyz';
-          const xyzParser = new XyzVariantParser();
-          const xyzParsed = xyzParser.parse(xyzData, xyzVariant);
+          // Try the Rust/WASM parser first (~2.5-3x faster); fall back to the
+          // JS parser if WASM is unavailable or fails.
+          const wasmParsed = parseXyzWasm(xyzData, xyzVariant);
+          const xyzParsed = wasmParsed ?? new XyzVariantParser().parse(xyzData, xyzVariant);
           this.logPerf(
-            `⏱️ PERF[xyz/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${xyzParsed.vertexCount} pts) for ${path.basename(document.uri.fsPath)}`
+            `⏱️ PERF[xyz/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${xyzParsed.vertexCount} pts, ${wasmParsed ? 'wasm' : 'js'}) for ${path.basename(document.uri.fsPath)}`
           );
 
           webviewPanel.webview.postMessage({
@@ -739,7 +764,24 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             faceIndexType: headerResult.faceIndexType,
           });
         } else {
-          // ASCII PLY - use traditional parsing
+          // ASCII PLY. Try the Rust/WASM parser first — it handles point clouds
+          // (no faces) and returns null for meshes or on any failure, so those
+          // transparently fall through to the JS parser below.
+          const plyWasm = parseAsciiPlyWasm(spatialData);
+          if (plyWasm) {
+            this.logPerf(
+              `⏱️ PERF[ply/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${plyWasm.vertexCount} pts, wasm) for ${path.basename(document.uri.fsPath)}`
+            );
+            webviewPanel.webview.postMessage({
+              type: 'xyzVariantData',
+              fileName: path.basename(document.uri.fsPath),
+              shortPath: this.getShortPath(document.uri.fsPath),
+              fileSizeInBytes: spatialData.byteLength,
+              data: plyWasm,
+              variant: 'ply',
+            });
+            return; // handled by the fast path
+          }
           console.log(
             `📝 ASCII PLY detected: ${path.basename(document.uri.fsPath)} - using traditional parsing`
           );
@@ -1688,6 +1730,30 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       }
     }
     return vscode.workspace.fs.readFile(uri);
+  }
+
+  /**
+   * True if a PCD's VIEWPOINT is identity (or absent) — i.e. no rigid transform
+   * needs applying. The WASM PCD parser doesn't carry the viewpoint, so clouds
+   * with a non-identity viewpoint stay on the JS path that applies it.
+   */
+  private pcdViewpointIsIdentity(bytes: Uint8Array): boolean {
+    const head = Buffer.from(bytes.subarray(0, Math.min(1024, bytes.length))).toString('utf8');
+    const m = head.match(/^VIEWPOINT\s+(.+)$/m);
+    if (!m) {
+      return true;
+    }
+    const v = m[1].trim().split(/\s+/).map(Number);
+    return (
+      v.length >= 7 &&
+      v[0] === 0 &&
+      v[1] === 0 &&
+      v[2] === 0 &&
+      v[3] === 1 &&
+      v[4] === 0 &&
+      v[5] === 0 &&
+      v[6] === 0
+    );
   }
 
   private async handleSequenceRequestFile(

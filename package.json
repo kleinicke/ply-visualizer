@@ -215,6 +215,7 @@
   "scripts": {
     "vscode:prepublish": "pnpm run compile",
     "compile": "webpack",
+    "build:wasm": "cd wasm/pointcloud-parser && wasm-pack build --target nodejs --release",
     "compile:tests": "tsc",
     "compile:all": "pnpm run compile && pnpm run compile:tests",
     "watch": "webpack --watch",
