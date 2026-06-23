@@ -69,6 +69,45 @@ impl PointCloudResult {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Zero-copy entry points: JS reads the file straight into WASM memory (via
+// `alloc`) and parses in place with `parse_at`, avoiding the extra JS->WASM
+// copy and halving peak memory. `format` is one of
+// "xyz" | "xyzn" | "xyzrgb" | "ply" | "pcd".
+// ---------------------------------------------------------------------------
+
+/// Reserve `len` bytes in WASM memory and return the offset. Caller fills it,
+/// passes it to `parse_at`, then releases it with `dealloc`.
+#[wasm_bindgen]
+pub fn alloc(len: usize) -> usize {
+    let mut buf = Vec::<u8>::with_capacity(len);
+    let ptr = buf.as_mut_ptr() as usize;
+    std::mem::forget(buf);
+    ptr
+}
+
+/// Free a buffer previously returned by `alloc`.
+#[wasm_bindgen]
+pub fn dealloc(ptr: usize, len: usize) {
+    if ptr != 0 && len != 0 {
+        unsafe {
+            let _ = Vec::from_raw_parts(ptr as *mut u8, 0, len);
+        }
+    }
+}
+
+/// Parse a buffer already sitting in WASM memory at `ptr`/`len`.
+#[wasm_bindgen]
+pub fn parse_at(ptr: usize, len: usize, format: &str) -> Result<PointCloudResult, JsValue> {
+    let data = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
+    match format {
+        "xyz" | "xyzn" | "xyzrgb" => Ok(parse_xyz(data, format)),
+        "ply" => parse_ascii_ply(data),
+        "pcd" => parse_pcd_ascii(data),
+        other => Err(JsValue::from_str(&format!("unknown format: {other}"))),
+    }
+}
+
 /// Column meaning for one output slot.
 #[derive(Clone, Copy, PartialEq)]
 enum Col {
@@ -128,40 +167,54 @@ fn parse_line(data: &[u8], pos: &mut usize, vals: &mut [f64; 16]) -> usize {
     n
 }
 
-/// Core row loop shared by every format. `layout` maps each input column to its
-/// meaning. `expected` is a vertex-count hint for pre-allocation (0 = unknown).
-fn parse_rows(data: &[u8], start: usize, layout: &[Col], expected: usize) -> PointCloudResult {
-    let uses_packed = layout.iter().any(|c| *c == Col::PackedRgb);
-    let has_colors =
-        uses_packed || layout.iter().any(|c| matches!(c, Col::R | Col::G | Col::B));
-    let has_normals = layout.iter().any(|c| matches!(c, Col::Nx | Col::Ny | Col::Nz));
-    let has_intensity = layout.iter().any(|c| *c == Col::Intensity);
+/// Output accumulator: the packed typed arrays + bbox, with per-row appends.
+/// Shared by the whole-buffer `parse_rows` and the streaming `StreamParser`.
+struct Builder {
+    layout: Vec<Col>,
+    ncol: usize,
+    uses_packed: bool,
+    has_colors: bool,
+    has_normals: bool,
+    has_intensity: bool,
+    positions: Vec<f32>,
+    colors: Vec<u8>,
+    normals: Vec<f32>,
+    intensity: Vec<f32>,
+    min: [f32; 3],
+    max: [f32; 3],
+}
 
-    let cap = expected.max(1024);
-    let mut positions: Vec<f32> = Vec::with_capacity(cap * 3);
-    let mut colors: Vec<u8> = if has_colors { Vec::with_capacity(cap * 3) } else { Vec::new() };
-    let mut normals: Vec<f32> = if has_normals { Vec::with_capacity(cap * 3) } else { Vec::new() };
-    let mut intensity: Vec<f32> = if has_intensity { Vec::with_capacity(cap) } else { Vec::new() };
-
-    let mut min = [f32::INFINITY; 3];
-    let mut max = [f32::NEG_INFINITY; 3];
-
-    let mut vals = [0f64; 16];
-    let mut pos = start;
-    let len = data.len();
-    let ncol = layout.len();
-
-    while pos < len {
-        // For formats with a known vertex count (PLY), stop before any trailing
-        // element rows (e.g. faces) so they aren't parsed as bogus vertices.
-        if expected > 0 && positions.len() / 3 >= expected {
-            break;
+impl Builder {
+    fn new(layout: Vec<Col>, cap: usize) -> Self {
+        let uses_packed = layout.iter().any(|c| *c == Col::PackedRgb);
+        let has_colors =
+            uses_packed || layout.iter().any(|c| matches!(c, Col::R | Col::G | Col::B));
+        let has_normals = layout.iter().any(|c| matches!(c, Col::Nx | Col::Ny | Col::Nz));
+        let has_intensity = layout.iter().any(|c| *c == Col::Intensity);
+        let ncol = layout.len();
+        Builder {
+            layout,
+            ncol,
+            uses_packed,
+            has_colors,
+            has_normals,
+            has_intensity,
+            positions: Vec::with_capacity(cap * 3),
+            colors: if has_colors { Vec::with_capacity(cap * 3) } else { Vec::new() },
+            normals: if has_normals { Vec::with_capacity(cap * 3) } else { Vec::new() },
+            intensity: if has_intensity { Vec::with_capacity(cap) } else { Vec::new() },
+            min: [f32::INFINITY; 3],
+            max: [f32::NEG_INFINITY; 3],
         }
-        let n = parse_line(data, &mut pos, &mut vals);
-        if n < 3 {
-            continue; // blank / malformed row
-        }
-        // Pull out the slots we care about by their column index.
+    }
+
+    #[inline]
+    fn count(&self) -> usize {
+        self.positions.len() / 3
+    }
+
+    #[inline]
+    fn push_row(&mut self, vals: &[f64; 16], n: usize) {
         let mut x = 0f32;
         let mut y = 0f32;
         let mut z = 0f32;
@@ -169,10 +222,10 @@ fn parse_rows(data: &[u8], start: usize, layout: &[Col], expected: usize) -> Poi
         let mut packed: u32 = 0;
         let (mut nx, mut ny, mut nz) = (0f32, 0f32, 0f32);
         let mut inten = 0f32;
-        let take = ncol.min(n);
+        let take = self.ncol.min(n);
         for i in 0..take {
             let v = vals[i];
-            match layout[i] {
+            match self.layout[i] {
                 Col::X => x = v as f32,
                 Col::Y => y = v as f32,
                 Col::Z => z = v as f32,
@@ -187,62 +240,118 @@ fn parse_rows(data: &[u8], start: usize, layout: &[Col], expected: usize) -> Poi
                 Col::Skip => {}
             }
         }
-
-        positions.push(x);
-        positions.push(y);
-        positions.push(z);
-        if x < min[0] { min[0] = x; }
-        if y < min[1] { min[1] = y; }
-        if z < min[2] { min[2] = z; }
-        if x > max[0] { max[0] = x; }
-        if y > max[1] { max[1] = y; }
-        if z > max[2] { max[2] = z; }
-
-        if has_colors {
-            if uses_packed {
-                // PCD packs rgb as 0x00RRGGBB in a float's bit pattern.
-                colors.push(((packed >> 16) & 0xff) as u8);
-                colors.push(((packed >> 8) & 0xff) as u8);
-                colors.push((packed & 0xff) as u8);
+        self.positions.push(x);
+        self.positions.push(y);
+        self.positions.push(z);
+        if x < self.min[0] { self.min[0] = x; }
+        if y < self.min[1] { self.min[1] = y; }
+        if z < self.min[2] { self.min[2] = z; }
+        if x > self.max[0] { self.max[0] = x; }
+        if y > self.max[1] { self.max[1] = y; }
+        if z > self.max[2] { self.max[2] = z; }
+        if self.has_colors {
+            if self.uses_packed {
+                self.colors.push(((packed >> 16) & 0xff) as u8);
+                self.colors.push(((packed >> 8) & 0xff) as u8);
+                self.colors.push((packed & 0xff) as u8);
             } else {
-                // Open3D writes 0-1 floats; raw integer otherwise.
                 let (cr, cg, cb) = if r <= 1.0 && g <= 1.0 && b <= 1.0 {
                     ((r * 255.0).round(), (g * 255.0).round(), (b * 255.0).round())
                 } else {
                     (r.round(), g.round(), b.round())
                 };
-                colors.push(cr.clamp(0.0, 255.0) as u8);
-                colors.push(cg.clamp(0.0, 255.0) as u8);
-                colors.push(cb.clamp(0.0, 255.0) as u8);
+                self.colors.push(cr.clamp(0.0, 255.0) as u8);
+                self.colors.push(cg.clamp(0.0, 255.0) as u8);
+                self.colors.push(cb.clamp(0.0, 255.0) as u8);
             }
         }
-        if has_normals {
-            normals.push(nx);
-            normals.push(ny);
-            normals.push(nz);
+        if self.has_normals {
+            self.normals.push(nx);
+            self.normals.push(ny);
+            self.normals.push(nz);
         }
-        if has_intensity {
-            intensity.push(inten);
+        if self.has_intensity {
+            self.intensity.push(inten);
         }
     }
 
-    let vertex_count = (positions.len() / 3) as u32;
-    if vertex_count == 0 {
-        min = [0.0; 3];
-        max = [0.0; 3];
+    fn finish(mut self) -> PointCloudResult {
+        let vertex_count = self.count() as u32;
+        if vertex_count == 0 {
+            self.min = [0.0; 3];
+            self.max = [0.0; 3];
+        }
+        PointCloudResult {
+            vertex_count,
+            positions: self.positions,
+            colors: self.colors,
+            normals: self.normals,
+            intensity: self.intensity,
+            has_colors: self.has_colors,
+            has_normals: self.has_normals,
+            has_intensity: self.has_intensity,
+            min: self.min,
+            max: self.max,
+        }
     }
-    PointCloudResult {
-        vertex_count,
-        positions,
-        colors,
-        normals,
-        intensity,
-        has_colors,
-        has_normals,
-        has_intensity,
-        min,
-        max,
+}
+
+/// Core whole-buffer row loop. `expected` is a vertex-count hint / stop bound.
+/// `cap` pre-sizes the output buffers (avoids reallocations on big parses);
+/// `expected` (> 0) caps how many rows are taken (PLY/PCD known counts).
+fn parse_rows(
+    data: &[u8],
+    start: usize,
+    layout: &[Col],
+    cap: usize,
+    expected: usize,
+) -> PointCloudResult {
+    let mut b = Builder::new(layout.to_vec(), cap.max(1024));
+    let mut vals = [0f64; 16];
+    let mut pos = start;
+    let len = data.len();
+    while pos < len {
+        // For formats with a known vertex count (PLY), stop before trailing
+        // element rows (e.g. faces) so they aren't parsed as bogus vertices.
+        if expected > 0 && b.count() >= expected {
+            break;
+        }
+        let n = parse_line(data, &mut pos, &mut vals);
+        if n >= 3 {
+            b.push_row(&vals, n);
+        }
     }
+    b.finish()
+}
+
+/// Parse all numeric tokens in a single line slice (no newline handling).
+#[inline]
+fn parse_numbers(line: &[u8], vals: &mut [f64; 16]) -> usize {
+    let len = line.len();
+    let mut n = 0usize;
+    let mut i = 0usize;
+    while i < len {
+        let c = line[i];
+        if is_ws(c) || c == b'\n' {
+            i += 1;
+            continue;
+        }
+        match fast_float::parse_partial::<f64, _>(&line[i..]) {
+            Ok((v, consumed)) if consumed > 0 => {
+                if n < 16 {
+                    vals[n] = v;
+                }
+                n += 1;
+                i += consumed;
+            }
+            _ => {
+                while i < len && !is_ws(line[i]) && line[i] != b'\n' {
+                    i += 1;
+                }
+            }
+        }
+    }
+    n
 }
 
 /// Parse XYZ / XYZN / XYZRGB. For plain "xyz" the layout is auto-detected from
@@ -270,7 +379,11 @@ pub fn parse_xyz(data: &[u8], variant: &str) -> PointCloudResult {
             }
         }
     };
-    parse_rows(data, 0, &layout, 0)
+    // XYZ has no count header — estimate it from the file size so the output is
+    // pre-sized (≈38 bytes/row for xyz, ≈75 for the 6-column variants).
+    let bytes_per_row = if layout.len() >= 6 { 75 } else { 35 };
+    let cap = data.len() / bytes_per_row;
+    parse_rows(data, 0, &layout, cap, 0)
 }
 
 /// Parse an ASCII PLY: read the header to learn the vertex count + property
@@ -345,7 +458,7 @@ pub fn parse_ascii_ply(data: &[u8]) -> Result<PointCloudResult, JsValue> {
         return Err(JsValue::from_str("no x/y/z properties"));
     }
 
-    Ok(parse_rows(data, data_start, &layout, vertex_count))
+    Ok(parse_rows(data, data_start, &layout, vertex_count, vertex_count))
 }
 
 /// Parse an ASCII PCD point cloud. Reads the FIELDS/COUNT header to build a
@@ -418,7 +531,303 @@ pub fn parse_pcd_ascii(data: &[u8]) -> Result<PointCloudResult, JsValue> {
         return Err(JsValue::from_str("no x/y/z fields"));
     }
 
-    Ok(parse_rows(data, p, &layout, vertex_count))
+    Ok(parse_rows(data, p, &layout, vertex_count, vertex_count))
+}
+
+fn ply_col(name: &str) -> Col {
+    match name {
+        "x" => Col::X,
+        "y" => Col::Y,
+        "z" => Col::Z,
+        "red" | "r" => Col::R,
+        "green" | "g" => Col::G,
+        "blue" | "b" => Col::B,
+        "nx" => Col::Nx,
+        "ny" => Col::Ny,
+        "nz" => Col::Nz,
+        "intensity" | "reflectivity" | "reflectance" | "remission" => Col::Intensity,
+        _ => Col::Skip,
+    }
+}
+
+fn pcd_col(name: &str) -> Col {
+    match name {
+        "x" => Col::X,
+        "y" => Col::Y,
+        "z" => Col::Z,
+        "rgb" | "rgba" => Col::PackedRgb,
+        "r" | "red" => Col::R,
+        "g" | "green" => Col::G,
+        "b" | "blue" => Col::B,
+        "normal_x" | "nx" => Col::Nx,
+        "normal_y" | "ny" => Col::Ny,
+        "normal_z" | "nz" => Col::Nz,
+        "intensity" => Col::Intensity,
+        _ => Col::Skip,
+    }
+}
+
+enum HeaderState {
+    /// Header end-marker not yet present — accumulate more bytes.
+    NeedMore,
+    /// Unsupported (binary, mesh, no xyz, …) — caller falls back to JS.
+    Reject,
+    /// (column layout, vertex count, byte offset where data rows begin)
+    Ready(Vec<Col>, usize, usize),
+}
+
+fn ply_header_stream(buf: &[u8]) -> HeaderState {
+    let header_end = match find_subslice(buf, b"end_header") {
+        Some(p) => p,
+        None => return HeaderState::NeedMore,
+    };
+    let mut data_start = header_end + b"end_header".len();
+    while data_start < buf.len() && (buf[data_start] == b'\n' || buf[data_start] == b'\r') {
+        data_start += 1;
+    }
+    let header = match std::str::from_utf8(&buf[..header_end]) {
+        Ok(h) => h,
+        Err(_) => return HeaderState::Reject,
+    };
+    let mut format_ascii = false;
+    let mut in_vertex = false;
+    let mut vertex_count = 0usize;
+    let mut face_count = 0usize;
+    let mut layout: Vec<Col> = Vec::new();
+    for line in header.lines() {
+        let t = line.trim();
+        let mut it = t.split_whitespace();
+        match it.next() {
+            Some("format") => format_ascii = it.next() == Some("ascii"),
+            Some("element") => {
+                let name = it.next().unwrap_or("");
+                in_vertex = name == "vertex";
+                let count = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                if in_vertex {
+                    vertex_count = count;
+                } else if name == "face" {
+                    face_count = count;
+                }
+            }
+            Some("property") if in_vertex => {
+                let parts: Vec<&str> = it.collect();
+                layout.push(ply_col(parts.last().copied().unwrap_or("")));
+            }
+            _ => {}
+        }
+    }
+    if !format_ascii || face_count > 0 || !layout.iter().any(|c| *c == Col::X) {
+        return HeaderState::Reject;
+    }
+    HeaderState::Ready(layout, vertex_count, data_start)
+}
+
+fn pcd_header_stream(buf: &[u8]) -> HeaderState {
+    let data_kw = match find_subslice(buf, b"DATA ") {
+        Some(p) => p,
+        None => return HeaderState::NeedMore,
+    };
+    let mut line_end = data_kw + b"DATA ".len();
+    while line_end < buf.len() && buf[line_end] != b'\n' {
+        line_end += 1;
+    }
+    if line_end >= buf.len() {
+        return HeaderState::NeedMore; // DATA line not fully present yet
+    }
+    let header = match std::str::from_utf8(&buf[..data_kw]) {
+        Ok(h) => h,
+        Err(_) => return HeaderState::Reject,
+    };
+    let data_kind = std::str::from_utf8(&buf[data_kw + 5..line_end]).unwrap_or("").trim();
+    if data_kind != "ascii" {
+        return HeaderState::Reject;
+    }
+    let data_start = line_end + 1;
+    let mut fields: Vec<&str> = Vec::new();
+    let mut counts: Vec<usize> = Vec::new();
+    let mut vertex_count = 0usize;
+    for line in header.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("FIELDS ") {
+            fields = rest.split_whitespace().collect();
+        } else if let Some(rest) = t.strip_prefix("COUNT ") {
+            counts = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+        } else if let Some(rest) = t.strip_prefix("POINTS ") {
+            vertex_count = rest.trim().parse().unwrap_or(0);
+        }
+    }
+    if fields.is_empty() {
+        return HeaderState::Reject;
+    }
+    let mut layout: Vec<Col> = Vec::new();
+    for (i, &name) in fields.iter().enumerate() {
+        layout.push(pcd_col(name));
+        let c = counts.get(i).copied().unwrap_or(1).max(1);
+        for _ in 1..c {
+            layout.push(Col::Skip);
+        }
+    }
+    if !layout.iter().any(|c| *c == Col::X) {
+        return HeaderState::Reject;
+    }
+    HeaderState::Ready(layout, vertex_count, data_start)
+}
+
+/// Incremental parser for streaming/overlapped loading. JS reads the file in
+/// chunks and calls `push` on each (while the next chunk's read is in flight),
+/// then `finish`. Partial lines are stitched across chunk boundaries via carry.
+#[wasm_bindgen]
+pub struct StreamParser {
+    format: u8, // 0 = xyz/variant, 1 = ply, 2 = pcd
+    builder: Option<Builder>,
+    header_done: bool,
+    expected: usize,
+    carry: Vec<u8>,
+    error: bool,
+}
+
+#[wasm_bindgen]
+impl StreamParser {
+    #[wasm_bindgen(constructor)]
+    pub fn new(format: &str) -> StreamParser {
+        let fmt = match format {
+            "ply" => 1u8,
+            "pcd" => 2u8,
+            _ => 0u8,
+        };
+        let builder = match format {
+            "xyzn" => Some(Builder::new(
+                vec![Col::X, Col::Y, Col::Z, Col::Nx, Col::Ny, Col::Nz],
+                1 << 20,
+            )),
+            "xyzrgb" => Some(Builder::new(
+                vec![Col::X, Col::Y, Col::Z, Col::R, Col::G, Col::B],
+                1 << 20,
+            )),
+            _ => None, // plain xyz: detect from first row; ply/pcd: after header
+        };
+        StreamParser {
+            format: fmt,
+            builder,
+            header_done: fmt == 0,
+            expected: 0,
+            carry: Vec::new(),
+            error: false,
+        }
+    }
+
+    /// True if a parse error occurred; the caller should discard and use the JS
+    /// parser (the result from `finish` would be empty/partial).
+    #[wasm_bindgen(getter)]
+    pub fn failed(&self) -> bool {
+        self.error
+    }
+
+    pub fn push(&mut self, chunk: &[u8]) {
+        if self.error {
+            return;
+        }
+        if !self.header_done {
+            // Accumulate header bytes in `carry` until the end-marker appears.
+            self.carry.extend_from_slice(chunk);
+            let state = if self.format == 1 {
+                ply_header_stream(&self.carry)
+            } else {
+                pcd_header_stream(&self.carry)
+            };
+            match state {
+                HeaderState::NeedMore => {}
+                HeaderState::Reject => self.error = true,
+                HeaderState::Ready(layout, count, data_start) => {
+                    self.expected = count;
+                    self.builder = Some(Builder::new(layout, count.max(1024)));
+                    self.header_done = true;
+                    let buf = std::mem::take(&mut self.carry);
+                    self.process_data(&buf[data_start..]);
+                }
+            }
+            return;
+        }
+        self.process_data(chunk);
+    }
+
+    pub fn finish(&mut self) -> PointCloudResult {
+        if !self.error && !self.carry.is_empty() {
+            let line = std::mem::take(&mut self.carry);
+            self.process_line(&line);
+        }
+        self.builder
+            .take()
+            .unwrap_or_else(|| Builder::new(vec![Col::X, Col::Y, Col::Z], 0))
+            .finish()
+    }
+}
+
+impl StreamParser {
+    /// Process the data bytes of one chunk, stitching the previous chunk's
+    /// trailing partial line (`carry`) onto the first line, and keeping this
+    /// chunk's trailing partial line as the new carry. Avoids copying the chunk.
+    fn process_data(&mut self, chunk: &[u8]) {
+        let len = chunk.len();
+        if len == 0 {
+            return;
+        }
+        let mut start = 0usize;
+        if !self.carry.is_empty() {
+            let mut nl = 0usize;
+            while nl < len && chunk[nl] != b'\n' {
+                nl += 1;
+            }
+            if nl >= len {
+                // No newline anywhere in this chunk — extend carry and wait.
+                self.carry.extend_from_slice(chunk);
+                return;
+            }
+            let mut line = std::mem::take(&mut self.carry);
+            line.extend_from_slice(&chunk[..nl]);
+            self.process_line(&line);
+            start = nl + 1;
+        }
+        let mut line_start = start;
+        let mut i = start;
+        while i < len {
+            if chunk[i] == b'\n' {
+                self.process_line(&chunk[line_start..i]);
+                line_start = i + 1;
+            }
+            i += 1;
+        }
+        if line_start < len {
+            self.carry.extend_from_slice(&chunk[line_start..]);
+        }
+    }
+
+    fn process_line(&mut self, line: &[u8]) {
+        if self.error || line.is_empty() {
+            return;
+        }
+        let mut vals = [0f64; 16];
+        let n = parse_numbers(line, &mut vals);
+        if n < 3 {
+            return;
+        }
+        if self.builder.is_none() {
+            // Plain xyz: decide the layout from the first valid row.
+            let layout = match n {
+                c if c >= 6 => vec![Col::X, Col::Y, Col::Z, Col::R, Col::G, Col::B],
+                4 => vec![Col::X, Col::Y, Col::Z, Col::Intensity],
+                _ => vec![Col::X, Col::Y, Col::Z],
+            };
+            self.builder = Some(Builder::new(layout, 1 << 20));
+        }
+        let expected = self.expected;
+        if let Some(b) = self.builder.as_mut() {
+            if expected > 0 && b.count() >= expected {
+                return;
+            }
+            b.push_row(&vals, n);
+        }
+    }
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {

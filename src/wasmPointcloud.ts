@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 
 /**
  * Thin loader/wrapper around the Rust/WASM point-cloud parser
@@ -89,6 +90,59 @@ export function parseAsciiPlyWasm(bytes: Uint8Array): WasmPointCloud | null {
   } catch (error) {
     console.warn('[pointcloud-wasm] parse_ascii_ply failed, falling back:', error);
     return null;
+  }
+}
+
+/**
+ * Stream-load a local ASCII point-cloud file with overlapped read+parse: the
+ * next chunk's disk read (on libuv's threadpool) runs while the current chunk
+ * is parsed on the main thread, so total load ≈ max(read, parse) instead of
+ * read + parse. `format` is "xyz" | "xyzn" | "xyzrgb" | "ply" | "pcd".
+ * Returns null if WASM/StreamParser is unavailable, the format is rejected
+ * (mesh PLY, binary PCD, …), or anything throws — caller falls back.
+ */
+export async function streamParseFile(
+  filePath: string,
+  format: string
+): Promise<WasmPointCloud | null> {
+  const m = load();
+  if (!m || typeof m.StreamParser !== 'function') {
+    return null;
+  }
+  let fh: fs.promises.FileHandle | undefined;
+  try {
+    const sp = new m.StreamParser(format);
+    fh = await fs.promises.open(filePath, 'r');
+    const CHUNK = 8 * 1024 * 1024;
+    const bufs = [Buffer.allocUnsafe(CHUNK), Buffer.allocUnsafe(CHUNK)];
+    let idx = 0;
+    let readP = fh.read(bufs[idx], 0, CHUNK, null);
+    for (;;) {
+      const { bytesRead } = await readP;
+      if (bytesRead === 0) {
+        break;
+      }
+      const cur = bufs[idx];
+      idx ^= 1;
+      // Kick off the next read (libuv I/O) BEFORE parsing this chunk (main
+      // thread) so the two overlap.
+      readP = fh.read(bufs[idx], 0, CHUNK, null);
+      sp.push(cur.subarray(0, bytesRead));
+      if (sp.failed) {
+        return null; // header rejected → JS fallback
+      }
+    }
+    if (sp.failed) {
+      return null;
+    }
+    return marshal(sp.finish());
+  } catch (error) {
+    console.warn('[pointcloud-wasm] stream parse failed, falling back:', error);
+    return null;
+  } finally {
+    if (fh) {
+      await fh.close();
+    }
   }
 }
 

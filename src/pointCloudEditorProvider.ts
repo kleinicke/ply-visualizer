@@ -12,7 +12,12 @@ import { OffParser } from '../website/src/parsers/offParser';
 import { GltfParser } from '../website/src/parsers/gltfParser';
 import { NpyParser } from '../website/src/parsers/npyParser';
 import { XyzVariantParser } from '../website/src/parsers/xyzVariantParser';
-import { parseXyzWasm, parseAsciiPlyWasm, parsePcdAsciiWasm } from './wasmPointcloud';
+import {
+  parseXyzWasm,
+  parseAsciiPlyWasm,
+  parsePcdAsciiWasm,
+  streamParseFile,
+} from './wasmPointcloud';
 
 // Shared file handling functionality
 import {
@@ -580,41 +585,52 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             timestamp: loadStartTime,
           });
 
-          const xyzReadStart = performance.now();
-          const xyzData = await this.readFileFast(document.uri);
-          const fileReadTime = performance.now();
-          this.logPerf(
-            `⏱️ PERF[xyz/ext] read ${(fileReadTime - xyzReadStart).toFixed(1)}ms (${(xyzData.byteLength / 1048576).toFixed(1)}MB) for ${path.basename(document.uri.fsPath)}`
-          );
-          webviewPanel.webview.postMessage({
-            type: 'timingUpdate',
-            message: `📁 Extension: XYZ variant file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
-            timestamp: fileReadTime,
-          });
-
-          // Parse in the extension (like PCD/PTS/PLY) and ship compact typed
-          // arrays, instead of sending the raw multi-hundred-MB ASCII text and
-          // parsing in the webview. This shrinks the transfer ~5x and keeps the
-          // webview responsive.
           const xyzVariant =
             fileType?.extension === 'xyzn'
               ? 'xyzn'
               : fileType?.extension === 'xyzrgb'
                 ? 'xyzrgb'
                 : 'xyz';
-          // Try the Rust/WASM parser first (~2.5-3x faster); fall back to the
-          // JS parser if WASM is unavailable or fails.
-          const wasmParsed = parseXyzWasm(xyzData, xyzVariant);
-          const xyzParsed = wasmParsed ?? new XyzVariantParser().parse(xyzData, xyzVariant);
+
+          // Streaming overlap (Rust/WASM StreamParser): the next chunk's disk
+          // read (libuv) runs while the current chunk parses (main thread), so
+          // total ≈ max(read, parse). A controlled cold A/B (purge between each)
+          // showed it saves ~0.6–1.2s on 600MB XYZ files — cold is the
+          // real-world first-open case. It costs ~300ms only when re-opening an
+          // already-cached file (warm), which is rare. So: on for local files.
+          const ENABLE_XYZ_STREAMING = true;
+          const loadStart = performance.now();
+          let xyzParsed: any = null;
+          let xyzMode = 'js';
+          let xyzBytes = 0;
+          if (ENABLE_XYZ_STREAMING && document.uri.scheme === 'file') {
+            const streamed = await streamParseFile(document.uri.fsPath, xyzVariant);
+            if (streamed) {
+              xyzParsed = streamed;
+              xyzMode = 'wasm-stream';
+              try {
+                xyzBytes = fs.statSync(document.uri.fsPath).size;
+              } catch {
+                /* size is best-effort for logging only */
+              }
+            }
+          }
+          if (!xyzParsed) {
+            const xyzData = await this.readFileFast(document.uri);
+            xyzBytes = xyzData.byteLength;
+            const wasmParsed = parseXyzWasm(xyzData, xyzVariant);
+            xyzParsed = wasmParsed ?? new XyzVariantParser().parse(xyzData, xyzVariant);
+            xyzMode = wasmParsed ? 'wasm' : 'js';
+          }
           this.logPerf(
-            `⏱️ PERF[xyz/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${xyzParsed.vertexCount} pts, ${wasmParsed ? 'wasm' : 'js'}) for ${path.basename(document.uri.fsPath)}`
+            `⏱️ PERF[xyz/ext] load ${(performance.now() - loadStart).toFixed(1)}ms (${xyzParsed.vertexCount} pts, ${xyzMode}) for ${path.basename(document.uri.fsPath)}`
           );
 
           webviewPanel.webview.postMessage({
             type: 'xyzVariantData',
             fileName: path.basename(document.uri.fsPath),
             shortPath: this.getShortPath(document.uri.fsPath),
-            fileSizeInBytes: xyzData.byteLength,
+            fileSizeInBytes: xyzBytes,
             data: xyzParsed,
             variant: xyzVariant,
           });
