@@ -790,8 +790,11 @@ class PointCloudVisualizer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.applySceneBrightness();
     this.applyBackgroundBrightness();
-    this.renderer.shadowMap.enabled = true; // Re-enable shadows
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Shadows are disabled: no object in the scene sets castShadow/receiveShadow,
+    // so the per-frame shadow pass + 2048² depth target produced nothing visible
+    // — pure overhead. (If shadow-casting meshes are ever added, re-enable here
+    // and set castShadow/receiveShadow on them.)
+    this.renderer.shadowMap.enabled = false;
 
     this.setupContextLossHandling(canvas);
 
