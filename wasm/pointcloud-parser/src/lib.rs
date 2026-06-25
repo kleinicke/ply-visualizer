@@ -563,6 +563,205 @@ pub fn parse_pcd_ascii(data: &[u8]) -> Result<PointCloudResult, JsValue> {
     Ok(parse_rows(data, p, &layout, vertex_count, vertex_count))
 }
 
+/// Read one numeric PCD field as f64. `ty`: b'F' float, b'U' unsigned, b'I'
+/// signed. Caller guarantees `o + size <= data.len()`.
+#[inline]
+fn pcd_read_num(d: &[u8], o: usize, size: usize, ty: u8) -> f64 {
+    match (ty, size) {
+        (b'F', 4) => f32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as f64,
+        (b'F', 8) => f64::from_le_bytes([
+            d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6], d[o + 7],
+        ]),
+        (b'U', 1) => d[o] as f64,
+        (b'U', 2) => u16::from_le_bytes([d[o], d[o + 1]]) as f64,
+        (b'U', 4) => u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as f64,
+        (b'U', 8) => u64::from_le_bytes([
+            d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6], d[o + 7],
+        ]) as f64,
+        (b'I', 1) => (d[o] as i8) as f64,
+        (b'I', 2) => i16::from_le_bytes([d[o], d[o + 1]]) as f64,
+        (b'I', 4) => i32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as f64,
+        (b'I', 8) => i64::from_le_bytes([
+            d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6], d[o + 7],
+        ]) as f64,
+        _ => 0.0,
+    }
+}
+
+/// Parse a binary PCD point cloud (`DATA binary`; not `binary_compressed`). Reads
+/// the FIELDS/SIZE/TYPE/COUNT header to map each field to a byte offset + reader,
+/// then walks fixed-size records straight into the packed output arrays — no
+/// text parsing, so it's orders of magnitude faster than the JS binary path.
+/// Returns Err (→ JS fallback) for ascii/compressed PCD, missing x/y/z, or a
+/// header whose SIZE/TYPE don't line up with FIELDS.
+#[wasm_bindgen]
+pub fn parse_pcd_binary(data: &[u8]) -> Result<PointCloudResult, JsValue> {
+    let data_kw =
+        find_subslice(data, b"DATA ").ok_or_else(|| JsValue::from_str("missing DATA line"))?;
+    let header = std::str::from_utf8(&data[..data_kw])
+        .map_err(|_| JsValue::from_str("non-utf8 header"))?;
+
+    let mut fields: Vec<&str> = Vec::new();
+    let mut sizes: Vec<usize> = Vec::new();
+    let mut types: Vec<u8> = Vec::new();
+    let mut counts: Vec<usize> = Vec::new();
+    let mut vertex_count = 0usize;
+    for line in header.lines() {
+        let t = line.trim();
+        if let Some(r) = t.strip_prefix("FIELDS ") {
+            fields = r.split_whitespace().collect();
+        } else if let Some(r) = t.strip_prefix("SIZE ") {
+            sizes = r.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+        } else if let Some(r) = t.strip_prefix("TYPE ") {
+            types = r.split_whitespace().map(|s| s.bytes().next().unwrap_or(b'F')).collect();
+        } else if let Some(r) = t.strip_prefix("COUNT ") {
+            counts = r.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+        } else if let Some(r) = t.strip_prefix("POINTS ") {
+            vertex_count = r.trim().parse().unwrap_or(0);
+        }
+    }
+    let nf = fields.len();
+    if nf == 0 || sizes.len() != nf || types.len() != nf {
+        return Err(JsValue::from_str("incomplete pcd header"));
+    }
+
+    // Only plain binary here; binary_compressed needs the JS path.
+    let mut p = data_kw + b"DATA ".len();
+    let line_end = {
+        let mut e = p;
+        while e < data.len() && data[e] != b'\n' {
+            e += 1;
+        }
+        e
+    };
+    let kind = std::str::from_utf8(&data[p..line_end]).unwrap_or("").trim();
+    if kind != "binary" {
+        return Err(JsValue::from_str("not plain binary pcd"));
+    }
+    p = line_end + 1;
+
+    // Field descriptors with byte offset within a record.
+    struct FieldDesc {
+        col: Col,
+        off: usize,
+        size: usize,
+        ty: u8,
+    }
+    let mut descs: Vec<FieldDesc> = Vec::with_capacity(nf);
+    let mut stride = 0usize;
+    for i in 0..nf {
+        let cnt = counts.get(i).copied().unwrap_or(1).max(1);
+        descs.push(FieldDesc { col: pcd_col(fields[i]), off: stride, size: sizes[i], ty: types[i] });
+        stride += sizes[i] * cnt;
+    }
+    if stride == 0 {
+        return Err(JsValue::from_str("zero record stride"));
+    }
+    if !descs.iter().any(|d| d.col == Col::X) {
+        return Err(JsValue::from_str("no x/y/z fields"));
+    }
+
+    let uses_packed = descs.iter().any(|d| d.col == Col::PackedRgb);
+    let has_colors =
+        uses_packed || descs.iter().any(|d| matches!(d.col, Col::R | Col::G | Col::B));
+    let has_normals = descs.iter().any(|d| matches!(d.col, Col::Nx | Col::Ny | Col::Nz));
+    let has_intensity = descs.iter().any(|d| d.col == Col::Intensity);
+
+    // Clamp to whole records actually present so every read stays in-bounds.
+    let avail = data.len().saturating_sub(p) / stride;
+    let n = vertex_count.min(avail);
+
+    let mut positions = Vec::with_capacity(n * 3);
+    let mut colors = if has_colors { Vec::with_capacity(n * 3) } else { Vec::new() };
+    let mut normals = if has_normals { Vec::with_capacity(n * 3) } else { Vec::new() };
+    let mut intensity = if has_intensity { Vec::with_capacity(n) } else { Vec::new() };
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+
+    for i in 0..n {
+        let base = p + i * stride;
+        let (mut x, mut y, mut z) = (0f32, 0f32, 0f32);
+        let (mut nx, mut ny, mut nz) = (0f32, 0f32, 0f32);
+        let mut inten = 0f32;
+        let (mut cr, mut cg, mut cb) = (0u8, 0u8, 0u8);
+        for d in &descs {
+            let o = base + d.off;
+            match d.col {
+                Col::Skip => {}
+                Col::X => x = pcd_read_num(data, o, d.size, d.ty) as f32,
+                Col::Y => y = pcd_read_num(data, o, d.size, d.ty) as f32,
+                Col::Z => z = pcd_read_num(data, o, d.size, d.ty) as f32,
+                Col::Nx => nx = pcd_read_num(data, o, d.size, d.ty) as f32,
+                Col::Ny => ny = pcd_read_num(data, o, d.size, d.ty) as f32,
+                Col::Nz => nz = pcd_read_num(data, o, d.size, d.ty) as f32,
+                Col::Intensity => inten = pcd_read_num(data, o, d.size, d.ty) as f32,
+                Col::PackedRgb => {
+                    // Read the raw 4 bytes as a u32 packing 0x00RRGGBB — works for
+                    // both 'F 4' and 'U 4' rgb/rgba with no float round-trip (which
+                    // could lose the bits when the packed value is a NaN).
+                    let packed = if d.size >= 4 {
+                        u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]])
+                    } else {
+                        0
+                    };
+                    cr = ((packed >> 16) & 0xff) as u8;
+                    cg = ((packed >> 8) & 0xff) as u8;
+                    cb = (packed & 0xff) as u8;
+                }
+                Col::R | Col::G | Col::B => {
+                    let v = pcd_read_num(data, o, d.size, d.ty);
+                    let c = if v <= 1.0 { (v * 255.0).round() } else { v.round() };
+                    let cc = c.clamp(0.0, 255.0) as u8;
+                    match d.col {
+                        Col::R => cr = cc,
+                        Col::G => cg = cc,
+                        _ => cb = cc,
+                    }
+                }
+            }
+        }
+        positions.push(x);
+        positions.push(y);
+        positions.push(z);
+        if x < min[0] { min[0] = x; }
+        if y < min[1] { min[1] = y; }
+        if z < min[2] { min[2] = z; }
+        if x > max[0] { max[0] = x; }
+        if y > max[1] { max[1] = y; }
+        if z > max[2] { max[2] = z; }
+        if has_colors {
+            colors.push(cr);
+            colors.push(cg);
+            colors.push(cb);
+        }
+        if has_normals {
+            normals.push(nx);
+            normals.push(ny);
+            normals.push(nz);
+        }
+        if has_intensity {
+            intensity.push(inten);
+        }
+    }
+
+    if n == 0 {
+        min = [0.0; 3];
+        max = [0.0; 3];
+    }
+    Ok(PointCloudResult {
+        vertex_count: n as u32,
+        positions,
+        colors,
+        normals,
+        intensity,
+        has_colors,
+        has_normals,
+        has_intensity,
+        min,
+        max,
+    })
+}
+
 fn ply_col(name: &str) -> Col {
     match name {
         "x" => Col::X,

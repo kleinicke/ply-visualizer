@@ -16,6 +16,7 @@ import {
   parseXyzWasm,
   parseAsciiPlyWasm,
   parsePcdAsciiWasm,
+  parsePcdBinaryWasm,
   parsePtsWasm,
   streamParseFile,
 } from './wasmPointcloud';
@@ -435,7 +436,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           // viewpoint guard keeps clouds that need the VIEWPOINT transform on
           // the JS path. Anything else falls through to the JS parser below.
           if (this.pcdViewpointIsIdentity(pcdData)) {
-            const pcdWasm = parsePcdAsciiWasm(pcdData);
+            // ASCII via WASM, then binary via WASM (binary PCD otherwise falls to
+            // the slow JS parser — ~11x slower). Both gated on identity viewpoint
+            // since the WASM parsers don't carry the VIEWPOINT transform.
+            const pcdWasm = parsePcdAsciiWasm(pcdData) || parsePcdBinaryWasm(pcdData);
             if (pcdWasm) {
               this.logPerf(
                 `⏱️ PERF[pcd/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${pcdWasm.vertexCount} pts, wasm) for ${path.basename(document.uri.fsPath)}`
@@ -731,6 +735,42 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           kind: 'ply',
           at: wallStart,
         });
+
+        // Streaming overlap for ASCII PLY point clouds (same cold-cache win as
+        // XYZ). Gate on a 64KB header read so we don't read the whole file first:
+        // only ASCII PLY streams (binary PLY uses the transfer-via-fetch path
+        // below); the stream parser returns null for binary/meshes → falls
+        // through to the whole-file path unchanged.
+        if (document.uri.scheme === 'file') {
+          try {
+            const head = await this.readFileHead(document.uri, 65536);
+            if (!isPlyBinary(head)) {
+              const streamed = await streamParseFile(document.uri.fsPath, 'ply');
+              if (streamed) {
+                let plyBytes = head.byteLength;
+                try {
+                  plyBytes = fs.statSync(document.uri.fsPath).size;
+                } catch {
+                  /* size is best-effort for logging only */
+                }
+                this.logPerf(
+                  `⏱️ PERF[ply/ext] load ${(performance.now() - loadStartTime).toFixed(1)}ms (${streamed.vertexCount} pts, wasm-stream) for ${path.basename(document.uri.fsPath)}`
+                );
+                webviewPanel.webview.postMessage({
+                  type: 'xyzVariantData',
+                  fileName: path.basename(document.uri.fsPath),
+                  shortPath: this.getShortPath(document.uri.fsPath),
+                  fileSizeInBytes: plyBytes,
+                  data: streamed,
+                  variant: 'ply',
+                });
+                return;
+              }
+            }
+          } catch {
+            /* fall through to the whole-file path */
+          }
+        }
 
         const spatialData = await vscode.workspace.fs.readFile(document.uri);
         const fileReadTime = performance.now();

@@ -160,6 +160,20 @@ export function parsePcdAsciiWasm(bytes: Uint8Array): WasmPointCloud | null {
   }
 }
 
+/** Parse a binary (DATA binary) PCD point cloud. Returns null on failure. */
+export function parsePcdBinaryWasm(bytes: Uint8Array): WasmPointCloud | null {
+  const m = load();
+  if (!m || typeof m.parse_pcd_binary !== 'function') {
+    return null;
+  }
+  try {
+    return marshal(m.parse_pcd_binary(bytes));
+  } catch (error) {
+    console.warn('[pointcloud-wasm] parse_pcd_binary failed, falling back:', error);
+    return null;
+  }
+}
+
 /** Parse a PTS point cloud. Returns null on failure (caller falls back). */
 export function parsePtsWasm(bytes: Uint8Array): WasmPointCloud | null {
   const m = load();

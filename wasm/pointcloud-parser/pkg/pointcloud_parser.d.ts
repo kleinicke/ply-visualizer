@@ -72,6 +72,16 @@ export function parse_at(ptr: number, len: number, format: string): PointCloudRe
 export function parse_pcd_ascii(data: Uint8Array): PointCloudResult;
 
 /**
+ * Parse a binary PCD point cloud (`DATA binary`; not `binary_compressed`). Reads
+ * the FIELDS/SIZE/TYPE/COUNT header to map each field to a byte offset + reader,
+ * then walks fixed-size records straight into the packed output arrays — no
+ * text parsing, so it's orders of magnitude faster than the JS binary path.
+ * Returns Err (→ JS fallback) for ascii/compressed PCD, missing x/y/z, or a
+ * header whose SIZE/TYPE don't line up with FIELDS.
+ */
+export function parse_pcd_binary(data: Uint8Array): PointCloudResult;
+
+/**
  * Parse a PTS point cloud. PTS has an optional leading count line + comments
  * (both have < 3 numeric columns, so `parse_rows` skips them automatically),
  * then rows auto-detected from the first data row:
