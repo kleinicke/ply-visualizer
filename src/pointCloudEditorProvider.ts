@@ -384,6 +384,44 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             timestamp: loadStartTime,
           });
 
+          // Streaming overlap for ASCII PCD (same cold-cache win as XYZ: the next
+          // chunk's disk read overlaps the current chunk's parse). Gate on the
+          // HEADER only so we don't read the whole file first: require ASCII data
+          // and an identity VIEWPOINT (the WASM stream parser carries no viewpoint
+          // transform). Anything else falls through to the whole-file path below.
+          if (document.uri.scheme === 'file') {
+            try {
+              const head = await this.readFileHead(document.uri, 65536);
+              const headText = Buffer.from(head).toString('latin1');
+              const isAsciiPcd = /[\r\n]DATA\s+ascii/i.test('\n' + headText);
+              if (isAsciiPcd && this.pcdViewpointIsIdentity(head)) {
+                const streamed = await streamParseFile(document.uri.fsPath, 'pcd');
+                if (streamed) {
+                  let pcdBytes = head.byteLength;
+                  try {
+                    pcdBytes = fs.statSync(document.uri.fsPath).size;
+                  } catch {
+                    /* size is best-effort for logging only */
+                  }
+                  this.logPerf(
+                    `⏱️ PERF[pcd/ext] load ${(performance.now() - loadStartTime).toFixed(1)}ms (${streamed.vertexCount} pts, wasm-stream) for ${path.basename(document.uri.fsPath)}`
+                  );
+                  webviewPanel.webview.postMessage({
+                    type: 'xyzVariantData',
+                    fileName: path.basename(document.uri.fsPath),
+                    shortPath: this.getShortPath(document.uri.fsPath),
+                    fileSizeInBytes: pcdBytes,
+                    data: streamed,
+                    variant: 'pcd',
+                  });
+                  return;
+                }
+              }
+            } catch {
+              /* fall through to the whole-file path */
+            }
+          }
+
           const pcdData = await this.readFileFast(document.uri);
           const fileReadTime = performance.now();
           webviewPanel.webview.postMessage({
@@ -1757,6 +1795,22 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       }
     }
     return vscode.workspace.fs.readFile(uri);
+  }
+
+  /**
+   * Read just the first `maxBytes` of a local file (for header detection before
+   * deciding whether to stream the body). Returns a copy sized to bytes actually
+   * read; throws on non-file schemes / IO errors (callers fall back).
+   */
+  private async readFileHead(uri: vscode.Uri, maxBytes: number): Promise<Uint8Array> {
+    const fh = await fs.promises.open(uri.fsPath, 'r');
+    try {
+      const buf = Buffer.allocUnsafe(maxBytes);
+      const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
+      return new Uint8Array(buf.subarray(0, bytesRead));
+    } finally {
+      await fh.close();
+    }
   }
 
   /**
