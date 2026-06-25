@@ -2618,6 +2618,14 @@ class PointCloudVisualizer {
 
     const startTime = performance.now();
 
+    // Point clouds (no faces) are drawn with PointsMaterial, which never uses
+    // normals (points aren't lit, and EDL works off depth). Uploading a normal
+    // attribute for them just wastes ~12 bytes/point of VRAM — significant when
+    // many large clouds are open at once. So only attach normals for MESHES;
+    // the CPU normals stay in spatialData for PLY export, and the
+    // normal-visualization tool is mesh-only anyway.
+    const isMesh = (data.faces?.length || 0) > 0 || (data.faceCount || 0) > 0;
+
     // Check if we have direct TypedArrays (new ultra-fast path)
     if ((data as any).useTypedArrays) {
       const positions = (data as any).positionsArray as Float32Array;
@@ -2632,7 +2640,7 @@ class PointCloudVisualizer {
       // assigned deletes it), so building it here was a redundant full-size
       // Float32 allocation + per-channel loop on every colored load.
 
-      if (normals && data.hasNormals) {
+      if (normals && data.hasNormals && isMesh) {
         geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       }
     } else {
@@ -2687,7 +2695,7 @@ class PointCloudVisualizer {
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
       }
 
-      if (normals) {
+      if (normals && isMesh) {
         geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       }
     }
