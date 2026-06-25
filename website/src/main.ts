@@ -311,15 +311,16 @@ class PointCloudVisualizer {
   private lastAbsoluteMs: number = 0;
 
   private optimizeForPointCount(material: THREE.PointsMaterial, pointCount: number): void {
-    // Apply transparency settings
-    if (this.allowTransparency) {
-      material.transparent = true;
-      material.alphaTest = 0.1;
-    } else {
-      // GPU rendering optimizations - skip transparency pipeline since points are fully opaque
-      material.transparent = false; // Skip alpha blending pipeline
-      material.alphaTest = 0; // Skip alpha testing (no alpha data anyway)
-    }
+    // Render points as discs instead of the default GL squares. A small circular
+    // alpha texture is sampled per fragment (via gl_PointCoord) and alphaTest
+    // discards the corners — so points are round and still opaque (no alpha
+    // blending pipeline). The white texture only carries the round mask; the
+    // per-vertex color is preserved (PointsMaterial multiplies map × color).
+    material.map = this.getRoundPointTexture();
+    material.alphaTest = 0.5; // keep the disc, discard the corners
+
+    // Transparency only affects the soft rim; the disc shape comes from alphaTest.
+    material.transparent = this.allowTransparency;
 
     material.depthTest = true;
     material.depthWrite = true;
@@ -328,6 +329,47 @@ class PointCloudVisualizer {
 
     // Force material update
     material.needsUpdate = true;
+  }
+
+  private roundPointTexture: THREE.Texture | null = null;
+
+  /**
+   * Lazily build (once) a small white circular alpha texture used to make points
+   * round. Alpha is 1 inside the disc with a 1–2px soft rim for anti-aliasing,
+   * 0 in the corners; combined with alphaTest=0.5 this yields clean round points.
+   */
+  private getRoundPointTexture(): THREE.Texture {
+    if (this.roundPointTexture) {
+      return this.roundPointTexture;
+    }
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const img = ctx.createImageData(size, size);
+    const c = (size - 1) / 2;
+    const smooth = (e0: number, e1: number, x: number) => {
+      const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+      return t * t * (3 - 2 * t);
+    };
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const dx = (x - c) / c;
+        const dy = (y - c) / c;
+        const d = Math.sqrt(dx * dx + dy * dy); // 0 at center, 1 at edge
+        const a = 1 - smooth(0.9, 1.0, d);
+        const i = (y * size + x) * 4;
+        img.data[i] = 255;
+        img.data[i + 1] = 255;
+        img.data[i + 2] = 255;
+        img.data[i + 3] = Math.round(a * 255);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    this.roundPointTexture = tex;
+    return tex;
   }
 
   private toggleTransparency(): void {
@@ -356,13 +398,9 @@ class PointCloudVisualizer {
     this.meshes.forEach(mesh => {
       if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
         const material = mesh.material as THREE.PointsMaterial;
-        if (this.allowTransparency) {
-          material.transparent = true;
-          material.alphaTest = 0.1;
-        } else {
-          material.transparent = false;
-          material.alphaTest = 0;
-        }
+        // Only toggle blending; keep alphaTest (the round-disc cutout, set in
+        // optimizeForPointCount) so points stay round across transparency toggles.
+        material.transparent = this.allowTransparency;
         material.needsUpdate = true;
       }
     });
@@ -371,13 +409,9 @@ class PointCloudVisualizer {
     this.vertexPointsObjects.forEach(vertexPoints => {
       if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
         const material = vertexPoints.material as THREE.PointsMaterial;
-        if (this.allowTransparency) {
-          material.transparent = true;
-          material.alphaTest = 0.1;
-        } else {
-          material.transparent = false;
-          material.alphaTest = 0;
-        }
+        // Only toggle blending; keep alphaTest (the round-disc cutout, set in
+        // optimizeForPointCount) so points stay round across transparency toggles.
+        material.transparent = this.allowTransparency;
         material.needsUpdate = true;
       }
     });
@@ -388,13 +422,8 @@ class PointCloudVisualizer {
         group.traverse(child => {
           if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
             const material = child.material as THREE.PointsMaterial;
-            if (this.allowTransparency) {
-              material.transparent = true;
-              material.alphaTest = 0.1;
-            } else {
-              material.transparent = false;
-              material.alphaTest = 0;
-            }
+            // Keep alphaTest (round-disc cutout); only toggle blending.
+            material.transparent = this.allowTransparency;
             material.needsUpdate = true;
           }
         });
