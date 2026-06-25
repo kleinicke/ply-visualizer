@@ -74,6 +74,11 @@ class PointCloudVisualizer {
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private renderer!: THREE.WebGLRenderer;
+  // True between a WebGL context loss and its restoration. While lost, the GPU
+  // is gone, so we must not render or touch GL objects — doing so throws and
+  // crashes the webview. This is the safety net for the multi-window
+  // out-of-VRAM case (each window is a separate context sharing one GPU).
+  private contextLost = false;
   private controls!: TrackballControls | OrbitControls | CustomArcballControls | TurntableControls;
 
   // Camera control state
@@ -758,6 +763,8 @@ class PointCloudVisualizer {
     this.applyBackgroundBrightness();
     this.renderer.shadowMap.enabled = true; // Re-enable shadows
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    this.setupContextLossHandling(canvas);
 
     // Initial check for formatted welcome message
     this.updateWelcomeMessageVisibility();
@@ -1549,10 +1556,48 @@ class PointCloudVisualizer {
   }
 
   /**
+   * Recover gracefully from WebGL context loss instead of crashing.
+   *
+   * Context loss happens when the GPU runs out of memory — common when several
+   * extension windows each hold a large cloud, since every webview is a separate
+   * WebGL context but they all share one GPU's VRAM. Without this handler the
+   * next GL call throws and takes down the whole webview. We preventDefault() to
+   * let the browser attempt restoration, pause rendering while lost, and resume
+   * on restore (Three.js re-uploads geometries/textures automatically on the
+   * next render because their CPU-side arrays still exist).
+   */
+  private setupContextLossHandling(canvas: HTMLCanvasElement): void {
+    canvas.addEventListener(
+      'webglcontextlost',
+      event => {
+        event.preventDefault(); // required so the context can be restored
+        this.contextLost = true;
+        console.warn('WebGL context lost — pausing rendering until restored.');
+        this.showStatus('GPU context lost (likely out of memory). Recovering…');
+      },
+      false
+    );
+    canvas.addEventListener(
+      'webglcontextrestored',
+      () => {
+        this.contextLost = false;
+        console.warn('WebGL context restored — resuming.');
+        this.showStatus('GPU context restored.');
+        this.requestRender();
+      },
+      false
+    );
+  }
+
+  /**
    * Centralized render method — routes through EDL EffectComposer when enabled,
    * falls back to direct renderer.render() when disabled for zero overhead.
    */
   private performRender(): void {
+    // The GPU is gone while the context is lost; any GL call would throw.
+    if (this.contextLost) {
+      return;
+    }
     if (this.edlEnabled && this.effectComposer) {
       this.effectComposer.render();
     } else {
