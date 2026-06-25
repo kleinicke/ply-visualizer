@@ -787,7 +787,8 @@ class PointCloudVisualizer {
       powerPreference: 'high-performance', // Keep discrete GPU preference
     });
     this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.fullPixelRatio = Math.min(window.devicePixelRatio, 2);
+    this.renderer.setPixelRatio(this.fullPixelRatio);
     this.applySceneBrightness();
     this.applyBackgroundBrightness();
     // Shadows are disabled: no object in the scene sets castShadow/receiveShadow,
@@ -997,12 +998,12 @@ class PointCloudVisualizer {
     ) {
       (this.controls as any).addEventListener('start', showAxes);
       (this.controls as any).addEventListener('end', hideAxesAfterDelay);
-      (this.controls as any).addEventListener('change', () => this.requestRender());
+      (this.controls as any).addEventListener('change', () => this.onControlsChange());
     } else {
       const orbitControls = this.controls as OrbitControls;
       orbitControls.addEventListener('start', showAxes);
       orbitControls.addEventListener('end', hideAxesAfterDelay);
-      orbitControls.addEventListener('change', () => this.requestRender());
+      orbitControls.addEventListener('change', () => this.onControlsChange());
     }
 
     // debug: axes visibility init
@@ -1585,6 +1586,49 @@ class PointCloudVisualizer {
 
   private requestRender(): void {
     this.needsRender = true;
+  }
+
+  // Dynamic resolution: while the camera is moving we render at a lower device
+  // pixel ratio (far fewer fragments — a big win on HiDPI/retina where the
+  // default is 2x = 4x the pixels), then restore full resolution shortly after
+  // motion stops so the idle image is always crisp ("no one should be able to
+  // tell"). Only the renderer's pixel ratio is touched; under EDL the composer
+  // owns resolution so we leave it unchanged there.
+  private fullPixelRatio = 1;
+  private lowResActive = false;
+  private resRestoreTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private onControlsChange(): void {
+    this.applyMotionResolution();
+    this.requestRender();
+  }
+
+  private applyMotionResolution(): void {
+    // Nothing to gain if we're not downscaling (e.g. 1x displays) or under EDL.
+    const motionRatio = Math.max(1.0, this.fullPixelRatio * 0.5);
+    if (!this.edlEnabled && motionRatio < this.fullPixelRatio) {
+      if (!this.lowResActive) {
+        this.lowResActive = true;
+        this.renderer.setPixelRatio(motionRatio);
+      }
+      // Restore full resolution a short moment after the last movement.
+      if (this.resRestoreTimer) {
+        clearTimeout(this.resRestoreTimer);
+      }
+      this.resRestoreTimer = setTimeout(() => this.restoreFullResolution(), 180);
+    }
+  }
+
+  private restoreFullResolution(): void {
+    if (this.resRestoreTimer) {
+      clearTimeout(this.resRestoreTimer);
+      this.resRestoreTimer = null;
+    }
+    if (this.lowResActive) {
+      this.lowResActive = false;
+      this.renderer.setPixelRatio(this.fullPixelRatio);
+      this.requestRender();
+    }
   }
 
   /**
