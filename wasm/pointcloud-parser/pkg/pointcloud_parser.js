@@ -231,6 +231,26 @@ function parse_pcd_ascii(data) {
 exports.parse_pcd_ascii = parse_pcd_ascii;
 
 /**
+ * Parse a PTS point cloud. PTS has an optional leading count line + comments
+ * (both have < 3 numeric columns, so `parse_rows` skips them automatically),
+ * then rows auto-detected from the first data row:
+ *   3 → x y z · 4 → x y z intensity · 6 → x y z r g b ·
+ *   7 → x y z intensity r g b (Open3D default).
+ * Colors are 0-255 integers (the shared 0-1-vs-int heuristic in `Builder`
+ * handles the common case; a rare all-channels-≤1 row could be misread — see
+ * PERFORMANCE_PLAN raw-int colors note).
+ * @param {Uint8Array} data
+ * @returns {PointCloudResult}
+ */
+function parse_pts(data) {
+  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.parse_pts(ptr0, len0);
+  return PointCloudResult.__wrap(ret);
+}
+exports.parse_pts = parse_pts;
+
+/**
  * Parse XYZ / XYZN / XYZRGB. For plain "xyz" the layout is auto-detected from
  * the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
  * @param {Uint8Array} data

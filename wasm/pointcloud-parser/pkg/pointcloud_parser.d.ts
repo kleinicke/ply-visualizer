@@ -72,6 +72,18 @@ export function parse_at(ptr: number, len: number, format: string): PointCloudRe
 export function parse_pcd_ascii(data: Uint8Array): PointCloudResult;
 
 /**
+ * Parse a PTS point cloud. PTS has an optional leading count line + comments
+ * (both have < 3 numeric columns, so `parse_rows` skips them automatically),
+ * then rows auto-detected from the first data row:
+ *   3 → x y z · 4 → x y z intensity · 6 → x y z r g b ·
+ *   7 → x y z intensity r g b (Open3D default).
+ * Colors are 0-255 integers (the shared 0-1-vs-int heuristic in `Builder`
+ * handles the common case; a rare all-channels-≤1 row could be misread — see
+ * PERFORMANCE_PLAN raw-int colors note).
+ */
+export function parse_pts(data: Uint8Array): PointCloudResult;
+
+/**
  * Parse XYZ / XYZN / XYZRGB. For plain "xyz" the layout is auto-detected from
  * the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
  */

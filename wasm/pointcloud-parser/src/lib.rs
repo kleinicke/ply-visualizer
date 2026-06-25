@@ -386,6 +386,35 @@ pub fn parse_xyz(data: &[u8], variant: &str) -> PointCloudResult {
     parse_rows(data, 0, &layout, cap, 0)
 }
 
+/// Parse a PTS point cloud. PTS has an optional leading count line + comments
+/// (both have < 3 numeric columns, so `parse_rows` skips them automatically),
+/// then rows auto-detected from the first data row:
+///   3 → x y z · 4 → x y z intensity · 6 → x y z r g b ·
+///   7 → x y z intensity r g b (Open3D default).
+/// Colors are 0-255 integers (the shared 0-1-vs-int heuristic in `Builder`
+/// handles the common case; a rare all-channels-≤1 row could be misread — see
+/// PERFORMANCE_PLAN raw-int colors note).
+#[wasm_bindgen]
+pub fn parse_pts(data: &[u8]) -> PointCloudResult {
+    let mut vals = [0f64; 16];
+    let mut probe = 0usize;
+    let mut n = 0usize;
+    while probe < data.len() {
+        n = parse_line(data, &mut probe, &mut vals);
+        if n >= 3 {
+            break;
+        }
+    }
+    let layout = match n {
+        c if c >= 7 => vec![Col::X, Col::Y, Col::Z, Col::Intensity, Col::R, Col::G, Col::B],
+        6 => vec![Col::X, Col::Y, Col::Z, Col::R, Col::G, Col::B],
+        4 => vec![Col::X, Col::Y, Col::Z, Col::Intensity],
+        _ => vec![Col::X, Col::Y, Col::Z],
+    };
+    let cap = data.len() / 40; // ~bytes per pts row
+    parse_rows(data, 0, &layout, cap, 0)
+}
+
 /// Parse an ASCII PLY: read the header to learn the vertex count + property
 /// order, then parse the vertex rows. Falls back to an error string the JS side
 /// can catch (and use its own parser) on anything unexpected.

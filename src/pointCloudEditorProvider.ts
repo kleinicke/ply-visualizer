@@ -16,6 +16,7 @@ import {
   parseXyzWasm,
   parseAsciiPlyWasm,
   parsePcdAsciiWasm,
+  parsePtsWasm,
   streamParseFile,
 } from './wasmPointcloud';
 
@@ -450,7 +451,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             timestamp: loadStartTime,
           });
 
-          const ptsData = await vscode.workspace.fs.readFile(document.uri);
+          const ptsData = await this.readFileFast(document.uri);
           const fileReadTime = performance.now();
           webviewPanel.webview.postMessage({
             type: 'timingUpdate',
@@ -458,22 +459,32 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             timestamp: fileReadTime,
           });
 
-          const ptsParser = new PtsParser();
-          const timingCallback = (message: string) => {
-            webviewPanel.webview.postMessage({
-              type: 'timingUpdate',
-              message: message,
-              timestamp: performance.now(),
-            });
-          };
-
-          const parsedData = await ptsParser.parse(ptsData, timingCallback);
-          const parseTime = performance.now();
-          webviewPanel.webview.postMessage({
-            type: 'timingUpdate',
-            message: `🎯 Extension: PTS parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
-            timestamp: parseTime,
-          });
+          // Try the Rust/WASM parser (~2.5-3x faster); fall back to JS.
+          let parsedData: any;
+          let ptsMode = 'js';
+          const ptsWasm = parsePtsWasm(ptsData);
+          if (ptsWasm) {
+            parsedData = {
+              vertexCount: ptsWasm.vertexCount,
+              positionsArray: ptsWasm.positionsArray,
+              colorsArray: ptsWasm.colorsArray,
+              normalsArray: ptsWasm.normalsArray,
+              intensityArray: ptsWasm.intensityArray,
+              hasColors: ptsWasm.hasColors,
+              hasNormals: ptsWasm.hasNormals,
+              hasIntensity: ptsWasm.hasIntensity,
+              scalarFields: ptsWasm.intensityArray ? { intensity: ptsWasm.intensityArray } : {},
+              detectedFormat: `x y z${ptsWasm.hasIntensity ? ' intensity' : ''}${ptsWasm.hasColors ? ' r g b' : ''}`,
+              comments: [],
+            };
+            ptsMode = 'wasm';
+          } else {
+            const ptsParser = new PtsParser();
+            parsedData = await ptsParser.parse(ptsData);
+          }
+          this.logPerf(
+            `⏱️ PERF[pts/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts, ${ptsMode}) for ${path.basename(document.uri.fsPath)}`
+          );
 
           // Send parsed PTS data to webview
           webviewPanel.webview.postMessage({

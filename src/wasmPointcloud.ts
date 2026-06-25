@@ -159,3 +159,17 @@ export function parsePcdAsciiWasm(bytes: Uint8Array): WasmPointCloud | null {
     return null;
   }
 }
+
+/** Parse a PTS point cloud. Returns null on failure (caller falls back). */
+export function parsePtsWasm(bytes: Uint8Array): WasmPointCloud | null {
+  const m = load();
+  if (!m || typeof m.parse_pts !== 'function') {
+    return null;
+  }
+  try {
+    return marshal(m.parse_pts(bytes));
+  } catch (error) {
+    console.warn('[pointcloud-wasm] parse_pts failed, falling back:', error);
+    return null;
+  }
+}
