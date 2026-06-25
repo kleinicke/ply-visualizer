@@ -372,6 +372,56 @@ class PointCloudVisualizer {
     return tex;
   }
 
+  /**
+   * Make a PointsMaterial decode its (raw 8-bit sRGB) vertex colors to linear in
+   * the fragment shader, so we can store point colors as Uint8 (4x less memory)
+   * instead of a baked Float32 [0,1] array — see buildOriginalColorArray.
+   *
+   * The decode is gated by material.userData.srgbDecode and uses the exact same
+   * sRGB→linear formula as colorProcessor's LUT, so the result is visually
+   * identical to the old path. It only applies in 'original' color mode with the
+   * gamma toggle on; intensity/assigned colors (already linear) keep srgbDecode
+   * false. Wired through onBeforeCompile (a no-op when disabled) with a matching
+   * customProgramCacheKey so toggling recompiles correctly. Idempotent.
+   */
+  /**
+   * Whether a point cloud's vertex colors are raw sRGB that the shader should
+   * decode. True only in 'original' mode with the gamma toggle on, and NOT for
+   * depth-derived clouds — those colors are already linear, so decoding them
+   * would darken them incorrectly. (Intensity/assigned modes aren't 'original'.)
+   */
+  private pointColorsNeedSrgbDecode(data: SpatialData, colorMode: string): boolean {
+    if (colorMode !== 'original' || !data.hasColors || !this.convertSrgbToLinear) {
+      return false;
+    }
+    const depthDerived = this.isDepthDerivedFile(data) || (data as any).isDepthDerived;
+    return !depthDerived;
+  }
+
+  private setupPointSrgbDecode(material: THREE.PointsMaterial): void {
+    if (material.userData.srgbDecodeSetup) {
+      return;
+    }
+    material.userData.srgbDecodeSetup = true;
+    material.onBeforeCompile = shader => {
+      if (!material.userData.srgbDecode) {
+        return; // stock shader: vertex colors used as-is (linear)
+      }
+      shader.fragmentShader =
+        'vec3 plySrgbToLinear(vec3 c){ return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }\n' +
+        shader.fragmentShader.replace(
+          '#include <color_fragment>',
+          `#if defined( USE_COLOR_ALPHA )
+             diffuseColor *= vec4( plySrgbToLinear( vColor.rgb ), vColor.a );
+           #elif defined( USE_COLOR )
+             diffuseColor.rgb *= plySrgbToLinear( vColor );
+           #endif`
+        );
+    };
+    // The compiled program differs by decode state, so it must be part of the key.
+    material.customProgramCacheKey = () => (material.userData.srgbDecode ? 'plySrgb1' : 'plySrgb0');
+  }
+
   private toggleTransparency(): void {
     this.allowTransparency = !this.allowTransparency;
     console.log(`Transparency ${this.allowTransparency ? 'enabled' : 'disabled'}`);
@@ -1330,6 +1380,13 @@ class PointCloudVisualizer {
 
         if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
           mesh.material.vertexColors = this.shouldUseVertexColors(spatialData, colorMode);
+          // Point colors are raw 8-bit sRGB now; the gamma toggle flips in-shader
+          // decoding rather than rebuilding the color array.
+          this.setupPointSrgbDecode(mesh.material);
+          mesh.material.userData.srgbDecode = this.pointColorsNeedSrgbDecode(
+            spatialData,
+            colorMode
+          );
           mesh.material.needsUpdate = true;
         }
       }
@@ -2443,9 +2500,20 @@ class PointCloudVisualizer {
     return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   }
 
-  private buildOriginalColorArray(data: SpatialData): Float32Array | null {
+  // For POINT CLOUDS this returns raw 8-bit sRGB colors (Uint8, 3 bytes/point)
+  // and the sRGB→linear conversion happens in the point shader (see
+  // setupPointSrgbDecode). That's 4x less color memory than the old baked Float32
+  // [0,1] array — the key lever when many large clouds are open at once — and the
+  // typed path is zero-copy (shares the parser's array). MESHES are unchanged:
+  // they keep the Float32 + LUT path (few vertices, memory is a non-issue, and
+  // their lit materials read linear vertex colors directly).
+  private buildOriginalColorArray(data: SpatialData): Float32Array | Uint8Array | null {
+    const isMesh = (data.faceCount || 0) > 0;
     const typedColors = (data as any).colorsArray as Uint8Array | null | undefined;
     if (typedColors && data.hasColors) {
+      if (!isMesh) {
+        return typedColors; // raw 8-bit sRGB, decoded in-shader; zero-copy
+      }
       const colorFloats = new Float32Array(typedColors.length);
       if (this.convertSrgbToLinear) {
         const lut = this.colorProcessor.ensureSrgbLUT();
@@ -2462,6 +2530,17 @@ class PointCloudVisualizer {
 
     if (!data.hasColors || !data.vertices?.length) {
       return null;
+    }
+
+    if (!isMesh) {
+      const colors = new Uint8Array(data.vertices.length * 3);
+      for (let i = 0, i3 = 0; i < data.vertices.length; i++, i3 += 3) {
+        const vertex = data.vertices[i];
+        colors[i3] = (vertex.red || 0) & 255;
+        colors[i3 + 1] = (vertex.green || 0) & 255;
+        colors[i3 + 2] = (vertex.blue || 0) & 255;
+      }
+      return colors;
     }
 
     const colors = new Float32Array(data.vertices.length * 3);
@@ -2507,7 +2586,10 @@ class PointCloudVisualizer {
     if (colorMode === 'original' && data.hasColors) {
       const colors = this.buildOriginalColorArray(data);
       if (colors) {
-        const colorAttribute = new THREE.BufferAttribute(colors, 3);
+        // Uint8 (point-cloud sRGB) attributes are normalized so the GPU reads
+        // 0..1; Float32 (mesh, already linear) are not.
+        const normalized = colors instanceof Uint8Array;
+        const colorAttribute = new THREE.BufferAttribute(colors, 3, normalized);
         geometry.setAttribute('color', colorAttribute);
         colorAttribute.needsUpdate = true;
         return;
@@ -4862,6 +4944,12 @@ class PointCloudVisualizer {
           material.color.setRGB(color[0], color[1], color[2]);
         }
       }
+
+      // Point colors are stored as raw 8-bit sRGB; decode them in-shader when in
+      // original mode with the gamma toggle on (visually identical to the old
+      // baked-Float32 path, 4x less memory).
+      this.setupPointSrgbDecode(material);
+      material.userData.srgbDecode = this.pointColorsNeedSrgbDecode(data, colorMode);
 
       return material;
     }
@@ -13003,6 +13091,14 @@ class PointCloudVisualizer {
 
     content += 'end_header\n';
 
+    // Point-cloud colors are stored as raw 8-bit sRGB (Uint8); mesh/intensity
+    // colors as Float32 [0,1]. Scale accordingly so export matches what's shown.
+    const colorIsByte =
+      hasColors &&
+      (colorAttribute.array instanceof Uint8Array ||
+        colorAttribute.array instanceof Uint8ClampedArray);
+    const colorScale = colorIsByte ? 1 : 255;
+
     // Vertex data from current geometry (includes transformations)
     for (let i = 0; i < vertexCount; i++) {
       const i3 = i * 3;
@@ -13013,9 +13109,9 @@ class PointCloudVisualizer {
       content += `${x} ${y} ${z}`;
 
       if (hasColors) {
-        const r = Math.round(colorAttribute.array[i3] * 255);
-        const g = Math.round(colorAttribute.array[i3 + 1] * 255);
-        const b = Math.round(colorAttribute.array[i3 + 2] * 255);
+        const r = Math.round(colorAttribute.array[i3] * colorScale);
+        const g = Math.round(colorAttribute.array[i3 + 1] * colorScale);
+        const b = Math.round(colorAttribute.array[i3 + 2] * colorScale);
         content += ` ${r} ${g} ${b}`;
       }
 
