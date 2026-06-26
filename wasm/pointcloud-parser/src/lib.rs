@@ -126,6 +126,36 @@ enum Col {
     Skip,
 }
 
+/// How to interpret separate R/G/B color values.
+#[derive(Clone, Copy, PartialEq)]
+enum ColorMode {
+    /// No type info (XYZ): guess per row — values all ≤ 1 are 0..1, else 0..255.
+    Auto,
+    /// Declared integer color (PLY `uchar`, PCD `TYPE U`): take values as 0..255.
+    Byte,
+    /// Declared float color (PLY `float`, PCD `TYPE F`): values are 0..1, scale ×255.
+    Unit,
+}
+
+/// Map a PLY color property type to a ColorMode. Unknown/exotic integer widths
+/// (ushort/uint…) stay Auto so behavior there is unchanged.
+fn ply_color_mode(ty: &str) -> ColorMode {
+    match ty {
+        "float" | "float32" | "double" | "float64" => ColorMode::Unit,
+        "uchar" | "uint8" | "char" | "int8" => ColorMode::Byte,
+        _ => ColorMode::Auto,
+    }
+}
+
+/// Map a PCD field TYPE char (b'F'/b'U'/b'I') to a ColorMode for separate r/g/b.
+fn pcd_color_mode(ty: u8) -> ColorMode {
+    match ty {
+        b'F' => ColorMode::Unit,
+        b'U' | b'I' => ColorMode::Byte,
+        _ => ColorMode::Auto,
+    }
+}
+
 #[inline(always)]
 fn is_ws(c: u8) -> bool {
     c == b' ' || c == b'\t' || c == b'\r'
@@ -182,10 +212,11 @@ struct Builder {
     intensity: Vec<f32>,
     min: [f32; 3],
     max: [f32; 3],
+    color_mode: ColorMode,
 }
 
 impl Builder {
-    fn new(layout: Vec<Col>, cap: usize) -> Self {
+    fn new(layout: Vec<Col>, cap: usize, color_mode: ColorMode) -> Self {
         let uses_packed = layout.iter().any(|c| *c == Col::PackedRgb);
         let has_colors =
             uses_packed || layout.iter().any(|c| matches!(c, Col::R | Col::G | Col::B));
@@ -205,6 +236,7 @@ impl Builder {
             intensity: if has_intensity { Vec::with_capacity(cap) } else { Vec::new() },
             min: [f32::INFINITY; 3],
             max: [f32::NEG_INFINITY; 3],
+            color_mode,
         }
     }
 
@@ -255,7 +287,15 @@ impl Builder {
                 self.colors.push(((packed >> 8) & 0xff) as u8);
                 self.colors.push((packed & 0xff) as u8);
             } else {
-                let (cr, cg, cb) = if r <= 1.0 && g <= 1.0 && b <= 1.0 {
+                // Byte: declared 0..255 ints — take as-is (so dark colors like
+                // `1 1 1` aren't mistaken for floats). Unit: declared 0..1 floats
+                // — scale ×255. Auto (XYZ, no type info): guess from the values.
+                let scale = match self.color_mode {
+                    ColorMode::Byte => false,
+                    ColorMode::Unit => true,
+                    ColorMode::Auto => r <= 1.0 && g <= 1.0 && b <= 1.0,
+                };
+                let (cr, cg, cb) = if scale {
                     ((r * 255.0).round(), (g * 255.0).round(), (b * 255.0).round())
                 } else {
                     (r.round(), g.round(), b.round())
@@ -305,8 +345,9 @@ fn parse_rows(
     layout: &[Col],
     cap: usize,
     expected: usize,
+    color_mode: ColorMode,
 ) -> PointCloudResult {
-    let mut b = Builder::new(layout.to_vec(), cap.max(1024));
+    let mut b = Builder::new(layout.to_vec(), cap.max(1024), color_mode);
     let mut vals = [0f64; 16];
     let mut pos = start;
     let len = data.len();
@@ -383,7 +424,7 @@ pub fn parse_xyz(data: &[u8], variant: &str) -> PointCloudResult {
     // pre-sized (≈38 bytes/row for xyz, ≈75 for the 6-column variants).
     let bytes_per_row = if layout.len() >= 6 { 75 } else { 35 };
     let cap = data.len() / bytes_per_row;
-    parse_rows(data, 0, &layout, cap, 0)
+    parse_rows(data, 0, &layout, cap, 0, ColorMode::Auto)
 }
 
 /// Parse a PTS point cloud. PTS has an optional leading count line + comments
@@ -412,7 +453,7 @@ pub fn parse_pts(data: &[u8]) -> PointCloudResult {
         _ => vec![Col::X, Col::Y, Col::Z],
     };
     let cap = data.len() / 40; // ~bytes per pts row
-    parse_rows(data, 0, &layout, cap, 0)
+    parse_rows(data, 0, &layout, cap, 0, ColorMode::Auto)
 }
 
 /// Parse an ASCII PLY: read the header to learn the vertex count + property
@@ -436,6 +477,7 @@ pub fn parse_ascii_ply(data: &[u8]) -> Result<PointCloudResult, JsValue> {
     let mut vertex_count = 0usize;
     let mut face_count = 0usize;
     let mut layout: Vec<Col> = Vec::new();
+    let mut color_mode = ColorMode::Auto;
 
     for line in header.lines() {
         let t = line.trim();
@@ -458,19 +500,14 @@ pub fn parse_ascii_ply(data: &[u8]) -> Result<PointCloudResult, JsValue> {
                 // property <type> <name>  (list properties don't occur for vertices)
                 let parts: Vec<&str> = it.collect();
                 let name = parts.last().copied().unwrap_or("");
-                layout.push(match name {
-                    "x" => Col::X,
-                    "y" => Col::Y,
-                    "z" => Col::Z,
-                    "red" | "r" => Col::R,
-                    "green" | "g" => Col::G,
-                    "blue" | "b" => Col::B,
-                    "nx" => Col::Nx,
-                    "ny" => Col::Ny,
-                    "nz" => Col::Nz,
-                    "intensity" | "reflectivity" | "reflectance" | "remission" => Col::Intensity,
-                    _ => Col::Skip,
-                });
+                let col = ply_col(name);
+                // Use the declared type of the (first) color channel instead of
+                // guessing from values, so e.g. `property uchar red = 1` isn't
+                // mistaken for a 0..1 float.
+                if matches!(col, Col::R | Col::G | Col::B) && color_mode == ColorMode::Auto {
+                    color_mode = ply_color_mode(parts.first().copied().unwrap_or(""));
+                }
+                layout.push(col);
             }
             _ => {}
         }
@@ -487,7 +524,7 @@ pub fn parse_ascii_ply(data: &[u8]) -> Result<PointCloudResult, JsValue> {
         return Err(JsValue::from_str("no x/y/z properties"));
     }
 
-    Ok(parse_rows(data, data_start, &layout, vertex_count, vertex_count))
+    Ok(parse_rows(data, data_start, &layout, vertex_count, vertex_count, color_mode))
 }
 
 /// Parse an ASCII PCD point cloud. Reads the FIELDS/COUNT header to build a
@@ -503,6 +540,7 @@ pub fn parse_pcd_ascii(data: &[u8]) -> Result<PointCloudResult, JsValue> {
 
     let mut fields: Vec<&str> = Vec::new();
     let mut counts: Vec<usize> = Vec::new();
+    let mut types: Vec<u8> = Vec::new();
     let mut vertex_count = 0usize;
     for line in header.lines() {
         let t = line.trim();
@@ -510,12 +548,23 @@ pub fn parse_pcd_ascii(data: &[u8]) -> Result<PointCloudResult, JsValue> {
             fields = rest.split_whitespace().collect();
         } else if let Some(rest) = t.strip_prefix("COUNT ") {
             counts = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+        } else if let Some(rest) = t.strip_prefix("TYPE ") {
+            types = rest.split_whitespace().map(|s| s.bytes().next().unwrap_or(b'F')).collect();
         } else if let Some(rest) = t.strip_prefix("POINTS ") {
             vertex_count = rest.trim().parse().unwrap_or(0);
         }
     }
     if fields.is_empty() {
         return Err(JsValue::from_str("no FIELDS"));
+    }
+    // Color mode from the declared TYPE of the first separate r/g/b field (packed
+    // rgb is always 8-bit and ignores this).
+    let mut color_mode = ColorMode::Auto;
+    for (i, &name) in fields.iter().enumerate() {
+        if matches!(name, "r" | "red" | "g" | "green" | "b" | "blue") {
+            color_mode = pcd_color_mode(types.get(i).copied().unwrap_or(b'F'));
+            break;
+        }
     }
 
     // Confirm DATA is ascii, and find the byte after that line's newline.
@@ -560,7 +609,7 @@ pub fn parse_pcd_ascii(data: &[u8]) -> Result<PointCloudResult, JsValue> {
         return Err(JsValue::from_str("no x/y/z fields"));
     }
 
-    Ok(parse_rows(data, p, &layout, vertex_count, vertex_count))
+    Ok(parse_rows(data, p, &layout, vertex_count, vertex_count, color_mode))
 }
 
 /// Read one numeric PCD field as f64. `ty`: b'F' float, b'U' unsigned, b'I'
@@ -710,7 +759,18 @@ pub fn parse_pcd_binary(data: &[u8]) -> Result<PointCloudResult, JsValue> {
                 }
                 Col::R | Col::G | Col::B => {
                     let v = pcd_read_num(data, o, d.size, d.ty);
-                    let c = if v <= 1.0 { (v * 255.0).round() } else { v.round() };
+                    // Use the declared TYPE: F → 0..1 float (×255), U/I → 0..255.
+                    let c = match pcd_color_mode(d.ty) {
+                        ColorMode::Unit => (v * 255.0).round(),
+                        ColorMode::Byte => v.round(),
+                        ColorMode::Auto => {
+                            if v <= 1.0 {
+                                (v * 255.0).round()
+                            } else {
+                                v.round()
+                            }
+                        }
+                    };
                     let cc = c.clamp(0.0, 255.0) as u8;
                     match d.col {
                         Col::R => cr = cc,
@@ -800,8 +860,8 @@ enum HeaderState {
     NeedMore,
     /// Unsupported (binary, mesh, no xyz, …) — caller falls back to JS.
     Reject,
-    /// (column layout, vertex count, byte offset where data rows begin)
-    Ready(Vec<Col>, usize, usize),
+    /// (column layout, vertex count, byte offset where data rows begin, color mode)
+    Ready(Vec<Col>, usize, usize, ColorMode),
 }
 
 fn ply_header_stream(buf: &[u8]) -> HeaderState {
@@ -822,6 +882,7 @@ fn ply_header_stream(buf: &[u8]) -> HeaderState {
     let mut vertex_count = 0usize;
     let mut face_count = 0usize;
     let mut layout: Vec<Col> = Vec::new();
+    let mut color_mode = ColorMode::Auto;
     for line in header.lines() {
         let t = line.trim();
         let mut it = t.split_whitespace();
@@ -839,7 +900,11 @@ fn ply_header_stream(buf: &[u8]) -> HeaderState {
             }
             Some("property") if in_vertex => {
                 let parts: Vec<&str> = it.collect();
-                layout.push(ply_col(parts.last().copied().unwrap_or("")));
+                let col = ply_col(parts.last().copied().unwrap_or(""));
+                if matches!(col, Col::R | Col::G | Col::B) && color_mode == ColorMode::Auto {
+                    color_mode = ply_color_mode(parts.first().copied().unwrap_or(""));
+                }
+                layout.push(col);
             }
             _ => {}
         }
@@ -847,7 +912,7 @@ fn ply_header_stream(buf: &[u8]) -> HeaderState {
     if !format_ascii || face_count > 0 || !layout.iter().any(|c| *c == Col::X) {
         return HeaderState::Reject;
     }
-    HeaderState::Ready(layout, vertex_count, data_start)
+    HeaderState::Ready(layout, vertex_count, data_start, color_mode)
 }
 
 fn pcd_header_stream(buf: &[u8]) -> HeaderState {
@@ -873,6 +938,7 @@ fn pcd_header_stream(buf: &[u8]) -> HeaderState {
     let data_start = line_end + 1;
     let mut fields: Vec<&str> = Vec::new();
     let mut counts: Vec<usize> = Vec::new();
+    let mut types: Vec<u8> = Vec::new();
     let mut vertex_count = 0usize;
     for line in header.lines() {
         let t = line.trim();
@@ -880,12 +946,21 @@ fn pcd_header_stream(buf: &[u8]) -> HeaderState {
             fields = rest.split_whitespace().collect();
         } else if let Some(rest) = t.strip_prefix("COUNT ") {
             counts = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+        } else if let Some(rest) = t.strip_prefix("TYPE ") {
+            types = rest.split_whitespace().map(|s| s.bytes().next().unwrap_or(b'F')).collect();
         } else if let Some(rest) = t.strip_prefix("POINTS ") {
             vertex_count = rest.trim().parse().unwrap_or(0);
         }
     }
     if fields.is_empty() {
         return HeaderState::Reject;
+    }
+    let mut color_mode = ColorMode::Auto;
+    for (i, &name) in fields.iter().enumerate() {
+        if matches!(name, "r" | "red" | "g" | "green" | "b" | "blue") {
+            color_mode = pcd_color_mode(types.get(i).copied().unwrap_or(b'F'));
+            break;
+        }
     }
     let mut layout: Vec<Col> = Vec::new();
     for (i, &name) in fields.iter().enumerate() {
@@ -898,7 +973,7 @@ fn pcd_header_stream(buf: &[u8]) -> HeaderState {
     if !layout.iter().any(|c| *c == Col::X) {
         return HeaderState::Reject;
     }
-    HeaderState::Ready(layout, vertex_count, data_start)
+    HeaderState::Ready(layout, vertex_count, data_start, color_mode)
 }
 
 /// Incremental parser for streaming/overlapped loading. JS reads the file in
@@ -927,10 +1002,12 @@ impl StreamParser {
             "xyzn" => Some(Builder::new(
                 vec![Col::X, Col::Y, Col::Z, Col::Nx, Col::Ny, Col::Nz],
                 1 << 20,
+                ColorMode::Auto,
             )),
             "xyzrgb" => Some(Builder::new(
                 vec![Col::X, Col::Y, Col::Z, Col::R, Col::G, Col::B],
                 1 << 20,
+                ColorMode::Auto,
             )),
             _ => None, // plain xyz: detect from first row; ply/pcd: after header
         };
@@ -966,9 +1043,9 @@ impl StreamParser {
             match state {
                 HeaderState::NeedMore => {}
                 HeaderState::Reject => self.error = true,
-                HeaderState::Ready(layout, count, data_start) => {
+                HeaderState::Ready(layout, count, data_start, color_mode) => {
                     self.expected = count;
-                    self.builder = Some(Builder::new(layout, count.max(1024)));
+                    self.builder = Some(Builder::new(layout, count.max(1024), color_mode));
                     self.header_done = true;
                     let buf = std::mem::take(&mut self.carry);
                     self.process_data(&buf[data_start..]);
@@ -986,7 +1063,7 @@ impl StreamParser {
         }
         self.builder
             .take()
-            .unwrap_or_else(|| Builder::new(vec![Col::X, Col::Y, Col::Z], 0))
+            .unwrap_or_else(|| Builder::new(vec![Col::X, Col::Y, Col::Z], 0, ColorMode::Auto))
             .finish()
     }
 }
@@ -1046,7 +1123,7 @@ impl StreamParser {
                 4 => vec![Col::X, Col::Y, Col::Z, Col::Intensity],
                 _ => vec![Col::X, Col::Y, Col::Z],
             };
-            self.builder = Some(Builder::new(layout, 1 << 20));
+            self.builder = Some(Builder::new(layout, 1 << 20, ColorMode::Auto));
         }
         let expected = self.expected;
         if let Some(b) = self.builder.as_mut() {
