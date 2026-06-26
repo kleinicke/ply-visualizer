@@ -1,8 +1,11 @@
 # Change Log
 
-## [1.6.0] - 2026-
+## [1.6.0] - 2026-06-07
 
+- Visualizing points as round points instead of squares
 - Add support for intensity values (for ply, pcd, pts and xyz)
+- Speedup during loading of point clouds using rust decoders and strongly modifying loading routines
+
 
 ## [1.5.0] - 2026-05-02
 
