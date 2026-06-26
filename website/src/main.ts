@@ -107,6 +107,11 @@ class PointCloudVisualizer {
 
   // Welcome message state
   private isFileLoading: boolean = false;
+  // When loading additional file(s) into a non-empty scene, we show progress as a
+  // row in the Files list instead of a blocking overlay (the current cloud stays
+  // interactive). Holds the label/detail of the in-progress add, or null.
+  private pendingLoadLabel: string | null = null;
+  private pendingLoadDetail: string = '';
 
   // FPS tracking
   private fpsFrameTimes: number[] = [];
@@ -1479,6 +1484,12 @@ class PointCloudVisualizer {
       }
     } else {
       loadingEl.classList.add('hidden');
+      // Clear any in-progress Files-list loading row.
+      if (this.pendingLoadLabel !== null) {
+        this.pendingLoadLabel = null;
+        this.pendingLoadDetail = '';
+        this.updateFileList();
+      }
     }
 
     // Update welcome message state based on loading status
@@ -5844,6 +5855,20 @@ class PointCloudVisualizer {
             `;
     }
 
+    // In-progress add(s): a non-blocking loading row so the user sees progress
+    // here while still interacting with the already-loaded clouds.
+    if (this.pendingLoadLabel !== null) {
+      html += `
+                <div class="file-item file-item-loading">
+                    <div class="file-item-main">
+                        <span class="spinner spinner-inline"></span>
+                        <span class="file-name">Loading ${this.escapeHtml(this.pendingLoadLabel)}…</span>
+                    </div>
+                    <div class="file-info" id="pending-load-detail">${this.escapeHtml(this.pendingLoadDetail)}</div>
+                </div>
+            `;
+    }
+
     fileListDiv.innerHTML = html;
 
     // Add event listeners after setting innerHTML
@@ -7129,14 +7154,26 @@ class PointCloudVisualizer {
     (window as any).loadingStartTime = uiStartTime;
     (window as any).absoluteStartTime = uiStartTime;
 
-    // Show loading indicator immediately
+    // Additional load into an existing scene: don't cover the cloud with a
+    // blocking spinner — the user can keep looking at / interacting with the
+    // current clouds. Show progress as a row in the Files list instead.
+    if (this.spatialFiles.length > 0) {
+      this.pendingLoadLabel = fileName;
+      this.pendingLoadDetail = 'Reading file…';
+      document.getElementById('loading')?.classList.add('hidden');
+      this.updateFileList();
+      return;
+    }
+
+    // First/empty load: nothing to interact with yet, so a centered spinner is
+    // appropriate. Show the real filename + a live phase line.
     const loadingEl = document.getElementById('loading');
     if (loadingEl) {
       loadingEl.classList.remove('hidden');
       loadingEl.innerHTML = `
                 <div class="spinner"></div>
-                <p>Loading ${fileName}...</p>
-                <p class="loading-detail">Starting file processing...</p>
+                <p>Loading ${fileName}…</p>
+                <p class="loading-detail">Reading file…</p>
             `;
     }
 
@@ -7155,6 +7192,36 @@ class PointCloudVisualizer {
 
     // Update file stats with placeholder
     this.updateFileStatsImmediate(fileName);
+  }
+
+  /**
+   * Update the live phase line during a load — the centered spinner's detail for
+   * a first load, or the in-progress Files-list row for an additional load.
+   */
+  private setLoadingDetail(text: string): void {
+    if (!this.isFileLoading) {
+      return;
+    }
+    if (this.pendingLoadLabel !== null) {
+      this.pendingLoadDetail = text;
+      const detailEl = document.getElementById('pending-load-detail');
+      if (detailEl) {
+        detailEl.textContent = text;
+      }
+      return;
+    }
+    const detailEl = document.querySelector('#loading .loading-detail');
+    if (detailEl) {
+      detailEl.textContent = text;
+    }
+  }
+
+  private escapeHtml(s: string): string {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   private updateFileStatsImmediate(fileName: string): void {
@@ -7272,6 +7339,13 @@ class PointCloudVisualizer {
   }
 
   private addNewFiles(newFiles: SpatialData[]): void {
+    // Phase feedback: the bytes are here, now we build GPU geometry.
+    if (this.isFileLoading && newFiles.length > 0) {
+      const pts = newFiles.reduce((s, f) => s + (f.vertexCount || 0), 0);
+      this.setLoadingDetail(
+        pts > 0 ? `Building geometry (${pts.toLocaleString()} points)…` : 'Building geometry…'
+      );
+    }
     for (const data of newFiles) {
       // Assign new file index
       data.fileIndex = this.spatialFiles.length;

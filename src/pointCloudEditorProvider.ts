@@ -1193,6 +1193,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           const fileExtension = path.extname(files[i].fsPath).toLowerCase();
           console.log(`🚀 ULTIMATE: Processing add file ${fileName} (${fileExtension})`);
 
+          // Tell the webview a load started so it shows a non-blocking progress
+          // row in the Files list (the scene already has clouds and stays
+          // interactive — no overlay). Sent before the read/parse below.
+          webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
+
           // Handle different file types
           if (
             fileExtension === '.tif' ||
@@ -1482,6 +1487,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       const fileName = path.basename(fileUri.fsPath);
       const shortPath = this.getShortPath(fileUri.fsPath);
       const ext = path.extname(fileUri.fsPath).toLowerCase();
+
+      // Non-blocking progress row in the Files list during read/parse (the scene
+      // already has clouds and stays interactive).
+      webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
       if (
         ext === '.tif' ||
