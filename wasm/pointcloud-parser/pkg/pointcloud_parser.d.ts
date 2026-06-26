@@ -32,7 +32,7 @@ export class StreamParser {
     free(): void;
     [Symbol.dispose](): void;
     finish(): PointCloudResult;
-    constructor(format: string);
+    constructor(format: string, color_mode: string);
     push(chunk: Uint8Array): void;
     /**
      * True if a parse error occurred; the caller should discard and use the JS
@@ -97,4 +97,4 @@ export function parse_pts(data: Uint8Array): PointCloudResult;
  * Parse XYZ / XYZN / XYZRGB. For plain "xyz" the layout is auto-detected from
  * the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
  */
-export function parse_xyz(data: Uint8Array, variant: string): PointCloudResult;
+export function parse_xyz(data: Uint8Array, variant: string, color_mode: string): PointCloudResult;

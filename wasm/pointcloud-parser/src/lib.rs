@@ -101,7 +101,7 @@ pub fn dealloc(ptr: usize, len: usize) {
 pub fn parse_at(ptr: usize, len: usize, format: &str) -> Result<PointCloudResult, JsValue> {
     let data = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
     match format {
-        "xyz" | "xyzn" | "xyzrgb" => Ok(parse_xyz(data, format)),
+        "xyz" | "xyzn" | "xyzrgb" => Ok(parse_xyz(data, format, "auto")),
         "ply" => parse_ascii_ply(data),
         "pcd" => parse_pcd_ascii(data),
         other => Err(JsValue::from_str(&format!("unknown format: {other}"))),
@@ -152,6 +152,18 @@ fn pcd_color_mode(ty: u8) -> ColorMode {
     match ty {
         b'F' => ColorMode::Unit,
         b'U' | b'I' => ColorMode::Byte,
+        _ => ColorMode::Auto,
+    }
+}
+
+/// Map a caller-supplied string to a ColorMode. Used by XYZ/XYZRGB, where the
+/// format carries no type info so the caller decides (by checking whether the
+/// color tokens are written with a decimal point) and passes "byte"/"unit";
+/// anything else (incl. "auto") keeps the per-row value heuristic.
+fn color_mode_from_str(s: &str) -> ColorMode {
+    match s {
+        "byte" => ColorMode::Byte,
+        "unit" => ColorMode::Unit,
         _ => ColorMode::Auto,
     }
 }
@@ -398,7 +410,7 @@ fn parse_numbers(line: &[u8], vals: &mut [f64; 16]) -> usize {
 /// Parse XYZ / XYZN / XYZRGB. For plain "xyz" the layout is auto-detected from
 /// the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
 #[wasm_bindgen]
-pub fn parse_xyz(data: &[u8], variant: &str) -> PointCloudResult {
+pub fn parse_xyz(data: &[u8], variant: &str, color_mode: &str) -> PointCloudResult {
     let layout: Vec<Col> = match variant {
         "xyzn" => vec![Col::X, Col::Y, Col::Z, Col::Nx, Col::Ny, Col::Nz],
         "xyzrgb" => vec![Col::X, Col::Y, Col::Z, Col::R, Col::G, Col::B],
@@ -424,7 +436,7 @@ pub fn parse_xyz(data: &[u8], variant: &str) -> PointCloudResult {
     // pre-sized (≈38 bytes/row for xyz, ≈75 for the 6-column variants).
     let bytes_per_row = if layout.len() >= 6 { 75 } else { 35 };
     let cap = data.len() / bytes_per_row;
-    parse_rows(data, 0, &layout, cap, 0, ColorMode::Auto)
+    parse_rows(data, 0, &layout, cap, 0, color_mode_from_str(color_mode))
 }
 
 /// Parse a PTS point cloud. PTS has an optional leading count line + comments
@@ -992,7 +1004,7 @@ pub struct StreamParser {
 #[wasm_bindgen]
 impl StreamParser {
     #[wasm_bindgen(constructor)]
-    pub fn new(format: &str) -> StreamParser {
+    pub fn new(format: &str, color_mode: &str) -> StreamParser {
         let fmt = match format {
             "ply" => 1u8,
             "pcd" => 2u8,
@@ -1007,7 +1019,9 @@ impl StreamParser {
             "xyzrgb" => Some(Builder::new(
                 vec![Col::X, Col::Y, Col::Z, Col::R, Col::G, Col::B],
                 1 << 20,
-                ColorMode::Auto,
+                // Caller decides byte/unit from the text (decimal point or not);
+                // ply/pcd ignore this and derive it from their headers.
+                color_mode_from_str(color_mode),
             )),
             _ => None, // plain xyz: detect from first row; ply/pcd: after header
         };

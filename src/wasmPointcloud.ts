@@ -65,18 +65,62 @@ function marshal(r: any): WasmPointCloud {
   return out;
 }
 
-/** Parse XYZ/XYZN/XYZRGB. Returns null if WASM is unavailable or parsing fails. */
-export function parseXyzWasm(bytes: Uint8Array, variant: string): WasmPointCloud | null {
+/**
+ * Parse XYZ/XYZN/XYZRGB. `colorMode` ('auto' | 'byte' | 'unit') is only used for
+ * colored variants: XYZ formats carry no type info, so the caller decides whether
+ * colors are 0-255 ints or 0-1 floats by checking the color tokens' text (see
+ * detectXyzColorMode) and passes 'byte'/'unit'. 'auto' keeps the value heuristic.
+ * Returns null if WASM is unavailable or parsing fails.
+ */
+export function parseXyzWasm(
+  bytes: Uint8Array,
+  variant: string,
+  colorMode: string = 'auto'
+): WasmPointCloud | null {
   const m = load();
   if (!m) {
     return null;
   }
   try {
-    return marshal(m.parse_xyz(bytes, variant));
+    return marshal(m.parse_xyz(bytes, variant, colorMode));
   } catch (error) {
     console.warn('[pointcloud-wasm] parse_xyz failed, falling back:', error);
     return null;
   }
+}
+
+/**
+ * Decide whether a colored XYZ file's colors are written as ints (`4`) or floats
+ * (`0.0156`, `1.0`) by scanning a text sample. ONE decision per file (writers are
+ * consistent), and only the COLOR columns (index ≥ 3) are checked — positions
+ * always have decimals. Returns 'unit' (float, scale ×255), 'byte' (int 0-255),
+ * or 'auto' if there are no color columns / nothing decisive.
+ */
+export function detectXyzColorMode(sample: Uint8Array, variant: string): string {
+  // Only the 6-column colored variant has separate r/g/b at indices 3-5.
+  if (variant !== 'xyzrgb') {
+    return 'auto';
+  }
+  const text = Buffer.from(sample).toString('latin1');
+  const lines = text.split('\n');
+  // Drop the last (possibly truncated) line from the sample.
+  for (let li = 0; li < lines.length - 1; li++) {
+    const t = lines[li].trim();
+    if (!t || t.startsWith('#')) {
+      continue;
+    }
+    const toks = t.split(/\s+/);
+    if (toks.length < 6) {
+      continue;
+    }
+    for (let i = 3; i < toks.length; i++) {
+      const tok = toks[i];
+      if (tok.includes('.') || tok.includes('e') || tok.includes('E')) {
+        return 'unit'; // a color written with a decimal/exponent → float file
+      }
+    }
+  }
+  return 'byte';
 }
 
 /** Parse an ASCII PLY point cloud. Returns null on failure (caller falls back). */
@@ -103,7 +147,8 @@ export function parseAsciiPlyWasm(bytes: Uint8Array): WasmPointCloud | null {
  */
 export async function streamParseFile(
   filePath: string,
-  format: string
+  format: string,
+  colorMode: string = 'auto'
 ): Promise<WasmPointCloud | null> {
   const m = load();
   if (!m || typeof m.StreamParser !== 'function') {
@@ -111,7 +156,7 @@ export async function streamParseFile(
   }
   let fh: fs.promises.FileHandle | undefined;
   try {
-    const sp = new m.StreamParser(format);
+    const sp = new m.StreamParser(format, colorMode);
     fh = await fs.promises.open(filePath, 'r');
     const CHUNK = 8 * 1024 * 1024;
     const bufs = [Buffer.allocUnsafe(CHUNK), Buffer.allocUnsafe(CHUNK)];

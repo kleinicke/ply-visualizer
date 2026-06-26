@@ -19,6 +19,7 @@ import {
   parsePcdBinaryWasm,
   parsePtsWasm,
   streamParseFile,
+  detectXyzColorMode,
 } from './wasmPointcloud';
 
 // Shared file handling functionality
@@ -656,8 +657,22 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           let xyzParsed: any = null;
           let xyzMode = 'js';
           let xyzBytes = 0;
+
+          // XYZRGB has no type header, so decide once per file whether its colors
+          // are 0-255 ints or 0-1 floats by checking the color tokens' text (a
+          // decimal point ⇒ float). Done from a small header sample.
+          let xyzColorMode = 'auto';
+          if (xyzVariant === 'xyzrgb' && document.uri.scheme === 'file') {
+            try {
+              const head = await this.readFileHead(document.uri, 65536);
+              xyzColorMode = detectXyzColorMode(head, xyzVariant);
+            } catch {
+              /* fall back to the in-parser value heuristic */
+            }
+          }
+
           if (ENABLE_XYZ_STREAMING && document.uri.scheme === 'file') {
-            const streamed = await streamParseFile(document.uri.fsPath, xyzVariant);
+            const streamed = await streamParseFile(document.uri.fsPath, xyzVariant, xyzColorMode);
             if (streamed) {
               xyzParsed = streamed;
               xyzMode = 'wasm-stream';
@@ -671,7 +686,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           if (!xyzParsed) {
             const xyzData = await this.readFileFast(document.uri);
             xyzBytes = xyzData.byteLength;
-            const wasmParsed = parseXyzWasm(xyzData, xyzVariant);
+            const wasmParsed = parseXyzWasm(xyzData, xyzVariant, xyzColorMode);
             xyzParsed = wasmParsed ?? new XyzVariantParser().parse(xyzData, xyzVariant);
             xyzMode = wasmParsed ? 'wasm' : 'js';
           }

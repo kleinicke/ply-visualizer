@@ -133,11 +133,14 @@ class StreamParser {
   }
   /**
    * @param {string} format
+   * @param {string} color_mode
    */
-  constructor(format) {
+  constructor(format, color_mode) {
     const ptr0 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.streamparser_new(ptr0, len0);
+    const ptr1 = passStringToWasm0(color_mode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.streamparser_new(ptr0, len0, ptr1, len1);
     this.__wbg_ptr = ret;
     StreamParserFinalization.register(this, this.__wbg_ptr, this);
     return this;
@@ -276,14 +279,17 @@ exports.parse_pts = parse_pts;
  * the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
  * @param {Uint8Array} data
  * @param {string} variant
+ * @param {string} color_mode
  * @returns {PointCloudResult}
  */
-function parse_xyz(data, variant) {
+function parse_xyz(data, variant, color_mode) {
   const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ptr1 = passStringToWasm0(variant, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
   const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.parse_xyz(ptr0, len0, ptr1, len1);
+  const ptr2 = passStringToWasm0(color_mode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.parse_xyz(ptr0, len0, ptr1, len1, ptr2, len2);
   return PointCloudResult.__wrap(ret);
 }
 exports.parse_xyz = parse_xyz;
