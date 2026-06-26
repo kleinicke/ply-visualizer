@@ -1491,6 +1491,14 @@ class PointCloudVisualizer {
       return;
     }
 
+    // The welcome message is a website-only hint ("click + Add Point Cloud"). In
+    // the VS Code extension files are opened from the editor, so it's just noise
+    // flashing behind the loading spinner — never show it there.
+    if (isVSCode) {
+      welcomeEl.classList.add('hidden');
+      return;
+    }
+
     // Show welcome message ONLY if:
     // 1. No files are currently loaded (spatialFiles.length === 0)
     // 2. We are NOT currently loading a file (!this.isFileLoading)
