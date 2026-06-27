@@ -7933,23 +7933,22 @@ class PointCloudVisualizer {
     message: any,
     fn: () => void | Promise<void>
   ): Promise<void> {
-    const perf = new PerfTimer(kind);
-    perf.transferSince(message.postedAt);
+    // read+parse, transfer and total come from the extension's wall-clock epochs
+    // (loadStartedAt/postedAt); `build` is the webview's geometry+display span.
+    const perf = new PerfTimer(kind, message.loadStartedAt, message.postedAt);
     try {
       await fn();
     } finally {
-      perf.mark('handle');
-      // Honest end-to-end total (includes the extension's read+parse, shown as
-      // the `ext` phase). Skip for add-file loads, which have no fresh
-      // startLoading and would measure from a previous load's start.
-      if (!message.isAddFile) {
-        perf.endToEnd((window as any).absoluteStartTime);
-      }
-      if (message.fileName) {
-        perf.note('file', String(message.fileName));
+      perf.mark('build');
+      const verts = message.vertexCount ?? message.data?.vertexCount;
+      if (typeof verts === 'number') {
+        perf.note('verts', verts.toLocaleString());
       }
       if (typeof message.fileSizeInBytes === 'number') {
-        perf.note('MB', (message.fileSizeInBytes / 1048576).toFixed(2));
+        perf.note('MB', (message.fileSizeInBytes / 1048576).toFixed(1));
+      }
+      if (message.parseMode) {
+        perf.note('mode', String(message.parseMode));
       }
       perf.summary();
     }
@@ -7964,6 +7963,10 @@ class PointCloudVisualizer {
    */
   private async handleUltimateRawBinaryUri(message: any): Promise<void> {
     try {
+      // Stamp when the (small) URI message arrived, BEFORE the fetch, so the
+      // timer's `transfer` is just the URI crossing and the fetch is its own
+      // phase (no double counting).
+      message.uriReceivedAt = Date.now();
       const fetchStart = performance.now();
       const response = await fetch(message.fileUri);
       if (!response.ok) {
@@ -7974,8 +7977,6 @@ class PointCloudVisualizer {
       // Extract the vertex region, matching what the extension would have sliced.
       message.rawBinaryData = full.slice(message.binaryDataStart);
       message.fetchMs = fetchMs;
-      // The fetch replaces the cross-process transfer; don't also report it.
-      message.postedAt = undefined;
       await this.handleUltimateRawBinaryData(message);
     } catch (error) {
       console.warn('[PLY] fetch path failed, requesting postMessage fallback:', error);
@@ -7990,8 +7991,12 @@ class PointCloudVisualizer {
 
   private async handleUltimateRawBinaryData(message: any): Promise<void> {
     const startTime = performance.now();
-    const perf = new PerfTimer('ply');
-    perf.transferSince(message.postedAt);
+    const perf = new PerfTimer(
+      'ply',
+      message.loadStartedAt,
+      message.postedAt,
+      message.uriReceivedAt
+    );
     if (message.fetchMs != null) {
       perf.add('fetch', message.fetchMs);
     }
@@ -8345,7 +8350,7 @@ class PointCloudVisualizer {
     } else if (message.messageType === 'addFiles') {
       this.addNewFiles([spatialData]);
     }
-    perf.mark('geometry+display');
+    perf.mark('build');
 
     // Normals visualizer will be created on-demand when user clicks normals button
     // This ensures vertices are fully parsed before creating normals
@@ -8379,14 +8384,11 @@ class PointCloudVisualizer {
     const modeLabel = message.messageType === 'addFiles' ? 'ADD FILE' : 'ULTIMATE';
     // concise metrics printed above
 
-    if (message.messageType !== 'addFiles') {
-      perf.endToEnd((window as any).absoluteStartTime);
-    }
-    perf.note('verts', totalVertices);
+    // total/read+parse/transfer come from the extension's wall-clock epochs on
+    // the message — consistent for first and added files, no clock juggling.
+    perf.note('verts', totalVertices.toLocaleString());
     perf.note('MB', (message.fileSizeInBytes / 1048576).toFixed(1));
-    if (message.hasColors) {
-      perf.note('rgb', 1);
-    }
+    perf.note('mode', message.fast ? 'binary' : 'binary-js');
     perf.summary();
   }
 

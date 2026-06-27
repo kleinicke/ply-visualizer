@@ -40,6 +40,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   private datasetManager: DatasetManager;
   private readonly perfChannel: vscode.OutputChannel;
   private perfChannelRevealed = false;
+  // Wall-clock epoch (Date.now) when the current file's load began. Stamped onto
+  // every outgoing *Data message so the webview can report one consistent
+  // end-to-end timing line (read+parse / transfer / build / total).
+  private currentLoadStartedAt = 0;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.datasetManager = new DatasetManager(context);
@@ -63,10 +67,14 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           msg &&
           typeof msg === 'object' &&
           typeof msg.type === 'string' &&
-          msg.type.endsWith('Data') &&
-          msg.postedAt === undefined
+          msg.type.endsWith('Data')
         ) {
-          msg.postedAt = Date.now();
+          if (msg.postedAt === undefined) {
+            msg.postedAt = Date.now();
+          }
+          if (msg.loadStartedAt === undefined && this.currentLoadStartedAt) {
+            msg.loadStartedAt = this.currentLoadStartedAt;
+          }
         }
         return original(msg);
       };
@@ -77,6 +85,13 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
   /** Append a timestamped line to the "3D Visualizer" Output channel. */
   private logPerf(line: string): void {
+    // The webview emits the single authoritative end-to-end timing line per load
+    // (read+parse · transfer · build · total). The extension's intermediate
+    // `…/ext` measurements stay console-only so the Output channel isn't doubled.
+    if (line.includes('/ext]')) {
+      console.log(line);
+      return;
+    }
     const t = new Date();
     const ts = `${t.toTimeString().split(' ')[0]}.${t
       .getMilliseconds()
@@ -174,6 +189,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // Show UI immediately before any file processing
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
+
+    // Anchor the load's wall-clock start for the unified end-to-end timing line.
+    this.currentLoadStartedAt = Date.now();
 
     // Send immediate message to show loading state
     webviewPanel.webview.postMessage({
@@ -415,6 +433,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                     fileSizeInBytes: pcdBytes,
                     data: streamed,
                     variant: 'pcd',
+                    parseMode: 'wasm-stream',
                   });
                   return;
                 }
@@ -452,6 +471,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                 fileSizeInBytes: pcdData.byteLength,
                 data: pcdWasm,
                 variant: 'pcd',
+                parseMode: 'wasm',
               });
               return;
             }
@@ -536,6 +556,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             shortPath: this.getShortPath(document.uri.fsPath),
             fileSizeInBytes: ptsData.byteLength,
             data: parsedData,
+            parseMode: ptsMode,
           });
 
           return; // Exit early for PTS files
@@ -701,6 +722,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             fileSizeInBytes: xyzBytes,
             data: xyzParsed,
             variant: xyzVariant,
+            parseMode: xyzMode,
           });
 
           return; // Exit early for XYZ variant files
@@ -778,6 +800,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
                   fileSizeInBytes: plyBytes,
                   data: streamed,
                   variant: 'ply',
+                  parseMode: 'wasm-stream',
                 });
                 return;
               }
@@ -864,6 +887,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             type: 'ultimateRawBinaryUri',
             messageType: 'multiSpatialData',
             postedAt: Date.now(),
+            loadStartedAt: this.currentLoadStartedAt,
             fileUri: webviewPanel.webview.asWebviewUri(document.uri).toString(),
             docUri: document.uri.toString(),
             binaryDataStart: headerResult.binaryDataStart,
@@ -899,6 +923,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
               fileSizeInBytes: spatialData.byteLength,
               data: plyWasm,
               variant: 'ply',
+              parseMode: 'wasm',
             });
             return; // handled by the fast path
           }
@@ -1196,6 +1221,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           // Tell the webview a load started so it shows a non-blocking progress
           // row in the Files list (the scene already has clouds and stays
           // interactive — no overlay). Sent before the read/parse below.
+          this.currentLoadStartedAt = Date.now();
           webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
           // Handle different file types
@@ -1490,6 +1516,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
       // Non-blocking progress row in the Files list during read/parse (the scene
       // already has clouds and stays interactive).
+      this.currentLoadStartedAt = Date.now();
       webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
       if (
