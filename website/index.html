@@ -69,6 +69,10 @@
             <button class="tab-button" data-tab="camera">Camera</button>
             <button class="tab-button" data-tab="controls">Controls</button>
             <button class="tab-button" data-tab="info">Info</button>
+            <!-- Always-visible EDL toggle (a control, not a tab) — depth shading
+                 for point clouds; shares state with the Controls-tab button + E key. -->
+            <button id="toggle-edl-tab" class="tab-toggle"
+                title="Eye Dome Lighting (E) — depth shading for point clouds">◐</button>
         </div>
 
         <!-- Tab Content -->
@@ -419,13 +423,6 @@
     </div>
     <div id="viewer-container">
         <canvas id="three-canvas"></canvas>
-        <!-- Always-visible quick toggles (top-left viewport overlay) -->
-        <div id="viewport-toolbar">
-            <button id="toggle-edl-floating" class="viewport-toggle"
-                title="Eye Dome Lighting (E) — enhances depth perception on point clouds">
-                <span class="viewport-toggle-dot"></span>EDL
-            </button>
-        </div>
         <!-- Navigation buttons at bottom right -->
         <div class="bottom-right-nav">
             <a href="about/" class="nav-button">About</a>

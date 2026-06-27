@@ -1763,8 +1763,8 @@ class PointCloudVisualizer {
    * Update EDL button active state.
    */
   private updateEDLButtonState(): void {
-    // Keep both the Controls-tab button and the viewport toggle in sync.
-    for (const id of ['toggle-edl', 'toggle-edl-floating']) {
+    // Keep both the Controls-tab button and the tab-bar toggle in sync.
+    for (const id of ['toggle-edl', 'toggle-edl-tab']) {
       const btn = document.getElementById(id);
       if (btn) {
         btn.classList.toggle('active', this.edlEnabled);
@@ -3089,11 +3089,11 @@ class PointCloudVisualizer {
         this.toggleEDL();
       });
     }
-    // Always-visible viewport EDL toggle — shares state with the Controls-tab
-    // button and the `E` shortcut (all route through toggleEDL).
-    const toggleEDLFloating = document.getElementById('toggle-edl-floating');
-    if (toggleEDLFloating) {
-      toggleEDLFloating.addEventListener('click', () => {
+    // Always-visible EDL toggle in the tab bar — shares state with the
+    // Controls-tab button and the `E` shortcut (all route through toggleEDL).
+    const toggleEDLTab = document.getElementById('toggle-edl-tab');
+    if (toggleEDLTab) {
+      toggleEDLTab.addEventListener('click', () => {
         this.toggleEDL();
       });
     }

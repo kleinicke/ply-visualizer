@@ -14,51 +14,30 @@ body {
   height: 100vh;
 }
 
-/* Always-visible quick toggles overlaid on the viewport (top-left). */
-#viewport-toolbar {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  display: flex;
-  gap: 6px;
-  z-index: 10;
-}
-.viewport-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 11px;
-  font-size: 12px;
-  font-weight: 600;
+/* Always-visible EDL toggle living in the tab bar (a control, not a tab). It
+   doesn't flex like the tabs, stays small, and highlights when EDL is on. */
+.tab-toggle {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 11px;
+  font-size: 13px;
   line-height: 1;
-  color: var(--vscode-foreground);
-  background: var(--vscode-button-secondaryBackground, rgba(50, 50, 50, 0.72));
-  border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.14));
-  border-radius: 5px;
+  color: var(--vscode-tab-inactiveForeground);
+  opacity: 0.7;
   cursor: pointer;
-  opacity: 0.82;
-  transition:
-    opacity 0.12s ease,
-    background 0.12s ease;
+  transition: all 0.15s ease;
 }
-.viewport-toggle:hover {
+.tab-toggle:hover {
   opacity: 1;
+  color: var(--vscode-tab-activeForeground);
+  background-color: var(--vscode-tab-hoverBackground, rgba(255, 255, 255, 0.06));
 }
-.viewport-toggle .viewport-toggle-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--vscode-descriptionForeground, #8a8a8a);
-  transition: background 0.12s ease;
-}
-.viewport-toggle.active {
+.tab-toggle.active {
   opacity: 1;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
-}
-.viewport-toggle.active .viewport-toggle-dot {
-  background: var(--vscode-charts-green, #5bd75b);
+  color: var(--vscode-charts-green, #5bd75b);
+  border-bottom-color: var(--vscode-charts-green, #5bd75b);
 }
 
 /* Sequence overlay */
