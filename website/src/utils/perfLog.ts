@@ -1,17 +1,23 @@
 /**
- * Lightweight, consistent phase timing for the load pipelines.
+ * Consistent, single-line phase timing for every load path.
  *
- * Goal: produce directly-comparable single-line summaries for every load path
- * (binary PLY, depth TIFF, etc.) so we can see exactly where time goes and
- * compare formats apples-to-apples.
+ * One clock for the whole pipeline: wall-clock `Date.now()`, which is shared by
+ * the extension host and the webview (same machine). The extension stamps two
+ * epochs on each load — `loadStartedAt` (when it starts reading the file) and
+ * `postedAt` (just before it posts the data) — and the webview adds `receivedAt`
+ * (construction) and `doneAt` (summary). Every phase is then the gap between two
+ * adjacent epochs, so the phases ALWAYS sum to the total, by construction:
  *
- * Output format (one line per load):
- *   ⏱️ PERF[ply] transfer 12.0ms  parse 84.3ms  geometry 9.1ms  | total 110ms  (verts=1500000)
+ *   read+parse = postedAt   - loadStartedAt   (extension: disk read + parse)
+ *   transfer   = receivedAt - postedAt         (data crossing into the webview)
+ *   build      = doneAt     - receivedAt        (geometry + GPU upload + 1st frame)
+ *   total      = doneAt     - loadStartedAt     (honest end-to-end the user waits)
  *
- * Clock note: use performance.now() for intra-process phase deltas. For the
- * cross-process extension→webview "transfer" phase, pass a wall-clock
- * Date.now() epoch from the extension (postedAt) into `transferSince()` — the
- * two processes don't share a performance.now() origin, but do share Date.now().
+ * The webview sub-divides its own span with performance.now() marks (e.g. binary
+ * PLY: fetch / parse / build) when a finer breakdown is useful.
+ *
+ * Output (one line per load):
+ *   ⏱️ PERF[xyz scan.xyz] read+parse 4318ms · transfer 341ms · build 276ms | total 4935ms  (7,899,730 pts · 599 MB · wasm-stream)
  */
 type PerfSink = (line: string) => void;
 
@@ -38,20 +44,38 @@ export function perfLog(line: string): void {
   }
 }
 
+const isEpoch = (v: unknown): v is number => typeof v === 'number' && isFinite(v) && v > 0;
+
 export class PerfTimer {
   private readonly kind: string;
-  private readonly t0: number;
+  private readonly t0: number; // performance.now() at construction (webview span start)
+  private readonly receivedAt: number; // Date.now() at construction (message receipt)
+  private readonly loadStartedAt?: number; // Date.now() epoch stamped by the extension
+  private readonly postedAt?: number; // Date.now() epoch stamped by the extension
   private last: number;
+  private fileName?: string; // source file name, shown after the kind tag
   private readonly marks: Array<[string, number]> = [];
   private readonly extra: Record<string, string | number> = {};
 
-  constructor(kind: string, startedAt?: number) {
+  /**
+   * @param loadStartedAt wall-clock epoch (Date.now) when the extension began the
+   *   load — drives `read+parse` and the honest `total`. Omitted on the website.
+   * @param postedAt wall-clock epoch (Date.now) stamped just before the extension
+   *   posted the data — drives `transfer`.
+   */
+  constructor(kind: string, loadStartedAt?: number, postedAt?: number, receivedAt?: number) {
     this.kind = kind;
-    this.t0 = startedAt ?? performance.now();
+    this.t0 = performance.now();
+    // `receivedAt` can be supplied for paths where the timer is built after some
+    // webview work already happened (e.g. binary PLY constructs it after the
+    // fetch, but passes the URI-receipt epoch so `transfer` excludes the fetch).
+    this.receivedAt = isEpoch(receivedAt) ? receivedAt : Date.now();
+    this.loadStartedAt = isEpoch(loadStartedAt) ? loadStartedAt : undefined;
+    this.postedAt = isEpoch(postedAt) ? postedAt : undefined;
     this.last = this.t0;
   }
 
-  /** Record the elapsed time since the previous mark as a named phase. */
+  /** Record the elapsed time since the previous mark as a named webview phase. */
   mark(phase: string): number {
     const now = performance.now();
     const dt = now - this.last;
@@ -60,21 +84,9 @@ export class PerfTimer {
     return dt;
   }
 
-  /** Record an externally-measured phase duration (ms). */
+  /** Record an externally-measured phase duration (ms), e.g. a fetch timed elsewhere. */
   add(phase: string, ms: number): void {
-    this.marks.push([phase, +ms.toFixed(1)]);
-    this.last = performance.now();
-  }
-
-  /**
-   * Record the cross-process transfer phase from a wall-clock epoch stamped by
-   * the extension just before postMessage. Resets the phase cursor so the next
-   * mark() measures from "now" (message receipt), not from postedAt.
-   */
-  transferSince(postedAt: number | undefined): void {
-    if (typeof postedAt === 'number' && isFinite(postedAt)) {
-      this.marks.push(['transfer', +Math.max(0, Date.now() - postedAt).toFixed(1)]);
-    }
+    this.marks.push([phase, +Math.max(0, ms).toFixed(1)]);
     this.last = performance.now();
   }
 
@@ -83,44 +95,41 @@ export class PerfTimer {
     this.extra[key] = value;
   }
 
-  private e2eStart?: number;
-
-  /**
-   * Record an absolute end-to-end start (a webview performance.now() epoch,
-   * typically window.absoluteStartTime captured when the load began) so the
-   * reported `total` reflects the WHOLE load — including work the extension did
-   * before this timer started (file read + parse). Surfaced as an `ext` phase.
-   * Ignored if the start is missing or not earlier than this timer's t0.
-   */
-  endToEnd(startMs?: number): void {
-    if (typeof startMs === 'number' && isFinite(startMs) && startMs <= this.t0) {
-      this.e2eStart = startMs;
+  /** Attach the source file name, shown right after the kind tag (basename only). */
+  file(name?: string): void {
+    if (typeof name === 'string' && name.length > 0) {
+      this.fileName = name.split(/[/\\]/).pop() || name;
     }
   }
 
-  /** Emit (and return) the consolidated summary line. */
+  /** Emit (and return) the consolidated single-line summary. */
   summary(): string {
-    const now = performance.now();
-    const phaseMarks: Array<[string, number]> = [...this.marks];
-    let totalMs = now - this.t0;
-    if (this.e2eStart != null) {
-      totalMs = now - this.e2eStart;
-      // Everything before this timer started is the extension's read+parse plus
-      // the data crossing (transfer or fetch, already shown as their own marks).
-      // Subtract those so `ext` is just the extension's read+parse, made visible.
-      const markMs = (name: string) => {
-        const m = this.marks.find(([p]) => p === name);
-        return m ? m[1] : 0;
-      };
-      const beforeT0 = markMs('transfer') + markMs('fetch');
-      const extMs = Math.max(0, this.t0 - this.e2eStart - beforeT0);
-      phaseMarks.unshift(['ext', +extMs.toFixed(1)]);
+    const doneAt = Date.now();
+    const phases: Array<[string, number]> = [];
+
+    // Cross-process phases from the shared wall clock (sum exactly into total).
+    if (this.loadStartedAt != null && this.postedAt != null) {
+      phases.push(['read+parse', +Math.max(0, this.postedAt - this.loadStartedAt).toFixed(1)]);
     }
-    const phases = phaseMarks.map(([p, ms]) => `${p} ${ms}ms`).join('  ');
+    if (this.postedAt != null) {
+      phases.push(['transfer', +Math.max(0, this.receivedAt - this.postedAt).toFixed(1)]);
+    }
+
+    // Webview phases (build, or fetch/parse/build) measured with performance.now.
+    phases.push(...this.marks);
+
+    // Honest end-to-end: wall-clock when anchored, else the webview span.
+    const totalMs =
+      this.loadStartedAt != null
+        ? Math.max(0, doneAt - this.loadStartedAt)
+        : performance.now() - this.t0;
+
+    const phaseStr = phases.map(([p, ms]) => `${p} ${ms}ms`).join(' · ');
     const extras = Object.entries(this.extra)
-      .map(([k, v]) => `${k}=${v}`)
-      .join(' ');
-    const line = `⏱️ PERF[${this.kind}] ${phases}  | total ${totalMs.toFixed(1)}ms${
+      .map(([, v]) => `${v}`)
+      .join(' · ');
+    const tag = this.fileName ? `${this.kind} ${this.fileName}` : this.kind;
+    const line = `⏱️ PERF[${tag}] ${phaseStr} | total ${totalMs.toFixed(1)}ms${
       extras ? `  (${extras})` : ''
     }`;
     perfLog(line);
