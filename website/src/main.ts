@@ -49,7 +49,7 @@ import {
 import { registerDefaultReaders, readDepth } from './depth/DepthRegistry';
 import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
 import { ColorImageLoader } from './colorImageLoader';
-import { ByteLineReader } from './utils/byteLineReader';
+import { PerfTimer, perfLog, setPerfSink } from './utils/perfLog';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 
@@ -74,6 +74,11 @@ class PointCloudVisualizer {
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private renderer!: THREE.WebGLRenderer;
+  // True between a WebGL context loss and its restoration. While lost, the GPU
+  // is gone, so we must not render or touch GL objects — doing so throws and
+  // crashes the webview. This is the safety net for the multi-window
+  // out-of-VRAM case (each window is a separate context sharing one GPU).
+  private contextLost = false;
   private controls!: TrackballControls | OrbitControls | CustomArcballControls | TurntableControls;
 
   // Camera control state
@@ -102,6 +107,11 @@ class PointCloudVisualizer {
 
   // Welcome message state
   private isFileLoading: boolean = false;
+  // When loading additional file(s) into a non-empty scene, we show progress as a
+  // row in the Files list instead of a blocking overlay (the current cloud stays
+  // interactive). Holds the label/detail of the in-progress add, or null.
+  private pendingLoadLabel: string | null = null;
+  private pendingLoadDetail: string = '';
 
   // FPS tracking
   private fpsFrameTimes: number[] = [];
@@ -251,7 +261,6 @@ class PointCloudVisualizer {
   > = new Map();
 
   // Adaptive decimation tracking
-  private lastCameraDistance: number = 0;
 
   // Depth processing state - support multiple pending Depth files
   private pendingDepthFiles: Map<
@@ -307,15 +316,16 @@ class PointCloudVisualizer {
   private lastAbsoluteMs: number = 0;
 
   private optimizeForPointCount(material: THREE.PointsMaterial, pointCount: number): void {
-    // Apply transparency settings
-    if (this.allowTransparency) {
-      material.transparent = true;
-      material.alphaTest = 0.1;
-    } else {
-      // GPU rendering optimizations - skip transparency pipeline since points are fully opaque
-      material.transparent = false; // Skip alpha blending pipeline
-      material.alphaTest = 0; // Skip alpha testing (no alpha data anyway)
-    }
+    // Render points as discs instead of the default GL squares. A small circular
+    // alpha texture is sampled per fragment (via gl_PointCoord) and alphaTest
+    // discards the corners — so points are round and still opaque (no alpha
+    // blending pipeline). The white texture only carries the round mask; the
+    // per-vertex color is preserved (PointsMaterial multiplies map × color).
+    material.map = this.getRoundPointTexture();
+    material.alphaTest = 0.5; // keep the disc, discard the corners
+
+    // Transparency only affects the soft rim; the disc shape comes from alphaTest.
+    material.transparent = this.allowTransparency;
 
     material.depthTest = true;
     material.depthWrite = true;
@@ -324,6 +334,102 @@ class PointCloudVisualizer {
 
     // Force material update
     material.needsUpdate = true;
+  }
+
+  private roundPointTexture: THREE.Texture | null = null;
+
+  /**
+   * Lazily build (once) a small white circular alpha texture used to make points
+   * round. Alpha is 1 inside the disc with a 1–2px soft rim for anti-aliasing,
+   * 0 in the corners; combined with alphaTest=0.5 this yields clean round points.
+   */
+  private getRoundPointTexture(): THREE.Texture {
+    if (this.roundPointTexture) {
+      return this.roundPointTexture;
+    }
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const img = ctx.createImageData(size, size);
+    const c = (size - 1) / 2;
+    const smooth = (e0: number, e1: number, x: number) => {
+      const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+      return t * t * (3 - 2 * t);
+    };
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const dx = (x - c) / c;
+        const dy = (y - c) / c;
+        const d = Math.sqrt(dx * dx + dy * dy); // 0 at center, 1 at edge
+        const a = 1 - smooth(0.9, 1.0, d);
+        const i = (y * size + x) * 4;
+        img.data[i] = 255;
+        img.data[i + 1] = 255;
+        img.data[i + 2] = 255;
+        img.data[i + 3] = Math.round(a * 255);
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    this.roundPointTexture = tex;
+    return tex;
+  }
+
+  /**
+   * Make a PointsMaterial decode its (raw 8-bit sRGB) vertex colors to linear in
+   * the fragment shader, so we can store point colors as Uint8 (4x less memory)
+   * instead of a baked Float32 [0,1] array — see buildOriginalColorArray.
+   *
+   * The decode is gated by material.userData.srgbDecode and uses the exact same
+   * sRGB→linear formula as colorProcessor's LUT, so the result is visually
+   * identical to the old path. It only applies in 'original' color mode with the
+   * gamma toggle on; intensity/assigned colors (already linear) keep srgbDecode
+   * false. Wired through onBeforeCompile (a no-op when disabled) with a matching
+   * customProgramCacheKey so toggling recompiles correctly. Idempotent.
+   */
+  /**
+   * Whether a point cloud's vertex colors are raw sRGB that the shader should
+   * decode. True only in 'original' mode with the gamma toggle on, and NOT for
+   * depth-derived clouds — those colors are already linear, so decoding them
+   * would darken them incorrectly. (Intensity/assigned modes aren't 'original'.)
+   */
+  private pointColorsNeedSrgbDecode(data: SpatialData, colorMode: string): boolean {
+    if (colorMode !== 'original' || !data.hasColors || !this.convertSrgbToLinear) {
+      return false;
+    }
+    const depthDerived = this.isDepthDerivedFile(data) || (data as any).isDepthDerived;
+    return !depthDerived;
+  }
+
+  private setupPointSrgbDecode(material: THREE.PointsMaterial): void {
+    if (material.userData.srgbDecodeSetup) {
+      return;
+    }
+    material.userData.srgbDecodeSetup = true;
+    material.onBeforeCompile = shader => {
+      if (!material.userData.srgbDecode) {
+        return; // stock shader: vertex colors used as-is (linear)
+      }
+      // Inject the decode function after <common> (a stable, early chunk) and the
+      // decode itself right AFTER <color_fragment> (which has already done
+      // diffuseColor.rgb *= vColor, and material.color is white for vertex-colored
+      // points, so diffuseColor.rgb == the raw sRGB vertex color here). All
+      // preprocessor directives are at column 0 — some GLSL drivers reject a '#'
+      // that isn't, which is what broke the previous indented version.
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          '#include <common>\nvec3 plySrgbToLinear( vec3 c ) { return mix( c / 12.92, pow( ( c + 0.055 ) / 1.055, vec3( 2.4 ) ), step( vec3( 0.04045 ), c ) ); }'
+        )
+        .replace(
+          '#include <color_fragment>',
+          '#include <color_fragment>\n#ifdef USE_COLOR\ndiffuseColor.rgb = plySrgbToLinear( diffuseColor.rgb );\n#endif'
+        );
+    };
+    // The compiled program differs by decode state, so it must be part of the key.
+    material.customProgramCacheKey = () => (material.userData.srgbDecode ? 'plySrgb1' : 'plySrgb0');
   }
 
   private toggleTransparency(): void {
@@ -352,13 +458,9 @@ class PointCloudVisualizer {
     this.meshes.forEach(mesh => {
       if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
         const material = mesh.material as THREE.PointsMaterial;
-        if (this.allowTransparency) {
-          material.transparent = true;
-          material.alphaTest = 0.1;
-        } else {
-          material.transparent = false;
-          material.alphaTest = 0;
-        }
+        // Only toggle blending; keep alphaTest (the round-disc cutout, set in
+        // optimizeForPointCount) so points stay round across transparency toggles.
+        material.transparent = this.allowTransparency;
         material.needsUpdate = true;
       }
     });
@@ -367,13 +469,9 @@ class PointCloudVisualizer {
     this.vertexPointsObjects.forEach(vertexPoints => {
       if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
         const material = vertexPoints.material as THREE.PointsMaterial;
-        if (this.allowTransparency) {
-          material.transparent = true;
-          material.alphaTest = 0.1;
-        } else {
-          material.transparent = false;
-          material.alphaTest = 0;
-        }
+        // Only toggle blending; keep alphaTest (the round-disc cutout, set in
+        // optimizeForPointCount) so points stay round across transparency toggles.
+        material.transparent = this.allowTransparency;
         material.needsUpdate = true;
       }
     });
@@ -384,13 +482,8 @@ class PointCloudVisualizer {
         group.traverse(child => {
           if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
             const material = child.material as THREE.PointsMaterial;
-            if (this.allowTransparency) {
-              material.transparent = true;
-              material.alphaTest = 0.1;
-            } else {
-              material.transparent = false;
-              material.alphaTest = 0;
-            }
+            // Keep alphaTest (round-disc cutout); only toggle blending.
+            material.transparent = this.allowTransparency;
             material.needsUpdate = true;
           }
         });
@@ -658,132 +751,17 @@ class PointCloudVisualizer {
 
     const points = new THREE.Points(geometry, material);
 
-    // Add adaptive decimation for large point clouds
-    if (positions && positions.count > 100000) {
-      (points as any).originalGeometry = geometry.clone(); // Store full geometry
-      (points as any).hasAdaptiveDecimation = true;
-      points.frustumCulled = false;
-    }
-
     return points;
-  }
-
-  private decimateGeometryByDistance(
-    originalGeometry: THREE.BufferGeometry,
-    cameraDistance: number
-  ): THREE.BufferGeometry {
-    const positions = originalGeometry.getAttribute('position') as THREE.BufferAttribute;
-    const colors = originalGeometry.getAttribute('color') as THREE.BufferAttribute;
-
-    let decimationFactor = 1;
-
-    // Aggressive decimation when zoomed out (high camera distance)
-    if (cameraDistance > 50) {
-      decimationFactor = 10;
-    } // Keep every 10th point
-    else if (cameraDistance > 20) {
-      decimationFactor = 5;
-    } // Keep every 5th point
-    else if (cameraDistance > 10) {
-      decimationFactor = 3;
-    } // Keep every 3rd point
-    else if (cameraDistance > 5) {
-      decimationFactor = 2;
-    } // Keep every 2nd point
-
-    if (decimationFactor === 1) {
-      return originalGeometry;
-    }
-
-    const totalPoints = positions.count;
-    const decimatedCount = Math.floor(totalPoints / decimationFactor);
-
-    const newPositions = new Float32Array(decimatedCount * 3);
-    const newColors = colors ? new Float32Array(decimatedCount * 3) : null;
-
-    let writeIndex = 0;
-    for (let i = 0; i < totalPoints; i += decimationFactor) {
-      // Copy position
-      newPositions[writeIndex * 3] = positions.array[i * 3];
-      newPositions[writeIndex * 3 + 1] = positions.array[i * 3 + 1];
-      newPositions[writeIndex * 3 + 2] = positions.array[i * 3 + 2];
-
-      // Copy color if available
-      if (newColors && colors) {
-        newColors[writeIndex * 3] = colors.array[i * 3];
-        newColors[writeIndex * 3 + 1] = colors.array[i * 3 + 1];
-        newColors[writeIndex * 3 + 2] = colors.array[i * 3 + 2];
-      }
-
-      writeIndex++;
-    }
-
-    const newGeometry = new THREE.BufferGeometry();
-    newGeometry.setAttribute('position', new THREE.BufferAttribute(newPositions, 3));
-    if (newColors) {
-      newGeometry.setAttribute('color', new THREE.BufferAttribute(newColors, 3));
-    }
-
-    return newGeometry;
-  }
-
-  private updateAdaptiveDecimation(): void {
-    // Calculate average distance to all point clouds
-    let totalDistance = 0;
-    let pointCloudCount = 0;
-
-    for (let i = 0; i < this.meshes.length; i++) {
-      const mesh = this.meshes[i];
-      if (mesh && mesh instanceof THREE.Points && (mesh as any).hasAdaptiveDecimation) {
-        if (mesh.geometry.boundingBox) {
-          const center = mesh.geometry.boundingBox.getCenter(new THREE.Vector3());
-          center.applyMatrix4(mesh.matrixWorld);
-          totalDistance += this.camera.position.distanceTo(center);
-          pointCloudCount++;
-        }
-      }
-    }
-
-    if (pointCloudCount === 0) {
-      return;
-    }
-
-    const avgDistance = totalDistance / pointCloudCount;
-
-    // Update geometries if distance changed significantly
-    const distanceThreshold = 2.0; // Only update if camera moved significantly
-    if (Math.abs(avgDistance - this.lastCameraDistance) > distanceThreshold) {
-      let decimationLog = `🔄 Adaptive decimation: distance=${avgDistance.toFixed(1)}`;
-
-      for (let i = 0; i < this.meshes.length; i++) {
-        const mesh = this.meshes[i];
-        if (mesh && mesh instanceof THREE.Points && (mesh as any).hasAdaptiveDecimation) {
-          const originalGeometry = (mesh as any).originalGeometry;
-          if (originalGeometry) {
-            const decimatedGeometry = this.decimateGeometryByDistance(
-              originalGeometry,
-              avgDistance
-            );
-
-            // Update mesh geometry
-            mesh.geometry.dispose();
-            mesh.geometry = decimatedGeometry;
-
-            decimationLog += `\n📊 File ${i}: ${originalGeometry.getAttribute('position').count} → ${decimatedGeometry.getAttribute('position').count} points`;
-          }
-        }
-      }
-
-      console.log(decimationLog);
-
-      this.lastCameraDistance = avgDistance;
-    }
   }
 
   // Predefined colors for different files - use shared constants
   private readonly fileColors: [number, number, number][] = DEFAULT_COLORS.FILE_COLORS;
 
   constructor() {
+    // Forward PERF lines to the extension's "3D Visualizer" Output channel.
+    if (isVSCode) {
+      setPerfSink((line: string) => this.vscode.postMessage({ type: 'perfLog', line }));
+    }
     this.init();
   }
 
@@ -872,8 +850,13 @@ class PointCloudVisualizer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.applySceneBrightness();
     this.applyBackgroundBrightness();
-    this.renderer.shadowMap.enabled = true; // Re-enable shadows
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Shadows are disabled: no object in the scene sets castShadow/receiveShadow,
+    // so the per-frame shadow pass + 2048² depth target produced nothing visible
+    // — pure overhead. (If shadow-casting meshes are ever added, re-enable here
+    // and set castShadow/receiveShadow on them.)
+    this.renderer.shadowMap.enabled = false;
+
+    this.setupContextLossHandling(canvas);
 
     // Initial check for formatted welcome message
     this.updateWelcomeMessageVisibility();
@@ -1407,6 +1390,13 @@ class PointCloudVisualizer {
 
         if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
           mesh.material.vertexColors = this.shouldUseVertexColors(spatialData, colorMode);
+          // Point colors are raw 8-bit sRGB now; the gamma toggle flips in-shader
+          // decoding rather than rebuilding the color array.
+          this.setupPointSrgbDecode(mesh.material);
+          mesh.material.userData.srgbDecode = this.pointColorsNeedSrgbDecode(
+            spatialData,
+            colorMode
+          );
           mesh.material.needsUpdate = true;
         }
       }
@@ -1494,6 +1484,12 @@ class PointCloudVisualizer {
       }
     } else {
       loadingEl.classList.add('hidden');
+      // Clear any in-progress Files-list loading row.
+      if (this.pendingLoadLabel !== null) {
+        this.pendingLoadLabel = null;
+        this.pendingLoadDetail = '';
+        this.updateFileList();
+      }
     }
 
     // Update welcome message state based on loading status
@@ -1503,6 +1499,14 @@ class PointCloudVisualizer {
   private updateWelcomeMessageVisibility(): void {
     const welcomeEl = document.getElementById('welcome-message');
     if (!welcomeEl) {
+      return;
+    }
+
+    // The welcome message is a website-only hint ("click + Add Point Cloud"). In
+    // the VS Code extension files are opened from the editor, so it's just noise
+    // flashing behind the loading spinner — never show it there.
+    if (isVSCode) {
+      welcomeEl.classList.add('hidden');
       return;
     }
 
@@ -1596,9 +1600,6 @@ class PointCloudVisualizer {
       this.updateCameraMatrix();
       this.updateCameraControlsPanel();
 
-      // Apply adaptive decimation based on camera distance
-      // this.updateAdaptiveDecimation();
-
       // Update screen-space scaling if enabled
       if (this.screenSpaceScaling) {
         const now = performance.now();
@@ -1668,10 +1669,48 @@ class PointCloudVisualizer {
   }
 
   /**
+   * Recover gracefully from WebGL context loss instead of crashing.
+   *
+   * Context loss happens when the GPU runs out of memory — common when several
+   * extension windows each hold a large cloud, since every webview is a separate
+   * WebGL context but they all share one GPU's VRAM. Without this handler the
+   * next GL call throws and takes down the whole webview. We preventDefault() to
+   * let the browser attempt restoration, pause rendering while lost, and resume
+   * on restore (Three.js re-uploads geometries/textures automatically on the
+   * next render because their CPU-side arrays still exist).
+   */
+  private setupContextLossHandling(canvas: HTMLCanvasElement): void {
+    canvas.addEventListener(
+      'webglcontextlost',
+      event => {
+        event.preventDefault(); // required so the context can be restored
+        this.contextLost = true;
+        console.warn('WebGL context lost — pausing rendering until restored.');
+        this.showStatus('GPU context lost (likely out of memory). Recovering…');
+      },
+      false
+    );
+    canvas.addEventListener(
+      'webglcontextrestored',
+      () => {
+        this.contextLost = false;
+        console.warn('WebGL context restored — resuming.');
+        this.showStatus('GPU context restored.');
+        this.requestRender();
+      },
+      false
+    );
+  }
+
+  /**
    * Centralized render method — routes through EDL EffectComposer when enabled,
    * falls back to direct renderer.render() when disabled for zero overhead.
    */
   private performRender(): void {
+    // The GPU is gone while the context is lost; any GL call would throw.
+    if (this.contextLost) {
+      return;
+    }
     if (this.edlEnabled && this.effectComposer) {
       this.effectComposer.render();
     } else {
@@ -2485,9 +2524,20 @@ class PointCloudVisualizer {
     return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   }
 
-  private buildOriginalColorArray(data: SpatialData): Float32Array | null {
+  // For POINT CLOUDS this returns raw 8-bit sRGB colors (Uint8, 3 bytes/point)
+  // and the sRGB→linear conversion happens in the point shader (see
+  // setupPointSrgbDecode). That's 4x less color memory than the old baked Float32
+  // [0,1] array — the key lever when many large clouds are open at once — and the
+  // typed path is zero-copy (shares the parser's array). MESHES are unchanged:
+  // they keep the Float32 + LUT path (few vertices, memory is a non-issue, and
+  // their lit materials read linear vertex colors directly).
+  private buildOriginalColorArray(data: SpatialData): Float32Array | Uint8Array | null {
+    const isMesh = (data.faceCount || 0) > 0;
     const typedColors = (data as any).colorsArray as Uint8Array | null | undefined;
     if (typedColors && data.hasColors) {
+      if (!isMesh) {
+        return typedColors; // raw 8-bit sRGB, decoded in-shader; zero-copy
+      }
       const colorFloats = new Float32Array(typedColors.length);
       if (this.convertSrgbToLinear) {
         const lut = this.colorProcessor.ensureSrgbLUT();
@@ -2504,6 +2554,17 @@ class PointCloudVisualizer {
 
     if (!data.hasColors || !data.vertices?.length) {
       return null;
+    }
+
+    if (!isMesh) {
+      const colors = new Uint8Array(data.vertices.length * 3);
+      for (let i = 0, i3 = 0; i < data.vertices.length; i++, i3 += 3) {
+        const vertex = data.vertices[i];
+        colors[i3] = (vertex.red || 0) & 255;
+        colors[i3 + 1] = (vertex.green || 0) & 255;
+        colors[i3 + 2] = (vertex.blue || 0) & 255;
+      }
+      return colors;
     }
 
     const colors = new Float32Array(data.vertices.length * 3);
@@ -2549,7 +2610,10 @@ class PointCloudVisualizer {
     if (colorMode === 'original' && data.hasColors) {
       const colors = this.buildOriginalColorArray(data);
       if (colors) {
-        const colorAttribute = new THREE.BufferAttribute(colors, 3);
+        // Uint8 (point-cloud sRGB) attributes are normalized so the GPU reads
+        // 0..1; Float32 (mesh, already linear) are not.
+        const normalized = colors instanceof Uint8Array;
+        const colorAttribute = new THREE.BufferAttribute(colors, 3, normalized);
         geometry.setAttribute('color', colorAttribute);
         colorAttribute.needsUpdate = true;
         return;
@@ -2573,31 +2637,29 @@ class PointCloudVisualizer {
 
     const startTime = performance.now();
 
+    // Point clouds (no faces) are drawn with PointsMaterial, which never uses
+    // normals (points aren't lit, and EDL works off depth). Uploading a normal
+    // attribute for them just wastes ~12 bytes/point of VRAM — significant when
+    // many large clouds are open at once. So only attach normals for MESHES;
+    // the CPU normals stay in spatialData for PLY export, and the
+    // normal-visualization tool is mesh-only anyway.
+    const isMesh = (data.faces?.length || 0) > 0 || (data.faceCount || 0) > 0;
+
     // Check if we have direct TypedArrays (new ultra-fast path)
     if ((data as any).useTypedArrays) {
       const positions = (data as any).positionsArray as Float32Array;
-      const colors = (data as any).colorsArray as Uint8Array | null;
       const normals = (data as any).normalsArray as Float32Array | null;
 
       // Direct assignment - zero copying, zero processing!
       geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
-      if (colors && data.hasColors) {
-        const colorFloats = new Float32Array(colors.length);
-        if (this.convertSrgbToLinear) {
-          const lut = this.colorProcessor.ensureSrgbLUT();
-          for (let i = 0; i < colors.length; i++) {
-            colorFloats[i] = lut[colors[i]];
-          }
-        } else {
-          for (let i = 0; i < colors.length; i++) {
-            colorFloats[i] = colors[i] / 255;
-          }
-        }
-        geometry.setAttribute('color', new THREE.BufferAttribute(colorFloats, 3));
-      }
+      // NOTE: the 'color' attribute is intentionally NOT built here. The
+      // unconditional applyColorModeToGeometry() call below fully determines the
+      // final color attribute for every mode (original/intensity rebuild it,
+      // assigned deletes it), so building it here was a redundant full-size
+      // Float32 allocation + per-channel loop on every colored load.
 
-      if (normals && data.hasNormals) {
+      if (normals && data.hasNormals && isMesh) {
         geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       }
     } else {
@@ -2652,7 +2714,7 @@ class PointCloudVisualizer {
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
       }
 
-      if (normals) {
+      if (normals && isMesh) {
         geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
       }
     }
@@ -4092,7 +4154,7 @@ class PointCloudVisualizer {
           try {
             // Both single and multi-file data are handled the same way now
             const dataArray = Array.isArray(message.data) ? message.data : [message.data];
-            await this.displayFiles(dataArray);
+            await this.loadWithPerf('ply', message, () => this.displayFiles(dataArray));
           } catch (error) {
             console.error('Error displaying PLY data:', error);
             this.showError(
@@ -4112,9 +4174,12 @@ class PointCloudVisualizer {
             );
           }
           break;
+        case 'ultimateRawBinaryUri':
+          await this.handleUltimateRawBinaryUri(message);
+          break;
         case 'directTypedArrayData':
           try {
-            await this.handleDirectTypedArrayData(message);
+            await this.loadWithPerf('ply', message, () => this.handleDirectTypedArrayData(message));
           } catch (error) {
             console.error('Error handling direct TypedArray data:', error);
             this.showError(
@@ -4125,7 +4190,7 @@ class PointCloudVisualizer {
           break;
         case 'binarySpatialData':
           try {
-            await this.handleBinarySpatialData(message);
+            await this.loadWithPerf('ply', message, () => this.handleBinarySpatialData(message));
           } catch (error) {
             console.error('Error handling binary PLY data:', error);
             this.showError(
@@ -4196,31 +4261,31 @@ class PointCloudVisualizer {
           this.handleDepthData(message);
           break;
         case 'objData':
-          this.handleObjData(message);
+          await this.loadWithPerf('obj', message, () => this.handleObjData(message));
           break;
         case 'stlData':
-          this.handleStlData(message);
+          await this.loadWithPerf('stl', message, () => this.handleStlData(message));
           break;
         case 'xyzData':
-          this.handleXyzData(message);
+          await this.loadWithPerf('xyz', message, () => this.handleXyzData(message));
           break;
         case 'pcdData':
-          this.handlePcdData(message);
+          await this.loadWithPerf('pcd', message, () => this.handlePcdData(message));
           break;
         case 'ptsData':
-          this.handlePtsData(message);
+          await this.loadWithPerf('pts', message, () => this.handlePtsData(message));
           break;
         case 'offData':
-          this.handleOffData(message);
+          await this.loadWithPerf('off', message, () => this.handleOffData(message));
           break;
         case 'gltfData':
-          this.handleGltfData(message);
+          await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
           break;
         case 'npyData':
-          this.handleNpyData(message);
+          await this.loadWithPerf('npy', message, () => this.handleNpyData(message));
           break;
         case 'xyzVariantData':
-          this.handleXyzVariantData(message);
+          await this.loadWithPerf('xyz', message, () => this.handleXyzVariantData(message));
           break;
         case 'cameraParams':
           this.handleCameraParams(message);
@@ -4911,6 +4976,12 @@ class PointCloudVisualizer {
           material.color.setRGB(color[0], color[1], color[2]);
         }
       }
+
+      // Point colors are stored as raw 8-bit sRGB; decode them in-shader when in
+      // original mode with the gamma toggle on (visually identical to the old
+      // baked-Float32 path, 4x less memory).
+      this.setupPointSrgbDecode(material);
+      material.userData.srgbDecode = this.pointColorsNeedSrgbDecode(data, colorMode);
 
       return material;
     }
@@ -5784,6 +5855,20 @@ class PointCloudVisualizer {
             `;
     }
 
+    // In-progress add(s): a non-blocking loading row so the user sees progress
+    // here while still interacting with the already-loaded clouds.
+    if (this.pendingLoadLabel !== null) {
+      html += `
+                <div class="file-item file-item-loading">
+                    <div class="file-item-main">
+                        <span class="spinner spinner-inline"></span>
+                        <span class="file-name">Loading ${this.escapeHtml(this.pendingLoadLabel)}…</span>
+                    </div>
+                    <div class="file-info" id="pending-load-detail">${this.escapeHtml(this.pendingLoadDetail)}</div>
+                </div>
+            `;
+    }
+
     fileListDiv.innerHTML = html;
 
     // Add event listeners after setting innerHTML
@@ -6192,10 +6277,6 @@ class PointCloudVisualizer {
             const geometry = mesh.geometry as THREE.BufferGeometry | undefined;
             if (geometry) {
               this.applyColorModeToGeometry(this.spatialFiles[i], geometry, value);
-              const originalGeometry = mesh.originalGeometry as THREE.BufferGeometry | undefined;
-              if (originalGeometry) {
-                this.applyColorModeToGeometry(this.spatialFiles[i], originalGeometry, value);
-              }
             }
             const oldMaterial = this.meshes[i].material as any;
             const newMaterial = this.createMaterialForFile(this.spatialFiles[i], i);
@@ -7073,14 +7154,26 @@ class PointCloudVisualizer {
     (window as any).loadingStartTime = uiStartTime;
     (window as any).absoluteStartTime = uiStartTime;
 
-    // Show loading indicator immediately
+    // Additional load into an existing scene: don't cover the cloud with a
+    // blocking spinner — the user can keep looking at / interacting with the
+    // current clouds. Show progress as a row in the Files list instead.
+    if (this.spatialFiles.length > 0) {
+      this.pendingLoadLabel = fileName;
+      this.pendingLoadDetail = 'Reading file…';
+      document.getElementById('loading')?.classList.add('hidden');
+      this.updateFileList();
+      return;
+    }
+
+    // First/empty load: nothing to interact with yet, so a centered spinner is
+    // appropriate. Show the real filename + a live phase line.
     const loadingEl = document.getElementById('loading');
     if (loadingEl) {
       loadingEl.classList.remove('hidden');
       loadingEl.innerHTML = `
                 <div class="spinner"></div>
-                <p>Loading ${fileName}...</p>
-                <p class="loading-detail">Starting file processing...</p>
+                <p>Loading ${fileName}…</p>
+                <p class="loading-detail">Reading file…</p>
             `;
     }
 
@@ -7099,6 +7192,36 @@ class PointCloudVisualizer {
 
     // Update file stats with placeholder
     this.updateFileStatsImmediate(fileName);
+  }
+
+  /**
+   * Update the live phase line during a load — the centered spinner's detail for
+   * a first load, or the in-progress Files-list row for an additional load.
+   */
+  private setLoadingDetail(text: string): void {
+    if (!this.isFileLoading) {
+      return;
+    }
+    if (this.pendingLoadLabel !== null) {
+      this.pendingLoadDetail = text;
+      const detailEl = document.getElementById('pending-load-detail');
+      if (detailEl) {
+        detailEl.textContent = text;
+      }
+      return;
+    }
+    const detailEl = document.querySelector('#loading .loading-detail');
+    if (detailEl) {
+      detailEl.textContent = text;
+    }
+  }
+
+  private escapeHtml(s: string): string {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   private updateFileStatsImmediate(fileName: string): void {
@@ -7216,6 +7339,13 @@ class PointCloudVisualizer {
   }
 
   private addNewFiles(newFiles: SpatialData[]): void {
+    // Phase feedback: the bytes are here, now we build GPU geometry.
+    if (this.isFileLoading && newFiles.length > 0) {
+      const pts = newFiles.reduce((s, f) => s + (f.vertexCount || 0), 0);
+      this.setLoadingDetail(
+        pts > 0 ? `Building geometry (${pts.toLocaleString()} points)…` : 'Building geometry…'
+      );
+    }
     for (const data of newFiles) {
       // Assign new file index
       data.fileIndex = this.spatialFiles.length;
@@ -7791,8 +7921,87 @@ class PointCloudVisualizer {
     this.requestRender();
   }
 
+  /**
+   * Generic timing wrapper for format handlers that don't self-report detailed
+   * phases (OBJ, STL, PCD, PTS, OFF, GLTF, NPY, XYZ, ...). Captures the
+   * cross-process transfer cost plus the handler (parse + geometry + display)
+   * as a single comparable PERF line. Errors propagate; the summary still
+   * fires via finally so failed loads are still timed.
+   */
+  private async loadWithPerf(
+    kind: string,
+    message: any,
+    fn: () => void | Promise<void>
+  ): Promise<void> {
+    // read+parse, transfer and total come from the extension's wall-clock epochs
+    // (loadStartedAt/postedAt); `build` is the webview's geometry+display span.
+    const perf = new PerfTimer(kind, message.loadStartedAt, message.postedAt);
+    perf.file(message.fileName);
+    try {
+      await fn();
+    } finally {
+      perf.mark('build');
+      const verts = message.vertexCount ?? message.data?.vertexCount;
+      if (typeof verts === 'number') {
+        perf.note('verts', verts.toLocaleString());
+      }
+      if (typeof message.fileSizeInBytes === 'number') {
+        perf.note('MB', (message.fileSizeInBytes / 1048576).toFixed(1));
+      }
+      if (message.parseMode) {
+        perf.note('mode', String(message.parseMode));
+      }
+      perf.summary();
+    }
+  }
+
+  /**
+   * Transfer-via-fetch entry: instead of receiving the vertex buffer over
+   * postMessage (a multi-hundred-ms structured clone for large clouds), fetch
+   * the file directly from its webview URI, slice out the vertex bytes, and
+   * hand off to the normal parser. On any fetch failure, ask the extension to
+   * resend over postMessage (the proven path) so loading never breaks.
+   */
+  private async handleUltimateRawBinaryUri(message: any): Promise<void> {
+    try {
+      // Stamp when the (small) URI message arrived, BEFORE the fetch, so the
+      // timer's `transfer` is just the URI crossing and the fetch is its own
+      // phase (no double counting).
+      message.uriReceivedAt = Date.now();
+      const fetchStart = performance.now();
+      const response = await fetch(message.fileUri);
+      if (!response.ok) {
+        throw new Error(`fetch failed: ${response.status}`);
+      }
+      const full = await response.arrayBuffer();
+      const fetchMs = performance.now() - fetchStart;
+      // Extract the vertex region, matching what the extension would have sliced.
+      message.rawBinaryData = full.slice(message.binaryDataStart);
+      message.fetchMs = fetchMs;
+      await this.handleUltimateRawBinaryData(message);
+    } catch (error) {
+      console.warn('[PLY] fetch path failed, requesting postMessage fallback:', error);
+      this.vscode.postMessage({
+        type: 'plyFetchFailed',
+        docUri: message.docUri,
+        fileName: message.fileName,
+        messageType: message.messageType,
+      });
+    }
+  }
+
   private async handleUltimateRawBinaryData(message: any): Promise<void> {
     const startTime = performance.now();
+    const perf = new PerfTimer(
+      'ply',
+      message.loadStartedAt,
+      message.postedAt,
+      message.uriReceivedAt
+    );
+    perf.file(message.fileName);
+    if (message.fetchMs != null) {
+      perf.add('fetch', message.fetchMs);
+    }
 
     // Parse raw binary data directly in webview
     const rawData = new Uint8Array(message.rawBinaryData);
@@ -7875,80 +8084,155 @@ class PointCloudVisualizer {
       }
     };
 
-    // Ultra-fast direct binary parsing with proper type handling
-    for (let i = 0; i < vertexCount; i++) {
-      const vertexOffset = i * vertexStride;
-      const i3 = i * 3;
+    // Fast path: the overwhelmingly common PLY layouts are float32 (or float64)
+    // x/y/z, uint8 r/g/b, float32 normals, float32 intensity. When every present
+    // property matches that, we read directly from the DataView in a tight loop
+    // with no per-property function call and no string-`switch` (the previous
+    // version did ~6 calls × N vertices, which dominated parse time). Open3D
+    // commonly writes double (float64) positions, so both widths are supported.
+    const isF32 = (t?: string) => t === 'float' || t === 'float32';
+    const isF64 = (t?: string) => t === 'double' || t === 'float64';
+    const isU8 = (t?: string) => t === 'uchar' || t === 'uint8';
+    const hasC = !!(colors && redOffset && greenOffset && blueOffset);
+    const hasN = !!(normals && nxOffset && nyOffset && nzOffset);
+    const hasI = !!(intensity && intensityOffset);
+    const posF32 =
+      isF32((xOffset as any)?.type) &&
+      isF32((yOffset as any)?.type) &&
+      isF32((zOffset as any)?.type);
+    const posF64 =
+      isF64((xOffset as any)?.type) &&
+      isF64((yOffset as any)?.type) &&
+      isF64((zOffset as any)?.type);
+    const fastEligible =
+      !!xOffset &&
+      !!yOffset &&
+      !!zOffset &&
+      (posF32 || posF64) &&
+      (!hasC ||
+        (isU8((redOffset as any).type) &&
+          isU8((greenOffset as any).type) &&
+          isU8((blueOffset as any).type))) &&
+      (!hasN ||
+        (isF32((nxOffset as any).type) &&
+          isF32((nyOffset as any).type) &&
+          isF32((nzOffset as any).type))) &&
+      (!hasI || isF32((intensityOffset as any).type));
 
-      // Read positions with correct data type
-      if (xOffset) {
-        positions[i3] = readBinaryValue(
-          vertexOffset + (xOffset as any).offset,
-          (xOffset as any).type
-        );
-      }
-      if (yOffset) {
-        positions[i3 + 1] = readBinaryValue(
-          vertexOffset + (yOffset as any).offset,
-          (yOffset as any).type
-        );
-      }
-      if (zOffset) {
-        positions[i3 + 2] = readBinaryValue(
-          vertexOffset + (zOffset as any).offset,
-          (zOffset as any).type
-        );
-      }
+    if (fastEligible) {
+      const le = littleEndian;
+      const xo = (xOffset as any).offset;
+      const yo = (yOffset as any).offset;
+      const zo = (zOffset as any).offset;
+      const ro = hasC ? (redOffset as any).offset : 0;
+      const go = hasC ? (greenOffset as any).offset : 0;
+      const bo = hasC ? (blueOffset as any).offset : 0;
+      const nxo = hasN ? (nxOffset as any).offset : 0;
+      const nyo = hasN ? (nyOffset as any).offset : 0;
+      const nzo = hasN ? (nzOffset as any).offset : 0;
+      const io = hasI ? (intensityOffset as any).offset : 0;
 
-      // Read colors with correct data type
-      if (colors && redOffset) {
-        colors[i3] = readBinaryValue(
-          vertexOffset + (redOffset as any).offset,
-          (redOffset as any).type
-        );
+      for (let i = 0; i < vertexCount; i++) {
+        const vo = i * vertexStride;
+        const i3 = i * 3;
+        if (posF64) {
+          positions[i3] = dataView.getFloat64(vo + xo, le);
+          positions[i3 + 1] = dataView.getFloat64(vo + yo, le);
+          positions[i3 + 2] = dataView.getFloat64(vo + zo, le);
+        } else {
+          positions[i3] = dataView.getFloat32(vo + xo, le);
+          positions[i3 + 1] = dataView.getFloat32(vo + yo, le);
+          positions[i3 + 2] = dataView.getFloat32(vo + zo, le);
+        }
+        if (hasC) {
+          colors![i3] = dataView.getUint8(vo + ro);
+          colors![i3 + 1] = dataView.getUint8(vo + go);
+          colors![i3 + 2] = dataView.getUint8(vo + bo);
+        }
+        if (hasN) {
+          normals![i3] = dataView.getFloat32(vo + nxo, le);
+          normals![i3 + 1] = dataView.getFloat32(vo + nyo, le);
+          normals![i3 + 2] = dataView.getFloat32(vo + nzo, le);
+        }
+        if (hasI) {
+          intensity![i] = dataView.getFloat32(vo + io, le);
+        }
       }
-      if (colors && greenOffset) {
-        colors[i3 + 1] = readBinaryValue(
-          vertexOffset + (greenOffset as any).offset,
-          (greenOffset as any).type
-        );
-      }
-      if (colors && blueOffset) {
-        colors[i3 + 2] = readBinaryValue(
-          vertexOffset + (blueOffset as any).offset,
-          (blueOffset as any).type
-        );
-      }
+    } else {
+      // Generic fallback for mixed/exotic property types.
+      for (let i = 0; i < vertexCount; i++) {
+        const vertexOffset = i * vertexStride;
+        const i3 = i * 3;
 
-      // Read normals with correct data type
-      if (normals && nxOffset) {
-        normals[i3] = readBinaryValue(
-          vertexOffset + (nxOffset as any).offset,
-          (nxOffset as any).type
-        );
-      }
-      if (normals && nyOffset) {
-        normals[i3 + 1] = readBinaryValue(
-          vertexOffset + (nyOffset as any).offset,
-          (nyOffset as any).type
-        );
-      }
-      if (normals && nzOffset) {
-        normals[i3 + 2] = readBinaryValue(
-          vertexOffset + (nzOffset as any).offset,
-          (nzOffset as any).type
-        );
-      }
+        if (xOffset) {
+          positions[i3] = readBinaryValue(
+            vertexOffset + (xOffset as any).offset,
+            (xOffset as any).type
+          );
+        }
+        if (yOffset) {
+          positions[i3 + 1] = readBinaryValue(
+            vertexOffset + (yOffset as any).offset,
+            (yOffset as any).type
+          );
+        }
+        if (zOffset) {
+          positions[i3 + 2] = readBinaryValue(
+            vertexOffset + (zOffset as any).offset,
+            (zOffset as any).type
+          );
+        }
 
-      if (intensity && intensityOffset) {
-        intensity[i] = readBinaryValue(
-          vertexOffset + (intensityOffset as any).offset,
-          (intensityOffset as any).type
-        );
+        if (colors && redOffset) {
+          colors[i3] = readBinaryValue(
+            vertexOffset + (redOffset as any).offset,
+            (redOffset as any).type
+          );
+        }
+        if (colors && greenOffset) {
+          colors[i3 + 1] = readBinaryValue(
+            vertexOffset + (greenOffset as any).offset,
+            (greenOffset as any).type
+          );
+        }
+        if (colors && blueOffset) {
+          colors[i3 + 2] = readBinaryValue(
+            vertexOffset + (blueOffset as any).offset,
+            (blueOffset as any).type
+          );
+        }
+
+        if (normals && nxOffset) {
+          normals[i3] = readBinaryValue(
+            vertexOffset + (nxOffset as any).offset,
+            (nxOffset as any).type
+          );
+        }
+        if (normals && nyOffset) {
+          normals[i3 + 1] = readBinaryValue(
+            vertexOffset + (nyOffset as any).offset,
+            (nyOffset as any).type
+          );
+        }
+        if (normals && nzOffset) {
+          normals[i3 + 2] = readBinaryValue(
+            vertexOffset + (nzOffset as any).offset,
+            (nzOffset as any).type
+          );
+        }
+
+        if (intensity && intensityOffset) {
+          intensity[i] = readBinaryValue(
+            vertexOffset + (intensityOffset as any).offset,
+            (intensityOffset as any).type
+          );
+        }
       }
     }
 
     const parseTime = performance.now();
+    perf.mark('parse');
+    perf.note('fast', fastEligible ? 1 : 0);
     console.log(`Load: parse ${message.fileName} ${(parseTime - startTime).toFixed(1)}ms`);
 
     // Create PLY data object with TypedArrays
@@ -8057,6 +8341,10 @@ class PointCloudVisualizer {
 
     console.log(`Load: total ${(performance.now() - startTime).toFixed(1)}ms`);
 
+    if (message.faceCount) {
+      perf.mark('faces');
+    }
+
     // Process as normal
     const displayStartTime = performance.now();
     if (message.messageType === 'multiSpatialData') {
@@ -8064,6 +8352,7 @@ class PointCloudVisualizer {
     } else if (message.messageType === 'addFiles') {
       this.addNewFiles([spatialData]);
     }
+    perf.mark('build');
 
     // Normals visualizer will be created on-demand when user clicks normals button
     // This ensures vertices are fully parsed before creating normals
@@ -8096,6 +8385,13 @@ class PointCloudVisualizer {
     const verticesPerSecond = Math.round(totalVertices / (absoluteCompleteTime / 1000));
     const modeLabel = message.messageType === 'addFiles' ? 'ADD FILE' : 'ULTIMATE';
     // concise metrics printed above
+
+    // total/read+parse/transfer come from the extension's wall-clock epochs on
+    // the message — consistent for first and added files, no clock juggling.
+    perf.note('verts', totalVertices.toLocaleString());
+    perf.note('MB', (message.fileSizeInBytes / 1048576).toFixed(1));
+    perf.note('mode', message.fast ? 'binary' : 'binary-js');
+    perf.summary();
   }
 
   private async handleDirectTypedArrayData(message: any): Promise<void> {
@@ -10192,6 +10488,13 @@ class PointCloudVisualizer {
   private async handleDepthData(message: any): Promise<void> {
     try {
       console.log('Received depth data for processing:', message.fileName);
+      if (typeof message.postedAt === 'number') {
+        const transferMs = Math.max(0, Date.now() - message.postedAt);
+        const bytes = (message.data && message.data.byteLength) || 0;
+        perfLog(
+          `⏱️ PERF[tiff] transfer ${transferMs.toFixed(1)}ms (${(bytes / 1048576).toFixed(2)}MB raw file) (file=${message.fileName})`
+        );
+      }
 
       // Generate unique request ID for this depth file using shared function
       const requestId = generateDepthRequestId();
@@ -10382,6 +10685,12 @@ class PointCloudVisualizer {
     console.log('Processing depth with camera params:', cameraParams);
     this.showStatus('Converting depth image to point cloud...');
 
+    // Complete-load timing for depth → point cloud (the wasm/geotiff decode is
+    // logged separately inside the reader; `convert` here includes it).
+    const perfKind = /\.(tif|tiff)$/i.test(depthFileData.fileName) ? 'tiff' : 'depth';
+    const perf = new PerfTimer(perfKind);
+    perf.file(depthFileData.fileName);
+
     // Store original data for re-processing
     this.originalDepthFileName = depthFileData.fileName;
     this.currentCameraParams = cameraParams;
@@ -10392,6 +10701,7 @@ class PointCloudVisualizer {
       depthFileData.fileName,
       cameraParams
     );
+    perf.mark('convert');
 
     const isPfm = /\.pfm$/i.test(depthFileData.fileName);
     const isTif = /\.(tif|tiff)$/i.test(depthFileData.fileName);
@@ -10405,11 +10715,27 @@ class PointCloudVisualizer {
       height: (result as any).height || 0,
     };
 
-    // Convert Float32Arrays to vertex array using utility method
-    const vertices = DepthConverter.convertResultToVertices(result);
+    // Typed-array fast path: the projector already produced Float32 position
+    // and color arrays, so attach them directly (zero-copy) instead of
+    // materializing N vertex objects and then rebuilding typed arrays inside
+    // createGeometryFromSpatialData. The useTypedArrays geometry path expects
+    // colors as Uint8 (0-255); convert once if the projector gave 0-1 floats.
+    let colorsU8: Uint8Array | null = null;
+    if (result.colors) {
+      if (result.colors instanceof Uint8Array) {
+        colorsU8 = result.colors;
+      } else {
+        const src = result.colors;
+        colorsU8 = new Uint8Array(src.length);
+        for (let i = 0; i < src.length; i++) {
+          colorsU8[i] = Math.round(src[i] * 255);
+        }
+      }
+    }
+    perf.mark('build-colors');
 
     const spatialData: SpatialData = {
-      vertices: vertices,
+      vertices: [],
       faces: [],
       vertexCount: result.pointCount,
       hasColors: !!result.colors,
@@ -10431,6 +10757,12 @@ class PointCloudVisualizer {
           : []),
       ],
     };
+    (spatialData as any).useTypedArrays = true;
+    (spatialData as any).positionsArray = result.vertices;
+    (spatialData as any).colorsArray = colorsU8;
+    (spatialData as any).normalsArray = null;
+    (spatialData as any).intensityArray = null;
+    (spatialData as any).scalarFields = {};
 
     // Mark explicitly as depth-derived so the UI always shows the depth panel later
     (spatialData as any).isDepthDerived = true;
@@ -10476,6 +10808,10 @@ class PointCloudVisualizer {
     } else {
       await this.displayFiles([spatialData]);
     }
+    perf.mark('geometry+display');
+    perf.note('verts', result.pointCount);
+    perf.note('file', depthFileData.fileName);
+    perf.summary();
 
     // Auto-open Depth Settings panel for newly created depth-derived file in browser
     setTimeout(() => {
@@ -11280,14 +11616,34 @@ class PointCloudVisualizer {
       console.log(`Load: recv XYZ variant (${message.variant}) ${message.fileName}`);
       this.showStatus(`XYZ: processing ${message.fileName} (${message.variant})`);
 
-      // Parse XYZ variant data
-      const spatialData = this.parseXyzVariantData(
-        message.data,
-        message.variant,
-        message.fileName,
-        message.fileSizeInBytes,
-        message.shortPath
-      );
+      // Data is already parsed into typed arrays by the extension (XyzVariantParser).
+      const xyzData = message.data;
+      const spatialData: SpatialData = {
+        vertices: [],
+        faces: [],
+        format: 'ascii',
+        version: '1.0',
+        comments: [
+          `Converted from ${message.variant.toUpperCase()}: ${message.fileName}`,
+          `Format variant: ${message.variant}`,
+        ],
+        vertexCount: xyzData.vertexCount,
+        faceCount: 0,
+        hasColors: xyzData.hasColors,
+        hasNormals: xyzData.hasNormals,
+        hasIntensity: xyzData.hasIntensity,
+        fileName: message.fileName,
+        shortPath: message.shortPath,
+        fileSizeInBytes: message.fileSizeInBytes,
+      };
+      (spatialData as any).useTypedArrays = true;
+      (spatialData as any).positionsArray = xyzData.positionsArray;
+      (spatialData as any).colorsArray = xyzData.colorsArray;
+      (spatialData as any).normalsArray = xyzData.normalsArray;
+      (spatialData as any).intensityArray = xyzData.intensityArray;
+      (spatialData as any).scalarFields = xyzData.intensityArray
+        ? { intensity: xyzData.intensityArray }
+        : {};
 
       if (message.isAddFile) {
         this.addNewFiles([spatialData]);
@@ -11321,118 +11677,6 @@ class PointCloudVisualizer {
         `${message.variant.toUpperCase()} processing failed: ${error instanceof Error ? error.message : String(error)}`
       );
     }
-  }
-
-  private parseXyzVariantData(
-    data: ArrayBuffer,
-    variant: string,
-    fileName: string,
-    fileSizeInBytes?: number,
-    shortPath?: string
-  ): SpatialData {
-    const hasColors = variant === 'xyzrgb';
-    const hasNormals = variant === 'xyzn';
-
-    // Grow dynamically — XYZ files have no point count header
-    let capacity = 1_000_000;
-    let positions = new Float32Array(capacity * 3);
-    let colors = hasColors ? new Uint8Array(capacity * 3) : null;
-    let normals = hasNormals ? new Float32Array(capacity * 3) : null;
-    let parsed = 0;
-
-    const grow = () => {
-      capacity *= 2;
-      const p2 = new Float32Array(capacity * 3);
-      p2.set(positions);
-      positions = p2;
-      if (colors) {
-        const c2 = new Uint8Array(capacity * 3);
-        c2.set(colors);
-        colors = c2;
-      }
-      if (normals) {
-        const n2 = new Float32Array(capacity * 3);
-        n2.set(normals);
-        normals = n2;
-      }
-    };
-
-    const bytes = new Uint8Array(data);
-    const reader = new ByteLineReader(bytes);
-
-    while (!reader.done) {
-      const line = reader.nextLine();
-      if (!line) {
-        continue;
-      }
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-
-      const parts = trimmed.split(/\s+/);
-      if (parts.length < 3) {
-        continue;
-      }
-
-      if (parsed >= capacity) {
-        grow();
-      }
-
-      const i3 = parsed * 3;
-      positions[i3] = parseFloat(parts[0]);
-      positions[i3 + 1] = parseFloat(parts[1]);
-      positions[i3 + 2] = parseFloat(parts[2]);
-
-      if (normals && parts.length >= 6) {
-        normals[i3] = parseFloat(parts[3]);
-        normals[i3 + 1] = parseFloat(parts[4]);
-        normals[i3 + 2] = parseFloat(parts[5]);
-      }
-
-      if (colors && parts.length >= 6) {
-        const r = parseFloat(parts[3]);
-        const g = parseFloat(parts[4]);
-        const b = parseFloat(parts[5]);
-        // Open3D writes 0-1 floats; raw integer otherwise
-        if (r <= 1.0 && g <= 1.0 && b <= 1.0) {
-          colors[i3] = Math.round(r * 255);
-          colors[i3 + 1] = Math.round(g * 255);
-          colors[i3 + 2] = Math.round(b * 255);
-        } else {
-          colors[i3] = Math.min(255, Math.max(0, Math.round(r)));
-          colors[i3 + 1] = Math.min(255, Math.max(0, Math.round(g)));
-          colors[i3 + 2] = Math.min(255, Math.max(0, Math.round(b)));
-        }
-      }
-
-      parsed++;
-    }
-
-    const spatialData: SpatialData = {
-      vertices: [],
-      faces: [],
-      format: 'ascii',
-      version: '1.0',
-      comments: [
-        `Converted from ${variant.toUpperCase()}: ${fileName}`,
-        `Format variant: ${variant}`,
-      ],
-      vertexCount: parsed,
-      faceCount: 0,
-      hasColors,
-      hasNormals,
-      fileName: fileName,
-      shortPath,
-      fileSizeInBytes,
-    };
-
-    (spatialData as any).useTypedArrays = true;
-    (spatialData as any).positionsArray = positions.subarray(0, parsed * 3);
-    (spatialData as any).colorsArray = colors ? colors.subarray(0, parsed * 3) : null;
-    (spatialData as any).normalsArray = normals ? normals.subarray(0, parsed * 3) : null;
-
-    return spatialData;
   }
 
   private createNormalsVisualizer(data: SpatialData): THREE.LineSegments {
@@ -11674,6 +11918,12 @@ class PointCloudVisualizer {
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
       spatialData.vertices = DepthConverter.convertResultToVertices(result);
+      // Reprocess paths rebuild geometry inline from these objects; clear the
+      // initial-load typed-array view so later color-mode rebuilds / geometry
+      // recreation use these fresh objects rather than stale arrays.
+      (spatialData as any).useTypedArrays = false;
+      (spatialData as any).positionsArray = undefined;
+      (spatialData as any).colorsArray = undefined;
       spatialData.hasColors = true;
       // Mark as depth-derived so gamma correction knows these are already linear colors
       (spatialData as any).isDepthDerived = true;
@@ -12183,6 +12433,12 @@ class PointCloudVisualizer {
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
       spatialData.vertices = DepthConverter.convertResultToVertices(result);
+      // Reprocess paths rebuild geometry inline from these objects; clear the
+      // initial-load typed-array view so later color-mode rebuilds / geometry
+      // recreation use these fresh objects rather than stale arrays.
+      (spatialData as any).useTypedArrays = false;
+      (spatialData as any).positionsArray = undefined;
+      (spatialData as any).colorsArray = undefined;
       spatialData.vertexCount = result.pointCount;
       spatialData.hasColors = !!result.colors;
       // Mark as depth-derived so gamma correction knows these are already linear colors
@@ -12770,6 +13026,12 @@ class PointCloudVisualizer {
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
       spatialData.vertices = DepthConverter.convertResultToVertices(result);
+      // Reprocess paths rebuild geometry inline from these objects; clear the
+      // initial-load typed-array view so later color-mode rebuilds / geometry
+      // recreation use these fresh objects rather than stale arrays.
+      (spatialData as any).useTypedArrays = false;
+      (spatialData as any).positionsArray = undefined;
+      (spatialData as any).colorsArray = undefined;
       spatialData.hasColors = !!result.colors;
       // Mark as depth-derived so gamma correction knows these are already linear colors
       (spatialData as any).isDepthDerived = true;
@@ -12929,6 +13191,14 @@ class PointCloudVisualizer {
 
     content += 'end_header\n';
 
+    // Point-cloud colors are stored as raw 8-bit sRGB (Uint8); mesh/intensity
+    // colors as Float32 [0,1]. Scale accordingly so export matches what's shown.
+    const colorIsByte =
+      hasColors &&
+      (colorAttribute.array instanceof Uint8Array ||
+        colorAttribute.array instanceof Uint8ClampedArray);
+    const colorScale = colorIsByte ? 1 : 255;
+
     // Vertex data from current geometry (includes transformations)
     for (let i = 0; i < vertexCount; i++) {
       const i3 = i * 3;
@@ -12939,9 +13209,9 @@ class PointCloudVisualizer {
       content += `${x} ${y} ${z}`;
 
       if (hasColors) {
-        const r = Math.round(colorAttribute.array[i3] * 255);
-        const g = Math.round(colorAttribute.array[i3 + 1] * 255);
-        const b = Math.round(colorAttribute.array[i3 + 2] * 255);
+        const r = Math.round(colorAttribute.array[i3] * colorScale);
+        const g = Math.round(colorAttribute.array[i3 + 1] * colorScale);
+        const b = Math.round(colorAttribute.array[i3 + 2] * colorScale);
         content += ` ${r} ${g} ${b}`;
       }
 
@@ -14417,12 +14687,16 @@ class PointCloudVisualizer {
   ): Promise<SpatialData | null> {
     try {
       console.log(`🖼️ Converting depth image ${fileName} to point cloud...`);
+      const perf = new PerfTimer('tiff');
+      perf.file(fileName);
 
       // Register depth readers if not already registered
       registerDefaultReaders();
 
-      // Read the depth image
+      // Read the depth image (format decode: GeoTIFF/PNG/NPY/PFM)
       const { image, meta } = await readDepth(fileName, depthData.buffer as ArrayBuffer);
+      perf.mark('decode');
+      perf.note('px', `${image.width}x${image.height}`);
       console.log(`📐 Depth image loaded: ${image.width}x${image.height}, kind: ${meta.kind}`);
 
       // Determine the depth kind based on user selection
@@ -14452,6 +14726,7 @@ class PointCloudVisualizer {
 
       // Normalize depth values
       const normalizedImage = normalizeDepth(image, updatedMeta);
+      perf.mark('normalize');
 
       // Project to point cloud
       const projectionMeta = {
@@ -14462,6 +14737,8 @@ class PointCloudVisualizer {
         cameraModel: updatedMeta.cameraModel!,
       };
       const pointCloudResult = projectToPointCloud(normalizedImage, projectionMeta);
+      perf.mark('project');
+      perf.note('model', updatedMeta.cameraModel || 'pinhole-ideal');
 
       console.log(`✅ Converted ${pointCloudResult.pointCount} depth pixels to points`);
 
@@ -14507,6 +14784,11 @@ class PointCloudVisualizer {
         fileName,
         fileIndex: 0,
       };
+
+      perf.mark('build-vertices');
+      perf.note('verts', pointCount);
+      perf.note('file', fileName);
+      perf.summary();
 
       console.log(`✅ Created PLY data with ${vertices.length} vertices from depth image`);
       return spatialData;

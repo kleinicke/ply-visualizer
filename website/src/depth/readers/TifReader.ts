@@ -1,5 +1,7 @@
 import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata } from '../types';
 import { Rgb24Converter, Rgb24ConversionConfig } from './Rgb24Reader';
+import { perfLog } from '../../utils/perfLog';
+import { decodeTiffWasm } from './tiffWasm';
 
 // Use the global GeoTIFF that's already loaded
 declare const GeoTIFF: any;
@@ -22,6 +24,34 @@ export class TifReader implements DepthReader {
   }
 
   async read(arrayBuffer: ArrayBuffer): Promise<DepthReaderResult> {
+    // Fast path: Rust/WASM decoder for single-channel depth TIFFs (the slow
+    // case for geotiff.js — Deflate/LZW + predictor). 3-channel RGB keeps the
+    // geotiff.js path below so the existing RGB24 conversion logic is preserved.
+    // Any failure falls through to geotiff.js with no behavior change.
+    try {
+      const wasmStart = performance.now();
+      const wasm = await decodeTiffWasm(arrayBuffer);
+      if (wasm && wasm.channels === 1 && wasm.data.length >= wasm.width * wasm.height) {
+        perfLog(
+          `⏱️ PERF[tiff] wasm decode ${(performance.now() - wasmStart).toFixed(1)}ms ` +
+            `(${wasm.width}x${wasm.height} ${wasm.bitsPerSample}bit sampleFormat=${wasm.sampleFormat} ` +
+            `compression=${wasm.compression} predictor=${wasm.predictor})`
+        );
+        const depthImage: DepthImage = {
+          width: wasm.width,
+          height: wasm.height,
+          data:
+            wasm.data.length === wasm.width * wasm.height
+              ? wasm.data
+              : wasm.data.subarray(0, wasm.width * wasm.height),
+        };
+        const metadata: DepthMetadata = { kind: 'depth', unit: 'meter' };
+        return { image: depthImage, meta: metadata };
+      }
+    } catch (error) {
+      console.warn('[TifReader] WASM path failed, falling back to geotiff.js:', error);
+    }
+
     try {
       const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
       const image = await tiff.getImage();
@@ -32,6 +62,32 @@ export class TifReader implements DepthReader {
       const sampleFormat = image.getSampleFormat ? image.getSampleFormat() : null;
       const bitsPerSample = image.getBitsPerSample();
 
+      // Log the TIFF layout up front: compression + predictor + tiling decide
+      // whether GeoTIFF.js takes the fast (uncompressed = typed-array view) or
+      // slow (JS LZW/Deflate/predictor) decode path. This is the single most
+      // useful line for judging whether a WASM decoder would help.
+      const fd = (image as any).fileDirectory || {};
+      const compressionNames: Record<number, string> = {
+        1: 'none',
+        5: 'LZW',
+        7: 'JPEG',
+        8: 'Deflate',
+        32773: 'PackBits',
+        34925: 'LZMA',
+        50000: 'Zstd',
+      };
+      const compression = compressionNames[fd.Compression] || `code-${fd.Compression}`;
+      const tiled = fd.TileWidth ? `tiled ${fd.TileWidth}x${fd.TileLength}` : 'stripped';
+      perfLog(
+        `⏱️ PERF[tiff] layout: ${width}x${height} ${samplesPerPixel}ch ${
+          Array.isArray(bitsPerSample) ? bitsPerSample[0] : bitsPerSample
+        }bit sampleFormat=${sampleFormat} compression=${compression} predictor=${
+          fd.Predictor ?? 1
+        } ${tiled}`
+      );
+
+      const rasterStart = performance.now();
+
       // Validate this is a depth image (allow 1-channel or 3-channel RGB)
       if (!this.isDepthTifImage(samplesPerPixel, sampleFormat, bitsPerSample)) {
         throw new Error(
@@ -39,8 +95,9 @@ export class TifReader implements DepthReader {
         );
       }
 
-      // Read the raster data
+      // Read the raster data (this is where GeoTIFF.js decompresses in JS)
       const rasterData = await image.readRasters();
+      perfLog(`⏱️ PERF[tiff] readRasters ${(performance.now() - rasterStart).toFixed(1)}ms`);
       let depthData: Float32Array;
 
       // Check if this is an RGB image (3 channels)

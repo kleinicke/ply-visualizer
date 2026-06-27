@@ -54,6 +54,49 @@ export class PlyParser {
     return PlyParser.intensityAliases.includes(normalized);
   }
 
+  /**
+   * Split a line on runs of ASCII whitespace, recording token boundaries into
+   * the provided reusable buffers instead of allocating an array of substrings.
+   * Returns the number of tokens found. Tokens beyond the buffer capacity are
+   * ignored (the caller sizes the buffers to the number of vertex properties).
+   */
+  private static tokenizeWhitespace(
+    line: string,
+    tokStart: Int32Array,
+    tokEnd: Int32Array
+  ): number {
+    const len = line.length;
+    const max = tokStart.length;
+    let n = 0;
+    let i = 0;
+    while (i < len) {
+      let c = line.charCodeAt(i);
+      // Skip whitespace: space, tab, LF, CR, VT, FF
+      while (c === 32 || c === 9 || c === 10 || c === 13 || c === 11 || c === 12) {
+        i++;
+        if (i >= len) {
+          return n;
+        }
+        c = line.charCodeAt(i);
+      }
+      const start = i;
+      while (i < len) {
+        c = line.charCodeAt(i);
+        if (c === 32 || c === 9 || c === 10 || c === 13 || c === 11 || c === 12) {
+          break;
+        }
+        i++;
+      }
+      if (n >= max) {
+        break;
+      }
+      tokStart[n] = start;
+      tokEnd[n] = i;
+      n++;
+    }
+    return n;
+  }
+
   async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<SpatialData> {
     const parseStartTime = performance.now();
     const log = timingCallback || console.log;
@@ -366,6 +409,12 @@ export class PlyParser {
       ? vertexProperties.findIndex(prop => PlyParser.isIntensityField(prop.name))
       : -1;
 
+    // Reusable token-boundary buffers for the vertex hot path. Avoids the
+    // per-vertex regex split (which allocates an array + a substring for every
+    // column); we only materialize substrings for columns we actually read.
+    const tokStart = new Int32Array(Math.max(vertexProperties.length, 1));
+    const tokEnd = new Int32Array(Math.max(vertexProperties.length, 1));
+
     // Stream-decode ASCII payload to avoid gigantic intermediate strings
     const decoder = new TextDecoder('utf-8');
     const chunkSize = 8 * 1024 * 1024; // 8 MB chunks
@@ -401,39 +450,43 @@ export class PlyParser {
         }
 
         if (verticesParsed < vertexCount) {
-          // Parse vertex line
-          const values = line.split(/\s+/);
+          // Parse vertex line using the allocation-light tokenizer.
+          const ntok = PlyParser.tokenizeWhitespace(line, tokStart, tokEnd);
           const base = verticesParsed * 3;
 
-          if (xIdx !== undefined) {
-            positions[base] = parseFloat(values[xIdx]);
+          if (xIdx !== undefined && xIdx < ntok) {
+            positions[base] = parseFloat(line.substring(tokStart[xIdx], tokEnd[xIdx]));
           }
-          if (yIdx !== undefined) {
-            positions[base + 1] = parseFloat(values[yIdx]);
+          if (yIdx !== undefined && yIdx < ntok) {
+            positions[base + 1] = parseFloat(line.substring(tokStart[yIdx], tokEnd[yIdx]));
           }
-          if (zIdx !== undefined) {
-            positions[base + 2] = parseFloat(values[zIdx]);
+          if (zIdx !== undefined && zIdx < ntok) {
+            positions[base + 2] = parseFloat(line.substring(tokStart[zIdx], tokEnd[zIdx]));
           }
 
           if (colors && rIdx !== undefined && gIdx !== undefined && bIdx !== undefined) {
-            colors[base] = (values[rIdx] !== undefined ? parseFloat(values[rIdx]) : 0) as number;
-            colors[base + 1] = (
-              values[gIdx] !== undefined ? parseFloat(values[gIdx]) : 0
-            ) as number;
-            colors[base + 2] = (
-              values[bIdx] !== undefined ? parseFloat(values[bIdx]) : 0
-            ) as number;
+            colors[base] =
+              rIdx < ntok ? parseFloat(line.substring(tokStart[rIdx], tokEnd[rIdx])) : 0;
+            colors[base + 1] =
+              gIdx < ntok ? parseFloat(line.substring(tokStart[gIdx], tokEnd[gIdx])) : 0;
+            colors[base + 2] =
+              bIdx < ntok ? parseFloat(line.substring(tokStart[bIdx], tokEnd[bIdx])) : 0;
           }
 
           if (normals && nxIdx !== undefined && nyIdx !== undefined && nzIdx !== undefined) {
-            normals[base] = values[nxIdx] !== undefined ? parseFloat(values[nxIdx]) : 0;
-            normals[base + 1] = values[nyIdx] !== undefined ? parseFloat(values[nyIdx]) : 0;
-            normals[base + 2] = values[nzIdx] !== undefined ? parseFloat(values[nzIdx]) : 0;
+            normals[base] =
+              nxIdx < ntok ? parseFloat(line.substring(tokStart[nxIdx], tokEnd[nxIdx])) : 0;
+            normals[base + 1] =
+              nyIdx < ntok ? parseFloat(line.substring(tokStart[nyIdx], tokEnd[nyIdx])) : 0;
+            normals[base + 2] =
+              nzIdx < ntok ? parseFloat(line.substring(tokStart[nzIdx], tokEnd[nzIdx])) : 0;
           }
 
           if (intensity && intensityIdx !== -1) {
             intensity[verticesParsed] =
-              values[intensityIdx] !== undefined ? parseFloat(values[intensityIdx]) : 0;
+              intensityIdx < ntok
+                ? parseFloat(line.substring(tokStart[intensityIdx], tokEnd[intensityIdx]))
+                : 0;
           }
 
           verticesParsed++;

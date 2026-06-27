@@ -14,7 +14,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
-    "@types/three": "^0.184.0",
+    "@types/three": "^0.185.0",
     "copy-webpack-plugin": "^14.0.0",
     "ts-loader": "^9.5.7",
     "typescript": "^6.0.3",
@@ -26,6 +26,6 @@
     "@types/js-yaml": "^4.0.9",
     "js-yaml": "^4.1.1",
     "pako": "^2.1.0",
-    "three": "^0.184.0"
+    "three": "^0.185.0"
   }
 }

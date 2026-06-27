@@ -100,6 +100,26 @@ body {
   }
 }
 
+/* Small inline spinner for the in-progress loading row in the Files list. */
+.spinner-inline {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+  border-top-width: 2px;
+  margin: 0 8px 0 0;
+  display: inline-block;
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
+
+/* Non-blocking "loading additional cloud" row in the Files list. */
+.file-item-loading {
+  opacity: 0.85;
+}
+.file-item-loading .file-name {
+  font-style: italic;
+}
+
 .error {
   position: fixed;
   top: 50%;

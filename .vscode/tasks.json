@@ -22,6 +22,14 @@
       "presentation": {
         "reveal": "never"
       }
+    },
+    {
+      "type": "npm",
+      "script": "dev",
+      "path": "website",
+      "problemMatcher": [],
+      "label": "npm: dev - website",
+      "detail": "webpack serve --mode=development"
     }
   ]
 }

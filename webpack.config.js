@@ -27,6 +27,16 @@ module.exports = [
               ignore: ['**/package.json', '**/README.md'],
             },
           },
+          {
+            // Rust/WASM point-cloud parser (nodejs target) — loaded at runtime
+            // by the extension host via require(). The .js glue loads the .wasm
+            // relative to its own dir, so both must sit together in out/.
+            from: 'wasm/pointcloud-parser/pkg',
+            to: 'wasm/pointcloud-parser',
+            globOptions: {
+              ignore: ['**/package.json', '**/.gitignore', '**/*.d.ts'],
+            },
+          },
         ],
       }),
     ],

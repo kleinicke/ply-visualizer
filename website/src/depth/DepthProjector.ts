@@ -27,11 +27,25 @@ export function projectToPointCloud(
   const { fx, cx, cy, cameraModel } = meta;
   const fy = meta.fy || fx; // Use fx if fy is not provided
 
-  // Pre-allocate typed arrays for better performance
   const totalPixels = width * height;
-  const tempVertices = new Float32Array(totalPixels * 3);
-  const tempColors = new Float32Array(totalPixels * 3);
-  const tempLogDepths = new Float32Array(totalPixels);
+
+  // Count valid pixels in a single cheap pass so we can allocate the output
+  // arrays to their exact final size. This avoids over-allocating for every
+  // pixel (3N+3N+N floats ≈ hundreds of MB on large depth maps) and avoids the
+  // full-size .slice() copy at the end. The validity predicate here MUST match
+  // the per-model loops below (isFinite(val) && val > 0).
+  let validCount = 0;
+  for (let i = 0; i < totalPixels; i++) {
+    const v = data[i];
+    if (isFinite(v) && v > 0) {
+      validCount++;
+    }
+  }
+
+  // Pre-allocate typed arrays at the exact valid-point count
+  const tempVertices = new Float32Array(validCount * 3);
+  const tempColors = new Float32Array(validCount * 3);
+  const tempLogDepths = new Float32Array(validCount);
 
   // For distorted camera models, store pixel coordinates for accurate color mapping
   // Reprojection is error-prone for distorted models, so we store the original (u,v)
@@ -39,7 +53,7 @@ export function projectToPointCloud(
     cameraModel === 'pinhole-opencv' ||
     cameraModel === 'fisheye-opencv' ||
     cameraModel === 'fisheye-kannala-brandt';
-  const tempPixelCoords = needsPixelCoords ? new Uint16Array(totalPixels * 2) : null;
+  const tempPixelCoords = needsPixelCoords ? new Uint16Array(validCount * 2) : null;
 
   let pointIndex = 0;
   let minDepth = Infinity;
@@ -390,10 +404,13 @@ export function projectToPointCloud(
     const invDenom = denom > 0 ? 1 / denom : 0;
     const gamma = 1.0; //2.2; // standard display gamma
     const minGray = 0.2; // lift darkest values to 0.2
+    const invGamma = 1 / gamma;
+    const gammaIsIdentity = gamma === 1;
     for (let i = 0; i < pointIndex; i++) {
       const colorBase = i * 3;
       const s = denom > 0 ? (tempLogDepths[i] - logMin) * invDenom : 1.0;
-      const g = Math.pow(s, 1 / gamma);
+      // gamma === 1 makes Math.pow an identity; skip it for the common case.
+      const g = gammaIsIdentity ? s : Math.pow(s, invGamma);
       const mapped = minGray + (1 - minGray) * g;
       tempColors[colorBase] = mapped;
       tempColors[colorBase + 1] = mapped;
@@ -410,11 +427,20 @@ export function projectToPointCloud(
     }
   }
 
-  // Create properly sized arrays from the pre-allocated ones
-  const vertices = tempVertices.slice(0, pointIndex * 3);
-  const colors = pointIndex > 0 ? tempColors.slice(0, pointIndex * 3) : undefined;
+  // The temp arrays were allocated at the exact valid-point count, so in the
+  // common case they're already correctly sized and we return them directly
+  // (no copy). Fall back to a slice only if the per-model validity count
+  // diverged from the pre-count (shouldn't happen — predicates match).
+  const exact = pointIndex === validCount;
+  const vertices = exact ? tempVertices : tempVertices.slice(0, pointIndex * 3);
+  const colors =
+    pointIndex > 0 ? (exact ? tempColors : tempColors.slice(0, pointIndex * 3)) : undefined;
   const pixelCoords =
-    tempPixelCoords && pointIndex > 0 ? tempPixelCoords.slice(0, pointIndex * 2) : undefined;
+    tempPixelCoords && pointIndex > 0
+      ? exact
+        ? tempPixelCoords
+        : tempPixelCoords.slice(0, pointIndex * 2)
+      : undefined;
 
   return {
     vertices,
@@ -429,11 +455,15 @@ export function projectToPointCloud(
 export function normalizeDepth(image: DepthImage, meta: DepthMetadata): DepthImage {
   const data = new Float32Array(image.data); // copy for safe transform
 
-  // Apply unit/scale to convert to meters when kind is depth/z
+  // Apply unit/scale to convert to meters when kind is depth/z. Skip the
+  // per-pixel loop entirely when the scale is a no-op (e.g. depth already in
+  // meters), which is the common case for depth TIFFs.
   if ((meta.kind === 'depth' || meta.kind === 'z') && (meta.unit || meta.scale)) {
     const scale = (meta.unit === 'millimeter' ? 1 / 1000 : 1) * (meta.scale ?? 1);
-    for (let i = 0; i < data.length; i++) {
-      data[i] = data[i] * scale;
+    if (scale !== 1) {
+      for (let i = 0; i < data.length; i++) {
+        data[i] = data[i] * scale;
+      }
     }
   }
 

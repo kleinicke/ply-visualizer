@@ -11,6 +11,16 @@ import { PtsParser } from '../website/src/parsers/ptsParser';
 import { OffParser } from '../website/src/parsers/offParser';
 import { GltfParser } from '../website/src/parsers/gltfParser';
 import { NpyParser } from '../website/src/parsers/npyParser';
+import { XyzVariantParser } from '../website/src/parsers/xyzVariantParser';
+import {
+  parseXyzWasm,
+  parseAsciiPlyWasm,
+  parsePcdAsciiWasm,
+  parsePcdBinaryWasm,
+  parsePtsWasm,
+  streamParseFile,
+  detectXyzColorMode,
+} from './wasmPointcloud';
 
 // Shared file handling functionality
 import {
@@ -28,9 +38,72 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   private pathToPanel = new Map<string, vscode.WebviewPanel>();
   private panelToPath = new Map<vscode.WebviewPanel, string>();
   private datasetManager: DatasetManager;
+  private readonly perfChannel: vscode.OutputChannel;
+  private perfChannelRevealed = false;
+  // Wall-clock epoch (Date.now) when the current file's load began. Stamped onto
+  // every outgoing *Data message so the webview can report one consistent
+  // end-to-end timing line (read+parse / transfer / build / total).
+  private currentLoadStartedAt = 0;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.datasetManager = new DatasetManager(context);
+    this.perfChannel = vscode.window.createOutputChannel('3D Visualizer');
+    context.subscriptions.push(this.perfChannel);
+  }
+
+  /**
+   * Wrap a panel's postMessage once so every data-bearing message (type ending
+   * in "Data") is stamped with a wall-clock `postedAt` just before it is sent.
+   * This lets the webview measure the cross-process transfer cost for ALL
+   * formats without editing each of the ~30 send sites. Best-effort: if the
+   * property can't be reassigned, transfer timing is simply omitted.
+   */
+  private stampTransferTimestamps(webviewPanel: vscode.WebviewPanel): void {
+    try {
+      const webview = webviewPanel.webview;
+      const original = webview.postMessage.bind(webview);
+      (webview as any).postMessage = (msg: any) => {
+        if (
+          msg &&
+          typeof msg === 'object' &&
+          typeof msg.type === 'string' &&
+          msg.type.endsWith('Data')
+        ) {
+          if (msg.postedAt === undefined) {
+            msg.postedAt = Date.now();
+          }
+          if (msg.loadStartedAt === undefined && this.currentLoadStartedAt) {
+            msg.loadStartedAt = this.currentLoadStartedAt;
+          }
+        }
+        return original(msg);
+      };
+    } catch {
+      /* transfer timing is optional; never block loading over it */
+    }
+  }
+
+  /** Append a timestamped line to the "3D Visualizer" Output channel. */
+  private logPerf(line: string): void {
+    // The webview emits the single authoritative end-to-end timing line per load
+    // (read+parse · transfer · build · total). The extension's intermediate
+    // `…/ext` measurements stay console-only so the Output channel isn't doubled.
+    if (line.includes('/ext]')) {
+      console.log(line);
+      return;
+    }
+    const t = new Date();
+    const ts = `${t.toTimeString().split(' ')[0]}.${t
+      .getMilliseconds()
+      .toString()
+      .padStart(3, '0')}`;
+    this.perfChannel.appendLine(`[${ts}] ${line}`);
+    // Reveal the panel once per session (without stealing editor focus) so the
+    // timing output is discoverable; afterwards it stays where the user put it.
+    if (!this.perfChannelRevealed) {
+      this.perfChannelRevealed = true;
+      this.perfChannel.show(true);
+    }
   }
 
   /**
@@ -59,6 +132,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     this.activePanels.add(webviewPanel);
     this.pathToPanel.set(document.uri.fsPath, webviewPanel);
     this.panelToPath.set(webviewPanel, document.uri.fsPath);
+    this.stampTransferTimestamps(webviewPanel);
     webviewPanel.onDidDispose(() => {
       this.activePanels.delete(webviewPanel);
       this.pathToPanel.delete(document.uri.fsPath);
@@ -69,6 +143,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       localResourceRoots: [
         vscode.Uri.joinPath(this.context.extensionUri, 'website', 'media'),
         vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview'),
+        // The document's directory so the webview can fetch the file bytes
+        // directly (transfer-via-fetch), avoiding the postMessage copy for
+        // large binary PLYs.
+        vscode.Uri.joinPath(document.uri, '..'),
       ],
     };
 
@@ -102,12 +180,18 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const isPtsFile = fileType?.extension === 'pts';
     const isOffFile = fileType?.extension === 'off';
     const isGltfFile = fileType?.extension === 'gltf' || fileType?.extension === 'glb';
-    const isXyzVariant = fileType?.extension === 'xyzn' || fileType?.extension === 'xyzrgb';
+    const isXyzVariant =
+      fileType?.extension === 'xyzn' ||
+      fileType?.extension === 'xyzrgb' ||
+      fileType?.extension === 'xyz';
     const isJsonFile = fileType?.extension === 'json';
     const isNpyPointCloud = fileType?.extension === 'npy' && fileType?.category === 'pointCloud';
 
     // Show UI immediately before any file processing
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
+
+    // Anchor the load's wall-clock start for the unified end-to-end timing line.
+    this.currentLoadStartedAt = Date.now();
 
     // Send immediate message to show loading state
     webviewPanel.webview.postMessage({
@@ -171,6 +255,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           // Send depth data to webview for conversion
           webviewPanel.webview.postMessage({
             type: 'depthData',
+            // Wall-clock epoch for measuring cross-process transfer cost in the webview.
+            postedAt: Date.now(),
             fileName: path.basename(document.uri.fsPath),
             shortPath: this.getShortPath(document.uri.fsPath),
             data: depthData.buffer.slice(
@@ -318,13 +404,78 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             timestamp: loadStartTime,
           });
 
-          const pcdData = await vscode.workspace.fs.readFile(document.uri);
+          // Streaming overlap for ASCII PCD (same cold-cache win as XYZ: the next
+          // chunk's disk read overlaps the current chunk's parse). Gate on the
+          // HEADER only so we don't read the whole file first: require ASCII data
+          // and an identity VIEWPOINT (the WASM stream parser carries no viewpoint
+          // transform). Anything else falls through to the whole-file path below.
+          if (document.uri.scheme === 'file') {
+            try {
+              const head = await this.readFileHead(document.uri, 65536);
+              const headText = Buffer.from(head).toString('latin1');
+              const isAsciiPcd = /[\r\n]DATA\s+ascii/i.test('\n' + headText);
+              if (isAsciiPcd && this.pcdViewpointIsIdentity(head)) {
+                const streamed = await streamParseFile(document.uri.fsPath, 'pcd');
+                if (streamed) {
+                  let pcdBytes = head.byteLength;
+                  try {
+                    pcdBytes = fs.statSync(document.uri.fsPath).size;
+                  } catch {
+                    /* size is best-effort for logging only */
+                  }
+                  this.logPerf(
+                    `⏱️ PERF[pcd/ext] load ${(performance.now() - loadStartTime).toFixed(1)}ms (${streamed.vertexCount} pts, wasm-stream) for ${path.basename(document.uri.fsPath)}`
+                  );
+                  webviewPanel.webview.postMessage({
+                    type: 'xyzVariantData',
+                    fileName: path.basename(document.uri.fsPath),
+                    shortPath: this.getShortPath(document.uri.fsPath),
+                    fileSizeInBytes: pcdBytes,
+                    data: streamed,
+                    variant: 'pcd',
+                    parseMode: 'wasm-stream',
+                  });
+                  return;
+                }
+              }
+            } catch {
+              /* fall through to the whole-file path */
+            }
+          }
+
+          const pcdData = await this.readFileFast(document.uri);
           const fileReadTime = performance.now();
           webviewPanel.webview.postMessage({
             type: 'timingUpdate',
             message: `📁 Extension: PCD file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
             timestamp: fileReadTime,
           });
+
+          // Fast path: Rust/WASM for ASCII PCD point clouds with an identity
+          // viewpoint. parse_pcd_ascii returns null for binary PCD; the
+          // viewpoint guard keeps clouds that need the VIEWPOINT transform on
+          // the JS path. Anything else falls through to the JS parser below.
+          if (this.pcdViewpointIsIdentity(pcdData)) {
+            // ASCII via WASM, then binary via WASM (binary PCD otherwise falls to
+            // the slow JS parser — ~11x slower). Both gated on identity viewpoint
+            // since the WASM parsers don't carry the VIEWPOINT transform.
+            const pcdWasm = parsePcdAsciiWasm(pcdData) || parsePcdBinaryWasm(pcdData);
+            if (pcdWasm) {
+              this.logPerf(
+                `⏱️ PERF[pcd/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${pcdWasm.vertexCount} pts, wasm) for ${path.basename(document.uri.fsPath)}`
+              );
+              webviewPanel.webview.postMessage({
+                type: 'xyzVariantData',
+                fileName: path.basename(document.uri.fsPath),
+                shortPath: this.getShortPath(document.uri.fsPath),
+                fileSizeInBytes: pcdData.byteLength,
+                data: pcdWasm,
+                variant: 'pcd',
+                parseMode: 'wasm',
+              });
+              return;
+            }
+          }
 
           const pcdParser = new PcdParser();
           const timingCallback = (message: string) => {
@@ -363,7 +514,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             timestamp: loadStartTime,
           });
 
-          const ptsData = await vscode.workspace.fs.readFile(document.uri);
+          const ptsData = await this.readFileFast(document.uri);
           const fileReadTime = performance.now();
           webviewPanel.webview.postMessage({
             type: 'timingUpdate',
@@ -371,22 +522,32 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             timestamp: fileReadTime,
           });
 
-          const ptsParser = new PtsParser();
-          const timingCallback = (message: string) => {
-            webviewPanel.webview.postMessage({
-              type: 'timingUpdate',
-              message: message,
-              timestamp: performance.now(),
-            });
-          };
-
-          const parsedData = await ptsParser.parse(ptsData, timingCallback);
-          const parseTime = performance.now();
-          webviewPanel.webview.postMessage({
-            type: 'timingUpdate',
-            message: `🎯 Extension: PTS parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
-            timestamp: parseTime,
-          });
+          // Try the Rust/WASM parser (~2.5-3x faster); fall back to JS.
+          let parsedData: any;
+          let ptsMode = 'js';
+          const ptsWasm = parsePtsWasm(ptsData);
+          if (ptsWasm) {
+            parsedData = {
+              vertexCount: ptsWasm.vertexCount,
+              positionsArray: ptsWasm.positionsArray,
+              colorsArray: ptsWasm.colorsArray,
+              normalsArray: ptsWasm.normalsArray,
+              intensityArray: ptsWasm.intensityArray,
+              hasColors: ptsWasm.hasColors,
+              hasNormals: ptsWasm.hasNormals,
+              hasIntensity: ptsWasm.hasIntensity,
+              scalarFields: ptsWasm.intensityArray ? { intensity: ptsWasm.intensityArray } : {},
+              detectedFormat: `x y z${ptsWasm.hasIntensity ? ' intensity' : ''}${ptsWasm.hasColors ? ' r g b' : ''}`,
+              comments: [],
+            };
+            ptsMode = 'wasm';
+          } else {
+            const ptsParser = new PtsParser();
+            parsedData = await ptsParser.parse(ptsData);
+          }
+          this.logPerf(
+            `⏱️ PERF[pts/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts, ${ptsMode}) for ${path.basename(document.uri.fsPath)}`
+          );
 
           // Send parsed PTS data to webview
           webviewPanel.webview.postMessage({
@@ -395,6 +556,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             shortPath: this.getShortPath(document.uri.fsPath),
             fileSizeInBytes: ptsData.byteLength,
             data: parsedData,
+            parseMode: ptsMode,
           });
 
           return; // Exit early for PTS files
@@ -498,22 +660,69 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             timestamp: loadStartTime,
           });
 
-          const xyzData = await vscode.workspace.fs.readFile(document.uri);
-          const fileReadTime = performance.now();
-          webviewPanel.webview.postMessage({
-            type: 'timingUpdate',
-            message: `📁 Extension: XYZ variant file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
-            timestamp: fileReadTime,
-          });
+          const xyzVariant =
+            fileType?.extension === 'xyzn'
+              ? 'xyzn'
+              : fileType?.extension === 'xyzrgb'
+                ? 'xyzrgb'
+                : 'xyz';
 
-          // Send XYZ variant data to webview for parsing
+          // Streaming overlap (Rust/WASM StreamParser): the next chunk's disk
+          // read (libuv) runs while the current chunk parses (main thread), so
+          // total ≈ max(read, parse). A controlled cold A/B (purge between each)
+          // showed it saves ~0.6–1.2s on 600MB XYZ files — cold is the
+          // real-world first-open case. It costs ~300ms only when re-opening an
+          // already-cached file (warm), which is rare. So: on for local files.
+          const ENABLE_XYZ_STREAMING = true;
+          const loadStart = performance.now();
+          let xyzParsed: any = null;
+          let xyzMode = 'js';
+          let xyzBytes = 0;
+
+          // XYZRGB has no type header, so decide once per file whether its colors
+          // are 0-255 ints or 0-1 floats by checking the color tokens' text (a
+          // decimal point ⇒ float). Done from a small header sample.
+          let xyzColorMode = 'auto';
+          if (xyzVariant === 'xyzrgb' && document.uri.scheme === 'file') {
+            try {
+              const head = await this.readFileHead(document.uri, 65536);
+              xyzColorMode = detectXyzColorMode(head, xyzVariant);
+            } catch {
+              /* fall back to the in-parser value heuristic */
+            }
+          }
+
+          if (ENABLE_XYZ_STREAMING && document.uri.scheme === 'file') {
+            const streamed = await streamParseFile(document.uri.fsPath, xyzVariant, xyzColorMode);
+            if (streamed) {
+              xyzParsed = streamed;
+              xyzMode = 'wasm-stream';
+              try {
+                xyzBytes = fs.statSync(document.uri.fsPath).size;
+              } catch {
+                /* size is best-effort for logging only */
+              }
+            }
+          }
+          if (!xyzParsed) {
+            const xyzData = await this.readFileFast(document.uri);
+            xyzBytes = xyzData.byteLength;
+            const wasmParsed = parseXyzWasm(xyzData, xyzVariant, xyzColorMode);
+            xyzParsed = wasmParsed ?? new XyzVariantParser().parse(xyzData, xyzVariant);
+            xyzMode = wasmParsed ? 'wasm' : 'js';
+          }
+          this.logPerf(
+            `⏱️ PERF[xyz/ext] load ${(performance.now() - loadStart).toFixed(1)}ms (${xyzParsed.vertexCount} pts, ${xyzMode}) for ${path.basename(document.uri.fsPath)}`
+          );
+
           webviewPanel.webview.postMessage({
             type: 'xyzVariantData',
             fileName: path.basename(document.uri.fsPath),
             shortPath: this.getShortPath(document.uri.fsPath),
-            fileSizeInBytes: xyzData.byteLength,
-            data: xyzData.buffer.slice(xyzData.byteOffset, xyzData.byteOffset + xyzData.byteLength),
-            variant: fileType?.extension === 'xyzn' ? 'xyzn' : 'xyzrgb',
+            fileSizeInBytes: xyzBytes,
+            data: xyzParsed,
+            variant: xyzVariant,
+            parseMode: xyzMode,
           });
 
           return; // Exit early for XYZ variant files
@@ -563,6 +772,43 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           kind: 'ply',
           at: wallStart,
         });
+
+        // Streaming overlap for ASCII PLY point clouds (same cold-cache win as
+        // XYZ). Gate on a 64KB header read so we don't read the whole file first:
+        // only ASCII PLY streams (binary PLY uses the transfer-via-fetch path
+        // below); the stream parser returns null for binary/meshes → falls
+        // through to the whole-file path unchanged.
+        if (document.uri.scheme === 'file') {
+          try {
+            const head = await this.readFileHead(document.uri, 65536);
+            if (!isPlyBinary(head)) {
+              const streamed = await streamParseFile(document.uri.fsPath, 'ply');
+              if (streamed) {
+                let plyBytes = head.byteLength;
+                try {
+                  plyBytes = fs.statSync(document.uri.fsPath).size;
+                } catch {
+                  /* size is best-effort for logging only */
+                }
+                this.logPerf(
+                  `⏱️ PERF[ply/ext] load ${(performance.now() - loadStartTime).toFixed(1)}ms (${streamed.vertexCount} pts, wasm-stream) for ${path.basename(document.uri.fsPath)}`
+                );
+                webviewPanel.webview.postMessage({
+                  type: 'xyzVariantData',
+                  fileName: path.basename(document.uri.fsPath),
+                  shortPath: this.getShortPath(document.uri.fsPath),
+                  fileSizeInBytes: plyBytes,
+                  data: streamed,
+                  variant: 'ply',
+                  parseMode: 'wasm-stream',
+                });
+                return;
+              }
+            }
+          } catch {
+            /* fall through to the whole-file path */
+          }
+        }
 
         const spatialData = await vscode.workspace.fs.readFile(document.uri);
         const fileReadTime = performance.now();
@@ -632,20 +878,64 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             message: `Header face types: count=${headerResult.faceCountType || 'n/a'}, index=${headerResult.faceIndexType || 'n/a'}`,
             timestamp: performance.now(),
           });
-          await this.sendUltimateRawBinary(
-            webviewPanel,
-            parsedData,
-            headerResult,
-            spatialData,
-            'multiSpatialData'
-          );
+          // Transfer-via-fetch: send only header metadata + a webview URI for
+          // the file. The webview fetches the bytes directly, avoiding the
+          // multi-hundred-ms structured-clone of the full vertex buffer. On a
+          // fetch failure the webview asks the extension to resend over
+          // postMessage (see the 'plyFetchFailed' handler, which re-reads).
+          webviewPanel.webview.postMessage({
+            type: 'ultimateRawBinaryUri',
+            messageType: 'multiSpatialData',
+            postedAt: Date.now(),
+            loadStartedAt: this.currentLoadStartedAt,
+            fileUri: webviewPanel.webview.asWebviewUri(document.uri).toString(),
+            docUri: document.uri.toString(),
+            binaryDataStart: headerResult.binaryDataStart,
+            fileName: parsedData.fileName,
+            shortPath: parsedData.shortPath,
+            fileSizeInBytes: spatialData.byteLength,
+            vertexCount: parsedData.vertexCount,
+            faceCount: parsedData.faceCount,
+            hasColors: parsedData.hasColors,
+            hasNormals: parsedData.hasNormals,
+            hasIntensity: parsedData.hasIntensity,
+            format: parsedData.format,
+            comments: parsedData.comments,
+            vertexStride: headerResult.vertexStride,
+            propertyOffsets: Array.from(headerResult.propertyOffsets.entries()),
+            littleEndian: headerResult.headerInfo.format === 'binary_little_endian',
+            faceCountType: headerResult.faceCountType,
+            faceIndexType: headerResult.faceIndexType,
+          });
         } else {
-          // ASCII PLY - use traditional parsing
+          // ASCII PLY. Try the Rust/WASM parser first — it handles point clouds
+          // (no faces) and returns null for meshes or on any failure, so those
+          // transparently fall through to the JS parser below.
+          const plyWasm = parseAsciiPlyWasm(spatialData);
+          if (plyWasm) {
+            this.logPerf(
+              `⏱️ PERF[ply/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${plyWasm.vertexCount} pts, wasm) for ${path.basename(document.uri.fsPath)}`
+            );
+            webviewPanel.webview.postMessage({
+              type: 'xyzVariantData',
+              fileName: path.basename(document.uri.fsPath),
+              shortPath: this.getShortPath(document.uri.fsPath),
+              fileSizeInBytes: spatialData.byteLength,
+              data: plyWasm,
+              variant: 'ply',
+              parseMode: 'wasm',
+            });
+            return; // handled by the fast path
+          }
           console.log(
             `📝 ASCII PLY detected: ${path.basename(document.uri.fsPath)} - using traditional parsing`
           );
           const parsedData = await parser.parse(spatialData, timingCallback);
           const parseTime = performance.now();
+          const isXyz = /\.xyz$/i.test(document.uri.fsPath);
+          this.logPerf(
+            `⏱️ PERF[${isXyz ? 'xyz' : 'ply'}/ext] parse ${(parseTime - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts) for ${path.basename(document.uri.fsPath)}`
+          );
           webviewPanel.webview.postMessage({
             type: 'timing',
             phase: 'parse',
@@ -707,6 +997,12 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'info':
           vscode.window.showInformationMessage(message.message);
+          break;
+        case 'perfLog':
+          this.logPerf(message.line);
+          break;
+        case 'plyFetchFailed':
+          await this.handlePlyFetchFallback(message);
           break;
         case 'addFile':
           await this.handleAddFile(webviewPanel);
@@ -831,17 +1127,53 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     );
     const geotiffUri = webview.asWebviewUri(geotiffPathOnDisk).toString();
 
+    // Rust/WASM TIFF decoder (drop-in accelerator for geotiff.js, mirrors the
+    // tiff-visualizer sister extension). The glue defines a global wasm_bindgen;
+    // the webview fetches the .wasm binary from this URI at init time.
+    const tiffWasmGlueOnDisk = vscode.Uri.joinPath(
+      this.context.extensionUri,
+      'website',
+      'media',
+      'wasm',
+      'tiff_wasm.js'
+    );
+    const tiffWasmGlueUri = webview.asWebviewUri(tiffWasmGlueOnDisk).toString();
+    const tiffWasmBinaryOnDisk = vscode.Uri.joinPath(
+      this.context.extensionUri,
+      'website',
+      'media',
+      'wasm',
+      'tiff_wasm_bg.wasm'
+    );
+    const tiffWasmBinaryUri = webview.asWebviewUri(tiffWasmBinaryOnDisk).toString();
+
     // Use a nonce to only allow specific scripts to be run
     const nonce = getNonce();
 
     // VSCode-specific modifications to the HTML:
-    // 1. Add Content Security Policy
-    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; connect-src ${webview.cspSource} https:; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
+    // 1. Add Content Security Policy. 'wasm-unsafe-eval' is required to compile
+    //    the TIFF decoder WebAssembly module; connect-src already allows
+    //    fetching the .wasm binary from the webview resource origin.
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; connect-src ${webview.cspSource} https:; script-src 'nonce-${nonce}' 'wasm-unsafe-eval'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
     html = html.replace('<meta name="viewport"', `${cspMeta}\n    <meta name="viewport"`);
 
     // 2. Replace resource URLs with webview URIs
     html = html.replace(/href="media\/style\.css"/, `href="${styleUri}"`);
     html = html.replace(/src="media\/geotiff\.min\.js"/, `nonce="${nonce}" src="${geotiffUri}"`);
+    html = html.replace(
+      /src="media\/wasm\/tiff_wasm\.js"/,
+      `nonce="${nonce}" src="${tiffWasmGlueUri}"`
+    );
+    // Point the webview at the webview-resource URI for the .wasm binary.
+    html = html.replace(
+      /window\.__TIFF_WASM_URL__ = window\.__TIFF_WASM_URL__ \|\| 'media\/wasm\/tiff_wasm_bg\.wasm';/,
+      `window.__TIFF_WASM_URL__ = '${tiffWasmBinaryUri}';`
+    );
+    // Add the nonce to the inline bootstrap script that sets __TIFF_WASM_URL__.
+    html = html.replace(
+      /<script>\s*\n\s*\/\/ Default WASM binary location/,
+      `<script nonce="${nonce}">\n      // Default WASM binary location`
+    );
     html = html.replace(/src="bundle\.js"/, `nonce="${nonce}" src="${scriptUri}"`);
 
     // 3. Remove browser-specific elements (file input, navigation links)
@@ -885,6 +1217,12 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           const shortPath = this.getShortPath(files[i].fsPath);
           const fileExtension = path.extname(files[i].fsPath).toLowerCase();
           console.log(`🚀 ULTIMATE: Processing add file ${fileName} (${fileExtension})`);
+
+          // Tell the webview a load started so it shows a non-blocking progress
+          // row in the Files list (the scene already has clouds and stays
+          // interactive — no overlay). Sent before the read/parse below.
+          this.currentLoadStartedAt = Date.now();
+          webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
           // Handle different file types
           if (
@@ -1175,6 +1513,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       const fileName = path.basename(fileUri.fsPath);
       const shortPath = this.getShortPath(fileUri.fsPath);
       const ext = path.extname(fileUri.fsPath).toLowerCase();
+
+      // Non-blocking progress row in the Files list during read/parse (the scene
+      // already has clouds and stays interactive).
+      this.currentLoadStartedAt = Date.now();
+      webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
       if (
         ext === '.tif' ||
@@ -1525,7 +1868,64 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   }
 
   private toArrayBuffer(data: Uint8Array): ArrayBuffer {
-    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+  }
+
+  /**
+   * Read a file's bytes. For local files this uses Node's fs directly, which is
+   * markedly faster than vscode.workspace.fs on large files (the latter routes
+   * through the FS-provider abstraction). Falls back to workspace.fs for
+   * non-local/virtual schemes.
+   */
+  private async readFileFast(uri: vscode.Uri): Promise<Uint8Array> {
+    if (uri.scheme === 'file') {
+      try {
+        return await fs.promises.readFile(uri.fsPath);
+      } catch {
+        /* fall back to the workspace filesystem */
+      }
+    }
+    return vscode.workspace.fs.readFile(uri);
+  }
+
+  /**
+   * Read just the first `maxBytes` of a local file (for header detection before
+   * deciding whether to stream the body). Returns a copy sized to bytes actually
+   * read; throws on non-file schemes / IO errors (callers fall back).
+   */
+  private async readFileHead(uri: vscode.Uri, maxBytes: number): Promise<Uint8Array> {
+    const fh = await fs.promises.open(uri.fsPath, 'r');
+    try {
+      const buf = Buffer.allocUnsafe(maxBytes);
+      const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
+      return new Uint8Array(buf.subarray(0, bytesRead));
+    } finally {
+      await fh.close();
+    }
+  }
+
+  /**
+   * True if a PCD's VIEWPOINT is identity (or absent) — i.e. no rigid transform
+   * needs applying. The WASM PCD parser doesn't carry the viewpoint, so clouds
+   * with a non-identity viewpoint stay on the JS path that applies it.
+   */
+  private pcdViewpointIsIdentity(bytes: Uint8Array): boolean {
+    const head = Buffer.from(bytes.subarray(0, Math.min(1024, bytes.length))).toString('utf8');
+    const m = head.match(/^VIEWPOINT\s+(.+)$/m);
+    if (!m) {
+      return true;
+    }
+    const v = m[1].trim().split(/\s+/).map(Number);
+    return (
+      v.length >= 7 &&
+      v[0] === 0 &&
+      v[1] === 0 &&
+      v[2] === 0 &&
+      v[3] === 1 &&
+      v[4] === 0 &&
+      v[5] === 0 &&
+      v[6] === 0
+    );
   }
 
   private async handleSequenceRequestFile(
@@ -1724,6 +2124,40 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     }
   }
 
+  /**
+   * Fallback for transfer-via-fetch: the webview couldn't fetch the file
+   * directly, so resend the vertex bytes over postMessage (the original path).
+   * Uses the retained header + bytes when available, otherwise re-reads.
+   */
+  private async handlePlyFetchFallback(message: any): Promise<void> {
+    const key = message.docUri as string;
+    this.logPerf(`⏱️ PERF[ply/ext] fetch fallback → postMessage for ${message.fileName || key}`);
+    try {
+      const uri = vscode.Uri.parse(key);
+      const panel = this.pathToPanel.get(uri.fsPath);
+      if (!panel) {
+        return;
+      }
+      // Re-read and reparse from the URI, then resend over the proven path.
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      const parser = new PlyParser();
+      const headerResult = await parser.parseHeaderOnly(bytes);
+      const parsedData = headerResult.headerInfo;
+      parsedData.fileName = path.basename(uri.fsPath);
+      parsedData.shortPath = this.getShortPath(uri.fsPath);
+      parsedData.fileIndex = 0;
+      await this.sendUltimateRawBinary(
+        panel,
+        parsedData,
+        headerResult,
+        bytes,
+        message.messageType || 'multiSpatialData'
+      );
+    } catch (error) {
+      console.error('PLY fetch fallback failed:', error);
+    }
+  }
+
   private async sendUltimateRawBinary(
     webviewPanel: vscode.WebviewPanel,
     parsedData: any,
@@ -1733,13 +2167,30 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   ): Promise<void> {
     console.log(`🚀 ULTIMATE: Sending raw binary data for ${parsedData.fileName}`);
 
-    // Extract just the binary vertex data
-    const binaryVertexData = rawFileData.slice(headerResult.binaryDataStart);
+    // Extract exactly the binary vertex bytes into a standalone ArrayBuffer.
+    // NOTE: vscode.workspace.fs.readFile returns a Node Buffer, whose .slice()
+    // is a *view* over the whole file's ArrayBuffer — so we must slice .buffer
+    // by byteOffset/byteLength to copy out just the vertex region. Sending the
+    // raw .buffer instead would ship the whole file from offset 0 (header bytes
+    // read as float32 → garbage geometry).
+    const copyStart = performance.now();
+    const binaryVertexData = rawFileData.subarray(headerResult.binaryDataStart);
+    const slicedBuffer = binaryVertexData.buffer.slice(
+      binaryVertexData.byteOffset,
+      binaryVertexData.byteOffset + binaryVertexData.byteLength
+    );
+    const copyMs = performance.now() - copyStart;
+    this.logPerf(
+      `⏱️ PERF[ply/ext] copy ${copyMs.toFixed(1)}ms (${(binaryVertexData.byteLength / 1048576).toFixed(1)}MB) for ${parsedData.fileName}`
+    );
 
     // Send raw binary data + parsing metadata
     webviewPanel.webview.postMessage({
       type: 'ultimateRawBinaryData',
       messageType: messageType,
+      // Wall-clock epoch stamped right before postMessage so the webview can
+      // measure the cross-process serialization+IPC "transfer" cost.
+      postedAt: Date.now(),
       fileName: parsedData.fileName,
       shortPath: parsedData.shortPath,
       fileSizeInBytes: rawFileData.byteLength,
@@ -1752,10 +2203,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       comments: parsedData.comments,
 
       // Raw binary data + parsing info
-      rawBinaryData: binaryVertexData.buffer.slice(
-        binaryVertexData.byteOffset,
-        binaryVertexData.byteOffset + binaryVertexData.byteLength
-      ),
+      rawBinaryData: slicedBuffer,
       vertexStride: headerResult.vertexStride,
       propertyOffsets: Array.from(headerResult.propertyOffsets.entries()),
       littleEndian: headerResult.headerInfo.format === 'binary_little_endian',

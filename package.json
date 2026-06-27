@@ -2,7 +2,7 @@
   "name": "ply-visualizer",
   "displayName": "3D Point Cloud and Mesh Visualizer (PLY, ...)",
   "description": "A 3D visualizer for point cloud and mesh files like the PLY format using Three.js. Supports 13+ formats: PLY, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth to point cloud conversions.",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "packageManager": "pnpm@10.32.1",
   "publisher": "kleinicke",
   "icon": "icon.png",
@@ -215,6 +215,7 @@
   "scripts": {
     "vscode:prepublish": "pnpm run compile",
     "compile": "webpack",
+    "build:wasm": "cd wasm/pointcloud-parser && wasm-pack build --target nodejs --release && echo 'exports.memory = wasm.memory;' >> pkg/pointcloud_parser.js",
     "compile:tests": "tsc",
     "compile:all": "pnpm run compile && pnpm run compile:tests",
     "watch": "webpack --watch",
@@ -237,7 +238,7 @@
     "@types/mocha": "^10.0.1",
     "@types/node": "20.17.57",
     "@types/pako": "^2.0.4",
-    "@types/three": "^0.184.0",
+    "@types/three": "^0.185.0",
     "@types/vscode": "1.98.0",
     "@typescript-eslint/eslint-plugin": "^8.58.2",
     "@typescript-eslint/parser": "^8.58.2",
@@ -251,7 +252,7 @@
     "mocha": "^11.7.5",
     "prettier": "^3.6.2",
     "ts-loader": "^9.5.7",
-    "typescript": "^4.9.5",
+    "typescript": "^6.0.3",
     "vscode-extension-tester": "^8.17.0",
     "webpack": "^5.106.2",
     "webpack-cli": "^7.0.2",
@@ -264,7 +265,7 @@
     "js-yaml": "^4.1.1",
     "lzma": "^2.3.2",
     "pako": "^2.1.0",
-    "three": "^0.184.0"
+    "three": "^0.185.0"
   },
   "c8": {
     "include": [

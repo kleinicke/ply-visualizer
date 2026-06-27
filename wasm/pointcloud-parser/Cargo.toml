@@ -1,0 +1,25 @@
+[package]
+name = "pointcloud-parser"
+version = "0.1.0"
+edition = "2021"
+description = "Fast WebAssembly parser for ASCII point-cloud formats (XYZ/XYZN/XYZRGB/ASCII-PLY)"
+license = "MIT"
+
+# Self-contained crate — kept in a subfolder for now, structured so it can be
+# extracted to its own repo / git submodule later for separate open-sourcing.
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+fast-float = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[package.metadata.wasm-pack.profile.release]
+# Skip wasm-opt so the build doesn't need the binaryen toolchain downloaded.
+wasm-opt = false
