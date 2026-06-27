@@ -213,22 +213,25 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile",
+    "vscode:prepublish": "npm run compile",
     "compile": "webpack",
     "build:wasm": "cd wasm/pointcloud-parser && wasm-pack build --target nodejs --release && echo 'exports.memory = wasm.memory;' >> pkg/pointcloud_parser.js",
     "compile:tests": "tsc",
-    "compile:all": "pnpm run compile && pnpm run compile:tests",
+    "compile:all": "npm run compile && npm run compile:tests",
     "watch": "webpack --watch",
-    "pretest": "pnpm run clean && pnpm run compile:all && pnpm run lint",
+    "pretest": "npm run clean && npm run compile:all && npm run lint",
     "clean": "rm -rf out/",
     "lint": "eslint src --ext ts",
     "test": "node ./out/src/test/runTest.js",
-    "test:coverage": "pnpm run pretest && c8 node ./out/src/test/runTest.js",
-    "coverage": "pnpm run test:coverage && pnpm run coverage:report",
+    "test:coverage": "npm run pretest && c8 node ./out/src/test/runTest.js",
+    "coverage": "npm run test:coverage && npm run coverage:report",
     "coverage:report": "c8 report && node ./analyze-coverage.mjs",
-    "test:ui": "pnpm run compile && cd ui-tests && pnpm exec tsc && cd .. && node ./out/ui-tests/ui-test-runner.js",
-    "test:all": "pnpm run test && pnpm run test:ui",
+    "test:ui": "npm run compile && cd ui-tests && npm exec tsc && cd .. && node ./out/ui-tests/ui-test-runner.js",
+    "test:all": "npm run test && npm run test:ui",
     "test:stl": "node test-stl.js",
+    "package:vsix": "vsce package",
+    "publish:vsce": "vsce publish",
+    "publish:ovsx": "ovsx publish --no-dependencies",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky"
@@ -243,6 +246,7 @@
     "@typescript-eslint/eslint-plugin": "^8.58.2",
     "@typescript-eslint/parser": "^8.58.2",
     "@vscode/test-electron": "^2.2.0",
+    "@vscode/vsce": "3.9.1",
     "c8": "^11.0.0",
     "copy-webpack-plugin": "^14.0.0",
     "eslint": "^10.2.1",
@@ -250,6 +254,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.1.6",
     "mocha": "^11.7.5",
+    "ovsx": "0.10.6",
     "prettier": "^3.6.2",
     "ts-loader": "^9.5.7",
     "typescript": "^6.0.3",
@@ -266,6 +271,9 @@
     "lzma": "^2.3.2",
     "pako": "^2.1.0",
     "three": "^0.185.0"
+  },
+  "vsce": {
+    "dependencies": false
   },
   "c8": {
     "include": [

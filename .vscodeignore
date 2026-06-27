@@ -17,6 +17,9 @@ website/**
 .editorconfig
 .yarnrc
 .npmrc
+eslint.config.cjs
+pnpm-lock.yaml
+pnpm-workspace.yaml
 vsc-extension-quickstart.md
 **/tsconfig.json
 **/.eslintrc.json
@@ -40,6 +43,7 @@ npm-debug.log
 .DS_Store
 .env
 .env.*
+icon_updated.png
 
 # Test and coverage files
 coverage/
@@ -54,6 +58,8 @@ dataset/**
 test_pc1.ply
 test_pc2.ply
 test_simple.ply
+test_calibration_parsers.js
+test_npy_integration.js
 
 # Development scripts and tools
 analyze-calls.mjs
