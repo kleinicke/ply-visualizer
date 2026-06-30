@@ -913,21 +913,26 @@ export async function convertDepthToUnified(
 
   const result = projectToPointCloud(norm, projectionParams) as unknown as {
     vertices: Float32Array;
-    colors?: Float32Array;
+    colors?: Float32Array | Uint8Array;
     pointCount: number;
     width?: number;
     height?: number;
   };
 
   const verts: any[] = new Array(result.pointCount);
+  const colorsAreUint8 = result.colors instanceof Uint8Array;
   for (let i = 0; i < result.pointCount; i++) {
     const x = result.vertices[i * 3];
     const y = result.vertices[i * 3 + 1];
     const z = result.vertices[i * 3 + 2];
     if (result.colors) {
-      const r = Math.round(result.colors[i * 3] * 255);
-      const g = Math.round(result.colors[i * 3 + 1] * 255);
-      const b = Math.round(result.colors[i * 3 + 2] * 255);
+      const r = colorsAreUint8 ? result.colors[i * 3] : Math.round(result.colors[i * 3] * 255);
+      const g = colorsAreUint8
+        ? result.colors[i * 3 + 1]
+        : Math.round(result.colors[i * 3 + 1] * 255);
+      const b = colorsAreUint8
+        ? result.colors[i * 3 + 2]
+        : Math.round(result.colors[i * 3 + 2] * 255);
       verts[i] = { x, y, z, red: r, green: g, blue: b };
     } else {
       verts[i] = { x, y, z };

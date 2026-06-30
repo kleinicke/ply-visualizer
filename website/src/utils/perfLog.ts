@@ -46,6 +46,22 @@ export function perfLog(line: string): void {
 
 const isEpoch = (v: unknown): v is number => typeof v === 'number' && isFinite(v) && v > 0;
 
+function formatExtra(key: string, value: string | number): string {
+  switch (key) {
+    case 'verts':
+      return `${value} pts`;
+    case 'MB':
+      return `${value} MB`;
+    case 'px':
+      return `${value} px`;
+    case 'mode':
+    case 'file':
+      return `${value}`;
+    default:
+      return `${key}=${value}`;
+  }
+}
+
 export class PerfTimer {
   private readonly kind: string;
   private readonly t0: number; // performance.now() at construction (webview span start)
@@ -90,7 +106,7 @@ export class PerfTimer {
     this.last = performance.now();
   }
 
-  /** Attach contextual key=value metadata shown in parentheses at the end. */
+  /** Attach contextual metadata shown in parentheses at the end. */
   note(key: string, value: string | number): void {
     this.extra[key] = value;
   }
@@ -126,7 +142,7 @@ export class PerfTimer {
 
     const phaseStr = phases.map(([p, ms]) => `${p} ${ms}ms`).join(' · ');
     const extras = Object.entries(this.extra)
-      .map(([, v]) => `${v}`)
+      .map(([k, v]) => formatExtra(k, v))
       .join(' · ');
     const tag = this.fileName ? `${this.kind} ${this.fileName}` : this.kind;
     const line = `⏱️ PERF[${tag}] ${phaseStr} | total ${totalMs.toFixed(1)}ms${

@@ -14745,6 +14745,7 @@ class PointCloudVisualizer {
       // Convert to PLY format
       const vertices = [];
       const pointCount = pointCloudResult.pointCount;
+      const colorsAreUint8 = pointCloudResult.colors instanceof Uint8Array;
 
       for (let i = 0; i < pointCount; i++) {
         const vertexBase = i * 3;
@@ -14758,9 +14759,15 @@ class PointCloudVisualizer {
 
         // Add colors if available
         if (pointCloudResult.colors) {
-          vertex.red = Math.round(pointCloudResult.colors[colorBase] * 255);
-          vertex.green = Math.round(pointCloudResult.colors[colorBase + 1] * 255);
-          vertex.blue = Math.round(pointCloudResult.colors[colorBase + 2] * 255);
+          vertex.red = colorsAreUint8
+            ? pointCloudResult.colors[colorBase]
+            : Math.round(pointCloudResult.colors[colorBase] * 255);
+          vertex.green = colorsAreUint8
+            ? pointCloudResult.colors[colorBase + 1]
+            : Math.round(pointCloudResult.colors[colorBase + 1] * 255);
+          vertex.blue = colorsAreUint8
+            ? pointCloudResult.colors[colorBase + 2]
+            : Math.round(pointCloudResult.colors[colorBase + 2] * 255);
         } else {
           // Default gray color
           vertex.red = 128;

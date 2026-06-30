@@ -2,7 +2,7 @@ import { CameraModel, DepthImage, DepthMetadata } from './types';
 
 export interface PointCloudResult {
   vertices: Float32Array;
-  colors?: Float32Array;
+  colors?: Float32Array | Uint8Array;
   pointCount: number;
   width?: number;
   height?: number;
@@ -35,17 +35,24 @@ export function projectToPointCloud(
   // full-size .slice() copy at the end. The validity predicate here MUST match
   // the per-model loops below (isFinite(val) && val > 0).
   let validCount = 0;
+  let minDepth = Infinity;
+  let maxDepth = -Infinity;
   for (let i = 0; i < totalPixels; i++) {
     const v = data[i];
     if (isFinite(v) && v > 0) {
       validCount++;
+      if (v < minDepth) {
+        minDepth = v;
+      }
+      if (v > maxDepth) {
+        maxDepth = v;
+      }
     }
   }
 
   // Pre-allocate typed arrays at the exact valid-point count
   const tempVertices = new Float32Array(validCount * 3);
-  const tempColors = new Float32Array(validCount * 3);
-  const tempLogDepths = new Float32Array(validCount);
+  const tempColors = new Uint8Array(validCount * 3);
 
   // For distorted camera models, store pixel coordinates for accurate color mapping
   // Reprojection is error-prone for distorted models, so we store the original (u,v)
@@ -56,10 +63,15 @@ export function projectToPointCloud(
   const tempPixelCoords = needsPixelCoords ? new Uint16Array(validCount * 2) : null;
 
   let pointIndex = 0;
-  let minDepth = Infinity;
-  let maxDepth = -Infinity;
 
   const isZDepth = meta.kind === 'z';
+  const conventionSign = meta.convention === 'opengl' ? -1 : 1;
+  const logMin = validCount > 0 ? Math.log(minDepth) : 0;
+  const logMax = validCount > 0 ? Math.log(maxDepth) : 0;
+  const denom = logMax - logMin;
+  const invDenom = denom > 0 ? 1 / denom : 0;
+  const minGrayByte = 51; // lift darkest values to 0.2 * 255
+  const grayRangeByte = 204;
 
   if (cameraModel === 'pinhole-ideal') {
     // Standard ideal pinhole camera model (undistorted)
@@ -78,11 +90,8 @@ export function projectToPointCloud(
           const X = ((u - cx) / fx) * Z;
           const Y = ((v - cy) / fy) * Z;
           tempVertices[pointBase] = X;
-          tempVertices[pointBase + 1] = Y;
-          tempVertices[pointBase + 2] = Z;
-          minDepth = Math.min(minDepth, Z);
-          maxDepth = Math.max(maxDepth, Z);
-          tempLogDepths[pointIndex] = Math.log(Z);
+          tempVertices[pointBase + 1] = Y * conventionSign;
+          tempVertices[pointBase + 2] = Z * conventionSign;
         } else {
           const X = (u - cx) / fx;
           const Y = (v - cy) / fy;
@@ -93,12 +102,14 @@ export function projectToPointCloud(
           const dirZ = Z / norm;
           const depth = val;
           tempVertices[pointBase] = dirX * depth;
-          tempVertices[pointBase + 1] = dirY * depth;
-          tempVertices[pointBase + 2] = dirZ * depth;
-          minDepth = Math.min(minDepth, depth);
-          maxDepth = Math.max(maxDepth, depth);
-          tempLogDepths[pointIndex] = Math.log(depth);
+          tempVertices[pointBase + 1] = dirY * depth * conventionSign;
+          tempVertices[pointBase + 2] = dirZ * depth * conventionSign;
         }
+        const s = denom > 0 ? (Math.log(val) - logMin) * invDenom : 1.0;
+        const mapped = (minGrayByte + 0.5 + grayRangeByte * s) | 0;
+        tempColors[pointBase] = mapped;
+        tempColors[pointBase + 1] = mapped;
+        tempColors[pointBase + 2] = mapped;
         pointIndex++;
       }
     }
@@ -145,11 +156,8 @@ export function projectToPointCloud(
           const X = xCorrected * Z;
           const Y = yCorrected * Z;
           tempVertices[pointBase] = X;
-          tempVertices[pointBase + 1] = Y;
-          tempVertices[pointBase + 2] = Z;
-          minDepth = Math.min(minDepth, Z);
-          maxDepth = Math.max(maxDepth, Z);
-          tempLogDepths[pointIndex] = Math.log(Z);
+          tempVertices[pointBase + 1] = Y * conventionSign;
+          tempVertices[pointBase + 2] = Z * conventionSign;
         } else {
           const norm = Math.hypot(xCorrected, yCorrected, 1.0);
           const dirX = xCorrected / norm;
@@ -157,12 +165,14 @@ export function projectToPointCloud(
           const dirZ = 1.0 / norm;
           const depth = val;
           tempVertices[pointBase] = dirX * depth;
-          tempVertices[pointBase + 1] = dirY * depth;
-          tempVertices[pointBase + 2] = dirZ * depth;
-          minDepth = Math.min(minDepth, depth);
-          maxDepth = Math.max(maxDepth, depth);
-          tempLogDepths[pointIndex] = Math.log(depth);
+          tempVertices[pointBase + 1] = dirY * depth * conventionSign;
+          tempVertices[pointBase + 2] = dirZ * depth * conventionSign;
         }
+        const s = denom > 0 ? (Math.log(val) - logMin) * invDenom : 1.0;
+        const mapped = (minGrayByte + 0.5 + grayRangeByte * s) | 0;
+        tempColors[pointBase] = mapped;
+        tempColors[pointBase + 1] = mapped;
+        tempColors[pointBase + 2] = mapped;
         // Store pixel coordinates for color mapping (distorted model)
         if (tempPixelCoords) {
           const pixelBase = pointIndex * 2;
@@ -191,7 +201,7 @@ export function projectToPointCloud(
         if (r === 0) {
           tempVertices[pointBase] = 0;
           tempVertices[pointBase + 1] = 0;
-          tempVertices[pointBase + 2] = depth;
+          tempVertices[pointBase + 2] = depth * conventionSign;
         } else {
           const uNorm = du / r;
           const vNorm = dv / r;
@@ -201,14 +211,15 @@ export function projectToPointCloud(
           const zNorm = Math.cos(theta);
 
           tempVertices[pointBase] = xNorm * depth;
-          tempVertices[pointBase + 1] = yNorm * depth;
-          tempVertices[pointBase + 2] = zNorm * depth;
+          tempVertices[pointBase + 1] = yNorm * depth * conventionSign;
+          tempVertices[pointBase + 2] = zNorm * depth * conventionSign;
         }
 
-        // Track depth range and store log-depth for later normalized color mapping
-        minDepth = Math.min(minDepth, depth);
-        maxDepth = Math.max(maxDepth, depth);
-        tempLogDepths[pointIndex] = Math.log(depth);
+        const s = denom > 0 ? (Math.log(depth) - logMin) * invDenom : 1.0;
+        const mapped = (minGrayByte + 0.5 + grayRangeByte * s) | 0;
+        tempColors[pointBase] = mapped;
+        tempColors[pointBase + 1] = mapped;
+        tempColors[pointBase + 2] = mapped;
         pointIndex++;
       }
     }
@@ -237,7 +248,7 @@ export function projectToPointCloud(
         if (r === 0) {
           tempVertices[pointBase] = 0;
           tempVertices[pointBase + 1] = 0;
-          tempVertices[pointBase + 2] = depth;
+          tempVertices[pointBase + 2] = depth * conventionSign;
         } else {
           // Apply fisheye distortion correction
           const r4 = r2 * r2;
@@ -256,13 +267,15 @@ export function projectToPointCloud(
           const zNorm = Math.cos(theta);
 
           tempVertices[pointBase] = xNorm * depth;
-          tempVertices[pointBase + 1] = yNorm * depth;
-          tempVertices[pointBase + 2] = zNorm * depth;
+          tempVertices[pointBase + 1] = yNorm * depth * conventionSign;
+          tempVertices[pointBase + 2] = zNorm * depth * conventionSign;
         }
 
-        minDepth = Math.min(minDepth, depth);
-        maxDepth = Math.max(maxDepth, depth);
-        tempLogDepths[pointIndex] = Math.log(depth);
+        const s = denom > 0 ? (Math.log(depth) - logMin) * invDenom : 1.0;
+        const mapped = (minGrayByte + 0.5 + grayRangeByte * s) | 0;
+        tempColors[pointBase] = mapped;
+        tempColors[pointBase + 1] = mapped;
+        tempColors[pointBase + 2] = mapped;
         // Store pixel coordinates for color mapping (distorted model)
         if (tempPixelCoords) {
           const pixelBase = pointIndex * 2;
@@ -297,7 +310,7 @@ export function projectToPointCloud(
         if (r === 0) {
           tempVertices[pointBase] = 0;
           tempVertices[pointBase + 1] = 0;
-          tempVertices[pointBase + 2] = depth;
+          tempVertices[pointBase + 2] = depth * conventionSign;
         } else {
           // Kannala-Brandt: r = k1*θ + k2*θ³ + k3*θ⁵ + k4*θ⁷ + k5*θ⁹
           // We need to solve for θ given r (undistortion)
@@ -335,13 +348,15 @@ export function projectToPointCloud(
           const zNorm = Math.cos(theta);
 
           tempVertices[pointBase] = xNorm * depth;
-          tempVertices[pointBase + 1] = yNorm * depth;
-          tempVertices[pointBase + 2] = zNorm * depth;
+          tempVertices[pointBase + 1] = yNorm * depth * conventionSign;
+          tempVertices[pointBase + 2] = zNorm * depth * conventionSign;
         }
 
-        minDepth = Math.min(minDepth, depth);
-        maxDepth = Math.max(maxDepth, depth);
-        tempLogDepths[pointIndex] = Math.log(depth);
+        const s = denom > 0 ? (Math.log(depth) - logMin) * invDenom : 1.0;
+        const mapped = (minGrayByte + 0.5 + grayRangeByte * s) | 0;
+        tempColors[pointBase] = mapped;
+        tempColors[pointBase + 1] = mapped;
+        tempColors[pointBase + 2] = mapped;
         // Store pixel coordinates for color mapping (distorted model)
         if (tempPixelCoords) {
           const pixelBase = pointIndex * 2;
@@ -368,12 +383,8 @@ export function projectToPointCloud(
           const X = ((u - cx) / fx) * Z;
           const Y = ((v - cy) / fy) * Z;
           tempVertices[pointBase] = X;
-          tempVertices[pointBase + 1] = Y;
-          tempVertices[pointBase + 2] = Z;
-          // Track depth range and store log-depth for later normalized color mapping
-          minDepth = Math.min(minDepth, Z);
-          maxDepth = Math.max(maxDepth, Z);
-          tempLogDepths[pointIndex] = Math.log(Z);
+          tempVertices[pointBase + 1] = Y * conventionSign;
+          tempVertices[pointBase + 2] = Z * conventionSign;
         } else {
           const X = (u - cx) / fx;
           const Y = (v - cy) / fy;
@@ -384,46 +395,16 @@ export function projectToPointCloud(
           const dirZ = Z / norm;
           const depth = val;
           tempVertices[pointBase] = dirX * depth;
-          tempVertices[pointBase + 1] = dirY * depth;
-          tempVertices[pointBase + 2] = dirZ * depth;
-          // Track depth range and store log-depth for later normalized color mapping
-          minDepth = Math.min(minDepth, depth);
-          maxDepth = Math.max(maxDepth, depth);
-          tempLogDepths[pointIndex] = Math.log(depth);
+          tempVertices[pointBase + 1] = dirY * depth * conventionSign;
+          tempVertices[pointBase + 2] = dirZ * depth * conventionSign;
         }
+        const s = denom > 0 ? (Math.log(val) - logMin) * invDenom : 1.0;
+        const mapped = (minGrayByte + 0.5 + grayRangeByte * s) | 0;
+        tempColors[pointBase] = mapped;
+        tempColors[pointBase + 1] = mapped;
+        tempColors[pointBase + 2] = mapped;
         pointIndex++;
       }
-    }
-  }
-
-  // Compute log-normalized, gamma-corrected grayscale colors directly to typed array
-  if (pointIndex > 0) {
-    const logMin = Math.log(minDepth);
-    const logMax = Math.log(maxDepth);
-    const denom = logMax - logMin;
-    const invDenom = denom > 0 ? 1 / denom : 0;
-    const gamma = 1.0; //2.2; // standard display gamma
-    const minGray = 0.2; // lift darkest values to 0.2
-    const invGamma = 1 / gamma;
-    const gammaIsIdentity = gamma === 1;
-    for (let i = 0; i < pointIndex; i++) {
-      const colorBase = i * 3;
-      const s = denom > 0 ? (tempLogDepths[i] - logMin) * invDenom : 1.0;
-      // gamma === 1 makes Math.pow an identity; skip it for the common case.
-      const g = gammaIsIdentity ? s : Math.pow(s, invGamma);
-      const mapped = minGray + (1 - minGray) * g;
-      tempColors[colorBase] = mapped;
-      tempColors[colorBase + 1] = mapped;
-      tempColors[colorBase + 2] = mapped;
-    }
-  }
-
-  // Apply coordinate system conversion if needed
-  if (meta.convention === 'opengl') {
-    for (let i = 0; i < pointIndex; i++) {
-      const pointBase = i * 3;
-      tempVertices[pointBase + 1] = -tempVertices[pointBase + 1];
-      tempVertices[pointBase + 2] = -tempVertices[pointBase + 2];
     }
   }
 
@@ -453,27 +434,46 @@ export function projectToPointCloud(
 }
 
 export function normalizeDepth(image: DepthImage, meta: DepthMetadata): DepthImage {
+  const unitScale =
+    meta.kind === 'depth' || meta.kind === 'z'
+      ? (meta.unit === 'millimeter' ? 1 / 1000 : 1) * (meta.scale ?? 1)
+      : 1;
+  const depthScale = meta.depthScale ?? 1.0;
+  const depthBias = meta.depthBias ?? 0.0;
+  const hasDepthScaleBias =
+    (meta.depthScale !== undefined || meta.depthBias !== undefined) &&
+    (depthScale !== 1 || depthBias !== 0);
+  const canConvertDisparity =
+    meta.kind === 'disparity' && (meta.fx ?? 0) > 0 && (meta.baseline ?? 0) > 0;
+  const needsClamp =
+    !!meta.depthClamp && (meta.depthClamp.min !== undefined || meta.depthClamp.max !== undefined);
+  const needsTransform =
+    unitScale !== 1 ||
+    hasDepthScaleBias ||
+    canConvertDisparity ||
+    meta.kind === 'inverse_depth' ||
+    needsClamp;
+
+  if (!needsTransform) {
+    return image;
+  }
+
   const data = new Float32Array(image.data); // copy for safe transform
 
   // Apply unit/scale to convert to meters when kind is depth/z. Skip the
   // per-pixel loop entirely when the scale is a no-op (e.g. depth already in
   // meters), which is the common case for depth TIFFs.
-  if ((meta.kind === 'depth' || meta.kind === 'z') && (meta.unit || meta.scale)) {
-    const scale = (meta.unit === 'millimeter' ? 1 / 1000 : 1) * (meta.scale ?? 1);
-    if (scale !== 1) {
-      for (let i = 0; i < data.length; i++) {
-        data[i] = data[i] * scale;
-      }
+  if (unitScale !== 1) {
+    for (let i = 0; i < data.length; i++) {
+      data[i] = data[i] * unitScale;
     }
   }
 
   // Apply depth scale and bias for mono depth networks (before type-specific conversions)
-  if (meta.depthScale !== undefined || meta.depthBias !== undefined) {
-    const scale = meta.depthScale ?? 1.0;
-    const bias = meta.depthBias ?? 0.0;
+  if (hasDepthScaleBias) {
     for (let i = 0; i < data.length; i++) {
       if (isFinite(data[i])) {
-        data[i] = data[i] * scale + bias;
+        data[i] = data[i] * depthScale + depthBias;
       }
     }
   }
@@ -503,7 +503,7 @@ export function normalizeDepth(image: DepthImage, meta: DepthMetadata): DepthIma
     meta.unit = 'meter';
   }
 
-  if (meta.depthClamp) {
+  if (needsClamp && meta.depthClamp) {
     const { min, max } = meta.depthClamp;
     for (let i = 0; i < data.length; i++) {
       const z = data[i];
