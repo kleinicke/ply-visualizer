@@ -433,6 +433,8 @@
       // Default WASM binary location for the standalone website. The VS Code
       // extension overrides this with a nonced inline script pointing at the
       // webview-resource URI (see pointCloudEditorProvider.getHtmlForWebview).
+      window.__GEOTIFF_URL__ = window.__GEOTIFF_URL__ || 'media/geotiff.min.js';
+      window.__TIFF_WASM_GLUE_URL__ = window.__TIFF_WASM_GLUE_URL__ || 'media/wasm/tiff_wasm.js';
       window.__TIFF_WASM_URL__ = window.__TIFF_WASM_URL__ || 'media/wasm/tiff_wasm_bg.wasm';
     </script>
     <script src="bundle.js"></script>

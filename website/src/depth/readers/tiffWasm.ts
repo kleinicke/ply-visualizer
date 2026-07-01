@@ -16,6 +16,32 @@
 // Provided by media/wasm/tiff_wasm.js (no-modules build). Lexical global.
 declare const wasm_bindgen: any;
 
+export interface DepthProjectWasmResult {
+  vertices: Float32Array;
+  colors: Uint8Array;
+  pointCount: number;
+  width: number;
+  height: number;
+  pixelCoords?: Uint16Array;
+}
+
+export interface DepthProjectWasmParams {
+  kind?: string;
+  cameraModel: string;
+  convention?: string;
+  fx: number;
+  fy: number;
+  cx: number;
+  cy: number;
+  k1?: number;
+  k2?: number;
+  k3?: number;
+  k4?: number;
+  k5?: number;
+  p1?: number;
+  p2?: number;
+}
+
 export interface TiffWasmResult {
   width: number;
   height: number;
@@ -31,6 +57,39 @@ export interface TiffWasmResult {
 
 let initPromise: Promise<boolean> | null = null;
 let ready = false;
+let glueLoaded = false;
+
+function getWasmBindgen(): any | null {
+  try {
+    return typeof wasm_bindgen === 'undefined' ? null : wasm_bindgen;
+  } catch {
+    return null;
+  }
+}
+
+export function ensureTiffWasmGlueLoaded(glueUrl?: string): boolean {
+  if (glueLoaded || getWasmBindgen()) {
+    glueLoaded = true;
+    return true;
+  }
+
+  const importScriptsFn = (globalThis as any).importScripts as
+    | ((...urls: string[]) => void)
+    | undefined;
+  const url = glueUrl || (globalThis as any).__TIFF_WASM_GLUE_URL__;
+  if (!url || typeof importScriptsFn !== 'function') {
+    return false;
+  }
+
+  try {
+    importScriptsFn(url);
+    glueLoaded = !!getWasmBindgen();
+    return glueLoaded;
+  } catch (error) {
+    console.warn('[TiffWasm] glue load failed:', error);
+    return false;
+  }
+}
 
 /** Initialize the WASM module once. Resolves false if unavailable (→ fallback). */
 export async function initTiffWasm(): Promise<boolean> {
@@ -39,7 +98,9 @@ export async function initTiffWasm(): Promise<boolean> {
   }
   initPromise = (async () => {
     try {
-      if (typeof wasm_bindgen === 'undefined') {
+      ensureTiffWasmGlueLoaded();
+      const wasmApi = getWasmBindgen();
+      if (!wasmApi) {
         return false;
       }
       const url = (globalThis as any).__TIFF_WASM_URL__;
@@ -48,8 +109,8 @@ export async function initTiffWasm(): Promise<boolean> {
       }
       // Object form is the non-deprecated wasm-bindgen init signature; a bare
       // string still works but logs a deprecation warning.
-      await wasm_bindgen({ module_or_path: url });
-      ready = typeof wasm_bindgen.decode_tiff_fast === 'function';
+      await wasmApi({ module_or_path: url });
+      ready = typeof wasmApi.decode_tiff_fast === 'function';
       return ready;
     } catch (error) {
       console.warn('[TiffWasm] init failed, using geotiff.js fallback:', error);
@@ -63,6 +124,60 @@ export function isTiffWasmReady(): boolean {
   return ready;
 }
 
+export function projectDepthWasmSync(
+  data: Float32Array,
+  width: number,
+  height: number,
+  params: DepthProjectWasmParams
+): DepthProjectWasmResult | null {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.project_depth_fast !== 'function') {
+    return null;
+  }
+
+  let result: any = null;
+  try {
+    result = wasmApi.project_depth_fast(
+      data,
+      width,
+      height,
+      params.kind || 'depth',
+      params.cameraModel,
+      params.convention || 'opengl',
+      params.fx,
+      params.fy,
+      params.cx,
+      params.cy,
+      params.k1 || 0,
+      params.k2 || 0,
+      params.k3 || 0,
+      params.k4 || 0,
+      params.k5 || 0,
+      params.p1 || 0,
+      params.p2 || 0
+    );
+
+    const hasPixelCoords = !!result.has_pixel_coords;
+    return {
+      vertices: new Float32Array(result.take_positions()),
+      colors: new Uint8Array(result.take_colors()),
+      pointCount: result.point_count,
+      width: result.width,
+      height: result.height,
+      pixelCoords: hasPixelCoords ? new Uint16Array(result.take_pixel_coords()) : undefined,
+    };
+  } catch (error) {
+    console.warn('[TiffWasm] depth projection failed, using JS fallback:', error);
+    return null;
+  } finally {
+    try {
+      result?.free?.();
+    } catch {
+      /* already freed */
+    }
+  }
+}
+
 /**
  * Decode a TIFF with the WASM decoder. Returns null (caller should fall back)
  * if WASM is unavailable or the decode fails for any reason.
@@ -72,10 +187,14 @@ export async function decodeTiffWasm(buffer: ArrayBuffer): Promise<TiffWasmResul
   if (!ok) {
     return null;
   }
+  const wasmApi = getWasmBindgen();
+  if (!wasmApi) {
+    return null;
+  }
   let result: any = null;
   try {
     const bytes = new Uint8Array(buffer);
-    result = wasm_bindgen.decode_tiff_fast(bytes);
+    result = wasmApi.decode_tiff_fast(bytes);
     // Read metadata getters before take_data_as_f32() (which moves the buffer).
     const out: TiffWasmResult = {
       width: result.width,

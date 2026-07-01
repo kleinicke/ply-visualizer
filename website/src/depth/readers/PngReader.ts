@@ -52,6 +52,10 @@ export class PngReader implements DepthReader {
   }
 
   private async decodePng(data: Uint8Array): Promise<ImageData> {
+    if (typeof document === 'undefined') {
+      return this.decodePngInWorker(data);
+    }
+
     return new Promise((resolve, reject) => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
@@ -88,6 +92,24 @@ export class PngReader implements DepthReader {
 
       img.src = url;
     });
+  }
+
+  private async decodePngInWorker(data: Uint8Array): Promise<ImageData> {
+    const blobBuffer = new ArrayBuffer(data.byteLength);
+    new Uint8Array(blobBuffer).set(data);
+    const blob = new Blob([blobBuffer], { type: 'image/png' });
+    const bitmap = await createImageBitmap(blob);
+    try {
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Could not create worker canvas context');
+      }
+      ctx.drawImage(bitmap, 0, 0);
+      return ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    } finally {
+      bitmap.close();
+    }
   }
 
   private detectPngFormat(data: Uint8Array): {

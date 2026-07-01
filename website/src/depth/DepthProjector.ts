@@ -1,4 +1,5 @@
 import { CameraModel, DepthImage, DepthMetadata } from './types';
+import { projectDepthWasmSync } from './readers/tiffWasm';
 
 export interface PointCloudResult {
   vertices: Float32Array;
@@ -26,6 +27,26 @@ export function projectToPointCloud(
   const { width, height, data } = image;
   const { fx, cx, cy, cameraModel } = meta;
   const fy = meta.fy || fx; // Use fx if fy is not provided
+
+  const wasmResult = projectDepthWasmSync(data, width, height, {
+    kind: meta.kind,
+    cameraModel,
+    convention: meta.convention || 'opengl',
+    fx,
+    fy,
+    cx,
+    cy,
+    k1: meta.k1,
+    k2: meta.k2,
+    k3: meta.k3,
+    k4: meta.k4,
+    k5: meta.k5,
+    p1: meta.p1,
+    p2: meta.p2,
+  });
+  if (wasmResult) {
+    return wasmResult;
+  }
 
   const totalPixels = width * height;
 

@@ -79,6 +79,47 @@ pub struct PngResult {
 }
 
 #[wasm_bindgen]
+pub struct DepthProjectResult {
+    positions: Vec<f32>,
+    colors: Vec<u8>,
+    pixel_coords: Vec<u16>,
+    point_count: u32,
+    width: u32,
+    height: u32,
+    has_pixel_coords: bool,
+}
+
+#[wasm_bindgen]
+impl DepthProjectResult {
+    #[wasm_bindgen(getter)]
+    pub fn point_count(&self) -> u32 { self.point_count }
+
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 { self.width }
+
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 { self.height }
+
+    #[wasm_bindgen(getter)]
+    pub fn has_pixel_coords(&self) -> bool { self.has_pixel_coords }
+
+    #[wasm_bindgen]
+    pub fn take_positions(&mut self) -> Vec<f32> {
+        mem::take(&mut self.positions)
+    }
+
+    #[wasm_bindgen]
+    pub fn take_colors(&mut self) -> Vec<u8> {
+        mem::take(&mut self.colors)
+    }
+
+    #[wasm_bindgen]
+    pub fn take_pixel_coords(&mut self) -> Vec<u16> {
+        mem::take(&mut self.pixel_coords)
+    }
+}
+
+#[wasm_bindgen]
 pub struct HdrResult {
     data_f32: Vec<f32>,
     metadata_f64: Vec<f64>,
@@ -367,6 +408,333 @@ impl TiffResult {
             return mem::take(&mut self.data_f32);
         }
         self.get_data_as_f32()
+    }
+}
+
+#[wasm_bindgen]
+pub fn project_depth_fast(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    kind: &str,
+    camera_model: &str,
+    convention: &str,
+    fx: f32,
+    fy: f32,
+    cx: f32,
+    cy: f32,
+    k1: f32,
+    k2: f32,
+    k3: f32,
+    k4: f32,
+    k5: f32,
+    p1: f32,
+    p2: f32,
+) -> Result<DepthProjectResult, JsValue> {
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| JsValue::from_str("Depth dimensions overflow"))?;
+    if data.len() < expected {
+        return Err(JsValue::from_str("Depth data is smaller than width*height"));
+    }
+    if fx <= 0.0 || fy <= 0.0 {
+        return Err(JsValue::from_str("Focal length must be positive"));
+    }
+
+    let mut valid_count = 0usize;
+    let mut min_depth = f32::INFINITY;
+    let mut max_depth = f32::NEG_INFINITY;
+    for &v in data.iter().take(expected) {
+        if v.is_finite() && v > 0.0 {
+            valid_count += 1;
+            if v < min_depth { min_depth = v; }
+            if v > max_depth { max_depth = v; }
+        }
+    }
+
+    let mut positions = vec![0.0f32; valid_count * 3];
+    let mut colors = vec![0u8; valid_count * 3];
+    let needs_pixel_coords = matches!(camera_model, "pinhole-opencv" | "fisheye-opencv" | "fisheye-kannala-brandt");
+    let mut pixel_coords = if needs_pixel_coords { vec![0u16; valid_count * 2] } else { Vec::new() };
+
+    let is_z_depth = kind == "z";
+    let convention_sign = if convention == "opengl" { -1.0 } else { 1.0 };
+    let log_min = if valid_count > 0 { min_depth.ln() } else { 0.0 };
+    let log_max = if valid_count > 0 { max_depth.ln() } else { 0.0 };
+    let denom = log_max - log_min;
+    let inv_denom = if denom > 0.0 { 1.0 / denom } else { 0.0 };
+
+    let width_usize = width as usize;
+    let height_usize = height as usize;
+    let inv_fx = 1.0 / fx;
+    let inv_fy = 1.0 / fy;
+
+    let point_index = match camera_model {
+        "pinhole-opencv" => {
+            let x_by_u: Vec<f32> = (0..width_usize).map(|u| (u as f32 - cx) * inv_fx).collect();
+            let y_by_v: Vec<f32> = (0..height_usize).map(|v| (v as f32 - cy) * inv_fy).collect();
+            project_valid_depths(
+                data,
+                width_usize,
+                height_usize,
+                &mut positions,
+                &mut colors,
+                &mut pixel_coords,
+                needs_pixel_coords,
+                log_min,
+                denom,
+                inv_denom,
+                |u, v, depth_value, point_base, positions| {
+                    let xn = x_by_u[u];
+                    let yn = y_by_v[v];
+                    let r2 = xn * xn + yn * yn;
+                    let r4 = r2 * r2;
+                    let r6 = r4 * r2;
+                    let radial = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+                    let tangential_x = 2.0 * p1 * xn * yn + p2 * (r2 + 2.0 * xn * xn);
+                    let tangential_y = p1 * (r2 + 2.0 * yn * yn) + 2.0 * p2 * xn * yn;
+                    write_projected_xy(
+                        positions,
+                        point_base,
+                        xn * radial + tangential_x,
+                        yn * radial + tangential_y,
+                        depth_value,
+                        is_z_depth,
+                        convention_sign,
+                    );
+                },
+            )
+        }
+        "fisheye-equidistant" => project_valid_depths(
+            data,
+            width_usize,
+            height_usize,
+            &mut positions,
+            &mut colors,
+            &mut pixel_coords,
+            needs_pixel_coords,
+            log_min,
+            denom,
+            inv_denom,
+            |u, v, depth_value, point_base, positions| {
+                let du = u as f32 - cx;
+                let dv = v as f32 - cy;
+                let r = (du * du + dv * dv).sqrt();
+                if r == 0.0 {
+                    positions[point_base] = 0.0;
+                    positions[point_base + 1] = 0.0;
+                    positions[point_base + 2] = depth_value * convention_sign;
+                } else {
+                    let theta = r * inv_fx;
+                    let sin_theta = theta.sin();
+                    positions[point_base] = (du / r) * sin_theta * depth_value;
+                    positions[point_base + 1] =
+                        (dv / r) * sin_theta * depth_value * convention_sign;
+                    positions[point_base + 2] = theta.cos() * depth_value * convention_sign;
+                }
+            },
+        ),
+        "fisheye-opencv" => {
+            let inv_fx2 = inv_fx * inv_fx;
+            project_valid_depths(
+                data,
+                width_usize,
+                height_usize,
+                &mut positions,
+                &mut colors,
+                &mut pixel_coords,
+                needs_pixel_coords,
+                log_min,
+                denom,
+                inv_denom,
+                |u, v, depth_value, point_base, positions| {
+                    let du = u as f32 - cx;
+                    let dv = v as f32 - cy;
+                    let r2 = (du * du + dv * dv) * inv_fx2;
+                    let r = r2.sqrt();
+                    if r == 0.0 {
+                        positions[point_base] = 0.0;
+                        positions[point_base + 1] = 0.0;
+                        positions[point_base + 2] = depth_value * convention_sign;
+                    } else {
+                        let r4 = r2 * r2;
+                        let r6 = r4 * r2;
+                        let r8 = r6 * r2;
+                        let theta = r * (1.0 + k1 * r2 + k2 * r4 + k3 * r6 + k4 * r8);
+                        let sin_theta = theta.sin();
+                        positions[point_base] = du / (r * fx) * sin_theta * depth_value;
+                        positions[point_base + 1] =
+                            dv / (r * fx) * sin_theta * depth_value * convention_sign;
+                        positions[point_base + 2] = theta.cos() * depth_value * convention_sign;
+                    }
+                },
+            )
+        }
+        "fisheye-kannala-brandt" => project_valid_depths(
+            data,
+            width_usize,
+            height_usize,
+            &mut positions,
+            &mut colors,
+            &mut pixel_coords,
+            needs_pixel_coords,
+            log_min,
+            denom,
+            inv_denom,
+            |u, v, depth_value, point_base, positions| {
+                let du = u as f32 - cx;
+                let dv = v as f32 - cy;
+                let r = (du * du + dv * dv).sqrt();
+                if r == 0.0 {
+                    positions[point_base] = 0.0;
+                    positions[point_base + 1] = 0.0;
+                    positions[point_base + 2] = depth_value * convention_sign;
+                } else {
+                    let mut theta = r * inv_fx;
+                    for _ in 0..10 {
+                        let theta2 = theta * theta;
+                        let theta4 = theta2 * theta2;
+                        let theta6 = theta4 * theta2;
+                        let theta8 = theta6 * theta2;
+                        let f = k1 * theta
+                            + k2 * theta * theta2
+                            + k3 * theta * theta4
+                            + k4 * theta * theta6
+                            + k5 * theta * theta8
+                            - r * inv_fx;
+                        let df = k1
+                            + 3.0 * k2 * theta2
+                            + 5.0 * k3 * theta4
+                            + 7.0 * k4 * theta6
+                            + 9.0 * k5 * theta8;
+                        if df.abs() < 1e-12 { break; }
+                        theta -= f / df;
+                        if f.abs() < 1e-12 { break; }
+                    }
+                    let sin_theta = theta.sin();
+                    positions[point_base] = (du / r) * sin_theta * depth_value;
+                    positions[point_base + 1] =
+                        (dv / r) * sin_theta * depth_value * convention_sign;
+                    positions[point_base + 2] = theta.cos() * depth_value * convention_sign;
+                }
+            },
+        ),
+        _ => {
+            let x_by_u: Vec<f32> = (0..width_usize).map(|u| (u as f32 - cx) * inv_fx).collect();
+            let y_by_v: Vec<f32> = (0..height_usize).map(|v| (v as f32 - cy) * inv_fy).collect();
+            project_valid_depths(
+                data,
+                width_usize,
+                height_usize,
+                &mut positions,
+                &mut colors,
+                &mut pixel_coords,
+                needs_pixel_coords,
+                log_min,
+                denom,
+                inv_denom,
+                |u, v, depth_value, point_base, positions| {
+                    write_projected_xy(
+                        positions,
+                        point_base,
+                        x_by_u[u],
+                        y_by_v[v],
+                        depth_value,
+                        is_z_depth,
+                        convention_sign,
+                    );
+                },
+            )
+        }
+    };
+
+    if point_index != valid_count {
+        positions.truncate(point_index * 3);
+        colors.truncate(point_index * 3);
+        if needs_pixel_coords {
+            pixel_coords.truncate(point_index * 2);
+        }
+    }
+
+    Ok(DepthProjectResult {
+        positions,
+        colors,
+        pixel_coords,
+        point_count: point_index as u32,
+        width,
+        height,
+        has_pixel_coords: needs_pixel_coords && point_index > 0,
+    })
+}
+
+fn project_valid_depths<F>(
+    data: &[f32],
+    width: usize,
+    height: usize,
+    positions: &mut [f32],
+    colors: &mut [u8],
+    pixel_coords: &mut [u16],
+    needs_pixel_coords: bool,
+    log_min: f32,
+    denom: f32,
+    inv_denom: f32,
+    mut project: F,
+) -> usize
+where
+    F: FnMut(usize, usize, f32, usize, &mut [f32]),
+{
+    let mut point_index = 0usize;
+    for v in 0..height {
+        let row_base = v * width;
+        for u in 0..width {
+            let depth_value = data[row_base + u];
+            if !depth_value.is_finite() || depth_value <= 0.0 {
+                continue;
+            }
+
+            let point_base = point_index * 3;
+            project(u, v, depth_value, point_base, positions);
+
+            let s = if denom > 0.0 {
+                (depth_value.ln() - log_min) * inv_denom
+            } else {
+                1.0
+            };
+            let gray = (51.5 + 204.0 * s) as u8;
+            colors[point_base] = gray;
+            colors[point_base + 1] = gray;
+            colors[point_base + 2] = gray;
+
+            if needs_pixel_coords {
+                let pixel_base = point_index * 2;
+                pixel_coords[pixel_base] = u.min(u16::MAX as usize) as u16;
+                pixel_coords[pixel_base + 1] = v.min(u16::MAX as usize) as u16;
+            }
+
+            point_index += 1;
+        }
+    }
+    point_index
+}
+
+fn write_projected_xy(
+    positions: &mut [f32],
+    point_base: usize,
+    x: f32,
+    y: f32,
+    depth_value: f32,
+    is_z_depth: bool,
+    convention_sign: f32,
+) {
+    if is_z_depth {
+        positions[point_base] = x * depth_value;
+        positions[point_base + 1] = y * depth_value * convention_sign;
+        positions[point_base + 2] = depth_value * convention_sign;
+    } else {
+        let inv_norm = 1.0 / (x * x + y * y + 1.0).sqrt();
+        positions[point_base] = x * inv_norm * depth_value;
+        positions[point_base + 1] = y * inv_norm * depth_value * convention_sign;
+        positions[point_base + 2] = inv_norm * depth_value * convention_sign;
     }
 }
 

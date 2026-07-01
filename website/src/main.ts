@@ -52,6 +52,8 @@ import { ColorImageLoader } from './colorImageLoader';
 import { PerfTimer, perfLog, setPerfSink } from './utils/perfLog';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
+import { DepthWorkerClient } from './depth/DepthWorkerClient';
+import { applyDepthResultTypedArrays, colorsToUint8 } from './depth/depthResultArrays';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
@@ -187,6 +189,7 @@ class PointCloudVisualizer {
 
   // Depth converter instance
   private depthConverter: DepthConverter = new DepthConverter();
+  private depthWorkerClient: DepthWorkerClient = new DepthWorkerClient(this.depthConverter);
 
   // Pose entries managed like files but stored as Object3D groups
   private poseGroups: THREE.Group[] = [];
@@ -290,6 +293,10 @@ class PointCloudVisualizer {
   private originalDepthFileName: string | null = null;
   private currentCameraParams: CameraParams | null = null;
   private depthDimensions: { width: number; height: number } | null = null;
+  private liveDepthUpdateFiles = new Set<number>();
+  private liveDepthUpdateInFlight = new Set<number>();
+  private liveDepthUpdateQueued = new Set<number>();
+  private liveDepthUpdateTimers = new Map<number, number>();
   private useLinearColorSpace: boolean = true; // Default: toggle is inactive; renderer still outputs sRGB
   private axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
   // Color space handling: always output sRGB, optionally convert source sRGB colors to linear before shading
@@ -5224,7 +5231,12 @@ class PointCloudVisualizer {
                             <span class="toggle-icon">▶</span> Depth Settings
                         </button>
                         <div class="depth-settings-panel" id="depth-panel-${i}" style="display:none; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;">
-                            <div id="image-size-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">${this.getImageSizeDisplay(i)}</div>
+                            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 1px; margin-bottom: 6px;">
+                                <div id="image-size-${i}" style="font-size: 9px; color: var(--vscode-descriptionForeground); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${this.getImageSizeDisplay(i)}</div>
+                                <label title="Apply depth settings when a field is committed" style="display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; font-size: 9px; color: var(--vscode-descriptionForeground); white-space: nowrap; cursor: pointer;">
+                                    <input type="checkbox" class="live-depth-update" data-file-index="${i}" ${this.liveDepthUpdateFiles.has(i) ? 'checked' : ''} style="margin: 0; width: 12px; height: 12px;"> Live
+                                </label>
+                            </div>
                             
                             <!-- Calibration File Loading -->
                             <div class="depth-group" style="margin-bottom: 8px;">
@@ -5477,7 +5489,7 @@ class PointCloudVisualizer {
                             </div>
                             <div class="depth-group" style="margin-bottom: 8px;">
                                 <div style="display: flex; gap: 4px;">
-                                    <button class="apply-depth-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">Apply Settings</button>
+                                    <button class="apply-depth-settings" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px; ${this.liveDepthUpdateFiles.has(i) ? 'display:none;' : ''}">Apply Settings</button>
                                     <button class="save-ply-file" data-file-index="${i}" style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;">💾 Save as PLY</button>
                                 </div>
                                 <div style="display: flex; gap: 4px; margin-top: 4px;">
@@ -6319,6 +6331,43 @@ class PointCloudVisualizer {
           });
         }
 
+        const liveDepthUpdateCheckbox = document.querySelector(
+          `.live-depth-update[data-file-index="${i}"]`
+        ) as HTMLInputElement | null;
+        if (liveDepthUpdateCheckbox) {
+          liveDepthUpdateCheckbox.checked = this.liveDepthUpdateFiles.has(i);
+          liveDepthUpdateCheckbox.addEventListener('change', () => {
+            this.setLiveDepthUpdateEnabled(i, liveDepthUpdateCheckbox.checked);
+            if (liveDepthUpdateCheckbox.checked) {
+              this.scheduleLiveDepthUpdate(i, 0);
+            }
+          });
+        }
+
+        if (depthPanel) {
+          depthPanel.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' || !this.isDepthCommitTarget(event.target)) {
+              return;
+            }
+            event.preventDefault();
+            (event.target as HTMLElement).blur();
+            this.scheduleLiveDepthUpdate(i, 0);
+          });
+
+          depthPanel.addEventListener('focusout', event => {
+            if (this.isDepthCommitTarget(event.target)) {
+              this.scheduleLiveDepthUpdate(i);
+            }
+          });
+
+          depthPanel.addEventListener('change', event => {
+            if (!this.isDepthCommitTarget(event.target)) {
+              return;
+            }
+            this.updateSingleDefaultButtonState(i);
+            this.scheduleLiveDepthUpdate(i, 0);
+          });
+        }
         // Calibration file loading
         const loadCalibrationBtn = document.querySelector(
           `.load-calibration-btn[data-file-index="${i}"]`
@@ -7895,6 +7944,35 @@ class PointCloudVisualizer {
       }
     }
     this.fileDepthData = newdepthData;
+
+    const shiftLiveDepthSet = (source: Set<number>): Set<number> => {
+      const next = new Set<number>();
+      for (const key of source) {
+        if (key > fileIndex) {
+          next.add(key - 1);
+        } else if (key < fileIndex) {
+          next.add(key);
+        }
+      }
+      return next;
+    };
+
+    const removedTimer = this.liveDepthUpdateTimers.get(fileIndex);
+    if (removedTimer !== undefined) {
+      window.clearTimeout(removedTimer);
+    }
+    const shiftedTimers = new Map<number, number>();
+    for (const [key, timer] of this.liveDepthUpdateTimers) {
+      if (key > fileIndex) {
+        shiftedTimers.set(key - 1, timer);
+      } else if (key < fileIndex) {
+        shiftedTimers.set(key, timer);
+      }
+    }
+    this.liveDepthUpdateTimers = shiftedTimers;
+    this.liveDepthUpdateFiles = shiftLiveDepthSet(this.liveDepthUpdateFiles);
+    this.liveDepthUpdateInFlight = shiftLiveDepthSet(this.liveDepthUpdateInFlight);
+    this.liveDepthUpdateQueued = shiftLiveDepthSet(this.liveDepthUpdateQueued);
 
     // Reassign file indices
     for (let i = 0; i < this.spatialFiles.length; i++) {
@@ -10720,18 +10798,7 @@ class PointCloudVisualizer {
     // materializing N vertex objects and then rebuilding typed arrays inside
     // createGeometryFromSpatialData. The useTypedArrays geometry path expects
     // colors as Uint8 (0-255); convert once if the projector gave 0-1 floats.
-    let colorsU8: Uint8Array | null = null;
-    if (result.colors) {
-      if (result.colors instanceof Uint8Array) {
-        colorsU8 = result.colors;
-      } else {
-        const src = result.colors;
-        colorsU8 = new Uint8Array(src.length);
-        for (let i = 0; i < src.length; i++) {
-          colorsU8[i] = Math.round(src[i] * 255);
-        }
-      }
-    }
+    const colorsU8 = colorsToUint8(result.colors);
     perf.mark('build-colors');
 
     const spatialData: SpatialData = {
@@ -10839,10 +10906,15 @@ class PointCloudVisualizer {
   private async processDepthToPointCloud(
     depthData: ArrayBuffer,
     fileName: string,
-    cameraParams: CameraParams
+    cameraParams: CameraParams,
+    colorImageData?: ImageData
   ): Promise<DepthConversionResult> {
-    // Delegate to the depth converter
-    return this.depthConverter.processDepthToPointCloud(depthData, fileName, cameraParams);
+    return this.depthWorkerClient.processDepthToPointCloud(
+      depthData,
+      fileName,
+      cameraParams,
+      colorImageData
+    );
   }
 
   private async handleObjData(message: any): Promise<void> {
@@ -11911,20 +11983,13 @@ class PointCloudVisualizer {
       const result = await this.processDepthToPointCloud(
         depthData.originalData,
         depthData.fileName,
-        depthData.cameraParams
+        depthData.cameraParams,
+        imageData
       );
-      this.colorProcessor.applyColorToDepthResult(result, imageData, depthData.cameraParams);
 
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
-      spatialData.vertices = DepthConverter.convertResultToVertices(result);
-      // Reprocess paths rebuild geometry inline from these objects; clear the
-      // initial-load typed-array view so later color-mode rebuilds / geometry
-      // recreation use these fresh objects rather than stale arrays.
-      (spatialData as any).useTypedArrays = false;
-      (spatialData as any).positionsArray = undefined;
-      (spatialData as any).colorsArray = undefined;
-      spatialData.hasColors = true;
+      applyDepthResultTypedArrays(spatialData, result);
       // Mark as depth-derived so gamma correction knows these are already linear colors
       (spatialData as any).isDepthDerived = true;
 
@@ -11945,51 +12010,10 @@ class PointCloudVisualizer {
         );
       }
 
-      // Update geometry with colors
-      const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
-
-      // Create position array
-      const positions = new Float32Array(spatialData.vertices.length * 3);
-      for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
-        const vertex = spatialData.vertices[i];
-        positions[i3] = vertex.x;
-        positions[i3 + 1] = vertex.y;
-        positions[i3 + 2] = vertex.z;
-      }
-      const positionAttribute = new THREE.BufferAttribute(positions, 3);
-      geometry.setAttribute('position', positionAttribute);
-      positionAttribute.needsUpdate = true;
-
-      // Create color array
-      const colors = new Float32Array(spatialData.vertices.length * 3);
-      if (this.convertSrgbToLinear) {
-        const lut = this.colorProcessor.ensureSrgbLUT();
-        for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
-          const v = spatialData.vertices[i];
-          const r8 = (v.red || 0) & 255;
-          const g8 = (v.green || 0) & 255;
-          const b8 = (v.blue || 0) & 255;
-          colors[i3] = lut[r8];
-          colors[i3 + 1] = lut[g8];
-          colors[i3 + 2] = lut[b8];
-        }
-      } else {
-        for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
-          const v = spatialData.vertices[i];
-          colors[i3] = ((v.red || 0) & 255) / 255;
-          colors[i3 + 1] = ((v.green || 0) & 255) / 255;
-          colors[i3 + 2] = ((v.blue || 0) & 255) / 255;
-        }
-      }
-      const colorAttribute = new THREE.BufferAttribute(colors, 3);
-      geometry.setAttribute('color', colorAttribute);
-      colorAttribute.needsUpdate = true;
-
-      // Invalidate old bounding box and force recomputation
-      geometry.boundingBox = null;
-      geometry.boundingSphere = null;
-      geometry.computeBoundingBox();
-      geometry.computeBoundingSphere();
+      const mesh = this.meshes[fileIndex] as THREE.Points;
+      const oldGeometry = mesh.geometry;
+      mesh.geometry = this.createGeometryFromSpatialData(spatialData);
+      oldGeometry.dispose();
 
       // Dispose old material
       if (oldMaterial) {
@@ -12369,6 +12393,76 @@ class PointCloudVisualizer {
     }
   }
 
+  private setLiveDepthUpdateEnabled(fileIndex: number, enabled: boolean): void {
+    if (enabled) {
+      this.liveDepthUpdateFiles.add(fileIndex);
+    } else {
+      this.liveDepthUpdateFiles.delete(fileIndex);
+      this.liveDepthUpdateQueued.delete(fileIndex);
+      const timer = this.liveDepthUpdateTimers.get(fileIndex);
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+        this.liveDepthUpdateTimers.delete(fileIndex);
+      }
+    }
+
+    const applyButton = document.querySelector(
+      `.apply-depth-settings[data-file-index="${fileIndex}"]`
+    ) as HTMLButtonElement | null;
+    if (applyButton) {
+      applyButton.style.display = enabled ? 'none' : '';
+    }
+  }
+
+  private isDepthCommitTarget(
+    target: EventTarget | null
+  ): target is HTMLInputElement | HTMLSelectElement {
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
+      return false;
+    }
+    return !target.classList.contains('live-depth-update');
+  }
+
+  private scheduleLiveDepthUpdate(fileIndex: number, delayMs: number = 60): void {
+    if (!this.liveDepthUpdateFiles.has(fileIndex)) {
+      return;
+    }
+
+    const existing = this.liveDepthUpdateTimers.get(fileIndex);
+    if (existing !== undefined) {
+      window.clearTimeout(existing);
+    }
+
+    const timer = window.setTimeout(() => {
+      this.liveDepthUpdateTimers.delete(fileIndex);
+      void this.requestLiveDepthUpdate(fileIndex);
+    }, delayMs);
+    this.liveDepthUpdateTimers.set(fileIndex, timer);
+  }
+
+  private async requestLiveDepthUpdate(fileIndex: number): Promise<void> {
+    if (!this.liveDepthUpdateFiles.has(fileIndex)) {
+      return;
+    }
+
+    if (this.liveDepthUpdateInFlight.has(fileIndex)) {
+      this.liveDepthUpdateQueued.add(fileIndex);
+      return;
+    }
+
+    this.liveDepthUpdateInFlight.add(fileIndex);
+    try {
+      await this.applyDepthSettings(fileIndex);
+    } finally {
+      this.liveDepthUpdateInFlight.delete(fileIndex);
+      if (
+        this.liveDepthUpdateQueued.delete(fileIndex) &&
+        this.liveDepthUpdateFiles.has(fileIndex)
+      ) {
+        this.scheduleLiveDepthUpdate(fileIndex, 0);
+      }
+    }
+  }
   private async applyDepthSettings(fileIndex: number): Promise<void> {
     try {
       // Get the current values from the form using the helper method
@@ -12412,35 +12506,22 @@ class PointCloudVisualizer {
       const result = await this.processDepthToPointCloud(
         depthData.originalData,
         depthData.fileName,
-        newCameraParams
+        newCameraParams,
+        depthData.colorImageData
       );
 
       // Update the stored camera parameters with the processed values (cx/cy might have been updated)
       depthData.cameraParams = newCameraParams;
 
-      // If there's a stored color image, reapply it (works for all depth formats)
       if (depthData.colorImageData) {
         console.log(
           `🎨 Reapplying stored color image: ${depthData.colorImageName}\n🎯 Using updated camera params: cx=${newCameraParams.cx}, cy=${newCameraParams.cy}`
-        );
-        this.colorProcessor.applyColorToDepthResult(
-          result,
-          depthData.colorImageData,
-          newCameraParams
         );
       }
 
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
-      spatialData.vertices = DepthConverter.convertResultToVertices(result);
-      // Reprocess paths rebuild geometry inline from these objects; clear the
-      // initial-load typed-array view so later color-mode rebuilds / geometry
-      // recreation use these fresh objects rather than stale arrays.
-      (spatialData as any).useTypedArrays = false;
-      (spatialData as any).positionsArray = undefined;
-      (spatialData as any).colorsArray = undefined;
-      spatialData.vertexCount = result.pointCount;
-      spatialData.hasColors = !!result.colors;
+      applyDepthResultTypedArrays(spatialData, result);
       // Mark as depth-derived so gamma correction knows these are already linear colors
       (spatialData as any).isDepthDerived = true;
       const comments: string[] = [
@@ -12484,84 +12565,23 @@ class PointCloudVisualizer {
         );
       }
 
-      // NUCLEAR OPTION: Completely recreate the mesh object to avoid any caching
+      // Replace the mesh so Three.js uploads the returned typed arrays cleanly.
       const oldMesh = this.meshes[fileIndex];
-
-      // Remove old mesh from scene
       this.scene.remove(oldMesh);
 
-      // Dispose old geometry and material completely
       if (oldMesh.geometry) {
         oldMesh.geometry.dispose();
       }
 
-      // Create completely new geometry
-      const geometry = new THREE.BufferGeometry();
-
-      // Create completely new mesh with new geometry and material
+      const geometry = this.createGeometryFromSpatialData(spatialData);
       const newMesh = new THREE.Points(geometry, newMaterial);
 
-      // Copy transformation from old mesh
       newMesh.matrix.copy(oldMesh.matrix);
       newMesh.matrixAutoUpdate = oldMesh.matrixAutoUpdate;
 
-      // Replace the mesh in our array and scene
       this.meshes[fileIndex] = newMesh;
       this.scene.add(newMesh);
 
-      // Create position array
-      const positions = new Float32Array(spatialData.vertices.length * 3);
-      for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
-        const vertex = spatialData.vertices[i];
-        positions[i3] = vertex.x;
-        positions[i3 + 1] = vertex.y;
-        positions[i3 + 2] = vertex.z;
-      }
-      const positionAttribute = new THREE.BufferAttribute(positions, 3);
-      geometry.setAttribute('position', positionAttribute);
-      // CRITICAL FIX: Mark position attribute as needing update
-      positionAttribute.needsUpdate = true;
-
-      if (spatialData.hasColors) {
-        // Create color array
-        const colors = new Float32Array(spatialData.vertices.length * 3);
-        if (this.convertSrgbToLinear) {
-          const lut = this.colorProcessor.ensureSrgbLUT();
-          for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
-            const v = spatialData.vertices[i];
-            const r8 = (v.red || 0) & 255;
-            const g8 = (v.green || 0) & 255;
-            const b8 = (v.blue || 0) & 255;
-            colors[i3] = lut[r8];
-            colors[i3 + 1] = lut[g8];
-            colors[i3 + 2] = lut[b8];
-          }
-        } else {
-          for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
-            const v = spatialData.vertices[i];
-            colors[i3] = ((v.red || 0) & 255) / 255;
-            colors[i3 + 1] = ((v.green || 0) & 255) / 255;
-            colors[i3 + 2] = ((v.blue || 0) & 255) / 255;
-          }
-        }
-        const colorAttribute = new THREE.BufferAttribute(colors, 3);
-        geometry.setAttribute('color', colorAttribute);
-        colorAttribute.needsUpdate = true;
-      }
-
-      // CRITICAL FIX: Invalidate old bounding box and force recomputation
-      geometry.boundingBox = null;
-      geometry.boundingSphere = null;
-      geometry.computeBoundingBox();
-      geometry.computeBoundingSphere();
-
-      // CRITICAL FIX: Force complete geometry refresh
-      geometry.attributes.position.needsUpdate = true;
-      if (geometry.attributes.color) {
-        geometry.attributes.color.needsUpdate = true;
-      }
-
-      // Force immediate render to show updated geometry
       this.performRender();
 
       // Dispose old material
@@ -12915,6 +12935,7 @@ class PointCloudVisualizer {
 
       // Update button states
       this.updateSingleDefaultButtonState(fileIndex);
+      this.scheduleLiveDepthUpdate(fileIndex, 0);
 
       this.showStatus('Reset starred fields to default values');
     } catch (error) {
@@ -12940,6 +12961,7 @@ class PointCloudVisualizer {
 
       // Update button state since values changed
       this.updateSingleDefaultButtonState(fileIndex);
+      this.scheduleLiveDepthUpdate(fileIndex, 0);
 
       this.showStatus('Reset mono parameters to Scale=1.0, Bias=0.0');
     } catch (error) {
@@ -12961,6 +12983,7 @@ class PointCloudVisualizer {
         offsetElement.value = '0';
       }
 
+      this.scheduleLiveDepthUpdate(fileIndex, 0);
       this.showStatus('Reset disparity offset to 0');
     } catch (error) {
       console.error('Error resetting disparity offset:', error);
@@ -12989,6 +13012,7 @@ class PointCloudVisualizer {
           cyElement.value = computedCy.toString();
         }
 
+        this.scheduleLiveDepthUpdate(fileIndex, 0);
         this.showStatus(`Reset principle point to center: cx=${computedCx}, cy=${computedCy}`);
       } else {
         // This should not happen for depth-derived files, but handle gracefully
@@ -13025,14 +13049,7 @@ class PointCloudVisualizer {
 
       // Update the PLY data
       const spatialData = this.spatialFiles[fileIndex];
-      spatialData.vertices = DepthConverter.convertResultToVertices(result);
-      // Reprocess paths rebuild geometry inline from these objects; clear the
-      // initial-load typed-array view so later color-mode rebuilds / geometry
-      // recreation use these fresh objects rather than stale arrays.
-      (spatialData as any).useTypedArrays = false;
-      (spatialData as any).positionsArray = undefined;
-      (spatialData as any).colorsArray = undefined;
-      spatialData.hasColors = !!result.colors;
+      applyDepthResultTypedArrays(spatialData, result);
       // Mark as depth-derived so gamma correction knows these are already linear colors
       (spatialData as any).isDepthDerived = true;
 
@@ -13053,40 +13070,10 @@ class PointCloudVisualizer {
         );
       }
 
-      // Update geometry
-      const geometry = this.meshes[fileIndex].geometry as THREE.BufferGeometry;
-
-      // Create position array
-      const positions = new Float32Array(spatialData.vertices.length * 3);
-      for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
-        const vertex = spatialData.vertices[i];
-        positions[i3] = vertex.x;
-        positions[i3 + 1] = vertex.y;
-        positions[i3 + 2] = vertex.z;
-      }
-      const positionAttribute = new THREE.BufferAttribute(positions, 3);
-      geometry.setAttribute('position', positionAttribute);
-      positionAttribute.needsUpdate = true;
-
-      if (spatialData.hasColors) {
-        // Create color array with default grayscale colors
-        const colors = new Float32Array(spatialData.vertices.length * 3);
-        for (let i = 0, i3 = 0; i < spatialData.vertices.length; i++, i3 += 3) {
-          const vertex = spatialData.vertices[i];
-          colors[i3] = (vertex.red || 0) / 255;
-          colors[i3 + 1] = (vertex.green || 0) / 255;
-          colors[i3 + 2] = (vertex.blue || 0) / 255;
-        }
-        const colorAttribute = new THREE.BufferAttribute(colors, 3);
-        geometry.setAttribute('color', colorAttribute);
-        colorAttribute.needsUpdate = true;
-      }
-
-      // Invalidate old bounding box and force recomputation
-      geometry.boundingBox = null;
-      geometry.boundingSphere = null;
-      geometry.computeBoundingBox();
-      geometry.computeBoundingSphere();
+      const mesh = this.meshes[fileIndex] as THREE.Points;
+      const oldGeometry = mesh.geometry;
+      mesh.geometry = this.createGeometryFromSpatialData(spatialData);
+      oldGeometry.dispose();
 
       // Dispose old material
       if (oldMaterial) {
@@ -14363,6 +14350,7 @@ class PointCloudVisualizer {
       k5: getValue(`k5-${fileIndex}`),
       p1: getValue(`p1-${fileIndex}`),
       p2: getValue(`p2-${fileIndex}`),
+      liveUpdate: this.liveDepthUpdateFiles.has(fileIndex) ? 'true' : 'false',
     };
   }
 
@@ -14456,6 +14444,15 @@ class PointCloudVisualizer {
     setValue(`k5-${fileIndex}`, formValues.k5);
     setValue(`p1-${fileIndex}`, formValues.p1);
     setValue(`p2-${fileIndex}`, formValues.p2);
+
+    const liveUpdate = formValues.liveUpdate === 'true';
+    this.setLiveDepthUpdateEnabled(fileIndex, liveUpdate);
+    const liveUpdateCheckbox = document.querySelector(
+      `.live-depth-update[data-file-index="${fileIndex}"]`
+    ) as HTMLInputElement | null;
+    if (liveUpdateCheckbox) {
+      liveUpdateCheckbox.checked = liveUpdate;
+    }
 
     // Show/hide distortion parameters based on camera model
     const distortionGroup = document.getElementById(`distortion-params-${fileIndex}`);
