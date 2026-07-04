@@ -100,46 +100,6 @@ importers:
         specifier: ^5.2.3
         version: 5.2.3(tslib@2.8.1)(webpack-cli@7.0.2)(webpack@5.106.2)
 
-  website:
-    dependencies:
-      '@types/js-yaml':
-        specifier: ^4.0.9
-        version: 4.0.9
-      js-yaml:
-        specifier: ^4.1.1
-        version: 4.1.1
-      pako:
-        specifier: ^2.1.0
-        version: 2.1.0
-      three:
-        specifier: ^0.184.0
-        version: 0.184.0
-    devDependencies:
-      '@playwright/test':
-        specifier: ^1.59.1
-        version: 1.59.1
-      '@types/three':
-        specifier: ^0.184.0
-        version: 0.184.0
-      copy-webpack-plugin:
-        specifier: ^14.0.0
-        version: 14.0.0(webpack@5.106.2)
-      ts-loader:
-        specifier: ^9.5.7
-        version: 9.5.7(typescript@6.0.3)(webpack@5.106.2)
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-      webpack:
-        specifier: ^5.106.2
-        version: 5.106.2(webpack-cli@7.0.2)
-      webpack-cli:
-        specifier: ^7.0.2
-        version: 7.0.2(webpack-dev-server@5.2.3)(webpack@5.106.2)
-      webpack-dev-server:
-        specifier: ^5.2.3
-        version: 5.2.3(tslib@2.8.1)(webpack-cli@7.0.2)(webpack@5.106.2)
-
 packages:
 
   7zip-bin@5.1.1:

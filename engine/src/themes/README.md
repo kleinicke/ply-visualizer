@@ -1,7 +1,7 @@
 # VS Code Themes for 3D Visualizer
 
 This directory contains VS Code theme definitions in JSON format for the PLY
-Visualizer website.
+Visualizer engine (used by both the VS Code extension and the standalone page).
 
 ## Adding New Themes
 

@@ -43,7 +43,7 @@ module.exports = [
     resolve: {
       extensions: ['.ts', '.js'],
       alias: {
-        '@website': path.resolve(__dirname, 'website/src'),
+        '@engine': path.resolve(__dirname, 'engine/src'),
       },
     },
     module: {
@@ -64,7 +64,7 @@ module.exports = [
   {
     target: 'web',
     mode: 'production',
-    entry: './website/src/main.ts',
+    entry: './engine/src/main.ts',
     output: {
       path: path.resolve(__dirname, 'out', 'webview'),
       filename: 'main.js',
@@ -90,8 +90,8 @@ module.exports = [
             {
               loader: 'ts-loader',
               options: {
-                configFile: 'website/src/tsconfig.json',
-                compiler: path.resolve(__dirname, 'website/node_modules/typescript'),
+                configFile: 'engine/src/tsconfig.json',
+                compiler: path.resolve(__dirname, 'engine/node_modules/typescript'),
               },
             },
           ],

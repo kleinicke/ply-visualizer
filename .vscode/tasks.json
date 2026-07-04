@@ -26,9 +26,9 @@
     {
       "type": "npm",
       "script": "dev",
-      "path": "website",
+      "path": "engine",
       "problemMatcher": [],
-      "label": "npm: dev - website",
+      "label": "npm: dev - engine",
       "detail": "webpack serve --mode=development"
     }
   ]

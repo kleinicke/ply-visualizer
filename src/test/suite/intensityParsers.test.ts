@@ -1,7 +1,7 @@
 import * as assert from 'assert';
-import { PcdParser } from '../../../website/src/parsers/pcdParser';
-import { PlyParser } from '../../../website/src/parsers/plyParser';
-import { PtsParser } from '../../../website/src/parsers/ptsParser';
+import { PcdParser } from '../../../engine/src/parsers/pcdParser';
+import { PlyParser } from '../../../engine/src/parsers/plyParser';
+import { PtsParser } from '../../../engine/src/parsers/ptsParser';
 
 suite('Intensity Parser Support', () => {
   test('PCD ASCII intensity is preserved as a scalar array', async () => {

@@ -12,15 +12,15 @@ dataset/
 coverage/
 .nyc_output/
 
-# Website build outputs and dependencies
-website/node_modules/
-website/dist/
-website/package-lock.json
-website/pnpm-lock.yaml
+# Engine (shared viz core + standalone page) build outputs and dependencies
+engine/node_modules/
+engine/dist/
+engine/package-lock.json
+engine/pnpm-lock.yaml
 
 # Test outputs
-website/test-results/
-website/playwright-report/
+engine/test-results/
+engine/playwright-report/
 
 # OS files
 .DS_Store

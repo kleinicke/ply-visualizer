@@ -6,11 +6,11 @@
 src/**
 temp/
 
-# Website files (only include necessary runtime files)
-website/**
-!website/src/**
-!website/media/**
-!website/index.html
+# Engine files (only include necessary runtime files)
+engine/**
+!engine/src/**
+!engine/media/**
+!engine/index.html
 
 # Config files
 .gitignore

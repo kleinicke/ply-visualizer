@@ -54,10 +54,12 @@ npx lint-staged         # Run linting on staged files (via git hooks)
 
 **For Core Functionality Changes** (parsers, visualization, controls):
 
-1. Work in `website/src/` directory - this is the shared codebase
-2. Test standalone website: `cd website && npm run dev` (if available)
-3. Test VS Code extension: Press **F5** to launch Extension Development Host
-4. Changes in `website/src/` automatically affect both targets
+1. Work in `engine/src/` directory - this is the shared codebase
+2. Fast feedback loop: `cd engine && npm run dev` (or `npm test` for
+   Playwright) - no need to launch VS Code for engine-only logic
+3. Before shipping, verify in the real target: Press **F5** to launch Extension
+   Development Host
+4. Changes in `engine/src/` automatically affect both targets
 
 **For VS Code-Specific Features** (commands, menus, file associations):
 
@@ -67,17 +69,22 @@ npx lint-staged         # Run linting on staged files (via git hooks)
 
 ## Architecture Overview
 
-This project implements a **dual-target architecture** supporting both a
-standalone website and a VS Code extension:
+**The VS Code extension is the primary product.** This project is one shared
+visualization engine (`engine/src/`) with two thin hosts:
 
-1. **Standalone Website** (`website/` folder) - Can run independently at
-   https://f-kleinicke.de
-2. **VS Code Extension** - Integrates the same core functionality into VS Code
+1. **VS Code Extension** (`src/` folder) - the main target; integrates the
+   engine into a custom editor via a webview
+2. **Standalone page** (`engine/` folder, deployed at https://f-kleinicke.de)
+   - a thin harness around the same engine bundle. It is not a second product to
+     feature-match the extension; its value is (a) a public demo/embed and (b) a
+     much faster test surface than the VS Code host - Playwright against a
+     browser page skips launching Electron/VS Code entirely.
 
-**Key Architectural Principle**: The `website/src/` directory contains all core
+**Key Architectural Principle**: The `engine/src/` directory contains all core
 visualization functionality (parsers, renderers, controls, depth processing)
 that is shared between both targets. The `src/` directory contains only VS
-Code-specific integration code.
+Code-specific integration code (commands, custom editor registration, webview
+wiring) - it should stay thin and delegate to `engine/src/`.
 
 ### Project Structure
 
@@ -86,9 +93,9 @@ Code-specific integration code.
 │   ├── extension.ts         # Extension activation & VS Code API integration
 │   ├── pointCloudEditorProvider.ts  # Custom editor registration
 │   └── *Parser.ts          # Lightweight parser wrappers for extension host
-├── website/                 # Shared core functionality + standalone website
+├── engine/                  # Shared visualization engine + standalone page host
 │   ├── src/                # Core visualization engine (shared code)
-│   │   ├── main.ts         # Main 3D visualization engine (~15,576 lines - TOO BIG!)
+│   │   ├── main.ts         # Main 3D visualization engine (~14,900 lines - TOO BIG!)
 │   │   ├── fileHandler.ts  # Shared file handling logic (USE THIS!)
 │   │   ├── controls.ts     # Camera control systems (USE THIS!)
 │   │   ├── interfaces.ts   # Shared type definitions
@@ -108,11 +115,10 @@ Code-specific integration code.
 │   │   ├── ui/             # UI generation modules (CREATE IF NEEDED)
 │   │   │   ├── dialogs.ts  # Dialog HTML generators (proposed)
 │   │   │   └── ...
-│   │   └── utils/          # Utility modules (CREATE IF NEEDED)
-│   │       ├── math.ts     # Math/geometry helpers (proposed)
-│   │       └── ...
-│   ├── index.html          # Standalone website entry point (SINGLE SOURCE OF TRUTH!)
-│   └── webpack.config.js   # Website-specific build configuration
+│   │   └── utils/          # Utility modules (matrix.ts, perfLog.ts exist; add more here)
+│   ├── test/               # Playwright tests - the fast engine test surface
+│   ├── index.html          # Standalone page entry point (SINGLE SOURCE OF TRUTH!)
+│   └── webpack.config.js   # Engine-specific build configuration
 ├── media/                  # Shared static assets (CSS, external libraries)
 └── testfiles/             # Test data organized by format type
 ```
@@ -120,7 +126,8 @@ Code-specific integration code.
 This architecture enables:
 
 - **Code Reuse**: Core functionality written once, used in both contexts
-- **Independent Development**: Website can be developed and tested standalone
+- **Fast Testing**: The engine can be developed and tested standalone via
+  Playwright, without booting VS Code/Electron
 - **VS Code Integration**: Extension provides native VS Code experience with
   same features
 
@@ -139,14 +146,14 @@ This architecture enables:
 
 **Webview (Browser Context)**
 
-- `website/src/main.ts` - Main visualization engine (~9000+ lines)
-- `website/src/depth/` - Depth processing pipeline:
+- `engine/src/main.ts` - Main visualization engine (~9000+ lines)
+- `engine/src/depth/` - Depth processing pipeline:
   - `DepthRegistry.ts` - Format detection and reader selection
   - `DepthProjector.ts` - 3D projection with camera models (pinhole/fisheye)
   - `readers/` - Format-specific depth readers (TIF, PFM, NPY, PNG)
-- `website/src/parsers/` - Format-specific parsers (PLY, OBJ, STL, etc.)
-- `website/src/controls.ts` - Camera control systems
-- `website/src/themes/` - Color themes and UI styling
+- `engine/src/parsers/` - Format-specific parsers (PLY, OBJ, STL, etc.)
+- `engine/src/controls.ts` - Camera control systems
+- `engine/src/themes/` - Color themes and UI styling
 - `media/` - External dependencies (geotiff.min.js, CSS)
 
 ### Key Architectural Patterns
@@ -159,10 +166,10 @@ This architecture enables:
    - Contains lightweight parsers that delegate core parsing to webview
 
 2. **Webview Bundle** (Web target):
-   - Entry: `website/src/main.ts`
+   - Entry: `engine/src/main.ts`
    - Purpose: 3D visualization, user interaction, core functionality
    - Contains complete parsers, rendering engine, controls, themes
-   - Same bundle used for both VS Code webview and standalone website
+   - Same bundle used for both the VS Code webview and the standalone page
 
 3. **Shared Resources**:
    - `media/` directory assets accessible to both targets
@@ -242,7 +249,7 @@ supporting:
 **TypeScript Configuration**:
 
 - Root `tsconfig.json` - Extension host compilation (Node.js target)
-- `website/src/tsconfig.json` - Webview compilation (DOM/ES6 target)
+- `engine/src/tsconfig.json` - Webview compilation (DOM/ES6 target)
 - Webpack enforces separation and prevents dependency conflicts
 
 **Test Organization**:
@@ -259,7 +266,7 @@ supporting:
 
 - `media/` - External JavaScript libraries and CSS
 - `out/` - Compiled extension and webview bundles
-- `website/` - Webview source code and assets
+- `engine/` - Webview source code and assets
 - `testfiles/` - Organized test files by format type
 
 **Git Hooks & Code Quality**:
@@ -273,7 +280,7 @@ supporting:
 
 ### Preventing Code Bloat in main.ts
 
-**IMPORTANT**: `website/src/main.ts` is currently **15,576 lines (603KB)** - one
+**IMPORTANT**: `engine/src/main.ts` is currently **15,576 lines (603KB)** - one
 of the largest files in the project. To prevent further growth:
 
 **DO:**
@@ -281,18 +288,17 @@ of the largest files in the project. To prevent further growth:
 - ✅ **Move code OUT of main.ts** - Always prefer existing appropriate files
   over adding to main.ts
 - ✅ **Use existing modular directories first**: Check if your code fits in
-  `website/src/parsers/`, `website/src/depth/`, `website/src/themes/`,
-  `website/src/controls.ts`, `website/src/fileHandler.ts`
-- ✅ **Add new parsers** in `website/src/parsers/` directory (follow existing
+  `engine/src/parsers/`, `engine/src/depth/`, `engine/src/themes/`,
+  `engine/src/controls.ts`, `engine/src/fileHandler.ts`
+- ✅ **Add new parsers** in `engine/src/parsers/` directory (follow existing
   parser patterns)
-- ✅ **Add new depth readers** in `website/src/depth/readers/` (implement reader
+- ✅ **Add new depth readers** in `engine/src/depth/readers/` (implement reader
   interface)
-- ✅ **Add camera/control features** to `website/src/controls.ts` (already
+- ✅ **Add camera/control features** to `engine/src/controls.ts` (already
   modular)
-- ✅ **Add file handling logic** to `website/src/fileHandler.ts` (already
-  shared)
+- ✅ **Add file handling logic** to `engine/src/fileHandler.ts` (already shared)
 - ✅ **Only create NEW files** if no appropriate existing file exists (e.g., new
-  `website/src/ui/` or `website/src/utils/` modules)
+  `engine/src/ui/` or `engine/src/utils/` modules)
 
 **DON'T:**
 
@@ -317,8 +323,8 @@ of the largest files in the project. To prevent further growth:
 
 **Single Source of Truth:**
 
-- `website/index.html` is the **canonical UI definition** for both website and
-  VSCode extension
+- `engine/index.html` is the **canonical UI definition** for both the standalone
+  page and the VS Code extension
 - `src/pointCloudEditorProvider.ts` reads and modifies this HTML at runtime
 - **Never duplicate HTML** between these files - modify index.html only
 
@@ -326,17 +332,17 @@ of the largest files in the project. To prevent further growth:
 
 **Decision Tree for Adding Code:**
 
-1. **Is it parser-related?** → Add to existing file in `website/src/parsers/` or
+1. **Is it parser-related?** → Add to existing file in `engine/src/parsers/` or
    create new parser following pattern
-2. **Is it depth/camera-related?** → Add to `website/src/depth/` directory
+2. **Is it depth/camera-related?** → Add to `engine/src/depth/` directory
    (DepthProjector, readers, etc.)
-3. **Is it camera controls?** → Add to `website/src/controls.ts` (already
+3. **Is it camera controls?** → Add to `engine/src/controls.ts` (already
    modular)
-4. **Is it file detection/handling?** → Add to `website/src/fileHandler.ts`
+4. **Is it file detection/handling?** → Add to `engine/src/fileHandler.ts`
    (already shared)
-5. **Is it theme-related?** → Add to `website/src/themes/` directory
-6. **Is it UI generation?** → Create in `website/src/ui/` directory (new module)
-7. **Is it a utility function?** → Create in `website/src/utils/` directory (new
+5. **Is it theme-related?** → Add to `engine/src/themes/` directory
+6. **Is it UI generation?** → Create in `engine/src/ui/` directory (new module)
+7. **Is it a utility function?** → Create in `engine/src/utils/` directory (new
    module)
 8. **Is it core visualization logic?** → Only then consider adding to main.ts
    (last resort)
@@ -352,12 +358,12 @@ of the largest files in the project. To prevent further growth:
 **Example - Good Pattern:**
 
 ```typescript
-// website/src/ui/transformDialog.ts
+// engine/src/ui/transformDialog.ts
 export function createTransformDialog(fileData: SpatialData): string {
   return `<div class="transform-dialog">...</div>`;
 }
 
-// website/src/main.ts
+// engine/src/main.ts
 import { createTransformDialog } from './ui/transformDialog';
 // Use it without defining inline
 ```
@@ -365,7 +371,7 @@ import { createTransformDialog } from './ui/transformDialog';
 **Example - Bad Pattern:**
 
 ```typescript
-// website/src/main.ts
+// engine/src/main.ts
 private showTransformDialog() {
   const html = `<div>...</div>`; // 200 lines of HTML inline
   dialog.innerHTML = html;
@@ -378,7 +384,7 @@ private showTransformDialog() {
 modules:
 
 ```
-website/src/
+engine/src/
 ├── main.ts                    # Coordinator only (~2,000 lines target)
 ├── fileHandler.ts             # File detection/handling (EXISTS - use it!)
 ├── controls.ts                # Camera controls (EXISTS - use it!)

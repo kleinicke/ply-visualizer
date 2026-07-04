@@ -2,16 +2,16 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { DatasetManager } from './dataset/datasetManager';
-import { PlyParser } from '../website/src/parsers/plyParser';
-import { ObjParser } from '../website/src/parsers/objParser';
-import { MtlParser } from '../website/src/parsers/mtlParser';
-import { StlParser } from '../website/src/parsers/stlParser';
-import { PcdParser } from '../website/src/parsers/pcdParser';
-import { PtsParser } from '../website/src/parsers/ptsParser';
-import { OffParser } from '../website/src/parsers/offParser';
-import { GltfParser } from '../website/src/parsers/gltfParser';
-import { NpyParser } from '../website/src/parsers/npyParser';
-import { XyzVariantParser } from '../website/src/parsers/xyzVariantParser';
+import { PlyParser } from '../engine/src/parsers/plyParser';
+import { ObjParser } from '../engine/src/parsers/objParser';
+import { MtlParser } from '../engine/src/parsers/mtlParser';
+import { StlParser } from '../engine/src/parsers/stlParser';
+import { PcdParser } from '../engine/src/parsers/pcdParser';
+import { PtsParser } from '../engine/src/parsers/ptsParser';
+import { OffParser } from '../engine/src/parsers/offParser';
+import { GltfParser } from '../engine/src/parsers/gltfParser';
+import { NpyParser } from '../engine/src/parsers/npyParser';
+import { XyzVariantParser } from '../engine/src/parsers/xyzVariantParser';
 import {
   parseXyzWasm,
   parseAsciiPlyWasm,
@@ -30,7 +30,7 @@ import {
   generateErrorMessage,
   SUPPORTED_EXTENSIONS,
   ALL_SUPPORTED_EXTENSIONS,
-} from '../website/src/fileHandler';
+} from '../engine/src/fileHandler';
 
 export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProvider {
   private static readonly viewType = 'plyViewer.plyEditor';
@@ -141,7 +141,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     webviewPanel.webview.options = {
       enableScripts: true,
       localResourceRoots: [
-        vscode.Uri.joinPath(this.context.extensionUri, 'website', 'media'),
+        vscode.Uri.joinPath(this.context.extensionUri, 'engine', 'media'),
         vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview'),
         // The document's directory so the webview can fetch the file bytes
         // directly (transfer-via-fetch), avoiding the postMessage copy for
@@ -1098,7 +1098,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
   private getHtmlForWebview(webview: vscode.Webview): string {
     // Read the shared index.html file (single source of truth)
-    const htmlPath = vscode.Uri.joinPath(this.context.extensionUri, 'website', 'index.html');
+    const htmlPath = vscode.Uri.joinPath(this.context.extensionUri, 'engine', 'index.html');
     const htmlPathOnDisk = htmlPath.fsPath;
     let html = fs.readFileSync(htmlPathOnDisk, 'utf8');
 
@@ -1113,7 +1113,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     const stylePathOnDisk = vscode.Uri.joinPath(
       this.context.extensionUri,
-      'website',
+      'engine',
       'media',
       'style.css'
     );
@@ -1121,7 +1121,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     const geotiffPathOnDisk = vscode.Uri.joinPath(
       this.context.extensionUri,
-      'website',
+      'engine',
       'media',
       'geotiff.min.js'
     );
@@ -1132,7 +1132,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     // the webview fetches the .wasm binary from this URI at init time.
     const tiffWasmGlueOnDisk = vscode.Uri.joinPath(
       this.context.extensionUri,
-      'website',
+      'engine',
       'media',
       'wasm',
       'tiff_wasm.js'
@@ -1140,7 +1140,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const tiffWasmGlueUri = webview.asWebviewUri(tiffWasmGlueOnDisk).toString();
     const tiffWasmBinaryOnDisk = vscode.Uri.joinPath(
       this.context.extensionUri,
-      'website',
+      'engine',
       'media',
       'wasm',
       'tiff_wasm_bg.wasm'

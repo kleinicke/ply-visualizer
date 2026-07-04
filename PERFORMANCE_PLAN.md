@@ -25,7 +25,7 @@ Two processes, message-passing via `postMessage`:
   file routing by extension, file **read** (`readFileFast`), **parse** dispatch,
   **transfer** to webview, and `getHtmlForWebview` (CSP + nonced script
   injection). Entry: `resolveCustomEditor`'s `setImmediate(async …)`.
-- **Webview (Chromium renderer)** — `website/src/main.ts` (~14.7k lines, one
+- **Webview (Chromium renderer)** — `engine/src/main.ts` (~14.7k lines, one
   `PointCloudVisualizer` class): Three.js scene/renderer, geometry build, color
   modes, materials, the render loop, and the message dispatch `switch`.
 
@@ -41,16 +41,16 @@ Supporting:
   `parseAsciiPlyWasm`, `parsePcdAsciiWasm`, `streamParseFile`, `marshal`. Loads
   the pkg via
   `__non_webpack_require__(path.join(__dirname,'wasm/pointcloud-parser/…'))`.
-- `website/src/parsers/` — JS parsers (fallbacks + binary): `plyParser`,
+- `engine/src/parsers/` — JS parsers (fallbacks + binary): `plyParser`,
   `pcdParser`, `ptsParser`, `objParser`, `stlParser`, `offParser`, `gltfParser`,
   `npyParser`, `xyzVariantParser`, `mtlParser`.
-- `website/src/depth/` — depth→pointcloud: `DepthProjector.ts`
+- `engine/src/depth/` — depth→pointcloud: `DepthProjector.ts`
   (`projectToPointCloud`, `normalizeDepth`), `readers/TifReader.ts` (uses the
-  sister extension's WASM TIFF decoder at `website/media/wasm/tiff_wasm*`),
+  sister extension's WASM TIFF decoder at `engine/media/wasm/tiff_wasm*`),
   `DepthConverter.ts`.
-- `website/src/postprocessing/EDLPass.ts` — Eye-Dome-Lighting post-process.
-- `website/src/colorProcessor.ts` — sRGB→linear LUT (`ensureSrgbLUT`).
-- `website/src/utils/perfLog.ts` — `PerfTimer` + `perfLog()`; lines go to the
+- `engine/src/postprocessing/EDLPass.ts` — Eye-Dome-Lighting post-process.
+- `engine/src/colorProcessor.ts` — sRGB→linear LUT (`ensureSrgbLUT`).
+- `engine/src/utils/perfLog.ts` — `PerfTimer` + `perfLog()`; lines go to the
   **"3D Visualizer" Output channel** (extension writes them; webview forwards
   via a `perfLog` message). Use this for any new timing.
 
@@ -301,7 +301,7 @@ EDL fold (8.x).
   _Verify:_ 50M cloud stays at interactive FPS; full detail when stationary.
 - **8.4 EDL fold** 🔜 — integrate Eye-Dome-Lighting into 7.1's point shader (or
   drive it from the same depth) to drop the extra full-screen pass + depth
-  texture. _Where:_ `website/src/postprocessing/EDLPass.ts`, `initEDLComposer`
+  texture. _Where:_ `engine/src/postprocessing/EDLPass.ts`, `initEDLComposer`
   (~1564).
 - **8.5 Octree LOD (screen-space error)** 🔭 — the endgame; **hardest** (level
   depends on camera distance + pixel size; tuning is finicky — a prior attempt
