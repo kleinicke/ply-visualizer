@@ -50,6 +50,14 @@ import { registerDefaultReaders, readDepth } from './depth/DepthRegistry';
 import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
 import { ColorImageLoader } from './colorImageLoader';
 import { PerfTimer, perfLog, setPerfSink } from './utils/perfLog';
+import {
+  createRotationMatrix,
+  createTranslationMatrix,
+  createQuaternionMatrix,
+  createAngleAxisMatrix,
+  parseSpaceSeparatedValues,
+  parseMatrixInput,
+} from './utils/matrix';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -2029,63 +2037,6 @@ class PointCloudVisualizer {
     }
   }
 
-  private createRotationMatrix(axis: 'x' | 'y' | 'z', angle: number): THREE.Matrix4 {
-    const matrix = new THREE.Matrix4();
-    switch (axis) {
-      case 'x':
-        matrix.makeRotationX(angle);
-        break;
-      case 'y':
-        matrix.makeRotationY(angle);
-        break;
-      case 'z':
-        matrix.makeRotationZ(angle);
-        break;
-    }
-    return matrix;
-  }
-
-  private createTranslationMatrix(x: number, y: number, z: number): THREE.Matrix4 {
-    const matrix = new THREE.Matrix4();
-    matrix.makeTranslation(x, y, z);
-    return matrix;
-  }
-
-  private createQuaternionMatrix(x: number, y: number, z: number, w: number): THREE.Matrix4 {
-    const quaternion = new THREE.Quaternion(x, y, z, w);
-    quaternion.normalize();
-    const matrix = new THREE.Matrix4();
-    matrix.makeRotationFromQuaternion(quaternion);
-    return matrix;
-  }
-
-  private createAngleAxisMatrix(axis: THREE.Vector3, angle: number): THREE.Matrix4 {
-    const quaternion = new THREE.Quaternion();
-    quaternion.setFromAxisAngle(axis.normalize(), angle);
-    const matrix = new THREE.Matrix4();
-    matrix.makeRotationFromQuaternion(quaternion);
-    return matrix;
-  }
-
-  private parseSpaceSeparatedValues(input: string): number[] {
-    if (!input.trim()) {
-      return [];
-    }
-
-    // Remove brackets, parentheses, and normalize whitespace/separators
-    let cleaned = input
-      .replace(/[\[\](){}]/g, '') // Remove brackets/parentheses
-      .replace(/[,;]/g, ' ') // Replace commas/semicolons with spaces
-      .replace(/\s+/g, ' ') // Normalize multiple spaces to single
-      .trim();
-
-    // Split by spaces and parse numbers
-    return cleaned
-      .split(' ')
-      .map(s => parseFloat(s))
-      .filter(n => !isNaN(n));
-  }
-
   private multiplyTransformationMatrices(fileIndex: number, matrix: THREE.Matrix4): void {
     if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
       this.transformationMatrices[fileIndex].multiply(matrix);
@@ -2095,7 +2046,7 @@ class PointCloudVisualizer {
 
   private addTranslationToMatrix(fileIndex: number, x: number, y: number, z: number): void {
     if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-      const translationMatrix = this.createTranslationMatrix(x, y, z);
+      const translationMatrix = createTranslationMatrix(x, y, z);
       this.multiplyTransformationMatrices(fileIndex, translationMatrix);
     }
   }
@@ -5995,7 +5946,7 @@ class PointCloudVisualizer {
         applyBtn.addEventListener('click', () => {
           const textarea = document.getElementById(`matrix-${i}`) as HTMLTextAreaElement;
           if (textarea) {
-            const values = this.parseMatrixInput(textarea.value);
+            const values = parseMatrixInput(textarea.value);
             if (values && values.length === 16) {
               const mat = new THREE.Matrix4();
               // Read matrix in row-major order (as displayed in UI)
@@ -6082,7 +6033,7 @@ class PointCloudVisualizer {
       const rotateXBtn = document.querySelector(`.rotate-x[data-file-index="${i}"]`);
       if (rotateXBtn) {
         rotateXBtn.addEventListener('click', () => {
-          const rotationMatrix = this.createRotationMatrix('x', Math.PI / 2); // 90 degrees
+          const rotationMatrix = createRotationMatrix('x', Math.PI / 2); // 90 degrees
           this.multiplyTransformationMatrices(i, rotationMatrix);
           this.updateMatrixTextarea(i);
         });
@@ -6091,7 +6042,7 @@ class PointCloudVisualizer {
       const rotateYBtn = document.querySelector(`.rotate-y[data-file-index="${i}"]`);
       if (rotateYBtn) {
         rotateYBtn.addEventListener('click', () => {
-          const rotationMatrix = this.createRotationMatrix('y', Math.PI / 2); // 90 degrees
+          const rotationMatrix = createRotationMatrix('y', Math.PI / 2); // 90 degrees
           this.multiplyTransformationMatrices(i, rotationMatrix);
           this.updateMatrixTextarea(i);
         });
@@ -6100,7 +6051,7 @@ class PointCloudVisualizer {
       const rotateZBtn = document.querySelector(`.rotate-z[data-file-index="${i}"]`);
       if (rotateZBtn) {
         rotateZBtn.addEventListener('click', () => {
-          const rotationMatrix = this.createRotationMatrix('z', Math.PI / 2); // 90 degrees
+          const rotationMatrix = createRotationMatrix('z', Math.PI / 2); // 90 degrees
           this.multiplyTransformationMatrices(i, rotationMatrix);
           this.updateMatrixTextarea(i);
         });
@@ -9513,7 +9464,7 @@ class PointCloudVisualizer {
     if (applyBtn) {
       applyBtn.addEventListener('click', () => {
         const input = (dialog.querySelector('#translation-input') as HTMLTextAreaElement).value;
-        const values = this.parseSpaceSeparatedValues(input);
+        const values = parseSpaceSeparatedValues(input);
 
         if (values.length === 3) {
           const [x, y, z] = values;
@@ -9604,11 +9555,11 @@ class PointCloudVisualizer {
     if (applyBtn) {
       applyBtn.addEventListener('click', () => {
         const input = (dialog.querySelector('#quaternion-input') as HTMLTextAreaElement).value;
-        const values = this.parseSpaceSeparatedValues(input);
+        const values = parseSpaceSeparatedValues(input);
 
         if (values.length === 4) {
           const [x, y, z, w] = values;
-          const quaternionMatrix = this.createQuaternionMatrix(x, y, z, w);
+          const quaternionMatrix = createQuaternionMatrix(x, y, z, w);
           this.multiplyTransformationMatrices(fileIndex, quaternionMatrix);
           this.updateMatrixTextarea(fileIndex);
           closeModal();
@@ -9696,13 +9647,13 @@ class PointCloudVisualizer {
     if (applyBtn) {
       applyBtn.addEventListener('click', () => {
         const input = (dialog.querySelector('#angle-axis-input') as HTMLTextAreaElement).value;
-        const values = this.parseSpaceSeparatedValues(input);
+        const values = parseSpaceSeparatedValues(input);
 
         if (values.length === 4) {
           const [axisX, axisY, axisZ, angleDegrees] = values;
           const axis = new THREE.Vector3(axisX, axisY, axisZ);
           const angle = (angleDegrees * Math.PI) / 180; // Convert to radians
-          const angleAxisMatrix = this.createAngleAxisMatrix(axis, angle);
+          const angleAxisMatrix = createAngleAxisMatrix(axis, angle);
           this.multiplyTransformationMatrices(fileIndex, angleAxisMatrix);
           this.updateMatrixTextarea(fileIndex);
           closeModal();
@@ -9811,7 +9762,7 @@ class PointCloudVisualizer {
         const constraint = (
           dialog.querySelector('input[name="position-constraint"]:checked') as HTMLInputElement
         ).value;
-        const values = this.parseSpaceSeparatedValues(input);
+        const values = parseSpaceSeparatedValues(input);
 
         if (values.length === 3) {
           const [x, y, z] = values;
@@ -9953,7 +9904,7 @@ class PointCloudVisualizer {
         const constraint = (
           dialog.querySelector('input[name="rotation-constraint"]:checked') as HTMLInputElement
         ).value;
-        const values = this.parseSpaceSeparatedValues(input);
+        const values = parseSpaceSeparatedValues(input);
 
         if (values.length === 3) {
           const [x, y, z] = values;
@@ -10109,7 +10060,7 @@ class PointCloudVisualizer {
         const constraint = (
           dialog.querySelector('input[name="center-constraint"]:checked') as HTMLInputElement
         ).value;
-        const values = this.parseSpaceSeparatedValues(input);
+        const values = parseSpaceSeparatedValues(input);
 
         if (values.length === 3) {
           const [x, y, z] = values;
@@ -12370,37 +12321,6 @@ class PointCloudVisualizer {
       return `Image Size: Width: ${width}, Height: ${height}`;
     }
     return 'Image Size: Width: -, Height: -';
-  }
-
-  private parseMatrixInput(input: string): number[] | null {
-    try {
-      // Remove brackets, commas, and other unwanted characters, keep numbers, spaces, dots, minus signs
-      const cleaned = input
-        .replace(/[\[\],]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      // Split by whitespace and parse numbers
-      const values = cleaned
-        .split(/\s+/)
-        .map(str => {
-          const num = parseFloat(str);
-          return isNaN(num) ? null : num;
-        })
-        .filter(val => val !== null) as number[];
-
-      // Should have exactly 16 numbers
-      if (values.length !== 16) {
-        console.warn(`Matrix parsing: Expected 16 numbers, got ${values.length}`);
-        return null;
-      }
-
-      console.log(`✅ Matrix parsed successfully: ${values.length} numbers`);
-      return values;
-    } catch (error) {
-      console.error('Matrix parsing error:', error);
-      return null;
-    }
   }
 
   private setLiveDepthUpdateEnabled(fileIndex: number, enabled: boolean): void {
