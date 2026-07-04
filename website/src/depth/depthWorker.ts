@@ -1,11 +1,12 @@
 import { CameraParams, DepthConversionResult } from '../interfaces';
-import { DepthConverter } from './DepthConverter';
+import { DecodedDepthImage, DepthConverter } from './DepthConverter';
 import { applyColorToDepthResult } from './applyColorToDepthResult';
-import { ensureTiffWasmGlueLoaded } from './readers/tiffWasm';
+import { ensureTiffWasmGlueLoaded, initTiffWasm } from './readers/tiffWasm';
 
 interface DepthWorkerRequest {
   id: number;
-  depthData: ArrayBuffer;
+  cacheKey: string;
+  depthData?: ArrayBuffer;
   fileName: string;
   cameraParams: CameraParams;
   colorImageData?: ImageData;
@@ -28,6 +29,9 @@ interface DepthWorkerFailure {
 
 const converter = new DepthConverter();
 const importedScripts = new Set<string>();
+const decodedCache = new Map<string, DecodedDepthImage>();
+const decodedCacheOrder: string[] = [];
+const maxDecodedCacheEntries = 4;
 
 function importClassicScript(url?: string): void {
   if (!url || importedScripts.has(url)) {
@@ -54,6 +58,31 @@ function transferListFor(result: DepthConversionResult): Transferable[] {
   return transfers;
 }
 
+async function getDecodedDepth(message: DepthWorkerRequest): Promise<DecodedDepthImage> {
+  const cached = decodedCache.get(message.cacheKey);
+  if (cached) {
+    return cached;
+  }
+  if (!message.depthData) {
+    throw new Error('Depth worker cache miss without source image bytes');
+  }
+
+  const decoded = await converter.decodeDepthImage(
+    message.depthData,
+    message.fileName,
+    message.cameraParams
+  );
+  decodedCache.set(message.cacheKey, decoded);
+  decodedCacheOrder.push(message.cacheKey);
+  while (decodedCacheOrder.length > maxDecodedCacheEntries) {
+    const oldest = decodedCacheOrder.shift();
+    if (oldest) {
+      decodedCache.delete(oldest);
+    }
+  }
+  return decoded;
+}
+
 self.onmessage = async (event: MessageEvent<DepthWorkerRequest>) => {
   const message = event.data;
   try {
@@ -61,10 +90,12 @@ self.onmessage = async (event: MessageEvent<DepthWorkerRequest>) => {
       (globalThis as any).__TIFF_WASM_URL__ = message.tiffWasmUrl;
     }
     ensureTiffWasmGlueLoaded(message.tiffWasmGlueUrl);
+    await initTiffWasm();
     importClassicScript(message.geotiffUrl);
 
-    const result = await converter.processDepthToPointCloud(
-      message.depthData,
+    const decoded = await getDecodedDepth(message);
+    const result = converter.projectDecodedDepthImage(
+      decoded,
       message.fileName,
       message.cameraParams
     );

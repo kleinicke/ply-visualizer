@@ -90,6 +90,35 @@ pub struct DepthProjectResult {
 }
 
 #[wasm_bindgen]
+pub struct NormalizeDepthResult {
+    data: Vec<f32>,
+    width: u32,
+    height: u32,
+    kind: String,
+    unit: String,
+}
+
+#[wasm_bindgen]
+impl NormalizeDepthResult {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 { self.width }
+
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 { self.height }
+
+    #[wasm_bindgen(getter)]
+    pub fn kind(&self) -> String { self.kind.clone() }
+
+    #[wasm_bindgen(getter)]
+    pub fn unit(&self) -> String { self.unit.clone() }
+
+    #[wasm_bindgen]
+    pub fn take_data(&mut self) -> Vec<f32> {
+        mem::take(&mut self.data)
+    }
+}
+
+#[wasm_bindgen]
 impl DepthProjectResult {
     #[wasm_bindgen(getter)]
     pub fn point_count(&self) -> u32 { self.point_count }
@@ -409,6 +438,95 @@ impl TiffResult {
         }
         self.get_data_as_f32()
     }
+}
+
+#[wasm_bindgen]
+pub fn normalize_depth_fast(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    kind: &str,
+    unit: &str,
+    scale: f32,
+    depth_scale: f32,
+    depth_bias: f32,
+    fx: f32,
+    baseline: f32,
+    disparity_offset: f32,
+    has_clamp_min: bool,
+    clamp_min: f32,
+    has_clamp_max: bool,
+    clamp_max: f32,
+) -> Result<NormalizeDepthResult, JsValue> {
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| JsValue::from_str("Depth dimensions overflow"))?;
+    if data.len() < expected {
+        return Err(JsValue::from_str("Depth data is smaller than width*height"));
+    }
+
+    let mut out = Vec::with_capacity(expected);
+    out.extend_from_slice(&data[..expected]);
+
+    let unit_scale = if kind == "depth" || kind == "z" {
+        if unit == "millimeter" { 0.001 * scale } else { scale }
+    } else {
+        1.0
+    };
+    let has_depth_scale_bias = depth_scale != 1.0 || depth_bias != 0.0;
+
+    if unit_scale != 1.0 {
+        for v in &mut out {
+            *v *= unit_scale;
+        }
+    }
+
+    if has_depth_scale_bias {
+        for v in &mut out {
+            if v.is_finite() {
+                *v = *v * depth_scale + depth_bias;
+            }
+        }
+    }
+
+    let mut normalized_kind = kind.to_string();
+    let mut normalized_unit = unit.to_string();
+    if kind == "disparity" && fx > 0.0 && baseline > 0.0 {
+        let eps = 1e-8f32;
+        for v in &mut out {
+            let d = *v + disparity_offset;
+            *v = if d > eps { (fx * baseline) / d } else { f32::NAN };
+        }
+        normalized_kind = "depth".to_string();
+        normalized_unit = "meter".to_string();
+    } else if kind == "inverse_depth" {
+        let inverse_scale = if unit == "millimeter" { 0.001 * scale } else { scale };
+        for v in &mut out {
+            let id = *v * inverse_scale;
+            *v = if id > 0.0 { 1.0 / id } else { f32::NAN };
+        }
+        normalized_kind = "depth".to_string();
+        normalized_unit = "meter".to_string();
+    }
+
+    if has_clamp_min || has_clamp_max {
+        for v in &mut out {
+            if has_clamp_min && *v < clamp_min {
+                *v = f32::NAN;
+            }
+            if has_clamp_max && *v > clamp_max {
+                *v = f32::NAN;
+            }
+        }
+    }
+
+    Ok(NormalizeDepthResult {
+        data: out,
+        width,
+        height,
+        kind: normalized_kind,
+        unit: normalized_unit,
+    })
 }
 
 #[wasm_bindgen]

@@ -14,10 +14,20 @@ interface WorkerResponse {
   error?: string;
 }
 
+function decodeConfigKey(cameraParams: CameraParams): string {
+  return JSON.stringify({
+    pngScaleFactor: cameraParams.pngScaleFactor ?? null,
+    rgb24ConversionMode: cameraParams.rgb24ConversionMode ?? 'shift',
+    rgb24ScaleFactor: cameraParams.rgb24ScaleFactor ?? 1000,
+    rgb24InvalidValue: cameraParams.rgb24InvalidValue ?? null,
+  });
+}
+
 export class DepthWorkerClient {
   private worker: Worker | null | undefined;
   private nextRequestId = 1;
   private pending = new Map<number, PendingRequest>();
+  private primedCacheKeys = new Set<string>();
 
   constructor(private readonly fallbackConverter: DepthConverter) {}
 
@@ -33,14 +43,24 @@ export class DepthWorkerClient {
     }
 
     const id = this.nextRequestId++;
-    const copiedDepthData = depthData.slice(0);
+    const configKey = decodeConfigKey(cameraParams);
+    const cacheKey = `${fileName}:${depthData.byteLength}:${configKey}`;
+    const shouldSendDepthData = !this.primedCacheKeys.has(cacheKey);
+    const copiedDepthData = shouldSendDepthData ? depthData.slice(0) : undefined;
 
     return new Promise<DepthConversionResult>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, {
+        resolve: result => {
+          this.primedCacheKeys.add(cacheKey);
+          resolve(result);
+        },
+        reject,
+      });
       try {
         worker.postMessage(
           {
             id,
+            cacheKey,
             depthData: copiedDepthData,
             fileName,
             cameraParams: { ...cameraParams },
@@ -49,7 +69,7 @@ export class DepthWorkerClient {
             tiffWasmGlueUrl: (globalThis as any).__TIFF_WASM_GLUE_URL__,
             tiffWasmUrl: (globalThis as any).__TIFF_WASM_URL__,
           },
-          [copiedDepthData]
+          copiedDepthData ? [copiedDepthData] : []
         );
       } catch (error) {
         this.pending.delete(id);

@@ -297,6 +297,7 @@ class PointCloudVisualizer {
   private liveDepthUpdateInFlight = new Set<number>();
   private liveDepthUpdateQueued = new Set<number>();
   private liveDepthUpdateTimers = new Map<number, number>();
+  private liveDepthUpdateVersions = new Map<number, number>();
   private useLinearColorSpace: boolean = true; // Default: toggle is inactive; renderer still outputs sRGB
   private axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
   // Color space handling: always output sRGB, optionally convert source sRGB colors to linear before shading
@@ -7973,6 +7974,15 @@ class PointCloudVisualizer {
     this.liveDepthUpdateFiles = shiftLiveDepthSet(this.liveDepthUpdateFiles);
     this.liveDepthUpdateInFlight = shiftLiveDepthSet(this.liveDepthUpdateInFlight);
     this.liveDepthUpdateQueued = shiftLiveDepthSet(this.liveDepthUpdateQueued);
+    const shiftedVersions = new Map<number, number>();
+    for (const [key, version] of this.liveDepthUpdateVersions) {
+      if (key > fileIndex) {
+        shiftedVersions.set(key - 1, version);
+      } else if (key < fileIndex) {
+        shiftedVersions.set(key, version);
+      }
+    }
+    this.liveDepthUpdateVersions = shiftedVersions;
 
     // Reassign file indices
     for (let i = 0; i < this.spatialFiles.length; i++) {
@@ -12399,6 +12409,7 @@ class PointCloudVisualizer {
     } else {
       this.liveDepthUpdateFiles.delete(fileIndex);
       this.liveDepthUpdateQueued.delete(fileIndex);
+      this.liveDepthUpdateVersions.delete(fileIndex);
       const timer = this.liveDepthUpdateTimers.get(fileIndex);
       if (timer !== undefined) {
         window.clearTimeout(timer);
@@ -12428,6 +12439,9 @@ class PointCloudVisualizer {
       return;
     }
 
+    const nextVersion = (this.liveDepthUpdateVersions.get(fileIndex) || 0) + 1;
+    this.liveDepthUpdateVersions.set(fileIndex, nextVersion);
+
     const existing = this.liveDepthUpdateTimers.get(fileIndex);
     if (existing !== undefined) {
       window.clearTimeout(existing);
@@ -12451,8 +12465,9 @@ class PointCloudVisualizer {
     }
 
     this.liveDepthUpdateInFlight.add(fileIndex);
+    const version = this.liveDepthUpdateVersions.get(fileIndex) || 0;
     try {
-      await this.applyDepthSettings(fileIndex);
+      await this.applyDepthSettings(fileIndex, version);
     } finally {
       this.liveDepthUpdateInFlight.delete(fileIndex);
       if (
@@ -12463,7 +12478,18 @@ class PointCloudVisualizer {
       }
     }
   }
-  private async applyDepthSettings(fileIndex: number): Promise<void> {
+
+  private isLiveDepthResultCurrent(fileIndex: number, version?: number): boolean {
+    return version === undefined || this.liveDepthUpdateVersions.get(fileIndex) === version;
+  }
+
+  private waitForNextFrame(): Promise<void> {
+    return new Promise(resolve => {
+      window.requestAnimationFrame(() => resolve());
+    });
+  }
+
+  private async applyDepthSettings(fileIndex: number, liveVersion?: number): Promise<void> {
     try {
       // Get the current values from the form using the helper method
       const newCameraParams = this.getDepthSettingsFromFileUI(fileIndex);
@@ -12509,6 +12535,14 @@ class PointCloudVisualizer {
         newCameraParams,
         depthData.colorImageData
       );
+      if (!this.isLiveDepthResultCurrent(fileIndex, liveVersion)) {
+        return;
+      }
+
+      await this.waitForNextFrame();
+      if (!this.isLiveDepthResultCurrent(fileIndex, liveVersion)) {
+        return;
+      }
 
       // Update the stored camera parameters with the processed values (cx/cy might have been updated)
       depthData.cameraParams = newCameraParams;

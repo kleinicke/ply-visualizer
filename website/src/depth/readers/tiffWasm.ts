@@ -42,6 +42,26 @@ export interface DepthProjectWasmParams {
   p2?: number;
 }
 
+export interface NormalizeDepthWasmParams {
+  kind: string;
+  unit?: string;
+  scale?: number;
+  depthScale?: number;
+  depthBias?: number;
+  fx?: number;
+  baseline?: number;
+  disparityOffset?: number;
+  depthClamp?: { min?: number; max?: number };
+}
+
+export interface NormalizeDepthWasmResult {
+  width: number;
+  height: number;
+  data: Float32Array;
+  kind: string;
+  unit: string;
+}
+
 export interface TiffWasmResult {
   width: number;
   height: number;
@@ -168,6 +188,56 @@ export function projectDepthWasmSync(
     };
   } catch (error) {
     console.warn('[TiffWasm] depth projection failed, using JS fallback:', error);
+    return null;
+  } finally {
+    try {
+      result?.free?.();
+    } catch {
+      /* already freed */
+    }
+  }
+}
+
+export function normalizeDepthWasmSync(
+  data: Float32Array,
+  width: number,
+  height: number,
+  params: NormalizeDepthWasmParams
+): NormalizeDepthWasmResult | null {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.normalize_depth_fast !== 'function') {
+    return null;
+  }
+
+  let result: any = null;
+  try {
+    result = wasmApi.normalize_depth_fast(
+      data,
+      width,
+      height,
+      params.kind,
+      params.unit || 'meter',
+      params.scale ?? 1,
+      params.depthScale ?? 1,
+      params.depthBias ?? 0,
+      params.fx ?? 0,
+      params.baseline ?? 0,
+      params.disparityOffset ?? 0,
+      params.depthClamp?.min !== undefined,
+      params.depthClamp?.min ?? 0,
+      params.depthClamp?.max !== undefined,
+      params.depthClamp?.max ?? 0
+    );
+
+    return {
+      width: result.width,
+      height: result.height,
+      data: new Float32Array(result.take_data()),
+      kind: result.kind,
+      unit: result.unit,
+    };
+  } catch (error) {
+    console.warn('[TiffWasm] depth normalization failed, using JS fallback:', error);
     return null;
   } finally {
     try {

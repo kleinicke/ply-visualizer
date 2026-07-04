@@ -1,5 +1,5 @@
 import { CameraModel, DepthImage, DepthMetadata } from './types';
-import { projectDepthWasmSync } from './readers/tiffWasm';
+import { normalizeDepthWasmSync, projectDepthWasmSync } from './readers/tiffWasm';
 
 export interface PointCloudResult {
   vertices: Float32Array;
@@ -477,6 +477,23 @@ export function normalizeDepth(image: DepthImage, meta: DepthMetadata): DepthIma
 
   if (!needsTransform) {
     return image;
+  }
+
+  const wasmResult = normalizeDepthWasmSync(image.data, image.width, image.height, {
+    kind: meta.kind || 'depth',
+    unit: meta.unit || 'meter',
+    scale: meta.scale ?? 1,
+    depthScale,
+    depthBias,
+    fx: meta.fx ?? 0,
+    baseline: meta.baseline ?? 0,
+    disparityOffset: meta.disparityOffset ?? 0,
+    depthClamp: meta.depthClamp,
+  });
+  if (wasmResult) {
+    meta.kind = wasmResult.kind as DepthMetadata['kind'];
+    meta.unit = wasmResult.unit as DepthMetadata['unit'];
+    return { width: wasmResult.width, height: wasmResult.height, data: wasmResult.data };
   }
 
   const data = new Float32Array(image.data); // copy for safe transform

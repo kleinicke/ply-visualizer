@@ -3,6 +3,12 @@ import { registerDefaultReaders, readDepth, registerReader } from './DepthRegist
 import { normalizeDepth, projectToPointCloud } from './DepthProjector';
 import { PngReader } from './readers/PngReader';
 import { TifReader } from './readers/TifReader';
+import { DepthImage, DepthMetadata } from './types';
+
+export interface DecodedDepthImage {
+  image: DepthImage;
+  meta: DepthMetadata;
+}
 
 /**
  * Handles depth image to point cloud conversion
@@ -60,116 +66,144 @@ export class DepthConverter {
         `[2025-10-25T${new Date().toISOString().split('T')[1]}] Converting depth image to point cloud...`
       );
 
-      registerDefaultReaders();
+      const decoded = await this.decodeDepthImage(depthData, fileName, cameraParams);
+      const result = this.projectDecodedDepthImage(decoded, fileName, cameraParams);
 
-      // RGB24 conversion settings from user
-      const rgb24ConversionMode = cameraParams.rgb24ConversionMode || 'shift';
-      const rgb24ScaleFactor = cameraParams.rgb24ScaleFactor || 1000;
-      const rgb24InvalidValue = cameraParams.rgb24InvalidValue;
+      console.log(`TIF to PLY conversion complete: ${result.pointCount} points`);
 
-      // Configure PNG reader with user settings
-      if (/\.png$/i.test(fileName)) {
-        const pngReader = new PngReader();
-        pngReader.setConfig({
-          pngScaleFactor: cameraParams.pngScaleFactor || 1000,
-          invalidValue: 0,
-          rgb24ConversionMode,
-          rgb24ScaleFactor,
-          rgb24InvalidValue,
-        });
-        registerReader(pngReader);
-        console.log(
-          `[DepthConverter] Configured PngReader: pngScale=${cameraParams.pngScaleFactor || 1000}, rgb24Scale=${rgb24ScaleFactor}, rgb24Mode=${rgb24ConversionMode}`
-        );
-      }
+      return result as unknown as DepthConversionResult;
+    } catch (error) {
+      throw new Error(
+        `Failed to process depth file: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
 
-      // Configure TIF reader with user settings
-      if (/\.tif(f)?$/i.test(fileName)) {
-        const tifReader = new TifReader();
-        tifReader.setConfig({
-          rgb24ConversionMode,
-          rgb24ScaleFactor,
-          rgb24InvalidValue,
-        });
-        registerReader(tifReader);
-        console.log(
-          `[DepthConverter] Configured TifReader: rgb24Scale=${rgb24ScaleFactor}, rgb24Mode=${rgb24ConversionMode}`
-        );
-      }
+  async decodeDepthImage(
+    depthData: ArrayBuffer,
+    fileName: string,
+    cameraParams: CameraParams
+  ): Promise<DecodedDepthImage> {
+    registerDefaultReaders();
 
-      const { image, meta: baseMeta } = await readDepth(fileName, depthData);
+    // RGB24 conversion settings from user
+    const rgb24ConversionMode = cameraParams.rgb24ConversionMode || 'shift';
+    const rgb24ScaleFactor = cameraParams.rgb24ScaleFactor || 1000;
+    const rgb24InvalidValue = cameraParams.rgb24InvalidValue;
 
-      // Auto-calculate cx/cy if not provided
-      const computedCx = (image.width - 1) / 2;
-      const computedCy = (image.height - 1) / 2;
-
-      if (cameraParams.cx === undefined) {
-        cameraParams.cx = computedCx;
-      }
-      if (cameraParams.cy === undefined) {
-        cameraParams.cy = computedCy;
-      }
-
-      // Set up camera parameters
-      const fx = cameraParams.fx;
-      const fy = cameraParams.fy || cameraParams.fx;
-      const cx = cameraParams.cx !== undefined ? cameraParams.cx : computedCx;
-      const cy = cameraParams.cy !== undefined ? cameraParams.cy : computedCy;
-
-      // Override depth kind based on UI selection
-      const meta: any = { ...baseMeta };
-
-      if (cameraParams.depthType === 'disparity') {
-        const fxOk = !!cameraParams.fx && cameraParams.fx > 0;
-        const blOk = !!cameraParams.baseline && cameraParams.baseline > 0;
-        if (fxOk && blOk) {
-          meta.kind = 'disparity';
-          meta.baseline = cameraParams.baseline! / 1000; // Convert mm to meters
-          meta.disparityOffset = cameraParams.disparityOffset || 0;
-        } else {
-          console.warn(
-            'Disparity mode requires baseline and focal length; using original depth type'
-          );
-        }
-      } else if (cameraParams.depthType === 'orthogonal') {
-        meta.kind = 'z';
-      } else if (cameraParams.depthType === 'euclidean') {
-        meta.kind = 'depth';
-      } else if (cameraParams.depthType === 'inverse_depth') {
-        meta.kind = 'inverse_depth';
-      }
-
-      const norm = normalizeDepth(image, {
-        ...meta,
-        fx,
-        fy,
-        cx,
-        cy,
-        baseline: meta.baseline,
-        depthScale: cameraParams.depthScale,
-        depthBias: cameraParams.depthBias,
+    // Configure PNG reader with user settings
+    if (/\.png$/i.test(fileName)) {
+      const pngReader = new PngReader();
+      pngReader.setConfig({
+        pngScaleFactor: cameraParams.pngScaleFactor || 1000,
+        invalidValue: 0,
+        rgb24ConversionMode,
+        rgb24ScaleFactor,
+        rgb24InvalidValue,
       });
+      registerReader(pngReader);
+      console.log(
+        `[DepthConverter] Configured PngReader: pngScale=${cameraParams.pngScaleFactor || 1000}, rgb24Scale=${rgb24ScaleFactor}, rgb24Mode=${rgb24ConversionMode}`
+      );
+    }
 
-      // Prepare projection parameters
-      const projectionParams = {
-        kind: meta.kind,
-        fx,
-        fy,
-        cx,
-        cy,
-        cameraModel: cameraParams.cameraModel,
-        convention: cameraParams.convention || 'opengl',
-        k1: cameraParams.k1 ? parseFloat(cameraParams.k1.toString()) : undefined,
-        k2: cameraParams.k2 ? parseFloat(cameraParams.k2.toString()) : undefined,
-        k3: cameraParams.k3 ? parseFloat(cameraParams.k3.toString()) : undefined,
-        k4: cameraParams.k4 ? parseFloat(cameraParams.k4.toString()) : undefined,
-        k5: cameraParams.k5 ? parseFloat(cameraParams.k5.toString()) : undefined,
-        p1: cameraParams.p1 ? parseFloat(cameraParams.p1.toString()) : undefined,
-        p2: cameraParams.p2 ? parseFloat(cameraParams.p2.toString()) : undefined,
-      };
+    // Configure TIF reader with user settings
+    if (/\.tif(f)?$/i.test(fileName)) {
+      const tifReader = new TifReader();
+      tifReader.setConfig({
+        rgb24ConversionMode,
+        rgb24ScaleFactor,
+        rgb24InvalidValue,
+      });
+      registerReader(tifReader);
+      console.log(
+        `[DepthConverter] Configured TifReader: rgb24Scale=${rgb24ScaleFactor}, rgb24Mode=${rgb24ConversionMode}`
+      );
+    }
 
-      // Single consolidated log for conversion parameters
-      console.log(`🚀 DEPTH-TO-POINT-CLOUD CONVERSION
+    const { image, meta } = await readDepth(fileName, depthData);
+    return { image, meta };
+  }
+
+  projectDecodedDepthImage(
+    decoded: DecodedDepthImage,
+    fileName: string,
+    cameraParams: CameraParams
+  ): DepthConversionResult {
+    const { image, meta: baseMeta } = decoded;
+
+    // Auto-calculate cx/cy if not provided
+    const computedCx = (image.width - 1) / 2;
+    const computedCy = (image.height - 1) / 2;
+
+    if (cameraParams.cx === undefined) {
+      cameraParams.cx = computedCx;
+    }
+    if (cameraParams.cy === undefined) {
+      cameraParams.cy = computedCy;
+    }
+
+    // Set up camera parameters
+    const fx = cameraParams.fx;
+    const fy = cameraParams.fy || cameraParams.fx;
+    const cx = cameraParams.cx !== undefined ? cameraParams.cx : computedCx;
+    const cy = cameraParams.cy !== undefined ? cameraParams.cy : computedCy;
+
+    // Override depth kind based on UI selection
+    const meta: any = { ...baseMeta };
+
+    if (cameraParams.depthType === 'disparity') {
+      const fxOk = !!cameraParams.fx && cameraParams.fx > 0;
+      const blOk = !!cameraParams.baseline && cameraParams.baseline > 0;
+      if (fxOk && blOk) {
+        meta.kind = 'disparity';
+        meta.baseline = cameraParams.baseline! / 1000; // Convert mm to meters
+        meta.disparityOffset = cameraParams.disparityOffset || 0;
+      } else {
+        console.warn(
+          'Disparity mode requires baseline and focal length; using original depth type'
+        );
+      }
+    } else if (cameraParams.depthType === 'orthogonal') {
+      meta.kind = 'z';
+    } else if (cameraParams.depthType === 'euclidean') {
+      meta.kind = 'depth';
+    } else if (cameraParams.depthType === 'inverse_depth') {
+      meta.kind = 'inverse_depth';
+    }
+
+    const normalizationMeta = {
+      ...meta,
+      fx,
+      fy,
+      cx,
+      cy,
+      baseline: meta.baseline,
+      depthScale: cameraParams.depthScale,
+      depthBias: cameraParams.depthBias,
+    };
+    const norm = normalizeDepth(image, normalizationMeta);
+
+    // Prepare projection parameters
+    const projectionParams = {
+      kind: normalizationMeta.kind,
+      fx,
+      fy,
+      cx,
+      cy,
+      cameraModel: cameraParams.cameraModel,
+      convention: cameraParams.convention || 'opengl',
+      k1: cameraParams.k1 ? parseFloat(cameraParams.k1.toString()) : undefined,
+      k2: cameraParams.k2 ? parseFloat(cameraParams.k2.toString()) : undefined,
+      k3: cameraParams.k3 ? parseFloat(cameraParams.k3.toString()) : undefined,
+      k4: cameraParams.k4 ? parseFloat(cameraParams.k4.toString()) : undefined,
+      k5: cameraParams.k5 ? parseFloat(cameraParams.k5.toString()) : undefined,
+      p1: cameraParams.p1 ? parseFloat(cameraParams.p1.toString()) : undefined,
+      p2: cameraParams.p2 ? parseFloat(cameraParams.p2.toString()) : undefined,
+    };
+
+    // Single consolidated log for conversion parameters
+    console.log(`🚀 DEPTH-TO-POINT-CLOUD CONVERSION
 📁 File: ${fileName}
 📏 Image Dimensions: ${norm.width}×${norm.height}
 🎯 Depth Type (kind): ${meta.kind}
@@ -193,15 +227,8 @@ export class DepthConverter {
   - depthScale: ${cameraParams.depthScale ?? 'not set'}
   - depthBias: ${cameraParams.depthBias ?? 'not set'}`);
 
-      const result = projectToPointCloud(norm, projectionParams);
+    const result = projectToPointCloud(norm, projectionParams);
 
-      console.log(`TIF to PLY conversion complete: ${result.pointCount} points`);
-
-      return result as unknown as DepthConversionResult;
-    } catch (error) {
-      throw new Error(
-        `Failed to process depth file: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    return result as unknown as DepthConversionResult;
   }
 }
