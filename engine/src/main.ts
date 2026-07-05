@@ -85,6 +85,7 @@ import * as transparency from './transparency';
 import * as plyExport from './plyExport';
 import * as rotationCenterFeature from './rotationCenterFeature';
 import * as axesFeature from './axesFeature';
+import * as transformationMatrix from './transformationMatrix';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -262,7 +263,7 @@ class PointCloudVisualizer {
   cameraShowCoords: boolean[] = [];
 
   // Rotation matrices
-  private cameraMatrix: THREE.Matrix4 = new THREE.Matrix4(); // Current camera position and rotation
+  cameraMatrix: THREE.Matrix4 = new THREE.Matrix4(); // Current camera position and rotation
   transformationMatrices: THREE.Matrix4[] = []; // Individual transformation matrices for each point cloud
   private frameCount: number = 0; // Frame counter for UI updates
   private lastCameraPosition: THREE.Vector3 = new THREE.Vector3(); // Track camera position changes
@@ -1343,228 +1344,50 @@ class PointCloudVisualizer {
 
   // Rotation Matrix Methods
   private updateCameraMatrix(): void {
-    // Create a matrix that represents the camera's current position and rotation
-    this.cameraMatrix.identity();
-
-    // Apply camera position
-    const positionMatrix = new THREE.Matrix4();
-    positionMatrix.makeTranslation(
-      -this.camera.position.x,
-      -this.camera.position.y,
-      -this.camera.position.z
-    );
-
-    // Apply camera rotation (inverse of camera quaternion)
-    const rotationMatrix = new THREE.Matrix4();
-    rotationMatrix.makeRotationFromQuaternion(this.camera.quaternion.clone().invert());
-
-    // Combine position and rotation
-    this.cameraMatrix.multiply(rotationMatrix).multiply(positionMatrix);
+    transformationMatrix.updateCameraMatrix(this);
   }
 
   private setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void {
-    if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-      this.transformationMatrices[fileIndex].copy(matrix);
-      this.applyTransformationMatrix(fileIndex);
-    }
+    transformationMatrix.setTransformationMatrix(this, fileIndex, matrix);
   }
 
   private getTransformationMatrix(fileIndex: number): THREE.Matrix4 {
-    if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-      return this.transformationMatrices[fileIndex].clone();
-    }
-    return new THREE.Matrix4(); // Return identity matrix if index is invalid
+    return transformationMatrix.getTransformationMatrix(this, fileIndex);
   }
 
   private getTransformationMatrixAsArray(fileIndex: number): number[] {
-    if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-      return this.transformationMatrices[fileIndex].elements.slice();
-    }
-    return new THREE.Matrix4().elements.slice(); // Return identity matrix if index is invalid
+    return transformationMatrix.getTransformationMatrixAsArray(this, fileIndex);
   }
 
   applyTransformationMatrix(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.transformationMatrices.length) {
-      return;
-    }
-
-    const matrix = this.transformationMatrices[fileIndex];
-
-    // Handle PLY/mesh files
-    if (fileIndex < this.meshes.length) {
-      const mesh = this.meshes[fileIndex];
-      if (mesh) {
-        mesh.matrix.copy(matrix);
-        mesh.matrixAutoUpdate = false;
-      }
-
-      // Also apply transformation to vertex points visualization
-      const vertexPoints = this.vertexPointsObjects[fileIndex];
-      if (vertexPoints) {
-        vertexPoints.matrix.copy(matrix);
-        vertexPoints.matrixAutoUpdate = false;
-      }
-
-      // Also apply transformation to normals visualizer
-      const normalsVisualizer = this.normalsVisualizers[fileIndex];
-      if (normalsVisualizer) {
-        normalsVisualizer.matrix.copy(matrix);
-        normalsVisualizer.matrixAutoUpdate = false;
-      }
-
-      // Also apply transformation to multi-material groups (for OBJ files)
-      const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
-      if (multiMaterialGroup) {
-        multiMaterialGroup.matrix.copy(matrix);
-        multiMaterialGroup.matrixAutoUpdate = false;
-      }
-
-      return;
-    }
-
-    // Handle poses
-    const poseIndex = fileIndex - this.spatialFiles.length;
-    if (poseIndex >= 0 && poseIndex < this.poseGroups.length) {
-      const group = this.poseGroups[poseIndex];
-      if (group) {
-        group.matrix.copy(matrix);
-        group.matrixAutoUpdate = false;
-      }
-      return;
-    }
-
-    // Handle cameras
-    const cameraIndex = fileIndex - this.spatialFiles.length - this.poseGroups.length;
-    if (cameraIndex >= 0 && cameraIndex < this.cameraGroups.length) {
-      const group = this.cameraGroups[cameraIndex];
-      if (group) {
-        // Apply transformation matrix to camera profile group
-        group.matrix.copy(matrix);
-        group.matrixAutoUpdate = false;
-
-        // Apply scaling only to visual elements, not position
-        const size = this.pointSizes[fileIndex] ?? 1.0;
-        this.applyCameraScale(cameraIndex, size);
-      }
-    }
+    transformationMatrix.applyTransformationMatrix(this, fileIndex);
   }
 
   private resetTransformationMatrix(fileIndex: number): void {
-    if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-      this.transformationMatrices[fileIndex].identity();
-      this.applyTransformationMatrix(fileIndex);
-    }
+    transformationMatrix.resetTransformationMatrix(this, fileIndex);
   }
 
   private multiplyTransformationMatrices(fileIndex: number, matrix: THREE.Matrix4): void {
-    if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-      this.transformationMatrices[fileIndex].multiply(matrix);
-      this.applyTransformationMatrix(fileIndex);
-    }
+    transformationMatrix.multiplyTransformationMatrices(this, fileIndex, matrix);
   }
 
   private addTranslationToMatrix(fileIndex: number, x: number, y: number, z: number): void {
-    if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-      const translationMatrix = createTranslationMatrix(x, y, z);
-      this.multiplyTransformationMatrices(fileIndex, translationMatrix);
-    }
+    transformationMatrix.addTranslationToMatrix(this, fileIndex, x, y, z);
   }
 
   private updateMatrixTextarea(fileIndex: number): void {
-    const textarea = document.getElementById(`matrix-${fileIndex}`) as HTMLTextAreaElement;
-    if (textarea) {
-      const matrixArr = this.getTransformationMatrixAsArray(fileIndex);
-      let matrixStr = '';
-      // Three.js stores matrices in column-major order: [m00, m10, m20, m30, m01, m11, m21, m31, m02, m12, m22, m32, m03, m13, m23, m33]
-      // Display in row-major order to match the input format: each row should be [m0r, m1r, m2r, m3r]
-      for (let row = 0; row < 4; ++row) {
-        const displayRow = [
-          matrixArr[row], // m0r (column r, row 0)
-          matrixArr[row + 4], // m1r (column r, row 1)
-          matrixArr[row + 8], // m2r (column r, row 2)
-          matrixArr[row + 12], // m3r (column r, row 3)
-        ].map(v => {
-          // Format numbers consistently: 6 decimal places, no padding
-          return v.toFixed(6);
-        });
-        matrixStr += displayRow.join(' ') + '\n';
-      }
-      textarea.value = matrixStr.trim();
-      // debug: matrix display updated
-    }
+    transformationMatrix.updateMatrixTextarea(this, fileIndex);
   }
 
   private updateCameraMatrixDisplay(): void {
-    // Camera matrix is now displayed in the camera controls panel
-    // This method is kept for compatibility but doesn't display anything
+    transformationMatrix.updateCameraMatrixDisplay(this);
   }
 
   private updateCameraControlsPanel(): void {
-    const controlsPanel = document.getElementById('camera-controls-panel');
-    if (controlsPanel) {
-      // Show simple camera position and rotation instead of complex matrix
-      const pos = this.camera.position;
-
-      // Get rotation from quaternion to handle all camera operations consistently
-      const euler = new THREE.Euler();
-      euler.setFromQuaternion(this.camera.quaternion, 'XYZ');
-      const rotX = (euler.x * 180) / Math.PI;
-      const rotY = (euler.y * 180) / Math.PI;
-      const rotZ = (euler.z * 180) / Math.PI;
-
-      // Only update the matrix display, not the entire panel
-      const matrixDisplay = controlsPanel.querySelector('.matrix-display');
-      if (matrixDisplay) {
-        // Get rotation center (controls target)
-        const target = this.controls.target;
-        let matrixHtml = `
-                    <div style="font-size:10px;margin:4px 0;">
-                        <div><strong>Position:</strong> (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})</div>
-                        <div><strong>Rotation:</strong> (${rotX.toFixed(1)}°, ${rotY.toFixed(1)}°, ${rotZ.toFixed(1)}°)</div>
-                        <div><strong>Rotation Center:</strong> (${target.x.toFixed(3)}, ${target.y.toFixed(3)}, ${target.z.toFixed(3)})</div>
-                    </div>
-                `;
-        matrixDisplay.innerHTML = matrixHtml;
-      } else {
-        // First time setup - create the entire panel
-        let html = `
-                    <div class="camera-controls-section">
-                        <label style="font-size:10px;">Field of View:</label><br>
-                        <input type="range" id="camera-fov" min="10" max="150" step="1" value="${this.camera.fov}" style="width:100%;margin:2px 0;">
-                        <input type="text" id="fov-input" value="${this.camera.fov.toFixed(2)}" style="font-size: 10px; width: 30px; border: none; background: transparent; color: var(--vscode-foreground); text-align: left; padding: 0; margin: 0; outline: none; cursor: text;"><span style="font-size:10px;">°</span>
-                    </div>
-                    
-                    <div class="camera-controls-section">
-                        <label style="font-size:10px;font-weight:bold;">Camera Position & Rotation:</label>
-                        <div class="matrix-display">
-                            <div style="font-size:10px;margin:4px 0;">
-                                <div><strong>Position:</strong> (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})</div>
-                                <div><strong>Rotation:</strong> (${rotX.toFixed(1)}°, ${rotY.toFixed(1)}°, ${rotZ.toFixed(1)}°)</div>
-                                <div><strong>Rotation Center:</strong> (${this.controls.target.x.toFixed(3)}, ${this.controls.target.y.toFixed(3)}, ${this.controls.target.z.toFixed(3)})</div>
-                            </div>
-                        </div>
-                        <div style="display:flex;gap:4px;margin-top:4px;">
-                            <button id="modify-camera-position" class="control-button" style="flex:1;font-size:9px;">Modify Position</button>
-                        </div>
-                        <div style="display:flex;gap:4px;margin-top:4px;">
-                            <button id="modify-camera-rotation" class="control-button" style="flex:1;font-size:9px;">Modify Rotation</button>
-                        </div>
-                        <div style="display:flex;gap:4px;margin-top:4px;">
-                            <button id="modify-rotation-center" class="control-button" style="flex:1;font-size:9px;">Modify Rotation Center</button>
-                        </div>
-                        <button id="reset-camera-matrix" class="control-button" style="margin-top:12px;">Reset Camera</button>
-                    </div>
-                `;
-
-        controlsPanel.innerHTML = html;
-
-        // Add event listeners only once
-        this.setupCameraControlEventListeners('');
-      }
-    }
+    transformationMatrix.updateCameraControlsPanel(this);
   }
 
-  private setupCameraControlEventListeners(matrixStr: string): void {
+  setupCameraControlEventListeners(matrixStr: string): void {
     const fovSlider = document.getElementById('camera-fov') as HTMLInputElement;
     const fovInput = document.getElementById('fov-input') as HTMLInputElement;
 
@@ -9950,7 +9773,7 @@ class PointCloudVisualizer {
     cameraProfile.toggleCameraProfileCoordinates(this, cameraProfileIndex, showCoords);
   }
 
-  private applyCameraScale(cameraProfileIndex: number, scale: number): void {
+  applyCameraScale(cameraProfileIndex: number, scale: number): void {
     cameraProfile.applyCameraScale(this, cameraProfileIndex, scale);
   }
 
