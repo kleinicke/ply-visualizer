@@ -11,7 +11,7 @@
 // types for consumers like main.ts, but tsc only honors JSDoc types in files
 // it treats as JS (allowJs/checkJs) - hence the .js extension here.
 export const filesState = $state(
-  /** @type {{ visibility: boolean[]; collapsed: boolean[]; colorModes: string[]; pointSizes: number[]; renderTick: number }} */ ({
+  /** @type {{ visibility: boolean[]; collapsed: boolean[]; colorModes: string[]; pointSizes: number[]; renderTick: number; statsTick: number; statsLoadingFileName: string | null }} */ ({
     visibility: [],
     collapsed: [],
     colorModes: [],
@@ -22,5 +22,13 @@ export const filesState = $state(
     // mirroring the old "regenerate everything on every call" model without
     // needing every underlying field to be individually reactive.
     renderTick: 0,
+    // Phase 4 (Stats.svelte): same pattern as renderTick, but separate since
+    // updateFileStats() is sometimes called without updateFileList() (e.g.
+    // liveDepthUpdate.ts after applying settings to an existing file).
+    statsTick: 0,
+    // Set by updateFileStatsImmediate() during the very first file's load
+    // (before parsing completes); cleared by updateFileStats() once real
+    // stats are available.
+    statsLoadingFileName: null,
   })
 );

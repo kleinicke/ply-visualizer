@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
 import { createTranslationMatrix } from './utils/matrix';
+import { viewerState } from './state/viewer.svelte';
 
 export interface TransformationMatrixHost {
   camera: THREE.PerspectiveCamera;
@@ -16,7 +17,6 @@ export interface TransformationMatrixHost {
   cameraGroups: THREE.Group[];
   pointSizes: number[];
   applyCameraScale(cameraProfileIndex: number, scale: number): void;
-  setupCameraControlEventListeners(matrixStr: string): void;
 }
 
 export function updateCameraMatrix(host: TransformationMatrixHost): void {
@@ -196,66 +196,20 @@ export function updateCameraMatrixDisplay(_host: TransformationMatrixHost): void
 }
 
 export function updateCameraControlsPanel(host: TransformationMatrixHost): void {
-  const controlsPanel = document.getElementById('camera-controls-panel');
-  if (controlsPanel) {
-    // Show simple camera position and rotation instead of complex matrix
-    const pos = host.camera.position;
+  // Phase 4 (docs/SVELTE_MIGRATION_PLAN.md): CameraControlsPanel.svelte reads
+  // these reactively instead of this function building/patching innerHTML.
+  const pos = host.camera.position;
 
-    // Get rotation from quaternion to handle all camera operations consistently
-    const euler = new THREE.Euler();
-    euler.setFromQuaternion(host.camera.quaternion, 'XYZ');
-    const rotX = (euler.x * 180) / Math.PI;
-    const rotY = (euler.y * 180) / Math.PI;
-    const rotZ = (euler.z * 180) / Math.PI;
+  const euler = new THREE.Euler();
+  euler.setFromQuaternion(host.camera.quaternion, 'XYZ');
+  const rotX = (euler.x * 180) / Math.PI;
+  const rotY = (euler.y * 180) / Math.PI;
+  const rotZ = (euler.z * 180) / Math.PI;
 
-    // Only update the matrix display, not the entire panel
-    const matrixDisplay = controlsPanel.querySelector('.matrix-display');
-    if (matrixDisplay) {
-      // Get rotation center (controls target)
-      const target = host.controls.target;
-      const matrixHtml = `
-                    <div style="font-size:10px;margin:4px 0;">
-                        <div><strong>Position:</strong> (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})</div>
-                        <div><strong>Rotation:</strong> (${rotX.toFixed(1)}°, ${rotY.toFixed(1)}°, ${rotZ.toFixed(1)}°)</div>
-                        <div><strong>Rotation Center:</strong> (${target.x.toFixed(3)}, ${target.y.toFixed(3)}, ${target.z.toFixed(3)})</div>
-                    </div>
-                `;
-      matrixDisplay.innerHTML = matrixHtml;
-    } else {
-      // First time setup - create the entire panel
-      const html = `
-                    <div class="camera-controls-section">
-                        <label style="font-size:10px;">Field of View:</label><br>
-                        <input type="range" id="camera-fov" min="10" max="150" step="1" value="${host.camera.fov}" style="width:100%;margin:2px 0;">
-                        <input type="text" id="fov-input" value="${host.camera.fov.toFixed(2)}" style="font-size: 10px; width: 30px; border: none; background: transparent; color: var(--vscode-foreground); text-align: left; padding: 0; margin: 0; outline: none; cursor: text;"><span style="font-size:10px;">°</span>
-                    </div>
+  const target = host.controls.target;
 
-                    <div class="camera-controls-section">
-                        <label style="font-size:10px;font-weight:bold;">Camera Position & Rotation:</label>
-                        <div class="matrix-display">
-                            <div style="font-size:10px;margin:4px 0;">
-                                <div><strong>Position:</strong> (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})</div>
-                                <div><strong>Rotation:</strong> (${rotX.toFixed(1)}°, ${rotY.toFixed(1)}°, ${rotZ.toFixed(1)}°)</div>
-                                <div><strong>Rotation Center:</strong> (${host.controls.target.x.toFixed(3)}, ${host.controls.target.y.toFixed(3)}, ${host.controls.target.z.toFixed(3)})</div>
-                            </div>
-                        </div>
-                        <div style="display:flex;gap:4px;margin-top:4px;">
-                            <button id="modify-camera-position" class="control-button" style="flex:1;font-size:9px;">Modify Position</button>
-                        </div>
-                        <div style="display:flex;gap:4px;margin-top:4px;">
-                            <button id="modify-camera-rotation" class="control-button" style="flex:1;font-size:9px;">Modify Rotation</button>
-                        </div>
-                        <div style="display:flex;gap:4px;margin-top:4px;">
-                            <button id="modify-rotation-center" class="control-button" style="flex:1;font-size:9px;">Modify Rotation Center</button>
-                        </div>
-                        <button id="reset-camera-matrix" class="control-button" style="margin-top:12px;">Reset Camera</button>
-                    </div>
-                `;
-
-      controlsPanel.innerHTML = html;
-
-      // Add event listeners only once
-      host.setupCameraControlEventListeners('');
-    }
-  }
+  viewerState.cameraFov = host.camera.fov;
+  viewerState.cameraPositionText = `(${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})`;
+  viewerState.cameraRotationText = `(${rotX.toFixed(1)}°, ${rotY.toFixed(1)}°, ${rotZ.toFixed(1)}°)`;
+  viewerState.cameraTargetText = `(${target.x.toFixed(3)}, ${target.y.toFixed(3)}, ${target.z.toFixed(3)})`;
 }

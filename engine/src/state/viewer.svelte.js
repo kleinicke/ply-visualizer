@@ -18,6 +18,10 @@ export const viewerState = $state(
    *   brightnessStops: number;
    *   backgroundBrightness: number;
    *   lightingMode: string;
+   *   cameraFov: number;
+   *   cameraPositionText: string;
+   *   cameraRotationText: string;
+   *   cameraTargetText: string;
    * }}
    */ ({
     controlScheme: 'trackball',
@@ -28,5 +32,11 @@ export const viewerState = $state(
     brightnessStops: 0,
     backgroundBrightness: 13,
     lightingMode: 'normal',
+    // Phase 4 (CameraControlsPanel.svelte): updated every frame the camera
+    // moves by transformationMatrix.ts's updateCameraControlsPanel().
+    cameraFov: 75,
+    cameraPositionText: '(0.000, 0.000, 0.000)',
+    cameraRotationText: '(0.0°, 0.0°, 0.0°)',
+    cameraTargetText: '(0.000, 0.000, 0.000)',
   })
 );
