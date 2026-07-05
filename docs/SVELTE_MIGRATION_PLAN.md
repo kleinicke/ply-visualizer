@@ -98,16 +98,20 @@ the engine core.
 ### Phase 1 — State layer (the real prerequisite) — DONE
 
 `engine/src/state/` now has four runes-based stores, write-through wired at
-every existing mutation site with no behavior change. Three are `.svelte.js`
-(see the TypeScript caveat under Key decisions above); `ui.svelte.ts` stayed
-`.ts` since its fields are all string/boolean literals with no empty arrays, so
-it never hit the `never[]` inference problem:
+every existing mutation site with no behavior change. All four are `.svelte.js`
+(see the TypeScript caveat under Key decisions above); `ui.svelte.ts` originally
+stayed `.ts` since its fields were all string/boolean literals with no empty
+arrays or other JSDoc-cast needs, but was renamed to `.js` on 2026-07-05 when
+the `#loading` overlay follow-up added a `loadingDetail: string | null` field
+that needed the same JSDoc-cast pattern:
 
 - `files.svelte.js` — mirrors the parallel per-file arrays in main.ts
   (`fileVisibility`, `individualColorModes`, `fileItemsCollapsed`,
   `pointSizes`), write-through at every set/push/splice site (~15 call sites).
-- `ui.svelte.ts` — status/error message, error visibility, active tab; wired
-  into `ui/status.ts`'s `showError`/`clearError`/`showStatus`/`switchTab`.
+- `ui.svelte.js` — status/error message, error visibility, active tab, loading
+  overlay visible/title/detail; wired into `ui/status.ts`'s
+  `showError`/`clearError`/`showStatus`/`switchTab` and directly into main.ts's
+  `showLoading`/`showImmediateLoading`/`setLoadingDetail`.
 - `viewer.svelte.js` — control scheme, camera convention, EDL
   enabled/strength/radius, brightness, background brightness, lighting mode;
   wired into `controlSchemeSwitcher.ts`, `cameraConvention.ts`, `edl.ts`, and
