@@ -40,6 +40,8 @@ import { createRotationMatrix, parseMatrixInput } from './utils/matrix';
 import * as sequencePlayback from './sequencePlayback';
 import * as pose from './pose';
 import * as renderStats from './renderStats';
+import * as pointCloudRenderer from './visualization/PointCloudRenderer';
+import * as meshBuilder from './visualization/MeshBuilder';
 import * as uiStatus from './ui/status';
 import * as intensity from './utils/intensity';
 import * as commentSettings from './depth/commentSettings';
@@ -355,66 +357,8 @@ class PointCloudVisualizer {
   private lastGeometryMs: number = 0;
   lastAbsoluteMs: number = 0;
 
-  private optimizeForPointCount(material: THREE.PointsMaterial, pointCount: number): void {
-    // Render points as discs instead of the default GL squares. A small circular
-    // alpha texture is sampled per fragment (via gl_PointCoord) and alphaTest
-    // discards the corners — so points are round and still opaque (no alpha
-    // blending pipeline). The white texture only carries the round mask; the
-    // per-vertex color is preserved (PointsMaterial multiplies map × color).
-    material.map = this.getRoundPointTexture();
-    material.alphaTest = 0.5; // keep the disc, discard the corners
-
-    // Transparency only affects the soft rim; the disc shape comes from alphaTest.
-    material.transparent = this.allowTransparency;
-
-    material.depthTest = true;
-    material.depthWrite = true;
-    material.sizeAttenuation = true; // Keep world-space sizing
-    material.side = THREE.FrontSide; // Default for points
-
-    // Force material update
-    material.needsUpdate = true;
-  }
-
-  private roundPointTexture: THREE.Texture | null = null;
-
-  /**
-   * Lazily build (once) a small white circular alpha texture used to make points
-   * round. Alpha is 1 inside the disc with a 1–2px soft rim for anti-aliasing,
-   * 0 in the corners; combined with alphaTest=0.5 this yields clean round points.
-   */
-  private getRoundPointTexture(): THREE.Texture {
-    if (this.roundPointTexture) {
-      return this.roundPointTexture;
-    }
-    const size = 64;
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = size;
-    const ctx = canvas.getContext('2d')!;
-    const img = ctx.createImageData(size, size);
-    const c = (size - 1) / 2;
-    const smooth = (e0: number, e1: number, x: number) => {
-      const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
-      return t * t * (3 - 2 * t);
-    };
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const dx = (x - c) / c;
-        const dy = (y - c) / c;
-        const d = Math.sqrt(dx * dx + dy * dy); // 0 at center, 1 at edge
-        const a = 1 - smooth(0.9, 1.0, d);
-        const i = (y * size + x) * 4;
-        img.data[i] = 255;
-        img.data[i + 1] = 255;
-        img.data[i + 2] = 255;
-        img.data[i + 3] = Math.round(a * 255);
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    this.roundPointTexture = tex;
-    return tex;
+  private optimizeForPointCount(material: THREE.PointsMaterial, _pointCount: number): void {
+    pointCloudRenderer.optimizeForPointCount(material, this.allowTransparency);
   }
 
   /**
@@ -487,18 +431,7 @@ class PointCloudVisualizer {
     geometry: THREE.BufferGeometry,
     material: THREE.PointsMaterial
   ): THREE.Points {
-    // Optimize geometry for GPU
-    const positions = geometry.getAttribute('position') as THREE.BufferAttribute;
-    if (positions && positions.count > 50000) {
-      // For very large point clouds, try to reduce vertex data transfer
-      geometry.deleteAttribute('normal'); // Points don't need normals
-      geometry.computeBoundingBox(); // Help with frustum culling
-      geometry.computeBoundingSphere();
-    }
-
-    const points = new THREE.Points(geometry, material);
-
-    return points;
+    return pointCloudRenderer.createOptimizedPointCloud(geometry, material);
   }
 
   // Predefined colors for different files - use shared constants
@@ -1512,164 +1445,8 @@ class PointCloudVisualizer {
   }
 
   createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry {
-    const geometry = new THREE.BufferGeometry();
-
-    const startTime = performance.now();
-
-    // Point clouds (no faces) are drawn with PointsMaterial, which never uses
-    // normals (points aren't lit, and EDL works off depth). Uploading a normal
-    // attribute for them just wastes ~12 bytes/point of VRAM — significant when
-    // many large clouds are open at once. So only attach normals for MESHES;
-    // the CPU normals stay in spatialData for PLY export, and the
-    // normal-visualization tool is mesh-only anyway.
-    const isMesh = (data.faces?.length || 0) > 0 || (data.faceCount || 0) > 0;
-
-    // Check if we have direct TypedArrays (new ultra-fast path)
-    if ((data as any).useTypedArrays) {
-      const positions = (data as any).positionsArray as Float32Array;
-      const normals = (data as any).normalsArray as Float32Array | null;
-
-      // Direct assignment - zero copying, zero processing!
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-
-      // NOTE: the 'color' attribute is intentionally NOT built here. The
-      // unconditional applyColorModeToGeometry() call below fully determines the
-      // final color attribute for every mode (original/intensity rebuild it,
-      // assigned deletes it), so building it here was a redundant full-size
-      // Float32 allocation + per-channel loop on every colored load.
-
-      if (normals && data.hasNormals && isMesh) {
-        geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-      }
-    } else {
-      // Fallback to traditional vertex object processing
-      const vertexCount = data.vertices.length;
-      // fallback path
-
-      // Pre-allocate typed arrays for better performance
-      const vertices = new Float32Array(vertexCount * 3);
-      const colors = data.hasColors ? new Float32Array(vertexCount * 3) : null;
-      const normals = data.hasNormals ? new Float32Array(vertexCount * 3) : null;
-
-      // Optimized vertex processing - batch operations
-      const vertexArray = data.vertices;
-      for (let i = 0, i3 = 0; i < vertexCount; i++, i3 += 3) {
-        const vertex = vertexArray[i];
-
-        // Position data (required)
-        vertices[i3] = vertex.x;
-        vertices[i3 + 1] = vertex.y;
-        vertices[i3 + 2] = vertex.z;
-
-        // Color data (optional)
-        if (colors && vertex.red !== undefined) {
-          const r8 = (vertex.red || 0) & 255;
-          const g8 = (vertex.green || 0) & 255;
-          const b8 = (vertex.blue || 0) & 255;
-          if (this.convertSrgbToLinear) {
-            const lut = this.colorProcessor.ensureSrgbLUT();
-            colors[i3] = lut[r8];
-            colors[i3 + 1] = lut[g8];
-            colors[i3 + 2] = lut[b8];
-          } else {
-            colors[i3] = r8 / 255;
-            colors[i3 + 1] = g8 / 255;
-            colors[i3 + 2] = b8 / 255;
-          }
-        }
-
-        // Normal data (optional)
-        if (normals && vertex.nx !== undefined) {
-          normals[i3] = vertex.nx;
-          normals[i3 + 1] = vertex.ny || 0;
-          normals[i3 + 2] = vertex.nz || 0;
-        }
-      }
-
-      // Set attributes
-      geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-
-      if (colors) {
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-      }
-
-      if (normals && isMesh) {
-        geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-      }
-    }
-
-    const colorMode =
-      data.fileIndex !== undefined
-        ? this.individualColorModes[data.fileIndex] || 'assigned'
-        : 'assigned';
-    this.applyColorModeToGeometry(data, geometry, colorMode);
-
-    // Optimized face processing
-    if (data.faces.length > 0) {
-      // Estimate index count for pre-allocation
-      let estimatedIndexCount = 0;
-      for (const face of data.faces) {
-        if (face.indices.length >= 3) {
-          estimatedIndexCount += (face.indices.length - 2) * 3;
-        }
-      }
-
-      const indices = new Uint32Array(estimatedIndexCount);
-      let indexOffset = 0;
-
-      for (const face of data.faces) {
-        if (face.indices.length >= 3) {
-          // Optimized fan triangulation
-          const faceIndices = face.indices;
-          const firstIndex = faceIndices[0];
-
-          for (let i = 1; i < faceIndices.length - 1; i++) {
-            indices[indexOffset++] = firstIndex;
-            indices[indexOffset++] = faceIndices[i];
-            indices[indexOffset++] = faceIndices[i + 1];
-          }
-        }
-      }
-
-      if (indexOffset > 0) {
-        // Trim array if we over-estimated
-        const finalIndices = indexOffset < indices.length ? indices.slice(0, indexOffset) : indices;
-        geometry.setIndex(new THREE.BufferAttribute(finalIndices, 1));
-      }
-    }
-
-    // Ensure normals are available for proper lighting after indices are set
-    if (!geometry.getAttribute('normal') && data.faces.length > 0) {
-      geometry.computeVertexNormals();
-    }
-
-    geometry.computeBoundingBox();
-
-    // Debug bounding box for disparity Depth files (may help with disappearing issue)
-    if (geometry.boundingBox) {
-      const box = geometry.boundingBox;
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-
-      // debug: bbox
-
-      // Check for extreme values that might cause culling issues
-      const maxDimension = Math.max(size.x, size.y, size.z);
-      if (maxDimension > 10000) {
-        // debug
-      }
-
-      // Check distance from origin
-      const distanceFromOrigin = center.length();
-      if (distanceFromOrigin > 1000) {
-        // debug
-      }
-    }
-
-    const endTime = performance.now();
-    this.lastGeometryMs = +(endTime - startTime).toFixed(1);
-    console.log(`Render: geometry ${this.lastGeometryMs}ms`);
-
+    const { geometry, geometryMs } = meshBuilder.createGeometryFromSpatialData(this, data);
+    this.lastGeometryMs = geometryMs;
     return geometry;
   }
 
