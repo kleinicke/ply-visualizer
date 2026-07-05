@@ -1,3 +1,5 @@
+import { uiState } from '../state/ui.svelte';
+
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
 
@@ -6,6 +8,8 @@ export function showError(message: string): void {
   try {
     console.error(message);
   } catch (_) {}
+  uiState.errorMessage = message;
+  uiState.isErrorVisible = true;
   document.getElementById('loading')?.classList.add('hidden');
   const errorMsg = document.getElementById('error-message');
   const errorDiv = document.getElementById('error');
@@ -65,6 +69,7 @@ export function showError(message: string): void {
 }
 
 export function clearError(): void {
+  uiState.isErrorVisible = false;
   const errorDiv = document.getElementById('error');
   if (errorDiv) {
     errorDiv.classList.add('hidden');
@@ -74,6 +79,7 @@ export function clearError(): void {
 export function showStatus(message: string): void {
   const ts = new Date().toISOString();
   console.log(`[${ts}] ${message}`);
+  uiState.statusMessage = message;
 
   // Clear any existing errors when showing a status update
   clearError();
@@ -102,6 +108,7 @@ export function showColorMappingStatus(
 }
 
 export function switchTab(tabName: string): void {
+  uiState.activeTab = tabName;
   // Remove active class from all tabs and panels
   document.querySelectorAll('.tab-button').forEach(btn => {
     btn.classList.remove('active');

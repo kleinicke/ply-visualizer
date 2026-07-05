@@ -25,7 +25,9 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.svelte$/,
+        // Matches both `.svelte` components and `.svelte.ts` rune-only
+        // state modules (Phase 1's src/state/*.svelte.ts stores).
+        test: /\.svelte(\.ts)?$/,
         use: {
           loader: 'svelte-loader',
           options: {
@@ -43,7 +45,7 @@ module.exports = {
             configFile: path.resolve(__dirname, 'tsconfig.json'),
           },
         },
-        exclude: /node_modules/,
+        exclude: [/node_modules/, /\.svelte\.ts$/],
       },
       {
         test: /\.css$/,
