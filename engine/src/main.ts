@@ -69,6 +69,7 @@ import {
   cameraRotationDialogTemplate,
   rotationCenterDialogTemplate,
 } from './ui/dialogs';
+import * as sequencePlayback from './sequencePlayback';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -80,7 +81,7 @@ import { applyDepthResultTypedArrays, colorsToUint8 } from './depth/depthResultA
  */
 
 class PointCloudVisualizer {
-  private vscode: any = isVSCode
+  vscode: any = isVSCode
     ? acquireVsCodeApi()
     : {
         // Mock VS Code API for browser version - fully functional
@@ -92,7 +93,7 @@ class PointCloudVisualizer {
 
   // Browser file handler
   private browserFileHandler: BrowserMessageHandler | null = null;
-  private scene!: THREE.Scene;
+  scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private renderer!: THREE.WebGLRenderer;
   // True between a WebGL context loss and its restoration. While lost, the GPU
@@ -155,13 +156,13 @@ class PointCloudVisualizer {
   private lastScalingUpdate: number = 0;
 
   // Unified file management
-  private spatialFiles: SpatialData[] = [];
-  private meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
+  spatialFiles: SpatialData[] = [];
+  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
   private normalsVisualizers: (THREE.LineSegments | null)[] = [];
   private vertexPointsObjects: (THREE.Points | null)[] = []; // Vertex points for triangle meshes
-  private multiMaterialGroups: (THREE.Group | null)[] = []; // Multi-material Groups for OBJ files
-  private materialMeshes: (THREE.Object3D[] | null)[] = []; // Sub-meshes for multi-material OBJ files
-  private fileVisibility: boolean[] = [];
+  multiMaterialGroups: (THREE.Group | null)[] = []; // Multi-material Groups for OBJ files
+  materialMeshes: (THREE.Object3D[] | null)[] = []; // Sub-meshes for multi-material OBJ files
+  fileVisibility: boolean[] = [];
   private isFirstFileLoad: boolean = true; // Track if this is the first file being loaded
 
   // Universal rendering mode states for each file
@@ -171,21 +172,21 @@ class PointCloudVisualizer {
   private normalsVisible: boolean[] = []; // Normals lines rendering
 
   private useOriginalColors = true; // Default to original colors
-  private pointSizes: number[] = []; // Individual point sizes for each point cloud
+  pointSizes: number[] = []; // Individual point sizes for each point cloud
 
   // Sequence mode state
-  private sequenceMode = false;
-  private sequenceFiles: string[] = [];
-  private sequenceIndex = 0;
-  private sequenceTargetIndex = 0;
-  private sequenceDidInitialFit = false;
-  private sequenceTimer: number | null = null;
-  private sequenceFps = 2; // ~2 frames per second
-  private isSequencePlaying = false;
-  private sequenceCache = new Map<number, THREE.Object3D>();
-  private sequenceCacheOrder: number[] = [];
-  private maxSequenceCache = 6; // keep more frames when navigating back
-  private individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
+  sequenceMode = false;
+  sequenceFiles: string[] = [];
+  sequenceIndex = 0;
+  sequenceTargetIndex = 0;
+  sequenceDidInitialFit = false;
+  sequenceTimer: number | null = null;
+  sequenceFps = 2; // ~2 frames per second
+  isSequencePlaying = false;
+  sequenceCache = new Map<number, THREE.Object3D>();
+  sequenceCacheOrder: number[] = [];
+  maxSequenceCache = 6; // keep more frames when navigating back
+  individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
   private appliedMtlColors: (number | null)[] = []; // Store applied MTL hex colors for each file
   private appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
   private appliedMtlData: (any | null)[] = []; // Store applied MTL data for each file
@@ -1691,7 +1692,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private requestRender(): void {
+  requestRender(): void {
     this.needsRender = true;
   }
 
@@ -3275,356 +3276,82 @@ class PointCloudVisualizer {
   }
 
   private initializeSequence(files: string[], wildcard: string): void {
-    this.sequenceMode = true;
-    this.sequenceFiles = files;
-    this.sequenceIndex = 0;
-    this.sequenceTargetIndex = 0;
-    this.sequenceDidInitialFit = false;
-    this.isSequencePlaying = false;
-    this.sequenceCache.clear();
-    this.sequenceCacheOrder = [];
-    // Show overlay
-    document.getElementById('sequence-overlay')?.classList.remove('hidden');
-    const wildcardInput = document.getElementById('seq-wildcard') as HTMLInputElement | null;
-    if (wildcardInput) {
-      wildcardInput.value = wildcard;
-    }
-    this.updateSequenceUI();
-    // Clear any existing meshes from normal mode
-    for (const obj of this.meshes) {
-      this.scene.remove(obj);
-    }
-    this.meshes = [];
-    this.spatialFiles = [];
-    // Load first frame
-    if (files.length > 0) {
-      this.loadSequenceFrame(0);
-    }
-    this.updateFileList();
+    sequencePlayback.initializeSequence(this, files, wildcard);
   }
 
   private updateSequenceUI(): void {
-    const slider = document.getElementById('seq-slider') as HTMLInputElement | null;
-    const label = document.getElementById('seq-label') as HTMLElement | null;
-    if (slider) {
-      slider.max = Math.max(0, this.sequenceFiles.length - 1).toString();
-      slider.value = Math.min(
-        this.sequenceIndex,
-        this.sequenceFiles.length ? this.sequenceFiles.length - 1 : 0
-      ).toString();
-    }
-    if (label) {
-      label.textContent = `${this.sequenceFiles.length ? this.sequenceIndex + 1 : 0} / ${this.sequenceFiles.length}`;
-    }
+    sequencePlayback.updateSequenceUI(this);
   }
 
   private playSequence(): void {
-    if (!this.sequenceFiles.length) {
-      return;
-    }
-    if (this.isSequencePlaying) {
-      return;
-    }
-    this.isSequencePlaying = true;
-    const intervalMs = Math.max(50, Math.floor(1000 / this.sequenceFps));
-    this.sequenceTimer = window.setInterval(() => {
-      const nextIndex = (this.sequenceIndex + 1) % this.sequenceFiles.length;
-      this.seekSequence(nextIndex);
-    }, intervalMs) as unknown as number;
+    sequencePlayback.playSequence(this);
   }
 
   private pauseSequence(): void {
-    this.isSequencePlaying = false;
-    if (this.sequenceTimer !== null) {
-      window.clearInterval(this.sequenceTimer as unknown as number);
-      this.sequenceTimer = null;
-    }
+    sequencePlayback.pauseSequence(this);
   }
+
   private stopSequence(): void {
-    this.pauseSequence();
+    sequencePlayback.stopSequence(this);
   }
 
   private stepSequence(delta: number): void {
-    if (!this.sequenceFiles.length) {
-      return;
-    }
-    this.pauseSequence(); // do not auto-play when stepping
-    const count = this.sequenceFiles.length;
-    const next = (this.sequenceIndex + delta + count) % count;
-    this.seekSequence(next);
+    sequencePlayback.stepSequence(this, delta);
   }
 
   private seekSequence(index: number): void {
-    if (!this.sequenceFiles.length) {
-      return;
-    }
-    const clamped = Math.max(0, Math.min(index, this.sequenceFiles.length - 1));
-    this.sequenceTargetIndex = clamped;
-    this.loadSequenceFrame(clamped);
+    sequencePlayback.seekSequence(this, index);
   }
 
   private async sequenceHandleUltimate(message: any): Promise<void> {
-    const plyMsg = { ...message, type: 'ultimateRawBinaryData', messageType: 'addFiles' };
-    const startFilesLen = this.spatialFiles.length;
-    await this.handleUltimateRawBinaryData(plyMsg);
-    const created = this.meshes[this.meshes.length - 1];
-    if (created) {
-      if (message.index === this.sequenceTargetIndex) {
-        this.useSequenceObject(created, message.index);
-      } else {
-        this.cacheSequenceOnly(created, message.index);
-      }
-    }
-    this.trimNormalModeArraysFrom(startFilesLen);
+    await sequencePlayback.sequenceHandleUltimate(this, message);
   }
 
   private async sequenceHandlePly(message: any): Promise<void> {
-    const startFilesLen = this.spatialFiles.length;
-    await this.displayFiles([message.data]);
-    const created = this.meshes[this.meshes.length - 1];
-    if (created) {
-      if (message.index === this.sequenceTargetIndex) {
-        this.useSequenceObject(created, message.index);
-      } else {
-        this.cacheSequenceOnly(created, message.index);
-      }
-    }
-    this.trimNormalModeArraysFrom(startFilesLen);
+    await sequencePlayback.sequenceHandlePly(this, message);
   }
 
   private async sequenceHandleXyz(message: any): Promise<void> {
-    const startFilesLen = this.spatialFiles.length;
-    await this.handleXyzData({
-      type: 'xyzData',
-      fileName: message.fileName,
-      data: message.data,
-      isAddFile: true,
-    });
-    const created = this.meshes[this.meshes.length - 1];
-    if (created) {
-      if (message.index === this.sequenceTargetIndex) {
-        this.useSequenceObject(created, message.index);
-      } else {
-        this.cacheSequenceOnly(created, message.index);
-      }
-    }
-    this.trimNormalModeArraysFrom(startFilesLen);
+    await sequencePlayback.sequenceHandleXyz(this, message);
   }
 
   private async sequenceHandleObj(message: any): Promise<void> {
-    const startFilesLen = this.spatialFiles.length;
-    await this.handleObjData({
-      type: 'objData',
-      fileName: message.fileName,
-      data: message.data,
-      isAddFile: true,
-    });
-    const created = this.meshes[this.meshes.length - 1];
-    if (created) {
-      if (message.index === this.sequenceTargetIndex) {
-        this.useSequenceObject(created, message.index);
-      } else {
-        this.cacheSequenceOnly(created, message.index);
-      }
-    }
-    this.trimNormalModeArraysFrom(startFilesLen);
+    await sequencePlayback.sequenceHandleObj(this, message);
   }
 
   private async sequenceHandleStl(message: any): Promise<void> {
-    const startFilesLen = this.spatialFiles.length;
-    await this.handleStlData({
-      type: 'stlData',
-      fileName: message.fileName,
-      data: message.data,
-      isAddFile: true,
-    });
-    const created = this.meshes[this.meshes.length - 1];
-    if (created) {
-      if (message.index === this.sequenceTargetIndex) {
-        this.useSequenceObject(created, message.index);
-      } else {
-        this.cacheSequenceOnly(created, message.index);
-      }
-    }
-    this.trimNormalModeArraysFrom(startFilesLen);
+    await sequencePlayback.sequenceHandleStl(this, message);
   }
 
   private async sequenceHandleDepth(message: any): Promise<void> {
-    const startFilesLen = this.spatialFiles.length;
-    await this.handleDepthData({
-      type: 'depthData',
-      fileName: message.fileName,
-      data: message.data,
-      isAddFile: true,
-    });
-    const created = this.meshes[this.meshes.length - 1];
-    if (created) {
-      this.useSequenceObject(created, message.index);
-    }
-    this.trimNormalModeArraysFrom(startFilesLen);
+    await sequencePlayback.sequenceHandleDepth(this, message);
   }
 
   private trimNormalModeArraysFrom(startIndex: number): void {
-    if (this.spatialFiles.length > startIndex) {
-      this.spatialFiles.splice(startIndex);
-    }
-    if (this.multiMaterialGroups.length > startIndex) {
-      this.multiMaterialGroups.splice(startIndex);
-    }
-    if (this.materialMeshes.length > startIndex) {
-      this.materialMeshes.splice(startIndex);
-    }
-    if (this.fileVisibility.length > startIndex) {
-      this.fileVisibility.splice(startIndex);
-    }
-    if (this.pointSizes.length > startIndex) {
-      this.pointSizes.splice(startIndex);
-    }
-    if (this.individualColorModes.length > startIndex) {
-      this.individualColorModes.splice(startIndex);
-    }
+    sequencePlayback.trimNormalModeArraysFrom(this, startIndex);
   }
 
   private async loadSequenceFrame(index: number): Promise<void> {
-    const filePath = this.sequenceFiles[index];
-    if (!filePath) {
-      return;
-    }
-    // If cached, display immediately
-    const cached = this.sequenceCache.get(index);
-    if (cached) {
-      this.swapSequenceObject(cached, index);
-      return;
-    }
-    // If a request is in-flight and for a different index, let it finish but ignore on arrival
-    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    // Request from extension with requestId for matching
-    this.vscode.postMessage({ type: 'sequence:requestFile', path: filePath, index, requestId });
-    // Show a lightweight loading hint
-    try {
-      (document.getElementById('loading') as HTMLElement)?.classList.remove('hidden');
-    } catch {}
+    await sequencePlayback.loadSequenceFrame(this, index);
   }
 
   private useSequenceObject(obj: THREE.Object3D, index: number): void {
-    // Cache management
-    if (!this.sequenceCache.has(index)) {
-      this.sequenceCache.set(index, obj);
-      this.sequenceCacheOrder.push(index);
-      // Evict if over capacity
-      while (this.sequenceCacheOrder.length > this.maxSequenceCache) {
-        const evictIndex = this.sequenceCacheOrder.shift()!;
-        if (evictIndex !== this.sequenceIndex) {
-          const evictObj = this.sequenceCache.get(evictIndex);
-          if (evictObj) {
-            this.scene.remove(evictObj);
-            if ((evictObj as any).geometry) {
-              (evictObj as any).geometry.dispose?.();
-            }
-            if ((evictObj as any).material) {
-              const mat = (evictObj as any).material;
-              if (Array.isArray(mat)) {
-                mat.forEach(m => m.dispose?.());
-              } else {
-                mat.dispose?.();
-              }
-            }
-          }
-          this.sequenceCache.delete(evictIndex);
-        }
-      }
-    }
-    this.swapSequenceObject(obj, index);
+    sequencePlayback.useSequenceObject(this, obj, index);
   }
 
   private cacheSequenceOnly(obj: THREE.Object3D, index: number): void {
-    if (obj.parent) {
-      this.scene.remove(obj);
-    }
-    if (!this.sequenceCache.has(index)) {
-      this.sequenceCache.set(index, obj);
-      this.sequenceCacheOrder.push(index);
-      while (this.sequenceCacheOrder.length > this.maxSequenceCache) {
-        const evictIndex = this.sequenceCacheOrder.shift()!;
-        const evictObj = this.sequenceCache.get(evictIndex);
-        if (evictObj) {
-          this.scene.remove(evictObj);
-          if ((evictObj as any).geometry) {
-            (evictObj as any).geometry.dispose?.();
-          }
-          if ((evictObj as any).material) {
-            const mat = (evictObj as any).material;
-            if (Array.isArray(mat)) {
-              mat.forEach(m => m.dispose?.());
-            } else {
-              mat.dispose?.();
-            }
-          }
-        }
-        this.sequenceCache.delete(evictIndex);
-      }
-    }
+    sequencePlayback.cacheSequenceOnly(this, obj, index);
   }
 
   private swapSequenceObject(obj: THREE.Object3D, index: number): void {
-    // Remove current
-    const current = this.sequenceCache.get(this.sequenceIndex);
-    if (current && current !== obj) {
-      current.visible = false;
-      this.scene.remove(current);
-    }
-    // Add new
-    if (!obj.parent) {
-      this.scene.add(obj);
-    }
-    obj.visible = true;
-    // Hide axes when new object is added to rule out looking-only-at-axes confusion
-    try {
-      (this as any).axesGroup.visible = true;
-    } catch {}
-
-    this.requestRender();
-    this.sequenceIndex = index;
-    // Make points clearly visible in sequence mode
-    this.ensureSequenceVisibility(obj);
-    // Fit camera only once on the first visible frame
-    if (!this.sequenceDidInitialFit) {
-      this.fitCameraToObject(obj);
-      this.sequenceDidInitialFit = true;
-    }
-    this.updateSequenceUI();
-    this.updateFileList();
-    // Hide loading if it was shown
-    try {
-      (document.getElementById('loading') as HTMLElement)?.classList.add('hidden');
-    } catch {}
-    // Preload next
-    const next = (index + 1) % this.sequenceFiles.length;
-    const nextPath = this.sequenceFiles[next] || '';
-    const isDepth = /\.(tif|tiff|pfm|npy|npz|png|exr)$/i.test(nextPath);
-    if (!isDepth && !this.sequenceCache.get(next)) {
-      this.vscode.postMessage({ type: 'sequence:requestFile', path: nextPath, index: next });
-    }
+    sequencePlayback.swapSequenceObject(this, obj, index);
   }
 
   private ensureSequenceVisibility(obj: THREE.Object3D): void {
-    if (
-      (obj as any).isPoints &&
-      (obj as any).material &&
-      (obj as any).material instanceof THREE.PointsMaterial
-    ) {
-      const mat = (obj as any).material as THREE.PointsMaterial;
-      // Use a sensible on-screen size for sequence mode; avoid tiny defaults
-      if (!mat.size || mat.size < 0.5) {
-        mat.size = 2.5;
-      }
-      // Use screen-space size for clarity regardless of distance
-      mat.sizeAttenuation = false;
-      mat.needsUpdate = true;
-    }
+    sequencePlayback.ensureSequenceVisibility(obj);
   }
 
-  private fitCameraToObject(obj: THREE.Object3D): void {
+  fitCameraToObject(obj: THREE.Object3D): void {
     const box = new THREE.Box3().setFromObject(obj);
     if (!box.isEmpty()) {
       const size = box.getSize(new THREE.Vector3());
@@ -4835,7 +4562,7 @@ class PointCloudVisualizer {
 
   // # VSCode changes: the functions above are used in the browser and were not used for the extension
 
-  private async displayFiles(dataArray: SpatialData[]): Promise<void> {
+  async displayFiles(dataArray: SpatialData[]): Promise<void> {
     // concise summary printed separately
     // In sequence mode: do not auto-fit camera or heavy UI work
     if (this.sequenceMode) {
@@ -5096,7 +4823,7 @@ class PointCloudVisualizer {
     this.updateCameraControlsPanel();
   }
 
-  private updateFileList(): void {
+  updateFileList(): void {
     console.log(`🔄 updateFileList() called - regenerating file list UI`);
     const fileListDiv = document.getElementById('file-list');
     if (!fileListDiv) {
@@ -8032,7 +7759,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private async handleUltimateRawBinaryData(message: any): Promise<void> {
+  async handleUltimateRawBinaryData(message: any): Promise<void> {
     const startTime = performance.now();
     const perf = new PerfTimer(
       'ply',
@@ -10124,7 +9851,7 @@ class PointCloudVisualizer {
     });
   }
 
-  private async handleDepthData(message: any): Promise<void> {
+  async handleDepthData(message: any): Promise<void> {
     try {
       console.log('Received depth data for processing:', message.fileName);
       if (typeof message.postedAt === 'number') {
@@ -10478,7 +10205,7 @@ class PointCloudVisualizer {
     );
   }
 
-  private async handleObjData(message: any): Promise<void> {
+  async handleObjData(message: any): Promise<void> {
     try {
       console.log(`Load: recv OBJ ${message.fileName}`);
       this.showStatus(`OBJ: processing ${message.fileName}`);
@@ -10582,7 +10309,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private async handleStlData(message: any): Promise<void> {
+  async handleStlData(message: any): Promise<void> {
     try {
       console.log(`Load: recv STL ${message.fileName}`);
       this.showStatus(`STL: processing ${message.fileName}`);
@@ -10739,7 +10466,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private async handleXyzData(message: any): Promise<void> {
+  async handleXyzData(message: any): Promise<void> {
     try {
       console.log('Received XYZ data for processing:', message.fileName);
       this.showStatus('Parsing XYZ file...');
