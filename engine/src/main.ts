@@ -73,6 +73,8 @@ import * as sequencePlayback from './sequencePlayback';
 import * as pose from './pose';
 import * as renderStats from './renderStats';
 import * as uiStatus from './ui/status';
+import * as intensity from './utils/intensity';
+import * as commentSettings from './depth/commentSettings';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -195,7 +197,7 @@ class PointCloudVisualizer {
   private appliedMtlData: (any | null)[] = []; // Store applied MTL data for each file
 
   // Per-file Depth data storage for reprocessing
-  private fileDepthData: Map<
+  fileDepthData: Map<
     number,
     {
       originalData: ArrayBuffer;
@@ -326,7 +328,7 @@ class PointCloudVisualizer {
   // Color space handling: always output sRGB, optionally convert source sRGB colors to linear before shading
 
   // Default depth settings for new files
-  private defaultDepthSettings: CameraParams = {
+  defaultDepthSettings: CameraParams = {
     fx: 1000,
     fy: undefined, // Optional, defaults to fx if not provided
     cx: undefined, // Will be auto-calculated per image based on dimensions
@@ -2209,40 +2211,11 @@ class PointCloudVisualizer {
   }
 
   private getIntensityArray(data: SpatialData): Float32Array | null {
-    const direct = (data as any).intensityArray as Float32Array | null | undefined;
-    if (direct) {
-      return direct;
-    }
-
-    const scalarFields = (data as any).scalarFields as Record<string, Float32Array> | undefined;
-    if (scalarFields) {
-      return (
-        scalarFields.intensity ||
-        scalarFields.reflectivity ||
-        scalarFields.reflectance ||
-        scalarFields.remission ||
-        null
-      );
-    }
-
-    if ((data as any).hasIntensity && data.vertices?.length) {
-      const values = new Float32Array(data.vertices.length);
-      for (let i = 0; i < data.vertices.length; i++) {
-        values[i] = data.vertices[i].intensity ?? 0;
-      }
-      (data as any).intensityArray = values;
-      (data as any).scalarFields = {
-        ...((data as any).scalarFields || {}),
-        intensity: values,
-      };
-      return values;
-    }
-
-    return null;
+    return intensity.getIntensityArray(data);
   }
 
   private hasIntensityData(data: SpatialData): boolean {
-    return !!this.getIntensityArray(data);
+    return intensity.hasIntensityData(data);
   }
 
   private buildIntensityColorArrayForMode(
@@ -2250,76 +2223,14 @@ class PointCloudVisualizer {
     pointCount: number,
     colorMode: string
   ): Float32Array {
-    const colors = new Float32Array(pointCount * 3);
-    let min = Infinity;
-    let max = -Infinity;
-
-    for (let i = 0; i < pointCount && i < values.length; i++) {
-      const value = values[i];
-      if (Number.isFinite(value)) {
-        min = Math.min(min, value);
-        max = Math.max(max, value);
-      }
-    }
-
-    const hasRange = Number.isFinite(min) && Number.isFinite(max) && max > min;
-    const mapName =
-      colorMode === 'intensity-viridis'
-        ? 'viridis'
-        : colorMode === 'intensity-colors'
-          ? 'colors'
-          : 'grayscale';
-
-    for (let i = 0; i < pointCount; i++) {
-      const value = i < values.length ? values[i] : 0;
-      const normalized = hasRange && Number.isFinite(value) ? (value - min) / (max - min) : 0.75;
-      const clamped = Math.min(1, Math.max(0, normalized));
-      const [r, g, b] = this.mapIntensityValue(clamped, mapName);
-      const i3 = i * 3;
-      colors[i3] = r;
-      colors[i3 + 1] = g;
-      colors[i3 + 2] = b;
-    }
-
-    return colors;
+    return intensity.buildIntensityColorArrayForMode(values, pointCount, colorMode);
   }
 
   private mapIntensityValue(
     value: number,
     mapName: 'grayscale' | 'viridis' | 'colors'
   ): [number, number, number] {
-    if (mapName === 'grayscale') {
-      return [value, value, value];
-    }
-
-    const viridis: [number, number, number][] = [
-      [0.267004, 0.004874, 0.329415],
-      [0.282623, 0.140926, 0.457517],
-      [0.253935, 0.265254, 0.529983],
-      [0.206756, 0.371758, 0.553117],
-      [0.163625, 0.471133, 0.558148],
-      [0.127568, 0.566949, 0.550556],
-      [0.134692, 0.658636, 0.517649],
-      [0.266941, 0.748751, 0.440573],
-      [0.477504, 0.821444, 0.318195],
-      [0.741388, 0.873449, 0.149561],
-      [0.993248, 0.906157, 0.143936],
-    ];
-
-    const colors: [number, number, number][] = [
-      [0.0, 0.0, 1.0],
-      [0.0, 1.0, 0.0],
-      [1.0, 1.0, 0.0],
-      [1.0, 0.0, 0.0],
-    ];
-
-    const stops = mapName === 'viridis' ? viridis : colors;
-    const scaled = value * (stops.length - 1);
-    const index = Math.min(stops.length - 2, Math.max(0, Math.floor(scaled)));
-    const t = scaled - index;
-    const a = stops[index];
-    const b = stops[index + 1];
-    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    return intensity.mapIntensityValue(value, mapName);
   }
 
   // For POINT CLOUDS this returns raw 8-bit sRGB colors (Uint8, 3 bytes/point)
@@ -10849,189 +10760,45 @@ class PointCloudVisualizer {
   }
 
   private getRgb24ScaleFactor(data: SpatialData): number {
-    const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {
-      return 1000;
-    }
-
-    for (const comment of comments) {
-      if (typeof comment === 'string' && comment.includes('rgb24Scale=')) {
-        const match = comment.match(/rgb24Scale=(\d+(?:\.\d+)?)/);
-        if (match) {
-          return parseFloat(match[1]);
-        }
-      }
-    }
-    return 1000; // Default to millimeters
+    return commentSettings.getRgb24ScaleFactor(data);
   }
 
   private getRgb24ConversionMode(
     data: SpatialData
   ): 'shift' | 'multiply' | 'red' | 'green' | 'blue' {
-    const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {
-      return 'shift';
-    }
-
-    for (const comment of comments) {
-      if (typeof comment === 'string' && comment.includes('rgb24Mode=')) {
-        const match = comment.match(/rgb24Mode=(shift|multiply|red|green|blue)/);
-        if (match) {
-          return match[1] as 'shift' | 'multiply' | 'red' | 'green' | 'blue';
-        }
-      }
-    }
-    return 'shift'; // Default to standard shift mode
+    return commentSettings.getRgb24ConversionMode(data);
   }
 
   private getPngScaleFactor(data: SpatialData): number {
-    const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {
-      return 1000;
-    } // Default
-
-    for (const comment of comments) {
-      if (typeof comment === 'string' && comment.includes('scale=')) {
-        const match = comment.match(/scale=(\d+(?:\.\d+)?)/);
-        if (match) {
-          return parseFloat(match[1]);
-        }
-      }
-    }
-    return 1000; // Default to millimeters
+    return commentSettings.getPngScaleFactor(data);
   }
 
   private getDepthSetting(data: SpatialData, setting: 'camera' | 'depth'): string {
-    const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {
-      if (setting === 'camera') {
-        return this.defaultDepthSettings.cameraModel;
-      }
-      if (setting === 'depth') {
-        return this.defaultDepthSettings.depthType;
-      }
-      return '';
-    }
-    for (const comment of comments) {
-      if (setting === 'camera' && comment.startsWith('Camera: ')) {
-        return comment.replace('Camera: ', '').toLowerCase();
-      }
-      if (setting === 'depth' && comment.startsWith('Depth: ')) {
-        return comment.replace('Depth: ', '').toLowerCase();
-      }
-    }
-    // Return default settings if no setting found in comments
-    if (setting === 'camera') {
-      return this.defaultDepthSettings.cameraModel;
-    }
-    if (setting === 'depth') {
-      return this.defaultDepthSettings.depthType;
-    }
-    return '';
+    return commentSettings.getDepthSetting(this, data, setting);
   }
 
   private getDepthFx(data: SpatialData): number {
-    const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {
-      return this.defaultDepthSettings.fx;
-    }
-    for (const comment of comments) {
-      if (comment.startsWith('fx: ')) {
-        const match = comment.match(/(\d+(?:\.\d+)?)px/);
-        return match ? parseFloat(match[1]) : this.defaultDepthSettings.fx;
-      }
-      // Legacy support for 'Focal length:' format
-      if (comment.startsWith('Focal length: ')) {
-        const match = comment.match(/(\d+(?:\.\d+)?)px/);
-        return match ? parseFloat(match[1]) : this.defaultDepthSettings.fx;
-      }
-    }
-    return this.defaultDepthSettings.fx;
+    return commentSettings.getDepthFx(this, data);
   }
 
   private getDepthFy(data: SpatialData): string {
-    const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {
-      return this.defaultDepthSettings.fy?.toString() || '';
-    }
-    for (const comment of comments) {
-      if (comment.startsWith('fy: ')) {
-        const match = comment.match(/(\d+(?:\.\d+)?)px/);
-        return match ? match[1] : this.defaultDepthSettings.fy?.toString() || '';
-      }
-    }
-    return this.defaultDepthSettings.fy?.toString() || '';
+    return commentSettings.getDepthFy(this, data);
   }
 
   private getDepthBaseline(data: SpatialData): number {
-    const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {
-      return this.defaultDepthSettings.baseline || 50;
-    }
-    for (const comment of comments) {
-      if (comment.startsWith('Baseline: ')) {
-        const match = comment.match(/(\d+(?:\.\d+)?)mm/);
-        return match ? parseFloat(match[1]) : this.defaultDepthSettings.baseline || 50;
-      }
-    }
-    return this.defaultDepthSettings.baseline || 50; // Use default baseline
+    return commentSettings.getDepthBaseline(this, data);
   }
 
   private getDepthCx(data: SpatialData, fileIndex?: number): string {
-    // First try to get dimensions from stored depth data using file index
-    if (fileIndex !== undefined) {
-      const depthData = this.fileDepthData.get(fileIndex);
-      if (depthData?.depthDimensions?.width) {
-        const cx = (depthData.depthDimensions.width - 1) / 2;
-        return cx.toString();
-      }
-    }
-
-    // Fall back to checking dimensions on the data object (legacy)
-    const dimensions = (data as any)?.depthDimensions;
-    if (dimensions && dimensions.width) {
-      const cx = (dimensions.width - 1) / 2;
-      return cx.toString();
-    }
-    // Return empty string when dimensions aren't available yet (will be auto-calculated)
-    return ''; // Empty = will be auto-calculated once image is processed
+    return commentSettings.getDepthCx(this, data, fileIndex);
   }
 
   private getDepthCy(data: SpatialData, fileIndex?: number): string {
-    // First try to get dimensions from stored depth data using file index
-    if (fileIndex !== undefined) {
-      const depthData = this.fileDepthData.get(fileIndex);
-      if (depthData?.depthDimensions?.height) {
-        const cy = (depthData.depthDimensions.height - 1) / 2;
-        return cy.toString();
-      }
-    }
-
-    // Fall back to checking dimensions on the data object (legacy)
-    const dimensions = (data as any)?.depthDimensions;
-    if (dimensions && dimensions.height) {
-      const cy = (dimensions.height - 1) / 2;
-      return cy.toString();
-    }
-    // Return empty string when dimensions aren't available yet (will be auto-calculated)
-    return ''; // Empty = will be auto-calculated once image is processed
+    return commentSettings.getDepthCy(this, data, fileIndex);
   }
 
   private getDepthConvention(data: SpatialData): 'opengl' | 'opencv' {
-    // Check if this file was processed with a specific convention
-    const comments = (data as any)?.comments;
-    if (Array.isArray(comments)) {
-      for (const comment of comments) {
-        if (comment.includes('Convention: ')) {
-          const convention = comment.replace('Convention: ', '').toLowerCase();
-          if (convention === 'opencv' || convention === 'opengl') {
-            return convention as 'opengl' | 'opencv';
-          }
-        }
-      }
-    }
-    // Use default convention from settings
-    return this.defaultDepthSettings.convention || 'opengl';
+    return commentSettings.getDepthConvention(this, data);
   }
 
   private getStoredColorImageName(fileIndex: number): string | null {
