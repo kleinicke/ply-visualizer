@@ -76,6 +76,7 @@ import * as uiStatus from './ui/status';
 import * as intensity from './utils/intensity';
 import * as commentSettings from './depth/commentSettings';
 import * as cameraProfile from './cameraProfile';
+import * as renderModeToggles from './renderModeToggles';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -113,7 +114,7 @@ class PointCloudVisualizer {
   private controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare' =
     'trackball';
   private screenSpaceScaling: boolean = false;
-  private allowTransparency: boolean = false;
+  allowTransparency: boolean = false;
 
   // Eye Dome Lighting (EDL) state
   private edlEnabled: boolean = false;
@@ -164,18 +165,18 @@ class PointCloudVisualizer {
   // Unified file management
   spatialFiles: SpatialData[] = [];
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
-  private normalsVisualizers: (THREE.LineSegments | null)[] = [];
-  private vertexPointsObjects: (THREE.Points | null)[] = []; // Vertex points for triangle meshes
+  normalsVisualizers: (THREE.LineSegments | null)[] = [];
+  vertexPointsObjects: (THREE.Points | null)[] = []; // Vertex points for triangle meshes
   multiMaterialGroups: (THREE.Group | null)[] = []; // Multi-material Groups for OBJ files
   materialMeshes: (THREE.Object3D[] | null)[] = []; // Sub-meshes for multi-material OBJ files
   fileVisibility: boolean[] = [];
   private isFirstFileLoad: boolean = true; // Track if this is the first file being loaded
 
   // Universal rendering mode states for each file
-  private solidVisible: boolean[] = []; // Solid mesh rendering
-  private wireframeVisible: boolean[] = []; // Wireframe rendering
-  private pointsVisible: boolean[] = []; // Points rendering
-  private normalsVisible: boolean[] = []; // Normals lines rendering
+  solidVisible: boolean[] = []; // Solid mesh rendering
+  wireframeVisible: boolean[] = []; // Wireframe rendering
+  pointsVisible: boolean[] = []; // Points rendering
+  normalsVisible: boolean[] = []; // Normals lines rendering
 
   private useOriginalColors = true; // Default to original colors
   pointSizes: number[] = []; // Individual point sizes for each point cloud
@@ -6119,182 +6120,23 @@ class PointCloudVisualizer {
    * Handles solid, wireframe, points, and normals rendering modes
    */
   private toggleUniversalRenderMode(fileIndex: number, mode: string): void {
-    console.log(`🔄 toggleUniversalRenderMode called: fileIndex=${fileIndex}, mode=${mode}`);
-    if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
-      console.log(
-        `❌ Invalid fileIndex: ${fileIndex}, spatialFiles.length=${this.spatialFiles.length}`
-      );
-      return;
-    }
-
-    const data = this.spatialFiles[fileIndex];
-    console.log(`📋 File data:`, data?.fileName);
-
-    switch (mode) {
-      case 'solid':
-      case 'mesh':
-        this.toggleSolidRendering(fileIndex);
-        break;
-      case 'wireframe':
-        this.toggleWireframeRendering(fileIndex);
-        break;
-      case 'points':
-        this.togglePointsRendering(fileIndex);
-        break;
-      case 'normals':
-        this.toggleNormalsRendering(fileIndex);
-        break;
-    }
-
-    // Update button states after mode change
-    this.updateUniversalRenderButtonStates();
+    renderModeToggles.toggleUniversalRenderMode(this, fileIndex, mode);
   }
 
   private toggleSolidRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
-      return;
-    }
-
-    // Ensure array is properly sized with default values
-    while (this.solidVisible.length <= fileIndex) {
-      const data = this.spatialFiles[this.solidVisible.length];
-      const defaultValue = data && data.faceCount > 0; // Default true for meshes, false for point clouds
-      this.solidVisible.push(defaultValue);
-    }
-
-    // Toggle solid visibility state
-    this.solidVisible[fileIndex] = !this.solidVisible[fileIndex];
-
-    this.updateMeshVisibilityAndMaterial(fileIndex);
-    this.requestRender();
-    // this.requestRender();
+    renderModeToggles.toggleSolidRendering(this, fileIndex);
   }
 
   private toggleWireframeRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
-      return;
-    }
-
-    // Ensure array is properly sized with default values
-    while (this.wireframeVisible.length <= fileIndex) {
-      this.wireframeVisible.push(false); // Wireframe always defaults to false
-    }
-
-    // Toggle wireframe visibility state
-    this.wireframeVisible[fileIndex] = !this.wireframeVisible[fileIndex];
-
-    this.updateMeshVisibilityAndMaterial(fileIndex);
-    this.requestRender();
-    // this.requestRender();
+    renderModeToggles.toggleWireframeRendering(this, fileIndex);
   }
 
   private togglePointsRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
-      return;
-    }
-
-    // Ensure array is properly sized with default values
-    while (this.pointsVisible.length <= fileIndex) {
-      const data = this.spatialFiles[this.pointsVisible.length];
-      const defaultValue = !data || data.faceCount === 0; // Default true for point clouds, false for meshes
-      this.pointsVisible.push(defaultValue);
-    }
-
-    // Toggle points visibility state
-    this.pointsVisible[fileIndex] = !this.pointsVisible[fileIndex];
-
-    this.updateMeshVisibilityAndMaterial(fileIndex);
-    this.requestRender();
-    // this.requestRender();
+    renderModeToggles.togglePointsRendering(this, fileIndex);
   }
 
   private updateMeshVisibilityAndMaterial(fileIndex: number): void {
-    const mesh = this.meshes[fileIndex];
-    const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
-
-    // Handle either regular mesh or multi-material OBJ group
-    const target = multiMaterialGroup || mesh;
-    if (!target) {
-      console.log(`No mesh or multi-material group found for file ${fileIndex}`);
-      return;
-    }
-
-    const solidVisible = this.solidVisible[fileIndex] ?? true;
-    const wireframeVisible = this.wireframeVisible[fileIndex] ?? false;
-    const pointsVisible = this.pointsVisible[fileIndex] ?? true;
-    const fileVisible = this.fileVisibility[fileIndex] ?? true;
-
-    // Set visibility for the target (mesh or multi-material group)
-    if (mesh && mesh.type === 'Points') {
-      // Point cloud case
-      mesh.visible = pointsVisible && fileVisible;
-    } else {
-      // Triangle mesh or multi-material group case
-      target.visible = (solidVisible || wireframeVisible) && fileVisible;
-
-      // Handle vertex points visualization for triangle meshes
-      if (mesh) {
-        // Only for regular meshes, not multi-material groups
-        this.updateVertexPointsVisualization(
-          fileIndex,
-          pointsVisible,
-          solidVisible,
-          wireframeVisible,
-          fileVisible
-        );
-      } else if (multiMaterialGroup) {
-        // Handle points for multi-material OBJ groups independently
-        this.updateMultiMaterialPointsVisualization(fileIndex, pointsVisible, fileVisible);
-      }
-    }
-
-    // Handle different rendering combinations:
-    // 1. Only solid active: show solid mesh
-    // 2. Only wireframe active: show wireframe mesh
-    // 3. Both active: show solid mesh (mesh takes precedence)
-    // 4. Neither active: mesh is hidden (handled by visibility check above)
-
-    // Update materials for wireframe mode
-    if (multiMaterialGroup) {
-      // Handle multi-material OBJ groups
-      const subMeshes = this.materialMeshes[fileIndex];
-      if (subMeshes) {
-        subMeshes.forEach(subMesh => {
-          if (subMesh instanceof THREE.Mesh && subMesh.material) {
-            const material = subMesh.material as THREE.Material;
-            if (
-              material instanceof THREE.MeshBasicMaterial ||
-              material instanceof THREE.MeshLambertMaterial
-            ) {
-              material.wireframe = wireframeVisible && !solidVisible;
-              material.opacity = 1.0;
-              material.transparent = false;
-            }
-          }
-        });
-      }
-    } else if (mesh && mesh.material) {
-      // Handle regular single mesh
-      if (Array.isArray(mesh.material)) {
-        mesh.material.forEach(material => {
-          if (
-            material instanceof THREE.MeshBasicMaterial ||
-            material instanceof THREE.MeshLambertMaterial
-          ) {
-            material.wireframe = wireframeVisible && !solidVisible;
-            material.opacity = 1.0;
-            material.transparent = false;
-          }
-        });
-      } else if (
-        mesh.material instanceof THREE.MeshBasicMaterial ||
-        mesh.material instanceof THREE.MeshLambertMaterial
-      ) {
-        mesh.material.wireframe = wireframeVisible && !solidVisible;
-        mesh.material.opacity = 1.0;
-        mesh.material.transparent = false;
-      }
-    }
+    renderModeToggles.updateMeshVisibilityAndMaterial(this, fileIndex);
   }
 
   private updateVertexPointsVisualization(
@@ -6304,79 +6146,18 @@ class PointCloudVisualizer {
     wireframeVisible: boolean,
     fileVisible: boolean
   ): void {
-    const mesh = this.meshes[fileIndex];
-    if (!mesh || mesh.type === 'Points') {
-      return;
-    } // Skip if it's already a point cloud
-
-    const shouldShowVertexPoints = pointsVisible && fileVisible;
-    let vertexPointsObject = this.vertexPointsObjects[fileIndex];
-
-    if (shouldShowVertexPoints && !vertexPointsObject) {
-      // Create vertex points object
-      vertexPointsObject = this.createVertexPointsFromMesh(mesh, fileIndex);
-      if (vertexPointsObject) {
-        this.vertexPointsObjects[fileIndex] = vertexPointsObject;
-        this.scene.add(vertexPointsObject);
-      }
-    }
-
-    if (vertexPointsObject) {
-      vertexPointsObject.visible = shouldShowVertexPoints;
-      // Update point size from slider
-      if (vertexPointsObject.material instanceof THREE.PointsMaterial) {
-        vertexPointsObject.material.size = this.pointSizes[fileIndex] || 1.0;
-      }
-    }
+    renderModeToggles.updateVertexPointsVisualization(
+      this,
+      fileIndex,
+      pointsVisible,
+      solidVisible,
+      wireframeVisible,
+      fileVisible
+    );
   }
 
   private createVertexPointsFromMesh(mesh: THREE.Object3D, fileIndex: number): THREE.Points | null {
-    let geometry: THREE.BufferGeometry | null = null;
-
-    // Extract geometry from mesh
-    if (mesh instanceof THREE.Mesh) {
-      geometry = mesh.geometry as THREE.BufferGeometry;
-    } else if (mesh instanceof THREE.Group) {
-      // For groups, find the first mesh child
-      mesh.traverse(child => {
-        if (child instanceof THREE.Mesh && !geometry) {
-          geometry = child.geometry as THREE.BufferGeometry;
-        }
-      });
-    }
-
-    if (!geometry || !geometry.attributes.position) {
-      return null;
-    }
-
-    // Create points geometry from mesh vertices
-    const pointsGeometry = new THREE.BufferGeometry();
-    pointsGeometry.setAttribute('position', geometry.attributes.position);
-
-    // Copy colors if available
-    if (geometry.attributes.color) {
-      pointsGeometry.setAttribute('color', geometry.attributes.color);
-    }
-
-    // Create point material with current point size
-    const currentPointSize = this.pointSizes[fileIndex] || 1.0;
-    const pointsMaterial = new THREE.PointsMaterial({
-      size: currentPointSize,
-      vertexColors: geometry.attributes.color ? true : false,
-      color: geometry.attributes.color ? undefined : 0x888888,
-      sizeAttenuation: true,
-      // Apply transparency settings
-      transparent: this.allowTransparency,
-      alphaTest: this.allowTransparency ? 0.1 : 0,
-      opacity: 1.0,
-      depthWrite: true,
-      depthTest: true,
-      side: THREE.FrontSide,
-    });
-
-    const points = new THREE.Points(pointsGeometry, pointsMaterial);
-    points.name = 'Vertex Points';
-    return points;
+    return renderModeToggles.createVertexPointsFromMesh(this, mesh, fileIndex);
   }
 
   private updateMultiMaterialPointsVisualization(
@@ -6384,153 +6165,20 @@ class PointCloudVisualizer {
     pointsVisible: boolean,
     fileVisible: boolean
   ): void {
-    const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
-    const subMeshes = this.materialMeshes[fileIndex];
-
-    if (!multiMaterialGroup || !subMeshes) {
-      return;
-    }
-
-    const shouldShowPoints = pointsVisible && fileVisible;
-
-    // Update visibility for all point objects in the multi-material group
-    for (const subMesh of subMeshes) {
-      if ((subMesh as any).isPoints && subMesh instanceof THREE.Points) {
-        subMesh.visible = shouldShowPoints;
-      }
-    }
+    renderModeToggles.updateMultiMaterialPointsVisualization(
+      this,
+      fileIndex,
+      pointsVisible,
+      fileVisible
+    );
   }
 
   private toggleNormalsRendering(fileIndex: number): void {
-    if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
-      return;
-    }
-
-    // Ensure array is properly sized with default values
-    while (this.normalsVisible.length <= fileIndex) {
-      this.normalsVisible.push(false); // Normals always default to false
-    }
-
-    // Toggle normals visibility state
-    this.normalsVisible[fileIndex] = !this.normalsVisible[fileIndex];
-
-    // Check if we have a normals visualizer, if not try to create one
-    let normalsVisualizer = this.normalsVisualizers[fileIndex];
-
-    console.log(
-      `Normals toggle for file ${fileIndex}: visible=${this.normalsVisible[fileIndex]}, existing visualizer=${!!normalsVisualizer}`
-    );
-
-    if (!normalsVisualizer && this.normalsVisible[fileIndex]) {
-      // Try to create normals visualizer
-      const spatialData = this.spatialFiles[fileIndex];
-      const mesh = this.meshes[fileIndex];
-
-      console.log(
-        `Creating normals for file ${fileIndex}: hasNormals=${spatialData?.hasNormals}, faceCount=${spatialData?.faceCount}, meshType=${mesh?.type}`
-      );
-
-      if (spatialData && mesh) {
-        // Try to create normals visualizer in multiple ways:
-
-        // 1. For PLY point clouds, try to use original normals data first
-        if (spatialData.fileName?.toLowerCase().endsWith('.ply') && mesh.type === 'Points') {
-          if (spatialData.hasNormals && spatialData.vertices.length > 0) {
-            normalsVisualizer = this.createNormalsVisualizer(spatialData);
-          } else {
-            // Try to extract normals from Points geometry
-            normalsVisualizer = this.createPointCloudNormalsVisualizer(spatialData, mesh);
-          }
-        }
-        // 2. For PLY triangle meshes, use computed normals from mesh geometry
-        else if (spatialData.fileName?.toLowerCase().endsWith('.ply')) {
-          normalsVisualizer = this.createComputedNormalsVisualizer(spatialData, mesh);
-        }
-        // 3. If PLY data has explicit normals and populated vertices array
-        else if (spatialData.hasNormals && spatialData.vertices.length > 0) {
-          normalsVisualizer = this.createNormalsVisualizer(spatialData);
-        }
-        // 4. If it's a triangle mesh, compute from geometry
-        else if (mesh.type !== 'Points') {
-          normalsVisualizer = this.createComputedNormalsVisualizer(spatialData, mesh);
-        }
-        // 5. Fallback: try any available data
-        else if (spatialData.faceCount > 0) {
-          normalsVisualizer = this.createComputedNormalsVisualizer(spatialData, mesh);
-        }
-
-        if (normalsVisualizer) {
-          console.log(`✅ Created normals visualizer for file ${fileIndex}`);
-          this.normalsVisualizers[fileIndex] = normalsVisualizer;
-          this.scene.add(normalsVisualizer);
-        } else {
-          console.log(`❌ Failed to create normals visualizer for file ${fileIndex}`);
-        }
-      }
-    }
-
-    if (normalsVisualizer) {
-      const shouldBeVisible =
-        this.normalsVisible[fileIndex] && (this.fileVisibility[fileIndex] ?? true);
-      console.log(
-        `Setting normals visualizer visibility: ${shouldBeVisible} (normals=${this.normalsVisible[fileIndex]}, file=${this.fileVisibility[fileIndex] ?? true})`
-      );
-
-      // Debug the normals visualizer
-      const geometry = (normalsVisualizer as any).geometry;
-      const material = (normalsVisualizer as any).material;
-      console.log(`📏 Normals visualizer info:`, {
-        name: normalsVisualizer.name,
-        visible: normalsVisualizer.visible,
-        geometryVertices: geometry?.attributes?.position?.count || 0,
-        materialColor: material?.color?.getHexString?.() || 'unknown',
-        position: normalsVisualizer.position,
-        scale: normalsVisualizer.scale,
-      });
-
-      normalsVisualizer.visible = shouldBeVisible;
-    } else {
-      console.log(`No normals visualizer found for file ${fileIndex}`);
-    }
-    this.requestRender();
-    // this.requestRender();
+    renderModeToggles.toggleNormalsRendering(this, fileIndex);
   }
 
   private updateUniversalRenderButtonStates(): void {
-    const renderModeButtons = document.querySelectorAll('.render-mode-btn');
-    renderModeButtons.forEach(button => {
-      const target = button as HTMLElement;
-      const fileIndex = parseInt(target.getAttribute('data-file-index') || '0');
-      const mode = target.getAttribute('data-mode') || 'solid';
-
-      let isActive = false;
-      switch (mode) {
-        case 'solid':
-        case 'mesh':
-          isActive = this.solidVisible[fileIndex] ?? true;
-          break;
-        case 'wireframe':
-          isActive = this.wireframeVisible[fileIndex] ?? false;
-          break;
-        case 'points':
-          isActive = this.pointsVisible[fileIndex] ?? true;
-          break;
-        case 'normals':
-          isActive = this.normalsVisible[fileIndex] ?? false;
-          break;
-      }
-
-      // Update button visual state
-      if (isActive) {
-        target.style.background = 'var(--vscode-button-background)';
-        target.style.color = 'var(--vscode-button-foreground)';
-        target.classList.add('active');
-      } else {
-        target.style.background = 'var(--vscode-button-secondaryBackground)';
-        target.style.color = 'var(--vscode-button-secondaryForeground)';
-        target.classList.remove('active');
-      }
-    });
+    renderModeToggles.updateUniversalRenderButtonStates(this);
   }
 
   private showImmediateLoading(message: any): void {
@@ -10365,7 +10013,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private createNormalsVisualizer(data: SpatialData): THREE.LineSegments {
+  createNormalsVisualizer(data: SpatialData): THREE.LineSegments {
     const normalsGeometry = new THREE.BufferGeometry();
     const lines = [];
     const normalLength = 0.1; // Controls how long the normal lines are
@@ -10411,7 +10059,7 @@ class PointCloudVisualizer {
     return normalsVisualizer;
   }
 
-  private createComputedNormalsVisualizer(
+  createComputedNormalsVisualizer(
     data: SpatialData,
     mesh: THREE.Object3D
   ): THREE.LineSegments | null {
@@ -10496,7 +10144,7 @@ class PointCloudVisualizer {
     return normalsVisualizer;
   }
 
-  private createPointCloudNormalsVisualizer(
+  createPointCloudNormalsVisualizer(
     data: SpatialData,
     mesh: THREE.Object3D
   ): THREE.LineSegments | null {
