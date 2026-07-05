@@ -83,6 +83,7 @@ import * as cameraConvention from './cameraConvention';
 import * as edl from './edl';
 import * as transparency from './transparency';
 import * as plyExport from './plyExport';
+import * as rotationCenterFeature from './rotationCenterFeature';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -132,7 +133,7 @@ class PointCloudVisualizer {
   backgroundBrightness: number = 13;
   effectComposer: EffectComposer | null = null;
   edlPass: EDLPass | null = null;
-  private rotationCenterManager: RotationCenterManager = new RotationCenterManager();
+  rotationCenterManager: RotationCenterManager = new RotationCenterManager();
   private measurementManager: MeasurementManager | null = null;
   private selectionManager: SelectionManager | null = null;
 
@@ -1803,38 +1804,7 @@ class PointCloudVisualizer {
   }
 
   private setRotationCenterToOrigin(): void {
-    // Temporarily remove change listener to prevent continuous rendering
-    const changeHandler = () => this.requestRender();
-    if (this.controls) {
-      (this.controls as any).removeEventListener('change', changeHandler);
-    }
-
-    // Set rotation center (target) to origin (0, 0, 0)
-    this.controls.target.set(0, 0, 0);
-    this.controls.update();
-
-    // Update axes position to the new rotation center
-    const axesGroup = (this as any).axesGroup;
-    if (axesGroup) {
-      axesGroup.position.copy(this.controls.target);
-    }
-
-    // Re-add change listener
-    if (this.controls) {
-      (this.controls as any).addEventListener('change', changeHandler);
-    }
-
-    // Show axes temporarily to indicate new rotation center
-    const showAxesTemporarily = (this as any).showAxesTemporarily;
-    if (showAxesTemporarily) {
-      showAxesTemporarily();
-    }
-
-    // Single render request for the rotation center change
-    this.requestRender();
-
-    // debug
-    this.updateRotationOriginButtonState();
+    rotationCenterFeature.setRotationCenterToOrigin(this);
   }
 
   private onDoubleClick(event: MouseEvent): void {
@@ -1890,38 +1860,11 @@ class PointCloudVisualizer {
   }
 
   private setRotationCenter(point: THREE.Vector3): void {
-    const axesGroup = (this as any).axesGroup;
-
-    this.rotationCenterManager.setRotationCenter(point, this.camera, this.controls, axesGroup, {
-      updateRotationOriginButtonState: () => this.updateRotationOriginButtonState(),
-      showAxesTemporarily: (this as any).showAxesTemporarily,
-      requestRender: () => this.requestRender(),
-    });
-
-    // Visual feedback
-    this.showRotationCenterFeedback(this.controls.target);
+    rotationCenterFeature.setRotationCenter(this, point);
   }
 
   private showRotationCenterFeedback(point: THREE.Vector3): void {
-    // Create a temporary visual indicator at the rotation center
-    const geometry = new THREE.SphereGeometry(0.01, 8, 6);
-    const material = new THREE.MeshBasicMaterial({
-      color: 0xff0000,
-      transparent: true,
-      opacity: 0.8,
-    });
-    const sphere = new THREE.Mesh(geometry, material);
-    sphere.position.copy(point);
-
-    this.scene.add(sphere);
-
-    // Remove the indicator after 2 seconds
-    setTimeout(() => {
-      this.scene.remove(sphere);
-      geometry.dispose();
-      material.dispose();
-      this.requestRender();
-    }, 2000);
+    rotationCenterFeature.showRotationCenterFeedback(this, point);
   }
 
   private getIntensityArray(data: SpatialData): Float32Array | null {
@@ -3015,17 +2958,7 @@ class PointCloudVisualizer {
   }
 
   private updateRotationOriginButtonState(): void {
-    const btn = document.getElementById('set-rotation-origin');
-    if (!btn) {
-      return;
-    }
-    const t = this.controls?.target;
-    const atOrigin = !!t && Math.abs(t.x) < 1e-9 && Math.abs(t.y) < 1e-9 && Math.abs(t.z) < 1e-9;
-    if (atOrigin) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
+    rotationCenterFeature.updateRotationOriginButtonState(this);
   }
 
   private setUpVector(upVector: THREE.Vector3): void {
