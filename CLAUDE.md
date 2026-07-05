@@ -86,13 +86,16 @@ that is shared between both targets. The `src/` directory contains only VS
 Code-specific integration code (commands, custom editor registration, webview
 wiring) - it should stay thin and delegate to `engine/src/`.
 
-**Svelte migration in progress**: The webview UI panel layer (file list,
-settings panels, dialogs) is being migrated to Svelte 5, in-place, one panel at
-a time — see [`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md)
-for the full plan, rationale, and phase breakdown. Every phase's exit criterion
-includes an F5 Extension Development Host check, because the extension must keep
-working perfectly throughout — the standalone page is a faster iteration
-surface, not the target to optimize for.
+**Svelte migration (Phases 0-6 done)**: The webview UI panel layer (file list,
+settings panels, dialogs, tab navigation) has been migrated to Svelte 5,
+in-place, one panel at a time — see
+[`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md) for what moved
+where, two intentionally-deferred follow-ups, and the rationale. New UI work in
+the webview should be a Svelte component under `engine/src/components/` reading
+from `engine/src/state/*.svelte.{ts,js}`, not a new HTML-string generator. Every
+phase's exit criterion included an F5 Extension Development Host check, because
+the extension must keep working perfectly throughout — the standalone page is a
+faster iteration surface, not the target to optimize for.
 
 ### Project Structure
 
@@ -121,7 +124,8 @@ surface, not the target to optimize for.
 │   │   │   ├── darkModern.ts
 │   │   │   └── ...
 │   │   ├── ui/             # UI generation modules
-│   │   │   ├── dialogs.ts  # Modal shell + dialog HTML templates (add more here)
+│   │   │   ├── dialogs.ts  # escapeHtml/addTooltipsToTruncatedFilenames only -
+│   │   │   │                # modal dialogs are components/Modal.svelte + friends
 │   │   │   └── ...
 │   │   └── utils/          # Utility modules (matrix.ts, perfLog.ts exist; add more here)
 │   ├── test/               # Playwright tests - the fast engine test surface
