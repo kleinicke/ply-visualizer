@@ -78,6 +78,7 @@ import * as commentSettings from './depth/commentSettings';
 import * as cameraProfile from './cameraProfile';
 import * as renderModeToggles from './renderModeToggles';
 import * as colorModeUtils from './colorMode';
+import * as pointSizeScaling from './pointSizeScaling';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -102,7 +103,7 @@ class PointCloudVisualizer {
   // Browser file handler
   private browserFileHandler: BrowserMessageHandler | null = null;
   scene!: THREE.Scene;
-  private camera!: THREE.PerspectiveCamera;
+  camera!: THREE.PerspectiveCamera;
   renderer!: THREE.WebGLRenderer;
   // True between a WebGL context loss and its restoration. While lost, the GPU
   // is gone, so we must not render or touch GL objects — doing so throws and
@@ -114,7 +115,7 @@ class PointCloudVisualizer {
   // Camera control state
   private controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare' =
     'trackball';
-  private screenSpaceScaling: boolean = false;
+  screenSpaceScaling: boolean = false;
   allowTransparency: boolean = false;
 
   // Eye Dome Lighting (EDL) state
@@ -503,129 +504,19 @@ class PointCloudVisualizer {
   }
 
   private toggleScreenSpaceScaling(): void {
-    this.screenSpaceScaling = !this.screenSpaceScaling;
-    console.log(`Screen-space scaling ${this.screenSpaceScaling ? 'enabled' : 'disabled'}`);
-
-    // Update UI button state
-    const button = document.getElementById('toggle-screenspace-scaling');
-    if (button) {
-      button.classList.toggle('active', this.screenSpaceScaling);
-    }
-
-    // Update all point sizes immediately
-    this.updateAllPointSizesForDistance();
-
-    // Show status message
-    this.showStatus(
-      `Screen-space scaling ${this.screenSpaceScaling ? 'enabled' : 'disabled'}: ${this.screenSpaceScaling ? 'Point sizes adjust with camera distance' : 'Fixed point sizes restored'}`
-    );
-
-    this.requestRender();
+    pointSizeScaling.toggleScreenSpaceScaling(this);
   }
 
   private updateAllPointSizesForDistance(): void {
-    if (!this.screenSpaceScaling) {
-      // Restore original point sizes
-      this.restoreOriginalPointSizes();
-      return;
-    }
-
-    // Calculate camera distance to scene center
-    const sceneCenter = new THREE.Vector3();
-    const box = new THREE.Box3();
-
-    // Calculate overall scene bounding box
-    this.scene.traverse(object => {
-      if (object instanceof THREE.Points || object instanceof THREE.Mesh) {
-        const geometry = object.geometry;
-        if (geometry) {
-          geometry.computeBoundingBox();
-          if (geometry.boundingBox) {
-            const transformedBox = geometry.boundingBox.clone().applyMatrix4(object.matrixWorld);
-            box.union(transformedBox);
-          }
-        }
-      }
-    });
-
-    if (!box.isEmpty()) {
-      box.getCenter(sceneCenter);
-    }
-
-    const cameraDistance = this.camera.position.distanceTo(sceneCenter);
-
-    // Apply distance-based scaling to all point materials
-    this.meshes.forEach((mesh, index) => {
-      if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
-        const material = mesh.material as THREE.PointsMaterial;
-        const baseSize = this.pointSizes[index] || 1.0;
-        material.size = this.calculateScreenSpacePointSize(baseSize, cameraDistance);
-        material.needsUpdate = true;
-      }
-    });
-
-    // Update vertex points objects
-    this.vertexPointsObjects.forEach((vertexPoints, index) => {
-      if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
-        const material = vertexPoints.material as THREE.PointsMaterial;
-        const baseSize = this.pointSizes[index] || 1.0;
-        material.size = this.calculateScreenSpacePointSize(baseSize, cameraDistance);
-        material.needsUpdate = true;
-      }
-    });
-
-    // Update multi-material groups
-    this.multiMaterialGroups.forEach((group, index) => {
-      if (group) {
-        group.traverse(child => {
-          if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
-            const material = child.material as THREE.PointsMaterial;
-            const baseSize = this.pointSizes[index] || 0.001;
-            material.size = this.calculateScreenSpacePointSize(baseSize, cameraDistance);
-            material.needsUpdate = true;
-          }
-        });
-      }
-    });
+    pointSizeScaling.updateAllPointSizesForDistance(this);
   }
 
   private calculateScreenSpacePointSize(baseSize: number, cameraDistance: number): number {
-    // Scale point size inversely with distance, with reasonable limits
-    const minSize = baseSize * 0.1; // Don't go below 10% of original
-    const maxSize = baseSize * 3.0; // Don't go above 300% of original
-    const scaledSize = baseSize * (20 / Math.max(1, cameraDistance));
-    return Math.max(minSize, Math.min(maxSize, scaledSize));
+    return pointSizeScaling.calculateScreenSpacePointSize(baseSize, cameraDistance);
   }
 
   private restoreOriginalPointSizes(): void {
-    // Restore original point sizes from stored values
-    this.meshes.forEach((mesh, index) => {
-      if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
-        const material = mesh.material as THREE.PointsMaterial;
-        material.size = this.pointSizes[index] || 1.0;
-        material.needsUpdate = true;
-      }
-    });
-
-    this.vertexPointsObjects.forEach((vertexPoints, index) => {
-      if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
-        const material = vertexPoints.material as THREE.PointsMaterial;
-        material.size = this.pointSizes[index] || 1.0;
-        material.needsUpdate = true;
-      }
-    });
-
-    this.multiMaterialGroups.forEach((group, index) => {
-      if (group) {
-        group.traverse(child => {
-          if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
-            const material = child.material as THREE.PointsMaterial;
-            material.size = this.pointSizes[index] || 0.001;
-            material.needsUpdate = true;
-          }
-        });
-      }
-    });
+    pointSizeScaling.restoreOriginalPointSizes(this);
   }
 
   private initGPUTiming(): void {
@@ -10191,7 +10082,7 @@ class PointCloudVisualizer {
    * Based on the Python reference implementation
    */
 
-  private showStatus(message: string): void {
+  showStatus(message: string): void {
     uiStatus.showStatus(message);
   }
 
