@@ -8,4 +8,5 @@ export const uiState = $state({
   statusMessage: '',
   activeTab: 'controls',
   showWelcomeMessage: false,
+  perfStatsText: '',
 });

@@ -1,3 +1,5 @@
+import { uiState } from './state/ui.svelte';
+
 /**
  * GPU timing (via EXT_disjoint_timer_query) and FPS/frame-time tracking for
  * the render loop. Extracted out of PointCloudVisualizer; main.ts's animate()
@@ -189,19 +191,13 @@ export function updateFPSCalculation(host: RenderStatsHost): void {
 }
 
 export function updateFPSDisplay(host: RenderStatsHost): void {
-  const statsElement = document.getElementById('performance-stats');
-  if (statsElement) {
-    let timeStr;
-    if (host.gpuTimerExtension && host.currentGpuTime > 0) {
-      // Show actual GPU render time when available
-      timeStr = `${host.currentGpuTime.toFixed(1)} ms`;
-    } else {
-      // Fallback to frame time
-      timeStr = `${host.currentFrameTime.toFixed(1)} ms`;
-    }
-    const statsStr = `${host.currentFps} fps / ${timeStr}`;
-    if (statsElement.textContent !== statsStr) {
-      statsElement.textContent = statsStr;
-    }
+  let timeStr;
+  if (host.gpuTimerExtension && host.currentGpuTime > 0) {
+    // Show actual GPU render time when available
+    timeStr = `${host.currentGpuTime.toFixed(1)} ms`;
+  } else {
+    // Fallback to frame time
+    timeStr = `${host.currentFrameTime.toFixed(1)} ms`;
   }
+  uiState.perfStatsText = `${host.currentFps} fps / ${timeStr}`;
 }

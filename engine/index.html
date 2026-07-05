@@ -63,13 +63,8 @@
                 margin-bottom: 8px;
               ">
                         <h4 style="margin: 0">File Management</h4>
-                        <div id="performance-stats" style="
-                  font-size: 10px;
-                  color: var(--vscode-descriptionForeground);
-                  font-family: monospace;
-                ">
-                            60 fps / 16.7 ms
-                        </div>
+                        <!-- PerformanceStats Svelte component mounts its own #performance-stats root here -->
+                        <div id="performance-stats-mount"></div>
                     </div>
                     <div class="file-controls">
                         <button id="add-file" class="primary-button"

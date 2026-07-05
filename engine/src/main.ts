@@ -74,6 +74,7 @@ import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { mountErrorOverlay } from './errorOverlayMount';
 import { mountWelcomeMessage } from './welcomeMessageMount';
+import { mountPerformanceStats } from './performanceStatsMount';
 import { filesState } from './state/files.svelte';
 import { viewerState } from './state/viewer.svelte';
 import { formatFileSize } from './utils/format';
@@ -513,6 +514,7 @@ class PointCloudVisualizer {
       this.setupEventListeners();
       mountSvelteSmokeTest();
       mountErrorOverlay();
+      mountPerformanceStats();
 
       // Setup color image loader callback
       this.colorImageLoader.setStatusCallback((message, type) => {
