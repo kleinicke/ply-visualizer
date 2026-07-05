@@ -78,6 +78,7 @@ import * as sceneBrightness from './sceneBrightness';
 import * as depthDefaultSettings from './depth/defaultSettings';
 import { parseCalibrationFile } from './depth/calibrationFileParser';
 import * as calibrationForm from './depth/calibrationForm';
+import * as controlSchemeSwitcher from './controlSchemeSwitcher';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -112,7 +113,7 @@ class PointCloudVisualizer {
   private controls!: TrackballControls | OrbitControls | CustomArcballControls | TurntableControls;
 
   // Camera control state
-  private controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare' =
+  controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare' =
     'trackball';
   screenSpaceScaling: boolean = false;
   allowTransparency: boolean = false;
@@ -724,7 +725,7 @@ class PointCloudVisualizer {
     });
   }
 
-  private initializeControls(): void {
+  initializeControls(): void {
     // Store current camera state before disposing old controls
     const currentCameraPosition = this.camera.position.clone();
     const currentTarget = this.controls ? this.controls.target.clone() : new THREE.Vector3(0, 0, 0);
@@ -7613,84 +7614,25 @@ class PointCloudVisualizer {
   }
 
   private switchToTrackballControls(): void {
-    if (this.controlType === 'trackball') {
-      return;
-    }
-
-    console.log('🔄 Switching to TrackballControls');
-    this.controlType = 'trackball';
-    this.initializeControls();
-    this.updateControlStatus();
-    this.showStatus('Switched to Trackball controls');
+    controlSchemeSwitcher.switchToTrackballControls(this);
   }
 
   private switchToOrbitControls(): void {
-    if (this.controlType === 'orbit') {
-      return;
-    }
-
-    console.log('🔄 Switching to OrbitControls');
-    this.controlType = 'orbit';
-    this.initializeControls();
-    this.updateControlStatus();
-    this.showStatus('Switched to Orbit controls');
+    controlSchemeSwitcher.switchToOrbitControls(this);
   }
 
   private switchToInverseTrackballControls(): void {
-    if (this.controlType === 'inverse-trackball') {
-      return;
-    }
-
-    console.log('🔄 Switching to Inverse TrackballControls');
-    this.controlType = 'inverse-trackball';
-    this.initializeControls();
-    this.updateControlStatus();
-    this.showStatus('Switched to Inverse Trackball controls');
+    controlSchemeSwitcher.switchToInverseTrackballControls(this);
   }
 
   private switchToArcballControls(): void {
-    if (this.controlType === 'arcball') {
-      return;
-    }
-
-    console.log('🔄 Switching to ArcballControls');
-    this.controlType = 'arcball';
-    this.initializeControls();
-    this.updateControlStatus();
-    this.showStatus('Switched to Arcball controls');
+    controlSchemeSwitcher.switchToArcballControls(this);
   }
 
   // Removed CloudCompare button/shortcut per user request; turntable impl remains unused
 
-  private updateControlStatus(): void {
-    const status = this.controlType.toUpperCase();
-    console.log(`📊 Camera Controls: ${status}`);
-
-    // Update UI if there's a status display
-    const statusElement = document.getElementById('camera-control-status');
-    if (statusElement) {
-      statusElement.textContent = status;
-    }
-
-    // Update button active states
-    const controlButtons = [
-      { id: 'trackball-controls', type: 'trackball' },
-      { id: 'orbit-controls', type: 'orbit' },
-      { id: 'inverse-trackball-controls', type: 'inverse-trackball' },
-      { id: 'arcball-controls', type: 'arcball' },
-      { id: 'cloudcompare-controls', type: 'cloudcompare' },
-    ];
-
-    controlButtons.forEach(button => {
-      const btn = document.getElementById(button.id);
-      if (btn) {
-        if (button.type === this.controlType) {
-          btn.classList.add('active');
-        } else {
-          btn.classList.remove('active');
-        }
-      }
-    });
+  updateControlStatus(): void {
+    controlSchemeSwitcher.updateControlStatus(this);
   }
 
   private setOpenCVCameraConvention(): void {
