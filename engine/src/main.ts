@@ -69,6 +69,7 @@ import * as transformDialogs from './transformDialogs';
 import * as browserFileDragDrop from './browserFileDragDrop';
 import * as liveDepthUpdate from './depth/liveDepthUpdate';
 import * as normalsVisualizer from './normalsVisualizer';
+import * as depthConversionPipeline from './depth/depthConversionPipeline';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -299,7 +300,7 @@ class PointCloudVisualizer {
   > = new Map();
 
   // Dataset texture storage for later application to point clouds
-  private datasetTextures: Map<
+  datasetTextures: Map<
     string,
     {
       fileName: string;
@@ -310,8 +311,8 @@ class PointCloudVisualizer {
   > = new Map();
 
   // Depth conversion tracking
-  private originalDepthFileName: string | null = null;
-  private currentCameraParams: CameraParams | null = null;
+  originalDepthFileName: string | null = null;
+  currentCameraParams: CameraParams | null = null;
   private depthDimensions: { width: number; height: number } | null = null;
   liveDepthUpdateFiles = new Set<number>();
   liveDepthUpdateInFlight = new Set<number>();
@@ -6566,147 +6567,14 @@ class PointCloudVisualizer {
   }
 
   async handleDepthData(message: any): Promise<void> {
-    try {
-      console.log('Received depth data for processing:', message.fileName);
-      if (typeof message.postedAt === 'number') {
-        const transferMs = Math.max(0, Date.now() - message.postedAt);
-        const bytes = (message.data && message.data.byteLength) || 0;
-        perfLog(
-          `⏱️ PERF[tiff] transfer ${transferMs.toFixed(1)}ms (${(bytes / 1048576).toFixed(2)}MB raw file) (file=${message.fileName})`
-        );
-      }
-
-      // Generate unique request ID for this depth file using shared function
-      const requestId = generateDepthRequestId();
-
-      // Store depth data in the map
-      this.pendingDepthFiles.set(requestId, {
-        data: message.data,
-        fileName: message.fileName,
-        shortPath: message.shortPath,
-        isAddFile: message.isAddFile || false,
-        requestId: requestId,
-      });
-
-      // Check if this is a dataset scene - store metadata but let UI load normally
-      if (message.sceneMetadata && message.sceneMetadata.isDatasetScene) {
-        console.log(
-          '🎯 Dataset scene detected - will auto-load calibration and image after UI loads...'
-        );
-
-        // Store dataset metadata for step-by-step processing
-        this.pendingDepthFiles.get(requestId)!.sceneMetadata = message.sceneMetadata;
-
-        console.log('📋 Will show depth UI normally, then auto-trigger calibration loading...');
-        // Continue to normal depth handling to show UI
-      }
-
-      // Determine how to handle depth conversion based on environment
-      // For dataset scenes, always use local UI to enable calibration auto-loading
-      const isDatasetScene = message.sceneMetadata && message.sceneMetadata.isDatasetScene;
-      const depthHandling = isDatasetScene ? 'local' : shouldRequestDepthParams(isVSCode);
-
-      if (depthHandling === 'extension') {
-        // Request camera parameters from VS Code extension
-        console.log('🔄 Requesting camera parameters from VS Code extension...');
-        this.vscode.postMessage({
-          type: 'requestCameraParams',
-          fileName: message.fileName,
-          requestId: requestId,
-        });
-        return; // Exit early - extension will respond with camera params
-      } else if (depthHandling === 'local') {
-        // Show local UI to collect camera parameters
-        console.log(
-          isDatasetScene
-            ? '📋 Showing local UI for dataset scene (enables auto-calibration)...'
-            : '📋 Showing local camera parameter UI...'
-        );
-        this.showDepthConversionUI(message.fileName, requestId);
-        return; // Exit early - UI will call processDepthWithParams when ready
-      } else {
-        // Use defaults immediately
-        console.log('⚡ Using default camera parameters...');
-        await this.processDepthWithDefaults(
-          message.fileName,
-          message.data,
-          requestId,
-          message.isAddFile
-        );
-        return; // Exit early - processing complete
-      }
-    } catch (error) {
-      console.error('Error handling depth data:', error);
-      // Clean up any pending depth files for this fileName
-      for (const [id, fileData] of this.pendingDepthFiles.entries()) {
-        if (fileData.fileName === message.fileName) {
-          this.pendingDepthFiles.delete(id);
-          break;
-        }
-      }
-      this.showError(
-        `Failed to process depth data: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await depthConversionPipeline.handleDepthData(this, message);
   }
 
   /**
    * Show depth conversion UI for local parameter collection
    */
   private async showDepthConversionUI(fileName: string, requestId: string): Promise<void> {
-    console.log('📋 Showing depth conversion UI for:', fileName);
-
-    const depthFileData = this.pendingDepthFiles.get(requestId);
-    if (!depthFileData) {
-      console.error('Depth file data not found for requestId:', requestId);
-      this.showError('Depth file data not found for processing');
-      return;
-    }
-
-    // Use shared prompt-based UI to collect camera parameters in browser mode
-    (async () => {
-      try {
-        // Check if this is a dataset scene and trigger step-by-step loading
-        if (depthFileData.sceneMetadata && depthFileData.sceneMetadata.isDatasetScene) {
-          console.log('🎯 Dataset scene detected - starting step-by-step calibration loading...');
-
-          // Trigger calibration loading after a short delay to let UI settle
-          setTimeout(async () => {
-            await this.triggerDatasetCalibrationLoading(depthFileData.sceneMetadata);
-          }, 500);
-
-          // Continue with normal UI flow - don't return early
-        }
-
-        // Probe image size to center cx/cy (quick path: read header via depth pipeline)
-        const tmpId = `tmp_${requestId}`;
-        // We don't have direct readers here; rely on defaults for cx/cy and let processing update
-        const params = await collectCameraParamsForBrowserPrompt(
-          1024,
-          768,
-          this.defaultDepthSettings
-        );
-        if (!params) {
-          console.warn('Camera parameter collection cancelled, using defaults.');
-          await this.processDepthWithDefaults(
-            fileName,
-            depthFileData.data,
-            requestId,
-            depthFileData.isAddFile
-          );
-          return;
-        }
-        await this.processDepthWithParams(requestId, params as any);
-      } catch (e) {
-        console.warn('Camera parameter prompt failed, using defaults:', e);
-        await this.processDepthWithDefaults(
-          fileName,
-          depthFileData.data,
-          requestId,
-          depthFileData.isAddFile
-        );
-      }
-    })();
+    await depthConversionPipeline.showDepthConversionUI(this, fileName, requestId);
   }
 
   /**
@@ -6715,191 +6583,13 @@ class PointCloudVisualizer {
   private async processDepthWithDefaults(
     fileName: string,
     data: ArrayBuffer,
-    requestId: string,
-    isAddFile: boolean
+    requestId: string
   ): Promise<void> {
-    console.log('⚡ Processing depth with defaults for:', fileName);
-
-    const isPng = /\.png$/i.test(fileName);
-
-    // Create default camera parameters
-    const defaultSettings: CameraParams = {
-      cameraModel: this.defaultDepthSettings.cameraModel,
-      fx: this.defaultDepthSettings.fx,
-      fy: this.defaultDepthSettings.fy,
-      cx: undefined, // Will be auto-calculated from image dimensions
-      cy: undefined, // Will be auto-calculated from image dimensions
-      depthType: this.defaultDepthSettings.depthType,
-      baseline: this.defaultDepthSettings.baseline,
-      convention: this.defaultDepthSettings.convention || 'opengl',
-      pngScaleFactor: isPng ? this.defaultDepthSettings.pngScaleFactor || 1000 : undefined,
-    };
-
-    const fileTypeLabel = isPng
-      ? 'PNG'
-      : fileName.toLowerCase().endsWith('.pfm')
-        ? 'PFM'
-        : fileName.toLowerCase().match(/\.np[yz]$/)
-          ? 'NPY'
-          : 'TIF';
-    const scaleInfo = isPng ? `, scale factor ${defaultSettings.pngScaleFactor}` : '';
-    const fyInfo = defaultSettings.fy ? ` / fy=${defaultSettings.fy}` : '';
-    this.showStatus(
-      `Converting ${fileTypeLabel} depth image: ${defaultSettings.cameraModel} camera, fx=${defaultSettings.fx}${fyInfo}px, ${defaultSettings.depthType} depth${scaleInfo}...`
-    );
-
-    console.log('✅ Using default camera parameters:', defaultSettings);
-    await this.processDepthWithParams(requestId, defaultSettings);
+    await depthConversionPipeline.processDepthWithDefaults(this, fileName, data, requestId);
   }
 
   async processDepthWithParams(requestId: string, cameraParams: CameraParams): Promise<void> {
-    const depthFileData = this.pendingDepthFiles.get(requestId);
-    if (!depthFileData) {
-      console.error('Depth file data not found for requestId:', requestId);
-      return;
-    }
-
-    console.log('Processing depth with camera params:', cameraParams);
-    this.showStatus('Converting depth image to point cloud...');
-
-    // Complete-load timing for depth → point cloud (the wasm/geotiff decode is
-    // logged separately inside the reader; `convert` here includes it).
-    const perfKind = /\.(tif|tiff)$/i.test(depthFileData.fileName) ? 'tiff' : 'depth';
-    const perf = new PerfTimer(perfKind);
-    perf.file(depthFileData.fileName);
-
-    // Store original data for re-processing
-    this.originalDepthFileName = depthFileData.fileName;
-    this.currentCameraParams = cameraParams;
-
-    // Process the depth data using the new depth processing system
-    const result = await this.processDepthToPointCloud(
-      depthFileData.data,
-      depthFileData.fileName,
-      cameraParams
-    );
-    perf.mark('convert');
-
-    const isPfm = /\.pfm$/i.test(depthFileData.fileName);
-    const isTif = /\.(tif|tiff)$/i.test(depthFileData.fileName);
-    const isNpy = /\.(npy|npz)$/i.test(depthFileData.fileName);
-    const isPng = /\.png$/i.test(depthFileData.fileName);
-    const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : isPng ? 'PNG' : 'TIF';
-
-    // Store dimensions FIRST before creating spatial data
-    const dimensions = {
-      width: (result as any).width || 0,
-      height: (result as any).height || 0,
-    };
-
-    // Typed-array fast path: the projector already produced Float32 position
-    // and color arrays, so attach them directly (zero-copy) instead of
-    // materializing N vertex objects and then rebuilding typed arrays inside
-    // createGeometryFromSpatialData. The useTypedArrays geometry path expects
-    // colors as Uint8 (0-255); convert once if the projector gave 0-1 floats.
-    const colorsU8 = colorsToUint8(result.colors);
-    perf.mark('build-colors');
-
-    const spatialData: SpatialData = {
-      vertices: [],
-      faces: [],
-      vertexCount: result.pointCount,
-      hasColors: !!result.colors,
-      hasNormals: false,
-      faceCount: 0,
-      fileName: depthFileData.fileName,
-      shortPath: depthFileData.shortPath,
-      fileIndex: depthFileData.isAddFile ? this.spatialFiles.length : 0,
-      format: 'binary_little_endian',
-      version: '1.0',
-      comments: [
-        `Converted from ${fileType} depth image: ${depthFileData.fileName}`,
-        `Camera: ${cameraParams.cameraModel}`,
-        `Depth type: ${cameraParams.depthType}`,
-        `fx: ${cameraParams.fx}px${cameraParams.fy ? `, fy: ${cameraParams.fy}px` : ''}`,
-        ...(cameraParams.baseline ? [`Baseline: ${cameraParams.baseline}mm`] : []),
-        ...(cameraParams.pngScaleFactor
-          ? [`Scale factor: scale=${cameraParams.pngScaleFactor}`]
-          : []),
-      ],
-    };
-    (spatialData as any).useTypedArrays = true;
-    (spatialData as any).positionsArray = result.vertices;
-    (spatialData as any).colorsArray = colorsU8;
-    (spatialData as any).normalsArray = null;
-    (spatialData as any).intensityArray = null;
-    (spatialData as any).scalarFields = {};
-
-    // Mark explicitly as depth-derived so the UI always shows the depth panel later
-    (spatialData as any).isDepthDerived = true;
-    // Attach dimensions so they're available when rendering UI
-    (spatialData as any).depthDimensions = dimensions;
-
-    console.log(`${fileType} to PLY conversion complete: ${result.pointCount} points`);
-
-    // Check for dataset texture to apply
-    if (depthFileData.sceneMetadata && depthFileData.sceneMetadata.isDatasetScene) {
-      const sceneName = depthFileData.sceneMetadata.sceneName;
-      const textureData = this.datasetTextures.get(sceneName);
-
-      if (textureData) {
-        console.log(`🖼️ Applying dataset texture ${textureData.fileName} to point cloud`);
-
-        // Add texture info to spatial data
-        (spatialData as any).datasetTexture = {
-          fileName: textureData.fileName,
-          data: textureData.arrayBuffer,
-          sceneName: sceneName,
-        };
-
-        this.showStatus(
-          `📷 Applied dataset texture: ${textureData.fileName} to ${depthFileData.fileName}`
-        );
-      }
-    }
-
-    // Cache the depth file data for later reprocessing BEFORE displaying
-    // This ensures dimensions are available when the UI is rendered
-    const fileIndex = spatialData.fileIndex || 0;
-    this.fileDepthData.set(fileIndex, {
-      originalData: depthFileData.data,
-      fileName: depthFileData.fileName,
-      cameraParams: cameraParams,
-      depthDimensions: dimensions,
-    });
-
-    // Add to scene - dimensions are now available in spatialData and fileDepthData
-    if (depthFileData.isAddFile) {
-      this.addNewFiles([spatialData]);
-    } else {
-      await this.displayFiles([spatialData]);
-    }
-    perf.mark('geometry+display');
-    perf.note('verts', result.pointCount);
-    perf.note('file', depthFileData.fileName);
-    perf.summary();
-
-    // Auto-open Depth Settings panel for newly created depth-derived file in browser
-    setTimeout(() => {
-      try {
-        const idx = spatialData.fileIndex || 0;
-        const panel = document.getElementById(`depth-panel-${idx}`);
-        const toggleBtn = document.querySelector(
-          `.depth-settings-toggle[data-file-index="${idx}"]`
-        );
-        if (panel && toggleBtn) {
-          panel.style.display = 'block';
-          const icon = (toggleBtn as HTMLElement).querySelector('.toggle-icon');
-          if (icon) {
-            icon.textContent = '▼';
-          }
-        }
-      } catch {}
-    }, 0);
-
-    // Clean up
-    this.pendingDepthFiles.delete(requestId);
-    this.showStatus(`${fileType} to point cloud conversion complete: ${result.pointCount} points`);
+    await depthConversionPipeline.processDepthWithParams(this, requestId, cameraParams);
   }
 
   async processDepthToPointCloud(
@@ -7860,7 +7550,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private async triggerDatasetCalibrationLoading(sceneMetadata: any): Promise<void> {
+  async triggerDatasetCalibrationLoading(sceneMetadata: any): Promise<void> {
     try {
       console.log('📁 Step 1: Triggering calibration file loading...');
 
