@@ -25,18 +25,13 @@ const isVSCode = typeof acquireVsCodeApi !== 'undefined';
 
 // Shared file handling functionality
 import {
-  processFiles,
   detectFileType,
-  detectFileTypeWithContent,
-  FileError,
   DEFAULT_COLORS,
   shouldRequestDepthParams,
   generateDepthRequestId,
   createDefaultCameraParams,
-  createBrowserFileHandler,
   BrowserMessageHandler,
   collectCameraParamsForBrowserPrompt,
-  convertDepthToUnified,
 } from './fileHandler';
 
 // Depth processing modules
@@ -71,6 +66,7 @@ import * as transformationMatrix from './transformationMatrix';
 import * as depthCameraParamsPrompt from './depthCameraParamsPrompt';
 import * as formatDataHandlers from './formatDataHandlers';
 import * as transformDialogs from './transformDialogs';
+import * as browserFileDragDrop from './browserFileDragDrop';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -94,7 +90,7 @@ class PointCloudVisualizer {
       };
 
   // Browser file handler
-  private browserFileHandler: BrowserMessageHandler | null = null;
+  browserFileHandler: BrowserMessageHandler | null = null;
   scene!: THREE.Scene;
   camera!: THREE.PerspectiveCamera;
   renderer!: THREE.WebGLRenderer;
@@ -2891,483 +2887,44 @@ class PointCloudVisualizer {
    * Initialize browser file handler with shared functionality
    */
   private initializeBrowserFileHandler(): void {
-    this.browserFileHandler = createBrowserFileHandler(
-      (fileIndex: number) => this.removeFileByIndex(fileIndex),
-      (message: any) => {
-        // Route messages to the appropriate handlers
-        switch (message.type) {
-          case 'cameraParamsResult':
-            this.handleCameraParams(message);
-            break;
-          case 'cameraParamsWithScaleResult':
-            this.handleCameraParams(message);
-            break;
-          default:
-            console.log(`🌐 Unhandled browser message: ${message.type}`);
-            break;
-        }
-      }
-    );
+    browserFileDragDrop.initializeBrowserFileHandler(this);
   }
 
   /**
    * Handle messages in browser mode - implements VS Code extension functionality locally
    */
   private handleBrowserMessage(message: any): void {
-    if (!this.browserFileHandler) {
-      console.error('🌐 Browser file handler not initialized');
-      return;
-    }
-
-    switch (message.type) {
-      case 'removeFile':
-        this.browserFileHandler.removeFile(message.fileIndex);
-        break;
-
-      case 'requestCameraParams':
-        this.browserFileHandler.handleCameraParams(message);
-        break;
-
-      case 'requestCameraParamsWithScale':
-        this.browserFileHandler.handleCameraParamsWithScale(message);
-        break;
-
-      case 'savePlyFile':
-        this.browserFileHandler.savePlyFile(message);
-        break;
-
-      default:
-        console.log(`🌐 Browser mode: Unhandled message type ${message.type}`);
-        break;
-    }
+    browserFileDragDrop.handleBrowserMessage(this, message);
   }
 
   // # VSCode changes: the functions below are used in the browser and were not used for the extension
   // Browser file handling methods
   private setupPanelResizeAndDrag(): void {
-    const mainPanel = document.getElementById('main-ui-panel');
-    const tabContent = document.querySelector('.tab-content') as HTMLElement;
-
-    if (!mainPanel || !tabContent) {
-      console.warn('⚠️ Main panel or tab content not found');
-      return;
-    }
-
-    console.log('✅ Panel resize setup initialized');
-
-    // Panel resize functionality - drag from bottom edge
-    let isDragging = false;
-    let startY = 0;
-    let startHeight = 0;
-    const resizeZone = 10; // 10px from bottom edge for easier grabbing
-
-    // Helper to check if mouse is in resize zone
-    const isInResizeZone = (e: MouseEvent): boolean => {
-      const rect = mainPanel.getBoundingClientRect();
-      const mouseY = e.clientY;
-      const bottomEdge = rect.bottom;
-      return mouseY >= bottomEdge - resizeZone && mouseY <= bottomEdge + 2;
-    };
-
-    // Update cursor when hovering over resize zone
-    mainPanel.addEventListener('mousemove', (e: MouseEvent) => {
-      if (!isDragging) {
-        if (isInResizeZone(e)) {
-          mainPanel.style.cursor = 'ns-resize';
-        } else {
-          mainPanel.style.cursor = '';
-        }
-      }
-    });
-
-    mainPanel.addEventListener('mouseleave', () => {
-      if (!isDragging) {
-        mainPanel.style.cursor = '';
-      }
-    });
-
-    // Start dragging
-    mainPanel.addEventListener('mousedown', (e: MouseEvent) => {
-      if (isInResizeZone(e)) {
-        isDragging = true;
-        startY = e.clientY;
-
-        // Get current ACTUAL height (not max-height from CSS)
-        const currentMaxHeight = tabContent.style.maxHeight;
-        if (currentMaxHeight && currentMaxHeight !== '') {
-          // Already has an inline style - use it
-          if (currentMaxHeight.includes('vh')) {
-            const vh = parseFloat(currentMaxHeight);
-            startHeight = (vh / 100) * window.innerHeight;
-          } else {
-            startHeight = parseInt(currentMaxHeight);
-          }
-        } else {
-          // No inline style yet - get the actual computed height
-          const computedHeight = tabContent.getBoundingClientRect().height;
-          startHeight = computedHeight;
-          console.log('📏 Using computed height:', computedHeight);
-        }
-
-        mainPanel.style.cursor = 'ns-resize';
-        document.body.style.cursor = 'ns-resize';
-        e.preventDefault();
-        e.stopPropagation();
-        console.log('🖱️ Drag started, initial height:', startHeight);
-      }
-    });
-
-    // Handle dragging
-    document.addEventListener('mousemove', (e: MouseEvent) => {
-      if (isDragging) {
-        const deltaY = e.clientY - startY;
-        const newHeight = startHeight + deltaY;
-
-        // Clamp height between reasonable values (in pixels)
-        const minHeight = 150; // Minimum 150px
-        const maxHeight = window.innerHeight * 0.9; // Maximum 90vh
-        const clampedHeight = Math.max(minHeight, Math.min(maxHeight, newHeight));
-
-        tabContent.style.maxHeight = `${clampedHeight}px`;
-        e.preventDefault();
-      }
-    });
-
-    // Stop dragging
-    document.addEventListener('mouseup', () => {
-      if (isDragging) {
-        isDragging = false;
-        mainPanel.style.cursor = '';
-        document.body.style.cursor = '';
-        console.log('🖱️ Drag ended');
-      }
-    });
+    browserFileDragDrop.setupPanelResizeAndDrag();
   }
 
   private setupBrowserFileHandlers(): void {
-    const fileInput = document.getElementById('hiddenFileInput') as HTMLInputElement;
-    const addFileButton = document.getElementById('add-file');
-    const mainPanel = document.getElementById('main-ui-panel');
-
-    if (fileInput) {
-      fileInput.addEventListener('change', event => {
-        const files = (event.target as HTMLInputElement).files;
-        if (files) {
-          this.handleDroppedFiles(Array.from(files));
-        }
-      });
-    }
-
-    // Add drag & drop support to the Add Point Cloud button
-    if (addFileButton) {
-      addFileButton.addEventListener('dragover', event => {
-        this.handleDragOver(event);
-        addFileButton.style.backgroundColor = '#1177bb';
-        addFileButton.style.transform = 'scale(1.02)';
-      });
-
-      addFileButton.addEventListener('dragleave', () => {
-        addFileButton.style.backgroundColor = '';
-        addFileButton.style.transform = '';
-      });
-
-      addFileButton.addEventListener('drop', event => {
-        addFileButton.style.backgroundColor = '';
-        addFileButton.style.transform = '';
-        void this.handleDropEvent(event);
-      });
-    }
-
-    // Also add drag & drop to the entire main UI panel as fallback
-    if (mainPanel) {
-      mainPanel.addEventListener('dragover', event => {
-        this.handleDragOver(event);
-      });
-
-      mainPanel.addEventListener('drop', event => {
-        void this.handleDropEvent(event);
-      });
-    }
-
-    // Add drag & drop support to the entire window
-    document.addEventListener('dragover', event => {
-      this.handleDragOver(event);
-      // Add visual feedback to the entire window
-      document.body.style.backgroundColor = 'rgba(0, 95, 184, 0.1)';
-    });
-
-    document.addEventListener('dragleave', event => {
-      // Only remove highlight when leaving the entire document
-      if (!event.relatedTarget || event.relatedTarget === document.documentElement) {
-        document.body.style.backgroundColor = '';
-      }
-    });
-
-    document.addEventListener('drop', event => {
-      document.body.style.backgroundColor = '';
-      void this.handleDropEvent(event);
-    });
+    browserFileDragDrop.setupBrowserFileHandlers(this);
   }
 
   private handleDragOver(event: DragEvent): void {
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'copy';
-    }
+    browserFileDragDrop.handleDragOver(event);
   }
 
   private async handleDropEvent(event: DragEvent): Promise<void> {
-    event.preventDefault();
-    event.stopPropagation();
-    document.body.style.backgroundColor = '';
-
-    const files = Array.from(event.dataTransfer?.files || []);
-    if (files.length > 0) {
-      await this.handleDroppedFiles(files);
-      return;
-    }
-
-    if (isVSCode) {
-      const filePaths = this.extractDroppedFilePaths(event.dataTransfer);
-      if (filePaths.length > 0) {
-        this.showImmediateLoading({ fileName: `${filePaths.length} dropped file(s)` });
-        filePaths.forEach(filePath => {
-          this.vscode.postMessage({
-            type: 'addFileFromPath',
-            path: filePath,
-          });
-        });
-        return;
-      }
-    }
+    await browserFileDragDrop.handleDropEvent(this, event);
   }
 
   private extractDroppedFilePaths(dataTransfer: DataTransfer | null): string[] {
-    if (!dataTransfer) {
-      return [];
-    }
-
-    const rawValues = [
-      dataTransfer.getData('text/uri-list'),
-      dataTransfer.getData('text/plain'),
-    ].filter(Boolean);
-
-    const paths: string[] = [];
-    for (const rawValue of rawValues) {
-      for (const rawLine of rawValue.split(/\r?\n/)) {
-        const line = rawLine.trim();
-        if (!line || line.startsWith('#')) {
-          continue;
-        }
-
-        if (line.startsWith('file://')) {
-          try {
-            const url = new URL(line);
-            let pathName = decodeURIComponent(url.pathname);
-            if (/^\/[A-Za-z]:\//.test(pathName)) {
-              pathName = pathName.slice(1);
-            }
-            paths.push(pathName);
-          } catch {
-            // Ignore malformed drag payloads and keep checking other entries.
-          }
-        } else if (/^(\/|[A-Za-z]:\\)/.test(line)) {
-          paths.push(line);
-        }
-      }
-    }
-
-    return Array.from(new Set(paths));
+    return browserFileDragDrop.extractDroppedFilePaths(dataTransfer);
   }
 
   private async handleDroppedFiles(files: File[]): Promise<void> {
-    if (files.length === 0) {
-      return;
-    }
-
-    if (isVSCode) {
-      this.showImmediateLoading({ fileName: `${files.length} dropped file(s)` });
-      try {
-        const droppedFiles = await Promise.all(
-          files.map(async file => ({
-            name: file.name,
-            data: await file.arrayBuffer(),
-          }))
-        );
-        this.vscode.postMessage({
-          type: 'addDroppedFiles',
-          files: droppedFiles,
-        });
-      } catch (error) {
-        this.showError(
-          `Failed to read dropped file: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-      return;
-    }
-
-    await this.handleBrowserFiles(files);
+    await browserFileDragDrop.handleDroppedFiles(this, files);
   }
 
-  private async handleBrowserFiles(files: File[]) {
-    console.log(`🌐 Loading ${files.length} files in browser...`);
-    this.showImmediateLoading({ fileName: `${files.length} files`, pointCount: 0 });
-
-    try {
-      // Convert File objects to data format expected by shared function
-      const fileData = await Promise.all(
-        files.map(async file => ({
-          name: file.name,
-          data: new Uint8Array(await file.arrayBuffer()),
-        }))
-      );
-
-      // Separate depth files and JSON files for special handling
-      const depthFiles: typeof fileData = [];
-      const regularFiles: typeof fileData = [];
-
-      fileData.forEach(file => {
-        const fileType = detectFileTypeWithContent(file.name, file.data);
-        if (fileType?.isDepthFile) {
-          depthFiles.push(file);
-        } else if (fileType?.category === 'poseData') {
-          // JSON files are handled separately below, don't add to regularFiles
-          // to avoid double processing
-        } else {
-          regularFiles.push(file);
-        }
-      });
-
-      const spatialDataArray: SpatialData[] = [];
-      // Remember starting index to map newly added files
-      const baseIndexStart = this.spatialFiles.length;
-      // Track depth metadata to populate fileDepthData after display
-      const depthMetaRecords: Array<{
-        localIndex: number;
-        fileName: string;
-        buffer: ArrayBuffer;
-        params: CameraParams;
-        dims?: { width: number; height: number };
-      }> = [];
-
-      // Process regular files using shared functionality
-      if (regularFiles.length > 0) {
-        const parseResults = await processFiles(regularFiles, {
-          timingCallback: (message: string) => {
-            console.log(`⏱️ ${message}`);
-          },
-          progressCallback: (current: number, total: number, fileName: string) => {
-            console.log(`📁 Processing ${fileName} (${current}/${total})`);
-          },
-          errorCallback: (error: FileError) => {
-            console.error(`❌ Error processing ${error.fileName}:`, error.error);
-            this.showError(error.error);
-          },
-        });
-
-        // Convert parse results to SpatialData format
-        parseResults.forEach(result => {
-          spatialDataArray.push(result.data as SpatialData);
-        });
-      }
-
-      // Handle depth files using the unified flow
-      for (const depthFile of depthFiles) {
-        console.log(`🖼️ Depth image detected: ${depthFile.name}`);
-        try {
-          // Ask for params (prompt); then convert via shared helper
-          const params = await this.promptForCameraParameters(depthFile.name);
-          if (!params) {
-            console.log(`⏭️ Skipping ${depthFile.name} - camera parameters cancelled`);
-            continue;
-          }
-          const parse = await convertDepthToUnified(depthFile.name, depthFile.data.buffer, {
-            fx: params.fx,
-            fy: params.fy ?? params.fx,
-            cx: params.cx ?? undefined,
-            cy: params.cy ?? undefined,
-            cameraModel: params.cameraModel,
-            depthType: params.depthType,
-            convention: params.convention ?? 'opengl',
-            baseline: params.baseline,
-            pngScaleFactor: params.pngScaleFactor,
-            depthScale: params.depthScale,
-            depthBias: params.depthBias,
-          });
-          const data = parse.data as SpatialData;
-          (data as any).isDepthDerived = true;
-          // Record dimensions if provided
-          const dims = (parse.data as any).depthDimensions;
-          if (dims) {
-            (data as any).depthDimensions = dims;
-          }
-          const localIndex = spatialDataArray.length;
-          spatialDataArray.push(data);
-          depthMetaRecords.push({
-            localIndex,
-            fileName: depthFile.name,
-            buffer: depthFile.data.buffer,
-            params,
-            dims,
-          });
-        } catch (error) {
-          console.error(`❌ Error processing depth image ${depthFile.name}:`, error);
-          this.showError(`Failed to process depth image ${depthFile.name}: ${error}`);
-        }
-      }
-
-      // Handle JSON files - check if they're camera profiles or pose data
-      const jsonFiles = fileData.filter(file => {
-        const fileType = detectFileTypeWithContent(file.name, file.data);
-        return fileType?.category === 'poseData';
-      });
-
-      for (const file of jsonFiles) {
-        console.log(`📍 JSON file detected: ${file.name}`);
-        try {
-          // Parse JSON to determine if it's a camera profile or pose data
-          const jsonText = new TextDecoder().decode(file.data);
-          const jsonData = JSON.parse(jsonText);
-
-          // Check if this is a camera profile JSON
-          if (jsonData && jsonData.cameras && typeof jsonData.cameras === 'object') {
-            console.log(`📷 Camera profile detected: ${file.name}`);
-            this.handleCameraProfile(jsonData, file.name);
-          } else {
-            console.log(`📍 Pose data detected: ${file.name}`);
-            // Handle pose data using the existing method
-            await this.handlePoseData({ data: jsonData, fileName: file.name });
-          }
-        } catch (error) {
-          console.error(`❌ Error parsing JSON file ${file.name}:`, error);
-          this.showError(`Failed to parse JSON file ${file.name}: ${error}`);
-        }
-      }
-
-      if (spatialDataArray.length > 0) {
-        await this.displayFiles(spatialDataArray);
-
-        // Populate fileDepthData for newly added depth-derived files
-        for (const rec of depthMetaRecords) {
-          const fileIndex = baseIndexStart + rec.localIndex;
-          this.fileDepthData.set(fileIndex, {
-            originalData: rec.buffer,
-            fileName: rec.fileName,
-            cameraParams: rec.params,
-            depthDimensions: rec.dims || { width: 0, height: 0 },
-          });
-          if (rec.dims) {
-            // Ensure cx/cy fields are populated correctly in UI
-            this.updatePrinciplePointFields(fileIndex, rec.dims);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error loading files:', error);
-      this.showError(
-        `Failed to load files: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+  private async handleBrowserFiles(files: File[]): Promise<void> {
+    await browserFileDragDrop.handleBrowserFiles(this, files);
   }
 
   // # VSCode changes: the functions above are used in the browser and were not used for the extension
@@ -5325,7 +4882,7 @@ class PointCloudVisualizer {
     renderModeToggles.updateUniversalRenderButtonStates(this);
   }
 
-  private showImmediateLoading(message: any): void {
+  showImmediateLoading(message: any): void {
     const fileName = message.fileName;
     const uiStartTime = performance.now();
     console.log(`Load: UI start ${fileName} at ${uiStartTime.toFixed(1)}ms`);
@@ -5821,7 +5378,7 @@ class PointCloudVisualizer {
     // debug
   }
 
-  private removeFileByIndex(fileIndex: number): void {
+  removeFileByIndex(fileIndex: number): void {
     if (fileIndex < 0) {
       return;
     }
@@ -7698,7 +7255,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private async handleCameraParams(message: any): Promise<void> {
+  async handleCameraParams(message: any): Promise<void> {
     await depthCameraParamsPrompt.handleCameraParams(this, message);
   }
 
@@ -8661,7 +8218,7 @@ class PointCloudVisualizer {
   }
 
   // ========== Pose loading ==========
-  private async handlePoseData(message: any): Promise<void> {
+  async handlePoseData(message: any): Promise<void> {
     const fileName: string = message.fileName || 'pose.json';
     const data = message.data;
     try {
@@ -8806,7 +8363,7 @@ class PointCloudVisualizer {
   }
 
   // ========== Camera Profile handling ==========
-  private handleCameraProfile(data: any, fileName: string): void {
+  handleCameraProfile(data: any, fileName: string): void {
     cameraProfile.handleCameraProfile(this, data, fileName);
   }
 
@@ -8869,7 +8426,7 @@ class PointCloudVisualizer {
     depthPanelState.restoreDepthFormValues(this, fileIndex, formValues);
   }
 
-  private async promptForCameraParameters(fileName: string): Promise<CameraParams | null> {
+  async promptForCameraParameters(fileName: string): Promise<CameraParams | null> {
     return depthCameraParamsPrompt.promptForCameraParameters(fileName);
   }
 
