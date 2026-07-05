@@ -79,6 +79,7 @@ import * as cameraProfile from './cameraProfile';
 import * as renderModeToggles from './renderModeToggles';
 import * as colorModeUtils from './colorMode';
 import * as pointSizeScaling from './pointSizeScaling';
+import * as depthPanelState from './depth/panelState';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -322,7 +323,7 @@ class PointCloudVisualizer {
   private originalDepthFileName: string | null = null;
   private currentCameraParams: CameraParams | null = null;
   private depthDimensions: { width: number; height: number } | null = null;
-  private liveDepthUpdateFiles = new Set<number>();
+  liveDepthUpdateFiles = new Set<number>();
   private liveDepthUpdateInFlight = new Set<number>();
   private liveDepthUpdateQueued = new Set<number>();
   private liveDepthUpdateTimers = new Map<number, number>();
@@ -10184,7 +10185,7 @@ class PointCloudVisualizer {
     return 'Image Size: Width: -, Height: -';
   }
 
-  private setLiveDepthUpdateEnabled(fileIndex: number, enabled: boolean): void {
+  setLiveDepthUpdateEnabled(fileIndex: number, enabled: boolean): void {
     if (enabled) {
       this.liveDepthUpdateFiles.add(fileIndex);
     } else {
@@ -10546,7 +10547,7 @@ class PointCloudVisualizer {
     console.log(`✅ Updated depth form ${fileIndex} with defaults:`, this.defaultDepthSettings);
   }
 
-  private updatePrinciplePointFields(
+  updatePrinciplePointFields(
     fileIndex: number,
     dimensions: { width: number; height: number }
   ): void {
@@ -11383,221 +11384,21 @@ class PointCloudVisualizer {
    * Capture the current open/closed state of depth settings panels and form values
    */
   private captureDepthPanelStates(): Map<number, { panelOpen: boolean; formValues: any }> {
-    const states = new Map<number, { panelOpen: boolean; formValues: any }>();
-
-    // Look for all depth settings panels and capture their display state
-    const panels = document.querySelectorAll('[id^="depth-panel-"]');
-    panels.forEach(panel => {
-      const id = panel.id;
-      const match = id.match(/depth-panel-(\d+)/);
-      if (match) {
-        const fileIndex = parseInt(match[1]);
-        const displayStyle = (panel as HTMLElement).style.display;
-        const isVisible =
-          displayStyle === 'block' ||
-          (displayStyle === '' && (panel as HTMLElement).offsetHeight > 0);
-
-        // Capture current form values
-        const formValues = this.captureDepthFormValues(fileIndex);
-
-        states.set(fileIndex, {
-          panelOpen: isVisible,
-          formValues: formValues,
-        });
-
-        console.log(
-          `📋 Captured state for file ${fileIndex}: ${isVisible ? 'open' : 'closed'}, fx=${formValues.fx}, cx=${formValues.cx}`
-        );
-      }
-    });
-
-    return states;
+    return depthPanelState.captureDepthPanelStates(this);
   }
 
-  /**
-   * Capture current form values for a depth settings panel
-   */
   private captureDepthFormValues(fileIndex: number): any {
-    const getValue = (id: string) => {
-      const element = document.getElementById(id) as HTMLInputElement | HTMLSelectElement;
-      return element ? element.value : null;
-    };
-
-    return {
-      fx: getValue(`fx-${fileIndex}`),
-      fy: getValue(`fy-${fileIndex}`),
-      cx: getValue(`cx-${fileIndex}`),
-      cy: getValue(`cy-${fileIndex}`),
-      cameraModel: getValue(`camera-model-${fileIndex}`),
-      depthType: getValue(`depth-type-${fileIndex}`),
-      baseline: getValue(`baseline-${fileIndex}`),
-      disparityOffset: getValue(`disparity-offset-${fileIndex}`),
-      convention: getValue(`convention-${fileIndex}`),
-      pngScaleFactor: getValue(`png-scale-factor-${fileIndex}`),
-      depthScale: getValue(`depth-scale-${fileIndex}`),
-      depthBias: getValue(`depth-bias-${fileIndex}`),
-      k1: getValue(`k1-${fileIndex}`),
-      k2: getValue(`k2-${fileIndex}`),
-      k3: getValue(`k3-${fileIndex}`),
-      k4: getValue(`k4-${fileIndex}`),
-      k5: getValue(`k5-${fileIndex}`),
-      p1: getValue(`p1-${fileIndex}`),
-      p2: getValue(`p2-${fileIndex}`),
-      liveUpdate: this.liveDepthUpdateFiles.has(fileIndex) ? 'true' : 'false',
-    };
+    return depthPanelState.captureDepthFormValues(this, fileIndex);
   }
 
-  /**
-   * Restore the open/closed state of depth settings panels and form values
-   */
   private restoreDepthPanelStates(
     states: Map<number, { panelOpen: boolean; formValues: any }>
   ): void {
-    // Wait a bit for the DOM to be updated
-    setTimeout(() => {
-      // First, restore panel visibility states and form values
-      states.forEach((state, fileIndex) => {
-        const panel = document.getElementById(`depth-panel-${fileIndex}`);
-        const toggleButton = document.querySelector(
-          `[data-file-index="${fileIndex}"].depth-settings-toggle`
-        ) as HTMLElement;
-
-        if (panel && toggleButton) {
-          console.log(
-            `🔄 Restoring state for file ${fileIndex}: ${state.panelOpen ? 'open' : 'closed'}`
-          );
-
-          // Restore panel visibility
-          if (state.panelOpen) {
-            (panel as HTMLElement).style.display = 'block';
-            const icon = toggleButton.querySelector('.toggle-icon');
-            if (icon) {
-              icon.textContent = '▼';
-            }
-          } else {
-            (panel as HTMLElement).style.display = 'none';
-            const icon = toggleButton.querySelector('.toggle-icon');
-            if (icon) {
-              icon.textContent = '▶';
-            }
-          }
-
-          // Restore form values
-          this.restoreDepthFormValues(fileIndex, state.formValues);
-        } else {
-          console.warn(`⚠️ Could not find panel or toggle button for file ${fileIndex}`);
-        }
-      });
-
-      // For any depth files not captured in states (edge case), restore dimensions
-      this.fileDepthData.forEach((depthData, fileIndex) => {
-        if (!states.has(fileIndex)) {
-          const panel = document.getElementById(`depth-panel-${fileIndex}`);
-          if (panel) {
-            console.log(
-              `📐 Restoring dimensions for uncaptured file ${fileIndex}: ${depthData.depthDimensions.width}×${depthData.depthDimensions.height}`
-            );
-            this.updatePrinciplePointFields(fileIndex, depthData.depthDimensions);
-          }
-        }
-      });
-    }, 10);
+    depthPanelState.restoreDepthPanelStates(this, states);
   }
 
-  /**
-   * Restore form values for a depth settings panel
-   */
   private restoreDepthFormValues(fileIndex: number, formValues: any): void {
-    const setValue = (id: string, value: string | null) => {
-      if (value !== null) {
-        const element = document.getElementById(id) as HTMLInputElement | HTMLSelectElement;
-        if (element) {
-          element.value = value;
-        }
-      }
-    };
-
-    // Restore all captured form values
-    setValue(`fx-${fileIndex}`, formValues.fx);
-    setValue(`fy-${fileIndex}`, formValues.fy);
-    setValue(`cx-${fileIndex}`, formValues.cx);
-    setValue(`cy-${fileIndex}`, formValues.cy);
-    setValue(`camera-model-${fileIndex}`, formValues.cameraModel);
-    setValue(`depth-type-${fileIndex}`, formValues.depthType);
-    setValue(`baseline-${fileIndex}`, formValues.baseline);
-    setValue(`disparity-offset-${fileIndex}`, formValues.disparityOffset);
-    setValue(`convention-${fileIndex}`, formValues.convention);
-    setValue(`png-scale-factor-${fileIndex}`, formValues.pngScaleFactor);
-    setValue(`depth-scale-${fileIndex}`, formValues.depthScale);
-    setValue(`depth-bias-${fileIndex}`, formValues.depthBias);
-    setValue(`k1-${fileIndex}`, formValues.k1);
-    setValue(`k2-${fileIndex}`, formValues.k2);
-    setValue(`k3-${fileIndex}`, formValues.k3);
-    setValue(`k4-${fileIndex}`, formValues.k4);
-    setValue(`k5-${fileIndex}`, formValues.k5);
-    setValue(`p1-${fileIndex}`, formValues.p1);
-    setValue(`p2-${fileIndex}`, formValues.p2);
-
-    const liveUpdate = formValues.liveUpdate === 'true';
-    this.setLiveDepthUpdateEnabled(fileIndex, liveUpdate);
-    const liveUpdateCheckbox = document.querySelector(
-      `.live-depth-update[data-file-index="${fileIndex}"]`
-    ) as HTMLInputElement | null;
-    if (liveUpdateCheckbox) {
-      liveUpdateCheckbox.checked = liveUpdate;
-    }
-
-    // Show/hide distortion parameters based on camera model
-    const distortionGroup = document.getElementById(`distortion-params-${fileIndex}`);
-    const pinholeParams = document.getElementById(`pinhole-params-${fileIndex}`);
-    const fisheyeOpencvParams = document.getElementById(`fisheye-opencv-params-${fileIndex}`);
-    const kannalaBrandtParams = document.getElementById(`kannala-brandt-params-${fileIndex}`);
-
-    if (distortionGroup && pinholeParams && fisheyeOpencvParams && kannalaBrandtParams) {
-      // Hide all parameter sections first
-      pinholeParams.style.display = 'none';
-      fisheyeOpencvParams.style.display = 'none';
-      kannalaBrandtParams.style.display = 'none';
-
-      // Show appropriate parameter section based on model
-      if (formValues.cameraModel === 'pinhole-opencv') {
-        distortionGroup.style.display = '';
-        pinholeParams.style.display = '';
-      } else if (formValues.cameraModel === 'fisheye-opencv') {
-        distortionGroup.style.display = '';
-        fisheyeOpencvParams.style.display = '';
-      } else if (formValues.cameraModel === 'fisheye-kannala-brandt') {
-        distortionGroup.style.display = '';
-        kannalaBrandtParams.style.display = '';
-      } else {
-        distortionGroup.style.display = 'none';
-      }
-    }
-
-    // Also ensure dimensions are displayed correctly
-    const depthData = this.fileDepthData.get(fileIndex);
-    if (depthData) {
-      const imageSizeDiv = document.getElementById(`image-size-${fileIndex}`);
-      if (imageSizeDiv) {
-        imageSizeDiv.textContent = `Image Size: Width: ${depthData.depthDimensions.width}, Height: ${depthData.depthDimensions.height}`;
-        console.log(
-          `📐 Restored image size display for file ${fileIndex}: ${depthData.depthDimensions.width}×${depthData.depthDimensions.height}`
-        );
-      }
-
-      // Backfill cx/cy if blank but dimensions are known
-      const cxEl = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement | null;
-      const cyEl = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement | null;
-      const cxBlank = !cxEl?.value || cxEl.value.trim() === '';
-      const cyBlank = !cyEl?.value || cyEl.value.trim() === '';
-      if (cxBlank || cyBlank) {
-        this.updatePrinciplePointFields(fileIndex, depthData.depthDimensions);
-      }
-    }
-
-    console.log(
-      `📝 Restored form values for file ${fileIndex}: fx=${formValues.fx}, cx=${formValues.cx}`
-    );
+    depthPanelState.restoreDepthFormValues(this, fileIndex, formValues);
   }
 
   private async promptForCameraParameters(fileName: string): Promise<CameraParams | null> {
