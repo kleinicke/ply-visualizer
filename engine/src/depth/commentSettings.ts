@@ -5,6 +5,47 @@ import { SpatialData, CameraParams } from '../interfaces';
  * SpatialData (e.g. "fx: 1000px", "Baseline: 50mm", "rgb24Scale=1000").
  */
 
+export function isDepthDerivedFile(data: SpatialData): boolean {
+  const comments = (data as any)?.comments;
+  if (!Array.isArray(comments)) {
+    return false;
+  }
+  return comments.some((comment: string) => {
+    if (typeof comment !== 'string') {
+      return false;
+    }
+    const lc = comment.toLowerCase();
+    return (
+      lc.includes('converted from tif depth image') ||
+      lc.includes('converted from pfm depth image') ||
+      lc.includes('converted from png depth image') ||
+      lc.includes('converted from npy depth image') ||
+      lc.includes('converted from depth image')
+    );
+  });
+}
+
+export function isPngDerivedFile(data: SpatialData): boolean {
+  const comments = (data as any)?.comments;
+  if (!Array.isArray(comments)) {
+    return false;
+  }
+  return comments.some(
+    (comment: string) =>
+      typeof comment === 'string' && comment.includes('Converted from PNG depth image')
+  );
+}
+
+export function isRgbDerivedFile(data: SpatialData): boolean {
+  const comments = (data as any)?.comments;
+  if (!Array.isArray(comments)) {
+    return false;
+  }
+  return comments.some(
+    (comment: string) => typeof comment === 'string' && comment.includes('RGB24 depth image')
+  );
+}
+
 export function getRgb24ScaleFactor(data: SpatialData): number {
   const comments = (data as any)?.comments;
   if (!Array.isArray(comments)) {

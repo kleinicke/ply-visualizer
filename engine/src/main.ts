@@ -77,6 +77,7 @@ import * as intensity from './utils/intensity';
 import * as commentSettings from './depth/commentSettings';
 import * as cameraProfile from './cameraProfile';
 import * as renderModeToggles from './renderModeToggles';
+import * as colorModeUtils from './colorMode';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -345,8 +346,8 @@ class PointCloudVisualizer {
 
   // Color image loader and processor
   private colorImageLoader = new ColorImageLoader();
-  private colorProcessor = new ColorProcessor();
-  private convertSrgbToLinear: boolean = true; // Default: remove gamma from source colors
+  colorProcessor = new ColorProcessor();
+  convertSrgbToLinear: boolean = true; // Default: remove gamma from source colors
   private lastGeometryMs: number = 0;
   private lastAbsoluteMs: number = 0;
 
@@ -431,40 +432,11 @@ class PointCloudVisualizer {
    * would darken them incorrectly. (Intensity/assigned modes aren't 'original'.)
    */
   private pointColorsNeedSrgbDecode(data: SpatialData, colorMode: string): boolean {
-    if (colorMode !== 'original' || !data.hasColors || !this.convertSrgbToLinear) {
-      return false;
-    }
-    const depthDerived = this.isDepthDerivedFile(data) || (data as any).isDepthDerived;
-    return !depthDerived;
+    return colorModeUtils.pointColorsNeedSrgbDecode(this, data, colorMode);
   }
 
   private setupPointSrgbDecode(material: THREE.PointsMaterial): void {
-    if (material.userData.srgbDecodeSetup) {
-      return;
-    }
-    material.userData.srgbDecodeSetup = true;
-    material.onBeforeCompile = shader => {
-      if (!material.userData.srgbDecode) {
-        return; // stock shader: vertex colors used as-is (linear)
-      }
-      // Inject the decode function after <common> (a stable, early chunk) and the
-      // decode itself right AFTER <color_fragment> (which has already done
-      // diffuseColor.rgb *= vColor, and material.color is white for vertex-colored
-      // points, so diffuseColor.rgb == the raw sRGB vertex color here). All
-      // preprocessor directives are at column 0 — some GLSL drivers reject a '#'
-      // that isn't, which is what broke the previous indented version.
-      shader.fragmentShader = shader.fragmentShader
-        .replace(
-          '#include <common>',
-          '#include <common>\nvec3 plySrgbToLinear( vec3 c ) { return mix( c / 12.92, pow( ( c + 0.055 ) / 1.055, vec3( 2.4 ) ), step( vec3( 0.04045 ), c ) ); }'
-        )
-        .replace(
-          '#include <color_fragment>',
-          '#include <color_fragment>\n#ifdef USE_COLOR\ndiffuseColor.rgb = plySrgbToLinear( diffuseColor.rgb );\n#endif'
-        );
-    };
-    // The compiled program differs by decode state, so it must be part of the key.
-    material.customProgramCacheKey = () => (material.userData.srgbDecode ? 'plySrgb1' : 'plySrgb0');
+    colorModeUtils.setupPointSrgbDecode(material);
   }
 
   private toggleTransparency(): void {
@@ -2243,59 +2215,7 @@ class PointCloudVisualizer {
   // they keep the Float32 + LUT path (few vertices, memory is a non-issue, and
   // their lit materials read linear vertex colors directly).
   private buildOriginalColorArray(data: SpatialData): Float32Array | Uint8Array | null {
-    const isMesh = (data.faceCount || 0) > 0;
-    const typedColors = (data as any).colorsArray as Uint8Array | null | undefined;
-    if (typedColors && data.hasColors) {
-      if (!isMesh) {
-        return typedColors; // raw 8-bit sRGB, decoded in-shader; zero-copy
-      }
-      const colorFloats = new Float32Array(typedColors.length);
-      if (this.convertSrgbToLinear) {
-        const lut = this.colorProcessor.ensureSrgbLUT();
-        for (let i = 0; i < typedColors.length; i++) {
-          colorFloats[i] = lut[typedColors[i]];
-        }
-      } else {
-        for (let i = 0; i < typedColors.length; i++) {
-          colorFloats[i] = typedColors[i] / 255;
-        }
-      }
-      return colorFloats;
-    }
-
-    if (!data.hasColors || !data.vertices?.length) {
-      return null;
-    }
-
-    if (!isMesh) {
-      const colors = new Uint8Array(data.vertices.length * 3);
-      for (let i = 0, i3 = 0; i < data.vertices.length; i++, i3 += 3) {
-        const vertex = data.vertices[i];
-        colors[i3] = (vertex.red || 0) & 255;
-        colors[i3 + 1] = (vertex.green || 0) & 255;
-        colors[i3 + 2] = (vertex.blue || 0) & 255;
-      }
-      return colors;
-    }
-
-    const colors = new Float32Array(data.vertices.length * 3);
-    for (let i = 0, i3 = 0; i < data.vertices.length; i++, i3 += 3) {
-      const vertex = data.vertices[i];
-      const r8 = (vertex.red || 0) & 255;
-      const g8 = (vertex.green || 0) & 255;
-      const b8 = (vertex.blue || 0) & 255;
-      if (this.convertSrgbToLinear) {
-        const lut = this.colorProcessor.ensureSrgbLUT();
-        colors[i3] = lut[r8];
-        colors[i3 + 1] = lut[g8];
-        colors[i3 + 2] = lut[b8];
-      } else {
-        colors[i3] = r8 / 255;
-        colors[i3 + 1] = g8 / 255;
-        colors[i3 + 2] = b8 / 255;
-      }
-    }
-    return colors;
+    return colorModeUtils.buildOriginalColorArray(this, data);
   }
 
   private applyColorModeToGeometry(
@@ -2303,44 +2223,11 @@ class PointCloudVisualizer {
     geometry: THREE.BufferGeometry,
     colorMode: string
   ): void {
-    const pointCount = data.vertexCount || geometry.getAttribute('position')?.count || 0;
-
-    if (colorMode.startsWith('intensity')) {
-      const intensity = this.getIntensityArray(data);
-      if (intensity) {
-        const colorAttribute = new THREE.BufferAttribute(
-          this.buildIntensityColorArrayForMode(intensity, pointCount, colorMode),
-          3
-        );
-        geometry.setAttribute('color', colorAttribute);
-        colorAttribute.needsUpdate = true;
-        return;
-      }
-    }
-
-    if (colorMode === 'original' && data.hasColors) {
-      const colors = this.buildOriginalColorArray(data);
-      if (colors) {
-        // Uint8 (point-cloud sRGB) attributes are normalized so the GPU reads
-        // 0..1; Float32 (mesh, already linear) are not.
-        const normalized = colors instanceof Uint8Array;
-        const colorAttribute = new THREE.BufferAttribute(colors, 3, normalized);
-        geometry.setAttribute('color', colorAttribute);
-        colorAttribute.needsUpdate = true;
-        return;
-      }
-    }
-
-    if (geometry.getAttribute('color')) {
-      geometry.deleteAttribute('color');
-    }
+    colorModeUtils.applyColorModeToGeometry(this, data, geometry, colorMode);
   }
 
   private shouldUseVertexColors(data: SpatialData, colorMode: string): boolean {
-    return (
-      (colorMode === 'original' && data.hasColors) ||
-      (colorMode.startsWith('intensity') && this.hasIntensityData(data))
-    );
+    return colorModeUtils.shouldUseVertexColors(data, colorMode);
   }
 
   private createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry {
@@ -4566,7 +4453,8 @@ class PointCloudVisualizer {
                     <div class="file-info">${data.vertexCount.toLocaleString()} vertices, ${data.faceCount.toLocaleString()} faces</div>
                     
                     ${
-                      data && (this.isDepthDerivedFile(data) || (data as any).isDepthDerived)
+                      data &&
+                      (commentSettings.isDepthDerivedFile(data) || (data as any).isDepthDerived)
                         ? `
                     <!-- Depth Settings (First) -->
                     <div class="depth-controls" style="margin-top: 8px;">
@@ -4780,7 +4668,7 @@ class PointCloudVisualizer {
                                 </div>
                             </div>
                             ${
-                              this.isPngDerivedFile(data)
+                              commentSettings.isPngDerivedFile(data)
                                 ? `
                             <div class="depth-group" style="margin-bottom: 8px;">
                                 <label for="png-scale-factor-${i}" style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Scale Factor ⭐:</label>
@@ -5650,7 +5538,7 @@ class PointCloudVisualizer {
       // Depth settings toggle and controls
       if (
         this.spatialFiles[i] &&
-        (this.isDepthDerivedFile(this.spatialFiles[i]) ||
+        (commentSettings.isDepthDerivedFile(this.spatialFiles[i]) ||
           (this.spatialFiles[i] as any).isDepthDerived)
       ) {
         const depthToggleBtn = document.querySelector(
@@ -7834,29 +7722,11 @@ class PointCloudVisualizer {
   }
 
   private getColorName(fileIndex: number): string {
-    const colorNames = [
-      'White',
-      'Red',
-      'Green',
-      'Blue',
-      'Yellow',
-      'Magenta',
-      'Cyan',
-      'Orange',
-      'Purple',
-      'Dark Green',
-      'Gray',
-    ];
-    return colorNames[fileIndex % colorNames.length];
+    return colorModeUtils.getColorName(fileIndex);
   }
 
   private getColorOptions(fileIndex: number): string {
-    let options = '';
-    for (let i = 0; i < this.fileColors.length; i++) {
-      const isSelected = this.individualColorModes[fileIndex] === i.toString();
-      options += `<option value="${i}" ${isSelected ? 'selected' : ''}>${this.getColorName(i)}</option>`;
-    }
-    return options;
+    return colorModeUtils.getColorOptions(this, fileIndex);
   }
 
   // ===== Pose feature updaters =====
@@ -10367,47 +10237,6 @@ class PointCloudVisualizer {
     return true;
   }
 
-  private isDepthDerivedFile(data: SpatialData): boolean {
-    const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {
-      return false;
-    }
-    return comments.some((comment: string) => {
-      if (typeof comment !== 'string') {
-        return false;
-      }
-      const lc = comment.toLowerCase();
-      return (
-        lc.includes('converted from tif depth image') ||
-        lc.includes('converted from pfm depth image') ||
-        lc.includes('converted from png depth image') ||
-        lc.includes('converted from npy depth image') ||
-        lc.includes('converted from depth image')
-      );
-    });
-  }
-
-  private isPngDerivedFile(data: SpatialData): boolean {
-    const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {
-      return false;
-    }
-    return comments.some(
-      (comment: string) =>
-        typeof comment === 'string' && comment.includes('Converted from PNG depth image')
-    );
-  }
-
-  private isRgbDerivedFile(data: SpatialData): boolean {
-    const comments = (data as any)?.comments;
-    if (!Array.isArray(comments)) {
-      return false;
-    }
-    return comments.some(
-      (comment: string) => typeof comment === 'string' && comment.includes('RGB24 depth image')
-    );
-  }
-
   private getRgb24ScaleFactor(data: SpatialData): number {
     return commentSettings.getRgb24ScaleFactor(data);
   }
@@ -10737,7 +10566,7 @@ class PointCloudVisualizer {
     // Update existing depth file forms to use the new default settings
     for (let i = 0; i < this.spatialFiles.length; i++) {
       const data = this.spatialFiles[i];
-      if (this.isDepthDerivedFile(data)) {
+      if (commentSettings.isDepthDerivedFile(data)) {
         console.log(`🔄 Refreshing depth form ${i} with new defaults`);
         this.updateDepthFormWithDefaults(i);
       }
@@ -10900,7 +10729,8 @@ class PointCloudVisualizer {
       const currentScale = currentParams.pngScaleFactor;
       const defaultScale = this.defaultDepthSettings.pngScaleFactor;
       const isPngFile =
-        fileIndex < this.spatialFiles.length && this.isPngDerivedFile(this.spatialFiles[fileIndex]);
+        fileIndex < this.spatialFiles.length &&
+        commentSettings.isPngDerivedFile(this.spatialFiles[fileIndex]);
       const pngScaleFactorMatch = !isPngFile
         ? true // For non-PNG files, scale factor is irrelevant
         : currentScale === undefined && defaultScale === undefined
