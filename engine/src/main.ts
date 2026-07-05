@@ -71,6 +71,7 @@ import * as liveDepthUpdate from './depth/liveDepthUpdate';
 import * as normalsVisualizer from './normalsVisualizer';
 import * as depthConversionPipeline from './depth/depthConversionPipeline';
 import * as colorImageForDepth from './depth/colorImageForDepth';
+import * as largeFileChunking from './largeFileChunking';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -264,7 +265,7 @@ class PointCloudVisualizer {
   private lightingMode: 'normal' | 'flat' | 'unlit' = 'normal';
 
   // Large file chunked loading state
-  private chunkedFileState: Map<
+  chunkedFileState: Map<
     string,
     {
       fileName: string;
@@ -1028,7 +1029,7 @@ class PointCloudVisualizer {
     this.updateWelcomeMessageVisibility();
   }
 
-  private updateWelcomeMessageVisibility(): void {
+  updateWelcomeMessageVisibility(): void {
     uiStatus.updateWelcomeMessageVisibility(this);
   }
 
@@ -6269,141 +6270,15 @@ class PointCloudVisualizer {
   }
 
   private handleStartLargeFile(message: any): void {
-    const startTime = performance.now();
-    console.log(
-      `Starting chunked loading for ${message.fileName} (${message.totalVertices} vertices, ${message.totalChunks} chunks)`
-    );
-
-    this.isFileLoading = true;
-    this.updateWelcomeMessageVisibility();
-
-    // Show loading progress
-    const loadingEl = document.getElementById('loading');
-    if (loadingEl) {
-      loadingEl.classList.remove('hidden');
-      loadingEl.textContent = `Loading ${message.fileName} (0/${message.totalChunks} chunks)...`;
-    }
-
-    // Initialize chunked file state
-    this.chunkedFileState.set(message.fileName, {
-      fileName: message.fileName,
-      totalVertices: message.totalVertices,
-      totalChunks: message.totalChunks,
-      receivedChunks: 0,
-      vertices: new Array(message.totalVertices),
-      hasColors: message.hasColors,
-      hasNormals: message.hasNormals,
-      faces: message.faces || [],
-      format: message.format,
-      comments: message.comments || [],
-      messageType: '',
-      startTime: startTime,
-      firstChunkTime: 0,
-      lastChunkTime: 0,
-    });
+    largeFileChunking.handleStartLargeFile(this, message);
   }
 
   private handleLargeFileChunk(message: any): void {
-    const chunkReceiveTime = performance.now();
-    const fileState = this.chunkedFileState.get(message.fileName);
-    if (!fileState) {
-      console.error(`No state found for chunked file: ${message.fileName}`);
-      return;
-    }
-
-    // Record timing for first and last chunks
-    if (fileState.receivedChunks === 0) {
-      fileState.firstChunkTime = chunkReceiveTime;
-      const timeSinceStart = chunkReceiveTime - fileState.startTime;
-      console.log(`First chunk received after ${timeSinceStart.toFixed(2)}ms`);
-    }
-
-    // Add chunk vertices to the appropriate position
-    const startIndex = message.chunkIndex * 1000000; // Must match ultra-fast CHUNK_SIZE
-    const chunkVertices = message.vertices;
-
-    const copyStartTime = performance.now();
-    for (let i = 0; i < chunkVertices.length; i++) {
-      fileState.vertices[startIndex + i] = chunkVertices[i];
-    }
-    const copyTime = performance.now() - copyStartTime;
-
-    fileState.receivedChunks++;
-    fileState.lastChunkTime = chunkReceiveTime;
-
-    // Update loading progress
-    const loadingEl = document.getElementById('loading');
-    if (loadingEl) {
-      const progress = Math.round((fileState.receivedChunks / fileState.totalChunks) * 100);
-      loadingEl.textContent = `Loading ${message.fileName} (${fileState.receivedChunks}/${fileState.totalChunks} chunks, ${progress}%)...`;
-    }
-
-    // Only log every 10th chunk to reduce console spam
-    if (message.chunkIndex % 10 === 0 || fileState.receivedChunks === fileState.totalChunks) {
-      console.log(
-        `Chunk ${message.chunkIndex + 1}/${message.totalChunks} (${chunkVertices.length} vertices, copy: ${copyTime.toFixed(2)}ms)`
-      );
-    }
+    largeFileChunking.handleLargeFileChunk(this, message);
   }
 
   private async handleLargeFileComplete(message: any): Promise<void> {
-    const completeTime = performance.now();
-    const fileState = this.chunkedFileState.get(message.fileName);
-    if (!fileState) {
-      console.error(`No state found for completed chunked file: ${message.fileName}`);
-      return;
-    }
-
-    // Calculate comprehensive timing
-    const totalTransferTime = completeTime - fileState.startTime;
-    const firstChunkDelay = fileState.firstChunkTime - fileState.startTime;
-    const transferTime = fileState.lastChunkTime - fileState.firstChunkTime;
-    const assemblyStartTime = performance.now();
-
-    console.log(`📊 Chunked loading timing for ${message.fileName}:
-  • Total transfer time: ${totalTransferTime.toFixed(2)}ms
-  • Time to first chunk: ${firstChunkDelay.toFixed(2)}ms
-  • Chunk transfer time: ${transferTime.toFixed(2)}ms
-  • Chunks: ${fileState.totalChunks} (${(transferTime / fileState.totalChunks).toFixed(2)}ms avg)`);
-
-    // Create complete PLY data object
-    const spatialData: SpatialData = {
-      vertices: fileState.vertices,
-      faces: fileState.faces,
-      format: fileState.format as any,
-      version: '1.0',
-      comments: fileState.comments,
-      vertexCount: fileState.totalVertices,
-      faceCount: fileState.faces.length,
-      hasColors: fileState.hasColors,
-      hasNormals: fileState.hasNormals,
-      fileName: fileState.fileName,
-      fileIndex: 0,
-    };
-
-    const assemblyTime = performance.now() - assemblyStartTime;
-
-    // Process the completed file based on original message type
-    const processStartTime = performance.now();
-    if (message.messageType === 'multiSpatialData') {
-      await this.displayFiles([spatialData]);
-    } else if (message.messageType === 'addFiles') {
-      this.addNewFiles([spatialData]);
-    }
-
-    // Normals visualizer will be created on-demand when user clicks normals button
-    const processTime = performance.now() - processStartTime;
-
-    const totalTime = performance.now() - fileState.startTime;
-    console.log(`  • PLY assembly time: ${assemblyTime.toFixed(2)}ms
-  • File processing time: ${processTime.toFixed(2)}ms
-  • TOTAL TIME: ${totalTime.toFixed(2)}ms`);
-
-    // Hide loading indicator
-    document.getElementById('loading')?.classList.add('hidden');
-
-    // Clean up chunked file state
-    this.chunkedFileState.delete(message.fileName);
+    await largeFileChunking.handleLargeFileComplete(this, message);
   }
 
   private updatePointSize(fileIndex: number, newSize: number): void {
