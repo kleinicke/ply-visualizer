@@ -1,3 +1,5 @@
+import { CameraParams } from '../interfaces';
+
 export interface DepthPanelStateHost {
   fileDepthData: Map<number, { depthDimensions: { width: number; height: number } }>;
   liveDepthUpdateFiles: Set<number>;
@@ -257,4 +259,94 @@ export function restoreDepthFormValues(
   console.log(
     `📝 Restored form values for file ${fileIndex}: fx=${formValues.fx}, cx=${formValues.cx}`
   );
+}
+
+export function getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
+  console.log(`📋 getDepthSettingsFromFileUI(${fileIndex}) called`);
+  const cameraModelSelect = document.getElementById(
+    `camera-model-${fileIndex}`
+  ) as HTMLSelectElement;
+  const fxInput = document.getElementById(`fx-${fileIndex}`) as HTMLInputElement;
+  const fyInput = document.getElementById(`fy-${fileIndex}`) as HTMLInputElement;
+  const cxInput = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement;
+  const cyInput = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
+  const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
+  const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
+  const disparityOffsetInput = document.getElementById(
+    `disparity-offset-${fileIndex}`
+  ) as HTMLInputElement;
+  const depthScaleInput = document.getElementById(`depth-scale-${fileIndex}`) as HTMLInputElement;
+  const depthBiasInput = document.getElementById(`depth-bias-${fileIndex}`) as HTMLInputElement;
+  const conventionSelect = document.getElementById(`convention-${fileIndex}`) as HTMLSelectElement;
+  const pngScaleFactorInput = document.getElementById(
+    `png-scale-factor-${fileIndex}`
+  ) as HTMLInputElement;
+  const rgb24ConversionModeSelect = document.getElementById(
+    `rgb24-conversion-mode-${fileIndex}`
+  ) as HTMLSelectElement;
+  const rgb24ScaleFactorInput = document.getElementById(
+    `rgb24-scale-factor-${fileIndex}`
+  ) as HTMLInputElement;
+
+  // Get distortion coefficient inputs
+  const k1Input = document.getElementById(`k1-${fileIndex}`) as HTMLInputElement;
+  const k2Input = document.getElementById(`k2-${fileIndex}`) as HTMLInputElement;
+  const k3Input = document.getElementById(`k3-${fileIndex}`) as HTMLInputElement;
+  const k4Input = document.getElementById(`k4-${fileIndex}`) as HTMLInputElement;
+  const k5Input = document.getElementById(`k5-${fileIndex}`) as HTMLInputElement;
+  const p1Input = document.getElementById(`p1-${fileIndex}`) as HTMLInputElement;
+  const p2Input = document.getElementById(`p2-${fileIndex}`) as HTMLInputElement;
+
+  const cx = cxInput?.value && cxInput.value.trim() !== '' ? parseFloat(cxInput.value) : undefined; // Will be auto-calculated if not provided
+  const cy = cyInput?.value && cyInput.value.trim() !== '' ? parseFloat(cyInput.value) : undefined; // Will be auto-calculated if not provided
+  const fx = parseFloat(fxInput?.value || '1000');
+  const fyValue = fyInput?.value?.trim();
+  const fy = fyValue && fyValue !== '' ? parseFloat(fyValue) : undefined;
+
+  // Parse distortion coefficients (only if they have values)
+  const k1 = k1Input?.value && k1Input.value.trim() !== '' ? parseFloat(k1Input.value) : undefined;
+  const k2 = k2Input?.value && k2Input.value.trim() !== '' ? parseFloat(k2Input.value) : undefined;
+  const k3 = k3Input?.value && k3Input.value.trim() !== '' ? parseFloat(k3Input.value) : undefined;
+  const k4 = k4Input?.value && k4Input.value.trim() !== '' ? parseFloat(k4Input.value) : undefined;
+  const k5 = k5Input?.value && k5Input.value.trim() !== '' ? parseFloat(k5Input.value) : undefined;
+  const p1 = p1Input?.value && p1Input.value.trim() !== '' ? parseFloat(p1Input.value) : undefined;
+  const p2 = p2Input?.value && p2Input.value.trim() !== '' ? parseFloat(p2Input.value) : undefined;
+
+  return {
+    cameraModel: (cameraModelSelect?.value as any) || 'pinhole-ideal',
+    fx: fx,
+    fy: fy,
+    cx: cx,
+    cy: cy,
+    depthType:
+      (depthTypeSelect?.value as 'euclidean' | 'orthogonal' | 'disparity' | 'inverse_depth') ||
+      'euclidean',
+    baseline:
+      depthTypeSelect?.value === 'disparity'
+        ? parseFloat(baselineInput?.value || '120')
+        : undefined,
+    disparityOffset:
+      depthTypeSelect?.value === 'disparity'
+        ? parseFloat(disparityOffsetInput?.value || '0')
+        : undefined,
+    depthScale: depthScaleInput?.value ? parseFloat(depthScaleInput.value) : undefined,
+    depthBias: depthBiasInput?.value ? parseFloat(depthBiasInput.value) : undefined,
+    convention: (conventionSelect?.value as 'opengl' | 'opencv') || 'opengl',
+    pngScaleFactor: pngScaleFactorInput
+      ? parseFloat(pngScaleFactorInput.value || '1000') || 1000
+      : undefined,
+    rgb24ConversionMode:
+      (rgb24ConversionModeSelect?.value as 'shift' | 'multiply' | 'red' | 'green' | 'blue') ||
+      'shift',
+    rgb24ScaleFactor: rgb24ScaleFactorInput
+      ? parseFloat(rgb24ScaleFactorInput.value || '1000') || 1000
+      : undefined,
+    k1: k1,
+    k2: k2,
+    k3: k3,
+    k4: k4,
+    k5: k5,
+    p1: p1,
+    p2: p2,
+  };
 }
