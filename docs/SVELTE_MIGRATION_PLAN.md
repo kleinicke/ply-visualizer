@@ -1,8 +1,9 @@
 # Svelte Migration Plan
 
 Status: approved, Phases 0-6 complete (2026-07-05). See "Deferred follow-ups"
-near the end for the two items intentionally left out (loading overlay,
-calibrationForm.ts DOM-scrape inversion) and why.
+near the end: the loading overlay is now done too (2026-07-05 follow-up pass);
+the panelState.ts DOM-scrape inversion was investigated but deliberately not
+done, with a real bug found and fixed along the way.
 
 ## Priority
 
@@ -283,33 +284,54 @@ notes. Added `tabnav-default-check.spec.ts` and `theme-selector-check.spec.ts`.
 ## Deferred follow-ups
 
 Two things were deliberately left out of Phases 0-6, both already noted inline
-where they came up:
+where they came up. Status as of the follow-up pass (2026-07-05):
 
-1. **The `#loading` overlay** (Phase 2). Touched directly from ~10 call sites
-   across `main.ts`, `cameraProfile.ts`, `largeFileChunking.ts`, `pose.ts`,
-   `sequencePlayback.ts`, `ui/status.ts`, with inconsistent mutation styles
-   (some set the `<p>` child's `textContent`, others overwrite the whole overlay
-   div's `textContent`, losing the spinner element). Needs the same "pin
-   behavior with Playwright first" discipline Phase 3 used before it's safe to
-   touch.
-2. **`depth/panelState.ts`/`depth/calibrationForm.ts`'s DOM-scrape
-   architecture** (Phase 3 scope decision). `getDepthSettingsFromFileUI` still
-   reads form inputs by id at commit time rather than a reactive store. Phase 3
-   deliberately didn't invert this because the mechanical win (declarative
-   rendering replacing `innerHTML` + manual `addEventListener`) didn't require
-   it - every id/class stayed the same, so this code kept working unchanged.
-   Revisit only if a future feature needs true field-level reactivity here.
+1. **The `#loading` overlay** — DONE. Converted to
+   `components/LoadingOverlay.svelte` reading `state/ui.svelte.js`'s
+   `loadingVisible`/`loadingTitle`/`loadingDetail` fields, mounted via
+   `loadingOverlayMount.ts` at `#loading-mount`. All prior direct DOM touch
+   points in `main.ts` (`showLoading`, `showImmediateLoading`,
+   `setLoadingDetail`, the sequence-mode hide) and `ui/status.ts`'s `showError`
+   now write through the store instead. Verified against the existing
+   `ply-loading.spec.ts` assertions (which already exercise `#loading`
+   visibility directly) plus a full Playwright/Mocha/tsc/ svelte-check pass.
+2. **`depth/panelState.ts`'s DOM-scrape architecture** — investigated, **not**
+   inverted. `getDepthSettingsFromFileUI` and the capture/restore dance
+   (`captureDepthPanelStates`/`restoreDepthPanelStates`) still read/write ~20
+   form inputs by id rather than a reactive store. A full inversion was judged
+   too risky for this pass: thin existing test coverage for the exact behavior
+   being changed, direct feed into the depth-to-point-cloud pipeline (a
+   must-keep-working feature), and no F5 Extension Development Host available in
+   the environment doing the work to manually verify against. Along the way a
+   real bug was found and fixed: `showImmediateLoading()`'s "additional load"
+   fast path called `updateFileList()` directly, unlike every other call site,
+   silently discarding an open/edited depth panel the moment a second file
+   started loading - now wrapped in capture/restore like the rest. That fix does
+   not fully close the race (loading a second file still fires two remounts in
+   quick succession, and `restoreDepthPanelStates`'s `setTimeout(10)` can let
+   the second capture run before the first restore commits) -
+   `test/depth-panel-state-persistence.spec.ts` pins today's actual,
+   improved-but-not-fully-fixed behavior in detail, including the residual race,
+   for whoever attempts the full store-based inversion next.
 
 ## Other refactoring worth doing (independent of Svelte)
 
-1. **`src/pointCloudEditorProvider.ts` is 3,498 lines** — the "thin host" is the
-   second-fattest file in the repo. Audit it the same way main.ts was treated:
-   message routing, file-type dispatch, and HTML handling can split into modules
-   under `src/`. Not a Svelte prerequisite, but same hygiene.
-2. **Remaining main.ts scene logic** (~4,700 lines after the UI block is gone):
-   the proposed `visualization/` split (SceneManager, PointCloudRenderer,
-   LightingManager) can proceed in parallel — it does not conflict with the UI
-   migration since it's the other side of the store boundary.
+1. **`src/pointCloudEditorProvider.ts`** — DONE (2026-07-05 follow-up pass).
+   Extracted into `src/providerHandlers/` (binary transfer, camera-param
+   dialogs, add/drop-file handling, the per-format initial document loader),
+   following the same host-interface + thin-delegating-wrapper pattern as
+   main.ts's earlier pass. 3,498 → 1,245 lines; the remainder is
+   calibration/dataset/mtl handling tightly coupled to `DatasetManager` and
+   `globalState`, not mechanically extractable the same way.
+2. **Remaining main.ts scene logic** — partially started (2026-07-05 follow-up
+   pass): `visualization/PointCloudRenderer.ts` (round-point-texture cache,
+   point material optimization, optimized-point-cloud creation) and
+   `visualization/MeshBuilder.ts` (`createGeometryFromSpatialData`) are
+   extracted; main.ts is 4,351 → 4,128 lines from this alone. The bulk of what's
+   left (scene/renderer lifecycle: `initThreeJS`, `animate`, `dispose`,
+   context-loss handling, lighting setup) is far more state-entangled and
+   higher-risk to move without a dedicated pass - proposed
+   `SceneManager`/`LightingManager` modules still not started.
 3. **Do NOT pre-extract `updateFileList` (or `setupEventListeners`) into plain
    `ui/` modules** — they get deleted/rewritten in Phase 3; extracting them
    first with a Host-interface is double work that gets thrown away.

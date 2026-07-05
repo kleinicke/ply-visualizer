@@ -102,11 +102,12 @@ faster iteration surface, not the target to optimize for.
 ```
 ├── src/                     # VS Code extension-specific files
 │   ├── extension.ts         # Extension activation & VS Code API integration
-│   ├── pointCloudEditorProvider.ts  # Custom editor registration
+│   ├── pointCloudEditorProvider.ts  # Custom editor registration (~1,245 lines - see providerHandlers/)
+│   ├── providerHandlers/    # Extracted message-handler clusters (binary transfer, camera params, add/drop-file, document loader)
 │   └── *Parser.ts          # Lightweight parser wrappers for extension host
 ├── engine/                  # Shared visualization engine + standalone page host
 │   ├── src/                # Core visualization engine (shared code)
-│   │   ├── main.ts         # Main 3D visualization engine (~4,350 lines - Svelte migration Phases 0-6 done)
+│   │   ├── main.ts         # Main 3D visualization engine (~4,128 lines - Svelte migration Phases 0-6 done + visualization/ split started)
 │   │   ├── fileHandler.ts  # Shared file handling logic (USE THIS!)
 │   │   ├── controls.ts     # Camera control systems (USE THIS!)
 │   │   ├── interfaces.ts   # Shared type definitions
@@ -158,8 +159,8 @@ This architecture enables:
 
 **Webview (Browser Context)**
 
-- `engine/src/main.ts` - Main visualization engine (~4,350 lines - Svelte
-  migration Phases 0-6 done)
+- `engine/src/main.ts` - Main visualization engine (~4,128 lines - Svelte
+  migration Phases 0-6 done + visualization/ split started)
 - `engine/src/depth/` - Depth processing pipeline:
   - `DepthRegistry.ts` - Format detection and reader selection
   - `DepthProjector.ts` - 3D projection with camera models (pinhole/fisheye)
@@ -296,8 +297,10 @@ supporting:
 **IMPORTANT**: `engine/src/main.ts` was **15,576 lines (603KB)**, went down to
 **~6,300 lines** after a plain-TS extraction pass (~30 commits, each moving a
 cohesive cluster of methods into its own module behind a `XyzHost` interface +
-thin delegating wrapper), and is now **~4,350 lines** after the Svelte migration
-(Phases 0-6, see git history on `claude/library-refactor-svelte-a0nnim` and
+thin delegating wrapper), down to **~4,350 lines** after the Svelte migration
+(Phases 0-6), and **~4,128 lines** after a follow-up pass started the
+`visualization/` split (see git history on
+`claude/library-refactor-svelte-a0nnim` and
 [`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md) for what moved
 where). `updateFileList()` (was ~1,600 lines) is now 3 lines - the file list
 rendering + its ~70 `addEventListener` calls became
@@ -463,11 +466,12 @@ engine/src/
 │   └── Modal.svelte / VectorInputDialog.svelte / CameraVectorDialog.svelte /
 │       DepthCameraParamsDialog.svelte
 │
-├── visualization/             # 3D rendering (PROPOSED - independent of Svelte, can proceed in parallel)
-│   ├── SceneManager.ts       # Scene setup/management
-│   ├── MeshBuilder.ts        # Mesh creation
-│   ├── PointCloudRenderer.ts # Point cloud rendering
-│   └── LightingManager.ts    # Lighting setup
+├── visualization/             # 3D rendering (split started 2026-07-05, independent of Svelte)
+│   ├── MeshBuilder.ts        # createGeometryFromSpatialData (EXISTS)
+│   ├── PointCloudRenderer.ts # round-point texture, point material opts, optimized point cloud creation (EXISTS)
+│   ├── SceneManager.ts       # Scene setup/management (proposed - not started; scene/renderer
+│   │                         # lifecycle in main.ts is state-entangled, higher-risk to move)
+│   └── LightingManager.ts    # Lighting setup (proposed - not started)
 │
 └── utils/                     # Utilities (STARTED)
     ├── matrix.ts             # Matrix/transform helpers (EXISTS)
@@ -487,12 +491,22 @@ engine/src/
 - ✅ **Svelte Phase 1** (Done): State layer (`state/` stores).
 - ✅ **Svelte Phases 2-6** (Done): Leaf islands → file list → controls/camera/
   info tabs → dialogs → consolidate shell. main.ts: ~6,300 → ~4,350 lines this
-  way. Full detail, including two intentionally-deferred items (`#loading`
-  overlay, `depth/panelState.ts`'s DOM-scrape architecture), in
+  way. Full detail in
   [`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md).
-- ⏳ **Independent, in parallel, not started**: Extract rendering logic to
-  `visualization/` modules (plain TS, not Svelte — this is the other side of the
-  store boundary).
+- ✅ **`#loading` overlay** (Done 2026-07-05): converted to
+  `components/LoadingOverlay.svelte` + `state/ui.svelte.js`.
+- ⏳ **`depth/panelState.ts`'s DOM-scrape architecture**: investigated
+  2026-07-05, deliberately not inverted (thin test coverage + feeds the
+  depth-to-point-cloud pipeline directly — too risky without a dedicated pass
+  and F5 verification). A real capture/restore gap was found and fixed along the
+  way; see `docs/SVELTE_MIGRATION_PLAN.md`'s "Deferred follow-ups" for the
+  residual known race.
+- ✅ **`src/pointCloudEditorProvider.ts`** (Done 2026-07-05): extracted into
+  `src/providerHandlers/`, 3,498 → 1,245 lines.
+- 🔶 **`visualization/` split** (Started 2026-07-05): `MeshBuilder.ts` and
+  `PointCloudRenderer.ts` extracted; main.ts's remaining scene/renderer
+  lifecycle (`SceneManager`/`LightingManager`) still not started — see
+  `docs/SVELTE_MIGRATION_PLAN.md` for why that's higher-risk.
 
 **Note**: Don't attempt big-bang refactoring! Previous attempts (5+ branches)
 failed. Instead, follow "strangler fig" pattern - new code goes in modules, old
