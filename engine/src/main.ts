@@ -70,11 +70,11 @@ import * as browserFileDragDrop from './browserFileDragDrop';
 import * as liveDepthUpdate from './depth/liveDepthUpdate';
 import * as normalsVisualizer from './normalsVisualizer';
 import * as depthConversionPipeline from './depth/depthConversionPipeline';
+import * as colorImageForDepth from './depth/colorImageForDepth';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
-import { applyDepthResultTypedArrays, colorsToUint8 } from './depth/depthResultArrays';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
@@ -124,7 +124,7 @@ class PointCloudVisualizer {
   private selectionManager: SelectionManager | null = null;
 
   // On-demand rendering state
-  private needsRender: boolean = false;
+  needsRender: boolean = false;
   private animationId: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
 
@@ -338,7 +338,7 @@ class PointCloudVisualizer {
   };
 
   // Color image loader and processor
-  private colorImageLoader = new ColorImageLoader();
+  colorImageLoader = new ColorImageLoader();
   colorProcessor = new ColorProcessor();
   convertSrgbToLinear: boolean = true; // Default: remove gamma from source colors
   private lastGeometryMs: number = 0;
@@ -5005,10 +5005,7 @@ class PointCloudVisualizer {
   }
 
   private requestColorImageForDepth(fileIndex: number): void {
-    this.vscode.postMessage({
-      type: 'selectColorImage',
-      fileIndex: fileIndex,
-    });
+    colorImageForDepth.requestColorImageForDepth(this, fileIndex);
   }
 
   addNewFiles(newFiles: SpatialData[]): void {
@@ -6691,107 +6688,7 @@ class PointCloudVisualizer {
   }
 
   private async handleColorImageData(message: any): Promise<void> {
-    try {
-      console.log('Received color image data for file index:', message.fileIndex);
-
-      // Convert the ArrayBuffer back to a File-like object for processing
-      const blob = new Blob([message.data], { type: message.mimeType || 'image/png' });
-      const file = new File([blob], message.fileName, { type: message.mimeType || 'image/png' });
-
-      // Get depth data first to access dimensions
-      const fileIndex = message.fileIndex;
-      const depthData = this.fileDepthData.get(fileIndex);
-      if (!depthData) {
-        throw new Error('No cached depth data found for this file');
-      }
-
-      // Load and validate the color image using ColorImageLoader
-      const imageData = await this.colorImageLoader.loadAndValidate(
-        file,
-        depthData.depthDimensions
-      );
-
-      if (!imageData) {
-        return; // Error already shown by ColorImageLoader
-      }
-
-      // Store color image data and name in depth data for future reprocessing
-      depthData.colorImageData = imageData;
-      depthData.colorImageName = message.fileName;
-
-      // Reprocess depth image with color data
-      const result = await this.processDepthToPointCloud(
-        depthData.originalData,
-        depthData.fileName,
-        depthData.cameraParams,
-        imageData
-      );
-
-      // Update the PLY data
-      const spatialData = this.spatialFiles[fileIndex];
-      applyDepthResultTypedArrays(spatialData, result);
-      // Mark as depth-derived so gamma correction knows these are already linear colors
-      (spatialData as any).isDepthDerived = true;
-
-      // Update the mesh with colored data
-      const oldMaterial = this.meshes[fileIndex].material;
-      const newMaterial = this.createMaterialForFile(spatialData, fileIndex);
-      this.meshes[fileIndex].material = newMaterial;
-
-      // Ensure point size is correctly applied to the new material
-      if (
-        this.meshes[fileIndex] instanceof THREE.Points &&
-        newMaterial instanceof THREE.PointsMaterial
-      ) {
-        const currentPointSize = this.pointSizes[fileIndex] || 0.001;
-        newMaterial.size = currentPointSize;
-        console.log(
-          `🔧 Applied point size ${currentPointSize} to color-updated depth material for file ${fileIndex}`
-        );
-      }
-
-      const mesh = this.meshes[fileIndex] as THREE.Points;
-      const oldGeometry = mesh.geometry;
-      mesh.geometry = this.createGeometryFromSpatialData(spatialData);
-      oldGeometry.dispose();
-
-      // Dispose old material
-      if (oldMaterial) {
-        if (Array.isArray(oldMaterial)) {
-          oldMaterial.forEach(mat => mat.dispose());
-        } else {
-          oldMaterial.dispose();
-        }
-      }
-
-      // Trigger re-render to display the updated colors
-      this.needsRender = true;
-
-      // Update UI (preserve depth panel states)
-      const openPanelStates = this.captureDepthPanelStates();
-      this.updateFileStats();
-      this.updateFileList();
-      this.restoreDepthPanelStates(openPanelStates);
-      this.showStatus(`Color image "${message.fileName}" applied successfully!`);
-
-      // Check if this is part of a dataset workflow
-      const pendingFiles = Array.from(this.pendingDepthFiles.values());
-      const datasetFile = pendingFiles.find(f => f.sceneMetadata && f.sceneMetadata.isDatasetScene);
-
-      if (datasetFile && datasetFile.sceneMetadata) {
-        console.log(
-          `🎯 Dataset workflow complete - all files loaded for ${datasetFile.sceneMetadata.sceneName}`
-        );
-        this.showStatus(
-          `✅ Dataset workflow complete for ${datasetFile.sceneMetadata.sceneName} - ready to apply!`
-        );
-      }
-    } catch (error) {
-      console.error('Error handling color image data:', error);
-      this.showError(
-        `Failed to apply color image: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await colorImageForDepth.handleColorImageData(this, message);
   }
 
   /**
@@ -6888,17 +6785,11 @@ class PointCloudVisualizer {
   }
 
   private getStoredColorImageName(fileIndex: number): string | null {
-    const depthData = this.fileDepthData.get(fileIndex);
-    return depthData?.colorImageName || null;
+    return colorImageForDepth.getStoredColorImageName(this, fileIndex);
   }
 
   private getImageSizeDisplay(fileIndex: number): string {
-    const depthData = this.fileDepthData.get(fileIndex);
-    if (depthData?.depthDimensions) {
-      const { width, height } = depthData.depthDimensions;
-      return `Image Size: Width: ${width}, Height: ${height}`;
-    }
-    return 'Image Size: Width: -, Height: -';
+    return colorImageForDepth.getImageSizeDisplay(this, fileIndex);
   }
 
   setLiveDepthUpdateEnabled(fileIndex: number, enabled: boolean): void {
@@ -7116,74 +7007,7 @@ class PointCloudVisualizer {
   }
 
   private async removeColorImageFromDepth(fileIndex: number): Promise<void> {
-    try {
-      const depthData = this.fileDepthData.get(fileIndex);
-      if (!depthData) {
-        throw new Error('No cached Depth data found for this file');
-      }
-
-      this.showStatus('Removing color image and reverting to default colors...');
-
-      // Remove stored color image data
-      delete depthData.colorImageData;
-      delete depthData.colorImageName;
-
-      // Reprocess depth image without color data (will use default grayscale colors)
-      const result = await this.processDepthToPointCloud(
-        depthData.originalData,
-        depthData.fileName,
-        depthData.cameraParams
-      );
-
-      // Update the PLY data
-      const spatialData = this.spatialFiles[fileIndex];
-      applyDepthResultTypedArrays(spatialData, result);
-      // Mark as depth-derived so gamma correction knows these are already linear colors
-      (spatialData as any).isDepthDerived = true;
-
-      // Update the mesh with default colors
-      const oldMaterial = this.meshes[fileIndex].material;
-      const newMaterial = this.createMaterialForFile(spatialData, fileIndex);
-      this.meshes[fileIndex].material = newMaterial;
-
-      // Ensure point size is correctly applied to the new material
-      if (
-        this.meshes[fileIndex] instanceof THREE.Points &&
-        newMaterial instanceof THREE.PointsMaterial
-      ) {
-        const currentPointSize = this.pointSizes[fileIndex] || 0.001;
-        newMaterial.size = currentPointSize;
-        console.log(
-          `🔧 Applied point size ${currentPointSize} to default-color Depth material for file ${fileIndex}`
-        );
-      }
-
-      const mesh = this.meshes[fileIndex] as THREE.Points;
-      const oldGeometry = mesh.geometry;
-      mesh.geometry = this.createGeometryFromSpatialData(spatialData);
-      oldGeometry.dispose();
-
-      // Dispose old material
-      if (oldMaterial) {
-        if (Array.isArray(oldMaterial)) {
-          oldMaterial.forEach(mat => mat.dispose());
-        } else {
-          oldMaterial.dispose();
-        }
-      }
-
-      // Update UI (preserve depth panel states)
-      const openPanelStates = this.captureDepthPanelStates();
-      this.updateFileStats();
-      this.updateFileList();
-      this.restoreDepthPanelStates(openPanelStates);
-      this.showStatus('Color image removed - reverted to default depth-based colors');
-    } catch (error) {
-      console.error('Error removing color image:', error);
-      this.showError(
-        `Failed to remove color image: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await colorImageForDepth.removeColorImageFromDepth(this, fileIndex);
   }
 
   private savePlyFile(fileIndex: number): void {
@@ -7385,7 +7209,7 @@ class PointCloudVisualizer {
   /**
    * Capture the current open/closed state of depth settings panels and form values
    */
-  private captureDepthPanelStates(): Map<number, { panelOpen: boolean; formValues: any }> {
+  captureDepthPanelStates(): Map<number, { panelOpen: boolean; formValues: any }> {
     return depthPanelState.captureDepthPanelStates(this);
   }
 
@@ -7393,9 +7217,7 @@ class PointCloudVisualizer {
     return depthPanelState.captureDepthFormValues(this, fileIndex);
   }
 
-  private restoreDepthPanelStates(
-    states: Map<number, { panelOpen: boolean; formValues: any }>
-  ): void {
+  restoreDepthPanelStates(states: Map<number, { panelOpen: boolean; formValues: any }>): void {
     depthPanelState.restoreDepthPanelStates(this, states);
   }
 
