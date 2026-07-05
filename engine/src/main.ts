@@ -73,6 +73,7 @@ import * as depthConversionPipeline from './depth/depthConversionPipeline';
 import * as colorImageForDepth from './depth/colorImageForDepth';
 import * as largeFileChunking from './largeFileChunking';
 import * as binaryDataHandlers from './binaryDataHandlers';
+import * as datasetWorkflow from './depth/datasetWorkflow';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -6489,89 +6490,16 @@ class PointCloudVisualizer {
     }
   }
 
-  private async loadDatasetTexture(texturePath: string, sceneName: string): Promise<void> {
-    try {
-      console.log(`🖼️ Loading dataset texture for ${sceneName}: ${texturePath}`);
-
-      // Request texture file from VS Code extension
-      this.vscode.postMessage({
-        type: 'requestDatasetTexture',
-        texturePath: texturePath,
-        sceneName: sceneName,
-      });
-    } catch (error) {
-      console.error('Error loading dataset texture:', error);
-      this.showError(
-        `Failed to load texture for ${sceneName}: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
   async triggerDatasetCalibrationLoading(sceneMetadata: any): Promise<void> {
-    try {
-      console.log('📁 Step 1: Triggering calibration file loading...');
-
-      // Step 1: Load calibration file using VS Code extension
-      this.vscode.postMessage({
-        type: 'loadDatasetCalibration',
-        calibrationPath: sceneMetadata.calibrationPath,
-        fileIndex: 0, // Assuming depth file is file index 0
-        sceneName: sceneMetadata.sceneName,
-      });
-
-      // Note: We'll trigger next steps when we receive the calibration response
-    } catch (error) {
-      console.error('Error triggering dataset calibration loading:', error);
-      this.showError(
-        `Failed to load dataset calibration: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await datasetWorkflow.triggerDatasetCalibrationLoading(this, sceneMetadata);
   }
 
   async triggerDatasetImageLoading(sceneMetadata: any): Promise<void> {
-    try {
-      console.log('📷 Step 3: Triggering color image loading...');
-
-      // Step 3: Load color image using VS Code extension
-      this.vscode.postMessage({
-        type: 'loadDatasetImage',
-        imagePath: sceneMetadata.texturePath,
-        fileIndex: 0, // Assuming depth file is file index 0
-        sceneName: sceneMetadata.sceneName,
-      });
-    } catch (error) {
-      console.error('Error triggering dataset image loading:', error);
-      this.showError(
-        `Failed to load dataset image: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await datasetWorkflow.triggerDatasetImageLoading(this, sceneMetadata);
   }
 
   private async handleDatasetTexture(message: any): Promise<void> {
-    try {
-      console.log(`📷 Received dataset texture: ${message.fileName} for ${message.sceneName}`);
-
-      // Store texture data for later use when depth conversion happens
-      // Don't add as a separate file - it will be applied to the point cloud
-      const textureData = {
-        fileName: message.fileName,
-        sceneName: message.sceneName,
-        data: message.data,
-        arrayBuffer: message.data,
-      };
-
-      // Store in a class property for later use
-      this.datasetTextures.set(message.sceneName, textureData);
-
-      this.showStatus(
-        `📷 Pre-loaded dataset texture: ${message.fileName} for ${message.sceneName} (will apply during depth conversion)`
-      );
-    } catch (error) {
-      console.error('Error handling dataset texture:', error);
-      this.showError(
-        `Failed to handle texture: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await datasetWorkflow.handleDatasetTexture(this, message);
   }
 }
 
