@@ -43,13 +43,8 @@
 
     <!-- Main UI Panel -->
     <div id="main-ui-panel" class="main-ui-panel">
-        <!-- Tab Navigation -->
-        <div class="tab-navigation">
-            <button class="tab-button active" data-tab="files">Files</button>
-            <button class="tab-button" data-tab="camera">Camera</button>
-            <button class="tab-button" data-tab="controls">Controls</button>
-            <button class="tab-button" data-tab="info">Info</button>
-        </div>
+        <!-- TabNav Svelte component mounts its own .tab-navigation root here -->
+        <div id="tab-nav-mount"></div>
 
         <!-- Tab Content -->
         <div class="tab-content">

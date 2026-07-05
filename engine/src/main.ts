@@ -72,6 +72,7 @@ import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { mountErrorOverlay } from './errorOverlayMount';
+import { mountTabNav } from './tabNavMount';
 import { mountWelcomeMessage } from './welcomeMessageMount';
 import { mountPerformanceStats } from './performanceStatsMount';
 import { mountSequenceControls } from './sequenceControlsMount';
@@ -519,6 +520,7 @@ class PointCloudVisualizer {
       mountSvelteSmokeTest();
       mountErrorOverlay();
       mountPerformanceStats();
+      mountTabNav(this);
 
       // Setup color image loader callback
       this.colorImageLoader.setStatusCallback((message, type) => {
@@ -1721,16 +1723,6 @@ class PointCloudVisualizer {
     });
 
     // Tab navigation
-    const tabButtons = document.querySelectorAll('.tab-button');
-    tabButtons.forEach(button => {
-      button.addEventListener('click', e => {
-        const targetTab = (e.target as HTMLElement).getAttribute('data-tab');
-        if (targetTab) {
-          this.switchTab(targetTab);
-        }
-      });
-    });
-
     // Keyboard shortcuts
     document.addEventListener('keydown', e => {
       // Only handle shortcuts when not typing in input fields
