@@ -95,7 +95,7 @@ wiring) - it should stay thin and delegate to `engine/src/`.
 │   └── *Parser.ts          # Lightweight parser wrappers for extension host
 ├── engine/                  # Shared visualization engine + standalone page host
 │   ├── src/                # Core visualization engine (shared code)
-│   │   ├── main.ts         # Main 3D visualization engine (~14,900 lines - TOO BIG!)
+│   │   ├── main.ts         # Main 3D visualization engine (~14,500 lines - TOO BIG!)
 │   │   ├── fileHandler.ts  # Shared file handling logic (USE THIS!)
 │   │   ├── controls.ts     # Camera control systems (USE THIS!)
 │   │   ├── interfaces.ts   # Shared type definitions
@@ -112,8 +112,8 @@ wiring) - it should stay thin and delegate to `engine/src/`.
 │   │   ├── themes/         # UI themes and styling (ADD THEME FEATURES HERE!)
 │   │   │   ├── darkModern.ts
 │   │   │   └── ...
-│   │   ├── ui/             # UI generation modules (CREATE IF NEEDED)
-│   │   │   ├── dialogs.ts  # Dialog HTML generators (proposed)
+│   │   ├── ui/             # UI generation modules
+│   │   │   ├── dialogs.ts  # Modal shell + dialog HTML templates (add more here)
 │   │   │   └── ...
 │   │   └── utils/          # Utility modules (matrix.ts, perfLog.ts exist; add more here)
 │   ├── test/               # Playwright tests - the fast engine test surface
@@ -406,12 +406,12 @@ engine/src/
 │   ├── darkModern.ts
 │   └── ...
 │
-├── ui/                        # UI generators (PROPOSED - create as needed)
-│   ├── dialogs.ts            # Dialog HTML generation
-│   ├── fileList.ts           # File list rendering
-│   ├── cameraPanel.ts        # Camera controls panel
-│   ├── statsPanel.ts         # Statistics display
-│   └── transformUI.ts        # Transformation dialogs
+├── ui/                        # UI generators (STARTED)
+│   ├── dialogs.ts            # Modal shell + dialog HTML templates (EXISTS)
+│   ├── fileList.ts           # File list rendering (proposed)
+│   ├── cameraPanel.ts        # Camera controls panel (proposed)
+│   ├── statsPanel.ts         # Statistics display (proposed)
+│   └── transformUI.ts        # Transformation dialogs (proposed)
 │
 ├── visualization/             # 3D rendering (PROPOSED - future refactor)
 │   ├── SceneManager.ts       # Scene setup/management
@@ -419,10 +419,11 @@ engine/src/
 │   ├── PointCloudRenderer.ts # Point cloud rendering
 │   └── LightingManager.ts    # Lighting setup
 │
-└── utils/                     # Utilities (PROPOSED - create as needed)
-    ├── math.ts               # Math/geometry helpers
-    ├── matrix.ts             # Matrix operations
-    └── three.ts              # Three.js helpers
+└── utils/                     # Utilities (STARTED)
+    ├── matrix.ts             # Matrix/transform helpers (EXISTS)
+    ├── perfLog.ts            # Perf timing helpers (EXISTS)
+    ├── math.ts               # Math/geometry helpers (proposed)
+    └── three.ts              # Three.js helpers (proposed)
 ```
 
 **Migration Strategy:**

@@ -58,6 +58,17 @@ import {
   parseSpaceSeparatedValues,
   parseMatrixInput,
 } from './utils/matrix';
+import {
+  escapeHtml,
+  addTooltipsToTruncatedFilenames,
+  createModalDialog,
+  translationDialogTemplate,
+  quaternionDialogTemplate,
+  angleAxisDialogTemplate,
+  cameraPositionDialogTemplate,
+  cameraRotationDialogTemplate,
+  rotationCenterDialogTemplate,
+} from './ui/dialogs';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -5120,7 +5131,7 @@ class PointCloudVisualizer {
                 </div>
             `;
       fileListDiv.innerHTML = html;
-      this.addTooltipsToTruncatedFilenames();
+      addTooltipsToTruncatedFilenames();
       return;
     }
 
@@ -5826,9 +5837,9 @@ class PointCloudVisualizer {
                 <div class="file-item file-item-loading">
                     <div class="file-item-main">
                         <span class="spinner spinner-inline"></span>
-                        <span class="file-name">Loading ${this.escapeHtml(this.pendingLoadLabel)}…</span>
+                        <span class="file-name">Loading ${escapeHtml(this.pendingLoadLabel)}…</span>
                     </div>
-                    <div class="file-info" id="pending-load-detail">${this.escapeHtml(this.pendingLoadDetail)}</div>
+                    <div class="file-info" id="pending-load-detail">${escapeHtml(this.pendingLoadDetail)}</div>
                 </div>
             `;
     }
@@ -5861,7 +5872,7 @@ class PointCloudVisualizer {
     }
 
     // Add tooltips only to truncated filenames
-    this.addTooltipsToTruncatedFilenames();
+    addTooltipsToTruncatedFilenames();
 
     // Collapse toggle logic for file items
     for (let i = 0; i < totalEntries; i++) {
@@ -7215,14 +7226,6 @@ class PointCloudVisualizer {
     if (detailEl) {
       detailEl.textContent = text;
     }
-  }
-
-  private escapeHtml(s: string): string {
-    return s
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
   }
 
   private updateFileStatsImmediate(fileName: string): void {
@@ -9404,61 +9407,13 @@ class PointCloudVisualizer {
   }
 
   private showTranslationDialog(fileIndex: number): void {
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        `;
-
-    const dialog = document.createElement('div');
-    dialog.style.cssText = `
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            min-width: 300px;
-            max-width: 400px;
-        `;
-
-    dialog.innerHTML = `
-            <h3 style="margin-top:0;">Add Translation</h3>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:bold;">Enter translation vector (X Y Z):</label>
-                <div style="font-size:11px;color:#666;margin-bottom:8px;">
-                    Format: X Y Z (space-separated)<br>
-                    Commas, brackets, and line breaks are automatically handled<br>
-                    Example: 1 0 0 (move 1 unit along X-axis)
-                </div>
-                <textarea id="translation-input" 
-                    placeholder="1 0 0" 
-                    style="width:100%;height:80px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
-                >1 0 0</textarea>
-            </div>
-            <div style="text-align:right;">
-                <button id="cancel-translation" style="margin-right:10px;padding:8px 15px;">Cancel</button>
-                <button id="apply-translation" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
-            </div>
-        `;
-
-    modal.appendChild(dialog);
-    document.body.appendChild(modal);
-
-    const closeModal = () => {
-      modal.remove();
-    };
+    const { dialog, close } = createModalDialog(translationDialogTemplate());
 
     const cancelBtn = dialog.querySelector('#cancel-translation');
     const applyBtn = dialog.querySelector('#apply-translation');
 
     if (cancelBtn) {
-      cancelBtn.addEventListener('click', closeModal);
+      cancelBtn.addEventListener('click', close);
     }
 
     if (applyBtn) {
@@ -9470,86 +9425,22 @@ class PointCloudVisualizer {
           const [x, y, z] = values;
           this.addTranslationToMatrix(fileIndex, x, y, z);
           this.updateMatrixTextarea(fileIndex);
-          closeModal();
+          close();
         } else {
           alert('Please enter exactly 3 numbers for translation (X Y Z)');
         }
       });
     }
-
-    // Close on background click
-    modal.addEventListener('click', e => {
-      if (e.target === modal) {
-        closeModal();
-      }
-    });
-
-    // Close on Escape key
-    const handleKeydown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        closeModal();
-        document.removeEventListener('keydown', handleKeydown);
-      }
-    };
-    document.addEventListener('keydown', handleKeydown);
   }
 
   private showQuaternionDialog(fileIndex: number): void {
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        `;
-
-    const dialog = document.createElement('div');
-    dialog.style.cssText = `
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            min-width: 300px;
-            max-width: 400px;
-        `;
-
-    dialog.innerHTML = `
-            <h3 style="margin-top:0;">Add Quaternion Rotation</h3>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:bold;">Enter quaternion values (X Y Z W):</label>
-                <div style="font-size:11px;color:#666;margin-bottom:8px;">
-                    Format: X Y Z W (space-separated)<br>
-                    Commas, brackets, and line breaks are automatically handled<br>
-                    Example: 0 0 0 1 (identity quaternion)
-                </div>
-                <textarea id="quaternion-input" 
-                    placeholder="0 0 0 1" 
-                    style="width:100%;height:80px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
-                >0 0 0 1</textarea>
-            </div>
-            <div style="text-align:right;">
-                <button id="cancel-quaternion" style="margin-right:10px;padding:8px 15px;">Cancel</button>
-                <button id="apply-quaternion" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
-            </div>
-        `;
-
-    modal.appendChild(dialog);
-    document.body.appendChild(modal);
-
-    const closeModal = () => {
-      modal.remove();
-    };
+    const { dialog, close } = createModalDialog(quaternionDialogTemplate());
 
     const cancelBtn = dialog.querySelector('#cancel-quaternion');
     const applyBtn = dialog.querySelector('#apply-quaternion');
 
     if (cancelBtn) {
-      cancelBtn.addEventListener('click', closeModal);
+      cancelBtn.addEventListener('click', close);
     }
 
     if (applyBtn) {
@@ -9562,86 +9453,22 @@ class PointCloudVisualizer {
           const quaternionMatrix = createQuaternionMatrix(x, y, z, w);
           this.multiplyTransformationMatrices(fileIndex, quaternionMatrix);
           this.updateMatrixTextarea(fileIndex);
-          closeModal();
+          close();
         } else {
           alert('Please enter exactly 4 numbers for the quaternion (X Y Z W)');
         }
       });
     }
-
-    // Close on background click
-    modal.addEventListener('click', e => {
-      if (e.target === modal) {
-        closeModal();
-      }
-    });
-
-    // Close on Escape key
-    const handleKeydown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        closeModal();
-        document.removeEventListener('keydown', handleKeydown);
-      }
-    };
-    document.addEventListener('keydown', handleKeydown);
   }
 
   private showAngleAxisDialog(fileIndex: number): void {
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        `;
-
-    const dialog = document.createElement('div');
-    dialog.style.cssText = `
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            min-width: 300px;
-            max-width: 400px;
-        `;
-
-    dialog.innerHTML = `
-            <h3 style="margin-top:0;">Add Angle-Axis Rotation</h3>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;font-weight:bold;">Enter axis and angle (X Y Z angle):</label>
-                <div style="font-size:11px;color:#666;margin-bottom:8px;">
-                    Format: X Y Z angle (space-separated, angle in degrees)<br>
-                    Commas, brackets, and line breaks are automatically handled<br>
-                    Example: 0 1 0 90 (90° rotation around Y-axis)
-                </div>
-                <textarea id="angle-axis-input" 
-                    placeholder="0 1 0 90" 
-                    style="width:100%;height:80px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
-                >0 1 0 90</textarea>
-            </div>
-            <div style="text-align:right;">
-                <button id="cancel-angle-axis" style="margin-right:10px;padding:8px 15px;">Cancel</button>
-                <button id="apply-angle-axis" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
-            </div>
-        `;
-
-    modal.appendChild(dialog);
-    document.body.appendChild(modal);
-
-    const closeModal = () => {
-      modal.remove();
-    };
+    const { dialog, close } = createModalDialog(angleAxisDialogTemplate());
 
     const cancelBtn = dialog.querySelector('#cancel-angle-axis');
     const applyBtn = dialog.querySelector('#apply-angle-axis');
 
     if (cancelBtn) {
-      cancelBtn.addEventListener('click', closeModal);
+      cancelBtn.addEventListener('click', close);
     }
 
     if (applyBtn) {
@@ -9656,98 +9483,30 @@ class PointCloudVisualizer {
           const angleAxisMatrix = createAngleAxisMatrix(axis, angle);
           this.multiplyTransformationMatrices(fileIndex, angleAxisMatrix);
           this.updateMatrixTextarea(fileIndex);
-          closeModal();
+          close();
         } else {
           alert('Please enter exactly 4 numbers for axis and angle (X Y Z angle in degrees)');
         }
       });
     }
-
-    // Close on background click
-    modal.addEventListener('click', e => {
-      if (e.target === modal) {
-        closeModal();
-      }
-    });
-
-    // Close on Escape key
-    const handleKeydown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        closeModal();
-        document.removeEventListener('keydown', handleKeydown);
-      }
-    };
-    document.addEventListener('keydown', handleKeydown);
   }
 
   private showCameraPositionDialog(): void {
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        `;
-
-    const dialog = document.createElement('div');
-    dialog.style.cssText = `
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            min-width: 300px;
-            max-width: 400px;
-        `;
-
     const currentPos = this.camera.position;
-
-    dialog.innerHTML = `
-            <h3 style="margin-top:0;">Modify Camera Position</h3>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Camera Position X Y Z in Meter:</label>
-                <textarea id="camera-position-input" 
-                    placeholder="${currentPos.x.toFixed(3)} ${currentPos.y.toFixed(3)} ${currentPos.z.toFixed(3)}" 
-                    style="width:100%;height:60px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
-                >${currentPos.x.toFixed(3)} ${currentPos.y.toFixed(3)} ${currentPos.z.toFixed(3)}</textarea>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:8px;">Keep constant when changing:</label>
-                <div style="display:flex;gap:15px;align-items:center;">
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="position-constraint" value="rotation" style="margin:0;">
-                        <span>Rotation (angle)</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="position-constraint" value="center" checked style="margin:0;">
-                        <span>Rotation center</span>
-                    </label>
-                </div>
-            </div>
-            <div style="text-align:right;">
-                <button id="set-all-pos-zero" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set All to 0</button>
-                <button id="cancel-camera-pos" style="margin-right:10px;padding:8px 15px;">Cancel</button>
-                <button id="apply-camera-pos" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
-            </div>
-        `;
-
-    modal.appendChild(dialog);
-    document.body.appendChild(modal);
-
-    const closeModal = () => {
-      modal.remove();
-    };
+    const { dialog, close } = createModalDialog(
+      cameraPositionDialogTemplate(
+        currentPos.x.toFixed(3),
+        currentPos.y.toFixed(3),
+        currentPos.z.toFixed(3)
+      )
+    );
 
     const cancelBtn = dialog.querySelector('#cancel-camera-pos');
     const applyBtn = dialog.querySelector('#apply-camera-pos');
     const setAllZeroBtn = dialog.querySelector('#set-all-pos-zero');
 
     if (cancelBtn) {
-      cancelBtn.addEventListener('click', closeModal);
+      cancelBtn.addEventListener('click', close);
     }
 
     if (setAllZeroBtn) {
@@ -9793,54 +9552,15 @@ class PointCloudVisualizer {
 
           this.controls.update();
           this.updateCameraControlsPanel();
-          closeModal();
+          close();
         } else {
           alert('Please enter exactly 3 numbers for position (X Y Z)');
         }
       });
     }
-
-    // Close on background click
-    modal.addEventListener('click', e => {
-      if (e.target === modal) {
-        closeModal();
-      }
-    });
-
-    // Close on Escape key
-    const handleKeydown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        closeModal();
-        document.removeEventListener('keydown', handleKeydown);
-      }
-    };
-    document.addEventListener('keydown', handleKeydown);
   }
 
   private showCameraRotationDialog(): void {
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        `;
-
-    const dialog = document.createElement('div');
-    dialog.style.cssText = `
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            min-width: 300px;
-            max-width: 400px;
-        `;
-
     // Get rotation from quaternion to handle all camera operations consistently
     const euler = new THREE.Euler();
     euler.setFromQuaternion(this.camera.quaternion, 'XYZ');
@@ -9848,48 +9568,16 @@ class PointCloudVisualizer {
     const rotY = (euler.y * 180) / Math.PI;
     const rotZ = (euler.z * 180) / Math.PI;
 
-    dialog.innerHTML = `
-            <h3 style="margin-top:0;">Modify Camera Rotation</h3>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Rotation around X Y Z Axis in degrees:</label>
-                <textarea id="camera-rotation-input" 
-                    placeholder="${rotX.toFixed(1)} ${rotY.toFixed(1)} ${rotZ.toFixed(1)}" 
-                    style="width:100%;height:60px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
-                >${rotX.toFixed(1)} ${rotY.toFixed(1)} ${rotZ.toFixed(1)}</textarea>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:8px;">Keep constant when changing:</label>
-                <div style="display:flex;gap:15px;align-items:center;">
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="rotation-constraint" value="position" style="margin:0;">
-                        <span>Position</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="rotation-constraint" value="center" checked style="margin:0;">
-                        <span>Rotation center</span>
-                    </label>
-                </div>
-            </div>
-            <div style="text-align:right;">
-                <button id="set-all-rot-zero" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set All to 0</button>
-                <button id="cancel-camera-rot" style="margin-right:10px;padding:8px 15px;">Cancel</button>
-                <button id="apply-camera-rot" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
-            </div>
-        `;
-
-    modal.appendChild(dialog);
-    document.body.appendChild(modal);
-
-    const closeModal = () => {
-      modal.remove();
-    };
+    const { dialog, close } = createModalDialog(
+      cameraRotationDialogTemplate(rotX.toFixed(1), rotY.toFixed(1), rotZ.toFixed(1))
+    );
 
     const cancelBtn = dialog.querySelector('#cancel-camera-rot');
     const applyBtn = dialog.querySelector('#apply-camera-rot');
     const setAllZeroBtn = dialog.querySelector('#set-all-rot-zero');
 
     if (cancelBtn) {
-      cancelBtn.addEventListener('click', closeModal);
+      cancelBtn.addEventListener('click', close);
     }
 
     if (setAllZeroBtn) {
@@ -9914,14 +9602,14 @@ class PointCloudVisualizer {
           const currentTarget = this.controls.target.clone();
 
           // Create quaternion from Euler angles
-          const euler = new THREE.Euler(
+          const rotationEuler = new THREE.Euler(
             (x * Math.PI) / 180,
             (y * Math.PI) / 180,
             (z * Math.PI) / 180,
             'XYZ'
           );
           const quaternion = new THREE.Quaternion();
-          quaternion.setFromEuler(euler);
+          quaternion.setFromEuler(rotationEuler);
 
           // Apply constraint logic
           if (constraint === 'position') {
@@ -9952,92 +9640,20 @@ class PointCloudVisualizer {
 
           this.controls.update();
           this.updateCameraControlsPanel();
-          closeModal();
+          close();
         } else {
           alert('Please enter exactly 3 numbers for rotation (X Y Z degrees)');
         }
       });
     }
-
-    // Close on background click
-    modal.addEventListener('click', e => {
-      if (e.target === modal) {
-        closeModal();
-      }
-    });
-
-    // Close on Escape key
-    const handleKeydown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        closeModal();
-        document.removeEventListener('keydown', handleKeydown);
-      }
-    };
-    document.addEventListener('keydown', handleKeydown);
   }
 
   private showRotationCenterDialog(): void {
-    const modal = document.createElement('div');
-    modal.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        `;
-
-    const dialog = document.createElement('div');
-    dialog.style.cssText = `
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            min-width: 300px;
-            max-width: 400px;
-        `;
-
     // Get current rotation center (controls target)
     const target = this.controls.target;
-
-    dialog.innerHTML = `
-            <h3 style="margin-top:0;">Modify Rotation Center</h3>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:5px;">Rotation Center X Y Z in Meter:</label>
-                <textarea id="rotation-center-input" 
-                    placeholder="${target.x.toFixed(3)} ${target.y.toFixed(3)} ${target.z.toFixed(3)}" 
-                    style="width:100%;height:60px;padding:8px;font-family:monospace;font-size:12px;border:1px solid #ccc;border-radius:4px;resize:vertical;"
-                >${target.x.toFixed(3)} ${target.y.toFixed(3)} ${target.z.toFixed(3)}</textarea>
-            </div>
-            <div style="margin-bottom: 15px;">
-                <label style="display:block;margin-bottom:8px;">Keep constant when changing:</label>
-                <div style="display:flex;gap:15px;align-items:center;">
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="center-constraint" value="position" checked style="margin:0;">
-                        <span>Position</span>
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="radio" name="center-constraint" value="rotation" style="margin:0;">
-                        <span>Rotation (angle)</span>
-                    </label>
-                </div>
-            </div>
-            <div style="text-align:right;">
-                <button id="set-center-origin" style="margin-right:10px;padding:6px 12px;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;font-size:11px;">Set to Origin (0,0,0)</button>
-                <button id="cancel-rotation-center" style="margin-right:10px;padding:8px 15px;">Cancel</button>
-                <button id="apply-rotation-center" style="padding:8px 15px;background:#007acc;color:white;border:none;border-radius:4px;">Apply</button>
-            </div>
-        `;
-
-    modal.appendChild(dialog);
-    document.body.appendChild(modal);
-
-    const closeModal = () => {
-      document.body.removeChild(modal);
-    };
+    const { dialog, close } = createModalDialog(
+      rotationCenterDialogTemplate(target.x.toFixed(3), target.y.toFixed(3), target.z.toFixed(3))
+    );
 
     // Event listeners
     const setOriginBtn = dialog.querySelector('#set-center-origin');
@@ -10051,7 +9667,7 @@ class PointCloudVisualizer {
     }
 
     if (cancelBtn) {
-      cancelBtn.addEventListener('click', closeModal);
+      cancelBtn.addEventListener('click', close);
     }
 
     if (applyBtn) {
@@ -10102,28 +9718,12 @@ class PointCloudVisualizer {
             `🎯 Rotation center set to: (${x.toFixed(3)}, ${y.toFixed(3)}, ${z.toFixed(3)})`
           );
           this.updateRotationOriginButtonState();
-          closeModal();
+          close();
         } else {
           alert('Please enter exactly 3 numbers for center (X Y Z)');
         }
       });
     }
-
-    // Close on background click
-    modal.addEventListener('click', e => {
-      if (e.target === modal) {
-        closeModal();
-      }
-    });
-
-    // Close on Escape key
-    const handleKeydown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        closeModal();
-        document.removeEventListener('keydown', handleKeydown);
-      }
-    };
-    document.addEventListener('keydown', handleKeydown);
   }
 
   private openCalibrationFileDialog(fileIndex: number): void {
@@ -14754,23 +14354,6 @@ class PointCloudVisualizer {
       console.error(`❌ Error converting depth image ${fileName}:`, error);
       throw error;
     }
-  }
-
-  private addTooltipsToTruncatedFilenames(): void {
-    const fileNameLabels = document.querySelectorAll('.file-name');
-    fileNameLabels.forEach(label => {
-      const element = label as HTMLElement;
-      // Always show short path (grandparent/parent/filename) in tooltip
-      const shortPath = element.getAttribute('data-short-path');
-      if (shortPath) {
-        element.title = shortPath;
-      } else if (element.scrollWidth > element.clientWidth) {
-        // Fallback: if no short path, show full text when truncated
-        element.title = element.textContent || '';
-      } else {
-        element.removeAttribute('title');
-      }
-    });
   }
 
   private async loadDatasetTexture(texturePath: string, sceneName: string): Promise<void> {
