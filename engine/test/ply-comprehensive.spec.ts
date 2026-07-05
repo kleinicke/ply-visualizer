@@ -3,7 +3,7 @@ import path from 'path';
 
 test.describe('Comprehensive PLY File Loading Tests', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/3d-visualizer/');
 
     // Wait for the visualizer to initialize
     await page.waitForSelector('#main-ui-panel');

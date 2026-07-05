@@ -17,7 +17,7 @@ test('PLY file loading works correctly', async ({ page }) => {
     }
   });
 
-  await page.goto('/');
+  await page.goto('/3d-visualizer/');
 
   // Wait for initialization
   await page.waitForTimeout(2000);
