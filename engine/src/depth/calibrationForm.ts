@@ -1,6 +1,84 @@
+import { parseCalibrationFile } from './calibrationFileParser';
+
 export interface CalibrationFormHost {
   calibrationData?: Map<number, any>;
+  vscode: { postMessage(message: any): void };
+  pendingDepthFiles: Map<string, { sceneMetadata?: any }>;
   updateSingleDefaultButtonState(fileIndex: number): void;
+  displayCalibrationInfo(calibrationData: any, fileName: string, fileIndex: number): void;
+  showStatus(message: string): void;
+  triggerDatasetImageLoading(sceneMetadata: any): Promise<void>;
+}
+
+export function openCalibrationFileDialog(host: CalibrationFormHost, fileIndex: number): void {
+  // Use VS Code's file picker instead of browser's for better directory control
+  host.vscode.postMessage({
+    type: 'selectCalibrationFile',
+    fileIndex: fileIndex,
+  });
+}
+
+export async function loadCalibrationFile(
+  host: CalibrationFormHost,
+  file: File,
+  fileIndex: number
+): Promise<void> {
+  try {
+    const text = await file.text();
+
+    // Parse calibration file based on format
+    const calibrationData = parseCalibrationFile(text, file.name);
+    if (!calibrationData) {
+      return; // Error already shown by parseCalibrationFile
+    }
+
+    // Display calibration file info and populate camera selection
+    host.displayCalibrationInfo(calibrationData, file.name, fileIndex);
+  } catch (error) {
+    console.error('Error loading calibration file:', error);
+    alert(
+      `Failed to load calibration file: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+export function handleCalibrationFileSelected(host: CalibrationFormHost, message: any): void {
+  try {
+    const fileIndex = message.fileIndex;
+    const fileName = message.fileName;
+    const content = message.content;
+
+    // Parse calibration file using the universal parser
+    const calibrationData = parseCalibrationFile(content, fileName);
+    if (!calibrationData) {
+      return; // Error already shown by parseCalibrationFile
+    }
+
+    // Display calibration file info and populate camera selection
+    host.displayCalibrationInfo(calibrationData, fileName, fileIndex);
+
+    // Check if this is part of a dataset workflow and trigger next step
+    const pendingFiles = Array.from(host.pendingDepthFiles.values());
+    const datasetFile = pendingFiles.find(f => f.sceneMetadata && f.sceneMetadata.isDatasetScene);
+
+    if (datasetFile && datasetFile.sceneMetadata) {
+      console.log(`🎯 Dataset calibration loaded - triggering Step 3: color image loading...`);
+
+      // Step 3: Trigger color image loading after brief delay
+      setTimeout(async () => {
+        await host.triggerDatasetImageLoading(datasetFile.sceneMetadata);
+      }, 1000);
+
+      host.showStatus(
+        `📁 Step 2: Calibration loaded for ${datasetFile.sceneMetadata.sceneName} - loading color image next...`
+      );
+    }
+  } catch (error) {
+    console.error('Error processing calibration file:', error);
+    alert(
+      `Failed to process calibration file: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 export function displayCalibrationInfo(

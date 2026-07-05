@@ -59,7 +59,6 @@ import * as pointSizeScaling from './pointSizeScaling';
 import * as depthPanelState from './depth/panelState';
 import * as sceneBrightness from './sceneBrightness';
 import * as depthDefaultSettings from './depth/defaultSettings';
-import { parseCalibrationFile } from './depth/calibrationFileParser';
 import * as calibrationForm from './depth/calibrationForm';
 import * as controlSchemeSwitcher from './controlSchemeSwitcher';
 import * as cameraConvention from './cameraConvention';
@@ -7108,35 +7107,14 @@ class PointCloudVisualizer {
   }
 
   private openCalibrationFileDialog(fileIndex: number): void {
-    // Use VS Code's file picker instead of browser's for better directory control
-    this.vscode.postMessage({
-      type: 'selectCalibrationFile',
-      fileIndex: fileIndex,
-    });
+    calibrationForm.openCalibrationFileDialog(this, fileIndex);
   }
 
   private async loadCalibrationFile(file: File, fileIndex: number): Promise<void> {
-    try {
-      const text = await file.text();
-      let calibrationData: any;
-
-      // Parse calibration file based on format
-      calibrationData = parseCalibrationFile(text, file.name);
-      if (!calibrationData) {
-        return; // Error already shown by parseCalibrationFile
-      }
-
-      // Display calibration file info and populate camera selection
-      this.displayCalibrationInfo(calibrationData, file.name, fileIndex);
-    } catch (error) {
-      console.error('Error loading calibration file:', error);
-      alert(
-        `Failed to load calibration file: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await calibrationForm.loadCalibrationFile(this, file, fileIndex);
   }
 
-  private displayCalibrationInfo(calibrationData: any, fileName: string, fileIndex: number): void {
+  displayCalibrationInfo(calibrationData: any, fileName: string, fileIndex: number): void {
     calibrationForm.displayCalibrationInfo(this, calibrationData, fileName, fileIndex);
   }
 
@@ -7145,42 +7123,7 @@ class PointCloudVisualizer {
   }
 
   private handleCalibrationFileSelected(message: any): void {
-    try {
-      const fileIndex = message.fileIndex;
-      const fileName = message.fileName;
-      const content = message.content;
-
-      // Parse calibration file using the universal parser
-      const calibrationData = parseCalibrationFile(content, fileName);
-      if (!calibrationData) {
-        return; // Error already shown by parseCalibrationFile
-      }
-
-      // Display calibration file info and populate camera selection
-      this.displayCalibrationInfo(calibrationData, fileName, fileIndex);
-
-      // Check if this is part of a dataset workflow and trigger next step
-      const pendingFiles = Array.from(this.pendingDepthFiles.values());
-      const datasetFile = pendingFiles.find(f => f.sceneMetadata && f.sceneMetadata.isDatasetScene);
-
-      if (datasetFile && datasetFile.sceneMetadata) {
-        console.log(`🎯 Dataset calibration loaded - triggering Step 3: color image loading...`);
-
-        // Step 3: Trigger color image loading after brief delay
-        setTimeout(async () => {
-          await this.triggerDatasetImageLoading(datasetFile.sceneMetadata);
-        }, 1000);
-
-        this.showStatus(
-          `📁 Step 2: Calibration loaded for ${datasetFile.sceneMetadata.sceneName} - loading color image next...`
-        );
-      }
-    } catch (error) {
-      console.error('Error processing calibration file:', error);
-      alert(
-        `Failed to process calibration file: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    calibrationForm.handleCalibrationFileSelected(this, message);
   }
 
   private populateFormFromCalibration(cameraData: any, fileIndex: number): void {
@@ -9218,7 +9161,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private async triggerDatasetImageLoading(sceneMetadata: any): Promise<void> {
+  async triggerDatasetImageLoading(sceneMetadata: any): Promise<void> {
     try {
       console.log('📷 Step 3: Triggering color image loading...');
 
