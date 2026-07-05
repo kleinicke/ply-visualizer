@@ -11,7 +11,9 @@
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "checkJs": true
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts", "**/*.js"]
 }

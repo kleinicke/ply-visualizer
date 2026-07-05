@@ -90,9 +90,9 @@ module.exports = [
     module: {
       rules: [
         {
-          // Matches both `.svelte` components and `.svelte.ts` rune-only
-          // state modules (Phase 1's engine/src/state/*.svelte.ts stores).
-          test: /\.svelte(\.ts)?$/,
+          // Matches both `.svelte` components and `.svelte.ts`/`.svelte.js`
+          // rune-only state modules (Phase 1's engine/src/state/* stores).
+          test: /\.svelte(\.[jt]s)?$/,
           use: {
             loader: 'svelte-loader',
             options: {

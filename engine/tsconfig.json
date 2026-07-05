@@ -11,6 +11,8 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": false,
     "outDir": "./dist",
+    "allowJs": true,
+    "checkJs": true,
     "paths": {
       "../../src/webview/*": ["../src/webview/*"]
     }

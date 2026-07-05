@@ -72,6 +72,7 @@ import * as largeFileChunking from './largeFileChunking';
 import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
+import { filesState } from './state/files.svelte';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -2922,6 +2923,7 @@ class PointCloudVisualizer {
       // Initialize point size if not set
       if (!this.pointSizes[fileIndex]) {
         this.pointSizes[fileIndex] = 0.001; // Universal default for all file types
+        filesState.pointSizes[fileIndex] = 0.001;
       }
 
       material.size = this.pointSizes[fileIndex];
@@ -3877,6 +3879,7 @@ class PointCloudVisualizer {
             content.style.display = isCollapsed ? 'block' : 'none';
             icon.textContent = isCollapsed ? '▼' : '▶';
             this.fileItemsCollapsed[i] = !isCollapsed;
+            filesState.collapsed[i] = !isCollapsed;
 
             // Update tooltip
             collapseBtn.setAttribute('title', isCollapsed ? 'Collapse' : 'Expand');
@@ -4213,6 +4216,7 @@ class PointCloudVisualizer {
         colorSelector.addEventListener('change', () => {
           const value = colorSelector.value;
           this.individualColorModes[i] = value;
+          filesState.colorModes[i] = value;
           const isPose = i >= this.spatialFiles.length;
           if (isPose) {
             // Update pose group material color
@@ -4686,6 +4690,7 @@ class PointCloudVisualizer {
       ? !!checkboxEl.checked
       : !(this.fileVisibility[fileIndex] ?? true);
     this.fileVisibility[fileIndex] = desiredVisible;
+    filesState.visibility[fileIndex] = desiredVisible;
 
     // If it's a mesh/pointcloud entry
     if (fileIndex < this.meshes.length && this.meshes[fileIndex]) {
@@ -4972,8 +4977,10 @@ class PointCloudVisualizer {
             : 'assigned';
       while (this.individualColorModes.length <= data.fileIndex) {
         this.individualColorModes.push('assigned'); // Placeholder for non-existent files
+        filesState.colorModes.push('assigned');
       }
       this.individualColorModes[data.fileIndex] = initialColorMode;
+      filesState.colorModes[data.fileIndex] = initialColorMode;
       console.log(
         `🎨 addNewFiles - fileIndex: ${data.fileIndex}, hasColors: ${data.hasColors}, colorMode: ${initialColorMode}, useOriginalColors: ${this.useOriginalColors}`
       );
@@ -4981,9 +4988,11 @@ class PointCloudVisualizer {
       // Ensure pointSizes array is large enough and set correct default for this PLY
       while (this.pointSizes.length <= data.fileIndex) {
         this.pointSizes.push(0.001); // Placeholder for non-existent files
+        filesState.pointSizes.push(0.001);
       }
       // IMPORTANT: Always set PLY file point size to 0.001, overwriting any placeholder values
       this.pointSizes[data.fileIndex] = 0.001;
+      filesState.pointSizes[data.fileIndex] = 0.001;
       // debug
 
       // Create geometry and material
@@ -5253,6 +5262,7 @@ class PointCloudVisualizer {
       const isSeqMode = this.sequenceFiles.length > 0;
       const shouldBeVisible = !isSeqMode || data.fileIndex === this.sequenceIndex;
       this.fileVisibility.push(shouldBeVisible);
+      filesState.visibility.push(shouldBeVisible);
       const lastObject = this.meshes[this.meshes.length - 1];
       if (lastObject) {
         lastObject.visible = shouldBeVisible;
@@ -5262,6 +5272,7 @@ class PointCloudVisualizer {
       // Note: pointSizes array is pre-allocated in the material creation step above
       if (this.pointSizes.length <= data.fileIndex) {
         this.pointSizes.push(0.001);
+        filesState.pointSizes.push(0.001);
       }
       this.appliedMtlColors.push(null); // No MTL color applied initially
       this.appliedMtlNames.push(null); // No MTL material applied initially
@@ -5320,8 +5331,11 @@ class PointCloudVisualizer {
       // Remove UI-aligned state for this unified index
       this.fileVisibility.splice(fileIndex, 1);
       this.pointSizes.splice(fileIndex, 1);
+      filesState.visibility.splice(fileIndex, 1);
+      filesState.pointSizes.splice(fileIndex, 1);
       if (this.individualColorModes[fileIndex] !== undefined) {
         this.individualColorModes.splice(fileIndex, 1);
+        filesState.colorModes.splice(fileIndex, 1);
       }
       this.transformationMatrices.splice(fileIndex, 1);
 
@@ -5359,8 +5373,11 @@ class PointCloudVisualizer {
       // Remove UI-aligned state for this unified index
       this.fileVisibility.splice(fileIndex, 1);
       this.pointSizes.splice(fileIndex, 1);
+      filesState.visibility.splice(fileIndex, 1);
+      filesState.pointSizes.splice(fileIndex, 1);
       if (this.individualColorModes[fileIndex] !== undefined) {
         this.individualColorModes.splice(fileIndex, 1);
+        filesState.colorModes.splice(fileIndex, 1);
       }
       // Preserve depth panel states when removing files
       const openPanelStates = this.captureDepthPanelStates();
@@ -5444,6 +5461,9 @@ class PointCloudVisualizer {
     this.fileVisibility.splice(fileIndex, 1);
     this.pointSizes.splice(fileIndex, 1); // Remove point size for this file
     this.individualColorModes.splice(fileIndex, 1); // Remove color mode for this file
+    filesState.visibility.splice(fileIndex, 1);
+    filesState.pointSizes.splice(fileIndex, 1);
+    filesState.colorModes.splice(fileIndex, 1);
     this.appliedMtlColors.splice(fileIndex, 1); // Remove MTL color for this file
     this.appliedMtlNames.splice(fileIndex, 1); // Remove MTL name for this file
     this.appliedMtlData.splice(fileIndex, 1); // Remove MTL data for this file
@@ -5622,6 +5642,7 @@ class PointCloudVisualizer {
     const totalEntries = this.spatialFiles.length + this.poseGroups.length;
     for (let i = 0; i < totalEntries; i++) {
       this.fileVisibility[i] = false;
+      filesState.visibility[i] = false;
       if (i < this.meshes.length) {
         const obj = this.meshes[i];
         if (obj) {
@@ -5637,6 +5658,7 @@ class PointCloudVisualizer {
     }
     // Show only the selected entry
     this.fileVisibility[fileIndex] = true;
+    filesState.visibility[fileIndex] = true;
     if (fileIndex < this.meshes.length) {
       const obj = this.meshes[fileIndex];
       if (obj) {
