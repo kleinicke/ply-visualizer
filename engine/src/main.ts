@@ -71,6 +71,7 @@ import {
 } from './ui/dialogs';
 import * as sequencePlayback from './sequencePlayback';
 import * as pose from './pose';
+import * as renderStats from './renderStats';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -96,7 +97,7 @@ class PointCloudVisualizer {
   private browserFileHandler: BrowserMessageHandler | null = null;
   scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
-  private renderer!: THREE.WebGLRenderer;
+  renderer!: THREE.WebGLRenderer;
   // True between a WebGL context loss and its restoration. While lost, the GPU
   // is gone, so we must not render or touch GL objects — doing so throws and
   // crashes the webview. This is the safety net for the multi-window
@@ -137,21 +138,21 @@ class PointCloudVisualizer {
   private pendingLoadDetail: string = '';
 
   // FPS tracking
-  private fpsFrameTimes: number[] = [];
-  private lastFpsUpdate: number = 0;
-  private currentFps: number = 0;
-  private previousFps: number = 0;
+  fpsFrameTimes: number[] = [];
+  lastFpsUpdate: number = 0;
+  currentFps: number = 0;
+  previousFps: number = 0;
 
   // Frame time tracking
   private lastFrameTime: number = 0;
-  private frameRenderTimes: number[] = [];
-  private currentFrameTime: number = 0;
+  frameRenderTimes: number[] = [];
+  currentFrameTime: number = 0;
 
   // GPU timing
-  private gpuTimerExtension: any = null;
-  private gpuQueries: any[] = [];
-  private gpuTimes: number[] = [];
-  private currentGpuTime: number = 0;
+  gpuTimerExtension: any = null;
+  gpuQueries: any[] = [];
+  gpuTimes: number[] = [];
+  currentGpuTime: number = 0;
 
   // Camera tracking for screen-space scaling
   private lastScalingUpdate: number = 0;
@@ -651,118 +652,19 @@ class PointCloudVisualizer {
   }
 
   private initGPUTiming(): void {
-    const gl = this.renderer.getContext();
-
-    // Try to get timer query extension
-    this.gpuTimerExtension =
-      gl.getExtension('EXT_disjoint_timer_query_webgl2') ||
-      gl.getExtension('EXT_disjoint_timer_query');
-
-    if (this.gpuTimerExtension) {
-      console.log('GPU timing available - measuring actual render time');
-    } else {
-      console.log('GPU timing not available - using CPU frame time');
-    }
+    renderStats.initGPUTiming(this);
   }
 
   private startGPUTiming(): any {
-    if (!this.gpuTimerExtension) {
-      return null;
-    }
-
-    const gl = this.renderer.getContext() as any; // Cast to handle extension methods
-
-    if (gl.createQuery) {
-      // WebGL2 approach
-      const query = gl.createQuery();
-      gl.beginQuery(this.gpuTimerExtension.TIME_ELAPSED_EXT, query);
-      return query;
-    } else if (this.gpuTimerExtension.createQueryEXT) {
-      // WebGL1 extension approach
-      const query = this.gpuTimerExtension.createQueryEXT();
-      this.gpuTimerExtension.beginQueryEXT(this.gpuTimerExtension.TIME_ELAPSED_EXT, query);
-      return query;
-    }
-
-    return null;
+    return renderStats.startGPUTiming(this);
   }
 
   private endGPUTiming(query: any): void {
-    if (!query || !this.gpuTimerExtension) {
-      return;
-    }
-
-    const gl = this.renderer.getContext() as any;
-
-    if (gl.endQuery) {
-      // WebGL2 approach
-      gl.endQuery(this.gpuTimerExtension.TIME_ELAPSED_EXT);
-    } else if (this.gpuTimerExtension.endQueryEXT) {
-      // WebGL1 extension approach
-      this.gpuTimerExtension.endQueryEXT(this.gpuTimerExtension.TIME_ELAPSED_EXT);
-    }
-
-    this.gpuQueries.push(query);
+    renderStats.endGPUTiming(this, query);
   }
 
   private updateGPUTiming(): void {
-    if (!this.gpuTimerExtension) {
-      return;
-    }
-
-    const gl = this.renderer.getContext() as any;
-
-    // Check completed queries
-    for (let i = this.gpuQueries.length - 1; i >= 0; i--) {
-      const query = this.gpuQueries[i];
-      let available = false;
-      let timeElapsed = 0;
-
-      if (gl.getQueryParameter) {
-        // WebGL2 approach
-        available = gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE);
-        if (available) {
-          timeElapsed = gl.getQueryParameter(query, gl.QUERY_RESULT);
-        }
-      } else if (this.gpuTimerExtension.getQueryObjectEXT) {
-        // WebGL1 extension approach
-        available = this.gpuTimerExtension.getQueryObjectEXT(
-          query,
-          this.gpuTimerExtension.QUERY_RESULT_AVAILABLE_EXT
-        );
-        if (available) {
-          timeElapsed = this.gpuTimerExtension.getQueryObjectEXT(
-            query,
-            this.gpuTimerExtension.QUERY_RESULT_EXT
-          );
-        }
-      }
-
-      const disjoint = gl.getParameter(this.gpuTimerExtension.GPU_DISJOINT_EXT);
-
-      if (available && !disjoint) {
-        const timeMs = timeElapsed / 1000000; // Convert nanoseconds to milliseconds
-
-        this.gpuTimes.push(timeMs);
-
-        // Keep only last 30 GPU times for averaging
-        if (this.gpuTimes.length > 30) {
-          this.gpuTimes.shift();
-        }
-
-        // Calculate average GPU time
-        this.currentGpuTime = this.gpuTimes.reduce((a, b) => a + b, 0) / this.gpuTimes.length;
-
-        // Clean up query
-        if (gl.deleteQuery) {
-          gl.deleteQuery(query);
-        } else if (this.gpuTimerExtension.deleteQueryEXT) {
-          this.gpuTimerExtension.deleteQueryEXT(query);
-        }
-
-        this.gpuQueries.splice(i, 1);
-      }
-    }
+    renderStats.updateGPUTiming(this);
   }
 
   private createOptimizedPointCloud(
@@ -1813,76 +1715,19 @@ class PointCloudVisualizer {
   }
 
   private trackRender(): void {
-    // Record a render event
-    const now = performance.now();
-    this.fpsFrameTimes.push(now);
+    renderStats.trackRender(this);
   }
 
   private trackFrameTime(frameTimeMs: number): void {
-    // Check if we're transitioning from 0 FPS (idle) to active rendering
-    const wasIdle = this.previousFps === 0 && this.currentFps > 0;
-
-    if (wasIdle) {
-      // Reset frame history when restarting from idle
-      this.frameRenderTimes = [frameTimeMs];
-      this.currentFrameTime = frameTimeMs;
-    } else {
-      // Add current frame time to history
-      this.frameRenderTimes.push(frameTimeMs);
-
-      // Keep only last 30 frame times for averaging
-      if (this.frameRenderTimes.length > 30) {
-        this.frameRenderTimes.shift();
-      }
-
-      // When at 0 FPS, use the exact time of the last rendering
-      // When active (FPS > 1), use averaging for smoother display
-      if (this.currentFps === 0) {
-        this.currentFrameTime = frameTimeMs;
-      } else if (this.currentFps <= 1) {
-        this.currentFrameTime = frameTimeMs;
-      } else {
-        // Normal averaging when we have multiple recent frames
-        this.currentFrameTime =
-          this.frameRenderTimes.reduce((a, b) => a + b, 0) / this.frameRenderTimes.length;
-      }
-    }
+    renderStats.trackFrameTime(this, frameTimeMs);
   }
 
   private updateFPSCalculation(): void {
-    const now = performance.now();
-
-    // Keep only renders from the last second
-    const oneSecondAgo = now - 1000;
-    while (this.fpsFrameTimes.length > 0 && this.fpsFrameTimes[0] < oneSecondAgo) {
-      this.fpsFrameTimes.shift();
-    }
-
-    // Update FPS display every 250ms to avoid too frequent updates
-    if (now - this.lastFpsUpdate > 250) {
-      this.previousFps = this.currentFps; // Store previous FPS value
-      this.currentFps = this.fpsFrameTimes.length;
-      this.lastFpsUpdate = now;
-      this.updateFPSDisplay();
-    }
+    renderStats.updateFPSCalculation(this);
   }
 
   private updateFPSDisplay(): void {
-    const statsElement = document.getElementById('performance-stats');
-    if (statsElement) {
-      let timeStr;
-      if (this.gpuTimerExtension && this.currentGpuTime > 0) {
-        // Show actual GPU render time when available
-        timeStr = `${this.currentGpuTime.toFixed(1)} ms`;
-      } else {
-        // Fallback to frame time
-        timeStr = `${this.currentFrameTime.toFixed(1)} ms`;
-      }
-      const statsStr = `${this.currentFps} fps / ${timeStr}`;
-      if (statsElement.textContent !== statsStr) {
-        statsElement.textContent = statsStr;
-      }
-    }
+    renderStats.updateFPSDisplay(this);
   }
 
   private startRenderLoop(): void {
