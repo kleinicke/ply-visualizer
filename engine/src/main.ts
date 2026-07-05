@@ -75,6 +75,7 @@ import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { mountErrorOverlay } from './errorOverlayMount';
 import { mountWelcomeMessage } from './welcomeMessageMount';
 import { mountPerformanceStats } from './performanceStatsMount';
+import { mountSequenceControls } from './sequenceControlsMount';
 import { filesState } from './state/files.svelte';
 import { viewerState } from './state/viewer.svelte';
 import { formatFileSize } from './utils/format';
@@ -1767,31 +1768,14 @@ class PointCloudVisualizer {
       });
     }
 
-    // Sequence controls (overlay)
-    const playBtn = document.getElementById('seq-play');
-    const pauseBtn = document.getElementById('seq-pause');
-    const stopBtn = document.getElementById('seq-stop');
-    const prevBtn = document.getElementById('seq-prev');
-    const nextBtn = document.getElementById('seq-next');
-    const slider = document.getElementById('seq-slider') as HTMLInputElement | null;
-    if (playBtn) {
-      playBtn.addEventListener('click', () => this.playSequence());
-    }
-    if (pauseBtn) {
-      pauseBtn.addEventListener('click', () => this.pauseSequence());
-    }
-    if (stopBtn) {
-      stopBtn.addEventListener('click', () => this.stopSequence());
-    }
-    if (prevBtn) {
-      prevBtn.addEventListener('click', () => this.stepSequence(-1));
-    }
-    if (nextBtn) {
-      nextBtn.addEventListener('click', () => this.stepSequence(1));
-    }
-    if (slider) {
-      slider.addEventListener('input', () => this.seekSequence(parseInt(slider.value, 10) || 0));
-    }
+    // Sequence controls - Svelte component (components/SequenceControls.svelte),
+    // driven by state/ui.svelte.ts's sequence fields.
+    mountSequenceControls({
+      onPlayPause: () => (this.isSequencePlaying ? this.pauseSequence() : this.playSequence()),
+      onPrev: () => this.stepSequence(-1),
+      onNext: () => this.stepSequence(1),
+      onSeek: index => this.seekSequence(index),
+    });
 
     document.addEventListener('dblclick', e => {
       const slider = e.target;

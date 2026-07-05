@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
+import { uiState } from './state/ui.svelte';
 
 /**
  * Everything the sequence-playback functions need from PointCloudVisualizer.
@@ -55,12 +56,7 @@ export function initializeSequence(
   host.isSequencePlaying = false;
   host.sequenceCache.clear();
   host.sequenceCacheOrder = [];
-  // Show overlay
-  document.getElementById('sequence-overlay')?.classList.remove('hidden');
-  const wildcardInput = document.getElementById('seq-wildcard') as HTMLInputElement | null;
-  if (wildcardInput) {
-    wildcardInput.value = wildcard;
-  }
+  uiState.sequenceMode = true;
   updateSequenceUI(host);
   // Clear any existing meshes from normal mode
   for (const obj of host.meshes) {
@@ -76,18 +72,11 @@ export function initializeSequence(
 }
 
 export function updateSequenceUI(host: SequencePlaybackHost): void {
-  const slider = document.getElementById('seq-slider') as HTMLInputElement | null;
-  const label = document.getElementById('seq-label') as HTMLElement | null;
-  if (slider) {
-    slider.max = Math.max(0, host.sequenceFiles.length - 1).toString();
-    slider.value = Math.min(
-      host.sequenceIndex,
-      host.sequenceFiles.length ? host.sequenceFiles.length - 1 : 0
-    ).toString();
-  }
-  if (label) {
-    label.textContent = `${host.sequenceFiles.length ? host.sequenceIndex + 1 : 0} / ${host.sequenceFiles.length}`;
-  }
+  uiState.sequenceTotal = host.sequenceFiles.length;
+  uiState.sequenceIndex = Math.min(
+    host.sequenceIndex,
+    host.sequenceFiles.length ? host.sequenceFiles.length - 1 : 0
+  );
 }
 
 export function playSequence(host: SequencePlaybackHost): void {
@@ -98,6 +87,7 @@ export function playSequence(host: SequencePlaybackHost): void {
     return;
   }
   host.isSequencePlaying = true;
+  uiState.isSequencePlaying = true;
   const intervalMs = Math.max(50, Math.floor(1000 / host.sequenceFps));
   host.sequenceTimer = window.setInterval(() => {
     const nextIndex = (host.sequenceIndex + 1) % host.sequenceFiles.length;
@@ -107,6 +97,7 @@ export function playSequence(host: SequencePlaybackHost): void {
 
 export function pauseSequence(host: SequencePlaybackHost): void {
   host.isSequencePlaying = false;
+  uiState.isSequencePlaying = false;
   if (host.sequenceTimer !== null) {
     window.clearInterval(host.sequenceTimer as unknown as number);
     host.sequenceTimer = null;

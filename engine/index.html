@@ -383,13 +383,8 @@
 
         <!-- Control buttons at bottom -->
         <div class="bottom-controls">
-            <div class="sequence-controls" id="sequence-controls" style="display: none">
-                <button id="seq-play-pause" class="control-button">▶</button>
-                <button id="seq-prev" class="control-button">◀</button>
-                <button id="seq-next" class="control-button">▶</button>
-                <input id="seq-slider" type="range" min="0" max="0" value="0" class="seq-slider" />
-                <span id="seq-label" class="seq-label">0 / 0</span>
-            </div>
+            <!-- SequenceControls Svelte component mounts its own #sequence-controls root here -->
+            <div id="sequence-controls-mount"></div>
         </div>
     </div>
     <div id="viewer-container">

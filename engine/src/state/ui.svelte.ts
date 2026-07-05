@@ -9,4 +9,8 @@ export const uiState = $state({
   activeTab: 'controls',
   showWelcomeMessage: false,
   perfStatsText: '',
+  sequenceMode: false,
+  sequenceIndex: 0,
+  sequenceTotal: 0,
+  isSequencePlaying: false,
 });
