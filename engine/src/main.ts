@@ -80,6 +80,7 @@ import { parseCalibrationFile } from './depth/calibrationFileParser';
 import * as calibrationForm from './depth/calibrationForm';
 import * as controlSchemeSwitcher from './controlSchemeSwitcher';
 import * as cameraConvention from './cameraConvention';
+import * as edl from './edl';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -120,14 +121,14 @@ class PointCloudVisualizer {
   allowTransparency: boolean = false;
 
   // Eye Dome Lighting (EDL) state
-  private edlEnabled: boolean = false;
-  private edlStrength: number = 1.0;
-  private edlRadius: number = 1.4;
-  private edlSecondRingWeight: number = 0.0;
+  edlEnabled: boolean = false;
+  edlStrength: number = 1.0;
+  edlRadius: number = 1.4;
+  edlSecondRingWeight: number = 0.0;
   brightnessStops: number = 0.0;
   backgroundBrightness: number = 13;
-  private effectComposer: EffectComposer | null = null;
-  private edlPass: EDLPass | null = null;
+  effectComposer: EffectComposer | null = null;
+  edlPass: EDLPass | null = null;
   private rotationCenterManager: RotationCenterManager = new RotationCenterManager();
   private measurementManager: MeasurementManager | null = null;
   private selectionManager: SelectionManager | null = null;
@@ -1438,63 +1439,28 @@ class PointCloudVisualizer {
    * The composer is only used when EDL is enabled.
    */
   private initEDLComposer(): void {
-    const container = document.getElementById('viewer-container');
-    if (!container) {
-      return;
-    }
-
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-
-    // EffectComposer manages the post-processing pipeline
-    this.effectComposer = new EffectComposer(this.renderer);
-
-    // EDLPass handles both scene rendering and the EDL effect in one pass
-    this.edlPass = new EDLPass(this.scene, this.camera, width, height, {
-      strength: this.edlStrength,
-      radius: this.edlRadius,
-      secondRingWeight: this.edlSecondRingWeight,
-    });
-    this.edlPass.renderToScreen = true;
-    this.effectComposer.addPass(this.edlPass);
-
-    console.log('🔦 EDL post-processing pipeline initialized');
+    edl.initEDLComposer(this);
   }
 
   /**
    * Toggle Eye Dome Lighting on/off.
    */
   private toggleEDL(): void {
-    this.edlEnabled = !this.edlEnabled;
-    this.updateEDLButtonState();
-    this.updateEDLSettingsVisibility();
-    this.requestRender();
-    this.showStatus(`Eye Dome Lighting: ${this.edlEnabled ? 'ON' : 'OFF'}`);
-    console.log(`🔦 EDL ${this.edlEnabled ? 'enabled' : 'disabled'}`);
+    edl.toggleEDL(this);
   }
 
   /**
    * Update EDL button active state.
    */
   private updateEDLButtonState(): void {
-    const btn = document.getElementById('toggle-edl');
-    if (btn) {
-      if (this.edlEnabled) {
-        btn.classList.add('active');
-      } else {
-        btn.classList.remove('active');
-      }
-    }
+    edl.updateEDLButtonState(this);
   }
 
   /**
    * Show/hide the EDL strength and radius sliders.
    */
   private updateEDLSettingsVisibility(): void {
-    const settings = document.getElementById('edl-settings');
-    if (settings) {
-      settings.style.display = this.edlEnabled ? 'block' : 'none';
-    }
+    edl.updateEDLSettingsVisibility(this);
   }
 
   private trackRender(): void {
