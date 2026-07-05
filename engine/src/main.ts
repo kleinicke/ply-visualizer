@@ -73,6 +73,7 @@ import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { mountErrorOverlay } from './errorOverlayMount';
+import { mountWelcomeMessage } from './welcomeMessageMount';
 import { filesState } from './state/files.svelte';
 import { viewerState } from './state/viewer.svelte';
 import { formatFileSize } from './utils/format';
@@ -519,12 +520,7 @@ class PointCloudVisualizer {
       });
 
       // Setup welcome message interactivity
-      const welcomeAddBtn = document.getElementById('welcome-add-cloud');
-      if (welcomeAddBtn) {
-        welcomeAddBtn.addEventListener('click', () => {
-          this.triggerOpenFile();
-        });
-      }
+      mountWelcomeMessage(() => this.triggerOpenFile());
 
       // Initial check for formatted welcome message
       this.updateWelcomeMessageVisibility();
