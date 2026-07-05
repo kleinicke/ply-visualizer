@@ -67,6 +67,7 @@ import * as depthCameraParamsPrompt from './depthCameraParamsPrompt';
 import * as formatDataHandlers from './formatDataHandlers';
 import * as transformDialogs from './transformDialogs';
 import * as browserFileDragDrop from './browserFileDragDrop';
+import * as liveDepthUpdate from './depth/liveDepthUpdate';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -312,10 +313,10 @@ class PointCloudVisualizer {
   private currentCameraParams: CameraParams | null = null;
   private depthDimensions: { width: number; height: number } | null = null;
   liveDepthUpdateFiles = new Set<number>();
-  private liveDepthUpdateInFlight = new Set<number>();
-  private liveDepthUpdateQueued = new Set<number>();
-  private liveDepthUpdateTimers = new Map<number, number>();
-  private liveDepthUpdateVersions = new Map<number, number>();
+  liveDepthUpdateInFlight = new Set<number>();
+  liveDepthUpdateQueued = new Set<number>();
+  liveDepthUpdateTimers = new Map<number, number>();
+  liveDepthUpdateVersions = new Map<number, number>();
   useLinearColorSpace: boolean = true; // Default: toggle is inactive; renderer still outputs sRGB
   axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
   // Color space handling: always output sRGB, optionally convert source sRGB colors to linear before shading
@@ -1215,7 +1216,7 @@ class PointCloudVisualizer {
    * Centralized render method — routes through EDL EffectComposer when enabled,
    * falls back to direct renderer.render() when disabled for zero overhead.
    */
-  private performRender(): void {
+  performRender(): void {
     // The GPU is gone while the context is lost; any GL call would throw.
     if (this.contextLost) {
       return;
@@ -1580,7 +1581,7 @@ class PointCloudVisualizer {
     return colorModeUtils.shouldUseVertexColors(data, colorMode);
   }
 
-  private createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry {
+  createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry {
     const geometry = new THREE.BufferGeometry();
 
     const startTime = performance.now();
@@ -2975,7 +2976,7 @@ class PointCloudVisualizer {
     return new Promise(resolve => setTimeout(resolve, 0));
   }
 
-  private createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material {
+  createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material {
     const colorMode = this.individualColorModes[fileIndex] || 'assigned';
 
     if (data.faceCount > 0) {
@@ -6900,7 +6901,7 @@ class PointCloudVisualizer {
     this.showStatus(`${fileType} to point cloud conversion complete: ${result.pointCount} points`);
   }
 
-  private async processDepthToPointCloud(
+  async processDepthToPointCloud(
     depthData: ArrayBuffer,
     fileName: string,
     cameraParams: CameraParams,
@@ -7720,238 +7721,33 @@ class PointCloudVisualizer {
   }
 
   setLiveDepthUpdateEnabled(fileIndex: number, enabled: boolean): void {
-    if (enabled) {
-      this.liveDepthUpdateFiles.add(fileIndex);
-    } else {
-      this.liveDepthUpdateFiles.delete(fileIndex);
-      this.liveDepthUpdateQueued.delete(fileIndex);
-      this.liveDepthUpdateVersions.delete(fileIndex);
-      const timer = this.liveDepthUpdateTimers.get(fileIndex);
-      if (timer !== undefined) {
-        window.clearTimeout(timer);
-        this.liveDepthUpdateTimers.delete(fileIndex);
-      }
-    }
-
-    const applyButton = document.querySelector(
-      `.apply-depth-settings[data-file-index="${fileIndex}"]`
-    ) as HTMLButtonElement | null;
-    if (applyButton) {
-      applyButton.style.display = enabled ? 'none' : '';
-    }
+    liveDepthUpdate.setLiveDepthUpdateEnabled(this, fileIndex, enabled);
   }
 
   private isDepthCommitTarget(
     target: EventTarget | null
   ): target is HTMLInputElement | HTMLSelectElement {
-    if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) {
-      return false;
-    }
-    return !target.classList.contains('live-depth-update');
+    return liveDepthUpdate.isDepthCommitTarget(target);
   }
 
   scheduleLiveDepthUpdate(fileIndex: number, delayMs: number = 60): void {
-    if (!this.liveDepthUpdateFiles.has(fileIndex)) {
-      return;
-    }
-
-    const nextVersion = (this.liveDepthUpdateVersions.get(fileIndex) || 0) + 1;
-    this.liveDepthUpdateVersions.set(fileIndex, nextVersion);
-
-    const existing = this.liveDepthUpdateTimers.get(fileIndex);
-    if (existing !== undefined) {
-      window.clearTimeout(existing);
-    }
-
-    const timer = window.setTimeout(() => {
-      this.liveDepthUpdateTimers.delete(fileIndex);
-      void this.requestLiveDepthUpdate(fileIndex);
-    }, delayMs);
-    this.liveDepthUpdateTimers.set(fileIndex, timer);
+    liveDepthUpdate.scheduleLiveDepthUpdate(this, fileIndex, delayMs);
   }
 
   private async requestLiveDepthUpdate(fileIndex: number): Promise<void> {
-    if (!this.liveDepthUpdateFiles.has(fileIndex)) {
-      return;
-    }
-
-    if (this.liveDepthUpdateInFlight.has(fileIndex)) {
-      this.liveDepthUpdateQueued.add(fileIndex);
-      return;
-    }
-
-    this.liveDepthUpdateInFlight.add(fileIndex);
-    const version = this.liveDepthUpdateVersions.get(fileIndex) || 0;
-    try {
-      await this.applyDepthSettings(fileIndex, version);
-    } finally {
-      this.liveDepthUpdateInFlight.delete(fileIndex);
-      if (
-        this.liveDepthUpdateQueued.delete(fileIndex) &&
-        this.liveDepthUpdateFiles.has(fileIndex)
-      ) {
-        this.scheduleLiveDepthUpdate(fileIndex, 0);
-      }
-    }
+    await liveDepthUpdate.requestLiveDepthUpdate(this, fileIndex);
   }
 
   private isLiveDepthResultCurrent(fileIndex: number, version?: number): boolean {
-    return version === undefined || this.liveDepthUpdateVersions.get(fileIndex) === version;
+    return liveDepthUpdate.isLiveDepthResultCurrent(this, fileIndex, version);
   }
 
   private waitForNextFrame(): Promise<void> {
-    return new Promise(resolve => {
-      window.requestAnimationFrame(() => resolve());
-    });
+    return liveDepthUpdate.waitForNextFrame();
   }
 
   private async applyDepthSettings(fileIndex: number, liveVersion?: number): Promise<void> {
-    try {
-      // Get the current values from the form using the helper method
-      const newCameraParams = this.getDepthSettingsFromFileUI(fileIndex);
-
-      // DEBUG: Log what we read from the form
-      console.log(
-        `🔍 APPLY SETTINGS DEBUG for file ${fileIndex}:\n  Form read values: ${JSON.stringify(newCameraParams, null, 2)}\n  depthType specifically: ${newCameraParams.depthType}\n  baseline specifically: ${newCameraParams.baseline}`
-      );
-
-      // Validate parameters
-      if (!newCameraParams.fx || newCameraParams.fx <= 0) {
-        throw new Error('fx (focal length x) must be a positive number');
-      }
-      if (
-        newCameraParams.depthType === 'disparity' &&
-        (!newCameraParams.baseline || newCameraParams.baseline <= 0)
-      ) {
-        throw new Error('Baseline must be a positive number for disparity mode');
-      }
-      if (
-        newCameraParams.pngScaleFactor !== undefined &&
-        (!newCameraParams.pngScaleFactor || newCameraParams.pngScaleFactor <= 0)
-      ) {
-        throw new Error('Scale factor must be a positive number for PNG files');
-      }
-
-      // Check if we have cached depth data for this file
-      const depthData = this.fileDepthData.get(fileIndex);
-      if (!depthData) {
-        throw new Error('No cached depth data found for this file. Please reload the depth file.');
-      }
-
-      const isPfm = /\.pfm$/i.test(depthData.fileName);
-      const isNpy = /\.(npy|npz)$/i.test(depthData.fileName);
-      const isPng = /\.png$/i.test(depthData.fileName);
-      const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : isPng ? 'PNG' : 'TIF';
-      this.showStatus(`Reprocessing ${fileType} with new settings...`);
-
-      // Process the depth data with new parameters using the new system
-      const result = await this.processDepthToPointCloud(
-        depthData.originalData,
-        depthData.fileName,
-        newCameraParams,
-        depthData.colorImageData
-      );
-      if (!this.isLiveDepthResultCurrent(fileIndex, liveVersion)) {
-        return;
-      }
-
-      await this.waitForNextFrame();
-      if (!this.isLiveDepthResultCurrent(fileIndex, liveVersion)) {
-        return;
-      }
-
-      // Update the stored camera parameters with the processed values (cx/cy might have been updated)
-      depthData.cameraParams = newCameraParams;
-
-      if (depthData.colorImageData) {
-        console.log(
-          `🎨 Reapplying stored color image: ${depthData.colorImageName}\n🎯 Using updated camera params: cx=${newCameraParams.cx}, cy=${newCameraParams.cy}`
-        );
-      }
-
-      // Update the PLY data
-      const spatialData = this.spatialFiles[fileIndex];
-      applyDepthResultTypedArrays(spatialData, result);
-      // Mark as depth-derived so gamma correction knows these are already linear colors
-      (spatialData as any).isDepthDerived = true;
-      const comments: string[] = [
-        `Converted from ${fileType} depth image: ${depthData.fileName}`,
-        `Camera: ${newCameraParams.cameraModel}`,
-        `Depth type: ${newCameraParams.depthType}`,
-        `fx: ${newCameraParams.fx}px${newCameraParams.fy ? `, fy: ${newCameraParams.fy}px` : ''}`,
-        ...(newCameraParams.baseline ? [`Baseline: ${newCameraParams.baseline}mm`] : []),
-      ];
-
-      // Add RGB24-specific settings if this is an RGB image
-      if (fileType === 'PNG' && newCameraParams.rgb24ScaleFactor) {
-        comments.push(`RGB24 depth image`);
-        comments.push(`rgb24Scale=${newCameraParams.rgb24ScaleFactor}`);
-        comments.push(`rgb24Mode=${newCameraParams.rgb24ConversionMode || 'shift'}`);
-      }
-
-      spatialData.comments = comments;
-
-      // Update cached parameters
-      depthData.cameraParams = newCameraParams;
-
-      // Update the mesh with new data
-      const oldMaterial = this.meshes[fileIndex].material;
-      const colorMode = this.individualColorModes[fileIndex] || 'assigned';
-      console.log(
-        `🎨 Depth settings apply - fileIndex: ${fileIndex}, hasColors: ${spatialData.hasColors}, colorMode: ${colorMode}, vertexCount: ${spatialData.vertexCount}`
-      );
-      const newMaterial = this.createMaterialForFile(spatialData, fileIndex);
-      this.meshes[fileIndex].material = newMaterial;
-
-      // Ensure point size is correctly applied to the new material
-      if (
-        this.meshes[fileIndex] instanceof THREE.Points &&
-        newMaterial instanceof THREE.PointsMaterial
-      ) {
-        const currentPointSize = this.pointSizes[fileIndex] || 0.001;
-        newMaterial.size = currentPointSize;
-        console.log(
-          `🔧 Applied point size ${currentPointSize} to updated ${fileType} material for file ${fileIndex}`
-        );
-      }
-
-      // Replace the mesh so Three.js uploads the returned typed arrays cleanly.
-      const oldMesh = this.meshes[fileIndex];
-      this.scene.remove(oldMesh);
-
-      if (oldMesh.geometry) {
-        oldMesh.geometry.dispose();
-      }
-
-      const geometry = this.createGeometryFromSpatialData(spatialData);
-      const newMesh = new THREE.Points(geometry, newMaterial);
-
-      newMesh.matrix.copy(oldMesh.matrix);
-      newMesh.matrixAutoUpdate = oldMesh.matrixAutoUpdate;
-
-      this.meshes[fileIndex] = newMesh;
-      this.scene.add(newMesh);
-
-      this.performRender();
-
-      // Dispose old material
-      if (oldMaterial) {
-        if (Array.isArray(oldMaterial)) {
-          oldMaterial.forEach(mat => mat.dispose());
-        } else {
-          oldMaterial.dispose();
-        }
-      }
-
-      // Update UI
-      this.updateFileStats();
-      this.showStatus(`${fileType} settings applied successfully!`);
-    } catch (error) {
-      console.error(`Error applying depth settings:`, error);
-      this.showError(
-        `Failed to apply depth settings: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await liveDepthUpdate.applyDepthSettings(this, fileIndex, liveVersion);
   }
 
   private handleDefaultDepthSettings(message: any): void {
