@@ -87,6 +87,7 @@ import * as rotationCenterFeature from './rotationCenterFeature';
 import * as axesFeature from './axesFeature';
 import * as transformationMatrix from './transformationMatrix';
 import * as depthCameraParamsPrompt from './depthCameraParamsPrompt';
+import * as formatDataHandlers from './formatDataHandlers';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -205,9 +206,9 @@ class PointCloudVisualizer {
   sequenceCacheOrder: number[] = [];
   maxSequenceCache = 6; // keep more frames when navigating back
   individualColorModes: string[] = []; // Individual color modes: 'original', 'assigned', or color index
-  private appliedMtlColors: (number | null)[] = []; // Store applied MTL hex colors for each file
-  private appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
-  private appliedMtlData: (any | null)[] = []; // Store applied MTL data for each file
+  appliedMtlColors: (number | null)[] = []; // Store applied MTL hex colors for each file
+  appliedMtlNames: (string | null)[] = []; // Store applied MTL material names for each file
+  appliedMtlData: (any | null)[] = []; // Store applied MTL data for each file
 
   // Per-file Depth data storage for reprocessing
   fileDepthData: Map<
@@ -1348,7 +1349,7 @@ class PointCloudVisualizer {
     transformationMatrix.updateCameraMatrix(this);
   }
 
-  private setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void {
+  setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void {
     transformationMatrix.setTransformationMatrix(this, fileIndex, matrix);
   }
 
@@ -5467,7 +5468,7 @@ class PointCloudVisualizer {
     });
   }
 
-  private addNewFiles(newFiles: SpatialData[]): void {
+  addNewFiles(newFiles: SpatialData[]): void {
     // Phase feedback: the bytes are here, now we build GPU geometry.
     if (this.isFileLoading && newFiles.length > 0) {
       const pts = newFiles.reduce((s, f) => s + (f.vertexCount || 0), 0);
@@ -8221,411 +8222,27 @@ class PointCloudVisualizer {
   }
 
   private async handlePcdData(message: any): Promise<void> {
-    try {
-      console.log(`Load: recv PCD ${message.fileName}`);
-      this.showStatus(`PCD: processing ${message.fileName}`);
-
-      const pcdData = message.data;
-      console.log(
-        `PCD: ${pcdData.vertexCount} points, format=${pcdData.format}, colors=${pcdData.hasColors}, normals=${pcdData.hasNormals}, intensity=${pcdData.hasIntensity}`
-      );
-
-      // Convert PCD data to PLY format for rendering
-      const spatialData: SpatialData = {
-        vertices: [],
-        faces: [],
-        format: pcdData.format === 'binary' ? 'binary_little_endian' : 'ascii',
-        version: '1.0',
-        comments: [
-          `Converted from PCD: ${message.fileName}`,
-          `Original format: ${pcdData.format}`,
-          `Width: ${pcdData.width}, Height: ${pcdData.height}`,
-          `Fields: ${pcdData.fields?.join(', ') || 'unknown'}`,
-          ...pcdData.comments,
-        ],
-        vertexCount: pcdData.vertexCount,
-        faceCount: 0,
-        hasColors: pcdData.hasColors,
-        hasNormals: pcdData.hasNormals,
-        hasIntensity: pcdData.hasIntensity,
-        fileName: message.fileName,
-        shortPath: message.shortPath,
-        fileSizeInBytes: message.fileSizeInBytes,
-      };
-      (spatialData as any).useTypedArrays = true;
-      (spatialData as any).positionsArray = pcdData.positionsArray;
-      (spatialData as any).colorsArray = pcdData.colorsArray;
-      (spatialData as any).normalsArray = pcdData.normalsArray;
-      (spatialData as any).intensityArray = pcdData.intensityArray;
-      (spatialData as any).scalarFields = pcdData.scalarFields ?? {};
-
-      // Carry the PCD viewpoint so we can set the initial transform after the
-      // file is registered (at which point we know the fileIndex).
-      const vp: number[] = pcdData.viewpoint ?? [0, 0, 0, 1, 0, 0, 0];
-      const isIdentityViewpoint =
-        vp[0] === 0 &&
-        vp[1] === 0 &&
-        vp[2] === 0 &&
-        vp[3] === 1 &&
-        vp[4] === 0 &&
-        vp[5] === 0 &&
-        vp[6] === 0;
-
-      if (message.isAddFile) {
-        this.addNewFiles([spatialData]);
-      } else {
-        await this.displayFiles([spatialData]);
-      }
-
-      // Apply PCD VIEWPOINT as the initial object transform (skip identity — it's the default).
-      // The point coordinates are stored as-is from the file (no axis conversion), so the
-      // viewpoint quaternion/translation is applied in the same PCL coordinate space.
-      // The user's OpenCV/OpenGL convention toggle handles the overall viewing perspective
-      // on top of this, just as it does for all other PCD data.
-      if (!isIdentityViewpoint) {
-        const fileIndex = spatialData.fileIndex ?? this.spatialFiles.length - 1;
-        if (fileIndex >= 0 && fileIndex < this.transformationMatrices.length) {
-          // PCD viewpoint: tx ty tz  qw qx qy qz
-          const [tx, ty, tz, qw, qx, qy, qz] = vp;
-          const q = new THREE.Quaternion(qx, qy, qz, qw).normalize();
-          const viewpointMatrix = new THREE.Matrix4();
-          viewpointMatrix.makeRotationFromQuaternion(q);
-          viewpointMatrix.setPosition(tx, ty, tz);
-          this.setTransformationMatrix(fileIndex, viewpointMatrix);
-        }
-      }
-
-      // Create normals visualizer if PCD has normals
-      if (spatialData.hasNormals) {
-        const normalsVisualizer = this.createNormalsVisualizer(spatialData);
-
-        // Set initial visibility based on stored state (default true)
-        const fileIndex = spatialData.fileIndex || this.spatialFiles.length - 1;
-        const initialVisible = this.normalsVisible[fileIndex] !== false;
-        normalsVisualizer.visible = initialVisible;
-
-        this.scene.add(normalsVisualizer);
-
-        // Ensure the array has the correct size and place the visualizer at the right index
-        while (this.normalsVisualizers.length <= fileIndex) {
-          this.normalsVisualizers.push(null);
-        }
-        this.normalsVisualizers[fileIndex] = normalsVisualizer;
-      }
-
-      this.showStatus(`PCD: loaded ${pcdData.vertexCount} points from ${message.fileName}`);
-    } catch (error) {
-      console.error('Error handling PCD data:', error);
-      this.showError(
-        `PCD processing failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await formatDataHandlers.handlePcdData(this, message);
   }
 
   private async handleNpyData(message: any): Promise<void> {
-    try {
-      console.log(`Load: recv NPY point cloud ${message.fileName}`);
-      this.showStatus(`NPY: processing point cloud data from ${message.fileName}`);
-
-      const npyData = message.data;
-      console.log(
-        `NPY: ${npyData.vertexCount} points, format=${npyData.format}, colors=${npyData.hasColors}, normals=${npyData.hasNormals}`
-      );
-
-      // NPY data is already in PLY format from the parser
-      const spatialData: SpatialData = {
-        ...npyData,
-        fileName: message.fileName,
-        shortPath: message.shortPath,
-      };
-
-      if (message.isAddFile) {
-        spatialData.fileIndex = this.spatialFiles.length;
-      }
-
-      await this.displayFiles([spatialData]);
-
-      // Handle normals visualization if available
-      const fileIndex = spatialData.fileIndex!;
-      if (npyData.hasNormals) {
-        // Ensure normalsVisualizers array is properly sized
-        while (this.normalsVisualizers.length <= fileIndex) {
-          this.normalsVisualizers.push(null);
-        }
-
-        const normalsVisualizer = this.createNormalsVisualizer(spatialData);
-        if (normalsVisualizer) {
-          this.scene.add(normalsVisualizer);
-        }
-        this.normalsVisualizers[fileIndex] = normalsVisualizer;
-      } else {
-        // Ensure array is properly sized even without normals
-        while (this.normalsVisualizers.length <= fileIndex) {
-          this.normalsVisualizers.push(null);
-        }
-        this.normalsVisualizers[fileIndex] = null;
-      }
-
-      this.showStatus(`NPY: loaded ${npyData.vertexCount} points from ${message.fileName}`);
-    } catch (error) {
-      console.error('Error handling NPY data:', error);
-      this.showError(
-        `NPY processing failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await formatDataHandlers.handleNpyData(this, message);
   }
 
   private async handlePtsData(message: any): Promise<void> {
-    try {
-      console.log(`Load: recv PTS ${message.fileName}`);
-      this.showStatus(`PTS: processing ${message.fileName}`);
-
-      const ptsData = message.data;
-      console.log(
-        `PTS: ${ptsData.vertexCount} points, format=${ptsData.detectedFormat}, colors=${ptsData.hasColors}, normals=${ptsData.hasNormals}, intensity=${ptsData.hasIntensity}`
-      );
-
-      // Convert PTS data to PLY format for rendering
-      const spatialData: SpatialData = {
-        vertices: [],
-        faces: [],
-        format: 'ascii',
-        version: '1.0',
-        comments: [
-          `Converted from PTS: ${message.fileName}`,
-          `Detected format: ${ptsData.detectedFormat}`,
-          ...ptsData.comments,
-        ],
-        vertexCount: ptsData.vertexCount,
-        faceCount: 0,
-        hasColors: ptsData.hasColors,
-        hasNormals: ptsData.hasNormals,
-        hasIntensity: ptsData.hasIntensity,
-        fileName: message.fileName,
-        shortPath: message.shortPath,
-        fileSizeInBytes: message.fileSizeInBytes,
-      };
-      (spatialData as any).useTypedArrays = true;
-      (spatialData as any).positionsArray = ptsData.positionsArray;
-      (spatialData as any).colorsArray = ptsData.colorsArray;
-      (spatialData as any).normalsArray = ptsData.normalsArray;
-      (spatialData as any).intensityArray = ptsData.intensityArray;
-      (spatialData as any).scalarFields = ptsData.scalarFields ?? {};
-
-      if (message.isAddFile) {
-        this.addNewFiles([spatialData]);
-      } else {
-        await this.displayFiles([spatialData]);
-      }
-
-      // Create normals visualizer if PTS has normals
-      if (spatialData.hasNormals) {
-        const normalsVisualizer = this.createNormalsVisualizer(spatialData);
-
-        // Set initial visibility based on stored state (default true)
-        const fileIndex = spatialData.fileIndex || this.spatialFiles.length - 1;
-        const initialVisible = this.normalsVisible[fileIndex] !== false;
-        normalsVisualizer.visible = initialVisible;
-
-        this.scene.add(normalsVisualizer);
-
-        // Ensure the array has the correct size and place the visualizer at the right index
-        while (this.normalsVisualizers.length <= fileIndex) {
-          this.normalsVisualizers.push(null);
-        }
-        this.normalsVisualizers[fileIndex] = normalsVisualizer;
-      }
-
-      this.showStatus(`PTS: loaded ${ptsData.vertexCount} points from ${message.fileName}`);
-    } catch (error) {
-      console.error('Error handling PTS data:', error);
-      this.showError(
-        `PTS processing failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await formatDataHandlers.handlePtsData(this, message);
   }
 
   private async handleOffData(message: any): Promise<void> {
-    try {
-      console.log(`Load: recv OFF ${message.fileName}`);
-      this.showStatus(`OFF: processing ${message.fileName}`);
-
-      const offData = message.data;
-      console.log(
-        `OFF: ${offData.vertexCount} vertices, ${offData.faceCount} faces, variant=${offData.offVariant}, colors=${offData.hasColors}, normals=${offData.hasNormals}`
-      );
-
-      // Convert OFF data to PLY format for rendering
-      const spatialData: SpatialData = {
-        vertices: offData.vertices,
-        faces: offData.faces,
-        format: 'ascii',
-        version: '1.0',
-        comments: [
-          `Converted from OFF: ${message.fileName}`,
-          `OFF variant: ${offData.offVariant}`,
-          ...offData.comments,
-        ],
-        vertexCount: offData.vertexCount,
-        faceCount: offData.faceCount,
-        hasColors: offData.hasColors,
-        hasNormals: offData.hasNormals,
-        fileName: message.fileName,
-        shortPath: message.shortPath,
-        fileSizeInBytes: message.fileSizeInBytes,
-      };
-
-      if (message.isAddFile) {
-        this.addNewFiles([spatialData]);
-      } else {
-        await this.displayFiles([spatialData]);
-      }
-
-      // Create normals visualizer if OFF has normals (for both meshes and point clouds)
-      if (spatialData.hasNormals) {
-        const normalsVisualizer = this.createNormalsVisualizer(spatialData);
-
-        // Set initial visibility based on stored state (default true)
-        const fileIndex = spatialData.fileIndex || this.spatialFiles.length - 1;
-        const initialVisible = this.normalsVisible[fileIndex] !== false;
-        normalsVisualizer.visible = initialVisible;
-
-        this.scene.add(normalsVisualizer);
-
-        // Ensure the array has the correct size and place the visualizer at the right index
-        while (this.normalsVisualizers.length <= fileIndex) {
-          this.normalsVisualizers.push(null);
-        }
-        this.normalsVisualizers[fileIndex] = normalsVisualizer;
-      }
-
-      const meshType = offData.faceCount > 0 ? 'mesh' : 'point cloud';
-      this.showStatus(
-        `OFF: loaded ${offData.vertexCount} vertices, ${offData.faceCount} faces as ${meshType} from ${message.fileName}`
-      );
-    } catch (error) {
-      console.error('Error handling OFF data:', error);
-      this.showError(
-        `OFF processing failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await formatDataHandlers.handleOffData(this, message);
   }
 
   private async handleGltfData(message: any): Promise<void> {
-    try {
-      console.log(`Load: recv GLTF/GLB ${message.fileName}`);
-      this.showStatus(`GLTF: processing ${message.fileName}`);
-
-      const gltfData = message.data;
-      console.log(
-        `GLTF: ${gltfData.vertexCount} vertices, ${gltfData.faceCount} faces, ${gltfData.meshCount} meshes, ${gltfData.materialCount} materials, colors=${gltfData.hasColors}, normals=${gltfData.hasNormals}`
-      );
-
-      // Convert GLTF data to PLY format for rendering
-      const spatialData: SpatialData = {
-        vertices: gltfData.vertices,
-        faces: gltfData.faces,
-        format: 'ascii',
-        version: '1.0',
-        comments: [
-          `Converted from GLTF/GLB: ${message.fileName}`,
-          `Format: ${gltfData.format}`,
-          `Meshes: ${gltfData.meshCount}, Materials: ${gltfData.materialCount}`,
-          ...gltfData.comments,
-        ],
-        vertexCount: gltfData.vertexCount,
-        faceCount: gltfData.faceCount,
-        hasColors: gltfData.hasColors,
-        hasNormals: gltfData.hasNormals,
-        fileName: message.fileName,
-        shortPath: message.shortPath,
-        fileSizeInBytes: message.fileSizeInBytes,
-      };
-
-      if (message.isAddFile) {
-        this.addNewFiles([spatialData]);
-      } else {
-        await this.displayFiles([spatialData]);
-      }
-
-      const meshType = gltfData.faceCount > 0 ? 'mesh' : 'point cloud';
-      this.showStatus(
-        `GLTF: loaded ${gltfData.vertexCount} vertices, ${gltfData.faceCount} faces as ${meshType} from ${message.fileName}`
-      );
-    } catch (error) {
-      console.error('Error handling GLTF data:', error);
-      this.showError(
-        `GLTF processing failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await formatDataHandlers.handleGltfData(this, message);
   }
 
   private async handleXyzVariantData(message: any): Promise<void> {
-    try {
-      console.log(`Load: recv XYZ variant (${message.variant}) ${message.fileName}`);
-      this.showStatus(`XYZ: processing ${message.fileName} (${message.variant})`);
-
-      // Data is already parsed into typed arrays by the extension (XyzVariantParser).
-      const xyzData = message.data;
-      const spatialData: SpatialData = {
-        vertices: [],
-        faces: [],
-        format: 'ascii',
-        version: '1.0',
-        comments: [
-          `Converted from ${message.variant.toUpperCase()}: ${message.fileName}`,
-          `Format variant: ${message.variant}`,
-        ],
-        vertexCount: xyzData.vertexCount,
-        faceCount: 0,
-        hasColors: xyzData.hasColors,
-        hasNormals: xyzData.hasNormals,
-        hasIntensity: xyzData.hasIntensity,
-        fileName: message.fileName,
-        shortPath: message.shortPath,
-        fileSizeInBytes: message.fileSizeInBytes,
-      };
-      (spatialData as any).useTypedArrays = true;
-      (spatialData as any).positionsArray = xyzData.positionsArray;
-      (spatialData as any).colorsArray = xyzData.colorsArray;
-      (spatialData as any).normalsArray = xyzData.normalsArray;
-      (spatialData as any).intensityArray = xyzData.intensityArray;
-      (spatialData as any).scalarFields = xyzData.intensityArray
-        ? { intensity: xyzData.intensityArray }
-        : {};
-
-      if (message.isAddFile) {
-        this.addNewFiles([spatialData]);
-      } else {
-        await this.displayFiles([spatialData]);
-      }
-
-      if (spatialData.hasNormals) {
-        const normalsVisualizer = this.createNormalsVisualizer(spatialData);
-
-        // Set initial visibility based on stored state (default true)
-        const fileIndex = spatialData.fileIndex || this.spatialFiles.length - 1;
-        const initialVisible = this.normalsVisible[fileIndex] !== false;
-        normalsVisualizer.visible = initialVisible;
-
-        this.scene.add(normalsVisualizer);
-
-        // Ensure the array has the correct size and place the visualizer at the right index
-        while (this.normalsVisualizers.length <= fileIndex) {
-          this.normalsVisualizers.push(null);
-        }
-        this.normalsVisualizers[fileIndex] = normalsVisualizer;
-      }
-
-      this.showStatus(
-        `${message.variant.toUpperCase()}: loaded ${spatialData.vertexCount} points from ${message.fileName}`
-      );
-    } catch (error) {
-      console.error('Error handling XYZ variant data:', error);
-      this.showError(
-        `${message.variant.toUpperCase()} processing failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await formatDataHandlers.handleXyzVariantData(this, message);
   }
 
   createNormalsVisualizer(data: SpatialData): THREE.LineSegments {
@@ -9721,160 +9338,7 @@ class PointCloudVisualizer {
   }
 
   private handleMtlData(message: any): void {
-    try {
-      console.log('Received MTL data for file index:', message.fileIndex);
-      const fileIndex = message.fileIndex;
-      const mtlData = message.data;
-      console.log('MTL data structure:', mtlData);
-      console.log('Available materials:', Object.keys(mtlData.materials || {}));
-
-      if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
-        console.error('Invalid file index for MTL data:', fileIndex);
-        return;
-      }
-
-      const objFile = this.spatialFiles[fileIndex];
-      const isObjFile = (objFile as any).isObjFile || (objFile as any).isObjWireframe;
-
-      console.log('OBJ file data:', {
-        isObjFile: (objFile as any).isObjFile,
-        isObjWireframe: (objFile as any).isObjWireframe,
-        objRenderType: (objFile as any).objRenderType,
-        fileName: objFile.fileName,
-      });
-
-      if (!isObjFile) {
-        console.error('File is not an OBJ file:', fileIndex);
-        return;
-      }
-
-      // Find the material to use - prioritize the current material from OBJ, then first material
-      let materialColor = { r: 1.0, g: 0.0, b: 0.0 }; // Default red
-      let materialName = '';
-
-      if (mtlData.materials && Object.keys(mtlData.materials).length > 0) {
-        const objData = (objFile as any).objData;
-        const materialNames = Object.keys(mtlData.materials);
-
-        // Try to use the material referenced in the OBJ file first
-        if (objData && objData.currentMaterial && mtlData.materials[objData.currentMaterial]) {
-          const material = mtlData.materials[objData.currentMaterial];
-          if (material.diffuseColor) {
-            materialColor = material.diffuseColor;
-            materialName = objData.currentMaterial;
-          }
-        } else {
-          // Fall back to first available material
-          const firstMaterial = mtlData.materials[materialNames[0]];
-          if (firstMaterial && firstMaterial.diffuseColor) {
-            materialColor = firstMaterial.diffuseColor;
-            materialName = materialNames[0];
-          }
-        }
-
-        console.log(
-          `Using material '${materialName}' with color: RGB(${materialColor.r}, ${materialColor.g}, ${materialColor.b})`
-        );
-      }
-
-      // Convert RGB 0-1 to Three.js hex color
-      const hexColor =
-        (Math.round(materialColor.r * 255) << 16) |
-        (Math.round(materialColor.g * 255) << 8) |
-        Math.round(materialColor.b * 255);
-
-      // Update the mesh color based on current render type
-      const mesh = this.meshes[fileIndex];
-      const multiMaterialGroup = this.multiMaterialGroups[fileIndex];
-      const subMeshes = this.materialMeshes[fileIndex];
-
-      console.log('Mesh info:', {
-        meshExists: !!mesh,
-        meshType: mesh?.type,
-        isLineSegments: (mesh as any)?.isLineSegments,
-        isObjMesh: (mesh as any)?.isObjMesh,
-        isMultiMaterial: (mesh as any)?.isMultiMaterial,
-        multiMaterialGroupExists: !!multiMaterialGroup,
-        subMeshCount: subMeshes?.length || 0,
-        materialType: (mesh as any)?.material?.type,
-      });
-
-      if (multiMaterialGroup && subMeshes) {
-        // Multi-material OBJ: apply materials to each sub-mesh
-        let appliedCount = 0;
-
-        for (const subMesh of subMeshes) {
-          const subMaterialName = (subMesh as any).materialName;
-          if (subMaterialName && mtlData.materials[subMaterialName]) {
-            const subMaterial = mtlData.materials[subMaterialName];
-            if (subMaterial.diffuseColor) {
-              const subHexColor =
-                (Math.round(subMaterial.diffuseColor.r * 255) << 16) |
-                (Math.round(subMaterial.diffuseColor.g * 255) << 8) |
-                Math.round(subMaterial.diffuseColor.b * 255);
-
-              const subMeshMaterial = (subMesh as any).material;
-              if (subMeshMaterial && subMeshMaterial.color) {
-                subMeshMaterial.color.setHex(subHexColor);
-                console.log(
-                  `Applied ${subMaterialName} color #${subHexColor.toString(16).padStart(6, '0')} to sub-mesh`
-                );
-                appliedCount++;
-              }
-            }
-          }
-        }
-
-        console.log(`Applied materials to ${appliedCount}/${subMeshes.length} sub-meshes`);
-        materialName = message.fileName; // For multi-material, show filename
-      } else if (mesh && (mesh as any).isLineSegments) {
-        // Update wireframe color
-        const lineMaterial = (mesh as any).material;
-        if (lineMaterial) {
-          lineMaterial.color.setHex(hexColor);
-          console.log(`Updated wireframe color to #${hexColor.toString(16).padStart(6, '0')}`);
-        }
-        materialName = message.fileName; // For single-material, show filename
-      } else if (mesh && ((mesh as any).isObjMesh || mesh.type === 'Mesh')) {
-        // Update solid mesh color
-        const meshMaterial = (mesh as any).material;
-        if (meshMaterial) {
-          meshMaterial.color.setHex(hexColor);
-          console.log(`Updated solid mesh color to #${hexColor.toString(16).padStart(6, '0')}`);
-        }
-        materialName = message.fileName; // For single-material, show filename
-      } else if (mesh) {
-        console.warn('Unknown mesh type, trying to update material anyway');
-        const anyMaterial = (mesh as any).material;
-        if (anyMaterial && anyMaterial.color) {
-          anyMaterial.color.setHex(hexColor);
-          console.log(
-            `Updated generic material color to #${hexColor.toString(16).padStart(6, '0')}`
-          );
-        }
-        materialName = message.fileName; // For single-material, show filename
-      } else {
-        console.error('No mesh or multi-material group found at index:', fileIndex);
-      }
-
-      // Store the applied MTL color, name, and data for future use
-      this.appliedMtlColors[fileIndex] = hexColor;
-      this.appliedMtlNames[fileIndex] = materialName;
-      this.appliedMtlData[fileIndex] = mtlData;
-
-      // Update UI to show loaded MTL
-      this.updateFileList();
-
-      const materialCount = mtlData.materialCount || Object.keys(mtlData.materials || {}).length;
-      this.showStatus(
-        `MTL material applied! Using material '${materialName}' from ${message.fileName}`
-      );
-    } catch (error) {
-      console.error('Error handling MTL data:', error);
-      this.showError(
-        `Failed to apply MTL material: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    formatDataHandlers.handleMtlData(this, message);
   }
 
   /**
