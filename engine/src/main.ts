@@ -79,6 +79,7 @@ import * as depthDefaultSettings from './depth/defaultSettings';
 import { parseCalibrationFile } from './depth/calibrationFileParser';
 import * as calibrationForm from './depth/calibrationForm';
 import * as controlSchemeSwitcher from './controlSchemeSwitcher';
+import * as cameraConvention from './cameraConvention';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -110,7 +111,7 @@ class PointCloudVisualizer {
   // crashes the webview. This is the safety net for the multi-window
   // out-of-VRAM case (each window is a separate context sharing one GPU).
   private contextLost = false;
-  private controls!: TrackballControls | OrbitControls | CustomArcballControls | TurntableControls;
+  controls!: TrackballControls | OrbitControls | CustomArcballControls | TurntableControls;
 
   // Camera control state
   controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare' =
@@ -7636,111 +7637,19 @@ class PointCloudVisualizer {
   }
 
   private setOpenCVCameraConvention(): void {
-    console.log('📷 Setting camera to OpenCV convention (Y-down, Z-forward)');
-
-    // OpenCV convention: Y-down, Z-forward
-    // Camera looks along +Z axis, Y points down
-
-    // Store current target position
-    const currentTarget = this.controls.target.clone();
-
-    // Set up vector to Y-down
-    this.camera.up.set(0, -1, 0);
-
-    // Calculate current camera direction relative to target
-    const cameraDirection = this.camera.position.clone().sub(currentTarget).normalize();
-    const distance = this.camera.position.distanceTo(currentTarget);
-
-    // Position camera to look along +Z axis while maintaining focus on current target
-    // Move camera to negative Z relative to target so it looks toward positive Z
-    this.camera.position.copy(currentTarget).add(new THREE.Vector3(0, 0, -distance));
-
-    // Keep the same target (don't reset to origin)
-    this.controls.target.copy(currentTarget);
-
-    // Make camera look at target
-    this.camera.lookAt(this.controls.target);
-
-    // Update controls
-    this.controls.update();
-
-    // Update axes helper to reflect OpenCV convention
-    this.updateAxesForCameraConvention('opencv');
-
-    // Show feedback
-    this.showCameraConventionFeedback('OpenCV');
+    cameraConvention.setOpenCVCameraConvention(this);
   }
 
   private setOpenGLCameraConvention(): void {
-    console.log('📷 Setting camera to OpenGL convention (Y-up, Z-backward)');
-
-    // OpenGL convention: Y-up, Z-backward
-    // Camera looks along -Z axis, Y points up (standard Three.js)
-
-    // Store current target position
-    const currentTarget = this.controls.target.clone();
-
-    // Set up vector to Y-up
-    this.camera.up.set(0, 1, 0);
-
-    // Calculate current camera direction relative to target
-    const cameraDirection = this.camera.position.clone().sub(currentTarget).normalize();
-    const distance = this.camera.position.distanceTo(currentTarget);
-
-    // Position camera to look along -Z axis while maintaining focus on current target
-    // Move camera to positive Z relative to target so it looks toward negative Z
-    this.camera.position.copy(currentTarget).add(new THREE.Vector3(0, 0, distance));
-
-    // Keep the same target (don't reset to origin)
-    this.controls.target.copy(currentTarget);
-
-    // Make camera look at target
-    this.camera.lookAt(this.controls.target);
-
-    // Update controls
-    this.controls.update();
-
-    // Update axes helper to reflect OpenGL convention
-    this.updateAxesForCameraConvention('opengl');
-
-    // Show feedback
-    this.showCameraConventionFeedback('OpenGL');
+    cameraConvention.setOpenGLCameraConvention(this);
   }
 
-  private updateAxesForCameraConvention(convention: 'opencv' | 'opengl'): void {
-    // Update the axes helper orientation to match the camera convention
-    const axesGroup = (this as any).axesGroup;
-    if (axesGroup) {
-      console.log(`🎯 Axes updated for ${convention} camera convention`);
-    }
+  updateAxesForCameraConvention(convention: 'opencv' | 'opengl'): void {
+    cameraConvention.updateAxesForCameraConvention(this, convention);
   }
 
-  private showCameraConventionFeedback(convention: string): void {
-    console.log(`✅ Camera set to ${convention} convention`);
-
-    // Create a temporary visual indicator
-    const origin = new THREE.Vector3(0, 0, 0);
-    const upVector =
-      convention === 'OpenCV' ? new THREE.Vector3(0, -1, 0) : new THREE.Vector3(0, 1, 0);
-    const length = 2;
-    const color = convention === 'OpenCV' ? 0xff0000 : 0x00ff00; // Red for OpenCV, Green for OpenGL
-
-    const arrowHelper = new THREE.ArrowHelper(
-      upVector,
-      origin,
-      length,
-      color,
-      length * 0.2,
-      length * 0.1
-    );
-    this.scene.add(arrowHelper);
-
-    // Remove after 2 seconds
-    setTimeout(() => {
-      this.scene.remove(arrowHelper);
-      arrowHelper.dispose();
-      this.requestRender();
-    }, 2000);
+  showCameraConventionFeedback(convention: string): void {
+    cameraConvention.showCameraConventionFeedback(this, convention);
   }
 
   private showTranslationDialog(fileIndex: number): void {
