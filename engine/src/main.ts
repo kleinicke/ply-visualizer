@@ -80,6 +80,7 @@ import * as renderModeToggles from './renderModeToggles';
 import * as colorModeUtils from './colorMode';
 import * as pointSizeScaling from './pointSizeScaling';
 import * as depthPanelState from './depth/panelState';
+import * as sceneBrightness from './sceneBrightness';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -124,8 +125,8 @@ class PointCloudVisualizer {
   private edlStrength: number = 1.0;
   private edlRadius: number = 1.4;
   private edlSecondRingWeight: number = 0.0;
-  private brightnessStops: number = 0.0;
-  private backgroundBrightness: number = 13;
+  brightnessStops: number = 0.0;
+  backgroundBrightness: number = 13;
   private effectComposer: EffectComposer | null = null;
   private edlPass: EDLPass | null = null;
   private rotationCenterManager: RotationCenterManager = new RotationCenterManager();
@@ -328,7 +329,7 @@ class PointCloudVisualizer {
   private liveDepthUpdateQueued = new Set<number>();
   private liveDepthUpdateTimers = new Map<number, number>();
   private liveDepthUpdateVersions = new Map<number, number>();
-  private useLinearColorSpace: boolean = true; // Default: toggle is inactive; renderer still outputs sRGB
+  useLinearColorSpace: boolean = true; // Default: toggle is inactive; renderer still outputs sRGB
   private axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
   // Color space handling: always output sRGB, optionally convert source sRGB colors to linear before shading
 
@@ -433,11 +434,11 @@ class PointCloudVisualizer {
    * depth-derived clouds — those colors are already linear, so decoding them
    * would darken them incorrectly. (Intensity/assigned modes aren't 'original'.)
    */
-  private pointColorsNeedSrgbDecode(data: SpatialData, colorMode: string): boolean {
+  pointColorsNeedSrgbDecode(data: SpatialData, colorMode: string): boolean {
     return colorModeUtils.pointColorsNeedSrgbDecode(this, data, colorMode);
   }
 
-  private setupPointSrgbDecode(material: THREE.PointsMaterial): void {
+  setupPointSrgbDecode(material: THREE.PointsMaterial): void {
     colorModeUtils.setupPointSrgbDecode(material);
   }
 
@@ -1096,39 +1097,23 @@ class PointCloudVisualizer {
   }
 
   private updateRendererColorSpace(): void {
-    // Always output sRGB for correct display on standard monitors
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    // concise summary already printed elsewhere
+    sceneBrightness.updateRendererColorSpace(this);
   }
 
   private applySceneBrightness(): void {
-    // Exposure affects rendered geometry, while the renderer clear/background color stays separate.
-    this.renderer.toneMapping = THREE.LinearToneMapping;
-    this.renderer.toneMappingExposure = Math.pow(2, this.brightnessStops);
+    sceneBrightness.applySceneBrightness(this);
   }
 
   private getBackgroundCssColor(): string {
-    const channel = THREE.MathUtils.clamp(
-      Math.round((this.backgroundBrightness / 100) * 255),
-      0,
-      255
-    );
-    return `#${channel.toString(16).padStart(2, '0').repeat(3)}`;
+    return sceneBrightness.getBackgroundCssColor(this);
   }
 
   private getBackgroundBrightnessLabel(): string {
-    return `${Math.round(this.backgroundBrightness)}% (${this.getBackgroundCssColor()})`;
+    return sceneBrightness.getBackgroundBrightnessLabel(this);
   }
 
   private applyBackgroundBrightness(): void {
-    const backgroundColor = this.getBackgroundCssColor();
-    this.scene.background = null;
-    if (this.renderer) {
-      this.renderer.setClearColor(0x000000, 0);
-      this.renderer.setClearAlpha(0);
-      this.renderer.domElement.style.backgroundColor = backgroundColor;
-      this.renderer.domElement.style.filter = '';
-    }
+    sceneBrightness.applyBackgroundBrightness(this);
   }
 
   private applyEnvironmentSpecificUI(): void {
@@ -1140,34 +1125,11 @@ class PointCloudVisualizer {
   }
 
   private toggleGammaCorrection(): void {
-    // Toggle whether we convert sRGB source colors to linear
-    this.convertSrgbToLinear = !this.convertSrgbToLinear;
-    // Keep the legacy flag loosely in sync (not used elsewhere for logic)
-    this.useLinearColorSpace = !this.convertSrgbToLinear;
-    const statusMessage = this.convertSrgbToLinear
-      ? 'Treat source colors as sRGB (convert to linear before shading)'
-      : 'Treat source colors as linear (no sRGB-to-linear conversion)';
-    this.showStatus(statusMessage);
-    this.updateGammaButtonState();
-    // Rebuild color attributes to reflect new conversion setting
-    this.rebuildAllColorAttributesForCurrentGammaSetting();
-    this.requestRender();
-    // this.requestRender();
+    sceneBrightness.toggleGammaCorrection(this);
   }
 
-  private updateGammaButtonState(): void {
-    const btn = document.getElementById('toggle-gamma-correction');
-    if (!btn) {
-      return;
-    }
-    // Active (blue) when we apply additional gamma (i.e., we do NOT convert input sRGB → linear)
-    // This matches the UX: blue means extra gamma appearance compared to default pipeline
-    if (!this.convertSrgbToLinear) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
-    // Keep label text unchanged per request
+  updateGammaButtonState(): void {
+    sceneBrightness.updateGammaButtonState(this);
   }
 
   private updateRotationCenterModeButtons(): void {
@@ -1175,34 +1137,7 @@ class PointCloudVisualizer {
   }
 
   private rebuildAllColorAttributesForCurrentGammaSetting(): void {
-    // Update colors for all meshes based on current convertSrgbToLinear flag
-    try {
-      for (let i = 0; i < this.spatialFiles.length && i < this.meshes.length; i++) {
-        const spatialData = this.spatialFiles[i];
-        const mesh = this.meshes[i];
-        if (!mesh || !spatialData) {
-          continue;
-        }
-        const geometry = mesh.geometry;
-        const colorMode = this.individualColorModes[i] || 'assigned';
-
-        this.applyColorModeToGeometry(spatialData, geometry, colorMode);
-
-        if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
-          mesh.material.vertexColors = this.shouldUseVertexColors(spatialData, colorMode);
-          // Point colors are raw 8-bit sRGB now; the gamma toggle flips in-shader
-          // decoding rather than rebuilding the color array.
-          this.setupPointSrgbDecode(mesh.material);
-          mesh.material.userData.srgbDecode = this.pointColorsNeedSrgbDecode(
-            spatialData,
-            colorMode
-          );
-          mesh.material.needsUpdate = true;
-        }
-      }
-    } catch (err) {
-      console.warn('Gamma rebuild failed:', err);
-    }
+    sceneBrightness.rebuildAllColorAttributesForCurrentGammaSetting(this);
   }
 
   private setupResizeObserver(): void {
@@ -2110,7 +2045,7 @@ class PointCloudVisualizer {
     return colorModeUtils.buildOriginalColorArray(this, data);
   }
 
-  private applyColorModeToGeometry(
+  applyColorModeToGeometry(
     data: SpatialData,
     geometry: THREE.BufferGeometry,
     colorMode: string
@@ -2118,7 +2053,7 @@ class PointCloudVisualizer {
     colorModeUtils.applyColorModeToGeometry(this, data, geometry, colorMode);
   }
 
-  private shouldUseVertexColors(data: SpatialData, colorMode: string): boolean {
+  shouldUseVertexColors(data: SpatialData, colorMode: string): boolean {
     return colorModeUtils.shouldUseVertexColors(data, colorMode);
   }
 
