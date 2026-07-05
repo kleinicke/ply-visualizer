@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
 import { applyDepthResultTypedArrays } from './depthResultArrays';
+import { depthSettingsState } from '../state/depthSettings.svelte';
 
 export interface LiveDepthUpdateHost {
   liveDepthUpdateFiles: Set<number>;
@@ -46,8 +47,15 @@ export function setLiveDepthUpdateEnabled(
 ): void {
   if (enabled) {
     host.liveDepthUpdateFiles.add(fileIndex);
+    if (!depthSettingsState.liveUpdateFileIndices.includes(fileIndex)) {
+      depthSettingsState.liveUpdateFileIndices.push(fileIndex);
+    }
   } else {
     host.liveDepthUpdateFiles.delete(fileIndex);
+    const idx = depthSettingsState.liveUpdateFileIndices.indexOf(fileIndex);
+    if (idx !== -1) {
+      depthSettingsState.liveUpdateFileIndices.splice(idx, 1);
+    }
     host.liveDepthUpdateQueued.delete(fileIndex);
     host.liveDepthUpdateVersions.delete(fileIndex);
     const timer = host.liveDepthUpdateTimers.get(fileIndex);
