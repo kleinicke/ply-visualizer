@@ -82,6 +82,8 @@ import * as controlSchemeSwitcher from './controlSchemeSwitcher';
 import * as cameraConvention from './cameraConvention';
 import * as edl from './edl';
 import * as transparency from './transparency';
+import * as plyExport from './plyExport';
+import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -4019,20 +4021,6 @@ class PointCloudVisualizer {
     }
   }
 
-  private formatFileSize(bytes: number | undefined): string {
-    if (!bytes) {
-      return 'Unknown';
-    }
-    const units = ['B', 'KB', 'MB', 'GB'];
-    let size = bytes;
-    let unitIndex = 0;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
-    }
-    return `${size.toFixed(2)} ${units[unitIndex]}`;
-  }
-
   updateFileStats(): void {
     const statsDiv = document.getElementById('file-stats');
     if (!statsDiv) {
@@ -4061,7 +4049,7 @@ class PointCloudVisualizer {
       const data = this.spatialFiles[0];
       const renderingMode = data.faceCount === 0 ? 'Points' : 'Mesh';
       statsDiv.innerHTML = `
-                <div><strong>File Size:</strong> ${this.formatFileSize(data.fileSizeInBytes)}</div>
+                <div><strong>File Size:</strong> ${formatFileSize(data.fileSizeInBytes)}</div>
                 <div><strong>Vertices:</strong> ${data.vertexCount.toLocaleString()}</div>
                 <div><strong>Faces:</strong> ${data.faceCount.toLocaleString()}</div>
                 <div><strong>Format:</strong> ${data.format}</div>
@@ -4090,7 +4078,7 @@ class PointCloudVisualizer {
 
       statsDiv.innerHTML = `
                 <div><strong>Total Objects:</strong> ${totalObjects} (Pointclouds: ${this.spatialFiles.length}, Poses: ${this.poseGroups.length}, Cameras: ${this.cameraGroups.length})</div>
-                <div><strong>Total Size:</strong> ${this.formatFileSize(totalSize)}</div>
+                <div><strong>Total Size:</strong> ${formatFileSize(totalSize)}</div>
                 <div><strong>Total Vertices:</strong> ${totalVertices.toLocaleString()}</div>
                 <div><strong>Total Faces:</strong> ${totalFaces.toLocaleString()}</div>
             `;
@@ -10053,127 +10041,11 @@ class PointCloudVisualizer {
   }
 
   private savePlyFile(fileIndex: number): void {
-    try {
-      if (fileIndex < 0 || fileIndex >= this.spatialFiles.length) {
-        throw new Error('Invalid file index');
-      }
-
-      const spatialData = this.spatialFiles[fileIndex];
-      this.showStatus(`Generating PLY file for ${spatialData.fileName}...`);
-
-      // Generate PLY file content with current state (including transformations and colors)
-      const plyContent = this.generatePlyFileContent(spatialData, fileIndex);
-
-      // Use VS Code save dialog instead of automatic download
-      const defaultFileName = spatialData.fileName || `pointcloud_${fileIndex + 1}.ply`;
-
-      this.vscode.postMessage({
-        type: 'savePlyFile',
-        content: plyContent,
-        defaultFileName: defaultFileName,
-        fileIndex: fileIndex,
-      });
-
-      this.showStatus(`Opening save dialog for ${defaultFileName}...`);
-    } catch (error) {
-      console.error('Error preparing PLY file:', error);
-      this.showError(
-        `Failed to prepare PLY file: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    plyExport.savePlyFile(this, fileIndex);
   }
 
   private generatePlyFileContent(spatialData: SpatialData, fileIndex: number): string {
-    // Get current transformed vertices from the actual geometry
-    const mesh = this.meshes[fileIndex];
-    const geometry = mesh.geometry as THREE.BufferGeometry;
-    const positionAttribute = geometry.getAttribute('position') as THREE.BufferAttribute;
-    const colorAttribute = geometry.getAttribute('color') as THREE.BufferAttribute;
-
-    const vertexCount = positionAttribute.count;
-
-    // PLY header
-    let content = 'ply\n';
-    content += `format ascii 1.0\n`;
-
-    // Add comments including transformation info
-    content += `comment Generated from ${spatialData.fileName || 'point cloud'}\n`;
-    content += `comment Coordinate system: OpenGL (Y-up, Z-backward)\n`;
-    if (spatialData.comments.length > 0) {
-      spatialData.comments.forEach(comment => {
-        content += `comment ${comment}\n`;
-      });
-    }
-
-    // Vertex element definition
-    content += `element vertex ${vertexCount}\n`;
-    content += 'property float x\n';
-    content += 'property float y\n';
-    content += 'property float z\n';
-
-    const hasColors = !!colorAttribute;
-    if (hasColors) {
-      content += 'property uchar red\n';
-      content += 'property uchar green\n';
-      content += 'property uchar blue\n';
-    }
-
-    if (spatialData.hasNormals) {
-      content += 'property float nx\n';
-      content += 'property float ny\n';
-      content += 'property float nz\n';
-    }
-
-    // Face element definition (if any)
-    if (spatialData.faceCount > 0) {
-      content += `element face ${spatialData.faceCount}\n`;
-      content += 'property list uchar int vertex_indices\n';
-    }
-
-    content += 'end_header\n';
-
-    // Point-cloud colors are stored as raw 8-bit sRGB (Uint8); mesh/intensity
-    // colors as Float32 [0,1]. Scale accordingly so export matches what's shown.
-    const colorIsByte =
-      hasColors &&
-      (colorAttribute.array instanceof Uint8Array ||
-        colorAttribute.array instanceof Uint8ClampedArray);
-    const colorScale = colorIsByte ? 1 : 255;
-
-    // Vertex data from current geometry (includes transformations)
-    for (let i = 0; i < vertexCount; i++) {
-      const i3 = i * 3;
-      const x = positionAttribute.array[i3];
-      const y = positionAttribute.array[i3 + 1];
-      const z = positionAttribute.array[i3 + 2];
-
-      content += `${x} ${y} ${z}`;
-
-      if (hasColors) {
-        const r = Math.round(colorAttribute.array[i3] * colorScale);
-        const g = Math.round(colorAttribute.array[i3 + 1] * colorScale);
-        const b = Math.round(colorAttribute.array[i3 + 2] * colorScale);
-        content += ` ${r} ${g} ${b}`;
-      }
-
-      if (spatialData.hasNormals && spatialData.vertices[i]) {
-        const vertex = spatialData.vertices[i];
-        content += ` ${vertex.nx || 0} ${vertex.ny || 0} ${vertex.nz || 0}`;
-      }
-
-      content += '\n';
-    }
-
-    // Face data (if any) - these don't change with transformations
-    spatialData.faces.forEach(face => {
-      content += `${face.indices.length}`;
-      face.indices.forEach(index => {
-        content += ` ${index}`;
-      });
-      content += '\n';
-    });
-
-    return content;
+    return plyExport.generatePlyFileContent(this, spatialData, fileIndex);
   }
 
   // ========== Pose loading ==========
