@@ -2578,7 +2578,13 @@ class PointCloudVisualizer {
       this.pendingLoadLabel = fileName;
       this.pendingLoadDetail = 'Reading file…';
       uiState.loadingVisible = false;
+      // Wrap in capture/restore like every other updateFileList() call site -
+      // otherwise this remount silently discards any depth settings panel
+      // that's open and edited (open state + unsaved field values) the
+      // moment a second file starts loading.
+      const openPanelStates = this.captureDepthPanelStates();
       this.updateFileList();
+      this.restoreDepthPanelStates(openPanelStates);
       return;
     }
 
