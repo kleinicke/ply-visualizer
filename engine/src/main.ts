@@ -81,6 +81,7 @@ import * as colorModeUtils from './colorMode';
 import * as pointSizeScaling from './pointSizeScaling';
 import * as depthPanelState from './depth/panelState';
 import * as sceneBrightness from './sceneBrightness';
+import * as depthDefaultSettings from './depth/defaultSettings';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -2829,7 +2830,7 @@ class PointCloudVisualizer {
     }
   }
 
-  private getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
+  getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
     console.log(`📋 getDepthSettingsFromFileUI(${fileIndex}) called`);
     const cameraModelSelect = document.getElementById(
       `camera-model-${fileIndex}`
@@ -10151,7 +10152,7 @@ class PointCloudVisualizer {
     return !target.classList.contains('live-depth-update');
   }
 
-  private scheduleLiveDepthUpdate(fileIndex: number, delayMs: number = 60): void {
+  scheduleLiveDepthUpdate(fileIndex: number, delayMs: number = 60): void {
     if (!this.liveDepthUpdateFiles.has(fileIndex)) {
       return;
     }
@@ -10512,271 +10513,31 @@ class PointCloudVisualizer {
   }
 
   private updateDefaultButtonState(): void {
-    // Update all "Use as Default" buttons to reflect current state
-    const buttons = document.querySelectorAll('.use-as-default-settings');
-    buttons.forEach((button, index) => {
-      this.updateSingleDefaultButtonState(index);
-    });
+    depthDefaultSettings.updateDefaultButtonState(this);
   }
 
   private updateSingleDefaultButtonState(fileIndex: number): void {
-    console.log(`🔍 updateSingleDefaultButtonState(${fileIndex}) called`);
-    const button = document.querySelector(
-      `.use-as-default-settings[data-file-index="${fileIndex}"]`
-    ) as HTMLButtonElement;
-    if (!button) {
-      return;
-    }
-
-    try {
-      // Get current form values
-      const currentParams = this.getDepthSettingsFromFileUI(fileIndex);
-
-      // Check if current settings match defaults
-      const fxMatch = currentParams.fx === this.defaultDepthSettings.fx;
-      const fyMatch =
-        (currentParams.fy === undefined && this.defaultDepthSettings.fy === undefined) ||
-        currentParams.fy === this.defaultDepthSettings.fy;
-      const cameraMatch = currentParams.cameraModel === this.defaultDepthSettings.cameraModel;
-      const depthMatch = currentParams.depthType === this.defaultDepthSettings.depthType;
-      const conventionMatch = currentParams.convention === this.defaultDepthSettings.convention;
-      const baselineMatch =
-        (currentParams.baseline || undefined) === (this.defaultDepthSettings.baseline || undefined);
-      const depthScaleMatch =
-        (currentParams.depthScale !== undefined ? currentParams.depthScale : 1.0) ===
-        (this.defaultDepthSettings.depthScale !== undefined
-          ? this.defaultDepthSettings.depthScale
-          : 1.0);
-      const depthBiasMatch =
-        (currentParams.depthBias !== undefined ? currentParams.depthBias : 0.0) ===
-        (this.defaultDepthSettings.depthBias !== undefined
-          ? this.defaultDepthSettings.depthBias
-          : 0.0);
-      // Handle scale factor comparison more carefully (only for PNG files)
-      const currentScale = currentParams.pngScaleFactor;
-      const defaultScale = this.defaultDepthSettings.pngScaleFactor;
-      const isPngFile =
-        fileIndex < this.spatialFiles.length &&
-        commentSettings.isPngDerivedFile(this.spatialFiles[fileIndex]);
-      const pngScaleFactorMatch = !isPngFile
-        ? true // For non-PNG files, scale factor is irrelevant
-        : currentScale === undefined && defaultScale === undefined
-          ? true
-          : currentScale !== undefined && defaultScale !== undefined
-            ? currentScale === defaultScale
-            : false;
-
-      console.log(
-        `  fx match: ${fxMatch} (${currentParams.fx} === ${this.defaultDepthSettings.fx})\n  fy match: ${fyMatch} (${currentParams.fy} === ${this.defaultDepthSettings.fy})\n  Camera match: ${cameraMatch} (${currentParams.cameraModel} === ${this.defaultDepthSettings.cameraModel})\n  Depth match: ${depthMatch} (${currentParams.depthType} === ${this.defaultDepthSettings.depthType})\n  Convention match: ${conventionMatch} (${currentParams.convention} === ${this.defaultDepthSettings.convention})\n  Baseline match: ${baselineMatch} (${currentParams.baseline} === ${this.defaultDepthSettings.baseline})\n  Depth scale match: ${depthScaleMatch} (${currentParams.depthScale} === ${this.defaultDepthSettings.depthScale})\n  Depth bias match: ${depthBiasMatch} (${currentParams.depthBias} === ${this.defaultDepthSettings.depthBias})\n  Scale factor match: ${pngScaleFactorMatch} (current: ${currentScale}, default: ${defaultScale}, isPNG: ${isPngFile})`
-      );
-
-      const isDefault =
-        fxMatch &&
-        fyMatch &&
-        cameraMatch &&
-        depthMatch &&
-        conventionMatch &&
-        baselineMatch &&
-        depthScaleMatch &&
-        depthBiasMatch &&
-        pngScaleFactorMatch;
-
-      if (isDefault) {
-        // Current settings are already default - make button blue
-        button.style.background = 'var(--vscode-button-background)';
-        button.style.color = 'var(--vscode-button-foreground)';
-        button.innerHTML = '✓ Current Default';
-      } else {
-        // Current settings differ from default - normal secondary style
-        button.style.background = 'var(--vscode-button-secondaryBackground)';
-        button.style.color = 'var(--vscode-button-secondaryForeground)';
-        button.innerHTML = '⭐ Use as Default';
-      }
-    } catch (error) {
-      // If we can't get form values, just show normal state
-      button.style.background = 'var(--vscode-button-secondaryBackground)';
-      button.style.color = 'var(--vscode-button-secondaryForeground)';
-      button.innerHTML = '⭐ Use as Default';
-    }
+    depthDefaultSettings.updateSingleDefaultButtonState(this, fileIndex);
   }
 
   private async useAsDefaultSettings(fileIndex: number): Promise<void> {
-    try {
-      // Get the current values from the form
-      const currentParams = this.getDepthSettingsFromFileUI(fileIndex);
-
-      // Store as default settings for future files (exclude cx and cy as they are auto-calculated per image)
-      this.defaultDepthSettings = {
-        fx: currentParams.fx,
-        fy: currentParams.fy,
-        cx: this.defaultDepthSettings.cx, // Keep existing cx, don't update from form
-        cy: this.defaultDepthSettings.cy, // Keep existing cy, don't update from form
-        cameraModel: currentParams.cameraModel,
-        depthType: currentParams.depthType,
-        baseline: currentParams.baseline,
-        convention: currentParams.convention || 'opengl',
-        pngScaleFactor: currentParams.pngScaleFactor,
-        depthScale: currentParams.depthScale,
-        depthBias: currentParams.depthBias,
-      };
-
-      // Save to extension global state for persistence across webview instances
-      this.vscode.postMessage({
-        type: 'saveDefaultDepthSettings',
-        settings: this.defaultDepthSettings,
-      });
-
-      // Show confirmation message with more detail
-      const fyInfo = currentParams.fy ? `, fy=${currentParams.fy}` : '';
-      this.showStatus(
-        `✅ Default settings saved: ${currentParams.cameraModel}, fx=${currentParams.fx}${fyInfo}px, ${currentParams.depthType}, ${currentParams.convention}`
-      );
-
-      // Update button state immediately
-      this.updateDefaultButtonState();
-
-      console.log('🎯 Default depth settings updated:', this.defaultDepthSettings);
-    } catch (error) {
-      console.error('Error saving default settings:', error);
-      this.showError(
-        `Failed to save default settings: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await depthDefaultSettings.useAsDefaultSettings(this, fileIndex);
   }
 
   private async resetToDefaultSettings(fileIndex: number): Promise<void> {
-    try {
-      // Get all the form elements
-      const setValue = (elementId: string, value: any) => {
-        const element = document.getElementById(elementId) as HTMLInputElement | HTMLSelectElement;
-        if (element && value !== undefined && value !== null) {
-          element.value = value.toString();
-        }
-      };
-
-      // Only reset fields that have stars (default values)
-      setValue(`camera-model-${fileIndex}`, this.defaultDepthSettings.cameraModel);
-      setValue(`fx-${fileIndex}`, this.defaultDepthSettings.fx);
-
-      // Handle fy field - clear it if default is same as fx, otherwise set the value
-      const fyElement = document.getElementById(`fy-${fileIndex}`) as HTMLInputElement;
-      if (fyElement) {
-        if (
-          this.defaultDepthSettings.fy &&
-          this.defaultDepthSettings.fy !== this.defaultDepthSettings.fx
-        ) {
-          fyElement.value = this.defaultDepthSettings.fy.toString();
-        } else {
-          fyElement.value = ''; // Clear to use "Same as fx"
-        }
-      }
-
-      setValue(`depth-type-${fileIndex}`, this.defaultDepthSettings.depthType);
-      setValue(`baseline-${fileIndex}`, this.defaultDepthSettings.baseline);
-      setValue(`depth-scale-${fileIndex}`, this.defaultDepthSettings.depthScale);
-      setValue(`depth-bias-${fileIndex}`, this.defaultDepthSettings.depthBias);
-      setValue(`convention-${fileIndex}`, this.defaultDepthSettings.convention);
-
-      // Handle PNG scale factor only if it exists
-      const pngScaleElement = document.getElementById(
-        `png-scale-factor-${fileIndex}`
-      ) as HTMLInputElement;
-      if (pngScaleElement && this.defaultDepthSettings.pngScaleFactor) {
-        pngScaleElement.value = this.defaultDepthSettings.pngScaleFactor.toString();
-      }
-
-      // Update button states
-      this.updateSingleDefaultButtonState(fileIndex);
-      this.scheduleLiveDepthUpdate(fileIndex, 0);
-
-      this.showStatus('Reset starred fields to default values');
-    } catch (error) {
-      console.error('Error resetting to default settings:', error);
-      this.showError(
-        `Failed to reset to default settings: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    await depthDefaultSettings.resetToDefaultSettings(this, fileIndex);
   }
 
   private resetMonoParameters(fileIndex: number): void {
-    try {
-      // Reset scale to 1.0 and bias to 0.0
-      const scaleElement = document.getElementById(`depth-scale-${fileIndex}`) as HTMLInputElement;
-      const biasElement = document.getElementById(`depth-bias-${fileIndex}`) as HTMLInputElement;
-
-      if (scaleElement) {
-        scaleElement.value = '1.0';
-      }
-      if (biasElement) {
-        biasElement.value = '0.0';
-      }
-
-      // Update button state since values changed
-      this.updateSingleDefaultButtonState(fileIndex);
-      this.scheduleLiveDepthUpdate(fileIndex, 0);
-
-      this.showStatus('Reset mono parameters to Scale=1.0, Bias=0.0');
-    } catch (error) {
-      console.error('Error resetting mono parameters:', error);
-      this.showError(
-        `Failed to reset mono parameters: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    depthDefaultSettings.resetMonoParameters(this, fileIndex);
   }
 
   private resetDisparityOffset(fileIndex: number): void {
-    try {
-      // Reset disparity offset to 0
-      const offsetElement = document.getElementById(
-        `disparity-offset-${fileIndex}`
-      ) as HTMLInputElement;
-
-      if (offsetElement) {
-        offsetElement.value = '0';
-      }
-
-      this.scheduleLiveDepthUpdate(fileIndex, 0);
-      this.showStatus('Reset disparity offset to 0');
-    } catch (error) {
-      console.error('Error resetting disparity offset:', error);
-      this.showError(
-        `Failed to reset disparity offset: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    depthDefaultSettings.resetDisparityOffset(this, fileIndex);
   }
 
   private resetPrinciplePoint(fileIndex: number): void {
-    try {
-      // Reset cx and cy to auto-calculated center values based on image dimensions
-      const cxElement = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement;
-      const cyElement = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
-
-      // Get image dimensions from stored depth data
-      const depthData = this.fileDepthData.get(fileIndex);
-      if (depthData?.depthDimensions) {
-        const computedCx = (depthData.depthDimensions.width - 1) / 2;
-        const computedCy = (depthData.depthDimensions.height - 1) / 2;
-
-        if (cxElement) {
-          cxElement.value = computedCx.toString();
-        }
-        if (cyElement) {
-          cyElement.value = computedCy.toString();
-        }
-
-        this.scheduleLiveDepthUpdate(fileIndex, 0);
-        this.showStatus(`Reset principle point to center: cx=${computedCx}, cy=${computedCy}`);
-      } else {
-        // This should not happen for depth-derived files, but handle gracefully
-        console.error(`No depth dimensions found for file ${fileIndex}`);
-        this.showError('Cannot reset principle point: image dimensions not available');
-      }
-    } catch (error) {
-      console.error('Error resetting principle point:', error);
-      this.showError(
-        `Failed to reset principle point: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+    depthDefaultSettings.resetPrinciplePoint(this, fileIndex);
   }
 
   private async removeColorImageFromDepth(fileIndex: number): Promise<void> {
