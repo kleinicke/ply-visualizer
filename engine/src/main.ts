@@ -72,6 +72,7 @@ import * as largeFileChunking from './largeFileChunking';
 import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
+import { mountErrorOverlay } from './errorOverlayMount';
 import { filesState } from './state/files.svelte';
 import { viewerState } from './state/viewer.svelte';
 import { formatFileSize } from './utils/format';
@@ -510,6 +511,7 @@ class PointCloudVisualizer {
       this.applyEnvironmentSpecificUI();
       this.setupEventListeners();
       mountSvelteSmokeTest();
+      mountErrorOverlay();
 
       // Setup color image loader callback
       this.colorImageLoader.setStatusCallback((message, type) => {

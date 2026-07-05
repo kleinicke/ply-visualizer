@@ -35,21 +35,8 @@
         <div class="spinner"></div>
         <p>Loading PLY file...</p>
     </div>
-    <div id="error" class="error hidden">
-        <div class="error-header">
-            <h3>Error</h3>
-            <div class="error-buttons">
-                <button id="error-copy" class="error-copy-btn" title="Copy error message">📋</button>
-                <button id="error-close" class="error-close-btn" title="Close error message">✕</button>
-            </div>
-        </div>
-        <p id="error-message" style="
-          user-select: text;
-          -webkit-user-select: text;
-          -moz-user-select: text;
-          -ms-user-select: text;
-        "></p>
-    </div>
+    <!-- ErrorOverlay Svelte component mounts its own #error root here -->
+    <div id="error-mount"></div>
 
     <!-- Welcome Message (when no files are loaded) -->
     <div id="welcome-message" class="welcome-message hidden">

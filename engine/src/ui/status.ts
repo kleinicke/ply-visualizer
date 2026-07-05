@@ -11,69 +11,12 @@ export function showError(message: string): void {
   uiState.errorMessage = message;
   uiState.isErrorVisible = true;
   document.getElementById('loading')?.classList.add('hidden');
-  const errorMsg = document.getElementById('error-message');
-  const errorDiv = document.getElementById('error');
-
-  if (errorMsg) {
-    errorMsg.textContent = message;
-  }
-
-  if (errorDiv) {
-    errorDiv.classList.remove('hidden');
-
-    // Set up close button (only once)
-    const closeBtn = document.getElementById('error-close');
-    if (closeBtn && !closeBtn.hasAttribute('data-listener-added')) {
-      closeBtn.setAttribute('data-listener-added', 'true');
-      closeBtn.addEventListener('click', () => {
-        clearError();
-      });
-    }
-
-    // Set up copy button (only once)
-    const copyBtn = document.getElementById('error-copy');
-    if (copyBtn && !copyBtn.hasAttribute('data-listener-added')) {
-      copyBtn.setAttribute('data-listener-added', 'true');
-      copyBtn.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(message);
-          // Provide visual feedback
-          const originalText = copyBtn.textContent;
-          copyBtn.textContent = '✓';
-          setTimeout(() => {
-            copyBtn.textContent = originalText;
-          }, 1000);
-        } catch (err) {
-          // Fallback for older browsers
-          const textArea = document.createElement('textarea');
-          textArea.value = message;
-          textArea.style.position = 'fixed';
-          textArea.style.opacity = '0';
-          document.body.appendChild(textArea);
-          textArea.select();
-          document.execCommand('copy');
-          document.body.removeChild(textArea);
-
-          // Provide visual feedback
-          const originalText = copyBtn.textContent;
-          copyBtn.textContent = '✓';
-          setTimeout(() => {
-            copyBtn.textContent = originalText;
-          }, 1000);
-        }
-      });
-    }
-  }
-
-  // keep error visible in UI only
+  // ErrorOverlay.svelte (components/ErrorOverlay.svelte) renders uiState
+  // reactively - no DOM manipulation needed here.
 }
 
 export function clearError(): void {
   uiState.isErrorVisible = false;
-  const errorDiv = document.getElementById('error');
-  if (errorDiv) {
-    errorDiv.classList.add('hidden');
-  }
 }
 
 export function showStatus(message: string): void {
