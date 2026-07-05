@@ -81,6 +81,7 @@ import * as calibrationForm from './depth/calibrationForm';
 import * as controlSchemeSwitcher from './controlSchemeSwitcher';
 import * as cameraConvention from './cameraConvention';
 import * as edl from './edl';
+import * as transparency from './transparency';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
@@ -443,66 +444,11 @@ class PointCloudVisualizer {
   }
 
   private toggleTransparency(): void {
-    this.allowTransparency = !this.allowTransparency;
-    console.log(`Transparency ${this.allowTransparency ? 'enabled' : 'disabled'}`);
-
-    // Update UI button state
-    const button = document.getElementById('toggle-transparency');
-    if (button) {
-      button.classList.toggle('active', this.allowTransparency);
-    }
-
-    // Update all existing materials with new transparency settings
-    this.updateAllMaterialsForTransparency();
-
-    // Show status message
-    this.showStatus(
-      `Transparency ${this.allowTransparency ? 'enabled' : 'disabled'}: ${this.allowTransparency ? 'Alpha blending available (may impact performance)' : 'Optimized opaque rendering'}`
-    );
-
-    this.requestRender();
+    transparency.toggleTransparency(this);
   }
 
   private updateAllMaterialsForTransparency(): void {
-    // Update all mesh materials with transparency settings
-    this.meshes.forEach(mesh => {
-      if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
-        const material = mesh.material as THREE.PointsMaterial;
-        // Only toggle blending; keep alphaTest (the round-disc cutout, set in
-        // optimizeForPointCount) so points stay round across transparency toggles.
-        material.transparent = this.allowTransparency;
-        material.needsUpdate = true;
-      }
-    });
-
-    // Update vertex points objects
-    this.vertexPointsObjects.forEach(vertexPoints => {
-      if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
-        const material = vertexPoints.material as THREE.PointsMaterial;
-        // Only toggle blending; keep alphaTest (the round-disc cutout, set in
-        // optimizeForPointCount) so points stay round across transparency toggles.
-        material.transparent = this.allowTransparency;
-        material.needsUpdate = true;
-      }
-    });
-
-    // Update multi-material groups
-    this.multiMaterialGroups.forEach(group => {
-      if (group) {
-        group.traverse(child => {
-          if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
-            const material = child.material as THREE.PointsMaterial;
-            // Keep alphaTest (round-disc cutout); only toggle blending.
-            material.transparent = this.allowTransparency;
-            material.needsUpdate = true;
-          }
-        });
-      }
-    });
-
-    console.log(
-      `Updated transparency for ${this.meshes.length} main meshes, ${this.vertexPointsObjects.length} vertex point objects, and ${this.multiMaterialGroups.length} multi-material groups`
-    );
+    transparency.updateAllMaterialsForTransparency(this);
   }
 
   private toggleScreenSpaceScaling(): void {
