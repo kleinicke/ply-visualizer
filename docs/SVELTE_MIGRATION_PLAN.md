@@ -121,14 +121,39 @@ Landed in 4 commits, same style as the extraction series. Verified at each
 commit: `svelte-check`, both webpack builds (root + engine), the extension Mocha
 suite (59 passing), and the engine Playwright suite (12 passing).
 
-### Phase 2 — Leaf islands (low risk, proves the pattern)
+### Phase 2 — Leaf islands (low risk, proves the pattern) — DONE
 
-Migrate small, self-contained UI first:
+Four islands landed, each as its own component + mount file + store fields, each
+verified with the same four-gate check as Phase 1 (svelte-check, both webpack
+builds, Mocha suite, Playwright suite) before commit:
 
-- status/loading/error overlays (`ui/status.ts`), welcome message
-- performance-stats readout (stop touching DOM from the render loop; write a
-  store value at the existing throttle interval instead)
-- sequence playback bar (`sequencePlayback.ts` DOM parts)
+- `ErrorOverlay.svelte` — `ui/status.ts`'s `showError`/`clearError` just set
+  `uiState.errorMessage`/`isErrorVisible` now; the component owns the copy/close
+  button handlers that used to be manually wired with `data-listener-added`
+  guards.
+- `WelcomeMessage.svelte` — driven by `uiState.showWelcomeMessage`;
+  `updateWelcomeMessageVisibility` just sets the store field.
+- `PerformanceStats.svelte` — `renderStats.ts`'s `updateFPSDisplay` writes
+  `uiState.perfStatsText` at the existing 250ms throttle instead of touching
+  `#performance-stats` directly.
+- `SequenceControls.svelte` — also fixed a pre-existing bug found while
+  migrating: `initializeSequence` tried to unhide a `#sequence-overlay` element
+  that didn't exist in index.html, and the play/pause listener looked for
+  `#seq-play`/`#seq-pause`/`#seq-stop` ids that were never in the markup (which
+  only ever had one `#seq-play-pause` toggle button). The sequence bar was
+  therefore always hidden and its toggle never worked for any user of the "Play
+  Point Cloud Sequence (Wildcard)" command - now fixed via
+  `uiState.sequenceMode`/`sequenceIndex`/`sequenceTotal`/`isSequencePlaying`.
+
+**Deliberately not migrated in Phase 2**: the `#loading` overlay. Unlike the
+other three, it's touched directly from ~10 places across 6 files (`main.ts`,
+`cameraProfile.ts`, `largeFileChunking.ts`, `pose.ts`, `sequencePlayback.ts`,
+`ui/status.ts`), and the call sites are inconsistent - some set the `<p>`
+child's `textContent`, others overwrite the whole overlay div's `textContent`
+(losing the spinner element). Migrating it safely means auditing and pinning
+each call site's exact behavior first, closer to Phase 3's "pin behavior with
+Playwright before touching it" discipline than a leaf-island-sized change. Left
+as a follow-up.
 
 ### Phase 3 — The file list (the payoff)
 
