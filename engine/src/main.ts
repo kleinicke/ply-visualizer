@@ -10,7 +10,6 @@ import {
   CameraParams,
   DepthConversionResult,
 } from './interfaces';
-import { CameraModel, DepthMetadata } from './depth/types';
 import { CustomArcballControls, TurntableControls } from './controls';
 import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
 import { RotationCenterManager, RotationCenterMode } from './RotationCenterManager';
@@ -35,8 +34,6 @@ import {
 } from './fileHandler';
 
 // Depth processing modules
-import { registerDefaultReaders, readDepth } from './depth/DepthRegistry';
-import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
 import { ColorImageLoader } from './colorImageLoader';
 import { PerfTimer, perfLog, setPerfSink } from './utils/perfLog';
 import { createRotationMatrix, parseMatrixInput } from './utils/matrix';
@@ -6363,131 +6360,6 @@ class PointCloudVisualizer {
 
   async promptForCameraParameters(fileName: string): Promise<CameraParams | null> {
     return depthCameraParamsPrompt.promptForCameraParameters(fileName);
-  }
-
-  private async convertDepthToPointCloud(
-    depthData: Uint8Array,
-    fileName: string,
-    cameraParams: CameraParams
-  ): Promise<SpatialData | null> {
-    try {
-      console.log(`🖼️ Converting depth image ${fileName} to point cloud...`);
-      const perf = new PerfTimer('tiff');
-      perf.file(fileName);
-
-      // Register depth readers if not already registered
-      registerDefaultReaders();
-
-      // Read the depth image (format decode: GeoTIFF/PNG/NPY/PFM)
-      const { image, meta } = await readDepth(fileName, depthData.buffer as ArrayBuffer);
-      perf.mark('decode');
-      perf.note('px', `${image.width}x${image.height}`);
-      console.log(`📐 Depth image loaded: ${image.width}x${image.height}, kind: ${meta.kind}`);
-
-      // Determine the depth kind based on user selection
-      const depthKind =
-        cameraParams.depthType === 'euclidean'
-          ? 'depth'
-          : cameraParams.depthType === 'orthogonal'
-            ? 'z'
-            : cameraParams.depthType === 'disparity'
-              ? 'disparity'
-              : cameraParams.depthType === 'inverse_depth'
-                ? 'inverse_depth'
-                : 'depth';
-
-      // Update camera parameters in metadata
-      const updatedMeta: DepthMetadata = {
-        ...meta,
-        fx: cameraParams.fx,
-        fy: cameraParams.fy || cameraParams.fx,
-        cx: cameraParams.cx !== undefined ? cameraParams.cx : (image.width - 1) / 2,
-        cy: cameraParams.cy !== undefined ? cameraParams.cy : (image.height - 1) / 2,
-        cameraModel: cameraParams.cameraModel as CameraModel,
-        kind: depthKind,
-        baseline: cameraParams.baseline ? cameraParams.baseline / 1000 : undefined, // Convert mm to meters
-        disparityOffset: cameraParams.disparityOffset || 0,
-      };
-
-      // Normalize depth values
-      const normalizedImage = normalizeDepth(image, updatedMeta);
-      perf.mark('normalize');
-
-      // Project to point cloud
-      const projectionMeta = {
-        ...updatedMeta,
-        fx: updatedMeta.fx!,
-        cx: updatedMeta.cx!,
-        cy: updatedMeta.cy!,
-        cameraModel: updatedMeta.cameraModel!,
-      };
-      const pointCloudResult = projectToPointCloud(normalizedImage, projectionMeta);
-      perf.mark('project');
-      perf.note('model', updatedMeta.cameraModel || 'pinhole-ideal');
-
-      console.log(`✅ Converted ${pointCloudResult.pointCount} depth pixels to points`);
-
-      // Convert to PLY format
-      const vertices = [];
-      const pointCount = pointCloudResult.pointCount;
-      const colorsAreUint8 = pointCloudResult.colors instanceof Uint8Array;
-
-      for (let i = 0; i < pointCount; i++) {
-        const vertexBase = i * 3;
-        const colorBase = i * 3;
-
-        const vertex: any = {
-          x: pointCloudResult.vertices[vertexBase],
-          y: pointCloudResult.vertices[vertexBase + 1],
-          z: pointCloudResult.vertices[vertexBase + 2],
-        };
-
-        // Add colors if available
-        if (pointCloudResult.colors) {
-          vertex.red = colorsAreUint8
-            ? pointCloudResult.colors[colorBase]
-            : Math.round(pointCloudResult.colors[colorBase] * 255);
-          vertex.green = colorsAreUint8
-            ? pointCloudResult.colors[colorBase + 1]
-            : Math.round(pointCloudResult.colors[colorBase + 1] * 255);
-          vertex.blue = colorsAreUint8
-            ? pointCloudResult.colors[colorBase + 2]
-            : Math.round(pointCloudResult.colors[colorBase + 2] * 255);
-        } else {
-          // Default gray color
-          vertex.red = 128;
-          vertex.green = 128;
-          vertex.blue = 128;
-        }
-
-        vertices.push(vertex);
-      }
-
-      const spatialData: SpatialData = {
-        vertices,
-        faces: [],
-        format: 'ascii',
-        version: '1.0',
-        comments: [`Converted from depth image: ${fileName}`],
-        vertexCount: pointCount,
-        faceCount: 0,
-        hasColors: true,
-        hasNormals: false,
-        fileName,
-        fileIndex: 0,
-      };
-
-      perf.mark('build-vertices');
-      perf.note('verts', pointCount);
-      perf.note('file', fileName);
-      perf.summary();
-
-      console.log(`✅ Created PLY data with ${vertices.length} vertices from depth image`);
-      return spatialData;
-    } catch (error) {
-      console.error(`❌ Error converting depth image ${fileName}:`, error);
-      throw error;
-    }
   }
 
   async triggerDatasetCalibrationLoading(sceneMetadata: any): Promise<void> {
