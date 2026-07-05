@@ -1,5 +1,7 @@
 const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
+const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const svelteConfig = require('./engine/svelte.config.js');
 
 module.exports = [
   // Extension source
@@ -71,7 +73,11 @@ module.exports = [
     },
     devtool: 'nosources-source-map',
     resolve: {
-      extensions: ['.ts', '.js'],
+      extensions: ['.ts', '.js', '.svelte'],
+      // Svelte 5 ships its runtime under package.json "svelte"/"browser" export
+      // conditions; without these, bundlers resolve the SSR build instead.
+      mainFields: ['svelte', 'browser', 'module', 'main'],
+      conditionNames: ['svelte', 'browser', 'import', 'default'],
       alias: {
         // Force single Three.js instance to prevent multiple imports
         three: path.resolve(__dirname, 'node_modules/three'),
@@ -83,6 +89,17 @@ module.exports = [
     },
     module: {
       rules: [
+        {
+          test: /\.svelte$/,
+          use: {
+            loader: 'svelte-loader',
+            options: {
+              compilerOptions: { dev: false },
+              preprocess: svelteConfig.preprocess,
+              emitCss: true,
+            },
+          },
+        },
         {
           test: /\.ts$/,
           exclude: [/node_modules/, /src\/test\/ui/],
@@ -96,7 +113,16 @@ module.exports = [
             },
           ],
         },
+        {
+          test: /\.css$/,
+          use: [MiniCssExtractPlugin.loader, 'css-loader'],
+        },
       ],
     },
+    plugins: [
+      new MiniCssExtractPlugin({
+        filename: 'bundle.css',
+      }),
+    ],
   },
 ];

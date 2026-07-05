@@ -10,12 +10,19 @@
     "start": "webpack serve --mode=development --open",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
-    "test:debug": "playwright test --debug"
+    "test:debug": "playwright test --debug",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@types/three": "^0.185.0",
     "copy-webpack-plugin": "^14.0.0",
+    "css-loader": "^7.1.4",
+    "mini-css-extract-plugin": "^2.10.2",
+    "svelte": "^5.56.4",
+    "svelte-check": "^4.7.1",
+    "svelte-loader": "^3.2.4",
+    "svelte-preprocess": "^6.0.5",
     "ts-loader": "^9.5.7",
     "typescript": "^6.0.3",
     "webpack": "^5.106.2",

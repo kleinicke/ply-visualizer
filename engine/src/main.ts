@@ -71,6 +71,7 @@ import * as colorImageForDepth from './depth/colorImageForDepth';
 import * as largeFileChunking from './largeFileChunking';
 import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
+import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -506,6 +507,7 @@ class PointCloudVisualizer {
       this.initThreeJS();
       this.applyEnvironmentSpecificUI();
       this.setupEventListeners();
+      mountSvelteSmokeTest();
 
       // Setup color image loader callback
       this.colorImageLoader.setStatusCallback((message, type) => {

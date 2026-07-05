@@ -1,5 +1,7 @@
 const path = require('path');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
+const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const svelteConfig = require('./svelte.config.js');
 
 module.exports = {
   mode: 'development',
@@ -10,7 +12,11 @@ module.exports = {
     clean: true,
   },
   resolve: {
-    extensions: ['.ts', '.js'],
+    extensions: ['.ts', '.js', '.svelte'],
+    // Svelte 5 ships its runtime under package.json "svelte"/"browser" export
+    // conditions; without these, bundlers resolve the SSR build instead.
+    mainFields: ['svelte', 'browser', 'module', 'main'],
+    conditionNames: ['svelte', 'browser', 'import', 'default'],
     alias: {
       // Map webview imports to the actual source files
       '../../src/webview': path.resolve(__dirname, '../src/webview'),
@@ -18,6 +24,17 @@ module.exports = {
   },
   module: {
     rules: [
+      {
+        test: /\.svelte$/,
+        use: {
+          loader: 'svelte-loader',
+          options: {
+            compilerOptions: { dev: false },
+            preprocess: svelteConfig.preprocess,
+            emitCss: true,
+          },
+        },
+      },
       {
         test: /\.ts$/,
         use: {
@@ -28,6 +45,10 @@ module.exports = {
         },
         exclude: /node_modules/,
       },
+      {
+        test: /\.css$/,
+        use: [MiniCssExtractPlugin.loader, 'css-loader'],
+      },
     ],
   },
   externals: {
@@ -35,6 +56,9 @@ module.exports = {
     geotiff: 'GeoTIFF',
   },
   plugins: [
+    new MiniCssExtractPlugin({
+      filename: 'bundle.css',
+    }),
     new CopyWebpackPlugin({
       patterns: [
         // 3D Visualizer goes to /3d-visualizer/ path
