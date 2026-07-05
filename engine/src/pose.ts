@@ -48,6 +48,14 @@ export interface PoseHost {
   individualColorModes: string[];
   pointSizes: number[];
   readonly fileColors: readonly [number, number, number][];
+  fileVisibility: boolean[];
+  transformationMatrices: THREE.Matrix4[];
+  applyTransformationMatrix(fileIndex: number): void;
+  updateFileList(): void;
+  updateFileStats(): void;
+  autoFitCameraOnFirstLoad(): void;
+  handleCameraProfile(data: any, fileName: string): void;
+  showError(message: string): void;
 }
 
 export function autoConnectKnn(
@@ -674,4 +682,145 @@ export function applyPoseFilters(host: PoseHost, fileIndex: number): void {
       obj.geometry = newGeo;
     }
   });
+}
+
+export async function handlePoseData(host: PoseHost, message: any): Promise<void> {
+  const fileName: string = message.fileName || 'pose.json';
+  const data = message.data;
+  try {
+    // Check if this is a camera profile JSON
+    if (data && data.cameras && typeof data.cameras === 'object') {
+      host.handleCameraProfile(data, fileName);
+      return;
+    }
+
+    // If Halpe meta with multiple instances, add each instance as a separate pose
+    if (
+      data &&
+      data.meta_info &&
+      Array.isArray(data.instance_info) &&
+      data.instance_info.length > 1
+    ) {
+      for (let i = 0; i < data.instance_info.length; i++) {
+        const single = { ...data, instance_info: [data.instance_info[i]] };
+        const parsedPose = normalizePose(single);
+        const group = buildPoseGroup(host, parsedPose);
+        host.scene.add(group);
+        host.poseGroups.push(group);
+        host.poseJoints.push(parsedPose.joints as any);
+        host.poseEdges.push(parsedPose.edges);
+        const invalidJoints = parsedPose.joints.filter((j: any) => j.valid !== true).length;
+        const extras = (data as any).__poseExtras || {};
+        // Extract scores/uncertainties when available
+        let jointScores: number[] | undefined;
+        let jointUnc: Array<[number, number, number]> | undefined;
+        try {
+          const instInfo = data.instance_info[i];
+          if (instInfo?.keypoint_scores && Array.isArray(instInfo.keypoint_scores)) {
+            jointScores = instInfo.keypoint_scores.slice();
+          }
+          if (instInfo?.keypoint_uncertainties && Array.isArray(instInfo.keypoint_uncertainties)) {
+            jointUnc = instInfo.keypoint_uncertainties.slice();
+          }
+        } catch {}
+        host.poseMeta.push({
+          jointCount: parsedPose.joints.length,
+          edgeCount: parsedPose.edges.length,
+          fileName: `${fileName} [${i + 1}/${data.instance_info.length}]`,
+          invalidJoints,
+          jointColors: extras.jointColors || [],
+          linkColors: extras.linkColors || [],
+          keypointNames: extras.keypointNames ? Object.values(extras.keypointNames) : undefined,
+          skeletonLinks: extras.skeletonLinks || [],
+          jointScores,
+          jointUncertainties: jointUnc,
+        });
+        const unifiedIndex = host.spatialFiles.length + (host.poseGroups.length - 1);
+        host.fileVisibility[unifiedIndex] = true;
+        host.pointSizes[unifiedIndex] = 0.02; // 20x larger for 2cm joint radius
+        host.individualColorModes[unifiedIndex] = 'assigned';
+        // Per-pose defaults
+        host.poseUseDatasetColors[unifiedIndex] = false;
+        host.poseShowLabels[unifiedIndex] = false;
+        host.poseScaleByScore[unifiedIndex] = false;
+        host.poseScaleByUncertainty[unifiedIndex] = false;
+        host.poseConvention[unifiedIndex] = 'opengl';
+        host.transformationMatrices.push(new THREE.Matrix4());
+        host.applyTransformationMatrix(unifiedIndex);
+      }
+      host.updateFileList();
+      host.updateFileStats();
+      host.autoFitCameraOnFirstLoad();
+      // Hide loading overlay for pose JSONs
+      document.getElementById('loading')?.classList.add('hidden');
+    } else {
+      const parsedPose = normalizePose(data);
+      const group = buildPoseGroup(host, parsedPose);
+      host.scene.add(group);
+      // Track pose group and meta
+      host.poseGroups.push(group);
+      host.poseJoints.push(parsedPose.joints as any);
+      host.poseEdges.push(parsedPose.edges);
+      const invalidJoints = parsedPose.joints.filter((j: any) => j.valid !== true).length;
+      const extras = (data as any).__poseExtras || {};
+      // Extract scores/uncertainties for non-Halpe formats
+      let jointScores: number[] | undefined;
+      let jointUnc: Array<[number, number, number]> | undefined;
+      try {
+        // Human3.6M-style confidence
+        if (Array.isArray((data as any).confidence)) {
+          jointScores = (data as any).confidence.slice();
+        }
+        // OpenPose-like: people[].pose_keypoints_3d/_2d
+        if (Array.isArray((data as any).people) && (data as any).people.length > 0) {
+          const p = (data as any).people[0];
+          const arr = p.pose_keypoints_3d || p.pose_keypoints_2d;
+          if (Array.isArray(arr)) {
+            const step = p.pose_keypoints_3d ? 4 : 3; // x,y,z,(c) or x,y,(c)
+            const scores: number[] = [];
+            for (let idx = 0; idx + (step - 1) < arr.length; idx += step) {
+              const cRaw = step === 4 ? arr[idx + 3] : arr[idx + 2];
+              const c = Number(cRaw);
+              scores.push(isFinite(c) ? c : 0);
+            }
+            jointScores = scores;
+          }
+        }
+      } catch {}
+      host.poseMeta.push({
+        jointCount: parsedPose.joints.length,
+        edgeCount: parsedPose.edges.length,
+        fileName,
+        invalidJoints,
+        jointColors: extras.jointColors || [],
+        linkColors: extras.linkColors || [],
+        keypointNames: extras.keypointNames ? Object.values(extras.keypointNames) : undefined,
+        skeletonLinks: extras.skeletonLinks || [],
+        jointScores,
+        jointUncertainties: jointUnc,
+      });
+      // Initialize UI state slots aligned after spatialFiles
+      const unifiedIndex = host.spatialFiles.length + (host.poseGroups.length - 1);
+      host.fileVisibility[unifiedIndex] = true;
+      host.pointSizes[unifiedIndex] = 0.02; // 20x larger for 2cm joint radius
+      host.individualColorModes[unifiedIndex] = 'assigned';
+      // Per-pose defaults
+      host.poseUseDatasetColors[unifiedIndex] = false;
+      host.poseShowLabels[unifiedIndex] = false;
+      host.poseScaleByScore[unifiedIndex] = false;
+      host.poseScaleByUncertainty[unifiedIndex] = false;
+      host.poseConvention[unifiedIndex] = 'opengl';
+      // Initialize transformation matrix for this pose
+      host.transformationMatrices.push(new THREE.Matrix4());
+      host.applyTransformationMatrix(unifiedIndex);
+      // Update UI
+      host.updateFileList();
+      host.updateFileStats();
+      host.autoFitCameraOnFirstLoad();
+      // Hide loading overlay for pose JSONs
+      document.getElementById('loading')?.classList.add('hidden');
+    }
+  } catch (err) {
+    host.showError('Pose parse error: ' + (err instanceof Error ? err.message : String(err)));
+  }
 }
