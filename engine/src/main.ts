@@ -74,6 +74,7 @@ import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { mountErrorOverlay } from './errorOverlayMount';
+import { mountLoadingOverlay } from './loadingOverlayMount';
 import { mountTabNav } from './tabNavMount';
 import { mountWelcomeMessage } from './welcomeMessageMount';
 import { mountPerformanceStats } from './performanceStatsMount';
@@ -83,6 +84,7 @@ import { mountStats } from './statsMount';
 import { mountControlsTab } from './controlsTabMount';
 import { filesState } from './state/files.svelte';
 import { viewerState } from './state/viewer.svelte';
+import { uiState } from './state/ui.svelte';
 import { flushSync } from 'svelte';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
@@ -452,6 +454,7 @@ class PointCloudVisualizer {
       this.setupEventListeners();
       mountSvelteSmokeTest();
       mountErrorOverlay();
+      mountLoadingOverlay();
       mountPerformanceStats();
       mountTabNav(this);
 
@@ -944,21 +947,15 @@ class PointCloudVisualizer {
   }
 
   private showLoading(show: boolean, message?: string): void {
-    const loadingEl = document.getElementById('loading');
-    if (!loadingEl) {
-      return;
-    }
-
     this.isFileLoading = show;
 
     if (show) {
-      loadingEl.classList.remove('hidden');
-      const msgEl = loadingEl.querySelector('p');
-      if (msgEl && message) {
-        msgEl.textContent = message;
+      uiState.loadingVisible = true;
+      if (message) {
+        uiState.loadingTitle = message;
       }
     } else {
-      loadingEl.classList.add('hidden');
+      uiState.loadingVisible = false;
       // Clear any in-progress Files-list loading row.
       if (this.pendingLoadLabel !== null) {
         this.pendingLoadLabel = null;
@@ -2213,9 +2210,7 @@ class PointCloudVisualizer {
       // Ensure color consistency with current gamma setting
       this.rebuildAllColorAttributesForCurrentGammaSetting();
 
-      try {
-        (document.getElementById('loading') as HTMLElement)?.classList.add('hidden');
-      } catch {}
+      uiState.loadingVisible = false;
       return;
     }
 
@@ -2582,22 +2577,16 @@ class PointCloudVisualizer {
     if (this.spatialFiles.length > 0) {
       this.pendingLoadLabel = fileName;
       this.pendingLoadDetail = 'Reading file…';
-      document.getElementById('loading')?.classList.add('hidden');
+      uiState.loadingVisible = false;
       this.updateFileList();
       return;
     }
 
     // First/empty load: nothing to interact with yet, so a centered spinner is
     // appropriate. Show the real filename + a live phase line.
-    const loadingEl = document.getElementById('loading');
-    if (loadingEl) {
-      loadingEl.classList.remove('hidden');
-      loadingEl.innerHTML = `
-                <div class="spinner"></div>
-                <p>Loading ${fileName}…</p>
-                <p class="loading-detail">Reading file…</p>
-            `;
-    }
+    uiState.loadingVisible = true;
+    uiState.loadingTitle = `Loading ${fileName}…`;
+    uiState.loadingDetail = 'Reading file…';
 
     // Show the main UI elements immediately (before file loads)
     const infoPanelEl = document.getElementById('info-panel');
@@ -2632,10 +2621,7 @@ class PointCloudVisualizer {
       }
       return;
     }
-    const detailEl = document.querySelector('#loading .loading-detail');
-    if (detailEl) {
-      detailEl.textContent = text;
-    }
+    uiState.loadingDetail = text;
   }
 
   private updateFileStatsImmediate(fileName: string): void {

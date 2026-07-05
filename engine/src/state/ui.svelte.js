@@ -15,4 +15,10 @@ export const uiState = $state({
   sequenceIndex: 0,
   sequenceTotal: 0,
   isSequencePlaying: false,
+  // Centered first-load spinner overlay. Matches index.html's static markup
+  // default (hidden, "Loading PLY file..." title, no detail line) - see
+  // showLoading()/showImmediateLoading()/setLoadingDetail() in main.ts.
+  loadingVisible: false,
+  loadingTitle: 'Loading PLY file...',
+  loadingDetail: /** @type {string | null} */ (null),
 });

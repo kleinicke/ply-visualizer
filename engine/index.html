@@ -31,10 +31,8 @@
         accept=".ply,.xyz,.xyzn,.xyzrgb,.obj,.stl,.pcd,.pts,.off,.gltf,.glb,.tif,.tiff,.pfm,.npy,.npz,.png,.json"
         style="display: none" />
 
-    <div id="loading" class="loading hidden">
-        <div class="spinner"></div>
-        <p>Loading PLY file...</p>
-    </div>
+    <!-- LoadingOverlay Svelte component mounts its own #loading root here -->
+    <div id="loading-mount"></div>
     <!-- ErrorOverlay Svelte component mounts its own #error root here -->
     <div id="error-mount"></div>
 

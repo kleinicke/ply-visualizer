@@ -10,7 +10,7 @@ export function showError(message: string): void {
   } catch (_) {}
   uiState.errorMessage = message;
   uiState.isErrorVisible = true;
-  document.getElementById('loading')?.classList.add('hidden');
+  uiState.loadingVisible = false;
   // ErrorOverlay.svelte (components/ErrorOverlay.svelte) renders uiState
   // reactively - no DOM manipulation needed here.
 }
