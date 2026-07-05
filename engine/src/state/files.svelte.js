@@ -11,10 +11,16 @@
 // types for consumers like main.ts, but tsc only honors JSDoc types in files
 // it treats as JS (allowJs/checkJs) - hence the .js extension here.
 export const filesState = $state(
-  /** @type {{ visibility: boolean[]; collapsed: boolean[]; colorModes: string[]; pointSizes: number[] }} */ ({
+  /** @type {{ visibility: boolean[]; collapsed: boolean[]; colorModes: string[]; pointSizes: number[]; renderTick: number }} */ ({
     visibility: [],
     collapsed: [],
     colorModes: [],
     pointSizes: [],
+    // Phase 3 (FileList.svelte): bumped by main.ts's updateFileList() instead
+    // of rebuilding an HTML string. FileList.svelte reads this to know when
+    // to re-read host.spatialFiles/poseGroups/cameraGroups from scratch,
+    // mirroring the old "regenerate everything on every call" model without
+    // needing every underlying field to be individually reactive.
+    renderTick: 0,
   })
 );
