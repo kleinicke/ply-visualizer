@@ -1,6 +1,6 @@
 # Svelte Migration Plan
 
-Status: approved, Phase 0 in progress (2026-07-05)
+Status: approved, Phase 0 and Phase 1 complete (2026-07-05)
 
 ## Priority
 
@@ -48,8 +48,20 @@ the engine core.
 
 ## Key decisions
 
-1. **Svelte 5 with runes**, TypeScript. State in `.svelte.ts` modules so plain
-   TS engine code can read/write the same reactive objects.
+1. **Svelte 5 with runes**, TypeScript. State in `.svelte.ts`/`.svelte.js`
+   modules so plain TS engine code can read/write the same reactive objects.
+   **Caveat discovered in Phase 1**: `svelte-loader` compiles these modules via
+   Svelte's `compileModule`, which as of svelte@5.56 parses with TypeScript
+   support hard-disabled (no `as` casts, type annotations, or interfaces) -
+   unrelated to `.svelte` component files, which go through `svelte.compile` +
+   `svelte-preprocess` and support TS normally. Store files therefore need to be
+   plain JS (`.svelte.js`) with JSDoc `@type` casts for typed consumers, and
+   `allowJs`/`checkJs` added to both `engine/tsconfig.json` and
+   `engine/src/tsconfig.json` so tsc/svelte-check honor those JSDoc types (tsc
+   only reads JSDoc types in files it treats as JS, not `.ts` files - a `.ts`
+   extension with JSDoc-only casts silently infers `never[]` for empty arrays).
+   Revisit if a future svelte-loader/svelte release adds TS support to
+   `compileModule`.
 2. **Keep webpack** initially (`svelte-loader` ≥3.2 supports Svelte 5, plus
    `emitCss` + `mini-css-extract-plugin`). Changes one variable at a time; a
    Vite switch can happen later as an independent step if dev-server speed
@@ -80,26 +92,32 @@ the engine core.
   Playwright, then F5 into the Extension Development Host and confirm CSP is
   clean. **This F5 check is the go/no-go gate for the whole plan.**
 
-### Phase 1 — State layer (the real prerequisite)
+### Phase 1 — State layer (the real prerequisite) — DONE
 
-Create `engine/src/state/` with runes-based stores:
+`engine/src/state/` now has four runes-based stores (all `.svelte.js`, see the
+TypeScript caveat under Key decisions above), write-through wired at every
+existing mutation site with no behavior change:
 
-- `files.svelte.ts` — file entries: name, shortPath, vertex/face counts,
-  visibility, color mode, collapsed state, per-file point size / render mode.
-  Replaces the parallel arrays in main.ts (`fileVisibility`,
-  `individualColorModes`, `fileItemsCollapsed`, `fileColors`, …).
-- `depthSettings.svelte.ts` — per-file depth/calibration settings. This inverts
-  `depth/panelState.ts`: settings live in the store, the DOM is just a view.
-  `getDepthSettingsFromFileUI` reads the store instead of inputs.
-- `ui.svelte.ts` — loading/error/status, active tab, sequence-mode state, FPS
-  display value.
-- `viewer.svelte.ts` — control scheme, camera convention, EDL params,
-  brightness, gamma, lighting mode, rotation-center behavior.
+- `files.svelte.js` — mirrors the parallel per-file arrays in main.ts
+  (`fileVisibility`, `individualColorModes`, `fileItemsCollapsed`,
+  `pointSizes`), write-through at every set/push/splice site (~15 call sites).
+- `ui.svelte.js` — status/error message, error visibility, active tab; wired
+  into `ui/status.ts`'s `showError`/`clearError`/`showStatus`/`switchTab`.
+- `viewer.svelte.js` — control scheme, camera convention, EDL
+  enabled/strength/radius, brightness, background brightness, lighting mode;
+  wired into `controlSchemeSwitcher.ts`, `cameraConvention.ts`, `edl.ts`, and
+  main.ts's slider/button handlers.
+- `depthSettings.svelte.js` — starts with `liveUpdateFileIndices`, the one piece
+  of depth-panel state that already lives in JS memory (`liveDepthUpdateFiles`)
+  rather than being scraped from DOM inputs on demand; wired into
+  `depth/liveDepthUpdate.ts`'s `setLiveDepthUpdateEnabled`. The full per-file
+  fx/fy/cx/cy/distortion field inversion of `depth/panelState.ts` (DOM becomes a
+  view instead of the source of truth) is Phase 3 work -
+  `getDepthSettingsFromFileUI` still reads DOM inputs directly today.
 
-Engine code mutates stores directly (plain property writes — runes make that
-reactive). During Phase 1, keep the old DOM code running: write-through both
-paths, so nothing changes visually yet. This phase can land in many small
-commits, same style as the recent extraction series.
+Landed in 4 commits, same style as the extraction series. Verified at each
+commit: `svelte-check`, both webpack builds (root + engine), the extension Mocha
+suite (59 passing), and the engine Playwright suite (12 passing).
 
 ### Phase 2 — Leaf islands (low risk, proves the pattern)
 
