@@ -84,6 +84,7 @@ import * as edl from './edl';
 import * as transparency from './transparency';
 import * as plyExport from './plyExport';
 import * as rotationCenterFeature from './rotationCenterFeature';
+import * as axesFeature from './axesFeature';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -334,7 +335,7 @@ class PointCloudVisualizer {
   private liveDepthUpdateTimers = new Map<number, number>();
   private liveDepthUpdateVersions = new Map<number, number>();
   useLinearColorSpace: boolean = true; // Default: toggle is inactive; renderer still outputs sRGB
-  private axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
+  axesPermanentlyVisible: boolean = false; // Persistent axes visibility toggle
   // Color space handling: always output sRGB, optionally convert source sRGB colors to linear before shading
 
   // Default depth settings for new files
@@ -764,63 +765,7 @@ class PointCloudVisualizer {
   }
 
   private setupAxesVisibility(): void {
-    // Track interaction state for axes visibility
-    let axesHideTimeout: ReturnType<typeof setTimeout> | null = null;
-
-    const showAxes = () => {
-      const axesGroup = (this as any).axesGroup;
-      const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
-
-      if (axesGroup && !axesPermanentlyVisible) {
-        axesGroup.visible = true;
-
-        if (axesHideTimeout) {
-          clearTimeout(axesHideTimeout);
-          axesHideTimeout = null;
-        }
-      }
-    };
-
-    const hideAxesAfterDelay = () => {
-      if (axesHideTimeout) {
-        clearTimeout(axesHideTimeout);
-      }
-
-      axesHideTimeout = setTimeout(() => {
-        const axesGroup = (this as any).axesGroup;
-        const axesPermanentlyVisible = (this as any).axesPermanentlyVisible;
-
-        if (axesGroup && !axesPermanentlyVisible) {
-          axesGroup.visible = false;
-          this.requestRender();
-        }
-        axesHideTimeout = null;
-      }, 500);
-    };
-
-    // Add event listeners for axes visibility based on control type
-    if (
-      this.controlType === 'trackball' ||
-      this.controlType === 'inverse-trackball' ||
-      this.controlType === 'arcball' ||
-      this.controlType === 'cloudcompare'
-    ) {
-      (this.controls as any).addEventListener('start', showAxes);
-      (this.controls as any).addEventListener('end', hideAxesAfterDelay);
-      (this.controls as any).addEventListener('change', () => this.requestRender());
-    } else {
-      const orbitControls = this.controls as OrbitControls;
-      orbitControls.addEventListener('start', showAxes);
-      orbitControls.addEventListener('end', hideAxesAfterDelay);
-      orbitControls.addEventListener('change', () => this.requestRender());
-    }
-
-    // debug: axes visibility init
-
-    // Initialize button state
-    this.updateAxesButtonState();
-    // Only mark rotation-origin button active if target is exactly at origin right now
-    this.updateRotationOriginButtonState();
+    axesFeature.setupAxesVisibility(this);
   }
 
   private setupInvertedControls(): void {
@@ -894,93 +839,11 @@ class PointCloudVisualizer {
   }
 
   private addAxesHelper(): void {
-    // Create a group to hold axes and labels
-    const axesGroup = new THREE.Group();
-
-    // Create coordinate axes helper (X=red, Y=green, Z=blue)
-    const axesHelper = new THREE.AxesHelper(1); // Size of 1 unit
-    axesGroup.add(axesHelper);
-
-    // Create text labels for each axis
-    this.createAxisLabels(axesGroup);
-
-    // Scale the axes based on the scene size once we have objects
-    // For now, use a reasonable default size
-    axesGroup.scale.setScalar(0.5);
-
-    // Position at the rotation center (initially at origin)
-    axesGroup.position.copy(this.controls.target);
-
-    // Initially hide the axes
-    axesGroup.visible = false;
-
-    // Add to scene
-    this.scene.add(axesGroup);
-
-    // Store reference for updating position and size
-    (this as any).axesGroup = axesGroup;
-    (this as any).axesHelper = axesHelper;
+    axesFeature.addAxesHelper(this);
   }
 
   private createAxisLabels(axesGroup: THREE.Group): void {
-    // Function to create text texture (creates new canvas for each call)
-    const createTextTexture = (text: string, color: string) => {
-      // Create separate canvas for each texture
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d')!;
-      canvas.width = 256;
-      canvas.height = 256;
-
-      // Set text properties
-      context.font = 'Bold 48px Arial';
-      context.fillStyle = color;
-      context.textAlign = 'center';
-      context.textBaseline = 'middle';
-
-      // Draw text
-      context.fillText(text, canvas.width / 2, canvas.height / 2);
-
-      // Create texture
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.needsUpdate = true;
-      return texture;
-    };
-
-    // Create materials for each axis label (each gets its own canvas)
-    const xTexture = createTextTexture('X', '#ff0000');
-    const yTexture = createTextTexture('Y', '#00ff00');
-    const zTexture = createTextTexture('Z', '#0080ff');
-
-    const labelMaterial = (texture: THREE.Texture) =>
-      new THREE.SpriteMaterial({
-        map: texture,
-        transparent: true,
-        alphaTest: 0.1,
-      });
-
-    // Create sprite labels
-    const xLabel = new THREE.Sprite(labelMaterial(xTexture));
-    const yLabel = new THREE.Sprite(labelMaterial(yTexture));
-    const zLabel = new THREE.Sprite(labelMaterial(zTexture));
-
-    // Scale labels appropriately
-    const labelScale = 0.3;
-    xLabel.scale.set(labelScale, labelScale, labelScale);
-    yLabel.scale.set(labelScale, labelScale, labelScale);
-    zLabel.scale.set(labelScale, labelScale, labelScale);
-
-    // Position labels at the end of each axis (will be scaled with the group)
-    xLabel.position.set(1.2, 0, 0); // X-axis end
-    yLabel.position.set(0, 1.2, 0); // Y-axis end
-    zLabel.position.set(0, 0, 1.2); // Z-axis end
-
-    // Add labels to the group
-    axesGroup.add(xLabel);
-    axesGroup.add(yLabel);
-    axesGroup.add(zLabel);
-
-    // Store references for potential updates
-    (this as any).axisLabels = { x: xLabel, y: yLabel, z: zLabel };
+    axesFeature.createAxisLabels(this, axesGroup);
   }
 
   private initSceneLighting(): void {
@@ -2820,21 +2683,7 @@ class PointCloudVisualizer {
   }
 
   private toggleAxesVisibility(): void {
-    const axesGroup = (this as any).axesGroup;
-    if (!axesGroup) {
-      return;
-    }
-
-    // Flip persistent visibility flag
-    this.axesPermanentlyVisible = !this.axesPermanentlyVisible;
-
-    // Apply visibility immediately
-    axesGroup.visible = this.axesPermanentlyVisible;
-
-    // When permanently visible, keep axes shown regardless of idle timeout in setupAxesVisibility
-    // When turned off, allow setupAxesVisibility handlers to hide them after interactions
-
-    this.requestRender();
+    axesFeature.toggleAxesVisibility(this);
   }
 
   private toggleNormalsVisibility(): void {
@@ -2942,88 +2791,28 @@ class PointCloudVisualizer {
     });
   }
 
-  private updateAxesButtonState(): void {
-    const toggleBtn = document.getElementById('toggle-axes');
-    if (!toggleBtn) {
-      return;
-    }
-    // Active (blue) when axes are permanently visible
-    if (this.axesPermanentlyVisible) {
-      toggleBtn.classList.add('active');
-      toggleBtn.innerHTML = 'Show Axes <span class="button-shortcut">A</span>';
-    } else {
-      toggleBtn.classList.remove('active');
-      toggleBtn.innerHTML = 'Show Axes <span class="button-shortcut">A</span>';
-    }
+  updateAxesButtonState(): void {
+    axesFeature.updateAxesButtonState(this);
   }
 
-  private updateRotationOriginButtonState(): void {
+  updateRotationOriginButtonState(): void {
     rotationCenterFeature.updateRotationOriginButtonState(this);
   }
 
   private setUpVector(upVector: THREE.Vector3): void {
-    // debug
-
-    // Normalize the up vector
-    upVector.normalize();
-
-    // Set the camera's up vector
-    this.camera.up.copy(upVector);
-
-    // Force the camera to look at the current target with the new up vector
-    this.camera.lookAt(this.controls.target);
-
-    // Update the controls (works for both TrackballControls and OrbitControls)
-    this.controls.update();
-
-    // Show feedback
-    this.showUpVectorFeedback(upVector);
-
-    // Update axes helper to match the new up vector
-    this.updateAxesForUpVector(upVector);
-
-    // Show visual indicator
-    this.showUpVectorIndicator(upVector);
+    axesFeature.setUpVector(this, upVector);
   }
 
-  private showUpVectorFeedback(upVector: THREE.Vector3): void {
-    const axisName =
-      upVector.x === 1 ? 'X' : upVector.y === 1 ? 'Y' : upVector.z === 1 ? 'Z' : 'Custom';
-    // debug
+  showUpVectorFeedback(upVector: THREE.Vector3): void {
+    axesFeature.showUpVectorFeedback(this, upVector);
   }
 
-  private updateAxesForUpVector(upVector: THREE.Vector3): void {
-    // Update the axes helper orientation to match the new up vector
-    const axesGroup = (this as any).axesGroup;
-    if (axesGroup) {
-      // Simple approach: just update the axes to reflect the current coordinate system
-      // debug
-    }
+  updateAxesForUpVector(upVector: THREE.Vector3): void {
+    axesFeature.updateAxesForUpVector(this, upVector);
   }
 
-  private showUpVectorIndicator(upVector: THREE.Vector3): void {
-    // Create a temporary arrow indicator showing the up direction
-    const origin = new THREE.Vector3(0, 0, 0);
-    const direction = upVector.clone();
-    const length = 2;
-    const color = 0xffff00; // Yellow
-
-    const arrowHelper = new THREE.ArrowHelper(
-      direction,
-      origin,
-      length,
-      color,
-      length * 0.2,
-      length * 0.1
-    );
-    this.scene.add(arrowHelper);
-
-    // Remove after 2 seconds
-    setTimeout(() => {
-      this.scene.remove(arrowHelper);
-      arrowHelper.dispose();
-      this.requestRender();
-    }, 2000);
+  showUpVectorIndicator(upVector: THREE.Vector3): void {
+    axesFeature.showUpVectorIndicator(this, upVector);
   }
 
   private showKeyboardShortcuts(): void {
