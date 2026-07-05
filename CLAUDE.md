@@ -86,6 +86,14 @@ that is shared between both targets. The `src/` directory contains only VS
 Code-specific integration code (commands, custom editor registration, webview
 wiring) - it should stay thin and delegate to `engine/src/`.
 
+**Svelte migration in progress**: The webview UI panel layer (file list,
+settings panels, dialogs) is being migrated to Svelte 5, in-place, one panel at
+a time — see [`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md)
+for the full plan, rationale, and phase breakdown. Every phase's exit criterion
+includes an F5 Extension Development Host check, because the extension must keep
+working perfectly throughout — the standalone page is a faster iteration
+surface, not the target to optimize for.
+
 ### Project Structure
 
 ```
@@ -95,7 +103,7 @@ wiring) - it should stay thin and delegate to `engine/src/`.
 │   └── *Parser.ts          # Lightweight parser wrappers for extension host
 ├── engine/                  # Shared visualization engine + standalone page host
 │   ├── src/                # Core visualization engine (shared code)
-│   │   ├── main.ts         # Main 3D visualization engine (~14,500 lines - TOO BIG!)
+│   │   ├── main.ts         # Main 3D visualization engine (~6,300 lines, shrinking - see Svelte plan)
 │   │   ├── fileHandler.ts  # Shared file handling logic (USE THIS!)
 │   │   ├── controls.ts     # Camera control systems (USE THIS!)
 │   │   ├── interfaces.ts   # Shared type definitions
@@ -146,7 +154,7 @@ This architecture enables:
 
 **Webview (Browser Context)**
 
-- `engine/src/main.ts` - Main visualization engine (~9000+ lines)
+- `engine/src/main.ts` - Main visualization engine (~6,300 lines, shrinking)
 - `engine/src/depth/` - Depth processing pipeline:
   - `DepthRegistry.ts` - Format detection and reader selection
   - `DepthProjector.ts` - 3D projection with camera models (pinhole/fisheye)
@@ -280,8 +288,18 @@ supporting:
 
 ### Preventing Code Bloat in main.ts
 
-**IMPORTANT**: `engine/src/main.ts` is currently **15,576 lines (603KB)** - one
-of the largest files in the project. To prevent further growth:
+**IMPORTANT**: `engine/src/main.ts` was **15,576 lines (603KB)** and is now down
+to **~6,300 lines** after an extraction pass (see git history on
+`claude/library-refactor-svelte-a0nnim` for the ~30 commits that did this, each
+one moving a cohesive cluster of methods into its own module behind a `XyzHost`
+interface + thin delegating wrapper, verified with `tsc --noEmit` +
+`npm run compile` + the full test suite at every step). What's left is
+concentrated in a few large, DOM-heavy chunks (`updateFileList`,
+`setupEventListeners`, `setupMessageHandler`) that are **intentionally not**
+being extracted further with this pattern — see
+[`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md) for why (they
+get rewritten as Svelte components, not relocated as plain-TS modules) and for
+the actual plan going forward. To prevent further growth in the meantime:
 
 **DO:**
 
@@ -380,12 +398,18 @@ private showTransformDialog() {
 
 ### Proposed Future Structure (Target State)
 
-**Goal**: Reduce main.ts from 15,576 lines to ~2,000 lines by extracting into
-modules:
+The original goal here was "reduce main.ts to ~2,000 lines by extracting
+everything into plain-TS modules." That goal is **superseded** by the Svelte
+migration plan below — the remaining bulk in main.ts is DOM-manipulation code
+(HTML-string building, `addEventListener` wiring) that gets **rewritten as
+Svelte components**, not relocated as plain-TS modules behind a Host interface.
+Extracting it first with the old pattern would be thrown-away work. See
+[`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md) for the full
+phased plan. Current structure:
 
 ```
 engine/src/
-├── main.ts                    # Coordinator only (~2,000 lines target)
+├── main.ts                    # Coordinator - shrinking, UI parts move to Svelte components (not plain-TS modules)
 ├── fileHandler.ts             # File detection/handling (EXISTS - use it!)
 ├── controls.ts                # Camera controls (EXISTS - use it!)
 ├── interfaces.ts              # Type definitions (EXISTS)
@@ -406,14 +430,24 @@ engine/src/
 │   ├── darkModern.ts
 │   └── ...
 │
-├── ui/                        # UI generators (STARTED)
-│   ├── dialogs.ts            # Modal shell + dialog HTML templates (EXISTS)
-│   ├── fileList.ts           # File list rendering (proposed)
-│   ├── cameraPanel.ts        # Camera controls panel (proposed)
-│   ├── statsPanel.ts         # Statistics display (proposed)
-│   └── transformUI.ts        # Transformation dialogs (proposed)
+├── ui/                        # UI generators (EXISTS - dialogs.ts is the modal shell)
+│   └── dialogs.ts            # Modal shell + dialog HTML templates (EXISTS)
+│                              # Do NOT add fileList.ts/cameraPanel.ts/statsPanel.ts here -
+│                              # those become Svelte components per the migration plan.
 │
-├── visualization/             # 3D rendering (PROPOSED - future refactor)
+├── state/                     # Svelte runes stores (PROPOSED - Svelte migration Phase 1)
+│   ├── files.svelte.ts        # File entries: visibility, color mode, per-file settings
+│   ├── depthSettings.svelte.ts# Per-file depth/calibration settings (replaces DOM scraping)
+│   ├── ui.svelte.ts           # Loading/error/status, active tab, sequence-mode state
+│   └── viewer.svelte.ts       # Control scheme, camera convention, EDL, brightness, gamma
+│
+├── components/                 # Svelte components (PROPOSED - Svelte migration Phases 2-5)
+│   ├── FileList.svelte
+│   ├── FileItem.svelte
+│   ├── DepthSettingsPanel.svelte
+│   └── ...
+│
+├── visualization/             # 3D rendering (PROPOSED - independent of Svelte, can proceed in parallel)
 │   ├── SceneManager.ts       # Scene setup/management
 │   ├── MeshBuilder.ts        # Mesh creation
 │   ├── PointCloudRenderer.ts # Point cloud rendering
@@ -428,14 +462,24 @@ engine/src/
 
 **Migration Strategy:**
 
-- ✅ **Phase 1** (Now): Stop adding to main.ts, use existing modules
-- ⏳ **Phase 2** (Future): Extract UI generation to `ui/` modules
-- ⏳ **Phase 3** (Future): Extract rendering logic to `visualization/` modules
-- ⏳ **Phase 4** (Future): Extract utilities to `utils/` modules
+- ✅ **main.ts extraction pass** (Done): ~30 commits moved cohesive,
+  non-UI-string-building logic (parsers glue, depth pipeline, pose/camera math,
+  transform dialogs, binary data handlers, etc.) out of main.ts into modules.
+  main.ts went from 15,576 → ~6,300 lines this way.
+- ⏳ **Svelte Phase 0** (Now): Tooling — add Svelte to the webview webpack build
+  only.
+- ⏳ **Svelte Phase 1**: State layer (`state/` stores) — the real prerequisite.
+- ⏳ **Svelte Phases 2-6**: Leaf islands → file list → controls/camera/info tabs
+  → dialogs → consolidate shell. Full detail in
+  [`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md).
+- ⏳ **Independent, in parallel**: Extract rendering logic to `visualization/`
+  modules (plain TS, not Svelte — this is the other side of the store boundary).
 
 **Note**: Don't attempt big-bang refactoring! Previous attempts (5+ branches)
 failed. Instead, follow "strangler fig" pattern - new code goes in modules, old
-code stays until naturally updated.
+code stays until naturally updated. The Svelte migration follows the same
+philosophy: index.html keeps its shell, each panel becomes an island mounted
+into its existing container, one at a time.
 
 ## Important Development Notes
 
