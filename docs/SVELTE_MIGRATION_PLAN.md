@@ -1,6 +1,8 @@
 # Svelte Migration Plan
 
-Status: approved, Phases 0-3 complete, Phase 4 next (2026-07-05)
+Status: approved, Phases 0-6 complete (2026-07-05). See "Deferred follow-ups"
+near the end for the two items intentionally left out (loading overlay,
+calibrationForm.ts DOM-scrape inversion) and why.
 
 ## Priority
 
@@ -197,24 +199,65 @@ because `captureDepthPanelStates()`/`restoreDepthPanelStates()` already exist as
 the codebase's answer to that exact problem, and duplicating that fix via
 Svelte's diffing would have created two competing mechanisms for the same thing.
 
-### Phase 4 — Controls / Camera / Info tabs
+### Phase 4 — Controls / Camera / Info tabs — DONE
 
-- Mostly static button grids → thin components dispatching engine commands;
-  active-state highlighting comes free from `viewer.svelte.ts`.
-- `updateFileStats()` → `Stats.svelte` reading the files store.
+`ControlsTabTop.svelte`/`ControlsTabBottom.svelte` (button grids),
+`CameraControlsPanel.svelte` (FOV + position/rotation/target readout, replacing
+transformationMatrix.ts's patch-vs-rebuild branching), and `Stats.svelte`
+(`updateFileStats()` → 2-line store bump). Active-state highlighting reads
+directly from `viewer.svelte.js` fields Phases 1-2 already wired through; a few
+toggles with no prior store field (axes/cameras visibility, gamma,
+rotation-center mode, screen-space scaling, transparency) use local
+component-level mirrors updated on click instead, since main.ts's own fields for
+these aren't reactive. The Theme section stays static HTML, deliberately not
+folded in - `setupThemeSwitcher()` wires its listener before
+`PointCloudVisualizer` exists, so mounting it inside a Phase-4-mounted component
+would race that setup and silently lose the listener. Added
+`controls-camera-tabs.spec.ts`.
 
-### Phase 5 — Dialogs
+### Phase 5 — Dialogs — DONE
 
-- `transformDialogs.ts`, `depthCameraParamsPrompt.ts`, `calibrationForm.ts`,
-  `ui/dialogs.ts` modal shell → `Dialog.svelte` + per-dialog components. These
-  are the heaviest remaining DOM-string code outside main.ts.
+`transformDialogs.ts` and `depthCameraParamsPrompt.ts`'s raw
+`document.createElement`/innerHTML modal building, plus `ui/dialogs.ts`'s
+`createModalDialog` shell, became `Modal.svelte` (shared overlay/box/
+Escape/backdrop-click) + `VectorInputDialog.svelte` (translation/quaternion/
+angle-axis - one generic component, they only differ in title/label/help
+text/expected value count) + `CameraVectorDialog.svelte` (camera position/
+rotation/rotation-center - textarea + constraint-radio + reset button) +
+`DepthCameraParamsDialog.svelte` (the fx/fy/cx/cy/depth-type/camera-model form,
+pinned by `file-list-interactions.spec.ts`'s depth-settings test). Each mounts
+on demand via Svelte's `mount()`/`unmount()`, matching the original one-shot
+show/resolve/close lifecycle rather than a persistently- mounted component.
+`ui/dialogs.ts` now only has `escapeHtml`/`addTooltipsToTruncatedFilenames`.
 
-### Phase 6 — Consolidate shell
+**Deliberately left untouched**: `depth/calibrationForm.ts` isn't a modal
+dialog - it's DOM-populate logic for the calibration section that Phase 3's
+`CalibrationSection.svelte`/`DepthSettingsPanel.svelte` already render with the
+same ids, so it already worked unchanged and needed no Phase 5 work. Added
+`transform-dialogs-check.spec.ts`.
 
-- Replace the static panel markup in `index.html` with one `<App />` mount;
-  index.html shrinks to canvas + script tags + analytics. The provider's regex
-  rewrites keep working because the tags it touches remain.
-- Delete dead CSS from `media/style.css` for markup that no longer exists.
+### Phase 6 — Consolidate shell — DONE
+
+`TabNav.svelte` replaced the last static, interactive shell piece (the
+`.tab-navigation` button row), reading `uiState.activeTab` for active-state
+highlighting instead of `switchTab()`'s manual `classList` queries. Found and
+fixed a real bug in the process: `uiState.activeTab`'s initial value was
+`'controls'`, but the actual default tab is `'files'` - harmless before since
+nothing read the field reactively, but would have highlighted the wrong button
+on every page load once `TabNav.svelte` started reading it. Deleted dead CSS
+(`.sequence-overlay`/`.seq-row`/`.seq-wildcard`/`.seq-btn`) left over from
+before the Phase 2 `SequenceControls.svelte` rewrite.
+
+**A single all-encompassing `<App />` mount replacing every remaining static
+element in index.html was not pursued** - it hits the same Theme-section timing
+constraint as Phase 4 (see above), and the `#loading` overlay is still
+deliberately deferred per Phase 2's notes (inconsistent DOM-mutation call sites
+across 6 files need auditing/pinning first, closer to a Phase-3-style effort
+than a leaf conversion). `index.html` is substantially smaller than at Phase 0
+start, but not literally just "canvas + script tags" - the remaining static
+pieces (hidden file input, `#loading`, Theme section, static shortcut lists) are
+either out of scope or deliberately deferred, documented above and in Phase 2's
+notes. Added `tabnav-default-check.spec.ts` and `theme-selector-check.spec.ts`.
 
 ### Per-phase exit criteria
 
@@ -236,6 +279,26 @@ Svelte's diffing would have created two competing mechanisms for the same thing.
   inputs in the depth panel don't lose focus mid-edit under live update.
 - **Playwright selectors**: tests select by id/class; keep the same ids on
   migrated components to avoid rewriting tests during migration.
+
+## Deferred follow-ups
+
+Two things were deliberately left out of Phases 0-6, both already noted inline
+where they came up:
+
+1. **The `#loading` overlay** (Phase 2). Touched directly from ~10 call sites
+   across `main.ts`, `cameraProfile.ts`, `largeFileChunking.ts`, `pose.ts`,
+   `sequencePlayback.ts`, `ui/status.ts`, with inconsistent mutation styles
+   (some set the `<p>` child's `textContent`, others overwrite the whole overlay
+   div's `textContent`, losing the spinner element). Needs the same "pin
+   behavior with Playwright first" discipline Phase 3 used before it's safe to
+   touch.
+2. **`depth/panelState.ts`/`depth/calibrationForm.ts`'s DOM-scrape
+   architecture** (Phase 3 scope decision). `getDepthSettingsFromFileUI` still
+   reads form inputs by id at commit time rather than a reactive store. Phase 3
+   deliberately didn't invert this because the mechanical win (declarative
+   rendering replacing `innerHTML` + manual `addEventListener`) didn't require
+   it - every id/class stayed the same, so this code kept working unchanged.
+   Revisit only if a future feature needs true field-level reactivity here.
 
 ## Other refactoring worth doing (independent of Svelte)
 
