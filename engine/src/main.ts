@@ -73,6 +73,7 @@ import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { filesState } from './state/files.svelte';
+import { viewerState } from './state/viewer.svelte';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
@@ -2002,6 +2003,7 @@ class PointCloudVisualizer {
     if (toggleUnlitPlyBtn) {
       toggleUnlitPlyBtn.addEventListener('click', () => {
         this.lightingMode = 'unlit';
+        viewerState.lightingMode = 'unlit';
         this.useUnlitPly = true;
         this.useFlatLighting = false;
         this.rebuildAllPlyMaterials();
@@ -2016,6 +2018,7 @@ class PointCloudVisualizer {
     if (normalLightingBtn) {
       normalLightingBtn.addEventListener('click', () => {
         this.lightingMode = 'normal';
+        viewerState.lightingMode = 'normal';
         this.useFlatLighting = false;
         this.useUnlitPly = false;
         this.rebuildAllPlyMaterials();
@@ -2028,6 +2031,7 @@ class PointCloudVisualizer {
     if (flatLightingBtn) {
       flatLightingBtn.addEventListener('click', () => {
         this.lightingMode = 'flat';
+        viewerState.lightingMode = 'flat';
         this.useFlatLighting = true;
         this.useUnlitPly = false;
         this.rebuildAllPlyMaterials();
@@ -2050,6 +2054,7 @@ class PointCloudVisualizer {
       edlStrengthSlider.addEventListener('input', () => {
         const val = parseFloat(edlStrengthSlider.value);
         this.edlStrength = val;
+        viewerState.edlStrength = val;
         if (this.edlPass) {
           this.edlPass.edlStrength = val;
         }
@@ -2065,6 +2070,7 @@ class PointCloudVisualizer {
       edlRadiusSlider.addEventListener('input', () => {
         const val = parseFloat(edlRadiusSlider.value);
         this.edlRadius = val;
+        viewerState.edlRadius = val;
         if (this.edlPass) {
           this.edlPass.edlRadius = val;
         }
@@ -2111,6 +2117,7 @@ class PointCloudVisualizer {
       brightnessSlider.addEventListener('input', () => {
         const val = parseFloat(brightnessSlider.value);
         this.brightnessStops = Number.isFinite(val) ? val : 0;
+        viewerState.brightnessStops = this.brightnessStops;
         if (brightnessValue) {
           brightnessValue.textContent = this.brightnessStops.toFixed(1);
         }
@@ -2131,6 +2138,7 @@ class PointCloudVisualizer {
       backgroundSlider.addEventListener('input', () => {
         const val = parseFloat(backgroundSlider.value);
         this.backgroundBrightness = Number.isFinite(val) ? val : 13;
+        viewerState.backgroundBrightness = this.backgroundBrightness;
         if (backgroundValue) {
           backgroundValue.textContent = this.getBackgroundBrightnessLabel();
         }

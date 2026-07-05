@@ -1,3 +1,5 @@
+import { viewerState } from './state/viewer.svelte';
+
 export type ControlType = 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare';
 
 export interface ControlSchemeHost {
@@ -56,6 +58,7 @@ export function switchToArcballControls(host: ControlSchemeHost): void {
 }
 
 export function updateControlStatus(host: ControlSchemeHost): void {
+  viewerState.controlScheme = host.controlType;
   const status = host.controlType.toUpperCase();
   console.log(`📊 Camera Controls: ${status}`);
 

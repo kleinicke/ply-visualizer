@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { EDLPass } from './postprocessing/EDLPass';
+import { viewerState } from './state/viewer.svelte';
 
 export interface EDLHost {
   renderer: THREE.WebGLRenderer;
@@ -45,6 +46,7 @@ export function initEDLComposer(host: EDLHost): void {
  */
 export function toggleEDL(host: EDLHost): void {
   host.edlEnabled = !host.edlEnabled;
+  viewerState.edlEnabled = host.edlEnabled;
   updateEDLButtonState(host);
   updateEDLSettingsVisibility(host);
   host.requestRender();

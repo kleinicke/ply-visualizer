@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { viewerState } from './state/viewer.svelte';
 
 export interface CameraConventionHost {
   camera: THREE.PerspectiveCamera;
@@ -80,6 +81,7 @@ export function setOpenGLCameraConvention(host: CameraConventionHost): void {
 }
 
 export function updateAxesForCameraConvention(host: object, convention: 'opencv' | 'opengl'): void {
+  viewerState.cameraConvention = convention;
   // Update the axes helper orientation to match the camera convention
   const axesGroup = (host as any).axesGroup;
   if (axesGroup) {
