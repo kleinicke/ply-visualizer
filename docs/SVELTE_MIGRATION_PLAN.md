@@ -1,6 +1,6 @@
 # Svelte Migration Plan
 
-Status: approved, Phases 0-2 complete, Phase 3 in progress (2026-07-05)
+Status: approved, Phases 0-3 complete, Phase 4 next (2026-07-05)
 
 ## Priority
 
@@ -155,18 +155,47 @@ each call site's exact behavior first, closer to Phase 3's "pin behavior with
 Playwright before touching it" discipline than a leaf-island-sized change. Left
 as a follow-up.
 
-### Phase 3 — The file list (the payoff)
+### Phase 3 — The file list (the payoff) — DONE
 
-- `FileList.svelte`, `FileItem.svelte`, `DepthSettingsPanel.svelte`,
-  `CalibrationSection.svelte`, `TransformSection.svelte`.
-- Deletes the ~1,600-line `updateFileList()` block and its 70 listener hookups;
-  every `this.updateFileList()` call site becomes a store mutation that's
-  already happening anyway.
-- Depth "Live update" flow: component commits a settings change → calls the
-  existing `liveDepthUpdate` pipeline. The pipeline no longer scrapes inputs.
-- Write Playwright coverage for file-list interactions **before** this phase
-  (toggle visibility, remove file, collapse, change color mode, edit depth
-  setting) so behavior is pinned.
+Landed as planned: `FileList.svelte`, `FileItem.svelte`,
+`DepthSettingsPanel.svelte`, `CalibrationSection.svelte`,
+`TransformSection.svelte`. Playwright pinning coverage
+(`file-list-interactions.spec.ts`) landed first, per plan.
+
+`updateFileList()` is now three lines: bump `state/files.svelte.js`'s
+`renderTick`, `flushSync()`, then the three trailing button-state sync calls
+that still query the DOM directly (`updatePointsNormalsButtonStates`,
+`updateUniversalRenderButtonStates`, `updateDefaultButtonState` - unchanged, out
+of scope for this phase). Every `this.updateFileList()` call site elsewhere in
+the codebase (main.ts, cameraProfile.ts, pose.ts, sequencePlayback.ts,
+colorImageForDepth.ts, formatDataHandlers.ts) needed no changes - they all just
+call the same method.
+
+**Deliberate scope decision, differs from the original plan text above**: depth
+"Live update" did _not_ get inverted to "component commits, pipeline reads the
+store." `depth/panelState.ts`'s `getDepthSettingsFromFileUI` still scrapes DOM
+inputs by id at commit time, and `depth/defaultSettings.ts` /
+`depth/calibrationForm.ts` / `depth/liveDepthUpdate.ts` still read/write those
+same DOM elements directly. This was intentional: every one of those modules
+already treats "the DOM is the source of truth, read via `getElementById` at the
+moment of commit" as its architecture, and the Svelte components render with the
+_same_ ids/classes as the old HTML strings - so none of that DOM-scraping code
+needed to change at all. Fully inverting it (store-first, DOM-as-view) would
+have meant redesigning `CameraParams` state management across four modules for
+no behavioral gain; the mechanical win (declarative rendering + bindings
+replacing innerHTML + 70 manual `addEventListener` calls) was captured without
+it. Revisit only if a future phase needs true field-level reactivity here.
+
+**Full-remount model**: `FileList.svelte` wraps its content in
+`{#key filesState.renderTick}`, forcing every `FileItem` (and nested
+`DepthSettingsPanel`/`TransformSection`) to fully unmount/remount on every
+`updateFileList()` call - deliberately matching the old "regenerate everything
+from an HTML string" behavior, including resetting collapsed/section-open local
+state each time. This was a considered choice over Svelte's normal keyed-diffing
+(which would have _improved_ behavior by preserving open panels across rebuilds)
+because `captureDepthPanelStates()`/`restoreDepthPanelStates()` already exist as
+the codebase's answer to that exact problem, and duplicating that fix via
+Svelte's diffing would have created two competing mechanisms for the same thing.
 
 ### Phase 4 — Controls / Camera / Info tabs
 
