@@ -1,0 +1,38 @@
+{
+  "name": "ply-visualizer-engine",
+  "version": "1.0.0",
+  "description": "Shared visualization engine (parsers, renderer, controls) plus its standalone web host",
+  "packageManager": "pnpm@10.32.1",
+  "main": "src/main.ts",
+  "scripts": {
+    "build": "webpack --mode=production",
+    "dev": "webpack serve --mode=development",
+    "start": "webpack serve --mode=development --open",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@types/three": "^0.185.0",
+    "copy-webpack-plugin": "^14.0.0",
+    "css-loader": "^7.1.4",
+    "mini-css-extract-plugin": "^2.10.2",
+    "svelte": "^5.56.4",
+    "svelte-check": "^4.7.1",
+    "svelte-loader": "^3.2.4",
+    "svelte-preprocess": "^6.0.5",
+    "ts-loader": "^9.5.7",
+    "typescript": "^6.0.3",
+    "webpack": "^5.106.2",
+    "webpack-cli": "^7.0.2",
+    "webpack-dev-server": "^5.2.3"
+  },
+  "dependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "js-yaml": "^4.1.1",
+    "pako": "^2.1.0",
+    "three": "^0.185.0"
+  }
+}

@@ -12,12 +12,12 @@
     "types": ["node", "vscode"],
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*", "website/src/parsers/**/*", "website/src/interfaces.ts"],
+  "include": ["src/**/*", "engine/src/parsers/**/*", "engine/src/interfaces.ts"],
   "exclude": [
     "node_modules",
     ".vscode-test",
     "ui-tests",
-    "website/tests",
-    "website/playwright.config.ts"
+    "engine/tests",
+    "engine/playwright.config.ts"
   ]
 }

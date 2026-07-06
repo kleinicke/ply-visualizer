@@ -1,5 +1,7 @@
 const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
+const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const svelteConfig = require('./engine/svelte.config.js');
 
 module.exports = [
   // Extension source
@@ -43,7 +45,7 @@ module.exports = [
     resolve: {
       extensions: ['.ts', '.js'],
       alias: {
-        '@website': path.resolve(__dirname, 'website/src'),
+        '@engine': path.resolve(__dirname, 'engine/src'),
       },
     },
     module: {
@@ -64,14 +66,18 @@ module.exports = [
   {
     target: 'web',
     mode: 'production',
-    entry: './website/src/main.ts',
+    entry: './engine/src/main.ts',
     output: {
       path: path.resolve(__dirname, 'out', 'webview'),
       filename: 'main.js',
     },
     devtool: 'nosources-source-map',
     resolve: {
-      extensions: ['.ts', '.js'],
+      extensions: ['.ts', '.js', '.svelte'],
+      // Svelte 5 ships its runtime under package.json "svelte"/"browser" export
+      // conditions; without these, bundlers resolve the SSR build instead.
+      mainFields: ['svelte', 'browser', 'module', 'main'],
+      conditionNames: ['svelte', 'browser', 'import', 'default'],
       alias: {
         // Force single Three.js instance to prevent multiple imports
         three: path.resolve(__dirname, 'node_modules/three'),
@@ -84,19 +90,41 @@ module.exports = [
     module: {
       rules: [
         {
+          // Matches both `.svelte` components and `.svelte.ts`/`.svelte.js`
+          // rune-only state modules (Phase 1's engine/src/state/* stores).
+          test: /\.svelte(\.[jt]s)?$/,
+          use: {
+            loader: 'svelte-loader',
+            options: {
+              compilerOptions: { dev: false },
+              preprocess: svelteConfig.preprocess,
+              emitCss: true,
+            },
+          },
+        },
+        {
           test: /\.ts$/,
-          exclude: [/node_modules/, /src\/test\/ui/],
+          exclude: [/node_modules/, /src\/test\/ui/, /\.svelte\.ts$/],
           use: [
             {
               loader: 'ts-loader',
               options: {
-                configFile: 'website/src/tsconfig.json',
-                compiler: path.resolve(__dirname, 'website/node_modules/typescript'),
+                configFile: 'engine/src/tsconfig.json',
+                compiler: path.resolve(__dirname, 'engine/node_modules/typescript'),
               },
             },
           ],
         },
+        {
+          test: /\.css$/,
+          use: [MiniCssExtractPlugin.loader, 'css-loader'],
+        },
       ],
     },
+    plugins: [
+      new MiniCssExtractPlugin({
+        filename: 'bundle.css',
+      }),
+    ],
   },
 ];

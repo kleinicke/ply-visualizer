@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link href="media/style.css" rel="stylesheet" />
+    <title>3D Point Cloud Visualizer</title>
+    <script async src="https://analytics.re4vive.com/js/pa-GabvR7klxXIEzqdnoWcJw.js"></script>
+    <script>
+        window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+        plausible.init()
+    </script>
+    <style>
+        /* Ensure solid background */
+        html,
+        body {
+            background-color: var(--vscode-editor-background);
+            color: var(--vscode-editor-foreground);
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Hidden file input for browser file loading -->
+    <input type="file" id="hiddenFileInput" multiple
+        accept=".ply,.xyz,.xyzn,.xyzrgb,.obj,.stl,.pcd,.pts,.off,.gltf,.glb,.tif,.tiff,.pfm,.npy,.npz,.png,.json"
+        style="display: none" />
+
+    <!-- LoadingOverlay Svelte component mounts its own #loading root here -->
+    <div id="loading-mount"></div>
+    <!-- ErrorOverlay Svelte component mounts its own #error root here -->
+    <div id="error-mount"></div>
+
+    <!-- WelcomeMessage Svelte component mounts its own #welcome-message root here -->
+    <div id="welcome-message-mount"></div>
+
+    <!-- Main UI Panel -->
+    <div id="main-ui-panel" class="main-ui-panel">
+        <!-- TabNav Svelte component mounts its own .tab-navigation root here -->
+        <div id="tab-nav-mount"></div>
+
+        <!-- Tab Content -->
+        <div class="tab-content">
+            <!-- Files Tab -->
+            <div id="files-tab" class="tab-panel active">
+                <div class="panel-section">
+                    <div style="
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 8px;
+              ">
+                        <h4 style="margin: 0">File Management</h4>
+                        <!-- PerformanceStats Svelte component mounts its own #performance-stats root here -->
+                        <div id="performance-stats-mount"></div>
+                    </div>
+                    <div class="file-controls">
+                        <button id="add-file" class="primary-button"
+                            title="Supported 3D File Formats: ply, xyz(n/rgb), pcd, pts, obj, stl, off, gltf, glb.&#10;Supported Depth images formats that are converted to 3D: tif, png, pfm, npy and npz.">
+                            + Add Point Cloud
+                        </button>
+                    </div>
+                    <div id="file-list"></div>
+                </div>
+            </div>
+
+            <!-- Camera Tab -->
+            <div id="camera-tab" class="tab-panel">
+                <div class="panel-section">
+                    <h4>Camera Settings</h4>
+                    <div id="camera-controls-panel"></div>
+                </div>
+            </div>
+
+            <!-- Controls Tab -->
+            <div id="controls-tab" class="tab-panel">
+                <!-- ControlsTabTop Svelte component mounts here (everything before Theme) -->
+                <div id="controls-tab-top-mount"></div>
+                <div id="theme-section" class="panel-section">
+                    <h4>Theme</h4>
+                    <div class="control-group">
+                        <label for="theme-selector">Color Theme:</label>
+                        <select id="theme-selector" class="control-input">
+                            <option value="dark-modern" selected>Dark Modern</option>
+                            <option value="light-modern">Light Modern</option>
+                        </select>
+                    </div>
+                </div>
+                <!-- ControlsTabBottom Svelte component mounts here (Performance section) -->
+                <div id="controls-tab-bottom-mount"></div>
+            </div>
+
+            <!-- Info Tab -->
+            <div id="info-tab" class="tab-panel">
+                <div class="panel-section">
+                    <h4>Statistics</h4>
+                    <!-- Stats Svelte component mounts here -->
+                    <div id="file-stats-mount"></div>
+                </div>
+                <div class="panel-section">
+                    <h4>Important Shortcuts</h4>
+                    <div class="shortcuts-list">
+                        <div class="shortcut-item" style="
+                  background-color: rgba(255, 193, 7, 0.1);
+                  padding: 6px;
+                  margin-bottom: 4px;
+                  border-radius: 3px;
+                  border-left: 3px solid #ffc107;
+                ">
+                            <span class="shortcut-key">Shift + <br />
+                                Double-click</span>
+                            <span class="shortcut-desc">Measure distance to rotation center</span>
+                        </div>
+                        <div class="shortcut-item" style="
+                  background-color: rgba(255, 193, 7, 0.1);
+                  padding: 6px;
+                  margin-bottom: 4px;
+                  border-radius: 3px;
+                  border-left: 3px solid #ffc107;
+                ">
+                            <span class="shortcut-key">W</span>
+                            <span class="shortcut-desc">Set rotation center to world origin</span>
+                        </div>
+                        <div class="shortcut-item" style="
+                  background-color: rgba(255, 193, 7, 0.1);
+                  padding: 6px;
+                  margin-bottom: 4px;
+                  border-radius: 3px;
+                  border-left: 3px solid #ffc107;
+                ">
+                            <span class="shortcut-key">G</span>
+                            <span class="shortcut-desc">Toggle gamma correction <br />(makes point clouds
+                                brighter)</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-section">
+                    <h4>All Keyboard Shortcuts</h4>
+                    <div class="shortcuts-list">
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">Double-click</span>
+                            <span class="shortcut-desc">Set rotation center</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">Shift + Click</span>
+                            <span class="shortcut-desc">Solo point cloud</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">Mouse wheel</span>
+                            <span class="shortcut-desc">Zoom</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">Drag</span>
+                            <span class="shortcut-desc">Rotate/Pan</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">F</span>
+                            <span class="shortcut-desc">Fit to view</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">R</span>
+                            <span class="shortcut-desc">Reset camera</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">A</span>
+                            <span class="shortcut-desc">Toggle axes</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">C</span>
+                            <span class="shortcut-desc">OpenCV convention (Y down)</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">B</span>
+                            <span class="shortcut-desc">OpenGL convention (Y up)</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">T</span>
+                            <span class="shortcut-desc">Trackball controls</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">O</span>
+                            <span class="shortcut-desc">Orbit controls</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">I</span>
+                            <span class="shortcut-desc">Inverse trackball</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">K</span>
+                            <span class="shortcut-desc">Arcball controls</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">S</span>
+                            <span class="shortcut-desc">Screen-space scaling</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <span class="shortcut-key">E</span>
+                            <span class="shortcut-desc">Toggle Eye Dome Lighting</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Control buttons at bottom -->
+        <div class="bottom-controls">
+            <!-- SequenceControls Svelte component mounts its own #sequence-controls root here -->
+            <div id="sequence-controls-mount"></div>
+        </div>
+    </div>
+    <div id="viewer-container">
+        <canvas id="three-canvas"></canvas>
+        <!-- Navigation buttons at bottom right -->
+        <div class="bottom-right-nav">
+            <a href="about/" class="nav-button">About</a>
+            <a href="impressum.html" class="nav-button">Impressum</a>
+            <a href="datenschutz.html" class="nav-button">Datenschutz</a>
+        </div>
+    </div>
+
+    <script src="media/geotiff.min.js"></script>
+    <script src="media/wasm/tiff_wasm.js"></script>
+    <script>
+      // Default WASM binary location for the standalone website. The VS Code
+      // extension overrides this with a nonced inline script pointing at the
+      // webview-resource URI (see pointCloudEditorProvider.getHtmlForWebview).
+      window.__GEOTIFF_URL__ = window.__GEOTIFF_URL__ || 'media/geotiff.min.js';
+      window.__TIFF_WASM_GLUE_URL__ = window.__TIFF_WASM_GLUE_URL__ || 'media/wasm/tiff_wasm.js';
+      window.__TIFF_WASM_URL__ = window.__TIFF_WASM_URL__ || 'media/wasm/tiff_wasm_bg.wasm';
+    </script>
+    <script src="bundle.js"></script>
+</body>
+
+</html>

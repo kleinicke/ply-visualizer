@@ -54,10 +54,12 @@ npx lint-staged         # Run linting on staged files (via git hooks)
 
 **For Core Functionality Changes** (parsers, visualization, controls):
 
-1. Work in `website/src/` directory - this is the shared codebase
-2. Test standalone website: `cd website && npm run dev` (if available)
-3. Test VS Code extension: Press **F5** to launch Extension Development Host
-4. Changes in `website/src/` automatically affect both targets
+1. Work in `engine/src/` directory - this is the shared codebase
+2. Fast feedback loop: `cd engine && npm run dev` (or `npm test` for
+   Playwright) - no need to launch VS Code for engine-only logic
+3. Before shipping, verify in the real target: Press **F5** to launch Extension
+   Development Host
+4. Changes in `engine/src/` automatically affect both targets
 
 **For VS Code-Specific Features** (commands, menus, file associations):
 
@@ -67,28 +69,46 @@ npx lint-staged         # Run linting on staged files (via git hooks)
 
 ## Architecture Overview
 
-This project implements a **dual-target architecture** supporting both a
-standalone website and a VS Code extension:
+**The VS Code extension is the primary product.** This project is one shared
+visualization engine (`engine/src/`) with two thin hosts:
 
-1. **Standalone Website** (`website/` folder) - Can run independently at
-   https://f-kleinicke.de
-2. **VS Code Extension** - Integrates the same core functionality into VS Code
+1. **VS Code Extension** (`src/` folder) - the main target; integrates the
+   engine into a custom editor via a webview
+2. **Standalone page** (`engine/` folder, deployed at https://f-kleinicke.de)
+   - a thin harness around the same engine bundle. It is not a second product to
+     feature-match the extension; its value is (a) a public demo/embed and (b) a
+     much faster test surface than the VS Code host - Playwright against a
+     browser page skips launching Electron/VS Code entirely.
 
-**Key Architectural Principle**: The `website/src/` directory contains all core
+**Key Architectural Principle**: The `engine/src/` directory contains all core
 visualization functionality (parsers, renderers, controls, depth processing)
 that is shared between both targets. The `src/` directory contains only VS
-Code-specific integration code.
+Code-specific integration code (commands, custom editor registration, webview
+wiring) - it should stay thin and delegate to `engine/src/`.
+
+**Svelte migration (done)**: The webview UI panel layer (file list, settings
+panels, dialogs, tab navigation, loading overlay) has been migrated to Svelte 5,
+in-place, one panel at a time — see
+[`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md) for what moved
+where and the one remaining intentionally-deferred item (`depth/panelState.ts`'s
+DOM-scrape architecture). New UI work in the webview should be a Svelte
+component under `engine/src/components/` reading from
+`engine/src/state/*.svelte.js`, not a new HTML-string generator. Every phase's
+exit criterion included an F5 Extension Development Host check, because the
+extension must keep working perfectly throughout — the standalone page is a
+faster iteration surface, not the target to optimize for.
 
 ### Project Structure
 
 ```
 ├── src/                     # VS Code extension-specific files
 │   ├── extension.ts         # Extension activation & VS Code API integration
-│   ├── pointCloudEditorProvider.ts  # Custom editor registration
+│   ├── pointCloudEditorProvider.ts  # Custom editor registration (~1,245 lines - see providerHandlers/)
+│   ├── providerHandlers/    # Extracted message-handler clusters (binary transfer, camera params, add/drop-file, document loader)
 │   └── *Parser.ts          # Lightweight parser wrappers for extension host
-├── website/                 # Shared core functionality + standalone website
+├── engine/                  # Shared visualization engine + standalone page host
 │   ├── src/                # Core visualization engine (shared code)
-│   │   ├── main.ts         # Main 3D visualization engine (~15,576 lines - TOO BIG!)
+│   │   ├── main.ts         # Coordinator + core Three.js scene/render/material logic (~4,128 lines)
 │   │   ├── fileHandler.ts  # Shared file handling logic (USE THIS!)
 │   │   ├── controls.ts     # Camera control systems (USE THIS!)
 │   │   ├── interfaces.ts   # Shared type definitions
@@ -105,14 +125,31 @@ Code-specific integration code.
 │   │   ├── themes/         # UI themes and styling (ADD THEME FEATURES HERE!)
 │   │   │   ├── darkModern.ts
 │   │   │   └── ...
-│   │   ├── ui/             # UI generation modules (CREATE IF NEEDED)
-│   │   │   ├── dialogs.ts  # Dialog HTML generators (proposed)
-│   │   │   └── ...
-│   │   └── utils/          # Utility modules (CREATE IF NEEDED)
-│   │       ├── math.ts     # Math/geometry helpers (proposed)
-│   │       └── ...
-│   ├── index.html          # Standalone website entry point (SINGLE SOURCE OF TRUTH!)
-│   └── webpack.config.js   # Website-specific build configuration
+│   │   ├── ui/             # UI generation modules
+│   │   │   └── dialogs.ts  # escapeHtml/addTooltipsToTruncatedFilenames only -
+│   │   │                    # modal dialogs are components/Modal.svelte + friends
+│   │   ├── state/          # Svelte runes stores (one write-through source of truth per concern)
+│   │   │   ├── files.svelte.js        # Per-file visibility/color mode/settings, renderTick/statsTick
+│   │   │   ├── depthSettings.svelte.js # liveUpdateFileIndices
+│   │   │   ├── ui.svelte.js           # Loading overlay, error/status, active tab, sequence-mode state
+│   │   │   └── viewer.svelte.js       # Control scheme, camera convention, EDL, brightness, lighting mode
+│   │   ├── components/     # Svelte components — new webview UI goes here, not HTML strings in main.ts
+│   │   │   ├── FileList.svelte / FileItem.svelte / DepthSettingsPanel.svelte
+│   │   │   ├── CalibrationSection.svelte / TransformSection.svelte
+│   │   │   ├── ControlsTabTop.svelte / ControlsTabBottom.svelte / CameraControlsPanel.svelte
+│   │   │   ├── Stats.svelte / TabNav.svelte / LoadingOverlay.svelte / ErrorOverlay.svelte /
+│   │   │   │   WelcomeMessage.svelte / PerformanceStats.svelte / SequenceControls.svelte
+│   │   │   └── Modal.svelte / VectorInputDialog.svelte / CameraVectorDialog.svelte /
+│   │   │       DepthCameraParamsDialog.svelte
+│   │   ├── visualization/  # 3D rendering, plain TS (ADD RENDERING HELPERS HERE!)
+│   │   │   ├── MeshBuilder.ts        # createGeometryFromSpatialData
+│   │   │   └── PointCloudRenderer.ts # round-point texture, point material opts, optimized point cloud creation
+│   │   │   # SceneManager.ts/LightingManager.ts (init/animate/dispose/context-loss, lighting setup)
+│   │   │   # not yet extracted - deliberately deferred, see "Critical Coding Guidelines" below
+│   │   └── utils/          # Utility modules (matrix.ts, perfLog.ts exist; add more here)
+│   ├── test/               # Playwright tests - the fast engine test surface
+│   ├── index.html          # Standalone page entry point (SINGLE SOURCE OF TRUTH!)
+│   └── webpack.config.js   # Engine-specific build configuration
 ├── media/                  # Shared static assets (CSS, external libraries)
 └── testfiles/             # Test data organized by format type
 ```
@@ -120,7 +157,8 @@ Code-specific integration code.
 This architecture enables:
 
 - **Code Reuse**: Core functionality written once, used in both contexts
-- **Independent Development**: Website can be developed and tested standalone
+- **Fast Testing**: The engine can be developed and tested standalone via
+  Playwright, without booting VS Code/Electron
 - **VS Code Integration**: Extension provides native VS Code experience with
   same features
 
@@ -139,14 +177,15 @@ This architecture enables:
 
 **Webview (Browser Context)**
 
-- `website/src/main.ts` - Main visualization engine (~9000+ lines)
-- `website/src/depth/` - Depth processing pipeline:
+- `engine/src/main.ts` - Main visualization engine (~4,128 lines - Svelte
+  migration Phases 0-6 done + visualization/ split started)
+- `engine/src/depth/` - Depth processing pipeline:
   - `DepthRegistry.ts` - Format detection and reader selection
   - `DepthProjector.ts` - 3D projection with camera models (pinhole/fisheye)
   - `readers/` - Format-specific depth readers (TIF, PFM, NPY, PNG)
-- `website/src/parsers/` - Format-specific parsers (PLY, OBJ, STL, etc.)
-- `website/src/controls.ts` - Camera control systems
-- `website/src/themes/` - Color themes and UI styling
+- `engine/src/parsers/` - Format-specific parsers (PLY, OBJ, STL, etc.)
+- `engine/src/controls.ts` - Camera control systems
+- `engine/src/themes/` - Color themes and UI styling
 - `media/` - External dependencies (geotiff.min.js, CSS)
 
 ### Key Architectural Patterns
@@ -159,10 +198,10 @@ This architecture enables:
    - Contains lightweight parsers that delegate core parsing to webview
 
 2. **Webview Bundle** (Web target):
-   - Entry: `website/src/main.ts`
+   - Entry: `engine/src/main.ts`
    - Purpose: 3D visualization, user interaction, core functionality
    - Contains complete parsers, rendering engine, controls, themes
-   - Same bundle used for both VS Code webview and standalone website
+   - Same bundle used for both the VS Code webview and the standalone page
 
 3. **Shared Resources**:
    - `media/` directory assets accessible to both targets
@@ -242,7 +281,7 @@ supporting:
 **TypeScript Configuration**:
 
 - Root `tsconfig.json` - Extension host compilation (Node.js target)
-- `website/src/tsconfig.json` - Webview compilation (DOM/ES6 target)
+- `engine/src/tsconfig.json` - Webview compilation (DOM/ES6 target)
 - Webpack enforces separation and prevents dependency conflicts
 
 **Test Organization**:
@@ -259,7 +298,7 @@ supporting:
 
 - `media/` - External JavaScript libraries and CSS
 - `out/` - Compiled extension and webview bundles
-- `website/` - Webview source code and assets
+- `engine/` - Webview source code and assets
 - `testfiles/` - Organized test files by format type
 
 **Git Hooks & Code Quality**:
@@ -273,26 +312,31 @@ supporting:
 
 ### Preventing Code Bloat in main.ts
 
-**IMPORTANT**: `website/src/main.ts` is currently **15,576 lines (603KB)** - one
-of the largest files in the project. To prevent further growth:
+**IMPORTANT**: `engine/src/main.ts` was **15,576 lines** at its peak and is now
+**~4,128 lines** — a plain-TS extraction pass plus the Svelte migration moved
+almost all UI-string-building and rendering-detail code into `state/`,
+`components/`, and `visualization/` (see
+[`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md) for the full
+history and what's still open). What's left in main.ts is core Three.js scene
+logic plus thin delegating wrappers to the already-extracted modules. To prevent
+regrowth going forward:
 
 **DO:**
 
 - ✅ **Move code OUT of main.ts** - Always prefer existing appropriate files
   over adding to main.ts
 - ✅ **Use existing modular directories first**: Check if your code fits in
-  `website/src/parsers/`, `website/src/depth/`, `website/src/themes/`,
-  `website/src/controls.ts`, `website/src/fileHandler.ts`
-- ✅ **Add new parsers** in `website/src/parsers/` directory (follow existing
+  `engine/src/parsers/`, `engine/src/depth/`, `engine/src/themes/`,
+  `engine/src/controls.ts`, `engine/src/fileHandler.ts`
+- ✅ **Add new parsers** in `engine/src/parsers/` directory (follow existing
   parser patterns)
-- ✅ **Add new depth readers** in `website/src/depth/readers/` (implement reader
+- ✅ **Add new depth readers** in `engine/src/depth/readers/` (implement reader
   interface)
-- ✅ **Add camera/control features** to `website/src/controls.ts` (already
+- ✅ **Add camera/control features** to `engine/src/controls.ts` (already
   modular)
-- ✅ **Add file handling logic** to `website/src/fileHandler.ts` (already
-  shared)
+- ✅ **Add file handling logic** to `engine/src/fileHandler.ts` (already shared)
 - ✅ **Only create NEW files** if no appropriate existing file exists (e.g., new
-  `website/src/ui/` or `website/src/utils/` modules)
+  `engine/src/ui/` or `engine/src/utils/` modules)
 
 **DON'T:**
 
@@ -317,8 +361,8 @@ of the largest files in the project. To prevent further growth:
 
 **Single Source of Truth:**
 
-- `website/index.html` is the **canonical UI definition** for both website and
-  VSCode extension
+- `engine/index.html` is the **canonical UI definition** for both the standalone
+  page and the VS Code extension
 - `src/pointCloudEditorProvider.ts` reads and modifies this HTML at runtime
 - **Never duplicate HTML** between these files - modify index.html only
 
@@ -326,17 +370,17 @@ of the largest files in the project. To prevent further growth:
 
 **Decision Tree for Adding Code:**
 
-1. **Is it parser-related?** → Add to existing file in `website/src/parsers/` or
+1. **Is it parser-related?** → Add to existing file in `engine/src/parsers/` or
    create new parser following pattern
-2. **Is it depth/camera-related?** → Add to `website/src/depth/` directory
+2. **Is it depth/camera-related?** → Add to `engine/src/depth/` directory
    (DepthProjector, readers, etc.)
-3. **Is it camera controls?** → Add to `website/src/controls.ts` (already
+3. **Is it camera controls?** → Add to `engine/src/controls.ts` (already
    modular)
-4. **Is it file detection/handling?** → Add to `website/src/fileHandler.ts`
+4. **Is it file detection/handling?** → Add to `engine/src/fileHandler.ts`
    (already shared)
-5. **Is it theme-related?** → Add to `website/src/themes/` directory
-6. **Is it UI generation?** → Create in `website/src/ui/` directory (new module)
-7. **Is it a utility function?** → Create in `website/src/utils/` directory (new
+5. **Is it theme-related?** → Add to `engine/src/themes/` directory
+6. **Is it UI generation?** → Create in `engine/src/ui/` directory (new module)
+7. **Is it a utility function?** → Create in `engine/src/utils/` directory (new
    module)
 8. **Is it core visualization logic?** → Only then consider adding to main.ts
    (last resort)
@@ -352,12 +396,12 @@ of the largest files in the project. To prevent further growth:
 **Example - Good Pattern:**
 
 ```typescript
-// website/src/ui/transformDialog.ts
+// engine/src/ui/transformDialog.ts
 export function createTransformDialog(fileData: SpatialData): string {
   return `<div class="transform-dialog">...</div>`;
 }
 
-// website/src/main.ts
+// engine/src/main.ts
 import { createTransformDialog } from './ui/transformDialog';
 // Use it without defining inline
 ```
@@ -365,70 +409,37 @@ import { createTransformDialog } from './ui/transformDialog';
 **Example - Bad Pattern:**
 
 ```typescript
-// website/src/main.ts
+// engine/src/main.ts
 private showTransformDialog() {
   const html = `<div>...</div>`; // 200 lines of HTML inline
   dialog.innerHTML = html;
 }
 ```
 
-### Proposed Future Structure (Target State)
+### Migration status
 
-**Goal**: Reduce main.ts from 15,576 lines to ~2,000 lines by extracting into
-modules:
+The Svelte migration (Phases 0-6) is done, and the target structure shown in
+"Project Structure" above is essentially reached. Two things remain deliberately
+open — not overlooked, but judged too risky to rush:
 
-```
-website/src/
-├── main.ts                    # Coordinator only (~2,000 lines target)
-├── fileHandler.ts             # File detection/handling (EXISTS - use it!)
-├── controls.ts                # Camera controls (EXISTS - use it!)
-├── interfaces.ts              # Type definitions (EXISTS)
-│
-├── parsers/                   # Format parsers (EXISTS - add new ones here!)
-│   ├── plyParser.ts
-│   ├── objParser.ts
-│   ├── stlParser.ts
-│   └── ...
-│
-├── depth/                     # Depth processing (EXISTS - extend here!)
-│   ├── DepthRegistry.ts
-│   ├── DepthProjector.ts
-│   ├── readers/
-│   └── ...
-│
-├── themes/                    # Themes (EXISTS - extend here!)
-│   ├── darkModern.ts
-│   └── ...
-│
-├── ui/                        # UI generators (PROPOSED - create as needed)
-│   ├── dialogs.ts            # Dialog HTML generation
-│   ├── fileList.ts           # File list rendering
-│   ├── cameraPanel.ts        # Camera controls panel
-│   ├── statsPanel.ts         # Statistics display
-│   └── transformUI.ts        # Transformation dialogs
-│
-├── visualization/             # 3D rendering (PROPOSED - future refactor)
-│   ├── SceneManager.ts       # Scene setup/management
-│   ├── MeshBuilder.ts        # Mesh creation
-│   ├── PointCloudRenderer.ts # Point cloud rendering
-│   └── LightingManager.ts    # Lighting setup
-│
-└── utils/                     # Utilities (PROPOSED - create as needed)
-    ├── math.ts               # Math/geometry helpers
-    ├── matrix.ts             # Matrix operations
-    └── three.ts              # Three.js helpers
-```
+- **`visualization/SceneManager.ts`/`LightingManager.ts`**: main.ts's remaining
+  scene/renderer lifecycle (`initThreeJS`, `animate`, `dispose`, context-loss
+  handling, lighting setup) is far more state-entangled than anything already
+  extracted, and needs a dedicated pass, not a mechanical move.
+- **`depth/panelState.ts`'s DOM-scrape architecture**: investigated and
+  deliberately not inverted — thin test coverage for the exact behavior at
+  stake, and it feeds the depth-to-point-cloud pipeline directly.
 
-**Migration Strategy:**
-
-- ✅ **Phase 1** (Now): Stop adding to main.ts, use existing modules
-- ⏳ **Phase 2** (Future): Extract UI generation to `ui/` modules
-- ⏳ **Phase 3** (Future): Extract rendering logic to `visualization/` modules
-- ⏳ **Phase 4** (Future): Extract utilities to `utils/` modules
+Full history (what moved where, why each phase was scoped the way it was, and
+the reasoning behind these two deferrals) is in
+[`docs/SVELTE_MIGRATION_PLAN.md`](docs/SVELTE_MIGRATION_PLAN.md) — check there
+before re-deriving context on either.
 
 **Note**: Don't attempt big-bang refactoring! Previous attempts (5+ branches)
-failed. Instead, follow "strangler fig" pattern - new code goes in modules, old
-code stays until naturally updated.
+failed before this migration. Instead, follow "strangler fig" pattern - new code
+goes in modules, old code stays until naturally updated. Apply the same
+philosophy to whatever's tackled next: land it in small, independently
+verifiable steps, not one large rewrite.
 
 ## Important Development Notes
 
