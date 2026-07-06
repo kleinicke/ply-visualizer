@@ -1381,6 +1381,18 @@ class PointCloudVisualizer {
       return;
     }
 
+    // A double-click far away from every visible object is the "I'm lost"
+    // recovery gesture: refit the view instead of doing nothing. Near-misses
+    // next to an object stay inert so a failed pick never jumps the camera.
+    if (
+      !this.sequenceMode &&
+      this.selectionManager.isFarFromAllVisibleObjects(mouseScreenX, mouseScreenY, canvas)
+    ) {
+      console.log('🧭 Double-click in empty space - fitting view to all objects');
+      this.fitCameraToAllObjects();
+      return;
+    }
+
     // If no point found, log the failure
     console.log(
       `❌ No selectable object found at (${mouseScreenX.toFixed(1)}, ${mouseScreenY.toFixed(1)})`

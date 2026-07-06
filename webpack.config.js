@@ -111,6 +111,9 @@ module.exports = [
               options: {
                 configFile: 'engine/src/tsconfig.json',
                 compiler: path.resolve(__dirname, 'engine/node_modules/typescript'),
+                // The engine tsconfig sets noEmit for standalone typechecking;
+                // ts-loader needs emitted JS to bundle
+                compilerOptions: { noEmit: false },
               },
             },
           ],

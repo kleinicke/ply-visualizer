@@ -513,7 +513,6 @@ export class SelectionManager {
     );
     const mvp = new THREE.Matrix4();
     const sphereCenter = new THREE.Vector3();
-    const scratch = new THREE.Vector3();
 
     // computeSelectionPixelRadius clamps to 150px, so no point farther than
     // this from the cursor can ever be selected
@@ -546,21 +545,15 @@ export class SelectionManager {
       if (sphere && sphere.radius > 0 && isFinite(sphere.radius)) {
         sphereCenter.copy(sphere.center).applyMatrix4(mesh.matrixWorld);
         const worldRadius = sphere.radius * mesh.matrixWorld.getMaxScaleOnAxis();
-        scratch.copy(sphereCenter).applyMatrix4(camera.matrixWorldInverse);
-        const nearDepth = -scratch.z - worldRadius;
-        if (nearDepth > 0) {
-          // Cloud is entirely in front of the camera: bound its screen extent
-          // conservatively via the sphere's projected radius at its near depth
-          scratch.copy(sphereCenter).applyMatrix4(viewProjection);
-          const cx = (scratch.x * 0.5 + 0.5) * width;
-          const cy = (scratch.y * -0.5 + 0.5) * height;
-          const pixelsPerWorldUnit =
-            (height * 0.5) / (Math.tan((camera.fov * Math.PI) / 360) * nearDepth);
-          const projectedRadius = worldRadius * pixelsPerWorldUnit;
-          const cursorDistance = Math.hypot(cx - mouseScreenX, cy - mouseScreenY);
-          if (cursorDistance > projectedRadius * 1.5 + maxPickRadius) {
-            continue;
-          }
+        const screenDistance = this.screenDistanceToBoundingSphere(
+          sphereCenter,
+          worldRadius,
+          mouseScreenX,
+          mouseScreenY,
+          canvas
+        );
+        if (screenDistance !== null && screenDistance > maxPickRadius) {
+          continue;
         }
       }
 
@@ -643,6 +636,133 @@ export class SelectionManager {
       renderedSize: bestRenderedSize,
       pixelRadius: bestPixelRadius,
     };
+  }
+
+  /**
+   * Distance in CSS pixels from a screen position to the (conservatively
+   * enlarged) projected disc of a world-space bounding sphere. Returns 0 when
+   * the position lies inside the disc, Infinity when the sphere is entirely
+   * behind the camera, and null when the sphere crosses the near plane —
+   * there the projection is unreliable and callers should treat the object
+   * as close.
+   */
+  private screenDistanceToBoundingSphere(
+    worldCenter: THREE.Vector3,
+    worldRadius: number,
+    screenX: number,
+    screenY: number,
+    canvas: HTMLCanvasElement
+  ): number | null {
+    const camera = this.context.camera;
+    const height = canvas.clientHeight;
+    const scratch = new THREE.Vector3().copy(worldCenter).applyMatrix4(camera.matrixWorldInverse);
+    const centerDepth = -scratch.z;
+
+    if (centerDepth + worldRadius < 0) {
+      return Infinity;
+    }
+    const nearDepth = centerDepth - worldRadius;
+    if (nearDepth <= 0) {
+      return null;
+    }
+
+    scratch.copy(worldCenter).project(camera);
+    const cx = (scratch.x * 0.5 + 0.5) * canvas.clientWidth;
+    const cy = (scratch.y * -0.5 + 0.5) * height;
+
+    // Bound the sphere's screen extent conservatively: project its radius at
+    // the nearest depth and widen it, so an underestimate can never classify
+    // a covered position as "far"
+    const pixelsPerWorldUnit =
+      (height * 0.5) / (Math.tan((camera.fov * Math.PI) / 360) * nearDepth);
+    const projectedRadius = worldRadius * pixelsPerWorldUnit * 1.5;
+
+    return Math.max(0, Math.hypot(cx - screenX, cy - screenY) - projectedRadius);
+  }
+
+  /**
+   * True when the given screen position is farther than marginPx from the
+   * projected bounds of every visible object (point clouds, meshes, poses,
+   * camera profiles). Used to distinguish a double-click into genuinely empty
+   * space — an "I'm lost" recovery gesture — from a near-miss next to
+   * something selectable.
+   */
+  isFarFromAllVisibleObjects(
+    mouseScreenX: number,
+    mouseScreenY: number,
+    canvas: HTMLCanvasElement,
+    marginPx: number = 150
+  ): boolean {
+    this.context.camera.updateMatrixWorld();
+    const worldCenter = new THREE.Vector3();
+
+    for (let i = 0; i < this.context.meshes.length; i++) {
+      if (!this.context.fileVisibility[i]) {
+        continue;
+      }
+      const mesh = this.context.meshes[i];
+      const geometry = (mesh as THREE.Mesh).geometry;
+      if (!geometry) {
+        continue;
+      }
+      if (!geometry.boundingSphere) {
+        geometry.computeBoundingSphere();
+      }
+      const sphere = geometry.boundingSphere;
+      if (!sphere || !isFinite(sphere.radius) || sphere.radius < 0) {
+        continue;
+      }
+      mesh.updateMatrixWorld();
+      worldCenter.copy(sphere.center).applyMatrix4(mesh.matrixWorld);
+      const worldRadius = sphere.radius * mesh.matrixWorld.getMaxScaleOnAxis();
+      const distance = this.screenDistanceToBoundingSphere(
+        worldCenter,
+        worldRadius,
+        mouseScreenX,
+        mouseScreenY,
+        canvas
+      );
+      if (distance === null || distance <= marginPx) {
+        return false;
+      }
+    }
+
+    // Pose and camera groups use the unified visibility index layout
+    // (spatial files, then poses, then cameras)
+    const groupSets = [
+      { groups: this.context.poseGroups, indexOffset: this.context.spatialFiles.length },
+      {
+        groups: this.context.cameraGroups,
+        indexOffset: this.context.spatialFiles.length + this.context.poseGroups.length,
+      },
+    ];
+    const box = new THREE.Box3();
+    const sphere = new THREE.Sphere();
+
+    for (const { groups, indexOffset } of groupSets) {
+      for (let i = 0; i < groups.length; i++) {
+        if (!this.context.fileVisibility[indexOffset + i]) {
+          continue;
+        }
+        box.setFromObject(groups[i]);
+        if (box.isEmpty()) {
+          continue;
+        }
+        box.getBoundingSphere(sphere);
+        const distance = this.screenDistanceToBoundingSphere(
+          sphere.center,
+          sphere.radius,
+          mouseScreenX,
+          mouseScreenY,
+          canvas
+        );
+        if (distance === null || distance <= marginPx) {
+          return false;
+        }
+      }
+    }
+
+    return true;
   }
 
   /**
