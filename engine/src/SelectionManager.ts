@@ -9,6 +9,18 @@ export interface SelectionResult {
 }
 
 /**
+ * Best candidate found by the screen-space point cloud scan
+ */
+interface PointPickHit {
+  mesh: THREE.Points;
+  pointIndex: number;
+  viewDepth: number;
+  pixelDistance: number;
+  renderedSize: number;
+  pixelRadius: number;
+}
+
+/**
  * Context interface providing access to scene state needed for selection
  */
 export interface SelectionContext {
@@ -377,19 +389,8 @@ export class SelectionManager {
     mouseScreenY: number,
     canvas: HTMLCanvasElement
   ): THREE.Vector3 | null {
-    const pointCloudMeshes = this.getVisiblePointClouds();
-
-    if (pointCloudMeshes.length === 0) {
-      return null;
-    }
-
-    // Use efficient raycast with dynamic radius calculation
-    return this.efficientRaycastPointSelection(
-      mouseScreenX,
-      mouseScreenY,
-      canvas,
-      pointCloudMeshes
-    );
+    const result = this.selectPointCloudWithLogging(mouseScreenX, mouseScreenY, canvas);
+    return result ? result.point : null;
   }
 
   /**
@@ -406,13 +407,8 @@ export class SelectionManager {
       return null;
     }
 
-    // Use efficient raycast with detailed logging
-    return this.efficientRaycastPointSelectionWithLogging(
-      mouseScreenX,
-      mouseScreenY,
-      canvas,
-      pointCloudMeshes
-    );
+    const hit = this.pickPointScreenSpace(mouseScreenX, mouseScreenY, canvas, pointCloudMeshes);
+    return hit ? this.resolvePickHit(hit) : null;
   }
 
   /**
@@ -491,39 +487,45 @@ export class SelectionManager {
   }
 
   /**
-   * Convert pixels to world units based on camera projection
+   * Screen-space point cloud picking.
+   *
+   * Projects every point of the visible clouds to pixel coordinates and, among
+   * the points whose rendered footprint (plus padding) covers the cursor,
+   * returns the one closest to the camera. Unlike Raycaster-based picking, the
+   * per-point cost is constant and the hot loop allocates nothing, so a
+   * zoomed-out click where the whole cloud lands near the cursor costs the
+   * same as a zoomed-in one.
    */
-  private convertPixelsToWorldUnits(
-    pixelRadius: number,
-    distance: number,
-    canvas: HTMLCanvasElement
-  ): number {
-    const fov = this.context.camera.fov;
-    const halfHeight = Math.tan((fov * Math.PI) / 360) * distance;
-    const pixelsPerWorldUnit = canvas.clientHeight / (2 * halfHeight);
-    return pixelRadius / pixelsPerWorldUnit;
-  }
-
-  /**
-   * Efficient raycast-based point selection
-   */
-  private efficientRaycastPointSelection(
+  private pickPointScreenSpace(
     mouseScreenX: number,
     mouseScreenY: number,
     canvas: HTMLCanvasElement,
     pointCloudMeshes: THREE.Points[]
-  ): THREE.Vector3 | null {
-    const mouse = new THREE.Vector2();
-    mouse.x = (mouseScreenX / canvas.clientWidth) * 2 - 1;
-    mouse.y = -(mouseScreenY / canvas.clientHeight) * 2 + 1;
+  ): PointPickHit | null {
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    const camera = this.context.camera;
+    camera.updateMatrixWorld();
 
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouse, this.context.camera);
+    const viewProjection = new THREE.Matrix4().multiplyMatrices(
+      camera.projectionMatrix,
+      camera.matrixWorldInverse
+    );
+    const mvp = new THREE.Matrix4();
+    const sphereCenter = new THREE.Vector3();
+    const scratch = new THREE.Vector3();
 
-    const pixelBuffer = 4; // 4 pixel buffer around point
+    // computeSelectionPixelRadius clamps to 150px, so no point farther than
+    // this from the cursor can ever be selected
+    const maxPickRadius = 150;
+    const maxPickRadiusSq = maxPickRadius * maxPickRadius;
 
-    let closestPoint: THREE.Vector3 | null = null;
-    let closestDistance = Infinity;
+    let bestMesh: THREE.Points | null = null;
+    let bestIndex = -1;
+    let bestDepth = Infinity;
+    let bestPixelDistanceSq = Infinity;
+    let bestRenderedSize = 0;
+    let bestPixelRadius = 0;
 
     for (const mesh of pointCloudMeshes) {
       const material = mesh.material as THREE.PointsMaterial;
@@ -534,236 +536,141 @@ export class SelectionManager {
         continue;
       }
 
-      // Calculate an approximate distance to this mesh for initial radius estimation
-      geometry.computeBoundingSphere();
-      const meshCenter = new THREE.Vector3();
-      if (geometry.boundingSphere) {
-        meshCenter.copy(geometry.boundingSphere.center).applyMatrix4(mesh.matrixWorld);
+      mesh.updateMatrixWorld();
+
+      // Skip clouds whose projected bounding sphere cannot reach the cursor
+      if (!geometry.boundingSphere) {
+        geometry.computeBoundingSphere();
       }
-
-      const approxDistance = this.context.camera.position.distanceTo(meshCenter);
-
-      // Calculate dynamic radius
-      const renderedPointSize = this.computeRenderedPointSize(material, approxDistance, canvas);
-      const pointSizeInWorld = this.convertPixelsToWorldUnits(
-        renderedPointSize * 0.5,
-        approxDistance,
-        canvas
-      );
-      const pixelBufferInWorld = this.convertPixelsToWorldUnits(
-        pixelBuffer,
-        approxDistance,
-        canvas
-      );
-
-      const dynamicThreshold = pointSizeInWorld + pixelBufferInWorld;
-      raycaster.params.Points!.threshold = dynamicThreshold;
-
-      // Perform raycast
-      const intersects = raycaster.intersectObject(mesh, false);
-
-      for (const intersection of intersects) {
-        if (intersection.index !== undefined) {
-          const worldPoint = new THREE.Vector3();
-          worldPoint.fromBufferAttribute(positionAttribute, intersection.index);
-          worldPoint.applyMatrix4(mesh.matrixWorld);
-
-          const actualDistance = this.context.camera.position.distanceTo(worldPoint);
-
-          // Recalculate threshold for this specific point's distance
-          const actualRenderedSize = this.computeRenderedPointSize(
-            material,
-            actualDistance,
-            canvas
-          );
-          const actualPointSizeInWorld = this.convertPixelsToWorldUnits(
-            actualRenderedSize * 0.5,
-            actualDistance,
-            canvas
-          );
-          const actualPixelBufferInWorld = this.convertPixelsToWorldUnits(
-            pixelBuffer,
-            actualDistance,
-            canvas
-          );
-          const actualThreshold = actualPointSizeInWorld + actualPixelBufferInWorld;
-
-          // Verify intersection is within refined threshold
-          const rayToPoint = worldPoint.clone().sub(raycaster.ray.origin);
-          const rayDirection = raycaster.ray.direction.clone().normalize();
-          const projectedDistance = rayToPoint.dot(rayDirection);
-          const rayPoint = raycaster.ray.origin
-            .clone()
-            .add(rayDirection.multiplyScalar(projectedDistance));
-          const perpendicularDistance = worldPoint.distanceTo(rayPoint);
-
-          if (perpendicularDistance <= actualThreshold) {
-            // Safety checks
-            if (actualDistance >= 0.0001) {
-              const cameraToPoint = worldPoint.clone().sub(this.context.camera.position);
-              const dotProduct = cameraToPoint.dot(
-                this.context.camera.getWorldDirection(new THREE.Vector3())
-              );
-              if (dotProduct > 0.0001) {
-                // Pick the closest to camera (front-most)
-                if (actualDistance < closestDistance) {
-                  closestDistance = actualDistance;
-                  closestPoint = worldPoint;
-                }
-              }
-            }
+      const sphere = geometry.boundingSphere;
+      if (sphere && sphere.radius > 0 && isFinite(sphere.radius)) {
+        sphereCenter.copy(sphere.center).applyMatrix4(mesh.matrixWorld);
+        const worldRadius = sphere.radius * mesh.matrixWorld.getMaxScaleOnAxis();
+        scratch.copy(sphereCenter).applyMatrix4(camera.matrixWorldInverse);
+        const nearDepth = -scratch.z - worldRadius;
+        if (nearDepth > 0) {
+          // Cloud is entirely in front of the camera: bound its screen extent
+          // conservatively via the sphere's projected radius at its near depth
+          scratch.copy(sphereCenter).applyMatrix4(viewProjection);
+          const cx = (scratch.x * 0.5 + 0.5) * width;
+          const cy = (scratch.y * -0.5 + 0.5) * height;
+          const pixelsPerWorldUnit =
+            (height * 0.5) / (Math.tan((camera.fov * Math.PI) / 360) * nearDepth);
+          const projectedRadius = worldRadius * pixelsPerWorldUnit;
+          const cursorDistance = Math.hypot(cx - mouseScreenX, cy - mouseScreenY);
+          if (cursorDistance > projectedRadius * 1.5 + maxPickRadius) {
+            continue;
           }
         }
       }
-    }
 
-    // Final safety check
-    if (closestPoint) {
-      const distance = this.context.camera.position.distanceTo(closestPoint);
-      if (distance < 0.0001) {
-        const cameraDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(
-          this.context.camera.quaternion
-        );
-        closestPoint = this.context.camera.position
-          .clone()
-          .add(cameraDirection.multiplyScalar(0.0001));
+      const mvpElements = mvp.multiplyMatrices(viewProjection, mesh.matrixWorld).elements;
+      const e0 = mvpElements[0];
+      const e1 = mvpElements[1];
+      const e3 = mvpElements[3];
+      const e4 = mvpElements[4];
+      const e5 = mvpElements[5];
+      const e7 = mvpElements[7];
+      const e8 = mvpElements[8];
+      const e9 = mvpElements[9];
+      const e11 = mvpElements[11];
+      const e12 = mvpElements[12];
+      const e13 = mvpElements[13];
+      const e15 = mvpElements[15];
+
+      const interleaved = (positionAttribute as any).isInterleavedBufferAttribute === true;
+      const array: ArrayLike<number> = interleaved
+        ? (positionAttribute as any).data.array
+        : (positionAttribute as THREE.BufferAttribute).array;
+      const stride = interleaved ? (positionAttribute as any).data.stride : 3;
+      const count = positionAttribute.count;
+
+      for (
+        let i = 0, base = interleaved ? (positionAttribute as any).offset : 0;
+        i < count;
+        i++, base += stride
+      ) {
+        const x = array[base];
+        const y = array[base + 1];
+        const z = array[base + 2];
+
+        // Clip-space w equals the view depth for a perspective projection
+        const w = e3 * x + e7 * y + e11 * z + e15;
+        if (w < 1e-6) {
+          continue; // behind the camera
+        }
+
+        const invW = 1 / w;
+        const sx = ((e0 * x + e4 * y + e8 * z + e12) * invW * 0.5 + 0.5) * width;
+        const sy = ((e1 * x + e5 * y + e9 * z + e13) * invW * -0.5 + 0.5) * height;
+        const dx = sx - mouseScreenX;
+        const dy = sy - mouseScreenY;
+        const pixelDistanceSq = dx * dx + dy * dy;
+
+        // Front-most within pick radius wins; skip anything that cannot win
+        // before doing the per-point radius math
+        if (pixelDistanceSq > maxPickRadiusSq || w > bestDepth) {
+          continue;
+        }
+        if (w === bestDepth && pixelDistanceSq >= bestPixelDistanceSq) {
+          continue;
+        }
+
+        const renderedSize = this.computeRenderedPointSize(material, w, canvas);
+        const pixelRadius = this.computeSelectionPixelRadius(renderedSize, w);
+        if (pixelDistanceSq > pixelRadius * pixelRadius) {
+          continue;
+        }
+
+        bestMesh = mesh;
+        bestIndex = i;
+        bestDepth = w;
+        bestPixelDistanceSq = pixelDistanceSq;
+        bestRenderedSize = renderedSize;
+        bestPixelRadius = pixelRadius;
       }
     }
 
-    return closestPoint;
+    if (!bestMesh) {
+      return null;
+    }
+
+    return {
+      mesh: bestMesh,
+      pointIndex: bestIndex,
+      viewDepth: bestDepth,
+      pixelDistance: Math.sqrt(bestPixelDistanceSq),
+      renderedSize: bestRenderedSize,
+      pixelRadius: bestPixelRadius,
+    };
   }
 
   /**
-   * Efficient raycast-based point selection with detailed logging
+   * Convert a pick hit into the world-space point plus logging info
    */
-  private efficientRaycastPointSelectionWithLogging(
-    mouseScreenX: number,
-    mouseScreenY: number,
-    canvas: HTMLCanvasElement,
-    pointCloudMeshes: THREE.Points[]
-  ): SelectionResult | null {
-    const mouse = new THREE.Vector2();
-    mouse.x = (mouseScreenX / canvas.clientWidth) * 2 - 1;
-    mouse.y = -(mouseScreenY / canvas.clientHeight) * 2 + 1;
+  private resolvePickHit(hit: PointPickHit): SelectionResult {
+    const positionAttribute = hit.mesh.geometry.getAttribute('position');
+    const worldPoint = new THREE.Vector3()
+      .fromBufferAttribute(positionAttribute, hit.pointIndex)
+      .applyMatrix4(hit.mesh.matrixWorld);
 
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouse, this.context.camera);
-
-    const pixelBuffer = 4;
-
-    let closestPoint: THREE.Vector3 | null = null;
-    let closestDistance = Infinity;
-    let bestSelectionInfo = '';
-
-    for (const mesh of pointCloudMeshes) {
-      const material = mesh.material as THREE.PointsMaterial;
-      const geometry = mesh.geometry;
-      const positionAttribute = geometry.getAttribute('position');
-
-      if (!positionAttribute) {
-        continue;
-      }
-
-      const fileIndex = this.context.meshes.indexOf(mesh);
-
-      geometry.computeBoundingSphere();
-      const meshCenter = new THREE.Vector3();
-      if (geometry.boundingSphere) {
-        meshCenter.copy(geometry.boundingSphere.center).applyMatrix4(mesh.matrixWorld);
-      }
-
-      const approxDistance = this.context.camera.position.distanceTo(meshCenter);
-
-      const renderedPointSize = this.computeRenderedPointSize(material, approxDistance, canvas);
-      const pointSizeInWorld = this.convertPixelsToWorldUnits(
-        renderedPointSize * 0.5,
-        approxDistance,
-        canvas
+    let adjusted = '';
+    if (this.context.camera.position.distanceTo(worldPoint) < 0.0001) {
+      const cameraDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(
+        this.context.camera.quaternion
       );
-      const pixelBufferInWorld = this.convertPixelsToWorldUnits(
-        pixelBuffer,
-        approxDistance,
-        canvas
-      );
-
-      const dynamicThreshold = pointSizeInWorld + pixelBufferInWorld;
-      raycaster.params.Points!.threshold = dynamicThreshold;
-
-      const intersects = raycaster.intersectObject(mesh, false);
-
-      for (const intersection of intersects) {
-        if (intersection.index !== undefined) {
-          const worldPoint = new THREE.Vector3();
-          worldPoint.fromBufferAttribute(positionAttribute, intersection.index);
-          worldPoint.applyMatrix4(mesh.matrixWorld);
-
-          const actualDistance = this.context.camera.position.distanceTo(worldPoint);
-
-          const actualRenderedSize = this.computeRenderedPointSize(
-            material,
-            actualDistance,
-            canvas
-          );
-          const actualPointSizeInWorld = this.convertPixelsToWorldUnits(
-            actualRenderedSize * 0.5,
-            actualDistance,
-            canvas
-          );
-          const actualPixelBufferInWorld = this.convertPixelsToWorldUnits(
-            pixelBuffer,
-            actualDistance,
-            canvas
-          );
-          const actualThreshold = actualPointSizeInWorld + actualPixelBufferInWorld;
-
-          const rayToPoint = worldPoint.clone().sub(raycaster.ray.origin);
-          const rayDirection = raycaster.ray.direction.clone().normalize();
-          const projectedDistance = rayToPoint.dot(rayDirection);
-          const rayPoint = raycaster.ray.origin
-            .clone()
-            .add(rayDirection.multiplyScalar(projectedDistance));
-          const perpendicularDistance = worldPoint.distanceTo(rayPoint);
-
-          if (perpendicularDistance <= actualThreshold) {
-            if (actualDistance >= 0.0001) {
-              const cameraToPoint = worldPoint.clone().sub(this.context.camera.position);
-              const dotProduct = cameraToPoint.dot(
-                this.context.camera.getWorldDirection(new THREE.Vector3())
-              );
-              if (dotProduct > 0.0001) {
-                if (actualDistance < closestDistance) {
-                  closestDistance = actualDistance;
-                  closestPoint = worldPoint;
-
-                  bestSelectionInfo =
-                    `efficient raycast: point #${intersection.index} in mesh ${fileIndex}, distance=${actualDistance.toFixed(4)}m, ` +
-                    `materialSize=${material.size.toFixed(1)}px, renderedSize=${actualRenderedSize.toFixed(1)}px, ` +
-                    `pointSizeWorld=${actualPointSizeInWorld.toFixed(6)}m, pixelBuffer=${pixelBuffer}px, ` +
-                    `bufferWorld=${actualPixelBufferInWorld.toFixed(6)}m, threshold=${actualThreshold.toFixed(6)}m, ` +
-                    `perpDist=${perpendicularDistance.toFixed(6)}m, sizeAttenuation=${material.sizeAttenuation}`;
-                }
-              }
-            }
-          }
-        }
-      }
+      worldPoint.copy(this.context.camera.position).add(cameraDirection.multiplyScalar(0.0001));
+      adjusted = ', adjusted for min distance';
     }
 
-    if (closestPoint) {
-      const distance = this.context.camera.position.distanceTo(closestPoint);
-      if (distance < 0.0001) {
-        const cameraDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(
-          this.context.camera.quaternion
-        );
-        closestPoint = this.context.camera.position
-          .clone()
-          .add(cameraDirection.multiplyScalar(0.0001));
-        bestSelectionInfo += `, adjusted for min distance`;
-      }
+    const fileIndex = this.context.meshes.indexOf(hit.mesh);
+    const material = hit.mesh.material as THREE.PointsMaterial;
+    const info =
+      `screen-space pick: point #${hit.pointIndex} in mesh ${fileIndex}, depth=${hit.viewDepth.toFixed(4)}m, ` +
+      `pixelDist=${hit.pixelDistance.toFixed(1)}px, pickRadius=${hit.pixelRadius.toFixed(1)}px, ` +
+      `materialSize=${material.size.toFixed(1)}px, renderedSize=${hit.renderedSize.toFixed(1)}px, ` +
+      `sizeAttenuation=${material.sizeAttenuation}${adjusted}`;
 
-      return { point: closestPoint, info: bestSelectionInfo };
-    }
-
-    return null;
+    return { point: worldPoint, info };
   }
 }
