@@ -85,7 +85,7 @@
         : 'none'};background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:8px;margin-top:4px;"
     >
       <div class="transform-group">
-        <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
+        <label for={`matrix-${fileIndex}`} style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
         <textarea
           id={`matrix-${fileIndex}`}
           rows="4"
@@ -116,7 +116,7 @@
     <div id={`transform-panel-${fileIndex}`} class="transform-panel" style="display:{open ? 'block' : 'none'};">
       {#if !matrixOnly}
         <div class="transform-group">
-          <label style="font-size:10px;font-weight:bold;">Transformations:</label>
+          <span class="transform-group-label" style="font-size:10px;font-weight:bold;">Transformations:</span>
           <div class="transform-buttons">
             <button
               class="add-translation"
@@ -137,7 +137,7 @@
         </div>
 
         <div class="transform-group">
-          <label style="font-size:10px;font-weight:bold;">Rotation (90°):</label>
+          <span class="transform-group-label" style="font-size:10px;font-weight:bold;">Rotation (90°):</span>
           <div class="transform-buttons">
             <button class="rotate-x" data-file-index={fileIndex} onclick={() => rotate('x')}
               >X</button
@@ -153,7 +153,7 @@
       {/if}
 
       <div class="transform-group">
-        <label style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
+        <label for={`matrix-${fileIndex}`} style="font-size:10px;font-weight:bold;">Matrix (4x4):</label>
         <textarea
           id={`matrix-${fileIndex}`}
           rows="4"

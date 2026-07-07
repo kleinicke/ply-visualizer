@@ -48,6 +48,7 @@ export async function handleAddFile(
 
       'Point Clouds': [...SUPPORTED_EXTENSIONS.pointClouds],
 
+      // eslint-disable-next-line @typescript-eslint/naming-convention -- dialog filter display name
       Meshes: [...SUPPORTED_EXTENSIONS.meshes],
 
       'Depth Images': [...SUPPORTED_EXTENSIONS.depthImages],

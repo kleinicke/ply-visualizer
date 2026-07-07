@@ -72,6 +72,9 @@ module.exports = [
       filename: 'main.js',
     },
     devtool: 'nosources-source-map',
+    // The webview bundle is loaded from local disk by VS Code, not over the
+    // network; the default 244KiB web-performance budget does not apply
+    performance: { hints: false },
     resolve: {
       extensions: ['.ts', '.js', '.svelte'],
       // Svelte 5 ships its runtime under package.json "svelte"/"browser" export

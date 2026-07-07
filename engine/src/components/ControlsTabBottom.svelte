@@ -1,7 +1,11 @@
 <script lang="ts">
   let { host }: { host: any } = $props();
 
+  // Intentional: seed local UI state from the host once at mount; the toggle
+  // handlers below keep it in sync afterwards
+  // svelte-ignore state_referenced_locally
   let screenSpaceScaling = $state(host.screenSpaceScaling);
+  // svelte-ignore state_referenced_locally
   let allowTransparency = $state(host.allowTransparency);
 
   function onToggleScreenSpaceScaling() {

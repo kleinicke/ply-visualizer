@@ -3,9 +3,15 @@
 
   let { host }: { host: any } = $props();
 
+  // Intentional: seed local UI state from the host once at mount; the change
+  // handlers below keep it in sync afterwards
+  // svelte-ignore state_referenced_locally
   let axesVisible = $state(host.axesPermanentlyVisible);
+  // svelte-ignore state_referenced_locally
   let camerasVisible = $state(host.cameraVisibility);
+  // svelte-ignore state_referenced_locally
   let gammaEnabled = $state(!host.convertSrgbToLinear);
+  // svelte-ignore state_referenced_locally
   let rotationCenterMode = $state(host.rotationCenterManager.getMode());
 
   function onBrightnessInput(e: Event) {

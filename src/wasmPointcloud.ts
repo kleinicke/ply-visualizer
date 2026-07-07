@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import { createRequire } from 'module';
 
 /**
  * Thin loader/wrapper around the Rust/WASM point-cloud parser
@@ -13,6 +14,7 @@ import * as fs from 'fs';
  */
 
 // webpack replaces require() of static paths; this keeps the require at runtime.
+// eslint-disable-next-line @typescript-eslint/naming-convention -- name is defined by webpack
 declare const __non_webpack_require__: NodeRequire | undefined;
 
 export interface WasmPointCloud {
@@ -38,7 +40,9 @@ function load(): any {
   attempted = true;
   try {
     const req: NodeRequire =
-      typeof __non_webpack_require__ !== 'undefined' ? __non_webpack_require__ : require;
+      typeof __non_webpack_require__ !== 'undefined'
+        ? __non_webpack_require__
+        : createRequire(__filename);
     mod = req(path.join(__dirname, 'wasm', 'pointcloud-parser', 'pointcloud_parser.js'));
   } catch (error) {
     console.warn('[pointcloud-wasm] module unavailable, using JS parsers:', error);

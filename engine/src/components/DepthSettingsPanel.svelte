@@ -14,7 +14,11 @@
   let conventionOpen = $state(false);
   let colorImageOpen = $state(false);
 
+  // Intentional: seed local UI state from the host once at mount; the change
+  // handlers keep it in sync afterwards
+  // svelte-ignore state_referenced_locally
   let cameraModel = $state(host.getDepthSetting(data, 'camera'));
+  // svelte-ignore state_referenced_locally
   let depthType = $state(host.getDepthSetting(data, 'depth'));
 
   const isDisparity = $derived(depthType === 'disparity');
@@ -122,9 +126,13 @@
   >
     <span class="toggle-icon">{open ? '▼' : '▶'}</span> Depth Settings
   </button>
+  <!-- The listeners only delegate for events bubbling from the form controls
+       inside; the panel itself is not interactive -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="depth-settings-panel"
     id={`depth-panel-${fileIndex}`}
+    role="group"
     style="display:{open ? 'block' : 'none'}; margin-top: 8px; padding: 8px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;"
     onkeydown={onPanelKeydown}
     onfocusout={onPanelFocusout}
@@ -190,7 +198,7 @@
       </select>
     </div>
     <div class="depth-group" style="margin-bottom: 8px;">
-      <label style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Focal Length (px) ⭐:</label>
+      <span style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;">Focal Length (px) ⭐:</span>
       <div style="display: flex; gap: 4px;">
         <div style="flex: 1;">
           <label for={`fx-${fileIndex}`} style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">fx:</label>

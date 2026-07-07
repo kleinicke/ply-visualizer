@@ -51,7 +51,7 @@
 <Modal {onClose}>
   <h3 style="margin-top:0;">{title}</h3>
   <div style="margin-bottom: 15px;">
-    <label style="display:block;margin-bottom:5px;">{label}</label>
+    <label for={inputId} style="display:block;margin-bottom:5px;">{label}</label>
     <textarea
       id={inputId}
       placeholder={defaultValue}
@@ -60,7 +60,7 @@
     >
   </div>
   <div style="margin-bottom: 15px;">
-    <label style="display:block;margin-bottom:8px;">Keep constant when changing:</label>
+    <span style="display:block;margin-bottom:8px;">Keep constant when changing:</span>
     <div style="display:flex;gap:15px;align-items:center;">
       {#each radioOptions as option (option.value)}
         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">

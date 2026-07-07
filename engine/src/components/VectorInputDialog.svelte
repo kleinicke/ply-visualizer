@@ -39,7 +39,7 @@
 <Modal {onClose}>
   <h3 style="margin-top:0;">{title}</h3>
   <div style="margin-bottom: 15px;">
-    <label style="display:block;margin-bottom:5px;font-weight:bold;">{label}</label>
+    <label for={inputId} style="display:block;margin-bottom:5px;font-weight:bold;">{label}</label>
     <div style="font-size:11px;color:#666;margin-bottom:8px;">
       {#each helpLines as line, i (i)}
         {line}<br />

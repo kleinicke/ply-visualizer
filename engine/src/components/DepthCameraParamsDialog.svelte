@@ -75,7 +75,7 @@
 
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
       <div>
-        <label style="display: block; margin-bottom: 5px;">Focal Length X (fx):</label>
+        <label for="depth-fx" style="display: block; margin-bottom: 5px;">Focal Length X (fx):</label>
         <input
           bind:this={fxInputEl}
           type="number"
@@ -86,7 +86,7 @@
         />
       </div>
       <div>
-        <label style="display: block; margin-bottom: 5px;">Focal Length Y (fy):</label>
+        <label for="depth-fy" style="display: block; margin-bottom: 5px;">Focal Length Y (fy):</label>
         <input
           type="number"
           id="depth-fy"
@@ -96,7 +96,7 @@
         />
       </div>
       <div>
-        <label style="display: block; margin-bottom: 5px;">Principal Point X (cx):</label>
+        <label for="depth-cx" style="display: block; margin-bottom: 5px;">Principal Point X (cx):</label>
         <input
           type="number"
           id="depth-cx"
@@ -106,7 +106,7 @@
         />
       </div>
       <div>
-        <label style="display: block; margin-bottom: 5px;">Principal Point Y (cy):</label>
+        <label for="depth-cy" style="display: block; margin-bottom: 5px;">Principal Point Y (cy):</label>
         <input
           type="number"
           id="depth-cy"
@@ -118,7 +118,7 @@
     </div>
 
     <div style="margin-bottom: 20px;">
-      <label style="display: block; margin-bottom: 5px;">Depth Type:</label>
+      <label for="depth-type" style="display: block; margin-bottom: 5px;">Depth Type:</label>
       <select
         id="depth-type"
         style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;"
@@ -139,7 +139,7 @@
     >
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
         <div>
-          <label style="display: block; margin-bottom: 5px;">Baseline (mm):</label>
+          <label for="depth-baseline" style="display: block; margin-bottom: 5px;">Baseline (mm):</label>
           <input
             type="number"
             id="depth-baseline"
@@ -149,7 +149,7 @@
           />
         </div>
         <div>
-          <label style="display: block; margin-bottom: 5px;">Disparity Offset:</label>
+          <label for="depth-disparity-offset" style="display: block; margin-bottom: 5px;">Disparity Offset:</label>
           <input
             type="number"
             id="depth-disparity-offset"
@@ -162,7 +162,7 @@
     </div>
 
     <div style="margin-bottom: 20px;">
-      <label style="display: block; margin-bottom: 5px;">Camera Model:</label>
+      <label for="camera-model" style="display: block; margin-bottom: 5px;">Camera Model:</label>
       <select
         id="camera-model"
         style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;"

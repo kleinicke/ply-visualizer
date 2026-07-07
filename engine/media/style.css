@@ -474,7 +474,8 @@ body {
   margin-bottom: 0;
 }
 
-.transform-group label {
+.transform-group label,
+.transform-group .transform-group-label {
   display: block;
   margin-bottom: 4px;
   color: var(--vscode-sideBarTitle-foreground);

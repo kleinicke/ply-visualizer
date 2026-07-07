@@ -50,7 +50,7 @@
 </script>
 
 <div class="camera-controls-section">
-  <label style="font-size:10px;">Field of View:</label><br />
+  <label for="camera-fov" style="font-size:10px;">Field of View:</label><br />
   <input
     type="range"
     id="camera-fov"
@@ -73,7 +73,7 @@
 </div>
 
 <div class="camera-controls-section">
-  <label style="font-size:10px;font-weight:bold;">Camera Position &amp; Rotation:</label>
+  <span style="font-size:10px;font-weight:bold;">Camera Position &amp; Rotation:</span>
   <div class="matrix-display">
     <div style="font-size:10px;margin:4px 0;">
       <div><strong>Position:</strong> {viewerState.cameraPositionText}</div>

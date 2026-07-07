@@ -16,6 +16,7 @@ import { RotationCenterManager, RotationCenterMode } from './RotationCenterManag
 import { MeasurementManager } from './MeasurementManager';
 import { SelectionManager, SelectionContext } from './SelectionManager';
 
+// eslint-disable-next-line @typescript-eslint/naming-convention -- ambient global from media/geotiff.min.js
 declare const GeoTIFF: any;
 declare const acquireVsCodeApi: () => any;
 
@@ -2147,11 +2148,18 @@ class PointCloudVisualizer {
       const timeOnly = `${new Date(iso).toTimeString().split(' ')[0]}.${new Date(iso).getMilliseconds().toString().padStart(3, '0')}`;
       const kind = (this.currentTiming.kind || 'unknown').toUpperCase();
       const fmt = this.currentTiming.format ? `, format=${this.currentTiming.format}` : '';
-      const read = this.currentTiming.readMs != null ? `read ${this.currentTiming.readMs}ms` : null;
+      const read =
+        typeof this.currentTiming.readMs === 'number'
+          ? `read ${this.currentTiming.readMs}ms`
+          : null;
       const parse =
-        this.currentTiming.parseMs != null ? `parse ${this.currentTiming.parseMs}ms` : null;
+        typeof this.currentTiming.parseMs === 'number'
+          ? `parse ${this.currentTiming.parseMs}ms`
+          : null;
       const convert =
-        this.currentTiming.convertMs != null ? `convert ${this.currentTiming.convertMs}ms` : null;
+        typeof this.currentTiming.convertMs === 'number'
+          ? `convert ${this.currentTiming.convertMs}ms`
+          : null;
       const render = this.lastGeometryMs ? `render ${this.lastGeometryMs}ms` : null;
       const parts = [read, parse, convert, render].filter(Boolean).join(', ');
       const totalAbs = this.lastAbsoluteMs
