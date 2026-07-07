@@ -388,7 +388,7 @@
       class:active={viewerState.controlScheme === 'inverse-trackball'}
       onclick={onInverseTrackball}
     >
-      Inverse <span class="button-shortcut">I</span>
+      Inverse Rotation <span class="button-shortcut">I</span>
     </button>
     <button
       id="arcball-controls"

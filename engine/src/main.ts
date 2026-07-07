@@ -119,6 +119,7 @@ class PointCloudVisualizer {
   // out-of-VRAM case (each window is a separate context sharing one GPU).
   private contextLost = false;
   controls!: TrackballControls | OrbitControls | CustomArcballControls | TurntableControls;
+  private inverseTrackballPointerDownHandler: (() => void) | null = null;
 
   // Camera control state
   controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare' =
@@ -639,7 +640,7 @@ class PointCloudVisualizer {
     } else if (this.controlType === 'inverse-trackball') {
       this.controls = new TrackballControls(this.camera, this.renderer.domElement);
       const trackballControls = this.controls as TrackballControls;
-      trackballControls.rotateSpeed = 1.0; // Reduced to 1.0 as requested
+      trackballControls.rotateSpeed = 5.0; // match normal trackball's orbit sensitivity
       trackballControls.zoomSpeed = 2.5;
       trackballControls.panSpeed = 1.5;
       trackballControls.noZoom = false;
@@ -710,8 +711,72 @@ class PointCloudVisualizer {
 
     const controls = this.controls as TrackballControls;
 
-    // Override _rotateCamera to invert up vector rotation using quaternion.invert()
+    // Override _rotateCamera to invert only the roll (the twist from a circular/
+    // tangential mouse gesture), while leaving ordinary left/right and up/down
+    // orbiting byte-for-byte identical to normal trackball - that part already
+    // feels right, only the roll direction is backwards.
+    //
+    // Roll isn't a separate term in the vanilla formula - a single step's axis is
+    // always perpendicular to the eye direction, so per-step there's no roll to
+    // negate. What the user perceives as "roll" from a circular drag is a multi-
+    // step holonomy effect: composing many small perpendicular-axis rotations in
+    // a loop nets a rotation about the view axis. That means it can't be flipped
+    // frame-by-frame without feeding the correction back into `up`, which then
+    // contaminates the *next* frame's axis calculation (object.up feeds into
+    // _objectSidewaysDirection) - which is exactly what made an earlier version
+    // of this fix scramble the yaw/pitch direction under real per-pixel dragging.
+    //
+    // So: run the exact unmodified vanilla algorithm on a private "shadow" eye/up
+    // pair that mirrors what normal trackball would show, immune to any
+    // correction. The real camera's eye always just copies the shadow's (so yaw/
+    // pitch matches normal trackball exactly). The real camera's `up` is instead
+    // reconstructed each frame via swing-twist decomposition relative to the
+    // start of the current drag: "swing" is the twist-free rotation that alone
+    // would carry the original eye direction to the current one (via
+    // setFromUnitVectors, which by construction has zero roll about the
+    // resulting axis); "twist" is whatever roll the shadow accumulated beyond
+    // that. Displaying swing rotated by the *negated* twist yields exactly the
+    // mirror-image roll while keeping the eye (and thus yaw/pitch) untouched.
+    let eyeOriginal = new THREE.Vector3();
+    let upOriginal = new THREE.Vector3();
+    let eyeShadow = new THREE.Vector3();
+    let upShadow = new THREE.Vector3();
+    let sessionActive = false;
+
+    const beginSession = () => {
+      eyeOriginal.copy(controls.object.position).sub(controls.target);
+      upOriginal.copy(controls.object.up);
+      eyeShadow.copy(eyeOriginal);
+      upShadow.copy(upOriginal);
+      sessionActive = true;
+    };
+
+    if (this.inverseTrackballPointerDownHandler) {
+      this.renderer.domElement.removeEventListener(
+        'pointerdown',
+        this.inverseTrackballPointerDownHandler
+      );
+    }
+    this.inverseTrackballPointerDownHandler = beginSession;
+    this.renderer.domElement.addEventListener('pointerdown', beginSession);
+
     (controls as any)._rotateCamera = function () {
+      if (!sessionActive) {
+        beginSession();
+      }
+
+      // `update()` already refreshed `this._eye` from the live camera position
+      // just before calling us, so its length reflects reality including any
+      // zoom applied on a previous frame (zoom only rescales `_eye`, it doesn't
+      // go through the shadow). Resync the shadow's magnitude (not direction -
+      // that's still driven by the shadow's own rotation history) so a zoom
+      // that happened mid-momentum doesn't get discarded the next time this
+      // rotates and writes eyeShadow back into the real `_eye`.
+      const liveLength = this._eye.length();
+      if (liveLength > 0) {
+        eyeShadow.setLength(liveLength);
+      }
+
       const _moveDirection = new THREE.Vector3();
       const _eyeDirection = new THREE.Vector3();
       const _objectUpDirection = new THREE.Vector3();
@@ -725,12 +790,11 @@ class PointCloudVisualizer {
         0
       );
       let angle = _moveDirection.length();
+      let didRotate = false;
 
       if (angle) {
-        this._eye.copy(this.object.position).sub(this.target);
-
-        _eyeDirection.copy(this._eye).normalize();
-        _objectUpDirection.copy(this.object.up).normalize();
+        _eyeDirection.copy(eyeShadow).normalize();
+        _objectUpDirection.copy(upShadow).normalize();
         _objectSidewaysDirection.crossVectors(_objectUpDirection, _eyeDirection).normalize();
 
         _objectUpDirection.setLength(this._moveCurr.y - this._movePrev.y);
@@ -738,36 +802,75 @@ class PointCloudVisualizer {
 
         _moveDirection.copy(_objectUpDirection.add(_objectSidewaysDirection));
 
-        _axis.crossVectors(_moveDirection, this._eye).normalize();
+        _axis.crossVectors(_moveDirection, eyeShadow).normalize();
 
         angle *= this.rotateSpeed;
         _quaternion.setFromAxisAngle(_axis, angle);
 
-        // Apply normal rotation to camera position
-        this._eye.applyQuaternion(_quaternion);
-
-        // Apply inverted rotation to up vector
-        this.object.up.applyQuaternion(_quaternion.clone().invert());
+        eyeShadow.applyQuaternion(_quaternion);
+        upShadow.applyQuaternion(_quaternion);
 
         this._lastAxis.copy(_axis);
         this._lastAngle = angle;
+        didRotate = true;
       } else if (!this.staticMoving && this._lastAngle) {
         this._lastAngle *= Math.sqrt(1.0 - this.dynamicDampingFactor);
-        this._eye.copy(this.object.position).sub(this.target);
 
-        _quaternion.setFromAxisAngle(this._lastAxis, this._lastAngle);
+        // The decay is geometric and asymptotic - it never reaches exactly
+        // zero, so without a cutoff `this._lastAngle` stays truthy (if
+        // vanishingly small) indefinitely. That kept this branch - and thus
+        // the shadow-eye override below - active forever, which silently
+        // fought any zoom/pan applied after a rotation ever completed.
+        const EPS = 1e-5;
+        if (Math.abs(this._lastAngle) < EPS) {
+          this._lastAngle = 0;
+        } else {
+          _quaternion.setFromAxisAngle(this._lastAxis, this._lastAngle);
 
-        // Apply normal rotation to camera position
-        this._eye.applyQuaternion(_quaternion);
-
-        // Apply inverted rotation to up vector
-        this.object.up.applyQuaternion(_quaternion.clone().invert());
+          eyeShadow.applyQuaternion(_quaternion);
+          upShadow.applyQuaternion(_quaternion);
+          didRotate = true;
+        }
       }
 
       this._movePrev.copy(this._moveCurr);
-    };
 
-    // debug: inversion applied
+      // update() is called every animation frame regardless of user
+      // interaction, not just while dragging. If nothing rotated this frame,
+      // don't touch the real eye/up at all - just keep the shadow in sync with
+      // reality so it doesn't go stale relative to external changes (zoom, pan,
+      // fit-to-view reset, programmatic repositioning). Without this, any of
+      // those would get silently reverted back to the shadow's last
+      // rotation-derived state on the very next frame.
+      if (!didRotate) {
+        eyeShadow.copy(this._eye);
+        upShadow.copy(this.object.up);
+        return;
+      }
+
+      // Eye matches the shadow exactly - yaw/pitch identical to normal trackball.
+      this._eye.copy(eyeShadow);
+
+      // Up is reconstructed via swing-twist relative to session start, with the
+      // twist (roll) negated instead of copied from the shadow.
+      const eyeAxis = eyeShadow.clone().normalize();
+      const qSwing = new THREE.Quaternion().setFromUnitVectors(
+        eyeOriginal.clone().normalize(),
+        eyeAxis
+      );
+      const upTwistFree = upOriginal.clone().applyQuaternion(qSwing);
+
+      const projectPerp = (v: THREE.Vector3) => {
+        const d = v.dot(eyeAxis);
+        return v.clone().addScaledVector(eyeAxis, -d).normalize();
+      };
+      const a = projectPerp(upTwistFree);
+      const b = projectPerp(upShadow);
+      const crossAB = new THREE.Vector3().crossVectors(a, b);
+      const twistAngle = Math.atan2(crossAB.dot(eyeAxis), a.dot(b));
+
+      this.object.up.copy(upTwistFree).applyAxisAngle(eyeAxis, -twistAngle);
+    };
   }
 
   private addAxesHelper(): void {
