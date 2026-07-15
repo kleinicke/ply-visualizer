@@ -1,5 +1,6 @@
 <script lang="ts">
   import { filesState } from '../state/files.svelte';
+  import { getExtraScalarFieldNames } from '../utils/scalarFields';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
   import TransformSection from './TransformSection.svelte';
 
@@ -26,12 +27,23 @@
       (host.isDepthDerivedFile(data) || (data as any).isDepthDerived)
   );
 
+  const scalarFieldNames = $derived(
+    kind === 'pointcloud' && data ? getExtraScalarFieldNames(data) : []
+  );
+
   function colorIndicatorStyle(): string {
     if (kind === 'pointcloud' && colorMode === 'original' && data?.hasColors) {
       return 'background: linear-gradient(45deg, #ff0000, #00ff00, #0000ff); border: 1px solid #666;';
     }
     if (kind === 'pointcloud' && colorMode?.startsWith('intensity') && host.hasIntensityData(data)) {
       return 'background: linear-gradient(90deg, #111, #fff); border: 1px solid #666;';
+    }
+    if (kind === 'pointcloud' && colorMode?.startsWith('scalar:')) {
+      if (colorMode.endsWith(':grayscale')) {
+        return 'background: linear-gradient(90deg, #111, #fff); border: 1px solid #666;';
+      }
+      // Viridis-ish ramp for scalar-field modes.
+      return 'background: linear-gradient(90deg, #440154, #31688e, #35b779, #fde725); border: 1px solid #666;';
     }
     const color = host.fileColors[index % host.fileColors.length];
     const colorHex = `#${Math.round(color[0] * 255)
@@ -337,6 +349,10 @@
             <option value="intensity-viridis">Intensity (Viridis)</option>
             <option value="intensity-colors">Intensity (Colors)</option>
           {/if}
+          {#each scalarFieldNames as fieldName (fieldName)}
+            <option value={`scalar:${fieldName}:viridis`}>{fieldName} (Viridis)</option>
+            <option value={`scalar:${fieldName}:grayscale`}>{fieldName} (Gray)</option>
+          {/each}
           <option value="assigned">Assigned ({host.getColorName(index)})</option>
           {@html host.getColorOptions(index)}
         </select>

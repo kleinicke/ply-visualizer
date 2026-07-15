@@ -1,5 +1,6 @@
 import { SpatialData, SpatialVertex } from './interfaces';
 import { PerfTimer } from './utils/perfLog';
+import { isExtraScalarProperty } from './utils/scalarFields';
 
 export interface BinaryDataHandlersHost {
   vscode: { postMessage(message: any): void };
@@ -308,6 +309,29 @@ export async function handleUltimateRawBinaryData(
     }
   }
 
+  // Extra scalar fields (confidence, error, label, …) in a per-field second
+  // pass, so the hand-tuned main loop above stays untouched. Files without
+  // extra properties skip this entirely.
+  const extraScalarFields: Record<string, Float32Array> = {};
+  for (const [rawName, rawInfo] of propertyOffsets.entries()) {
+    const name = String(rawName);
+    const info = rawInfo as { offset: number; type: string };
+    if (!isExtraScalarProperty(name, info.type)) {
+      continue;
+    }
+    const arr = new Float32Array(vertexCount);
+    if (info.type === 'float' || info.type === 'float32') {
+      for (let i = 0; i < vertexCount; i++) {
+        arr[i] = dataView.getFloat32(i * vertexStride + info.offset, littleEndian);
+      }
+    } else {
+      for (let i = 0; i < vertexCount; i++) {
+        arr[i] = readBinaryValue(i * vertexStride + info.offset, info.type);
+      }
+    }
+    extraScalarFields[name] = arr;
+  }
+
   const parseTime = performance.now();
   perf.mark('parse');
   perf.note('fast', fastEligible ? 1 : 0);
@@ -336,7 +360,9 @@ export async function handleUltimateRawBinaryData(
   (spatialData as any).colorsArray = colors;
   (spatialData as any).normalsArray = normals;
   (spatialData as any).intensityArray = intensity;
-  (spatialData as any).scalarFields = intensity ? { intensity } : {};
+  (spatialData as any).scalarFields = intensity
+    ? { intensity, ...extraScalarFields }
+    : extraScalarFields;
 
   // Faces: if face info was provided in header, read faces after vertex block
   // Note: rawBinaryData starts at vertex buffer; if faces follow, they are after vertexStride * vertexCount bytes

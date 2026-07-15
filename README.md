@@ -59,7 +59,10 @@ results without leaving the editor.
 Point cloud files can include positions, RGB colors, normals and scalar fields.
 The viewer uses positions for geometry, original RGB values when available,
 normals for inspection, and intensity/reflectivity fields for optional scalar
-coloring.
+coloring. The recognized property names are `x/y/z`, `red/green/blue`,
+`nx/ny/nz` and `intensity`/`reflectivity`/`reflectance`/`remission`. Any other
+numeric per-vertex PLY property (e.g. `confidence`, `error`, `curvature`) also
+appears in the Color dropdown for Viridis or grayscale colormap coloring.
 
 ### Distance Measurement Tools and Camera Manipulation
 

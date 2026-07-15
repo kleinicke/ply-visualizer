@@ -54,6 +54,58 @@ export class PlyParser {
     return PlyParser.intensityAliases.includes(normalized);
   }
 
+  // Properties consumed by position/color/normal handling. Any other non-list
+  // numeric property is collected into scalarFields for scalar coloring.
+  // Kept local (duplicating utils/scalarFields.ts) so this parser stays
+  // import-free — keep the two lists in sync.
+  private static readonly consumedProps = [
+    'x',
+    'y',
+    'z',
+    'red',
+    'green',
+    'blue',
+    'alpha',
+    'nx',
+    'ny',
+    'nz',
+  ];
+
+  private static isExtraScalarProperty(name: string, type: string): boolean {
+    if (type === 'list') {
+      return false;
+    }
+    const normalized = name.toLowerCase();
+    return (
+      !PlyParser.consumedProps.includes(normalized) &&
+      !PlyParser.intensityAliases.includes(normalized)
+    );
+  }
+
+  private static collectExtraScalarTargets(
+    vertexProperties: Array<{ name: string; type: string }>,
+    vertexCount: number
+  ): { idx: number; name: string; arr: Float32Array }[] {
+    const extras: { idx: number; name: string; arr: Float32Array }[] = [];
+    vertexProperties.forEach((prop, idx) => {
+      if (PlyParser.isExtraScalarProperty(prop.name, prop.type)) {
+        extras.push({ idx, name: prop.name, arr: new Float32Array(vertexCount) });
+      }
+    });
+    return extras;
+  }
+
+  private static assembleScalarFields(
+    intensity: Float32Array | null,
+    extras: { name: string; arr: Float32Array }[]
+  ): Record<string, Float32Array> {
+    const scalarFields: Record<string, Float32Array> = intensity ? { intensity } : {};
+    for (const extra of extras) {
+      scalarFields[extra.name] = extra.arr;
+    }
+    return scalarFields;
+  }
+
   /**
    * Split a line on runs of ASCII whitespace, recording token boundaries into
    * the provided reusable buffers instead of allocating an array of substrings.
@@ -408,6 +460,7 @@ export class PlyParser {
     const intensityIdx = useIntensity
       ? vertexProperties.findIndex(prop => PlyParser.isIntensityField(prop.name))
       : -1;
+    const extras = PlyParser.collectExtraScalarTargets(vertexProperties, vertexCount);
 
     // Reusable token-boundary buffers for the vertex hot path. Avoids the
     // per-vertex regex split (which allocates an array + a substring for every
@@ -489,6 +542,14 @@ export class PlyParser {
                 : 0;
           }
 
+          for (let e = 0; e < extras.length; e++) {
+            const extra = extras[e];
+            extra.arr[verticesParsed] =
+              extra.idx < ntok
+                ? parseFloat(line.substring(tokStart[extra.idx], tokEnd[extra.idx]))
+                : 0;
+          }
+
           verticesParsed++;
 
           if (verticesParsed % 1000000 === 0) {
@@ -547,6 +608,10 @@ export class PlyParser {
             intensity[verticesParsed] =
               values[intensityIdx] !== undefined ? parseFloat(values[intensityIdx]) : 0;
           }
+          for (const extra of extras) {
+            extra.arr[verticesParsed] =
+              values[extra.idx] !== undefined ? parseFloat(values[extra.idx]) : 0;
+          }
           verticesParsed++;
         } else if (faceCount > 0 && facesParsed < faceCount) {
           const tokens = line.split(/\s+/);
@@ -573,7 +638,7 @@ export class PlyParser {
     (result as any).colorsArray = colors;
     (result as any).normalsArray = normals;
     (result as any).intensityArray = intensity;
-    (result as any).scalarFields = intensity ? { intensity } : {};
+    (result as any).scalarFields = PlyParser.assembleScalarFields(intensity, extras);
     (result as any).useTypedArrays = true;
     result.vertices = [];
   }
@@ -656,6 +721,13 @@ export class PlyParser {
     const nyIdx = propIndices.get('ny') ?? -1;
     const nzIdx = propIndices.get('nz') ?? -1;
     const intensityIdx = vertexProperties.findIndex(prop => PlyParser.isIntensityField(prop.name));
+    const extras = PlyParser.collectExtraScalarTargets(vertexProperties, result.vertexCount);
+    // Per-propIdx target array (null for consumed/alias/list props) so extra
+    // scalars cost one indexed lookup in the unmatched branch of the hot loop.
+    const extraByPropIdx: (Float32Array | null)[] = new Array(vertexProperties.length).fill(null);
+    for (const extra of extras) {
+      extraByPropIdx[extra.idx] = extra.arr;
+    }
 
     // Lightning-fast direct binary parsing
     for (let i = 0; i < result.vertexCount; i++) {
@@ -686,6 +758,11 @@ export class PlyParser {
           normals[i3 + 2] = value;
         } else if (intensity && propIdx === intensityIdx) {
           intensity[i] = value;
+        } else {
+          const extraTarget = extraByPropIdx[propIdx];
+          if (extraTarget) {
+            extraTarget[i] = value;
+          }
         }
       }
     }
@@ -698,7 +775,7 @@ export class PlyParser {
     (result as any).colorsArray = colors;
     (result as any).normalsArray = normals;
     (result as any).intensityArray = intensity;
-    (result as any).scalarFields = intensity ? { intensity } : {};
+    (result as any).scalarFields = PlyParser.assembleScalarFields(intensity, extras);
     (result as any).useTypedArrays = true;
 
     // Create minimal vertex array for compatibility (only if really needed)

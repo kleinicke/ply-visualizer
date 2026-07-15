@@ -284,6 +284,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           // Handle PLY file save request
           await this.handleSaveSpatialFile(webviewPanel, message);
           break;
+        case 'saveScreenshot':
+          await this.handleSaveScreenshot(message);
+          break;
         case 'selectColorImage':
           await this.handleSelectColorImage(webviewPanel, message);
           break;
@@ -745,6 +748,27 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       // Show error message to user
       vscode.window.showErrorMessage(
         `Failed to save PLY file: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async handleSaveScreenshot(message: any): Promise<void> {
+    try {
+      const saveUri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(message.defaultFileName),
+        filters: {
+          'PNG Images': ['png'],
+          'All Files': ['*'],
+        },
+      });
+      if (!saveUri) {
+        return;
+      }
+      await vscode.workspace.fs.writeFile(saveUri, Buffer.from(message.dataBase64, 'base64'));
+      vscode.window.showInformationMessage(`Screenshot saved: ${path.basename(saveUri.fsPath)}`);
+    } catch (error) {
+      vscode.window.showErrorMessage(
+        `Failed to save screenshot: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

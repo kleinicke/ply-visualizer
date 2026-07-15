@@ -80,6 +80,24 @@ export function buildIntensityColorArrayForMode(
   pointCount: number,
   colorMode: string
 ): Float32Array {
+  const mapName =
+    colorMode === 'intensity-viridis'
+      ? 'viridis'
+      : colorMode === 'intensity-colors'
+        ? 'colors'
+        : 'grayscale';
+  return buildScalarColorArray(values, pointCount, mapName);
+}
+
+/**
+ * Map any scalar field to vertex colors, auto-normalized to the field's
+ * finite min/max (non-finite values render at 0.75 like missing intensity).
+ */
+export function buildScalarColorArray(
+  values: Float32Array,
+  pointCount: number,
+  mapName: 'grayscale' | 'viridis' | 'colors'
+): Float32Array {
   const colors = new Float32Array(pointCount * 3);
   let min = Infinity;
   let max = -Infinity;
@@ -93,12 +111,6 @@ export function buildIntensityColorArrayForMode(
   }
 
   const hasRange = Number.isFinite(min) && Number.isFinite(max) && max > min;
-  const mapName =
-    colorMode === 'intensity-viridis'
-      ? 'viridis'
-      : colorMode === 'intensity-colors'
-        ? 'colors'
-        : 'grayscale';
 
   for (let i = 0; i < pointCount; i++) {
     const value = i < values.length ? values[i] : 0;

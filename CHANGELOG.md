@@ -1,5 +1,14 @@
 # Change Log
 
+## [1.7.0] - 
+
+- Internal refactoring - move to svelte
+- Speedup for computing point clouds out of depth
+- Add double click onto empty region to automatically fit to point cloud
+- Color point clouds by any extra PLY scalar property (e.g. confidence, error) via Viridis/Gray colormaps in the Color dropdown
+- Add "Save Screenshot" (PNG) and "Copy Camera JSON" (position/target/up/fov) to the camera tab
+
+
 ## [1.6.0] - 2026-06-07
 
 - Visualizing points as round points instead of squares

@@ -5,7 +5,9 @@ import {
   getIntensityArray,
   hasIntensityData,
   buildIntensityColorArrayForMode,
+  buildScalarColorArray,
 } from './utils/intensity';
+import { parseScalarColorMode, getScalarFieldForColorMode } from './utils/scalarFields';
 
 export interface SrgbHost {
   convertSrgbToLinear: boolean;
@@ -136,6 +138,20 @@ export function applyColorModeToGeometry(
     }
   }
 
+  const scalarMode = parseScalarColorMode(colorMode);
+  if (scalarMode) {
+    const values = data.scalarFields?.[scalarMode.field];
+    if (values) {
+      const colorAttribute = new THREE.BufferAttribute(
+        buildScalarColorArray(values, pointCount, scalarMode.map),
+        3
+      );
+      geometry.setAttribute('color', colorAttribute);
+      colorAttribute.needsUpdate = true;
+      return;
+    }
+  }
+
   if (colorMode === 'original' && data.hasColors) {
     const colors = buildOriginalColorArray(host, data);
     if (colors) {
@@ -157,7 +173,8 @@ export function applyColorModeToGeometry(
 export function shouldUseVertexColors(data: SpatialData, colorMode: string): boolean {
   return (
     (colorMode === 'original' && data.hasColors) ||
-    (colorMode.startsWith('intensity') && hasIntensityData(data))
+    (colorMode.startsWith('intensity') && hasIntensityData(data)) ||
+    !!getScalarFieldForColorMode(data, colorMode)
   );
 }
 

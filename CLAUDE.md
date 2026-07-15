@@ -69,8 +69,9 @@ there; put code in the modules above.
 - Depth pipeline: `DepthRegistry` picks a reader → user supplies camera
   intrinsics → `DepthProjector` projects to 3D (pinhole/fisheye; OpenGL and
   OpenCV axis conventions).
-- Supported formats: `.ply`/`.xyz` (points), `.obj`/`.stl` (meshes),
-  `.tif`/`.tiff`/`.pfm`/`.npy`/`.npz`/`.png` (depth), `.json` (poses).
+- Supported formats: PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY (points), PLY, OBJ,
+  STL, OFF, GLTF, GLB (meshes), TIFF, PNG, PFM, NPY, NPZ (depth), `.json`
+  (poses, experimental).
 - Known issues: camera rotation direction is inverted vs CloudCompare
   (experimental fixes exist); large coordinate values need Fit to View (F key)
   after loading.

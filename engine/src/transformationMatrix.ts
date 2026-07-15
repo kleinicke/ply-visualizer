@@ -209,6 +209,8 @@ export function updateCameraControlsPanel(host: TransformationMatrixHost): void 
   const target = host.controls.target;
 
   viewerState.cameraFov = host.camera.fov;
+  viewerState.cameraNear = host.camera.near;
+  viewerState.cameraFar = host.camera.far;
   viewerState.cameraPositionText = `(${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})`;
   viewerState.cameraRotationText = `(${rotX.toFixed(1)}°, ${rotY.toFixed(1)}°, ${rotZ.toFixed(1)}°)`;
   viewerState.cameraTargetText = `(${target.x.toFixed(3)}, ${target.y.toFixed(3)}, ${target.z.toFixed(3)})`;
