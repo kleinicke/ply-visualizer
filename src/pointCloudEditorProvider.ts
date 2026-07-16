@@ -22,6 +22,7 @@ import {
   type AddFileHost,
 } from './providerHandlers/addFileHandlers';
 import { loadDocumentContent, type DocumentLoaderHost } from './providerHandlers/documentLoader';
+import { createWebviewReadyGate, type WebviewReadyGate } from './providerHandlers/webviewReadyGate';
 
 // Shared file handling functionality
 import { detectFileType, detectFileTypeWithContent, isPlyBinary } from '../engine/src/fileHandler';
@@ -63,35 +64,40 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   }
 
   /**
-   * Wrap a panel's postMessage once so every data-bearing message (type ending
-   * in "Data") is stamped with a wall-clock `postedAt` just before it is sent.
-   * This lets the webview measure the cross-process transfer cost for ALL
-   * formats without editing each of the ~30 send sites. Best-effort: if the
-   * property can't be reassigned, transfer timing is simply omitted.
+   * Wrap a panel's postMessage once so outbound messages wait for the webview
+   * listener and data-bearing messages receive an accurate send timestamp.
+   * Keeping this at the common boundary covers all format-specific send sites.
    */
-  private stampTransferTimestamps(webviewPanel: vscode.WebviewPanel): void {
-    try {
-      const webview = webviewPanel.webview;
-      const original = webview.postMessage.bind(webview);
-      (webview as any).postMessage = (msg: any) => {
-        if (
-          msg &&
-          typeof msg === 'object' &&
-          typeof msg.type === 'string' &&
-          msg.type.endsWith('Data')
-        ) {
-          if (msg.postedAt === undefined) {
-            msg.postedAt = Date.now();
-          }
-          if (msg.loadStartedAt === undefined && this.currentLoadStartedAt) {
-            msg.loadStartedAt = this.currentLoadStartedAt;
-          }
+  private prepareWebviewMessaging(
+    webviewPanel: vscode.WebviewPanel,
+    readyGate: WebviewReadyGate
+  ): void {
+    const webview = webviewPanel.webview;
+    const original = webview.postMessage.bind(webview);
+    (webview as any).postMessage = async (msg: any) => {
+      // VS Code may restore a custom editor before its scripts have installed
+      // a `message` listener. Keep parsing in parallel, but do not release
+      // extension-to-webview messages until the webview explicitly says it
+      // is ready. Disposing the panel resolves the gate with false so queued
+      // messages cannot leak or hang forever.
+      if (!(await readyGate.wait())) {
+        return false;
+      }
+      if (
+        msg &&
+        typeof msg === 'object' &&
+        typeof msg.type === 'string' &&
+        msg.type.endsWith('Data')
+      ) {
+        if (msg.postedAt === undefined) {
+          msg.postedAt = Date.now();
         }
-        return original(msg);
-      };
-    } catch {
-      /* transfer timing is optional; never block loading over it */
-    }
+        if (msg.loadStartedAt === undefined && this.currentLoadStartedAt) {
+          msg.loadStartedAt = this.currentLoadStartedAt;
+        }
+      }
+      return original(msg);
+    };
   }
 
   /** Append a timestamped line to the "3D Visualizer" Output channel. */
@@ -140,11 +146,13 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     webviewPanel: vscode.WebviewPanel,
     token: vscode.CancellationToken
   ): Promise<void> {
+    const readyGate = createWebviewReadyGate();
     this.activePanels.add(webviewPanel);
     this.pathToPanel.set(document.uri.fsPath, webviewPanel);
     this.panelToPath.set(webviewPanel, document.uri.fsPath);
-    this.stampTransferTimestamps(webviewPanel);
+    this.prepareWebviewMessaging(webviewPanel, readyGate);
     webviewPanel.onDidDispose(() => {
+      readyGate.dispose();
       this.activePanels.delete(webviewPanel);
       this.pathToPanel.delete(document.uri.fsPath);
       this.panelToPath.delete(webviewPanel);
@@ -198,59 +206,13 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const isJsonFile = fileType?.extension === 'json';
     const isNpyPointCloud = fileType?.extension === 'npy' && fileType?.category === 'pointCloud';
 
-    // Show UI immediately before any file processing
-    webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
-
-    // Anchor the load's wall-clock start for the unified end-to-end timing line.
-    this.currentLoadStartedAt = Date.now();
-
-    // Send immediate message to show loading state
-    webviewPanel.webview.postMessage({
-      type: 'startLoading',
-      fileName: path.basename(document.uri.fsPath),
-      isTifFile: isTifFile,
-      isPfmFile: isPfmFile,
-      isNpyFile: isNpyFile,
-      isPngFile: isPngFile,
-      isExrFile: isExrFile,
-      isDepthFile: isDepthFile,
-      isObjFile: isObjFile,
-      isStlFile: isStlFile,
-      isPcdFile: isPcdFile,
-      isPtsFile: isPtsFile,
-      isOffFile: isOffFile,
-      isGltfFile: isGltfFile,
-      isXyzVariant: isXyzVariant,
-    });
-
-    // Proactively send default depth settings before any depth processing
-    // to ensure the webview uses the latest saved defaults during initial conversion
-    await this.handleRequestDefaultDepthSettings(webviewPanel);
-
-    // Load and parse file asynchronously (don't await - let UI show first)
-    setImmediate(() =>
-      loadDocumentContent(this.documentLoaderHost, document.uri, webviewPanel, {
-        fileType,
-        isDepthFile,
-        isPfmFile,
-        isNpyFile,
-        isPngFile,
-        isExrFile,
-        isNpyPointCloud,
-        isObjFile,
-        isStlFile,
-        isPcdFile,
-        isPtsFile,
-        isOffFile,
-        isGltfFile,
-        isXyzVariant,
-        isJsonFile,
-      })
-    );
-
-    // Handle messages from webview
+    // Register before assigning HTML. Restored webviews can initialize very
+    // quickly, and their ready signal must never race this subscription.
     webviewPanel.webview.onDidReceiveMessage(async message => {
       switch (message.type) {
+        case 'webviewReady':
+          readyGate.markReady();
+          break;
         case 'error':
           vscode.window.showErrorMessage(message.message);
           break;
@@ -333,6 +295,57 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
       }
     });
+
+    // Show UI immediately. Reading/parsing starts in parallel below, while
+    // prepareWebviewMessaging queues all outbound messages until webviewReady.
+    webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
+
+    // Anchor the load's wall-clock start for the unified end-to-end timing line.
+    this.currentLoadStartedAt = Date.now();
+
+    void webviewPanel.webview.postMessage({
+      type: 'startLoading',
+      fileName: path.basename(document.uri.fsPath),
+      isTifFile: isTifFile,
+      isPfmFile: isPfmFile,
+      isNpyFile: isNpyFile,
+      isPngFile: isPngFile,
+      isExrFile: isExrFile,
+      isDepthFile: isDepthFile,
+      isObjFile: isObjFile,
+      isStlFile: isStlFile,
+      isPcdFile: isPcdFile,
+      isPtsFile: isPtsFile,
+      isOffFile: isOffFile,
+      isGltfFile: isGltfFile,
+      isXyzVariant: isXyzVariant,
+    });
+
+    // Keep the existing proactive settings message, but let the ready gate
+    // deliver it safely instead of blocking resolveCustomEditor.
+    void this.handleRequestDefaultDepthSettings(webviewPanel);
+
+    // Continue parsing immediately so normal loading retains its overlap with
+    // webview startup. Result messages wait at the ready gate if necessary.
+    setImmediate(() =>
+      loadDocumentContent(this.documentLoaderHost, document.uri, webviewPanel, {
+        fileType,
+        isDepthFile,
+        isPfmFile,
+        isNpyFile,
+        isPngFile,
+        isExrFile,
+        isNpyPointCloud,
+        isObjFile,
+        isStlFile,
+        isPcdFile,
+        isPtsFile,
+        isOffFile,
+        isGltfFile,
+        isXyzVariant,
+        isJsonFile,
+      })
+    );
   }
 
   // Start sequence playback in current active webview with background loading hint

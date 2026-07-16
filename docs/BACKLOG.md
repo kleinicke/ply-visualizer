@@ -3,6 +3,114 @@
 Decisions from the July 2026 roadmap discussion. This file records what was
 considered and _not_ built, so the reasoning isn't lost or re-litigated.
 
+## Planned
+
+### Better point-to-point measurements
+
+Replace the current rotation-center-to-point-only workflow with an arbitrary
+measurement path. The user picks A, B, C, ... directly on visible geometry; the
+UI shows every segment length and the accumulated total. Keep remove-last and
+clear-all, and retain the current rotation-center shortcut as a quick
+single-distance option.
+
+Implementation sketch:
+
+1. Extend `MeasurementManager` with an ordered list of picked world-space points
+   and render a polyline plus point markers.
+2. Reuse `SelectionManager` for point/mesh picking so measurement does not get
+   its own competing raycasting path.
+3. Show segment lengths, total length and selected coordinates in a small Svelte
+   panel; allow undo-last and clear-all from both UI and keyboard.
+4. Keep the interaction and Three.js scene objects in TypeScript. Put the pure
+   distance calculation in the Rust/WASM geometry module if it can share the
+   same batched API with later area/profile tools; do not add a WASM boundary
+   for one subtraction per click alone.
+5. Test transformed objects, meshes, multiple clouds, undo/clear and picks near
+   overlapping geometry.
+
+### LAS and LAZ support
+
+Add `.las` and `.laz` as first-class point-cloud formats in both the VS Code and
+browser hosts. Prefer one Rust parser compiled to WASM rather than separate
+JavaScript and extension-host implementations.
+
+Implementation sketch:
+
+1. Create a Rust/WASM LiDAR parser that reads LAS headers and point formats,
+   decodes positions, RGB and standard attributes, and returns typed arrays
+   compatible with `SpatialData`.
+2. Expose intensity, classification, return number, scan angle, GPS time and
+   other useful dimensions through the existing scalar-field UI instead of
+   reducing the format to XYZ/RGB.
+3. Add LAZ decompression behind the same Rust API. Evaluate a native Rust LAZ
+   implementation first; use a proven WASM decoder such as `laz-perf` only if
+   the Rust option is incomplete or materially slower.
+4. Parse incrementally and sample during decoding when a configured point or
+   memory budget is exceeded. Always tell the user when the displayed cloud is
+   sampled and preserve the original point count in metadata.
+5. Preserve LAS scale, offset, bounds, CRS/VLR metadata and exact source-space
+   coordinates. Render rebased coordinates when necessary for float32 precision,
+   while keeping the offset available for transforms and export.
+6. Start with representative fixtures for several LAS point formats and both
+   compressed and uncompressed data before advertising general support.
+
+Georeferenced map tiles are a possible follow-up, not part of initial LAS/LAZ
+support. Correct CRS preservation and large-coordinate rendering come first.
+
+### E57 support
+
+Add `.e57` using Rust/WASM. E57 containers can hold several scans, so each scan
+should become an independently visible and transformable entry in the existing
+file list rather than silently loading only the first one.
+
+Implementation sketch:
+
+1. Build an E57 WASM crate around the Rust `e57` ecosystem and share the same
+   typed-array result contract as the LAS/LAZ parser.
+2. Return scan names, scan transforms, bounds, XYZ, RGB and intensity, while
+   filtering invalid Cartesian records and reporting unsupported fields.
+3. Read from chunked input where practical and perform sampling inside Rust so
+   large intermediate JavaScript arrays are never created.
+4. Add progress, cancellation and explicit memory-budget errors. Avoid copying
+   decoded buffers more often than required by the WASM-to-JavaScript boundary.
+5. Test multi-scan files, transformed scans, color/intensity variants and large
+   files. Document clearly which E57 features are supported.
+
+### Film-maker mode
+
+Add a camera-keyframe workflow for demonstrations, documentation and
+reproducible bug reports. This is planned alongside the format work rather than
+being treated as a distant optional feature.
+
+Implementation sketch:
+
+1. Let users add, select, reorder, edit and delete camera keyframes containing
+   camera position/orientation, rotation center, field of view and optional
+   dwell time.
+2. Generate a smooth camera timeline using position interpolation and quaternion
+   interpolation. Implement timeline generation as one batched Rust/WASM
+   operation; keep Three.js camera application and playback timing in
+   TypeScript.
+3. Provide preview/play/pause/loop controls and show keyframe camera frustums in
+   the scene while editing.
+4. Record the standalone/VS Code webview canvas with `captureStream` and
+   `MediaRecorder`, choosing the best supported codec and extension rather than
+   assuming MP4/H.264 is available.
+5. Allow saving/loading the keyframe project as JSON independently of the
+   recorded video, so a camera path can be reproduced and adjusted later.
+6. Test interpolation across rotations, resizing/high-DPI recording, codec
+   fallback, cancellation and restoration of the pre-playback camera.
+
+### Rust/WASM implementation preference
+
+For new parsing and compute-heavy features, prefer Rust compiled to WASM when
+the work can be expressed as a coarse, typed-array operation. LAS/LAZ and E57
+decoding, sampling, bounds/scalar extraction and complete film timelines are
+good candidates. DOM interaction, Three.js object management, browser APIs and
+tiny per-click calculations stay in TypeScript unless they can join a larger
+batched Rust geometry API. This keeps Rust useful without paying WASM call and
+copy overhead for trivial UI work.
+
 ## Skipped for now (worth revisiting)
 
 ### Cloud-to-cloud distance comparison
@@ -95,8 +203,3 @@ Why the multiple past attempts failed (post-mortem opinion):
 Cost/benefit verdict: repeated significant effort, no stable result, and users
 adapt to rotation direction quickly — but a lost camera was the real pain, and
 the void-double-click shortcut solves that directly.
-
-## Maybe add:
-
-LAS, LAZ, and E57 support. Are these easy to implement or would it be
-complicated?

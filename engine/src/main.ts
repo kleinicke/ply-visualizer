@@ -478,6 +478,9 @@ class PointCloudVisualizer {
       if (isVSCode) {
         // VSCode extension environment
         this.setupMessageHandler();
+        // The extension may already be parsing a restored document, but it
+        // queues all outbound messages until this listener is installed.
+        this.vscode.postMessage({ type: 'webviewReady' });
         console.log('📤 Requesting default depth settings from extension...');
         this.vscode.postMessage({
           type: 'requestDefaultDepthSettings',
