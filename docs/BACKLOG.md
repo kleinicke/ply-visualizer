@@ -7,6 +7,12 @@ considered and _not_ built, so the reasoning isn't lost or re-litigated.
 
 ### Cloud-to-cloud distance comparison
 
+**Prototype branch:** `feature/cloud-distance-comparison` (commit `31c29f3`).
+The branch contains a bounded nearest-neighbor implementation running in a Web
+Worker, with source/reference selection, a maximum-distance clamp and scalar
+heatmap coloring. It is intentionally kept off `main` until its usefulness and
+performance have been validated with representative real-world clouds.
+
 Color cloud A by its nearest-neighbor distance to reference cloud B — a
 CloudCompare-style distance heatmap, useful for comparing reconstruction output
 against ground truth.
