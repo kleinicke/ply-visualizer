@@ -19,6 +19,14 @@ export interface TransformationMatrixHost {
   applyCameraScale(cameraProfileIndex: number, scale: number): void;
 }
 
+function setObjectMatrix(object: THREE.Object3D, matrix: THREE.Matrix4): void {
+  object.matrix.copy(matrix);
+  object.matrixAutoUpdate = false;
+  // copy() does not dirty matrixWorld. This matters when the object rendered
+  // once between scene.add() and transform assignment (the normal load path).
+  object.matrixWorldNeedsUpdate = true;
+}
+
 export function updateCameraMatrix(host: TransformationMatrixHost): void {
   // Create a matrix that represents the camera's current position and rotation
   host.cameraMatrix.identity();
@@ -81,29 +89,25 @@ export function applyTransformationMatrix(host: TransformationMatrixHost, fileIn
   if (fileIndex < host.meshes.length) {
     const mesh = host.meshes[fileIndex];
     if (mesh) {
-      mesh.matrix.copy(matrix);
-      mesh.matrixAutoUpdate = false;
+      setObjectMatrix(mesh, matrix);
     }
 
     // Also apply transformation to vertex points visualization
     const vertexPoints = host.vertexPointsObjects[fileIndex];
     if (vertexPoints) {
-      vertexPoints.matrix.copy(matrix);
-      vertexPoints.matrixAutoUpdate = false;
+      setObjectMatrix(vertexPoints, matrix);
     }
 
     // Also apply transformation to normals visualizer
     const normalsVisualizer = host.normalsVisualizers[fileIndex];
     if (normalsVisualizer) {
-      normalsVisualizer.matrix.copy(matrix);
-      normalsVisualizer.matrixAutoUpdate = false;
+      setObjectMatrix(normalsVisualizer, matrix);
     }
 
     // Also apply transformation to multi-material groups (for OBJ files)
     const multiMaterialGroup = host.multiMaterialGroups[fileIndex];
     if (multiMaterialGroup) {
-      multiMaterialGroup.matrix.copy(matrix);
-      multiMaterialGroup.matrixAutoUpdate = false;
+      setObjectMatrix(multiMaterialGroup, matrix);
     }
 
     return;
@@ -114,8 +118,7 @@ export function applyTransformationMatrix(host: TransformationMatrixHost, fileIn
   if (poseIndex >= 0 && poseIndex < host.poseGroups.length) {
     const group = host.poseGroups[poseIndex];
     if (group) {
-      group.matrix.copy(matrix);
-      group.matrixAutoUpdate = false;
+      setObjectMatrix(group, matrix);
     }
     return;
   }
@@ -126,8 +129,7 @@ export function applyTransformationMatrix(host: TransformationMatrixHost, fileIn
     const group = host.cameraGroups[cameraIndex];
     if (group) {
       // Apply transformation matrix to camera profile group
-      group.matrix.copy(matrix);
-      group.matrixAutoUpdate = false;
+      setObjectMatrix(group, matrix);
 
       // Apply scaling only to visual elements, not position
       const size = host.pointSizes[fileIndex] ?? 1.0;

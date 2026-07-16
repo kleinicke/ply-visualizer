@@ -50,6 +50,8 @@ export function generatePlyFileContent(
   const geometry = mesh.geometry as THREE.BufferGeometry;
   const positionAttribute = geometry.getAttribute('position') as THREE.BufferAttribute;
   const colorAttribute = geometry.getAttribute('color') as THREE.BufferAttribute;
+  mesh.updateWorldMatrix(true, false);
+  const worldPoint = new THREE.Vector3();
 
   const vertexCount = positionAttribute.count;
 
@@ -101,12 +103,12 @@ export function generatePlyFileContent(
       colorAttribute.array instanceof Uint8ClampedArray);
   const colorScale = colorIsByte ? 1 : 255;
 
-  // Vertex data from current geometry (includes transformations)
+  // Export through matrixWorld so the editable per-file transform is reflected
+  // in the saved coordinates, as promised by the save action.
   for (let i = 0; i < vertexCount; i++) {
     const i3 = i * 3;
-    const x = positionAttribute.array[i3];
-    const y = positionAttribute.array[i3 + 1];
-    const z = positionAttribute.array[i3 + 2];
+    worldPoint.fromBufferAttribute(positionAttribute, i).applyMatrix4(mesh.matrixWorld);
+    const { x, y, z } = worldPoint;
 
     content += `${x} ${y} ${z}`;
 
