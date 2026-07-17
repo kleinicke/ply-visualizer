@@ -28,6 +28,29 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await expect(checkbox).toBeChecked();
   });
 
+  test('shift-click toggles between one visible file and all visible files', async ({ page }) => {
+    await page
+      .locator('#hiddenFileInput')
+      .setInputFiles([
+        path.resolve('../testfiles/ply/test_small_mesh.ply'),
+        path.resolve('../testfiles/ply/test_small_mesh_binary.ply'),
+      ]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const first = page.locator('#file-0');
+    const second = page.locator('#file-1');
+    await expect(first).toBeChecked();
+    await expect(second).toBeChecked();
+
+    await first.click({ modifiers: ['Shift'] });
+    await expect(first).toBeChecked();
+    await expect(second).not.toBeChecked();
+
+    await first.click({ modifiers: ['Shift'] });
+    await expect(first).toBeChecked();
+    await expect(second).toBeChecked();
+  });
+
   test('collapse and expand a file item', async ({ page }) => {
     const plyPath = path.resolve('../testfiles/open3d/sample_mesh.ply');
     await page.locator('#hiddenFileInput').setInputFiles(plyPath);

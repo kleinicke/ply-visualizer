@@ -2594,6 +2594,10 @@ class PointCloudVisualizer {
     const desiredVisible = checkboxEl
       ? !!checkboxEl.checked
       : !(this.fileVisibility[fileIndex] ?? true);
+    this.setFileEntryVisibility(fileIndex, desiredVisible);
+  }
+
+  private setFileEntryVisibility(fileIndex: number, desiredVisible: boolean): void {
     this.fileVisibility[fileIndex] = desiredVisible;
     filesState.visibility[fileIndex] = desiredVisible;
 
@@ -3529,39 +3533,21 @@ class PointCloudVisualizer {
   }
 
   private soloPointCloud(fileIndex: number): void {
-    // Hide all objects (point clouds and poses)
-    const totalEntries = this.spatialFiles.length + this.poseGroups.length;
+    const totalEntries =
+      this.spatialFiles.length + this.poseGroups.length + this.cameraGroups.length;
+    const selectedIsSoleVisible =
+      (this.fileVisibility[fileIndex] ?? filesState.visibility[fileIndex] ?? true) &&
+      Array.from({ length: totalEntries }, (_, index) => index).every(
+        index =>
+          index === fileIndex ||
+          !(this.fileVisibility[index] ?? filesState.visibility[index] ?? true)
+      );
+    const showAll = selectedIsSoleVisible;
+
     for (let i = 0; i < totalEntries; i++) {
-      this.fileVisibility[i] = false;
-      filesState.visibility[i] = false;
-      if (i < this.meshes.length) {
-        const obj = this.meshes[i];
-        if (obj) {
-          obj.visible = false;
-        }
-      } else {
-        const poseIndex = i - this.spatialFiles.length;
-        const group = this.poseGroups[poseIndex];
-        if (group) {
-          group.visible = false;
-        }
-      }
+      this.setFileEntryVisibility(i, showAll || i === fileIndex);
     }
-    // Show only the selected entry
-    this.fileVisibility[fileIndex] = true;
-    filesState.visibility[fileIndex] = true;
-    if (fileIndex < this.meshes.length) {
-      const obj = this.meshes[fileIndex];
-      if (obj) {
-        obj.visible = true;
-      }
-    } else {
-      const poseIndex = fileIndex - this.spatialFiles.length;
-      const group = this.poseGroups[poseIndex];
-      if (group) {
-        group.visible = true;
-      }
-    }
+
     // Update UI
     this.updateFileList();
     // Request render to show visibility changes
