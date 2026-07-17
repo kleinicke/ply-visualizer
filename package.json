@@ -2,7 +2,7 @@
   "name": "ply-visualizer",
   "displayName": "3D Point Cloud and Mesh Visualizer (PLY, ...)",
   "description": "A fast 3D visualizer for point clouds and meshes using Three.js. Supports PLY, LAS/LAZ, E57, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth conversion.",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "packageManager": "pnpm@10.32.1",
   "publisher": "kleinicke",
   "icon": "icon.png",

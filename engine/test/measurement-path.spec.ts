@@ -250,6 +250,14 @@ test('measurement paths can be cleared from the contextual bottom row', async ({
   await expect(page.locator('#measurement-quick-new-center')).toHaveCount(0);
   await expect(page.locator('#measurement-quick-new-free')).toBeVisible();
   await expect(page.locator('#measurement-quick-actions button img')).toHaveCount(4);
+  await expect(page.locator('#measurement-quick-actions button[title]')).toHaveCount(0);
+  await expect(page.locator('#measurement-quick-loop')).toHaveAttribute('data-tooltip', 'Loop');
+  await page.locator('#measurement-quick-loop').hover();
+  const loopTooltip = await page.locator('#measurement-quick-loop').evaluate(button => {
+    const style = getComputedStyle(button, '::after');
+    return { content: style.content, opacity: style.opacity, visibility: style.visibility };
+  });
+  expect(loopTooltip).toEqual({ content: '"Loop"', opacity: '1', visibility: 'visible' });
   const rowLayout = await page.locator('#measurement-quick-actions').evaluate(row => {
     const buttons = Array.from(row.querySelectorAll('button'));
     return {

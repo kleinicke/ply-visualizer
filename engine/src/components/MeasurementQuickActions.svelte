@@ -39,27 +39,26 @@
   >
     <span
       style="display: flex; align-items: center; gap: 4px; min-width: 0; margin-right: auto; overflow: hidden; text-overflow: ellipsis;"
-      title="Measurement total distance"
     >
       <img src={measureIcon} alt="" width="16" height="16" />
       {formatDistance(measurementState.totalLength)}
     </span>
     <button
       id="measurement-quick-loop"
-      class="control-button"
+      class="control-button quick-tooltip"
       class:active={measurementState.pathClosed}
+      data-tooltip="Loop"
       style="flex: 0 0 24px; width: 24px; min-width: 24px; height: 22px; margin: 0; padding: 0; justify-content: center;"
-      title="Close or open the measurement loop"
       aria-label="Toggle measurement loop"
       aria-pressed={measurementState.pathClosed}
       onclick={toggleLoop}><img src={loopIcon} alt="" width="17" height="17" /></button
     >
     <button
       id="measurement-quick-new-free"
-      class="control-button"
+      class="control-button quick-tooltip"
       class:active={measurementState.pathStartMode === 'free'}
+      data-tooltip="New path"
       style="flex: 0 0 29px; width: 29px; min-width: 29px; height: 22px; margin: 0; padding: 0; justify-content: center;"
-      title="Start the next path at the first picked point"
       aria-label="New free measurement path"
       aria-pressed={measurementState.pathStartMode === 'free'}
       onclick={() => toggleNewPath('free')}
@@ -67,18 +66,18 @@
     >
     <button
       id="measurement-quick-undo"
-      class="control-button"
+      class="control-button quick-tooltip"
+      data-tooltip="Undo"
       style="flex: 0 0 24px; width: 24px; min-width: 24px; height: 22px; margin: 0; padding: 0; justify-content: center;"
       disabled={measurementState.pathPointCount === 0}
-      title="Undo the last measurement point"
       aria-label="Undo last measurement point"
       onclick={undo}><img src={undoIcon} alt="" width="17" height="17" /></button
     >
     <button
       id="measurement-quick-clear"
-      class="control-button"
+      class="control-button quick-tooltip"
+      data-tooltip="Clear all"
       style="flex: 0 0 24px; width: 24px; min-width: 24px; height: 22px; margin: 0; padding: 0; justify-content: center;"
-      title="Clear all measurement paths"
       aria-label="Clear all measurement paths"
       onclick={clearAll}><img src={clearIcon} alt="" width="17" height="17" /></button
     >
