@@ -56,7 +56,18 @@ export class CloudCompareControls {
   public rotateSpeed = 1.0;
   // Roll ("twist") multiplier, independent of the orbit speed.
   public rollSpeed = 1.0;
+  // Upper bound (rad) for the scaled swing of one drag. Must stay below π:
+  // a rotation past π wraps around and the view lurches backwards. The
+  // scaled swing approaches this limit smoothly (tanh), so small drags keep
+  // exactly rotateSpeed slope and long drags saturate instead of wrapping —
+  // re-grab to keep orbiting.
+  public swingLimit = 2.5;
+  // Wheel-zoom speed with the same semantics as three.js TrackballControls
+  // (2.5 here feels like 2.5 there): a wheel notch contributes
+  // deltaY·0.00125·zoomSpeed of log-zoom, eased in over several frames.
   public zoomSpeed = 1.0;
+  // Fraction of the outstanding zoom applied per animation frame.
+  public zoomDampingFactor = 0.2;
   public panSpeed = 1.0;
   public minDistance = 0.001;
   public maxDistance = 50000;
@@ -72,6 +83,8 @@ export class CloudCompareControls {
   private upStart: THREE.Vector3 = new THREE.Vector3();
   private camQStart: THREE.Quaternion = new THREE.Quaternion();
   private panStart: THREE.Vector2 = new THREE.Vector2();
+  // Outstanding wheel zoom (log scale), eased toward zero in update().
+  private pendingZoomLog = 0;
   private listeners: Map<string, Set<(e?: any) => void>> = new Map();
 
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
@@ -115,14 +128,20 @@ export class CloudCompareControls {
 
   /**
    * Project a client-space cursor position onto the virtual unit ball in view
-   * coordinates (x right, y up, z out of the screen). Inside the ball the
-   * point sits on the sphere surface; outside it is clamped to the rim, which
-   * is what makes rim drags purely tangential (roll).
+   * coordinates (x right, y up, z out of the screen). The ball is ROUND: both
+   * axes are normalized by the smaller half-dimension (the ball is inscribed
+   * in the canvas). Normalizing per-axis instead would make the ball
+   * elliptical, which slows horizontal drags relative to vertical ones and
+   * exaggerates the tangential (roll) fraction of off-center horizontal
+   * drags. Inside the ball the point sits on the sphere surface; outside it
+   * is clamped to the rim, which is what makes rim drags purely tangential
+   * (roll).
    */
   private projectOnUnitSphere(clientX: number, clientY: number): THREE.Vector3 {
     const rect = this.domElement.getBoundingClientRect();
-    const x = (2 * (clientX - rect.left)) / rect.width - 1;
-    const y = 1 - (2 * (clientY - rect.top)) / rect.height;
+    const halfMin = Math.min(rect.width, rect.height) / 2;
+    const x = (clientX - rect.left - rect.width / 2) / halfMin;
+    const y = (rect.top + rect.height / 2 - clientY) / halfMin;
     const v = new THREE.Vector3(x, y, 0);
     const len2 = x * x + y * y;
     if (len2 <= 1) {
@@ -180,8 +199,18 @@ export class CloudCompareControls {
       const twistPart = new THREE.Quaternion(0, 0, qFull.z, qFull.w).normalize();
       const swing = qFull.clone().multiply(twistPart.clone().invert());
 
+      // Scale the swing with soft saturation (see swingLimit): factor is
+      // rotateSpeed for small chords, then eases toward the cap.
+      const swingAngle = 2 * Math.acos(THREE.MathUtils.clamp(swing.w, -1, 1));
+      let swingFactor = this.rotateSpeed;
+      if (swingAngle > 1e-12) {
+        const scaled =
+          this.swingLimit * Math.tanh((swingAngle * this.rotateSpeed) / this.swingLimit);
+        swingFactor = scaled / swingAngle;
+      }
+
       // Total apparent scene rotation for this drag, in view space.
-      const qView = scaleRotation(swing, this.rotateSpeed).multiply(
+      const qView = scaleRotation(swing, swingFactor).multiply(
         new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), this.twistAccum)
       );
 
@@ -241,25 +270,39 @@ export class CloudCompareControls {
       return;
     }
     e.preventDefault();
-    const scale = Math.exp((e.deltaY / 100) * this.zoomSpeed);
-    const eye = this.object.position.clone().sub(this.target);
-    let newLen = eye.length() * scale;
-    newLen = Math.max(this.minDistance, Math.min(this.maxDistance, newLen));
-    eye.setLength(newLen);
-    this.object.position.copy(this.target.clone().add(eye));
-    this.object.lookAt(this.target);
-    // Rotation poses are recomputed from the drag-start eye each move, so a
-    // zoom during an active drag must be folded into that baseline too.
-    if (this.isRotating) {
-      this.eyeStart.setLength(newLen);
-    }
+    // Same per-notch calibration as three.js TrackballControls: it offsets an
+    // eased value by deltaY·0.00025 (pixels; ×40 lines, ×100 pages) and its
+    // damped catch-up multiplies the total by zoomSpeed/dampingFactor — i.e.
+    // deltaY·0.00125·zoomSpeed of log-zoom, arriving smoothly, not at once.
+    const perPixel = e.deltaMode === 2 ? 0.025 : e.deltaMode === 1 ? 0.01 : 0.00025;
+    this.pendingZoomLog += e.deltaY * perPixel * 5 * this.zoomSpeed;
     this.dispatchEvent('start');
-    this.dispatchEvent('change');
     this.dispatchEvent('end');
   }
 
   update(): void {
-    // No damping/momentum; nothing to do per frame
+    // Ease any outstanding wheel zoom toward zero (legacy-trackball feel:
+    // each notch glides in over several frames instead of jumping).
+    if (this.pendingZoomLog !== 0) {
+      let step = this.pendingZoomLog * this.zoomDampingFactor;
+      if (Math.abs(this.pendingZoomLog - step) < 1e-4) {
+        step = this.pendingZoomLog;
+      }
+      this.pendingZoomLog -= step;
+
+      const eye = this.object.position.clone().sub(this.target);
+      let newLen = eye.length() * Math.exp(step);
+      newLen = Math.max(this.minDistance, Math.min(this.maxDistance, newLen));
+      eye.setLength(newLen);
+      this.object.position.copy(this.target.clone().add(eye));
+      this.object.lookAt(this.target);
+      // Rotation poses are recomputed from the drag-start eye each move, so a
+      // zoom during an active drag must be folded into that baseline too.
+      if (this.isRotating) {
+        this.eyeStart.setLength(newLen);
+      }
+      this.dispatchEvent('change');
+    }
   }
 
   dispose(): void {

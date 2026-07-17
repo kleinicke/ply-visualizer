@@ -16,10 +16,9 @@ async function setup(page: Page, mode: 'ball' | 'legacy') {
   await page.waitForTimeout(1500);
   await page.click('[data-tab="controls"]');
   await page.waitForTimeout(300);
-  if (mode === 'legacy') {
-    await page.click('#legacy-trackball-controls');
-    await page.waitForTimeout(300);
-  }
+  // Click the scheme button explicitly — never rely on the startup default.
+  await page.click(mode === 'legacy' ? '#legacy-trackball-controls' : '#trackball-controls');
+  await page.waitForTimeout(300);
 }
 
 for (const mode of ['ball', 'legacy'] as const) {

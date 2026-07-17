@@ -130,7 +130,7 @@ class PointCloudVisualizer {
     | CloudCompareControls;
 
   // Camera control state
-  controlType: 'trackball' | 'orbit' | 'legacy-trackball' | 'arcball' = 'trackball';
+  controlType: 'trackball' | 'orbit' | 'legacy-trackball' | 'arcball' = 'legacy-trackball';
   screenSpaceScaling: boolean = false;
   allowTransparency: boolean = false;
 
@@ -657,11 +657,16 @@ class PointCloudVisualizer {
       // CloudCompare. Promoted to default in July 2026.
       this.controls = new CloudCompareControls(this.camera, this.renderer.domElement);
       const ball = this.controls as CloudCompareControls;
-      // Orbit speed matched to the legacy trackball: legacy turns 5 rad over a
-      // half-width drag, the ball turns π/2 at speed 1 — so 5/(π/2) ≈ 3.2.
-      // Roll keeps a lower multiplier so rim/circular gestures stay precise.
-      ball.rotateSpeed = 5.0;
-      ball.rollSpeed = 5.0;
+      // Speed calibration against the legacy trackball, in the round-ball
+      // units (both axes normalized by the smaller canvas half-dimension):
+      // legacy rotates 5/halfWidth rad per pixel; the ball rotates
+      // rotateSpeed/halfMin — parity on a 16:9 canvas is ≈ 2.8. Defaults sit
+      // ~25% above parity because the ball uses net displacement (endpoint
+      // chord) while legacy integrates every wobble of the hand path, which
+      // makes equal nominal speeds feel slower on the ball. zoomSpeed has
+      // legacy TrackballControls semantics (see CloudCompareControls).
+      ball.rotateSpeed = 3.5;
+      ball.rollSpeed = 3.0;
       ball.zoomSpeed = 2.5;
       ball.panSpeed = 1.5;
     } else if (this.controlType === 'legacy-trackball') {
