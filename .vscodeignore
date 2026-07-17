@@ -8,9 +8,12 @@ temp/
 
 # Engine files (only include necessary runtime files)
 engine/**
-!engine/src/**
 !engine/media/**
 !engine/index.html
+
+# Rust/WASM sources and build caches. Runtime WASM artifacts are copied to
+# out/wasm/ or engine/media/ by the build.
+wasm/**
 
 # Config files
 .gitignore
@@ -23,11 +26,15 @@ vsc-extension-quickstart.md
 **/.eslintignore
 **/.prettierrc
 **/.prettierignore
+eslint.config.*
+pnpm-lock.yaml
 
 # Build artifacts
 **/*.map
 **/*.tsbuildinfo
 **/*.ts
+out/src/**
+out/engine/**
 
 # Dependencies
 node_modules/**
@@ -60,7 +67,10 @@ analyze-calls.mjs
 analyze-coverage.mjs
 build-call-graph.mjs
 test-*.js
+test_*.js
+*.mjs
 *.py
+icon_updated.png
 
 # Git hooks
 .husky/**

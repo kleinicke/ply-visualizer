@@ -225,7 +225,7 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile",
+    "vscode:prepublish": "pnpm run clean && pnpm run compile",
     "compile": "webpack",
     "build:wasm": "cd wasm/pointcloud-parser && wasm-pack build --target nodejs --release --out-dir pkg && wasm-pack build --target web --release --out-dir pkg-web && node -e \"require('fs').rmSync('pkg-web/.gitignore', { force: true })\"",
     "compile:tests": "tsc",
