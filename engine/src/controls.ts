@@ -1,5 +1,221 @@
 import * as THREE from 'three';
 
+/**
+ * CloudCompare-style controls: a sphere-projected ("virtual ball") trackball.
+ *
+ * The decisive difference from three.js TrackballControls is that rotation is
+ * computed from the mouse's *position on a virtual ball*, not from mouse
+ * deltas. Each pointer move projects the previous and current cursor
+ * positions onto a unit sphere over the canvas (view space) and applies the
+ * minimal rotation carrying one to the other — CloudCompare applies exactly
+ * this to its view matrix. Consequences that delta-based trackballs cannot
+ * reproduce:
+ *
+ * - Center drags give yaw/pitch in the same direction as a normal trackball
+ *   (the scene front follows the mouse).
+ * - Drags near the rim, or tangential/circular gestures, ROLL the scene under
+ *   the cursor — the ball follows the finger. This is "the rotation" that was
+ *   always backwards here: a delta-based trackball's only roll is the
+ *   accumulation (holonomy) of its yaw/pitch steps, which comes out in the
+ *   opposite direction of the finger, and no sign flip can fix it because the
+ *   per-step math has no roll term at all (see docs/BACKLOG.md post-mortem).
+ *
+ * The step rotation is applied rigidly (one quaternion to eye and up
+ * together, conjugated from view space into world space), so the camera frame
+ * stays orthonormal — no decomposition, no drift, no momentum state.
+ */
+export class CloudCompareControls {
+  public object: THREE.PerspectiveCamera;
+  public domElement: HTMLElement;
+  public enabled = true;
+  public target: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
+  public rotateSpeed = 1.0; // 1.0 = true grab-the-ball feel
+  public zoomSpeed = 1.0;
+  public panSpeed = 1.0;
+  public minDistance = 0.001;
+  public maxDistance = 50000;
+  public maxStep = 0.35; // rad clamp per pointer event (guards against jumps)
+
+  private isRotating = false;
+  private isPanning = false;
+  private lastSphereVec: THREE.Vector3 = new THREE.Vector3();
+  private panStart: THREE.Vector2 = new THREE.Vector2();
+  private listeners: Map<string, Set<(e?: any) => void>> = new Map();
+
+  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
+    this.object = camera;
+    this.domElement = domElement;
+    this.addDOMListeners();
+  }
+
+  private addDOMListeners(): void {
+    this.onPointerDown = this.onPointerDown.bind(this);
+    this.onPointerMove = this.onPointerMove.bind(this);
+    this.onPointerUp = this.onPointerUp.bind(this);
+    this.onWheel = this.onWheel.bind(this);
+
+    this.domElement.addEventListener('pointerdown', this.onPointerDown);
+    window.addEventListener('pointermove', this.onPointerMove);
+    window.addEventListener('pointerup', this.onPointerUp);
+    this.domElement.addEventListener('wheel', this.onWheel, { passive: false });
+  }
+
+  addEventListener(type: 'start' | 'end' | 'change', listener: (e?: any) => void): void {
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, new Set());
+    }
+    this.listeners.get(type)!.add(listener);
+  }
+
+  removeEventListener(type: 'start' | 'end' | 'change', listener: (e?: any) => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  private dispatchEvent(type: 'start' | 'end' | 'change'): void {
+    const set = this.listeners.get(type);
+    if (!set) {
+      return;
+    }
+    for (const l of set) {
+      l();
+    }
+  }
+
+  /**
+   * Project a client-space cursor position onto the virtual unit ball in view
+   * coordinates (x right, y up, z out of the screen). Inside the ball the
+   * point sits on the sphere surface; outside it is clamped to the rim, which
+   * is what makes rim drags purely tangential (roll).
+   */
+  private projectOnUnitSphere(clientX: number, clientY: number): THREE.Vector3 {
+    const rect = this.domElement.getBoundingClientRect();
+    const x = (2 * (clientX - rect.left)) / rect.width - 1;
+    const y = 1 - (2 * (clientY - rect.top)) / rect.height;
+    const v = new THREE.Vector3(x, y, 0);
+    const len2 = x * x + y * y;
+    if (len2 <= 1) {
+      v.z = Math.sqrt(1 - len2);
+    } else {
+      v.normalize();
+    }
+    return v;
+  }
+
+  private onPointerDown(e: PointerEvent): void {
+    if (!this.enabled) {
+      return;
+    }
+    this.domElement.setPointerCapture(e.pointerId);
+    if (e.button === 0 && !e.shiftKey) {
+      this.isRotating = true;
+      this.lastSphereVec.copy(this.projectOnUnitSphere(e.clientX, e.clientY));
+      this.dispatchEvent('start');
+    } else {
+      this.isPanning = true;
+      this.panStart.set(e.clientX, e.clientY);
+      this.dispatchEvent('start');
+    }
+  }
+
+  private onPointerMove(e: PointerEvent): void {
+    if (!this.enabled) {
+      return;
+    }
+    if (this.isRotating) {
+      const curr = this.projectOnUnitSphere(e.clientX, e.clientY);
+      const prev = this.lastSphereVec;
+      if (prev.distanceToSquared(curr) < 1e-14) {
+        return;
+      }
+
+      // Minimal rotation carrying prev -> curr on the ball, in view space.
+      // This IS the apparent scene rotation (the ball follows the cursor).
+      let qView = new THREE.Quaternion().setFromUnitVectors(prev, curr);
+      const angle = 2 * Math.acos(THREE.MathUtils.clamp(qView.w, -1, 1));
+      const scaled = Math.min(angle * this.rotateSpeed, this.maxStep);
+      if (angle > 1e-12 && Math.abs(scaled - angle) > 1e-12) {
+        qView = new THREE.Quaternion().slerp(qView, scaled / angle);
+      }
+
+      // The camera rig rotates by the inverse, conjugated from view space
+      // into world space (object.quaternion maps camera-local to world).
+      const camQ = this.object.quaternion;
+      const qWorld = camQ.clone().multiply(qView.invert()).multiply(camQ.clone().invert());
+
+      const eye = this.object.position.clone().sub(this.target);
+      eye.applyQuaternion(qWorld);
+      this.object.up.applyQuaternion(qWorld);
+      this.object.position.copy(this.target).add(eye);
+      this.object.lookAt(this.target);
+
+      this.lastSphereVec.copy(curr);
+      this.dispatchEvent('change');
+    } else if (this.isPanning) {
+      const rect = this.domElement.getBoundingClientRect();
+      const deltaX = e.clientX - this.panStart.x;
+      const deltaY = e.clientY - this.panStart.y;
+      this.panStart.set(e.clientX, e.clientY);
+
+      const distance = this.object.position.distanceTo(this.target);
+      const fov = this.object.fov * (Math.PI / 180);
+      const scale = (2 * Math.tan(fov / 2) * distance) / rect.height;
+
+      const right = new THREE.Vector3()
+        .crossVectors(this.object.getWorldDirection(new THREE.Vector3()), this.object.up)
+        .normalize();
+      const up = this.object.up.clone().normalize();
+
+      const move = new THREE.Vector3();
+      move.addScaledVector(right, -deltaX * scale * this.panSpeed);
+      move.addScaledVector(up, deltaY * scale * this.panSpeed);
+
+      this.target.add(move);
+      this.object.position.add(move);
+      this.object.lookAt(this.target);
+      this.dispatchEvent('change');
+    }
+  }
+
+  private onPointerUp(e: PointerEvent): void {
+    if (this.isRotating || this.isPanning) {
+      this.isRotating = false;
+      this.isPanning = false;
+      try {
+        this.domElement.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+      this.dispatchEvent('end');
+    }
+  }
+
+  private onWheel(e: WheelEvent): void {
+    if (!this.enabled) {
+      return;
+    }
+    e.preventDefault();
+    const scale = Math.exp((e.deltaY / 100) * this.zoomSpeed);
+    const eye = this.object.position.clone().sub(this.target);
+    let newLen = eye.length() * scale;
+    newLen = Math.max(this.minDistance, Math.min(this.maxDistance, newLen));
+    eye.setLength(newLen);
+    this.object.position.copy(this.target.clone().add(eye));
+    this.object.lookAt(this.target);
+    this.dispatchEvent('start');
+    this.dispatchEvent('change');
+    this.dispatchEvent('end');
+  }
+
+  update(): void {
+    // No damping/momentum; nothing to do per frame
+  }
+
+  dispose(): void {
+    this.domElement.removeEventListener('pointerdown', this.onPointerDown);
+    window.removeEventListener('pointermove', this.onPointerMove);
+    window.removeEventListener('pointerup', this.onPointerUp);
+    this.domElement.removeEventListener('wheel', this.onWheel as any);
+  }
+}
+
 // Minimal, self-contained Arcball-like controls that expose a .target similar to Trackball/Orbit
 export class CustomArcballControls {
   public object: THREE.PerspectiveCamera;

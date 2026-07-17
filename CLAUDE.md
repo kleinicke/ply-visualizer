@@ -72,9 +72,10 @@ there; put code in the modules above.
 - Supported formats: PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY (points), PLY, OBJ,
   STL, OFF, GLTF, GLB (meshes), TIFF, PNG, PFM, NPY, NPZ (depth), `.json`
   (poses, experimental).
-- Known issues: camera rotation direction is inverted vs CloudCompare
-  (experimental fixes exist); large coordinate values need Fit to View (F key)
-  after loading.
+- Known issues: large coordinate values need Fit to View (F key) after loading.
+  (The old "rotation inverted vs CloudCompare" complaint is addressed by the
+  CloudCompare control scheme (`P`) — see the resolved post-mortem in
+  docs/BACKLOG.md.)
 
 ## Refactoring rules
 

@@ -10,10 +10,12 @@ import {
   CameraParams,
   DepthConversionResult,
 } from './interfaces';
-import { CustomArcballControls, TurntableControls } from './controls';
+import { CustomArcballControls, TurntableControls, CloudCompareControls } from './controls';
 import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
 import { RotationCenterManager, RotationCenterMode } from './RotationCenterManager';
 import { MeasurementManager } from './MeasurementManager';
+import { FilmManager } from './film/FilmManager';
+import { mountFilmPanel } from './filmPanelMount';
 import { SelectionManager, SelectionContext } from './SelectionManager';
 
 // eslint-disable-next-line @typescript-eslint/naming-convention -- ambient global from media/geotiff.min.js
@@ -86,6 +88,7 @@ import { mountControlsTab } from './controlsTabMount';
 import { filesState } from './state/files.svelte';
 import { viewerState } from './state/viewer.svelte';
 import { uiState } from './state/ui.svelte';
+import { measurementState } from './state/measurement.svelte';
 import { flushSync } from 'svelte';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
@@ -119,7 +122,12 @@ class PointCloudVisualizer {
   // crashes the webview. This is the safety net for the multi-window
   // out-of-VRAM case (each window is a separate context sharing one GPU).
   private contextLost = false;
-  controls!: TrackballControls | OrbitControls | CustomArcballControls | TurntableControls;
+  controls!:
+    | TrackballControls
+    | OrbitControls
+    | CustomArcballControls
+    | TurntableControls
+    | CloudCompareControls;
   private inverseTrackballPointerDownHandler: (() => void) | null = null;
 
   // Camera control state
@@ -140,6 +148,11 @@ class PointCloudVisualizer {
   rotationCenterManager: RotationCenterManager = new RotationCenterManager();
   private measurementManager: MeasurementManager | null = null;
   private selectionManager: SelectionManager | null = null;
+  // While true, double-clicks append points to the measurement path instead
+  // of moving the rotation center (toggled from the Measurements panel / M).
+  measurementPathMode: boolean = false;
+  // Video mode: camera keyframes, playback and recording (film/FilmManager.ts)
+  filmManager: FilmManager | null = null;
 
   // On-demand rendering state
   needsRender: boolean = false;
@@ -581,6 +594,9 @@ class PointCloudVisualizer {
     // Initialize selection manager
     this.selectionManager = new SelectionManager(this.getSelectionContext());
 
+    // Initialize video mode (camera keyframes / recording)
+    this.filmManager = new FilmManager(this);
+
     // Lighting
     this.initSceneLighting();
 
@@ -680,12 +696,14 @@ class PointCloudVisualizer {
       // Apply preference
       arc.invertRotation = this.arcballInvertRotation;
     } else if (this.controlType === 'cloudcompare') {
-      this.controls = new TurntableControls(this.camera, this.renderer.domElement);
-      const cc = this.controls as TurntableControls;
+      // Sphere-projected trackball (see CloudCompareControls in controls.ts):
+      // center drags orbit like normal trackball, rim/tangential drags roll
+      // the scene under the cursor — CloudCompare's actual rotation model.
+      this.controls = new CloudCompareControls(this.camera, this.renderer.domElement);
+      const cc = this.controls as CloudCompareControls;
       cc.rotateSpeed = 1.0;
       cc.zoomSpeed = 1.0;
       cc.panSpeed = 1.0;
-      cc.worldUp.copy(this.camera.up.lengthSq() > 0 ? this.camera.up : new THREE.Vector3(0, 1, 0));
     } else {
       this.controls = new OrbitControls(this.camera, this.renderer.domElement);
       const orbitControls = this.controls as OrbitControls;
@@ -1045,6 +1063,12 @@ class PointCloudVisualizer {
       this.measurementManager = null;
     }
 
+    // Clean up video mode
+    if (this.filmManager) {
+      this.filmManager.dispose();
+      this.filmManager = null;
+    }
+
     // Clean up EDL resources
     if (this.edlPass) {
       this.edlPass.dispose();
@@ -1119,8 +1143,10 @@ class PointCloudVisualizer {
       this.effectComposer.setSize(container.clientWidth, container.clientHeight);
     }
 
-    // Update controls based on type
-    if (this.controlType === 'trackball') {
+    // Update controls based on type (TrackballControls-based schemes need
+    // their screen rectangle refreshed on resize; CloudCompareControls reads
+    // the live canvas rect on every event and needs nothing here)
+    if (this.controlType === 'trackball' || this.controlType === 'inverse-trackball') {
       const trackballControls = this.controls as TrackballControls;
       trackballControls.screen.width = container.clientWidth;
       trackballControls.screen.height = container.clientHeight;
@@ -1487,6 +1513,15 @@ class PointCloudVisualizer {
         console.log(`⚫ Selected point cloud: ${info}`);
       }
 
+      // Measurement-path mode: picks extend the path; the rotation center
+      // stays untouched so measuring never disturbs the camera.
+      if (this.measurementPathMode && this.measurementManager) {
+        this.measurementManager.addPathPoint(selectedPoint);
+        console.log(`📏 Measurement path point added (${info})`);
+        this.requestRender();
+        return;
+      }
+
       // If Shift is pressed, measure distance to rotation center
       if (event.shiftKey && this.measurementManager) {
         const rotationCenter = this.controls.target.clone();
@@ -1503,8 +1538,11 @@ class PointCloudVisualizer {
     // A double-click far away from every visible object is the "I'm lost"
     // recovery gesture: refit the view instead of doing nothing. Near-misses
     // next to an object stay inert so a failed pick never jumps the camera.
+    // Suppressed while measuring - a missed pick must never jump the camera
+    // mid-measurement.
     if (
       !this.sequenceMode &&
+      !this.measurementPathMode &&
       this.selectionManager.isFarFromAllVisibleObjects(mouseScreenX, mouseScreenY, canvas)
     ) {
       console.log('🧭 Double-click in empty space - fitting view to all objects');
@@ -1515,6 +1553,16 @@ class PointCloudVisualizer {
     // If no point found, log the failure
     console.log(
       `❌ No selectable object found at (${mouseScreenX.toFixed(1)}, ${mouseScreenY.toFixed(1)})`
+    );
+  }
+
+  toggleMeasurementPathMode(): void {
+    this.measurementPathMode = !this.measurementPathMode;
+    measurementState.pathActive = this.measurementPathMode;
+    this.showStatus(
+      this.measurementPathMode
+        ? 'Measurement path: double-click points on geometry to measure (M to finish)'
+        : 'Measurement path mode off'
     );
   }
 
@@ -1610,6 +1658,7 @@ class PointCloudVisualizer {
     mountFileList(this);
     mountStats(this);
     mountControlsTab(this);
+    mountFilmPanel(this);
 
     document.addEventListener('dblclick', e => {
       const slider = e.target;
@@ -1688,6 +1737,14 @@ class PointCloudVisualizer {
           break;
         case 'k':
           this.switchToArcballControls();
+          e.preventDefault();
+          break;
+        case 'p':
+          this.switchToCloudCompareControls();
+          e.preventDefault();
+          break;
+        case 'm':
+          this.toggleMeasurementPathMode();
           e.preventDefault();
           break;
 
@@ -3570,7 +3627,12 @@ class PointCloudVisualizer {
     controlSchemeSwitcher.switchToArcballControls(this);
   }
 
-  // Removed CloudCompare button/shortcut per user request; turntable impl remains unused
+  // CloudCompare mode: trackball with the full rotation mirrored (scene
+  // follows the mouse). The earlier turntable-based attempt at this mode
+  // remains in controls.ts but is no longer wired up.
+  private switchToCloudCompareControls(): void {
+    controlSchemeSwitcher.switchToCloudCompareControls(this);
+  }
 
   updateControlStatus(): void {
     controlSchemeSwitcher.updateControlStatus(this);

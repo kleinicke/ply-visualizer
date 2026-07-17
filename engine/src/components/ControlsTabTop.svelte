@@ -1,5 +1,7 @@
 <script lang="ts">
   import { viewerState } from '../state/viewer.svelte';
+  import { measurementState } from '../state/measurement.svelte';
+  import { formatDistance } from '../MeasurementManager';
 
   let { host }: { host: any } = $props();
 
@@ -108,6 +110,23 @@
     }
   }
 
+  function onToggleMeasurementPath() {
+    host.toggleMeasurementPathMode();
+  }
+  function onUndoPathPoint() {
+    if (host.measurementManager) {
+      host.measurementManager.undoLastPathPoint();
+      host.requestRender();
+    }
+  }
+  function onClearPath() {
+    if (host.measurementManager) {
+      host.measurementManager.clearPath();
+      host.requestRender();
+      host.showStatus('Measurement path cleared');
+    }
+  }
+
   function onOpenCVConvention() {
     host.setOpenCVCameraConvention();
     if (host.vscode) {
@@ -132,6 +151,9 @@
   }
   function onArcball() {
     host.switchToArcballControls();
+  }
+  function onCloudCompare() {
+    host.switchToCloudCompareControls();
   }
 
   function setRotationCenterMode(mode: 'move-camera' | 'keep-camera' | 'keep-distance') {
@@ -331,6 +353,24 @@
 <div class="panel-section">
   <h4>Measurements</h4>
   <div class="control-buttons">
+    <button
+      id="toggle-measurement-path"
+      class="control-button"
+      class:active={measurementState.pathActive}
+      onclick={onToggleMeasurementPath}
+      title="Double-click points on geometry to build a measurement path A → B → C …"
+    >
+      {measurementState.pathActive ? 'Finish Measurement Path' : 'Start Measurement Path'}
+      <span class="button-shortcut">M</span>
+    </button>
+    {#if measurementState.pathPointCount > 0}
+      <button id="undo-path-point" class="control-button" onclick={onUndoPathPoint}>
+        Undo Last Point
+      </button>
+      <button id="clear-measurement-path" class="control-button" onclick={onClearPath}>
+        Clear Path
+      </button>
+    {/if}
     <button id="clear-measurements" class="control-button" onclick={onClearMeasurements}
       >Clear All Measurements</button
     >
@@ -338,6 +378,20 @@
       Remove Last Measurement
     </button>
   </div>
+  {#if measurementState.pathPointCount > 0}
+    <div id="measurement-path-info" style="font-size: 11px; margin-top: 8px; font-family: monospace;">
+      {#if measurementState.segmentLengths.length > 0}
+        {#each measurementState.segmentLengths as length, i}
+          <div>Segment {i + 1}: {formatDistance(length)}</div>
+        {/each}
+        <div style="margin-top: 4px; font-weight: bold;">
+          Total: {formatDistance(measurementState.totalLength)}
+        </div>
+      {:else}
+        <div>1 point picked — double-click the next point.</div>
+      {/if}
+    </div>
+  {/if}
   <div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 8px">
     Tip: Shift + Double-click to measure distance from rotation center
   </div>
@@ -397,6 +451,15 @@
       onclick={onArcball}
     >
       Arcball <span class="button-shortcut">K</span>
+    </button>
+    <button
+      id="cloudcompare-controls"
+      class="control-button"
+      class:active={viewerState.controlScheme === 'cloudcompare'}
+      onclick={onCloudCompare}
+      title="CloudCompare-style virtual ball: center drags orbit, drags near the edge and circular gestures roll the scene under the cursor"
+    >
+      CloudCompare <span class="button-shortcut">P</span>
     </button>
   </div>
 </div>

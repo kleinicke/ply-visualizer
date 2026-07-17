@@ -1,6 +1,6 @@
 # Change Log
 
-## [1.7.0] - 
+## [1.7.0] - 2026-07-??
 
 - Internal refactoring - move to svelte
 - Speedup for computing point clouds out of depth
@@ -8,6 +8,9 @@
 - Color point clouds by any extra PLY scalar property (e.g. confidence, error) via Viridis/Gray colormaps in the Color dropdown
 - Add "Save Screenshot" (PNG) and "Copy Camera JSON" (position/target/up/fov) to the camera tab
 - Add LAS/LAZ and E57 file formats
+- Finally Inverse Camera Rotation
+- Add video mode
+- Add distance measurement paths
 
 
 ## [1.6.0] - 2026-06-07

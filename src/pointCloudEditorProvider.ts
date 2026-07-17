@@ -253,6 +253,12 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         case 'saveScreenshot':
           await this.handleSaveScreenshot(message);
           break;
+        case 'saveVideo':
+          await this.handleSaveVideo(message);
+          break;
+        case 'saveCameraPath':
+          await this.handleSaveCameraPath(message);
+          break;
         case 'selectColorImage':
           await this.handleSelectColorImage(webviewPanel, message);
           break;
@@ -787,6 +793,49 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     } catch (error) {
       vscode.window.showErrorMessage(
         `Failed to save screenshot: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async handleSaveVideo(message: any): Promise<void> {
+    try {
+      const extension = message.extension === 'mp4' ? 'mp4' : 'webm';
+      const saveUri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(message.defaultFileName),
+        filters: {
+          'Video Files': [extension],
+          'All Files': ['*'],
+        },
+      });
+      if (!saveUri) {
+        return;
+      }
+      await vscode.workspace.fs.writeFile(saveUri, Buffer.from(message.dataBase64, 'base64'));
+      vscode.window.showInformationMessage(`Video saved: ${path.basename(saveUri.fsPath)}`);
+    } catch (error) {
+      vscode.window.showErrorMessage(
+        `Failed to save video: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async handleSaveCameraPath(message: any): Promise<void> {
+    try {
+      const saveUri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(message.defaultFileName),
+        filters: {
+          'Camera Path JSON': ['json'],
+          'All Files': ['*'],
+        },
+      });
+      if (!saveUri) {
+        return;
+      }
+      await vscode.workspace.fs.writeFile(saveUri, Buffer.from(message.content, 'utf8'));
+      vscode.window.showInformationMessage(`Camera path saved: ${path.basename(saveUri.fsPath)}`);
+    } catch (error) {
+      vscode.window.showErrorMessage(
+        `Failed to save camera path: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

@@ -7,26 +7,17 @@ considered and _not_ built, so the reasoning isn't lost or re-litigated.
 
 ### Better point-to-point measurements
 
-Replace the current rotation-center-to-point-only workflow with an arbitrary
-measurement path. The user picks A, B, C, ... directly on visible geometry; the
-UI shows every segment length and the accumulated total. Keep remove-last and
-clear-all, and retain the current rotation-center shortcut as a quick
-single-distance option.
+**Shipped (July 2026, initial version).** `MeasurementManager` now holds an
+ordered measurement path: toggle path mode (Measurements panel button or `M`),
+double-click points on geometry (picked through `SelectionManager`, no separate
+raycasting path), and the panel lists every segment length plus the accumulated
+total. Undo-last-point and clear-path exist alongside the retained
+rotation-center Shift+double-click quick measurement. Distance math stayed in
+TypeScript per the original sketch (one subtraction per click does not justify a
+WASM boundary). Playwright coverage: `engine/test/measurement-path.spec.ts`.
 
-Implementation sketch:
-
-1. Extend `MeasurementManager` with an ordered list of picked world-space points
-   and render a polyline plus point markers.
-2. Reuse `SelectionManager` for point/mesh picking so measurement does not get
-   its own competing raycasting path.
-3. Show segment lengths, total length and selected coordinates in a small Svelte
-   panel; allow undo-last and clear-all from both UI and keyboard.
-4. Keep the interaction and Three.js scene objects in TypeScript. Put the pure
-   distance calculation in the Rust/WASM geometry module if it can share the
-   same batched API with later area/profile tools; do not add a WASM boundary
-   for one subtraction per click alone.
-5. Test transformed objects, meshes, multiple clouds, undo/clear and picks near
-   overlapping geometry.
+Still open from the original sketch: explicit tests for transformed objects,
+multiple clouds and picks near overlapping geometry.
 
 ### LAS and LAZ support
 
@@ -78,28 +69,25 @@ Implementation sketch:
 
 ### Film-maker mode
 
-Add a camera-keyframe workflow for demonstrations, documentation and
-reproducible bug reports. This is planned alongside the format work rather than
-being treated as a distant optional feature.
+**Shipped (July 2026, initial version)** as "Video Mode" in the Camera tab:
+`engine/src/film/` (keyframe timeline + `FilmManager`), `FilmPanel.svelte`,
+`state/film.svelte.js`. Covers keyframe add/reorder/edit/delete/re-capture
+(position, orientation, rotation center, FOV, per-keyframe travel duration and
+dwell), Catmull-Rom position/target spline with per-segment quaternion slerp and
+smoothstep easing, play/stop/loop preview, keyframe frustum preview
+(short-far-plane `CameraHelper`s), `captureStream`+`MediaRecorder` recording
+with codec fallback (MP4 → VP9 → VP8 → WebM), and camera-path JSON save/load
+(save goes through the extension host in VS Code). The pre-playback camera is
+restored after playback/recording. Playwright coverage:
+`engine/test/film-mode.spec.ts`.
 
-Implementation sketch:
+Deliberate deviation from the sketch: timeline generation stayed in TypeScript
+instead of Rust/WASM — sampling one camera pose per frame is trivial compute,
+far below the "coarse batched typed-array operation" bar set below. Revisit only
+if a batched Rust geometry API grows anyway.
 
-1. Let users add, select, reorder, edit and delete camera keyframes containing
-   camera position/orientation, rotation center, field of view and optional
-   dwell time.
-2. Generate a smooth camera timeline using position interpolation and quaternion
-   interpolation. Implement timeline generation as one batched Rust/WASM
-   operation; keep Three.js camera application and playback timing in
-   TypeScript.
-3. Provide preview/play/pause/loop controls and show keyframe camera frustums in
-   the scene while editing.
-4. Record the standalone/VS Code webview canvas with `captureStream` and
-   `MediaRecorder`, choosing the best supported codec and extension rather than
-   assuming MP4/H.264 is available.
-5. Allow saving/loading the keyframe project as JSON independently of the
-   recorded video, so a camera path can be reproduced and adjusted later.
-6. Test interpolation across rotations, resizing/high-DPI recording, codec
-   fallback, cancellation and restoration of the pre-playback camera.
+Still open: pause (currently play/stop only), timeline scrubbing, high-DPI /
+resize-during-recording tests.
 
 ### Rust/WASM implementation preference
 
@@ -175,8 +163,43 @@ unaffected because ShaderMaterials don't opt into clipping.
 
 ### CloudCompare-style rotation direction
 
-**Status: abandoned.** The accepted answer is the recovery shortcut —
-double-click into empty void to get back to a sane view (commit `7df5232`) —
+**Status: RESOLVED (July 2026) — shipped as the "CloudCompare" control scheme
+(`P`), `CloudCompareControls` in `engine/src/controls.ts`.** Reattempted on
+explicit user request after the abandonment below. The first retry (mirroring
+the whole trackball rotation) was wrong — user feedback: it inverted the
+straight drags, which had been fine, and left "the rotation" (roll) backwards.
+That feedback identified what CloudCompare actually does differently:
+
+- **CloudCompare is a sphere-projected ("virtual ball") trackball, not a delta
+  trackball.** Each pointer move projects the previous and current cursor
+  _positions_ onto a unit ball over the canvas and applies the minimal rotation
+  carrying one to the other, scene-side (camera gets the conjugated inverse,
+  applied rigidly to eye+up — orthonormal by construction, no drift, no momentum
+  state).
+- **Straight drags through the center match normal three.js trackball**
+  direction (scene front follows the mouse) — that part was never the problem.
+- **The actual difference is that rotation is position-dependent.** Drags near
+  the canvas rim and circular gestures ROLL the scene under the cursor,
+  following the finger. A delta-based trackball structurally cannot do this: its
+  per-step math ignores the cursor position, so its only roll is the
+  _accumulation_ (holonomy) of yaw/pitch steps — which comes out large and in
+  the wrong direction (measured: −3.0 rad against a 180° clockwise circular
+  gesture vs +0.38 rad following it). That is "the rotation is inverted", and it
+  explains why every sign-flipping attempt failed: there is no roll term in the
+  delta formula to flip.
+- Coverage: `engine/test/cloudcompare-rotation.spec.ts` (straight-drag direction
+  parity with normal trackball, rim-drag tangential roll with zero roll at
+  center, circular-gesture roll following the finger and opposite to normal
+  trackball's, sustained-drag stability). The older roll-only
+  `inverse-trackball` scheme remains available and unchanged; the unused
+  turntable implementation stays parked in `controls.ts`.
+
+The historical post-mortem below is kept: its failure analysis (particularly
+"fighting the controls' assumptions") was pointing at the right conclusion — the
+fix required replacing the rotation model, not adjusting signs inside it.
+
+**Pre-2026-07 status: abandoned.** The accepted answer was the recovery shortcut
+— double-click into empty void to get back to a sane view (commit `7df5232`) —
 plus the existing experimental control schemes for those who want them.
 
 Why the multiple past attempts failed (post-mortem opinion):

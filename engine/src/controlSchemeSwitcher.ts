@@ -45,6 +45,18 @@ export function switchToInverseTrackballControls(host: ControlSchemeHost): void 
   host.showStatus('Switched to Inverse Trackball controls');
 }
 
+export function switchToCloudCompareControls(host: ControlSchemeHost): void {
+  if (host.controlType === 'cloudcompare') {
+    return;
+  }
+
+  console.log('🔄 Switching to CloudCompare controls');
+  host.controlType = 'cloudcompare';
+  host.initializeControls();
+  host.updateControlStatus();
+  host.showStatus('Switched to CloudCompare controls (virtual ball)');
+}
+
 export function switchToArcballControls(host: ControlSchemeHost): void {
   if (host.controlType === 'arcball') {
     return;

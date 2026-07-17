@@ -81,6 +81,9 @@ export function showKeyboardShortcuts(onCreateShortcutsUI: () => void): void {
   T: Switch to TrackballControls
   O: Switch to OrbitControls
   I: Switch to Inverse TrackballControls
+  K: Switch to ArcballControls
+  P: Switch to CloudCompare controls (mirrored rotation)
+  M: Toggle measurement-path mode
   C: Set OpenCV camera convention (Y-down)
   B: Set OpenGL camera convention (Y-up)
   W: Set rotation center to world origin (0,0,0)
@@ -126,6 +129,8 @@ export function createShortcutsUI(onUpdateControlStatus: () => void): void {
                 <div><span style="font-weight: bold;">O</span> Switch to OrbitControls</div>
                 <div><span style="font-weight: bold;">I</span> Switch to Inverse TrackballControls</div>
                 <div><span style="font-weight: bold;">K</span> Switch to ArcballControls</div>
+                <div><span style="font-weight: bold;">P</span> Switch to CloudCompare controls</div>
+                <div><span style="font-weight: bold;">M</span> Toggle measurement-path mode</div>
             </div>
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">📷 Camera Conventions</div>
             <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4; margin-bottom: 8px;">
