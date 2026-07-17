@@ -1,6 +1,6 @@
 import { viewerState } from './state/viewer.svelte';
 
-export type ControlType = 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare';
+export type ControlType = 'trackball' | 'orbit' | 'legacy-trackball' | 'arcball';
 
 export interface ControlSchemeHost {
   controlType: ControlType;
@@ -33,28 +33,16 @@ export function switchToOrbitControls(host: ControlSchemeHost): void {
   host.showStatus('Switched to Orbit controls');
 }
 
-export function switchToInverseTrackballControls(host: ControlSchemeHost): void {
-  if (host.controlType === 'inverse-trackball') {
+export function switchToLegacyTrackballControls(host: ControlSchemeHost): void {
+  if (host.controlType === 'legacy-trackball') {
     return;
   }
 
-  console.log('🔄 Switching to Inverse TrackballControls');
-  host.controlType = 'inverse-trackball';
+  console.log('🔄 Switching to Legacy TrackballControls');
+  host.controlType = 'legacy-trackball';
   host.initializeControls();
   host.updateControlStatus();
-  host.showStatus('Switched to Inverse Trackball controls');
-}
-
-export function switchToCloudCompareControls(host: ControlSchemeHost): void {
-  if (host.controlType === 'cloudcompare') {
-    return;
-  }
-
-  console.log('🔄 Switching to CloudCompare controls');
-  host.controlType = 'cloudcompare';
-  host.initializeControls();
-  host.updateControlStatus();
-  host.showStatus('Switched to CloudCompare controls (virtual ball)');
+  host.showStatus('Switched to Legacy Trackball controls (delta-based)');
 }
 
 export function switchToArcballControls(host: ControlSchemeHost): void {
@@ -84,9 +72,8 @@ export function updateControlStatus(host: ControlSchemeHost): void {
   const controlButtons = [
     { id: 'trackball-controls', type: 'trackball' },
     { id: 'orbit-controls', type: 'orbit' },
-    { id: 'inverse-trackball-controls', type: 'inverse-trackball' },
+    { id: 'legacy-trackball-controls', type: 'legacy-trackball' },
     { id: 'arcball-controls', type: 'arcball' },
-    { id: 'cloudcompare-controls', type: 'cloudcompare' },
   ];
 
   controlButtons.forEach(button => {

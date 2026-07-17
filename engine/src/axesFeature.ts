@@ -8,7 +8,7 @@ export interface AxesFeatureHost {
   }>;
   camera: THREE.PerspectiveCamera;
   scene: THREE.Scene;
-  controlType: 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare';
+  controlType: 'trackball' | 'orbit' | 'legacy-trackball' | 'arcball';
   axesPermanentlyVisible: boolean;
   requestRender(): void;
   updateAxesButtonState(): void;
@@ -56,9 +56,8 @@ export function setupAxesVisibility(host: AxesFeatureHost): void {
   // Add event listeners for axes visibility based on control type
   if (
     host.controlType === 'trackball' ||
-    host.controlType === 'inverse-trackball' ||
-    host.controlType === 'arcball' ||
-    host.controlType === 'cloudcompare'
+    host.controlType === 'legacy-trackball' ||
+    host.controlType === 'arcball'
   ) {
     (host.controls as any).addEventListener('start', showAxes);
     (host.controls as any).addEventListener('end', hideAxesAfterDelay);

@@ -5,11 +5,7 @@ import * as THREE from 'three';
  *
  * The decisive difference from three.js TrackballControls is that rotation is
  * computed from the mouse's *position on a virtual ball*, not from mouse
- * deltas. Each pointer move projects the previous and current cursor
- * positions onto a unit sphere over the canvas (view space) and applies the
- * minimal rotation carrying one to the other — CloudCompare applies exactly
- * this to its view matrix. Consequences that delta-based trackballs cannot
- * reproduce:
+ * deltas. Consequences that delta-based trackballs cannot reproduce:
  *
  * - Center drags give yaw/pitch in the same direction as a normal trackball
  *   (the scene front follows the mouse).
@@ -20,25 +16,61 @@ import * as THREE from 'three';
  *   opposite direction of the finger, and no sign flip can fix it because the
  *   per-step math has no roll term at all (see docs/BACKLOG.md post-mortem).
  *
- * The step rotation is applied rigidly (one quaternion to eye and up
- * together, conjugated from view space into world space), so the camera frame
- * stays orthonormal — no decomposition, no drift, no momentum state.
+ * To keep those properties while allowing sensitivity well above the natural
+ * grab-the-ball speed, the gesture is split into two independently scaled
+ * parts (naively multiplying incremental step angles does NOT work — the
+ * amplified yaw/pitch steps rebuild the counter-holonomy and circular-drag
+ * roll flips back to the wrong direction):
+ *
+ * - SWING (yaw/pitch) is Shoemake-arcball style: the twist-free part of the
+ *   single rotation from the drag-start ball point to the current one, angle
+ *   scaled by `rotateSpeed`. Being endpoint-based it is path-independent, so
+ *   a closed mouse loop contributes exactly zero swing at any speed.
+ * - TWIST (roll) is the integral of each step's view-axis component, scaled
+ *   by `rollSpeed` — for circular gestures this is precisely the
+ *   ball-follows-finger roll.
+ *
+ * Each pointer move recomputes the camera pose from the drag-start pose with
+ * one rigid quaternion (conjugated from view space into world space), so the
+ * camera frame stays orthonormal — no decomposition drift, no momentum state.
  */
+/** Scale a rotation's angle by `factor`, keeping its axis. */
+function scaleRotation(q: THREE.Quaternion, factor: number): THREE.Quaternion {
+  const angle = 2 * Math.acos(THREE.MathUtils.clamp(q.w, -1, 1));
+  if (angle < 1e-12) {
+    return q.clone();
+  }
+  const s = Math.sin(angle / 2);
+  const axis = new THREE.Vector3(q.x / s, q.y / s, q.z / s);
+  return new THREE.Quaternion().setFromAxisAngle(axis, angle * factor);
+}
+
 export class CloudCompareControls {
   public object: THREE.PerspectiveCamera;
   public domElement: HTMLElement;
   public enabled = true;
   public target: THREE.Vector3 = new THREE.Vector3(0, 0, 0);
-  public rotateSpeed = 1.0; // 1.0 = true grab-the-ball feel
+  // Orbit (yaw/pitch, "swing") multiplier. 1.0 = true grab-the-ball feel
+  // (center-to-rim drag = 90°); higher values trade the exact ball metaphor
+  // for faster orbiting.
+  public rotateSpeed = 1.0;
+  // Roll ("twist") multiplier, independent of the orbit speed.
+  public rollSpeed = 1.0;
   public zoomSpeed = 1.0;
   public panSpeed = 1.0;
   public minDistance = 0.001;
   public maxDistance = 50000;
-  public maxStep = 0.35; // rad clamp per pointer event (guards against jumps)
 
   private isRotating = false;
   private isPanning = false;
-  private lastSphereVec: THREE.Vector3 = new THREE.Vector3();
+  // Rotation drag session state: ball points and the camera pose the drag
+  // started from (poses are recomputed absolutely from here every move).
+  private dragStartSphere: THREE.Vector3 = new THREE.Vector3();
+  private prevSphere: THREE.Vector3 = new THREE.Vector3();
+  private twistAccum = 0;
+  private eyeStart: THREE.Vector3 = new THREE.Vector3();
+  private upStart: THREE.Vector3 = new THREE.Vector3();
+  private camQStart: THREE.Quaternion = new THREE.Quaternion();
   private panStart: THREE.Vector2 = new THREE.Vector2();
   private listeners: Map<string, Set<(e?: any) => void>> = new Map();
 
@@ -108,7 +140,12 @@ export class CloudCompareControls {
     this.domElement.setPointerCapture(e.pointerId);
     if (e.button === 0 && !e.shiftKey) {
       this.isRotating = true;
-      this.lastSphereVec.copy(this.projectOnUnitSphere(e.clientX, e.clientY));
+      this.dragStartSphere.copy(this.projectOnUnitSphere(e.clientX, e.clientY));
+      this.prevSphere.copy(this.dragStartSphere);
+      this.twistAccum = 0;
+      this.eyeStart.copy(this.object.position).sub(this.target);
+      this.upStart.copy(this.object.up);
+      this.camQStart.copy(this.object.quaternion);
       this.dispatchEvent('start');
     } else {
       this.isPanning = true;
@@ -123,32 +160,44 @@ export class CloudCompareControls {
     }
     if (this.isRotating) {
       const curr = this.projectOnUnitSphere(e.clientX, e.clientY);
-      const prev = this.lastSphereVec;
-      if (prev.distanceToSquared(curr) < 1e-14) {
+      if (this.prevSphere.distanceToSquared(curr) < 1e-14) {
         return;
       }
 
-      // Minimal rotation carrying prev -> curr on the ball, in view space.
-      // This IS the apparent scene rotation (the ball follows the cursor).
-      let qView = new THREE.Quaternion().setFromUnitVectors(prev, curr);
-      const angle = 2 * Math.acos(THREE.MathUtils.clamp(qView.w, -1, 1));
-      const scaled = Math.min(angle * this.rotateSpeed, this.maxStep);
-      if (angle > 1e-12 && Math.abs(scaled - angle) > 1e-12) {
-        qView = new THREE.Quaternion().slerp(qView, scaled / angle);
-      }
+      // TWIST: integrate the view-axis component of this step (the tangential
+      // part of the motion — for circular gestures, the ball-follows-finger
+      // roll), independent of the swing.
+      const qStep = new THREE.Quaternion().setFromUnitVectors(this.prevSphere, curr);
+      this.twistAccum += 2 * Math.atan2(qStep.z, qStep.w) * this.rollSpeed;
+      this.prevSphere.copy(curr);
 
-      // The camera rig rotates by the inverse, conjugated from view space
-      // into world space (object.quaternion maps camera-local to world).
-      const camQ = this.object.quaternion;
-      const qWorld = camQ.clone().multiply(qView.invert()).multiply(camQ.clone().invert());
+      // SWING: single endpoint-based rotation from the drag-start ball point
+      // to the current one, with its own twist component removed (roll is
+      // owned entirely by twistAccum — keeping it here would double-count).
+      // Endpoint-based means path-independent: closed loops add zero swing,
+      // so scaling its angle cannot create counter-roll.
+      const qFull = new THREE.Quaternion().setFromUnitVectors(this.dragStartSphere, curr);
+      const twistPart = new THREE.Quaternion(0, 0, qFull.z, qFull.w).normalize();
+      const swing = qFull.clone().multiply(twistPart.clone().invert());
 
-      const eye = this.object.position.clone().sub(this.target);
-      eye.applyQuaternion(qWorld);
-      this.object.up.applyQuaternion(qWorld);
+      // Total apparent scene rotation for this drag, in view space.
+      const qView = scaleRotation(swing, this.rotateSpeed).multiply(
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), this.twistAccum)
+      );
+
+      // Recompute the pose from the drag-start state: camera rig rotates by
+      // the inverse, conjugated from view space into world space using the
+      // drag-start orientation (camQStart maps camera-local to world).
+      const qWorld = this.camQStart
+        .clone()
+        .multiply(qView.invert())
+        .multiply(this.camQStart.clone().invert());
+
+      const eye = this.eyeStart.clone().applyQuaternion(qWorld);
+      this.object.up.copy(this.upStart).applyQuaternion(qWorld);
       this.object.position.copy(this.target).add(eye);
       this.object.lookAt(this.target);
 
-      this.lastSphereVec.copy(curr);
       this.dispatchEvent('change');
     } else if (this.isPanning) {
       const rect = this.domElement.getBoundingClientRect();
@@ -199,6 +248,11 @@ export class CloudCompareControls {
     eye.setLength(newLen);
     this.object.position.copy(this.target.clone().add(eye));
     this.object.lookAt(this.target);
+    // Rotation poses are recomputed from the drag-start eye each move, so a
+    // zoom during an active drag must be folded into that baseline too.
+    if (this.isRotating) {
+      this.eyeStart.setLength(newLen);
+    }
     this.dispatchEvent('start');
     this.dispatchEvent('change');
     this.dispatchEvent('end');

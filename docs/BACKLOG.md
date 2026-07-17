@@ -81,6 +81,15 @@ with codec fallback (MP4 → VP9 → VP8 → WebM), and camera-path JSON save/lo
 restored after playback/recording. Playwright coverage:
 `engine/test/film-mode.spec.ts`.
 
+Refined after first user feedback (July 2026): looping flies a closing segment
+from the last keyframe back to the first (the last keyframe's duration is that
+segment's travel time; the spline wraps) instead of teleporting; easing is
+boundary-dependent so dwell-0 keyframes are flown through at speed rather than
+braking to a stop at every keyframe; recordings bake the CSS canvas background
+into `scene.background` for the take (the canvas clears with alpha 0, so raw
+captureStream footage was black); and Record can be pressed mid-preview — it
+restarts from the beginning and runs the loop exactly once.
+
 Deliberate deviation from the sketch: timeline generation stayed in TypeScript
 instead of Rust/WASM — sampling one camera pose per frame is trivial compute,
 far below the "coarse batched typed-array operation" bar set below. Revisit only
@@ -163,12 +172,30 @@ unaffected because ShaderMaterials don't opt into clipping.
 
 ### CloudCompare-style rotation direction
 
-**Status: RESOLVED (July 2026) — shipped as the "CloudCompare" control scheme
-(`P`), `CloudCompareControls` in `engine/src/controls.ts`.** Reattempted on
-explicit user request after the abandonment below. The first retry (mirroring
-the whole trackball rotation) was wrong — user feedback: it inverted the
-straight drags, which had been fine, and left "the rotation" (roll) backwards.
-That feedback identified what CloudCompare actually does differently:
+**Status: RESOLVED (July 2026) — shipped as `CloudCompareControls` in
+`engine/src/controls.ts` and then PROMOTED TO THE DEFAULT "Trackball" scheme
+(`T`).** The previous delta-based three.js TrackballControls remains available
+as "Legacy Trackball" (`I`); the old roll-only "Inverse Trackball" scheme and
+its shadow-state `_rotateCamera` patch were removed with their specs
+(inverse-trackball-rotation, measure-accumulated-roll, rotation-drift-check —
+the accumulated-roll spec had been failing on main anyway).
+
+Sensitivity design (second iteration, after user feedback that the pure ball was
+too slow): orbit and roll are split into independently scaled parts, because
+naively multiplying the incremental step angles rebuilds the counter-holonomy
+and flips circular-drag roll back to the wrong direction at high speed
+(measured: −1.31 rad at 3.2x). SWING (yaw/pitch) is Shoemake-arcball style — the
+twist-free single rotation from the drag-start ball point to the current one,
+endpoint-based and therefore path-independent (closed loops add zero swing at
+any speed) — scaled 3.2x to match the legacy trackball's speed. TWIST (roll) is
+the integral of each step's view-axis component, scaled 1.5x. Poses are
+recomputed rigidly from the drag-start state each move, so there is no drift and
+no momentum state.
+
+Reattempted on explicit user request after the abandonment below. The first
+retry (mirroring the whole trackball rotation) was wrong — user feedback: it
+inverted the straight drags, which had been fine, and left "the rotation" (roll)
+backwards. That feedback identified what CloudCompare actually does differently:
 
 - **CloudCompare is a sphere-projected ("virtual ball") trackball, not a delta
   trackball.** Each pointer move projects the previous and current cursor

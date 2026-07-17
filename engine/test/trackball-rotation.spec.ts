@@ -1,22 +1,24 @@
 import { test, expect, Page } from '@playwright/test';
 import path from 'path';
 
-// Coverage for the CloudCompare control scheme (CloudCompareControls in
-// controls.ts): a sphere-projected trackball, i.e. CloudCompare's actual
-// rotation model. The behaviors that define it:
+// Coverage for the default Trackball control scheme (CloudCompareControls in
+// controls.ts): a sphere-projected virtual-ball trackball, i.e. CloudCompare's
+// rotation model, promoted to default in July 2026. The previous delta-based
+// three.js TrackballControls lives on as 'Legacy Trackball' and serves as the
+// comparison baseline here. The behaviors that define the ball:
 //
 // 1. Straight drags through the canvas center orbit in the SAME direction as
-//    normal trackball (the scene front follows the mouse) — no mirroring.
+//    the legacy trackball (the scene front follows the mouse) — no mirroring.
 // 2. Rotation is position-dependent: a vertical drag near the canvas rim
 //    ROLLS the scene under the cursor (tangential), while the same drag at
 //    the center is pure pitch. Delta-based trackballs cannot do this at all —
 //    their per-step math ignores where on the canvas the cursor is.
 // 3. A circular drag rolls the scene in the direction of the finger. This is
-//    "the rotation" that was always backwards vs CloudCompare: a delta-based
+//    "the rotation" that was always backwards before: a delta-based
 //    trackball's circular-drag roll is accumulation holonomy with the
-//    opposite sign, so the roll sign here must DIFFER from normal trackball.
+//    opposite sign, so the roll sign here must DIFFER from legacy trackball.
 
-async function setup(page: Page, mode: 'trackball' | 'cloudcompare-controls') {
+async function setup(page: Page, mode: 'ball' | 'legacy') {
   await page.goto('/3d-visualizer/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(1000);
@@ -29,8 +31,9 @@ async function setup(page: Page, mode: 'trackball' | 'cloudcompare-controls') {
   await page.click('[data-tab="controls"]');
   await page.waitForTimeout(300);
 
-  if (mode === 'cloudcompare-controls') {
-    await page.click('#cloudcompare-controls');
+  // 'ball' is the default Trackball scheme — no click needed.
+  if (mode === 'legacy') {
+    await page.click('#legacy-trackball-controls');
     await page.waitForTimeout(300);
   }
 
@@ -186,25 +189,25 @@ const straightCases: Array<{
 ];
 
 for (const { name, dirX, dirY, axis, sign } of straightCases) {
-  test(`center drag ${name}: orbits like normal trackball (scene follows mouse)`, async ({
+  test(`center drag ${name}: orbits like legacy trackball (scene follows mouse)`, async ({
     page,
   }) => {
-    // Measure normal trackball first with a small budget (so its 5x speed
-    // stays well under a half revolution and the sign is unambiguous).
-    await setup(page, 'trackball');
+    // Measure the legacy delta trackball first with a small budget (so its 5x
+    // speed stays well under a half revolution and the sign is unambiguous).
+    await setup(page, 'legacy');
     let { cx, cy } = await canvasCenter(page);
     await dragStraight(page, cx, cy, dirX, dirY, 40);
     const normalAfter = await getCamState(page);
     expect(isFinite3(normalAfter.pos)).toBe(true);
-    expect(Math.sign(normalAfter.pos[axis]), 'normal trackball reference direction').toBe(sign);
+    expect(Math.sign(normalAfter.pos[axis]), 'legacy trackball reference direction').toBe(sign);
 
-    await setup(page, 'cloudcompare-controls');
+    await setup(page, 'ball');
     ({ cx, cy } = await canvasCenter(page));
     await dragStraight(page, cx, cy, dirX, dirY, 150);
     const ccAfter = await getCamState(page);
     expect(isFinite3(ccAfter.pos)).toBe(true);
 
-    // Same direction as normal trackball — NOT mirrored.
+    // Same direction as the legacy trackball — NOT mirrored.
     expect(Math.abs(ccAfter.pos[axis])).toBeGreaterThan(0.15);
     expect(Math.sign(ccAfter.pos[axis])).toBe(sign);
   });
@@ -213,7 +216,7 @@ for (const { name, dirX, dirY, axis, sign } of straightCases) {
 // --------------------------------------------------------------- rim roll
 
 test('vertical drag at the left rim rolls the scene under the cursor', async ({ page }) => {
-  await setup(page, 'cloudcompare-controls');
+  await setup(page, 'ball');
   const { cx, cy } = await canvasCenter(page);
   // Left rim (~0.78 of the half-width). The RIGHT side of the canvas is
   // covered by the main UI panel, which would swallow the pointer events.
@@ -227,7 +230,7 @@ test('vertical drag at the left rim rolls the scene under the cursor', async ({ 
   let after = await getCamState(page);
   const rollUp = await rollAngle(page, before, after);
 
-  await setup(page, 'cloudcompare-controls');
+  await setup(page, 'ball');
   before = await getCamState(page);
   await dragStraight(page, rimX, cy - 75, 0, 1, 150);
   after = await getCamState(page);
@@ -238,7 +241,7 @@ test('vertical drag at the left rim rolls the scene under the cursor', async ({ 
   expect(rollDown).toBeLessThan(-0.1);
 
   // The same vertical drag through the CENTER is pure pitch — nearly no roll.
-  await setup(page, 'cloudcompare-controls');
+  await setup(page, 'ball');
   before = await getCamState(page);
   await dragStraight(page, cx, cy + 75, 0, -1, 150);
   after = await getCamState(page);
@@ -249,21 +252,21 @@ test('vertical drag at the left rim rolls the scene under the cursor', async ({ 
 
 // ------------------------------------------------------------ circular roll
 
-// Partial sweeps compare against normal trackball, whose mid-gesture roll is
-// reliably in the wrong (opposite-of-finger) direction — the original user
+// Partial sweeps compare against the legacy trackball, whose mid-gesture roll
+// is reliably in the wrong (opposite-of-finger) direction — the original user
 // complaint. At a full closed loop that comparison stops being meaningful
-// (normal trackball's open-arc artifacts largely cancel over a closed loop
-// and the residual sign is unstable), so 370° asserts only the CloudCompare
+// (the legacy trackball's open-arc artifacts largely cancel over a closed
+// loop and the residual sign is unstable), so 370° asserts only the ball
 // property itself: the roll keeps following the finger.
 const comparativeSweeps = [180, 270];
 
 for (const degrees of comparativeSweeps) {
-  test(`clockwise circular drag ${degrees}°: roll follows the finger (opposite of normal trackball)`, async ({
+  test(`clockwise circular drag ${degrees}°: roll follows the finger (opposite of legacy trackball)`, async ({
     page,
   }) => {
     const radius = 220;
 
-    await setup(page, 'trackball');
+    await setup(page, 'legacy');
     let { cx, cy } = await canvasCenter(page);
     let before = await getCamState(page);
     await dragCircular(page, cx, cy, degrees, radius, 1);
@@ -271,7 +274,7 @@ for (const degrees of comparativeSweeps) {
     expect(isFinite3(after.up)).toBe(true);
     const rollNormal = await rollAngle(page, before, after);
 
-    await setup(page, 'cloudcompare-controls');
+    await setup(page, 'ball');
     ({ cx, cy } = await canvasCenter(page));
     before = await getCamState(page);
     await dragCircular(page, cx, cy, degrees, radius, 1);
@@ -279,13 +282,11 @@ for (const degrees of comparativeSweeps) {
     expect(isFinite3(after.up), `up finite after ${degrees}° (no spin-out)`).toBe(true);
     const rollCC = await rollAngle(page, before, after);
 
-    console.log(
-      `[${degrees}°] rollNormal=${rollNormal.toFixed(3)} rollCloudCompare=${rollCC.toFixed(3)}`
-    );
+    console.log(`[${degrees}°] rollLegacy=${rollNormal.toFixed(3)} rollBall=${rollCC.toFixed(3)}`);
 
     // Clockwise finger => clockwise apparent scene roll => positive
-    // swing-corrected camera roll — and the opposite sign of what the
-    // delta-based trackball's accumulation produces for the same gesture.
+    // swing-corrected camera roll — and the opposite sign of what the legacy
+    // delta trackball's accumulation produces for the same gesture.
     expect(rollCC).toBeGreaterThan(0.04);
     expect(Math.sign(rollCC)).not.toBe(Math.sign(rollNormal));
   });
@@ -294,19 +295,19 @@ for (const degrees of comparativeSweeps) {
 test('clockwise circular drag 370°: roll keeps following the finger past a full loop', async ({
   page,
 }) => {
-  await setup(page, 'cloudcompare-controls');
+  await setup(page, 'ball');
   const { cx, cy } = await canvasCenter(page);
   const before = await getCamState(page);
   await dragCircular(page, cx, cy, 370, 220, 1);
   const after = await getCamState(page);
   expect(isFinite3(after.up), 'up finite after 370° (no spin-out)').toBe(true);
   const rollCC = await rollAngle(page, before, after);
-  console.log(`[370°] rollCloudCompare=${rollCC.toFixed(3)}`);
+  console.log(`[370°] rollBall=${rollCC.toFixed(3)}`);
   expect(rollCC).toBeGreaterThan(0.04);
 });
 
 test('counter-clockwise circular drag rolls the other way', async ({ page }) => {
-  await setup(page, 'cloudcompare-controls');
+  await setup(page, 'ball');
   const { cx, cy } = await canvasCenter(page);
   const before = await getCamState(page);
   await dragCircular(page, cx, cy, 270, 220, -1);
@@ -318,8 +319,8 @@ test('counter-clockwise circular drag rolls the other way', async ({ page }) => 
 
 // --------------------------------------------------------------- stability
 
-test('cloudcompare mode stays stable (no drift/NaN) over sustained rotation', async ({ page }) => {
-  await setup(page, 'cloudcompare-controls');
+test('ball trackball stays stable (no drift/NaN) over sustained rotation', async ({ page }) => {
+  await setup(page, 'ball');
   const { cx, cy } = await canvasCenter(page);
 
   await page.mouse.move(cx, cy);

@@ -7,6 +7,7 @@ import {
 } from './keyframes';
 import { filmState } from '../state/film.svelte';
 import { viewerState } from '../state/viewer.svelte';
+import { getBackgroundCssColor } from '../sceneBrightness';
 
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
@@ -16,6 +17,7 @@ export interface FilmHost {
   controls: { target: THREE.Vector3; enabled: boolean; update(): void };
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
+  backgroundBrightness: number;
   vscode: { postMessage(message: any): void };
   requestRender(): void;
   showStatus(message: string): void;
@@ -49,6 +51,12 @@ export class FilmManager {
   private recorder: MediaRecorder | null = null;
   private recordedChunks: Blob[] = [];
   private recordedMime = '';
+  // The canvas clears with alpha 0 and the visible background is CSS on the
+  // canvas element, so captureStream would record transparency (black in the
+  // video). During recording the background is rendered into the scene
+  // instead; this holds what to restore afterwards.
+  private savedBackground: THREE.Scene['background'] = null;
+  private backgroundSwapped = false;
 
   private frustumGroup: THREE.Group | null = null;
 
@@ -197,22 +205,27 @@ export class FilmManager {
     if (!this.playing) {
       return;
     }
-    const total = timelineDuration(this.keyframes);
+    const loop = filmState.loop;
+    const total = timelineDuration(this.keyframes, loop);
     let t = (performance.now() - this.playStart) / 1000;
 
     if (t >= total) {
-      if (filmState.loop && !this.recorder) {
-        this.playStart = performance.now();
-        t = 0;
+      if (loop && !this.recorder) {
+        // The looping timeline ends exactly where it starts (closing segment
+        // flies back to the first keyframe), so wrapping t is seamless.
+        const cycles = Math.floor(t / total);
+        this.playStart += cycles * total * 1000;
+        t -= cycles * total;
       } else {
-        // Show the final pose for one frame, then restore.
-        this.applySample(sampleTimeline(this.keyframes, total));
+        // Show the final pose for one frame, then restore. A recording with
+        // loop enabled runs the loop exactly once and ends back at the start.
+        this.applySample(sampleTimeline(this.keyframes, total, loop));
         this.stop();
         return;
       }
     }
 
-    this.applySample(sampleTimeline(this.keyframes, t));
+    this.applySample(sampleTimeline(this.keyframes, t, loop));
     this.rafId = requestAnimationFrame(this.tick);
   };
 
@@ -233,7 +246,7 @@ export class FilmManager {
   // ---------------------------------------------------------------- recording
 
   startRecording(): void {
-    if (this.recorder || this.playing) {
+    if (this.recorder) {
       return;
     }
     if (this.keyframes.length < 2) {
@@ -260,6 +273,20 @@ export class FilmManager {
       return;
     }
 
+    // Recording during a preview restarts from the beginning: end the preview
+    // (restoring the pre-preview camera, which play() below re-saves so it
+    // still comes back after the recording) and record one full pass.
+    if (this.playing) {
+      this.stop();
+    }
+
+    // Bake the CSS canvas background into the scene for the recording (the
+    // canvas itself is transparent — see savedBackground).
+    this.savedBackground = this.host.scene.background;
+    this.host.scene.background = new THREE.Color(getBackgroundCssColor(this.host as any));
+    this.backgroundSwapped = true;
+    this.host.requestRender();
+
     const stream = (this.host.renderer.domElement as HTMLCanvasElement).captureStream(60);
     this.recordedChunks = [];
     this.recordedMime = mime;
@@ -282,6 +309,13 @@ export class FilmManager {
     }
     this.recorder = null;
     filmState.recording = false;
+
+    if (this.backgroundSwapped) {
+      this.host.scene.background = this.savedBackground;
+      this.savedBackground = null;
+      this.backgroundSwapped = false;
+      this.host.requestRender();
+    }
 
     recorder.onstop = () => {
       const blob = new Blob(this.recordedChunks, { type: this.recordedMime });
@@ -422,6 +456,12 @@ export class FilmManager {
     this.host.scene.add(this.frustumGroup);
   }
 
+  toggleLoop(): void {
+    filmState.loop = !filmState.loop;
+    // The loop's closing segment changes the total duration.
+    this.syncState();
+  }
+
   /** Mirror manager state into the Svelte store the panel renders from. */
   private syncState(): void {
     filmState.keyframes = this.keyframes.map(k => ({
@@ -430,7 +470,8 @@ export class FilmManager {
       dwell: k.dwell,
       fov: k.fov,
     }));
-    filmState.totalDuration = this.keyframes.length > 1 ? timelineDuration(this.keyframes) : 0;
+    filmState.totalDuration =
+      this.keyframes.length > 1 ? timelineDuration(this.keyframes, filmState.loop) : 0;
     if (filmState.frustumsVisible) {
       this.rebuildFrustums();
     }

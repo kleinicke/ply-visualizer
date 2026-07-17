@@ -146,14 +146,11 @@
   function onOrbit() {
     host.switchToOrbitControls();
   }
-  function onInverseTrackball() {
-    host.switchToInverseTrackballControls();
+  function onLegacyTrackball() {
+    host.switchToLegacyTrackballControls();
   }
   function onArcball() {
     host.switchToArcballControls();
-  }
-  function onCloudCompare() {
-    host.switchToCloudCompareControls();
   }
 
   function setRotationCenterMode(mode: 'move-camera' | 'keep-camera' | 'keep-distance') {
@@ -425,6 +422,7 @@
       class="control-button"
       class:active={viewerState.controlScheme === 'trackball'}
       onclick={onTrackball}
+      title="Virtual ball (CloudCompare-style): center drags orbit, drags near the edge and circular gestures roll the scene under the cursor"
     >
       Trackball <span class="button-shortcut">T</span>
     </button>
@@ -437,12 +435,13 @@
       Orbit <span class="button-shortcut">O</span>
     </button>
     <button
-      id="inverse-trackball-controls"
+      id="legacy-trackball-controls"
       class="control-button"
-      class:active={viewerState.controlScheme === 'inverse-trackball'}
-      onclick={onInverseTrackball}
+      class:active={viewerState.controlScheme === 'legacy-trackball'}
+      onclick={onLegacyTrackball}
+      title="The previous default: delta-based three.js TrackballControls with momentum"
     >
-      Inverse Rotation <span class="button-shortcut">I</span>
+      Legacy Trackball <span class="button-shortcut">I</span>
     </button>
     <button
       id="arcball-controls"
@@ -451,15 +450,6 @@
       onclick={onArcball}
     >
       Arcball <span class="button-shortcut">K</span>
-    </button>
-    <button
-      id="cloudcompare-controls"
-      class="control-button"
-      class:active={viewerState.controlScheme === 'cloudcompare'}
-      onclick={onCloudCompare}
-      title="CloudCompare-style virtual ball: center drags orbit, drags near the edge and circular gestures roll the scene under the cursor"
-    >
-      CloudCompare <span class="button-shortcut">P</span>
     </button>
   </div>
 </div>

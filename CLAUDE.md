@@ -72,10 +72,10 @@ there; put code in the modules above.
 - Supported formats: PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY (points), PLY, OBJ,
   STL, OFF, GLTF, GLB (meshes), TIFF, PNG, PFM, NPY, NPZ (depth), `.json`
   (poses, experimental).
-- Known issues: large coordinate values need Fit to View (F key) after loading.
-  (The old "rotation inverted vs CloudCompare" complaint is addressed by the
-  CloudCompare control scheme (`P`) — see the resolved post-mortem in
-  docs/BACKLOG.md.)
+- Known issues: (The old "rotation inverted vs CloudCompare" complaint is
+  resolved: the default Trackball scheme is now a CloudCompare-style virtual
+  ball; the old delta trackball is "Legacy Trackball" (`I`) — see the resolved
+  post-mortem in docs/BACKLOG.md.)
 
 ## Refactoring rules
 

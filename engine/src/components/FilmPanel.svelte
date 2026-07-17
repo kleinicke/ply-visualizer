@@ -41,7 +41,7 @@
     }
   }
   function onToggleLoop() {
-    filmState.loop = !filmState.loop;
+    manager()?.toggleLoop();
   }
   function onToggleFrustums() {
     manager()?.setFrustumsVisible(!filmState.frustumsVisible);
@@ -93,9 +93,8 @@
           min="0.1"
           step="0.5"
           value={key.duration}
-          title="Seconds traveling to the next keyframe"
+          title="Seconds traveling to the next keyframe (for the last keyframe: back to the first when Loop is on)"
           style="width: 38px; font-size: 10px;"
-          disabled={i === filmState.keyframes.length - 1}
           onchange={e => onDurationInput(i, e)}
         />
         <input
@@ -136,9 +135,8 @@
       </div>
     {/each}
     <div style="font-size: 10px; color: var(--vscode-descriptionForeground); margin: 2px 0 6px;">
-      Columns: travel seconds to next keyframe, dwell seconds. Total: {filmState.totalDuration.toFixed(
-        1
-      )}s
+      Columns: travel seconds to next keyframe, dwell seconds (0 = fly through without stopping).
+      Total: {filmState.totalDuration.toFixed(1)}s
     </div>
   </div>
 
@@ -168,7 +166,8 @@
       id="film-record"
       class="control-button"
       class:active={filmState.recording}
-      disabled={filmState.keyframes.length < 2 || (filmState.playing && !filmState.recording)}
+      disabled={filmState.keyframes.length < 2}
+      title="Records one full pass from the beginning (also while a preview is playing)"
       onclick={onRecord}
     >
       {filmState.recording ? '■ Stop Recording' : '● Record Video'}

@@ -24,11 +24,16 @@ export interface TimelineSample {
   fov: number;
 }
 
-export function timelineDuration(keyframes: CameraKeyframe[]): number {
+/**
+ * Total timeline length. With `loop`, the last keyframe's duration is the
+ * travel time of the closing segment back to the first keyframe (so loops fly
+ * home along the path instead of teleporting).
+ */
+export function timelineDuration(keyframes: CameraKeyframe[], loop = false): number {
   let total = 0;
   for (let i = 0; i < keyframes.length; i++) {
     total += Math.max(0, keyframes[i].dwell);
-    if (i < keyframes.length - 1) {
+    if (i < keyframes.length - 1 || (loop && keyframes.length > 1)) {
       total += Math.max(0.01, keyframes[i].duration);
     }
   }
@@ -51,12 +56,15 @@ function catmullRomComponent(p0: number, p1: number, p2: number, p3: number, u: 
 function catmullRom(
   points: Array<[number, number, number]>,
   segment: number,
-  u: number
+  u: number,
+  loop: boolean
 ): THREE.Vector3 {
-  const p0 = points[Math.max(0, segment - 1)];
+  const n = points.length;
+  const wrap = (i: number) => ((i % n) + n) % n;
+  const p0 = loop ? points[wrap(segment - 1)] : points[Math.max(0, segment - 1)];
   const p1 = points[segment];
-  const p2 = points[segment + 1];
-  const p3 = points[Math.min(points.length - 1, segment + 2)];
+  const p2 = points[wrap(segment + 1)];
+  const p3 = loop ? points[wrap(segment + 2)] : points[Math.min(n - 1, segment + 2)];
   return new THREE.Vector3(
     catmullRomComponent(p0[0], p1[0], p2[0], p3[0], u),
     catmullRomComponent(p0[1], p1[1], p2[1], p3[1], u),
@@ -64,8 +72,25 @@ function catmullRom(
   );
 }
 
-function smoothstep(u: number): number {
-  return u * u * (3 - 2 * u);
+/**
+ * Per-segment time easing driven by the boundary conditions: ease only where
+ * the camera actually rests (dwell > 0, or the non-loop path ends). Keyframes
+ * with dwell 0 are flown through at speed instead of decelerating to a stop —
+ * the easing curves have zero derivative only on eased ends and slope 1 on
+ * flow-through ends.
+ */
+function segmentEase(u: number, easeIn: boolean, easeOut: boolean): number {
+  if (easeIn && easeOut) {
+    return u * u * (3 - 2 * u); // smoothstep
+  }
+  if (easeIn) {
+    return u * u * (2 - u); // f'(0)=0, f'(1)=1
+  }
+  if (easeOut) {
+    const v = 1 - u;
+    return 1 - v * v * (2 - v); // f'(0)=1, f'(1)=0
+  }
+  return u;
 }
 
 function keyframePose(key: CameraKeyframe): TimelineSample {
@@ -84,43 +109,62 @@ function keyframePose(key: CameraKeyframe): TimelineSample {
  * Positions and targets follow a Catmull-Rom spline through the keyframes so
  * the camera flows through intermediate keyframes without hard corners;
  * orientation is a per-segment quaternion slerp (the sampled `up` is derived
- * from the slerped quaternion); FOV interpolates linearly. Each travel
- * segment is eased with smoothstep so motion starts and ends gently, which
- * also makes dwells look deliberate rather than like stalls.
+ * from the slerped quaternion); FOV interpolates linearly. Easing is boundary
+ * dependent (see segmentEase): motion only slows into keyframes where it
+ * actually rests. With `loop`, a closing segment travels from the last
+ * keyframe back to the first (using the last keyframe's duration) and the
+ * spline wraps, so a looping path is seamless.
  */
-export function sampleTimeline(keyframes: CameraKeyframe[], t: number): TimelineSample {
+export function sampleTimeline(
+  keyframes: CameraKeyframe[],
+  t: number,
+  loop = false
+): TimelineSample {
   if (keyframes.length === 0) {
     throw new Error('sampleTimeline called with no keyframes');
+  }
+  const n = keyframes.length;
+  if (n === 1) {
+    return keyframePose(keyframes[0]);
   }
 
   const positions = keyframes.map(k => k.position);
   const targets = keyframes.map(k => k.target);
 
   let remaining = Math.max(0, t);
-  for (let i = 0; i < keyframes.length; i++) {
+  for (let i = 0; i < n; i++) {
     const dwell = Math.max(0, keyframes[i].dwell);
-    if (remaining < dwell || i === keyframes.length - 1) {
+    if (remaining < dwell) {
       return keyframePose(keyframes[i]);
     }
     remaining -= dwell;
 
+    const isLast = i === n - 1;
+    if (isLast && !loop) {
+      return keyframePose(keyframes[i]);
+    }
+
+    const j = (i + 1) % n;
     const duration = Math.max(0.01, keyframes[i].duration);
     if (remaining < duration) {
-      const u = smoothstep(remaining / duration);
+      const easeIn = keyframes[i].dwell > 0 || (i === 0 && !loop);
+      const easeOut = keyframes[j].dwell > 0 || (!loop && j === n - 1);
+      const u = segmentEase(remaining / duration, easeIn, easeOut);
       const qa = new THREE.Quaternion().fromArray(keyframes[i].quaternion);
-      const qb = new THREE.Quaternion().fromArray(keyframes[i + 1].quaternion);
+      const qb = new THREE.Quaternion().fromArray(keyframes[j].quaternion);
       const q = qa.slerp(qb, u);
       return {
-        position: catmullRom(positions, i, u),
-        target: catmullRom(targets, i, u),
+        position: catmullRom(positions, i, u, loop),
+        target: catmullRom(targets, i, u, loop),
         up: new THREE.Vector3(0, 1, 0).applyQuaternion(q),
-        fov: THREE.MathUtils.lerp(keyframes[i].fov, keyframes[i + 1].fov, u),
+        fov: THREE.MathUtils.lerp(keyframes[i].fov, keyframes[j].fov, u),
       };
     }
     remaining -= duration;
   }
 
-  return keyframePose(keyframes[keyframes.length - 1]);
+  // Past the end: a looping timeline lands back on the first keyframe.
+  return keyframePose(keyframes[loop ? 0 : n - 1]);
 }
 
 /** Validate parsed JSON into a keyframe list; returns null when malformed. */

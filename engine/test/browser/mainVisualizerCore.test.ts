@@ -121,25 +121,19 @@ suite('PointCloudVisualizer Core Methods Test Suite', () => {
 
   suite('Camera Controls', () => {
     test('Should handle camera control type switching', () => {
-      type ControlType = 'trackball' | 'orbit' | 'inverse-trackball' | 'arcball' | 'cloudcompare';
+      type ControlType = 'trackball' | 'orbit' | 'legacy-trackball' | 'arcball';
 
       let currentControlType: ControlType = 'trackball';
 
       // Test switching controls
-      const validTypes: ControlType[] = [
-        'trackball',
-        'orbit',
-        'inverse-trackball',
-        'arcball',
-        'cloudcompare',
-      ];
+      const validTypes: ControlType[] = ['trackball', 'orbit', 'legacy-trackball', 'arcball'];
 
       for (const type of validTypes) {
         currentControlType = type;
         assert.ok(validTypes.includes(currentControlType));
       }
 
-      assert.strictEqual(currentControlType, 'cloudcompare');
+      assert.strictEqual(currentControlType, 'arcball');
     });
 
     test('Should manage camera positioning', () => {
