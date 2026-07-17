@@ -82,7 +82,6 @@ export function showKeyboardShortcuts(onCreateShortcutsUI: () => void): void {
   O: Switch to OrbitControls
   I: Switch to Legacy Trackball controls (delta-based)
   K: Switch to ArcballControls
-  M: Toggle measurement-path mode
   C: Set OpenCV camera convention (Y-down)
   B: Set OpenGL camera convention (Y-up)
   W: Set rotation center to world origin (0,0,0)
@@ -128,7 +127,6 @@ export function createShortcutsUI(onUpdateControlStatus: () => void): void {
                 <div><span style="font-weight: bold;">O</span> Switch to OrbitControls</div>
                 <div><span style="font-weight: bold;">I</span> Switch to Legacy Trackball controls</div>
                 <div><span style="font-weight: bold;">K</span> Switch to ArcballControls</div>
-                <div><span style="font-weight: bold;">M</span> Toggle measurement-path mode</div>
             </div>
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">📷 Camera Conventions</div>
             <div style="font-family: var(--vscode-editor-font-family); line-height: 1.4; margin-bottom: 8px;">
@@ -141,6 +139,7 @@ export function createShortcutsUI(onUpdateControlStatus: () => void): void {
                 <div><span style="font-weight: bold;">Left Click + Drag</span> Move camera around</div>
                 <div><span style="font-weight: bold;">Shift+Click</span> Solo point cloud (hide others)</div>
                 <div><span style="font-weight: bold;">Double-Click</span> Set rotation center</div>
+                <div><span style="font-weight: bold;">Shift + Double-Click</span> Add a measurement-path point</div>
             </div>
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">📊 Camera Controls</div>
             <div id="camera-control-status" style="font-family: var(--vscode-editor-font-family); padding: 4px; background: var(--vscode-input-background); border-radius: 2px;">

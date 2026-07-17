@@ -1,9 +1,9 @@
 import { test, expect, Page } from '@playwright/test';
 import path from 'path';
 
-// Coverage for the default Trackball control scheme (CloudCompareControls in
-// controls.ts): a sphere-projected virtual-ball trackball, i.e. CloudCompare's
-// rotation model, promoted to default in July 2026. The previous delta-based
+// Coverage for the default Trackball control scheme (VirtualBallControls in
+// controls.ts): a sphere-projected virtual-ball rotation model, promoted to
+// default in July 2026. The previous delta-based
 // three.js TrackballControls lives on as 'Legacy Trackball' and serves as the
 // comparison baseline here. The behaviors that define the ball:
 //

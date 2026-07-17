@@ -69,8 +69,13 @@ scan as a separate, independently visible entry.
 
 ### Distance Measurement Tools and Camera Manipulation
 
-**Shift-double-click** measures the distance between the rotation center and the
-selected point.
+Build multiple measurement paths with **Shift-double-click**. See control
+settings for options.
+
+### Camera Recording
+
+Create smooth camera paths from keyframes and export them as configurable video
+recordings.
 
 ### Navigation
 

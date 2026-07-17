@@ -7,16 +7,18 @@
 export const measurementState = $state(
   /**
    * @type {{
-   *   pathActive: boolean;
    *   pathPointCount: number;
+   *   pathClosed: boolean;
+   *   pathCount: number;
+   *   pathStartMode: 'center' | 'free' | null;
    *   segmentLengths: number[];
    *   totalLength: number;
    * }}
    */ ({
-    // True while double-clicks append measurement-path points instead of
-    // setting the rotation center.
-    pathActive: false,
     pathPointCount: 0,
+    pathClosed: false,
+    pathCount: 0,
+    pathStartMode: 'center',
     segmentLengths: [],
     totalLength: 0,
   })

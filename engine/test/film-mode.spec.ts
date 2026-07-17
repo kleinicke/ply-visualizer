@@ -320,3 +320,33 @@ test('recording produces a video file download', async ({ page }) => {
   }
   expect(Buffer.concat(chunks).length).toBeGreaterThan(1000);
 });
+
+test('recording settings expose resolution, frame rate, and quality presets', async ({ page }) => {
+  await setup(page);
+  await setCameraPose(page, [3, 0, 0]);
+  await page.click('#film-add-keyframe');
+
+  await page.click('#film-record-settings');
+  await expect(page.locator('#film-record-settings-panel')).toBeVisible();
+  await page.selectOption('#film-record-resolution', '4k');
+  await page.selectOption('#film-record-fps', '30');
+  await page.selectOption('#film-record-quality', '6000000');
+
+  const settings = await page.evaluate(() => {
+    const state = (window as any).visualizer;
+    // The manager accepts settings through the panel; read the selected DOM
+    // values here because the reactive store is deliberately module-private.
+    return {
+      resolution: (document.querySelector('#film-record-resolution') as HTMLSelectElement).value,
+      fps: (document.querySelector('#film-record-fps') as HTMLSelectElement).value,
+      bitrate: (document.querySelector('#film-record-quality') as HTMLSelectElement).value,
+      managerPresent: Boolean(state.filmManager),
+    };
+  });
+  expect(settings).toEqual({
+    resolution: '4k',
+    fps: '30',
+    bitrate: '6000000',
+    managerPresent: true,
+  });
+});

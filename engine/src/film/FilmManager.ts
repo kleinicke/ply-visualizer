@@ -51,6 +51,8 @@ export class FilmManager {
   private recorder: MediaRecorder | null = null;
   private recordedChunks: Blob[] = [];
   private recordedMime = '';
+  private recordingFrameId: number | null = null;
+  private recordingCanvas: HTMLCanvasElement | null = null;
   // The canvas clears with alpha 0 and the visible background is CSS on the
   // canvas element, so captureStream would record transparency (black in the
   // video). During recording the background is rendered into the scene
@@ -245,6 +247,66 @@ export class FilmManager {
 
   // ---------------------------------------------------------------- recording
 
+  updateRecordingSettings(settings: { resolution?: string; fps?: number; bitrate?: number }): void {
+    if (this.recorder) {
+      return;
+    }
+    if (settings.resolution && ['viewport', '720p', '1080p', '4k'].includes(settings.resolution)) {
+      filmState.recordingResolution = settings.resolution;
+    }
+    if (settings.fps === 30 || settings.fps === 60) {
+      filmState.recordingFps = settings.fps;
+    }
+    if (settings.bitrate && [6_000_000, 12_000_000, 20_000_000].includes(settings.bitrate)) {
+      filmState.recordingBitrate = settings.bitrate;
+    }
+  }
+
+  private createRecordingStream(): MediaStream {
+    const source = this.host.renderer.domElement as HTMLCanvasElement;
+    const fps = filmState.recordingFps;
+    if (filmState.recordingResolution === 'viewport') {
+      return source.captureStream(fps);
+    }
+
+    const [width, height] =
+      filmState.recordingResolution === '4k'
+        ? [3840, 2160]
+        : filmState.recordingResolution === '1080p'
+          ? [1920, 1080]
+          : [1280, 720];
+    const output = document.createElement('canvas');
+    output.width = width;
+    output.height = height;
+    const context = output.getContext('2d');
+    if (!context) {
+      return source.captureStream(fps);
+    }
+    this.recordingCanvas = output;
+
+    const copyFrame = () => {
+      const sourceAspect = source.width / source.height;
+      const outputAspect = width / height;
+      let drawWidth = width;
+      let drawHeight = height;
+      let x = 0;
+      let y = 0;
+      if (sourceAspect > outputAspect) {
+        drawHeight = width / sourceAspect;
+        y = (height - drawHeight) / 2;
+      } else {
+        drawWidth = height * sourceAspect;
+        x = (width - drawWidth) / 2;
+      }
+      context.fillStyle = getBackgroundCssColor(this.host as any);
+      context.fillRect(0, 0, width, height);
+      context.drawImage(source, x, y, drawWidth, drawHeight);
+      this.recordingFrameId = requestAnimationFrame(copyFrame);
+    };
+    copyFrame();
+    return output.captureStream(fps);
+  }
+
   startRecording(): void {
     if (this.recorder) {
       return;
@@ -287,10 +349,13 @@ export class FilmManager {
     this.backgroundSwapped = true;
     this.host.requestRender();
 
-    const stream = (this.host.renderer.domElement as HTMLCanvasElement).captureStream(60);
+    const stream = this.createRecordingStream();
     this.recordedChunks = [];
     this.recordedMime = mime;
-    this.recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
+    this.recorder = new MediaRecorder(stream, {
+      mimeType: mime,
+      videoBitsPerSecond: filmState.recordingBitrate,
+    });
     this.recorder.ondataavailable = e => {
       if (e.data.size > 0) {
         this.recordedChunks.push(e.data);
@@ -309,6 +374,12 @@ export class FilmManager {
     }
     this.recorder = null;
     filmState.recording = false;
+
+    if (this.recordingFrameId !== null) {
+      cancelAnimationFrame(this.recordingFrameId);
+      this.recordingFrameId = null;
+    }
+    this.recordingCanvas = null;
 
     if (this.backgroundSwapped) {
       this.host.scene.background = this.savedBackground;

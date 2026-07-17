@@ -10,12 +10,13 @@ import {
   CameraParams,
   DepthConversionResult,
 } from './interfaces';
-import { CustomArcballControls, TurntableControls, CloudCompareControls } from './controls';
+import { CustomArcballControls, TurntableControls, VirtualBallControls } from './controls';
 import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
 import { RotationCenterManager, RotationCenterMode } from './RotationCenterManager';
 import { MeasurementManager } from './MeasurementManager';
 import { FilmManager } from './film/FilmManager';
 import { mountFilmPanel } from './filmPanelMount';
+import { mountMeasurementQuickActions } from './measurementQuickActionsMount';
 import { SelectionManager, SelectionContext } from './SelectionManager';
 
 // eslint-disable-next-line @typescript-eslint/naming-convention -- ambient global from media/geotiff.min.js
@@ -88,7 +89,6 @@ import { mountControlsTab } from './controlsTabMount';
 import { filesState } from './state/files.svelte';
 import { viewerState } from './state/viewer.svelte';
 import { uiState } from './state/ui.svelte';
-import { measurementState } from './state/measurement.svelte';
 import { flushSync } from 'svelte';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
@@ -127,7 +127,7 @@ class PointCloudVisualizer {
     | OrbitControls
     | CustomArcballControls
     | TurntableControls
-    | CloudCompareControls;
+    | VirtualBallControls;
 
   // Camera control state
   controlType: 'trackball' | 'orbit' | 'legacy-trackball' | 'arcball' = 'legacy-trackball';
@@ -146,9 +146,6 @@ class PointCloudVisualizer {
   rotationCenterManager: RotationCenterManager = new RotationCenterManager();
   private measurementManager: MeasurementManager | null = null;
   private selectionManager: SelectionManager | null = null;
-  // While true, double-clicks append points to the measurement path instead
-  // of moving the rotation center (toggled from the Measurements panel / M).
-  measurementPathMode: boolean = false;
   // Video mode: camera keyframes, playback and recording (film/FilmManager.ts)
   filmManager: FilmManager | null = null;
 
@@ -627,7 +624,7 @@ class PointCloudVisualizer {
       }
     });
 
-    // Double-click to change rotation center (like CloudCompare)
+    // Double-click to change the rotation center.
     this.renderer.domElement.addEventListener('dblclick', this.onDoubleClick.bind(this));
 
     // Start render loop
@@ -651,12 +648,10 @@ class PointCloudVisualizer {
     }
 
     if (this.controlType === 'trackball') {
-      // Default scheme: sphere-projected "virtual ball" trackball
-      // (CloudCompareControls in controls.ts) — center drags orbit,
-      // rim/tangential drags roll the scene under the cursor, like
-      // CloudCompare. Promoted to default in July 2026.
-      this.controls = new CloudCompareControls(this.camera, this.renderer.domElement);
-      const ball = this.controls as CloudCompareControls;
+      // Default sphere-projected "virtual ball" trackball: center drags
+      // orbit, while rim/tangential drags roll the scene under the cursor.
+      this.controls = new VirtualBallControls(this.camera, this.renderer.domElement);
+      const ball = this.controls as VirtualBallControls;
       // Speed calibration against the legacy trackball, in the round-ball
       // units (both axes normalized by the smaller canvas half-dimension):
       // legacy rotates 5/halfWidth rad per pixel; the ball rotates
@@ -664,7 +659,7 @@ class PointCloudVisualizer {
       // ~25% above parity because the ball uses net displacement (endpoint
       // chord) while legacy integrates every wobble of the hand path, which
       // makes equal nominal speeds feel slower on the ball. zoomSpeed has
-      // legacy TrackballControls semantics (see CloudCompareControls).
+      // legacy TrackballControls semantics (see VirtualBallControls).
       ball.rotateSpeed = 3.5;
       ball.rollSpeed = 3.0;
       ball.zoomSpeed = 2.5;
@@ -962,7 +957,7 @@ class PointCloudVisualizer {
     }
 
     // Update controls based on type (TrackballControls-based schemes need
-    // their screen rectangle refreshed on resize; CloudCompareControls reads
+    // their screen rectangle refreshed on resize; VirtualBallControls reads
     // the live canvas rect on every event and needs nothing here)
     if (this.controlType === 'legacy-trackball') {
       const trackballControls = this.controls as TrackballControls;
@@ -1331,20 +1326,14 @@ class PointCloudVisualizer {
         console.log(`⚫ Selected point cloud: ${info}`);
       }
 
-      // Measurement-path mode: picks extend the path; the rotation center
-      // stays untouched so measuring never disturbs the camera.
-      if (this.measurementPathMode && this.measurementManager) {
-        this.measurementManager.addPathPoint(selectedPoint);
-        console.log(`📏 Measurement path point added (${info})`);
-        this.requestRender();
-        return;
-      }
-
-      // If Shift is pressed, measure distance to rotation center
+      // Shift + double-click is the single measurement gesture. The first
+      // implicit path starts at the rotation center; an explicitly created
+      // free path starts at the first picked point instead.
       if (event.shiftKey && this.measurementManager) {
         const rotationCenter = this.controls.target.clone();
-        this.measurementManager.addMeasurement(rotationCenter, selectedPoint);
-        console.log(`📏 Measurement added from rotation center to selected point`);
+        this.measurementManager.prepareForPathPoint(rotationCenter);
+        this.measurementManager.addPathPoint(selectedPoint);
+        console.log(`📏 Measurement path point added (${info})`);
         this.requestRender();
       } else {
         this.setRotationCenter(selectedPoint);
@@ -1356,11 +1345,11 @@ class PointCloudVisualizer {
     // A double-click far away from every visible object is the "I'm lost"
     // recovery gesture: refit the view instead of doing nothing. Near-misses
     // next to an object stay inert so a failed pick never jumps the camera.
-    // Suppressed while measuring - a missed pick must never jump the camera
-    // mid-measurement.
+    // Suppressed for Shift + double-click so a missed measurement pick never
+    // jumps the camera.
     if (
       !this.sequenceMode &&
-      !this.measurementPathMode &&
+      !event.shiftKey &&
       this.selectionManager.isFarFromAllVisibleObjects(mouseScreenX, mouseScreenY, canvas)
     ) {
       console.log('🧭 Double-click in empty space - fitting view to all objects');
@@ -1371,16 +1360,6 @@ class PointCloudVisualizer {
     // If no point found, log the failure
     console.log(
       `❌ No selectable object found at (${mouseScreenX.toFixed(1)}, ${mouseScreenY.toFixed(1)})`
-    );
-  }
-
-  toggleMeasurementPathMode(): void {
-    this.measurementPathMode = !this.measurementPathMode;
-    measurementState.pathActive = this.measurementPathMode;
-    this.showStatus(
-      this.measurementPathMode
-        ? 'Measurement path: double-click points on geometry to measure (M to finish)'
-        : 'Measurement path mode off'
     );
   }
 
@@ -1477,6 +1456,7 @@ class PointCloudVisualizer {
     mountStats(this);
     mountControlsTab(this);
     mountFilmPanel(this);
+    mountMeasurementQuickActions(this);
 
     document.addEventListener('dblclick', e => {
       const slider = e.target;
@@ -1557,11 +1537,6 @@ class PointCloudVisualizer {
           this.switchToArcballControls();
           e.preventDefault();
           break;
-        case 'm':
-          this.toggleMeasurementPathMode();
-          e.preventDefault();
-          break;
-
         // Arcball settings bindings
         case 'x':
           this.setUpVector(new THREE.Vector3(1, 0, 0));

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * CloudCompare-style controls: a sphere-projected ("virtual ball") trackball.
+ * Sphere-projected ("virtual ball") trackball controls.
  *
  * The decisive difference from three.js TrackballControls is that rotation is
  * computed from the mouse's *position on a virtual ball*, not from mouse
@@ -45,7 +45,7 @@ function scaleRotation(q: THREE.Quaternion, factor: number): THREE.Quaternion {
   return new THREE.Quaternion().setFromAxisAngle(axis, angle * factor);
 }
 
-export class CloudCompareControls {
+export class VirtualBallControls {
   public object: THREE.PerspectiveCamera;
   public domElement: HTMLElement;
   public enabled = true;
@@ -564,7 +564,7 @@ export class CustomArcballControls {
   }
 }
 
-// CloudCompare-like Turntable controls: object-centered orbit with world-up yaw and pitch
+// Turntable controls: object-centered orbit with world-up yaw and pitch
 export class TurntableControls {
   public object: THREE.PerspectiveCamera;
   public domElement: HTMLElement;

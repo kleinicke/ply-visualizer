@@ -104,10 +104,54 @@ function keyframePose(key: CameraKeyframe): TimelineSample {
 }
 
 /**
+ * Preserve distance for a pure orbit segment. Interpolating the two world
+ * positions directly follows a chord (or a Cartesian spline close to it),
+ * which looks like a zoom toward the target before the camera rotates.
+ */
+function orbitPosition(
+  from: CameraKeyframe,
+  to: CameraKeyframe,
+  interpolatedTarget: THREE.Vector3,
+  u: number
+): THREE.Vector3 | null {
+  const targetA = new THREE.Vector3().fromArray(from.target);
+  const targetB = new THREE.Vector3().fromArray(to.target);
+  const offsetA = new THREE.Vector3().fromArray(from.position).sub(targetA);
+  const offsetB = new THREE.Vector3().fromArray(to.position).sub(targetB);
+  const radiusA = offsetA.length();
+  const radiusB = offsetB.length();
+  const scale = Math.max(1, radiusA, radiusB);
+
+  // This branch is deliberately narrow: only poses that are effectively the
+  // same orbit qualify. Dolly shots and moving-target shots retain the normal
+  // world-space spline.
+  if (
+    radiusA < 1e-9 ||
+    radiusB < 1e-9 ||
+    targetA.distanceTo(targetB) > scale * 1e-4 ||
+    Math.abs(radiusA - radiusB) > scale * 1e-4
+  ) {
+    return null;
+  }
+
+  const directionA = offsetA.multiplyScalar(1 / radiusA);
+  const directionB = offsetB.multiplyScalar(1 / radiusB);
+  const rotation = new THREE.Quaternion().setFromUnitVectors(directionA, directionB);
+  const direction = directionA
+    .clone()
+    .applyQuaternion(new THREE.Quaternion().slerpQuaternions(new THREE.Quaternion(), rotation, u))
+    .normalize();
+  const radius = THREE.MathUtils.lerp(radiusA, radiusB, u);
+  return interpolatedTarget.clone().addScaledVector(direction, radius);
+}
+
+/**
  * Evaluate the camera timeline at time `t` (seconds from the start).
  *
- * Positions and targets follow a Catmull-Rom spline through the keyframes so
- * the camera flows through intermediate keyframes without hard corners;
+ * Positions and targets normally follow a Catmull-Rom spline through the
+ * keyframes so the camera flows through intermediate keyframes without hard
+ * corners. Pure rotations around a shared target use spherical interpolation
+ * of the camera offset instead, preserving their captured orbit radius;
  * orientation is a per-segment quaternion slerp (the sampled `up` is derived
  * from the slerped quaternion); FOV interpolates linearly. Easing is boundary
  * dependent (see segmentEase): motion only slows into keyframes where it
@@ -153,9 +197,12 @@ export function sampleTimeline(
       const qa = new THREE.Quaternion().fromArray(keyframes[i].quaternion);
       const qb = new THREE.Quaternion().fromArray(keyframes[j].quaternion);
       const q = qa.slerp(qb, u);
+      const target = catmullRom(targets, i, u, loop);
+      const position =
+        orbitPosition(keyframes[i], keyframes[j], target, u) ?? catmullRom(positions, i, u, loop);
       return {
-        position: catmullRom(positions, i, u, loop),
-        target: catmullRom(targets, i, u, loop),
+        position,
+        target,
         up: new THREE.Vector3(0, 1, 0).applyQuaternion(q),
         fov: THREE.MathUtils.lerp(keyframes[i].fov, keyframes[j].fov, u),
       };

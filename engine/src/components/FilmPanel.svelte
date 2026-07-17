@@ -4,6 +4,7 @@
   let { host }: { host: any } = $props();
 
   let fileInput: HTMLInputElement;
+  let recordingSettingsOpen = $state(false);
 
   function manager() {
     return host.filmManager;
@@ -52,6 +53,15 @@
     } else {
       manager()?.startRecording();
     }
+  }
+  function updateRecordingResolution(e: Event) {
+    manager()?.updateRecordingSettings({ resolution: (e.target as HTMLSelectElement).value });
+  }
+  function updateRecordingFps(e: Event) {
+    manager()?.updateRecordingSettings({ fps: Number((e.target as HTMLSelectElement).value) });
+  }
+  function updateRecordingQuality(e: Event) {
+    manager()?.updateRecordingSettings({ bitrate: Number((e.target as HTMLSelectElement).value) });
   }
 
   function onSavePath() {
@@ -162,17 +172,71 @@
       class:active={filmState.frustumsVisible}
       onclick={onToggleFrustums}>Show Keyframe Cameras</button
     >
-    <button
-      id="film-record"
-      class="control-button"
-      class:active={filmState.recording}
-      disabled={filmState.keyframes.length < 2}
-      title="Records one full pass from the beginning (also while a preview is playing)"
-      onclick={onRecord}
-    >
-      {filmState.recording ? '■ Stop Recording' : '● Record Video'}
-    </button>
+    <div style="display: flex; gap: 4px; width: 100%;">
+      <button
+        id="film-record"
+        class="control-button"
+        class:active={filmState.recording}
+        style="flex: 1; margin: 0;"
+        disabled={filmState.keyframes.length < 2}
+        title="Records one full pass from the beginning (also while a preview is playing)"
+        onclick={onRecord}
+      >
+        {filmState.recording ? '■ Stop Recording' : '● Record Video'}
+      </button>
+      <button
+        id="film-record-settings"
+        class="control-button"
+        class:active={recordingSettingsOpen}
+        style="flex: 0 0 auto; margin: 0; padding: 2px 8px;"
+        disabled={filmState.recording}
+        title="Recording settings"
+        aria-label="Recording settings"
+        onclick={() => (recordingSettingsOpen = !recordingSettingsOpen)}>Settings</button
+      >
+    </div>
   </div>
+
+  {#if recordingSettingsOpen}
+    <div
+      id="film-record-settings-panel"
+      style="display: grid; grid-template-columns: auto 1fr; gap: 5px 8px; align-items: center; margin-top: 5px; padding: 6px; border: 1px solid var(--vscode-panel-border); border-radius: 3px; font-size: 10px;"
+    >
+      <label for="film-record-resolution">Resolution</label>
+      <select
+        id="film-record-resolution"
+        value={filmState.recordingResolution}
+        onchange={updateRecordingResolution}
+      >
+        <option value="viewport">Current viewport</option>
+        <option value="720p">HD (1280 × 720)</option>
+        <option value="1080p">Full HD (1920 × 1080)</option>
+        <option value="4k">4K UHD (3840 × 2160)</option>
+      </select>
+      <label for="film-record-fps">Frame rate</label>
+      <select
+        id="film-record-fps"
+        value={String(filmState.recordingFps)}
+        onchange={updateRecordingFps}
+      >
+        <option value="30">30 fps</option>
+        <option value="60">60 fps</option>
+      </select>
+      <label for="film-record-quality">Quality</label>
+      <select
+        id="film-record-quality"
+        value={String(filmState.recordingBitrate)}
+        onchange={updateRecordingQuality}
+      >
+        <option value="6000000">Compact (6 Mbps)</option>
+        <option value="12000000">High (12 Mbps)</option>
+        <option value="20000000">Very high (20 Mbps)</option>
+      </select>
+      <div style="grid-column: 1 / -1; color: var(--vscode-descriptionForeground);">
+        Fixed 16:9 sizes preserve the view with neutral bars when needed.
+      </div>
+    </div>
+  {/if}
 
   <div style="display: flex; gap: 4px; margin-top: 4px;">
     <button

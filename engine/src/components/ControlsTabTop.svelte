@@ -24,12 +24,34 @@
     host.requestRender();
   }
 
+  function resetBrightness(e: MouseEvent) {
+    e.preventDefault();
+    host.brightnessStops = 0;
+    viewerState.brightnessStops = 0;
+    host.applySceneBrightness();
+    host.requestRender();
+  }
+
   function onBackgroundInput(e: Event) {
     const val = parseFloat((e.target as HTMLInputElement).value);
     host.backgroundBrightness = Number.isFinite(val) ? val : 13;
     viewerState.backgroundBrightness = host.backgroundBrightness;
     host.applyBackgroundBrightness();
     host.requestRender();
+  }
+
+  function resetBackground(e: MouseEvent) {
+    e.preventDefault();
+    host.backgroundBrightness = 13;
+    viewerState.backgroundBrightness = 13;
+    host.applyBackgroundBrightness();
+    host.requestRender();
+  }
+
+  function backgroundLabel(value: number): string {
+    const channel = Math.max(0, Math.min(255, Math.round((value / 100) * 255)));
+    const hex = channel.toString(16).padStart(2, '0');
+    return `${Math.round(value)}% (#${hex}${hex}${hex})`;
   }
 
   function onToggleEdl() {
@@ -95,24 +117,6 @@
     host.updateRotationOriginButtonState();
   }
 
-  function onClearMeasurements() {
-    if (host.measurementManager) {
-      host.measurementManager.clearAll();
-      host.requestRender();
-      host.showStatus('All measurements cleared');
-    }
-  }
-  function onRemoveLastMeasurement() {
-    if (host.measurementManager) {
-      host.measurementManager.removeLastMeasurement();
-      host.requestRender();
-      host.showStatus('Last measurement removed');
-    }
-  }
-
-  function onToggleMeasurementPath() {
-    host.toggleMeasurementPathMode();
-  }
   function onUndoPathPoint() {
     if (host.measurementManager) {
       host.measurementManager.undoLastPathPoint();
@@ -124,6 +128,41 @@
       host.measurementManager.clearPath();
       host.requestRender();
       host.showStatus('Measurement path cleared');
+    }
+  }
+  function onTogglePathClosed() {
+    if (host.measurementManager) {
+      host.measurementManager.togglePathClosed();
+      host.requestRender();
+    }
+  }
+  function onNewPath() {
+    if (host.measurementManager) {
+      host.measurementManager.togglePathStartMode('free');
+      host.requestRender();
+      host.showStatus(
+        measurementState.pathStartMode === 'free'
+          ? 'New free path armed for the next Shift + Double-click'
+          : 'New free path cancelled; continuing the current path'
+      );
+    }
+  }
+  function onNewPathFromCenter() {
+    if (host.measurementManager) {
+      host.measurementManager.togglePathStartMode('center');
+      host.requestRender();
+      host.showStatus(
+        measurementState.pathStartMode === 'center'
+          ? 'Path from center armed for the next Shift + Double-click'
+          : 'Path from center cancelled; continuing the current path'
+      );
+    }
+  }
+  function onClearAllPaths() {
+    if (host.measurementManager) {
+      host.measurementManager.clearAllPaths();
+      host.requestRender();
+      host.showStatus('All measurement paths cleared');
     }
   }
 
@@ -218,6 +257,7 @@
         class="control-input"
         style="flex: 1; margin: 0 8px;"
         oninput={onBrightnessInput}
+        ondblclick={resetBrightness}
       />
       <span id="brightness-value" style="font-size: 11px; min-width: 32px; text-align: right;"
         >{viewerState.brightnessStops.toFixed(1)}</span
@@ -235,11 +275,12 @@
         class="control-input"
         style="flex: 1; margin: 0 8px;"
         oninput={onBackgroundInput}
+        ondblclick={resetBackground}
       />
       <span
         id="background-brightness-value"
         style="font-size: 11px; min-width: 88px; text-align: right;"
-        >{host.getBackgroundBrightnessLabel ? host.getBackgroundBrightnessLabel() : ''}</span
+        >{backgroundLabel(viewerState.backgroundBrightness)}</span
       >
     </div>
     <p class="setting-description" style="margin-top: 0;">
@@ -348,17 +389,31 @@
   </div>
 </div>
 <div class="panel-section">
-  <h4>Measurements</h4>
+  <h4 style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px;">
+    <span>Measurements</span>
+    <span style="font-size: 9px; font-weight: normal; color: var(--vscode-descriptionForeground);">
+      Shift + Double-click
+    </span>
+  </h4>
   <div class="control-buttons">
     <button
-      id="toggle-measurement-path"
+      id="new-measurement-path"
       class="control-button"
-      class:active={measurementState.pathActive}
-      onclick={onToggleMeasurementPath}
-      title="Double-click points on geometry to build a measurement path A → B → C …"
+      class:active={measurementState.pathStartMode === 'free'}
+      aria-pressed={measurementState.pathStartMode === 'free'}
+      onclick={onNewPath}
     >
-      {measurementState.pathActive ? 'Finish Measurement Path' : 'Start Measurement Path'}
-      <span class="button-shortcut">M</span>
+      New Free Path
+    </button>
+    <button
+      id="new-measurement-path-from-center"
+      class="control-button"
+      class:active={measurementState.pathStartMode === 'center'}
+      aria-pressed={measurementState.pathStartMode === 'center'}
+      onclick={onNewPathFromCenter}
+      title="Use the current rotation center as point A on the next measurement pick"
+    >
+      New Path from Center
     </button>
     {#if measurementState.pathPointCount > 0}
       <button id="undo-path-point" class="control-button" onclick={onUndoPathPoint}>
@@ -368,12 +423,20 @@
         Clear Path
       </button>
     {/if}
-    <button id="clear-measurements" class="control-button" onclick={onClearMeasurements}
-      >Clear All Measurements</button
+    <button
+      id="close-measurement-path"
+      class="control-button"
+      class:active={measurementState.pathClosed}
+      onclick={onTogglePathClosed}
+      title="Keep the active path connected from its last point back to its first"
     >
-    <button id="remove-last-measurement" class="control-button" onclick={onRemoveLastMeasurement}>
-      Remove Last Measurement
+      {measurementState.pathClosed ? 'Open Loop' : 'Close Loop'}
     </button>
+    {#if measurementState.pathCount > 0}
+      <button id="clear-all-measurement-paths" class="control-button" onclick={onClearAllPaths}>
+        Clear All Paths
+      </button>
+    {/if}
   </div>
   {#if measurementState.pathPointCount > 0}
     <div id="measurement-path-info" style="font-size: 11px; margin-top: 8px; font-family: monospace;">
@@ -390,7 +453,8 @@
     </div>
   {/if}
   <div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 8px">
-    Tip: Shift + Double-click to measure distance from rotation center
+    Shift + Double-click adds points. By default the first path starts at the rotation center;
+    use New Free Path when the first picked point should be point A.
   </div>
 </div>
 <div class="panel-section">
@@ -422,7 +486,7 @@
       class="control-button"
       class:active={viewerState.controlScheme === 'trackball'}
       onclick={onTrackball}
-      title="Virtual ball (CloudCompare-style): center drags orbit, drags near the edge and circular gestures roll the scene under the cursor"
+      title="Virtual ball: center drags orbit; drags near the edge and circular gestures roll the scene under the cursor"
     >
       Trackball <span class="button-shortcut">T</span>
     </button>

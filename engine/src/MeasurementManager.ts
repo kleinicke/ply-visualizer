@@ -28,6 +28,17 @@ export interface Measurement {
   distance: number;
 }
 
+interface MeasurementPath {
+  points: THREE.Vector3[];
+  line: THREE.Line | null;
+  closingLine: THREE.Line | null;
+  markers: THREE.Points | null;
+  labels: HTMLDivElement[];
+  closed: boolean;
+}
+
+export type PathStartMode = 'center' | 'free';
+
 /**
  * Manages distance measurements between points in 3D space
  */
@@ -38,13 +49,16 @@ export class MeasurementManager {
   private renderer: THREE.WebGLRenderer;
   private labelsContainer: HTMLDivElement | null = null;
 
-  // Measurement path (A → B → C → ...): ordered picked world-space points
-  // rendered as a polyline with per-segment labels. Independent of the
-  // rotation-center single measurements above.
-  private pathPoints: THREE.Vector3[] = [];
-  private pathLine: THREE.Line | null = null;
-  private pathMarkers: THREE.Points | null = null;
-  private pathLabels: HTMLDivElement[] = [];
+  // Completed paths keep their visuals while the newest path remains editable.
+  private paths: MeasurementPath[] = [];
+  private activePathIndex = -1;
+  // This is an editing preference, not a one-shot operation. A newly added
+  // point keeps the active path closed by moving its last-to-first segment.
+  private closeLoopEnabled = false;
+  // One-shot choice for the next Shift + double-click. It does not create or
+  // modify a path until the gesture actually hits geometry.
+  private pendingStartMode: PathStartMode | null = 'center';
+  private lastUsedStartMode: PathStartMode = 'center';
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, renderer: THREE.WebGLRenderer) {
     this.scene = scene;
@@ -137,34 +151,88 @@ export class MeasurementManager {
    * Append a picked point to the measurement path and rebuild its visuals.
    */
   addPathPoint(point: THREE.Vector3): void {
-    this.pathPoints.push(point.clone());
-    this.rebuildPathVisuals();
+    const path = this.ensureActivePath();
+    path.closed = this.closeLoopEnabled;
+    path.points.push(point.clone());
+    this.rebuildPathVisuals(path);
   }
 
   /**
    * Remove the most recently picked path point.
    */
   undoLastPathPoint(): void {
-    if (this.pathPoints.length === 0) {
+    const path = this.getActivePath();
+    if (!path || path.points.length === 0) {
       return;
     }
-    this.pathPoints.pop();
-    this.rebuildPathVisuals();
+    path.points.pop();
+    this.rebuildPathVisuals(path);
   }
 
   /**
    * Remove the whole measurement path.
    */
   clearPath(): void {
-    if (this.pathPoints.length === 0) {
+    const path = this.getActivePath();
+    if (!path || path.points.length === 0) {
       return;
     }
-    this.pathPoints = [];
-    this.rebuildPathVisuals();
+    path.points = [];
+    path.closed = this.closeLoopEnabled;
+    this.rebuildPathVisuals(path);
+  }
+
+  togglePathClosed(): void {
+    this.closeLoopEnabled = !this.closeLoopEnabled;
+    const path = this.ensureActivePath();
+    path.closed = this.closeLoopEnabled;
+    this.rebuildPathVisuals(path);
+  }
+
+  togglePathStartMode(mode: PathStartMode): void {
+    this.pendingStartMode = this.pendingStartMode === mode ? null : mode;
+    this.syncPathState();
+  }
+
+  /** Consume the armed one-shot mode immediately before adding a picked point. */
+  prepareForPathPoint(rotationCenter: THREE.Vector3): void {
+    const mode = this.pendingStartMode;
+    if (!mode) {
+      return;
+    }
+
+    let path = this.getActivePath();
+    if (!path || path.points.length > 0) {
+      path = this.createPath();
+      this.paths.push(path);
+      this.activePathIndex = this.paths.length - 1;
+    }
+    this.pendingStartMode = null;
+    this.lastUsedStartMode = mode;
+    if (mode === 'center') {
+      path.points.push(rotationCenter.clone());
+      this.rebuildPathVisuals(path);
+    } else {
+      this.syncPathState();
+    }
   }
 
   getPathPoints(): THREE.Vector3[] {
-    return this.pathPoints;
+    return this.getActivePath()?.points ?? [];
+  }
+
+  getPathCount(): number {
+    return this.paths.filter(path => path.points.length > 0).length;
+  }
+
+  clearAllPaths(): void {
+    for (const path of this.paths) {
+      this.disposePathVisuals(path);
+    }
+    this.paths = [];
+    this.activePathIndex = -1;
+    this.pendingStartMode = this.lastUsedStartMode === 'center' ? 'center' : null;
+    this.syncPathState();
   }
 
   /**
@@ -172,71 +240,141 @@ export class MeasurementManager {
    * from the current path points. The path is small (hand-picked points), so
    * a full rebuild per edit is simpler than incremental updates.
    */
-  private rebuildPathVisuals(): void {
-    if (this.pathLine) {
-      this.scene.remove(this.pathLine);
-      this.pathLine.geometry.dispose();
-      (this.pathLine.material as THREE.Material).dispose();
-      this.pathLine = null;
+  private createPath(): MeasurementPath {
+    return {
+      points: [],
+      line: null,
+      closingLine: null,
+      markers: null,
+      labels: [],
+      closed: this.closeLoopEnabled,
+    };
+  }
+
+  private getActivePath(): MeasurementPath | null {
+    return this.paths[this.activePathIndex] ?? null;
+  }
+
+  private ensureActivePath(): MeasurementPath {
+    let path = this.getActivePath();
+    if (!path) {
+      path = this.createPath();
+      this.paths.push(path);
+      this.activePathIndex = 0;
     }
-    if (this.pathMarkers) {
-      this.scene.remove(this.pathMarkers);
-      this.pathMarkers.geometry.dispose();
-      (this.pathMarkers.material as THREE.Material).dispose();
-      this.pathMarkers = null;
+    return path;
+  }
+
+  private disposePathVisuals(path: MeasurementPath): void {
+    if (path.line) {
+      this.scene.remove(path.line);
+      path.line.geometry.dispose();
+      (path.line.material as THREE.Material).dispose();
+      path.line = null;
     }
-    for (const label of this.pathLabels) {
+    if (path.closingLine) {
+      this.scene.remove(path.closingLine);
+      path.closingLine.geometry.dispose();
+      (path.closingLine.material as THREE.Material).dispose();
+      path.closingLine = null;
+    }
+    if (path.markers) {
+      this.scene.remove(path.markers);
+      path.markers.geometry.dispose();
+      (path.markers.material as THREE.Material).dispose();
+      path.markers = null;
+    }
+    for (const label of path.labels) {
       label.parentNode?.removeChild(label);
     }
-    this.pathLabels = [];
+    path.labels = [];
+  }
 
-    if (this.pathPoints.length > 0) {
+  private rebuildPathVisuals(path: MeasurementPath): void {
+    this.disposePathVisuals(path);
+
+    if (path.points.length > 0) {
       // Constant screen-size markers so picks stay visible at any zoom.
-      const markerGeometry = new THREE.BufferGeometry().setFromPoints(this.pathPoints);
+      const markerGeometry = new THREE.BufferGeometry().setFromPoints(path.points);
       const markerMaterial = new THREE.PointsMaterial({
         color: 0xffb300,
         size: 9,
         sizeAttenuation: false,
         depthTest: false,
       });
-      this.pathMarkers = new THREE.Points(markerGeometry, markerMaterial);
-      this.pathMarkers.renderOrder = 999;
-      this.scene.add(this.pathMarkers);
+      path.markers = new THREE.Points(markerGeometry, markerMaterial);
+      path.markers.renderOrder = 999;
+      this.scene.add(path.markers);
     }
 
     const segmentLengths: number[] = [];
-    if (this.pathPoints.length > 1) {
-      const lineGeometry = new THREE.BufferGeometry().setFromPoints(this.pathPoints);
+    if (path.points.length > 1) {
+      const lineGeometry = new THREE.BufferGeometry().setFromPoints(path.points);
       const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffb300, linewidth: 2 });
-      this.pathLine = new THREE.Line(lineGeometry, lineMaterial);
-      this.scene.add(this.pathLine);
+      path.line = new THREE.Line(lineGeometry, lineMaterial);
+      this.scene.add(path.line);
 
-      for (let i = 1; i < this.pathPoints.length; i++) {
-        const distance = this.pathPoints[i - 1].distanceTo(this.pathPoints[i]);
+      for (let i = 1; i < path.points.length; i++) {
+        const distance = path.points[i - 1].distanceTo(path.points[i]);
         segmentLengths.push(distance);
-        this.pathLabels.push(this.createPathLabel(distance));
+        path.labels.push(this.createPathLabel(distance));
+      }
+      if (path.closed && path.points.length > 2) {
+        const distance = path.points[path.points.length - 1].distanceTo(path.points[0]);
+        segmentLengths.push(distance);
+        path.labels.push(this.createPathLabel(distance, true));
+        const closingGeometry = new THREE.BufferGeometry().setFromPoints([
+          path.points[path.points.length - 1],
+          path.points[0],
+        ]);
+        const closingMaterial = new THREE.LineBasicMaterial({ color: 0xffd166, linewidth: 2 });
+        path.closingLine = new THREE.Line(closingGeometry, closingMaterial);
+        this.scene.add(path.closingLine);
       }
     }
 
-    measurementState.pathPointCount = this.pathPoints.length;
-    measurementState.segmentLengths = segmentLengths;
-    measurementState.totalLength = segmentLengths.reduce((a, b) => a + b, 0);
+    this.syncPathState(segmentLengths);
 
     this.updateLabelPositions();
   }
 
-  private createPathLabel(distance: number): HTMLDivElement {
+  private syncPathState(segmentLengths?: number[]): void {
+    const path = this.getActivePath();
+    const lengths = segmentLengths ?? this.getSegmentLengths(path);
+    measurementState.pathPointCount = path?.points.length ?? 0;
+    measurementState.pathClosed = this.closeLoopEnabled;
+    measurementState.pathStartMode = this.pendingStartMode;
+    measurementState.pathCount = this.getPathCount();
+    measurementState.segmentLengths = lengths;
+    measurementState.totalLength = lengths.reduce((a, b) => a + b, 0);
+  }
+
+  private getSegmentLengths(path: MeasurementPath | null): number[] {
+    if (!path) {
+      return [];
+    }
+    const lengths: number[] = [];
+    for (let i = 1; i < path.points.length; i++) {
+      lengths.push(path.points[i - 1].distanceTo(path.points[i]));
+    }
+    if (path.closed && path.points.length > 2) {
+      lengths.push(path.points[path.points.length - 1].distanceTo(path.points[0]));
+    }
+    return lengths;
+  }
+
+  private createPathLabel(distance: number, closing = false): HTMLDivElement {
     const label = document.createElement('div');
-    label.className = 'measurement-label measurement-path-label';
+    label.className = `measurement-label measurement-path-label${closing ? ' measurement-loop-label' : ''}`;
     label.style.position = 'absolute';
     label.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-    label.style.color = '#ffb300';
+    label.style.color = closing ? '#ffd166' : '#ffb300';
     label.style.padding = '4px 8px';
     label.style.borderRadius = '4px';
     label.style.fontSize = '12px';
     label.style.fontFamily = 'monospace';
     label.style.whiteSpace = 'nowrap';
-    label.style.border = '1px solid #ffb300';
+    label.style.border = `1px solid ${closing ? '#ffd166' : '#ffb300'}`;
     label.style.pointerEvents = 'none';
     label.textContent = formatDistance(distance);
     this.labelsContainer?.appendChild(label);
@@ -252,18 +390,21 @@ export class MeasurementManager {
       this.updateLabelPosition(measurement);
     }
 
-    for (let i = 0; i < this.pathLabels.length; i++) {
-      const midpoint = new THREE.Vector3()
-        .addVectors(this.pathPoints[i], this.pathPoints[i + 1])
-        .multiplyScalar(0.5);
-      const screenPosition = this.projectToScreen(midpoint);
-      const label = this.pathLabels[i];
-      if (screenPosition) {
-        label.style.left = `${screenPosition.x}px`;
-        label.style.top = `${screenPosition.y}px`;
-        label.style.display = 'block';
-      } else {
-        label.style.display = 'none';
+    for (const path of this.paths) {
+      for (let i = 0; i < path.labels.length; i++) {
+        const nextIndex = (i + 1) % path.points.length;
+        const midpoint = new THREE.Vector3()
+          .addVectors(path.points[i], path.points[nextIndex])
+          .multiplyScalar(0.5);
+        const screenPosition = this.projectToScreen(midpoint);
+        const label = path.labels[i];
+        if (screenPosition) {
+          label.style.left = `${screenPosition.x}px`;
+          label.style.top = `${screenPosition.y}px`;
+          label.style.display = 'block';
+        } else {
+          label.style.display = 'none';
+        }
       }
     }
   }
@@ -329,7 +470,7 @@ export class MeasurementManager {
     }
 
     this.measurements = [];
-    this.clearPath();
+    this.clearAllPaths();
   }
 
   /**

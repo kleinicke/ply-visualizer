@@ -13,6 +13,9 @@ export const filmState = $state(
    *   loop: boolean;
    *   frustumsVisible: boolean;
    *   totalDuration: number;
+   *   recordingResolution: string;
+   *   recordingFps: number;
+   *   recordingBitrate: number;
    * }}
    */ ({
     keyframes: [],
@@ -21,5 +24,8 @@ export const filmState = $state(
     loop: false,
     frustumsVisible: false,
     totalDuration: 0,
+    recordingResolution: 'viewport',
+    recordingFps: 60,
+    recordingBitrate: 12000000,
   })
 );
