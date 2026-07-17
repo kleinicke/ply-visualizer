@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+  <!-- open path: bottom, left, top sides -->
+  <path d="M18 19 H4 V5 H18" stroke="#FFB300"/>
+  <!-- closing side on the right, with arrow pointing down toward the corner -->
+  <path d="M18 5 V18" stroke="#FFD166"/>
+  <polyline points="15,15.5 18,18.5 21,15.5" stroke="#FFD166"/>
+</svg>

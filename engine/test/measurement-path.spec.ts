@@ -247,8 +247,18 @@ test('measurement paths can be cleared from the contextual bottom row', async ({
   await expect(
     page.locator('#main-ui-panel > #measurement-quick-actions-mount #measurement-quick-actions')
   ).toBeVisible();
-  await expect(page.locator('#measurement-quick-new-center')).toBeVisible();
+  await expect(page.locator('#measurement-quick-new-center')).toHaveCount(0);
   await expect(page.locator('#measurement-quick-new-free')).toBeVisible();
+  await expect(page.locator('#measurement-quick-actions button img')).toHaveCount(4);
+  const rowLayout = await page.locator('#measurement-quick-actions').evaluate(row => {
+    const buttons = Array.from(row.querySelectorAll('button'));
+    return {
+      fits: row.scrollWidth <= row.clientWidth,
+      tops: buttons.map(button => Math.round(button.getBoundingClientRect().top)),
+    };
+  });
+  expect(rowLayout.fits).toBe(true);
+  expect(new Set(rowLayout.tops).size).toBe(1);
   await page.click('#measurement-quick-clear');
 
   expect(await pathPointCount(page)).toBe(0);

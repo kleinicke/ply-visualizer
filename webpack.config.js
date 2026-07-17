@@ -125,6 +125,14 @@ module.exports = [
           test: /\.css$/,
           use: [MiniCssExtractPlugin.loader, 'css-loader'],
         },
+        {
+          test: /\.png$/,
+          type: 'asset/inline',
+        },
+        {
+          test: /\.svg$/,
+          type: 'asset/inline',
+        },
       ],
     },
     plugins: [
