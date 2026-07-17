@@ -38,6 +38,12 @@ export interface SpatialData {
   intensityArray?: Float32Array | null;
   scalarFields?: Record<string, Float32Array>;
   useTypedArrays?: boolean;
+  /** Full source point count (can differ from vertexCount for filtered invalid records). */
+  sourcePointCount?: number;
+  /** Source-space origin subtracted before conversion to float32 GPU positions. */
+  sourceOrigin?: [number, number, number];
+  /** Format-specific header/scan metadata retained for inspection and export. */
+  metadata?: Record<string, unknown>;
 }
 
 export interface CameraParams {

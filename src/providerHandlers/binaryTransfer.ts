@@ -246,6 +246,7 @@ export async function sendBinaryData(
     faceCount: spatialData.faceCount,
     hasColors: hasColors,
     hasNormals: hasNormals,
+    hasIntensity: !!spatialData.hasIntensity,
     format: spatialData.format,
     comments: spatialData.comments,
     // Binary buffers (will be transferred efficiently)
@@ -253,6 +254,16 @@ export async function sendBinaryData(
     colorBuffer: colorBuffer ? colorBuffer.buffer : null,
     normalBuffer: normalBuffer ? normalBuffer.buffer : null,
     indexBuffer: indexBuffer ? indexBuffer.buffer : null,
+    scalarFieldBuffers: Object.fromEntries(
+      Object.entries(spatialData.scalarFields || {}).map(([name, values]) => [
+        name,
+        (values as Float32Array).buffer,
+      ])
+    ),
+    sourcePointCount: spatialData.sourcePointCount,
+    sourceOrigin: spatialData.sourceOrigin,
+    metadata: spatialData.metadata,
+    fileSizeInBytes: spatialData.fileSizeInBytes,
   });
 }
 

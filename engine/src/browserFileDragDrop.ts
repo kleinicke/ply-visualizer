@@ -7,6 +7,7 @@ import {
   processFiles,
   convertDepthToUnified,
 } from './fileHandler';
+import { parseLidarFile } from './parsers/lidarParser';
 
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
@@ -399,9 +400,22 @@ export async function handleBrowserFiles(
       dims?: { width: number; height: number };
     }> = [];
 
-    // Process regular files using shared functionality
-    if (regularFiles.length > 0) {
-      const parseResults = await processFiles(regularFiles, {
+    const lidarFiles = regularFiles.filter(file => /\.(las|laz|e57)$/i.test(file.name));
+    const conventionalFiles = regularFiles.filter(file => !/\.(las|laz|e57)$/i.test(file.name));
+    for (const file of lidarFiles) {
+      try {
+        const extension = file.name.split('.').pop()!.toLowerCase() as 'las' | 'laz' | 'e57';
+        spatialDataArray.push(...(await parseLidarFile(file.data, extension, file.name)));
+      } catch (error) {
+        host.showError(
+          `Failed to load ${file.name}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
+    // Process conventional files using shared functionality
+    if (conventionalFiles.length > 0) {
+      const parseResults = await processFiles(conventionalFiles, {
         timingCallback: (message: string) => {
           console.log(`⏱️ ${message}`);
         },

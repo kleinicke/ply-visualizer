@@ -21,6 +21,7 @@ import {
   sendUltimateRawBinary,
   sendSpatialDataToWebview,
 } from './binaryTransfer';
+import { parseLidarWasm } from '../wasmPointcloud';
 
 export interface AddFileHost {
   getShortPath(filePath: string): string;
@@ -32,6 +33,38 @@ export interface AddFileHost {
     parsedObjData: any,
     fileIndex: number
   ): Promise<void>;
+}
+
+function decodeLidarData(
+  bytes: Uint8Array,
+  extension: 'las' | 'laz' | 'e57',
+  fileName: string,
+  shortPath: string
+): any[] {
+  return parseLidarWasm(bytes, extension, fileName).map(cloud => ({
+    vertices: [],
+    faces: [],
+    format: 'binary_little_endian' as const,
+    version: '1.0',
+    comments: [`Imported from ${extension.toUpperCase()}`],
+    vertexCount: cloud.vertexCount,
+    sourcePointCount: cloud.sourcePointCount,
+    faceCount: 0,
+    hasColors: cloud.hasColors,
+    hasNormals: false,
+    hasIntensity: cloud.hasIntensity,
+    fileName: extension === 'e57' ? cloud.name : fileName,
+    shortPath,
+    fileSizeInBytes: bytes.byteLength,
+    positionsArray: cloud.positionsArray,
+    colorsArray: cloud.colorsArray,
+    normalsArray: null,
+    intensityArray: cloud.intensityArray,
+    scalarFields: cloud.scalarFields,
+    useTypedArrays: true,
+    sourceOrigin: Array.from(cloud.sourceOrigin) as [number, number, number],
+    metadata: cloud.metadata,
+  }));
 }
 
 export async function handleAddFile(
@@ -75,6 +108,14 @@ export async function handleAddFile(
         webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
         // Handle different file types
+        if (fileExtension === '.las' || fileExtension === '.laz' || fileExtension === '.e57') {
+          const bytes = await vscode.workspace.fs.readFile(files[i]);
+          const extension = fileExtension.slice(1) as 'las' | 'laz' | 'e57';
+          const data = decodeLidarData(bytes, extension, fileName, shortPath);
+          await sendSpatialDataToWebview(webviewPanel, data, 'multiSpatialData');
+          continue;
+        }
+
         if (
           fileExtension === '.tif' ||
           fileExtension === '.tiff' ||
@@ -362,6 +403,18 @@ export async function handleAddFileFromPath(
     host.setLoadStartedAt(Date.now());
     webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
+    if (ext === '.las' || ext === '.laz' || ext === '.e57') {
+      const bytes = await vscode.workspace.fs.readFile(fileUri);
+      const data = decodeLidarData(
+        bytes,
+        ext.slice(1) as 'las' | 'laz' | 'e57',
+        fileName,
+        shortPath
+      );
+      await sendSpatialDataToWebview(webviewPanel, data, 'multiSpatialData');
+      return;
+    }
+
     if (
       ext === '.tif' ||
       ext === '.tiff' ||
@@ -567,6 +620,17 @@ export async function handleDroppedFilesFromWebview(
           data: toArrayBuffer(fileData),
           isAddFile: true,
         });
+        continue;
+      }
+
+      if (ext === '.las' || ext === '.laz' || ext === '.e57') {
+        const data = decodeLidarData(
+          fileData,
+          ext.slice(1) as 'las' | 'laz' | 'e57',
+          fileName,
+          shortPath
+        );
+        await sendSpatialDataToWebview(webviewPanel, data, 'multiSpatialData');
         continue;
       }
 

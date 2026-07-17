@@ -15,6 +15,9 @@
 use std::mem;
 use wasm_bindgen::prelude::*;
 
+mod lidar;
+pub use lidar::{parse_e57, parse_las, LidarCollectionResult, LidarScanResult};
+
 /// Parsed point cloud, returned to JS. Large buffers are moved out with the
 /// `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.
 #[wasm_bindgen]
@@ -64,7 +67,12 @@ impl PointCloudResult {
     /// [min_x, min_y, min_z, max_x, max_y, max_z]
     pub fn bbox(&self) -> Vec<f32> {
         vec![
-            self.min[0], self.min[1], self.min[2], self.max[0], self.max[1], self.max[2],
+            self.min[0],
+            self.min[1],
+            self.min[2],
+            self.max[0],
+            self.max[1],
+            self.max[2],
         ]
     }
 }
@@ -232,7 +240,9 @@ impl Builder {
         let uses_packed = layout.iter().any(|c| *c == Col::PackedRgb);
         let has_colors =
             uses_packed || layout.iter().any(|c| matches!(c, Col::R | Col::G | Col::B));
-        let has_normals = layout.iter().any(|c| matches!(c, Col::Nx | Col::Ny | Col::Nz));
+        let has_normals = layout
+            .iter()
+            .any(|c| matches!(c, Col::Nx | Col::Ny | Col::Nz));
         let has_intensity = layout.iter().any(|c| *c == Col::Intensity);
         let ncol = layout.len();
         Builder {
@@ -243,9 +253,21 @@ impl Builder {
             has_normals,
             has_intensity,
             positions: Vec::with_capacity(cap * 3),
-            colors: if has_colors { Vec::with_capacity(cap * 3) } else { Vec::new() },
-            normals: if has_normals { Vec::with_capacity(cap * 3) } else { Vec::new() },
-            intensity: if has_intensity { Vec::with_capacity(cap) } else { Vec::new() },
+            colors: if has_colors {
+                Vec::with_capacity(cap * 3)
+            } else {
+                Vec::new()
+            },
+            normals: if has_normals {
+                Vec::with_capacity(cap * 3)
+            } else {
+                Vec::new()
+            },
+            intensity: if has_intensity {
+                Vec::with_capacity(cap)
+            } else {
+                Vec::new()
+            },
             min: [f32::INFINITY; 3],
             max: [f32::NEG_INFINITY; 3],
             color_mode,
@@ -287,12 +309,24 @@ impl Builder {
         self.positions.push(x);
         self.positions.push(y);
         self.positions.push(z);
-        if x < self.min[0] { self.min[0] = x; }
-        if y < self.min[1] { self.min[1] = y; }
-        if z < self.min[2] { self.min[2] = z; }
-        if x > self.max[0] { self.max[0] = x; }
-        if y > self.max[1] { self.max[1] = y; }
-        if z > self.max[2] { self.max[2] = z; }
+        if x < self.min[0] {
+            self.min[0] = x;
+        }
+        if y < self.min[1] {
+            self.min[1] = y;
+        }
+        if z < self.min[2] {
+            self.min[2] = z;
+        }
+        if x > self.max[0] {
+            self.max[0] = x;
+        }
+        if y > self.max[1] {
+            self.max[1] = y;
+        }
+        if z > self.max[2] {
+            self.max[2] = z;
+        }
         if self.has_colors {
             if self.uses_packed {
                 self.colors.push(((packed >> 16) & 0xff) as u8);
@@ -308,7 +342,11 @@ impl Builder {
                     ColorMode::Auto => r <= 1.0 && g <= 1.0 && b <= 1.0,
                 };
                 let (cr, cg, cb) = if scale {
-                    ((r * 255.0).round(), (g * 255.0).round(), (b * 255.0).round())
+                    (
+                        (r * 255.0).round(),
+                        (g * 255.0).round(),
+                        (b * 255.0).round(),
+                    )
                 } else {
                     (r.round(), g.round(), b.round())
                 };
@@ -459,7 +497,15 @@ pub fn parse_pts(data: &[u8]) -> PointCloudResult {
         }
     }
     let layout = match n {
-        c if c >= 7 => vec![Col::X, Col::Y, Col::Z, Col::Intensity, Col::R, Col::G, Col::B],
+        c if c >= 7 => vec![
+            Col::X,
+            Col::Y,
+            Col::Z,
+            Col::Intensity,
+            Col::R,
+            Col::G,
+            Col::B,
+        ],
         6 => vec![Col::X, Col::Y, Col::Z, Col::R, Col::G, Col::B],
         4 => vec![Col::X, Col::Y, Col::Z, Col::Intensity],
         _ => vec![Col::X, Col::Y, Col::Z],
@@ -536,7 +582,14 @@ pub fn parse_ascii_ply(data: &[u8]) -> Result<PointCloudResult, JsValue> {
         return Err(JsValue::from_str("no x/y/z properties"));
     }
 
-    Ok(parse_rows(data, data_start, &layout, vertex_count, vertex_count, color_mode))
+    Ok(parse_rows(
+        data,
+        data_start,
+        &layout,
+        vertex_count,
+        vertex_count,
+        color_mode,
+    ))
 }
 
 /// Parse an ASCII PCD point cloud. Reads the FIELDS/COUNT header to build a
@@ -544,11 +597,11 @@ pub fn parse_ascii_ply(data: &[u8]) -> Result<PointCloudResult, JsValue> {
 /// Returns an error (→ JS fallback) for binary PCD or anything unsupported.
 #[wasm_bindgen]
 pub fn parse_pcd_ascii(data: &[u8]) -> Result<PointCloudResult, JsValue> {
-    let data_kw = find_subslice(data, b"DATA ")
-        .ok_or_else(|| JsValue::from_str("missing DATA line"))?;
+    let data_kw =
+        find_subslice(data, b"DATA ").ok_or_else(|| JsValue::from_str("missing DATA line"))?;
     // Header is everything up to the DATA line.
-    let header = std::str::from_utf8(&data[..data_kw])
-        .map_err(|_| JsValue::from_str("non-utf8 header"))?;
+    let header =
+        std::str::from_utf8(&data[..data_kw]).map_err(|_| JsValue::from_str("non-utf8 header"))?;
 
     let mut fields: Vec<&str> = Vec::new();
     let mut counts: Vec<usize> = Vec::new();
@@ -559,9 +612,15 @@ pub fn parse_pcd_ascii(data: &[u8]) -> Result<PointCloudResult, JsValue> {
         if let Some(rest) = t.strip_prefix("FIELDS ") {
             fields = rest.split_whitespace().collect();
         } else if let Some(rest) = t.strip_prefix("COUNT ") {
-            counts = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+            counts = rest
+                .split_whitespace()
+                .filter_map(|s| s.parse().ok())
+                .collect();
         } else if let Some(rest) = t.strip_prefix("TYPE ") {
-            types = rest.split_whitespace().map(|s| s.bytes().next().unwrap_or(b'F')).collect();
+            types = rest
+                .split_whitespace()
+                .map(|s| s.bytes().next().unwrap_or(b'F'))
+                .collect();
         } else if let Some(rest) = t.strip_prefix("POINTS ") {
             vertex_count = rest.trim().parse().unwrap_or(0);
         }
@@ -621,7 +680,14 @@ pub fn parse_pcd_ascii(data: &[u8]) -> Result<PointCloudResult, JsValue> {
         return Err(JsValue::from_str("no x/y/z fields"));
     }
 
-    Ok(parse_rows(data, p, &layout, vertex_count, vertex_count, color_mode))
+    Ok(parse_rows(
+        data,
+        p,
+        &layout,
+        vertex_count,
+        vertex_count,
+        color_mode,
+    ))
 }
 
 /// Read one numeric PCD field as f64. `ty`: b'F' float, b'U' unsigned, b'I'
@@ -631,19 +697,40 @@ fn pcd_read_num(d: &[u8], o: usize, size: usize, ty: u8) -> f64 {
     match (ty, size) {
         (b'F', 4) => f32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as f64,
         (b'F', 8) => f64::from_le_bytes([
-            d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6], d[o + 7],
+            d[o],
+            d[o + 1],
+            d[o + 2],
+            d[o + 3],
+            d[o + 4],
+            d[o + 5],
+            d[o + 6],
+            d[o + 7],
         ]),
         (b'U', 1) => d[o] as f64,
         (b'U', 2) => u16::from_le_bytes([d[o], d[o + 1]]) as f64,
         (b'U', 4) => u32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as f64,
         (b'U', 8) => u64::from_le_bytes([
-            d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6], d[o + 7],
+            d[o],
+            d[o + 1],
+            d[o + 2],
+            d[o + 3],
+            d[o + 4],
+            d[o + 5],
+            d[o + 6],
+            d[o + 7],
         ]) as f64,
         (b'I', 1) => (d[o] as i8) as f64,
         (b'I', 2) => i16::from_le_bytes([d[o], d[o + 1]]) as f64,
         (b'I', 4) => i32::from_le_bytes([d[o], d[o + 1], d[o + 2], d[o + 3]]) as f64,
         (b'I', 8) => i64::from_le_bytes([
-            d[o], d[o + 1], d[o + 2], d[o + 3], d[o + 4], d[o + 5], d[o + 6], d[o + 7],
+            d[o],
+            d[o + 1],
+            d[o + 2],
+            d[o + 3],
+            d[o + 4],
+            d[o + 5],
+            d[o + 6],
+            d[o + 7],
         ]) as f64,
         _ => 0.0,
     }
@@ -659,8 +746,8 @@ fn pcd_read_num(d: &[u8], o: usize, size: usize, ty: u8) -> f64 {
 pub fn parse_pcd_binary(data: &[u8]) -> Result<PointCloudResult, JsValue> {
     let data_kw =
         find_subslice(data, b"DATA ").ok_or_else(|| JsValue::from_str("missing DATA line"))?;
-    let header = std::str::from_utf8(&data[..data_kw])
-        .map_err(|_| JsValue::from_str("non-utf8 header"))?;
+    let header =
+        std::str::from_utf8(&data[..data_kw]).map_err(|_| JsValue::from_str("non-utf8 header"))?;
 
     let mut fields: Vec<&str> = Vec::new();
     let mut sizes: Vec<usize> = Vec::new();
@@ -672,11 +759,20 @@ pub fn parse_pcd_binary(data: &[u8]) -> Result<PointCloudResult, JsValue> {
         if let Some(r) = t.strip_prefix("FIELDS ") {
             fields = r.split_whitespace().collect();
         } else if let Some(r) = t.strip_prefix("SIZE ") {
-            sizes = r.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+            sizes = r
+                .split_whitespace()
+                .filter_map(|s| s.parse().ok())
+                .collect();
         } else if let Some(r) = t.strip_prefix("TYPE ") {
-            types = r.split_whitespace().map(|s| s.bytes().next().unwrap_or(b'F')).collect();
+            types = r
+                .split_whitespace()
+                .map(|s| s.bytes().next().unwrap_or(b'F'))
+                .collect();
         } else if let Some(r) = t.strip_prefix("COUNT ") {
-            counts = r.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+            counts = r
+                .split_whitespace()
+                .filter_map(|s| s.parse().ok())
+                .collect();
         } else if let Some(r) = t.strip_prefix("POINTS ") {
             vertex_count = r.trim().parse().unwrap_or(0);
         }
@@ -712,7 +808,12 @@ pub fn parse_pcd_binary(data: &[u8]) -> Result<PointCloudResult, JsValue> {
     let mut stride = 0usize;
     for i in 0..nf {
         let cnt = counts.get(i).copied().unwrap_or(1).max(1);
-        descs.push(FieldDesc { col: pcd_col(fields[i]), off: stride, size: sizes[i], ty: types[i] });
+        descs.push(FieldDesc {
+            col: pcd_col(fields[i]),
+            off: stride,
+            size: sizes[i],
+            ty: types[i],
+        });
         stride += sizes[i] * cnt;
     }
     if stride == 0 {
@@ -723,9 +824,13 @@ pub fn parse_pcd_binary(data: &[u8]) -> Result<PointCloudResult, JsValue> {
     }
 
     let uses_packed = descs.iter().any(|d| d.col == Col::PackedRgb);
-    let has_colors =
-        uses_packed || descs.iter().any(|d| matches!(d.col, Col::R | Col::G | Col::B));
-    let has_normals = descs.iter().any(|d| matches!(d.col, Col::Nx | Col::Ny | Col::Nz));
+    let has_colors = uses_packed
+        || descs
+            .iter()
+            .any(|d| matches!(d.col, Col::R | Col::G | Col::B));
+    let has_normals = descs
+        .iter()
+        .any(|d| matches!(d.col, Col::Nx | Col::Ny | Col::Nz));
     let has_intensity = descs.iter().any(|d| d.col == Col::Intensity);
 
     // Clamp to whole records actually present so every read stays in-bounds.
@@ -733,9 +838,21 @@ pub fn parse_pcd_binary(data: &[u8]) -> Result<PointCloudResult, JsValue> {
     let n = vertex_count.min(avail);
 
     let mut positions = Vec::with_capacity(n * 3);
-    let mut colors = if has_colors { Vec::with_capacity(n * 3) } else { Vec::new() };
-    let mut normals = if has_normals { Vec::with_capacity(n * 3) } else { Vec::new() };
-    let mut intensity = if has_intensity { Vec::with_capacity(n) } else { Vec::new() };
+    let mut colors = if has_colors {
+        Vec::with_capacity(n * 3)
+    } else {
+        Vec::new()
+    };
+    let mut normals = if has_normals {
+        Vec::with_capacity(n * 3)
+    } else {
+        Vec::new()
+    };
+    let mut intensity = if has_intensity {
+        Vec::with_capacity(n)
+    } else {
+        Vec::new()
+    };
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
 
@@ -795,12 +912,24 @@ pub fn parse_pcd_binary(data: &[u8]) -> Result<PointCloudResult, JsValue> {
         positions.push(x);
         positions.push(y);
         positions.push(z);
-        if x < min[0] { min[0] = x; }
-        if y < min[1] { min[1] = y; }
-        if z < min[2] { min[2] = z; }
-        if x > max[0] { max[0] = x; }
-        if y > max[1] { max[1] = y; }
-        if z > max[2] { max[2] = z; }
+        if x < min[0] {
+            min[0] = x;
+        }
+        if y < min[1] {
+            min[1] = y;
+        }
+        if z < min[2] {
+            min[2] = z;
+        }
+        if x > max[0] {
+            max[0] = x;
+        }
+        if y > max[1] {
+            max[1] = y;
+        }
+        if z > max[2] {
+            max[2] = z;
+        }
         if has_colors {
             colors.push(cr);
             colors.push(cg);
@@ -943,7 +1072,9 @@ fn pcd_header_stream(buf: &[u8]) -> HeaderState {
         Ok(h) => h,
         Err(_) => return HeaderState::Reject,
     };
-    let data_kind = std::str::from_utf8(&buf[data_kw + 5..line_end]).unwrap_or("").trim();
+    let data_kind = std::str::from_utf8(&buf[data_kw + 5..line_end])
+        .unwrap_or("")
+        .trim();
     if data_kind != "ascii" {
         return HeaderState::Reject;
     }
@@ -957,9 +1088,15 @@ fn pcd_header_stream(buf: &[u8]) -> HeaderState {
         if let Some(rest) = t.strip_prefix("FIELDS ") {
             fields = rest.split_whitespace().collect();
         } else if let Some(rest) = t.strip_prefix("COUNT ") {
-            counts = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+            counts = rest
+                .split_whitespace()
+                .filter_map(|s| s.parse().ok())
+                .collect();
         } else if let Some(rest) = t.strip_prefix("TYPE ") {
-            types = rest.split_whitespace().map(|s| s.bytes().next().unwrap_or(b'F')).collect();
+            types = rest
+                .split_whitespace()
+                .map(|s| s.bytes().next().unwrap_or(b'F'))
+                .collect();
         } else if let Some(rest) = t.strip_prefix("POINTS ") {
             vertex_count = rest.trim().parse().unwrap_or(0);
         }
@@ -1153,7 +1290,5 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
     }
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }

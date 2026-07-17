@@ -91,6 +91,7 @@ import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
+import { alignSourceOrigin } from './utils/sourceOrigin';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
@@ -2802,6 +2803,7 @@ class PointCloudVisualizer {
       );
     }
     for (const data of newFiles) {
+      alignSourceOrigin(data, this.spatialFiles);
       // Assign new file index
       data.fileIndex = this.spatialFiles.length;
 

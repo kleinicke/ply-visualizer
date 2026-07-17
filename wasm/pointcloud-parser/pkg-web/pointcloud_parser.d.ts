@@ -139,3 +139,85 @@ export function parse_pts(data: Uint8Array): PointCloudResult;
  * the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
  */
 export function parse_xyz(data: Uint8Array, variant: string, color_mode: string): PointCloudResult;
+
+export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
+
+export interface InitOutput {
+    readonly memory: WebAssembly.Memory;
+    readonly __wbg_lidarcollectionresult_free: (a: number, b: number) => void;
+    readonly __wbg_lidarscanresult_free: (a: number, b: number) => void;
+    readonly __wbg_pointcloudresult_free: (a: number, b: number) => void;
+    readonly __wbg_streamparser_free: (a: number, b: number) => void;
+    readonly lidarcollectionresult_scan_count: (a: number) => number;
+    readonly lidarcollectionresult_take_scan: (a: number, b: number) => [number, number, number];
+    readonly lidarscanresult_bbox: (a: number) => [number, number];
+    readonly lidarscanresult_has_colors: (a: number) => number;
+    readonly lidarscanresult_metadata_json: (a: number) => [number, number];
+    readonly lidarscanresult_name: (a: number) => [number, number];
+    readonly lidarscanresult_source_count: (a: number) => number;
+    readonly lidarscanresult_source_origin: (a: number) => [number, number];
+    readonly lidarscanresult_take_classification: (a: number) => [number, number];
+    readonly lidarscanresult_take_colors: (a: number) => [number, number];
+    readonly lidarscanresult_take_column_index: (a: number) => [number, number];
+    readonly lidarscanresult_take_gps_time: (a: number) => [number, number];
+    readonly lidarscanresult_take_intensity: (a: number) => [number, number];
+    readonly lidarscanresult_take_number_of_returns: (a: number) => [number, number];
+    readonly lidarscanresult_take_point_source_id: (a: number) => [number, number];
+    readonly lidarscanresult_take_positions: (a: number) => [number, number];
+    readonly lidarscanresult_take_return_number: (a: number) => [number, number];
+    readonly lidarscanresult_take_row_index: (a: number) => [number, number];
+    readonly lidarscanresult_take_scan_angle: (a: number) => [number, number];
+    readonly lidarscanresult_take_user_data: (a: number) => [number, number];
+    readonly lidarscanresult_vertex_count: (a: number) => number;
+    readonly parse_ascii_ply: (a: number, b: number) => [number, number, number];
+    readonly parse_at: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly parse_e57: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly parse_las: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly parse_pcd_ascii: (a: number, b: number) => [number, number, number];
+    readonly parse_pcd_binary: (a: number, b: number) => [number, number, number];
+    readonly parse_pts: (a: number, b: number) => number;
+    readonly parse_xyz: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly pointcloudresult_bbox: (a: number) => [number, number];
+    readonly pointcloudresult_has_colors: (a: number) => number;
+    readonly pointcloudresult_has_intensity: (a: number) => number;
+    readonly pointcloudresult_has_normals: (a: number) => number;
+    readonly pointcloudresult_take_colors: (a: number) => [number, number];
+    readonly pointcloudresult_take_intensity: (a: number) => [number, number];
+    readonly pointcloudresult_take_normals: (a: number) => [number, number];
+    readonly pointcloudresult_take_positions: (a: number) => [number, number];
+    readonly pointcloudresult_vertex_count: (a: number) => number;
+    readonly streamparser_failed: (a: number) => number;
+    readonly streamparser_finish: (a: number) => number;
+    readonly streamparser_new: (a: number, b: number, c: number, d: number) => number;
+    readonly streamparser_push: (a: number, b: number, c: number) => void;
+    readonly alloc: (a: number) => number;
+    readonly dealloc: (a: number, b: number) => void;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __externref_table_dealloc: (a: number) => void;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_start: () => void;
+}
+
+export type SyncInitInput = BufferSource | WebAssembly.Module;
+
+/**
+ * Instantiates the given `module`, which can either be bytes or
+ * a precompiled `WebAssembly.Module`.
+ *
+ * @param {{ module: SyncInitInput }} module - Passing `SyncInitInput` directly is deprecated.
+ *
+ * @returns {InitOutput}
+ */
+export function initSync(module: { module: SyncInitInput } | SyncInitInput): InitOutput;
+
+/**
+ * If `module_or_path` is {RequestInfo} or {URL}, makes a request and
+ * for everything else, calls `WebAssembly.instantiate` directly.
+ *
+ * @param {{ module_or_path: InitInput | Promise<InitInput> }} module_or_path - Passing `InitInput` directly is deprecated.
+ *
+ * @returns {Promise<InitOutput>}
+ */
+export default function __wbg_init (module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>): Promise<InitOutput>;

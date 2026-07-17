@@ -204,6 +204,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       fileType?.extension === 'xyzrgb' ||
       fileType?.extension === 'xyz';
     const isJsonFile = fileType?.extension === 'json';
+    const isLidarFile =
+      fileType?.extension === 'las' ||
+      fileType?.extension === 'laz' ||
+      fileType?.extension === 'e57';
     const isNpyPointCloud = fileType?.extension === 'npy' && fileType?.category === 'pointCloud';
 
     // Register before assigning HTML. Restored webviews can initialize very
@@ -344,6 +348,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         isGltfFile,
         isXyzVariant,
         isJsonFile,
+        isLidarFile,
       })
     );
   }

@@ -18,13 +18,13 @@ directly inside VS Code.
 
 ## Supported formats
 
-| Type                   | Formats                               |
-| ---------------------- | ------------------------------------- |
-| Point clouds           | PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY |
-| Meshes                 | PLY, OBJ, STL, OFF, GLTF, GLB         |
-| Depth/disparity images | TIFF, PNG, PFM, NPY, NPZ              |
-| 3D Body Poses          | JSON pose data (experimental)         |
-| Camera Profiles        | JSON pose data (experimental)         |
+| Type                   | Formats                                              |
+| ---------------------- | ---------------------------------------------------- |
+| Point clouds           | PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY, LAS, LAZ, E57 |
+| Meshes                 | PLY, OBJ, STL, OFF, GLTF, GLB                        |
+| Depth/disparity images | TIFF, PNG, PFM, NPY, NPZ                             |
+| 3D Body Poses          | JSON pose data (experimental)                        |
+| Camera Profiles        | JSON pose data (experimental)                        |
 
 ## Features
 
@@ -63,6 +63,9 @@ coloring. The recognized property names are `x/y/z`, `red/green/blue`,
 `nx/ny/nz` and `intensity`/`reflectivity`/`reflectance`/`remission`. Any other
 numeric per-vertex PLY property (e.g. `confidence`, `error`, `curvature`) also
 appears in the Color dropdown for Viridis or grayscale colormap coloring.
+LAS/LAZ attributes such as classification, returns, scan angle and GPS time are
+exposed through the same scalar-field color controls. E57 containers load each
+scan as a separate, independently visible entry.
 
 ### Distance Measurement Tools and Camera Manipulation
 

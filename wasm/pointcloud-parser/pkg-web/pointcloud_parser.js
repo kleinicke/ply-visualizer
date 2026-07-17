@@ -1,6 +1,6 @@
 /* @ts-self-types="./pointcloud_parser.d.ts" */
 
-class LidarCollectionResult {
+export class LidarCollectionResult {
   static __wrap(ptr) {
     const obj = Object.create(LidarCollectionResult.prototype);
     obj.__wbg_ptr = ptr;
@@ -38,13 +38,12 @@ class LidarCollectionResult {
 }
 if (Symbol.dispose)
   LidarCollectionResult.prototype[Symbol.dispose] = LidarCollectionResult.prototype.free;
-exports.LidarCollectionResult = LidarCollectionResult;
 
 /**
  * A single decoded LAS/LAZ cloud or E57 scan. Buffers are moved to JS with
  * `take_*`, avoiding an additional Rust-side clone at the WASM boundary.
  */
-class LidarScanResult {
+export class LidarScanResult {
   static __wrap(ptr) {
     const obj = Object.create(LidarScanResult.prototype);
     obj.__wbg_ptr = ptr;
@@ -240,13 +239,12 @@ class LidarScanResult {
   }
 }
 if (Symbol.dispose) LidarScanResult.prototype[Symbol.dispose] = LidarScanResult.prototype.free;
-exports.LidarScanResult = LidarScanResult;
 
 /**
  * Parsed point cloud, returned to JS. Large buffers are moved out with the
  * `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.
  */
-class PointCloudResult {
+export class PointCloudResult {
   static __wrap(ptr) {
     const obj = Object.create(PointCloudResult.prototype);
     obj.__wbg_ptr = ptr;
@@ -339,14 +337,13 @@ class PointCloudResult {
   }
 }
 if (Symbol.dispose) PointCloudResult.prototype[Symbol.dispose] = PointCloudResult.prototype.free;
-exports.PointCloudResult = PointCloudResult;
 
 /**
  * Incremental parser for streaming/overlapped loading. JS reads the file in
  * chunks and calls `push` on each (while the next chunk's read is in flight),
  * then `finish`. Partial lines are stitched across chunk boundaries via carry.
  */
-class StreamParser {
+export class StreamParser {
   __destroy_into_raw() {
     const ptr = this.__wbg_ptr;
     this.__wbg_ptr = 0;
@@ -397,7 +394,6 @@ class StreamParser {
   }
 }
 if (Symbol.dispose) StreamParser.prototype[Symbol.dispose] = StreamParser.prototype.free;
-exports.StreamParser = StreamParser;
 
 /**
  * Reserve `len` bytes in WASM memory and return the offset. Caller fills it,
@@ -405,21 +401,19 @@ exports.StreamParser = StreamParser;
  * @param {number} len
  * @returns {number}
  */
-function alloc(len) {
+export function alloc(len) {
   const ret = wasm.alloc(len);
   return ret >>> 0;
 }
-exports.alloc = alloc;
 
 /**
  * Free a buffer previously returned by `alloc`.
  * @param {number} ptr
  * @param {number} len
  */
-function dealloc(ptr, len) {
+export function dealloc(ptr, len) {
   wasm.dealloc(ptr, len);
 }
-exports.dealloc = dealloc;
 
 /**
  * Parse an ASCII PLY: read the header to learn the vertex count + property
@@ -428,7 +422,7 @@ exports.dealloc = dealloc;
  * @param {Uint8Array} data
  * @returns {PointCloudResult}
  */
-function parse_ascii_ply(data) {
+export function parse_ascii_ply(data) {
   const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ret = wasm.parse_ascii_ply(ptr0, len0);
@@ -437,7 +431,6 @@ function parse_ascii_ply(data) {
   }
   return PointCloudResult.__wrap(ret[0]);
 }
-exports.parse_ascii_ply = parse_ascii_ply;
 
 /**
  * Parse a buffer already sitting in WASM memory at `ptr`/`len`.
@@ -446,7 +439,7 @@ exports.parse_ascii_ply = parse_ascii_ply;
  * @param {string} format
  * @returns {PointCloudResult}
  */
-function parse_at(ptr, len, format) {
+export function parse_at(ptr, len, format) {
   const ptr0 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
   const len0 = WASM_VECTOR_LEN;
   const ret = wasm.parse_at(ptr, len, ptr0, len0);
@@ -455,14 +448,13 @@ function parse_at(ptr, len, format) {
   }
   return PointCloudResult.__wrap(ret[0]);
 }
-exports.parse_at = parse_at;
 
 /**
  * @param {Uint8Array} data
  * @param {string} file_name
  * @returns {LidarCollectionResult}
  */
-function parse_e57(data, file_name) {
+export function parse_e57(data, file_name) {
   const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ptr1 = passStringToWasm0(file_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -473,14 +465,13 @@ function parse_e57(data, file_name) {
   }
   return LidarCollectionResult.__wrap(ret[0]);
 }
-exports.parse_e57 = parse_e57;
 
 /**
  * @param {Uint8Array} data
  * @param {string} file_name
  * @returns {LidarCollectionResult}
  */
-function parse_las(data, file_name) {
+export function parse_las(data, file_name) {
   const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ptr1 = passStringToWasm0(file_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -491,7 +482,6 @@ function parse_las(data, file_name) {
   }
   return LidarCollectionResult.__wrap(ret[0]);
 }
-exports.parse_las = parse_las;
 
 /**
  * Parse an ASCII PCD point cloud. Reads the FIELDS/COUNT header to build a
@@ -500,7 +490,7 @@ exports.parse_las = parse_las;
  * @param {Uint8Array} data
  * @returns {PointCloudResult}
  */
-function parse_pcd_ascii(data) {
+export function parse_pcd_ascii(data) {
   const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ret = wasm.parse_pcd_ascii(ptr0, len0);
@@ -509,7 +499,6 @@ function parse_pcd_ascii(data) {
   }
   return PointCloudResult.__wrap(ret[0]);
 }
-exports.parse_pcd_ascii = parse_pcd_ascii;
 
 /**
  * Parse a binary PCD point cloud (`DATA binary`; not `binary_compressed`). Reads
@@ -521,7 +510,7 @@ exports.parse_pcd_ascii = parse_pcd_ascii;
  * @param {Uint8Array} data
  * @returns {PointCloudResult}
  */
-function parse_pcd_binary(data) {
+export function parse_pcd_binary(data) {
   const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ret = wasm.parse_pcd_binary(ptr0, len0);
@@ -530,7 +519,6 @@ function parse_pcd_binary(data) {
   }
   return PointCloudResult.__wrap(ret[0]);
 }
-exports.parse_pcd_binary = parse_pcd_binary;
 
 /**
  * Parse a PTS point cloud. PTS has an optional leading count line + comments
@@ -544,13 +532,12 @@ exports.parse_pcd_binary = parse_pcd_binary;
  * @param {Uint8Array} data
  * @returns {PointCloudResult}
  */
-function parse_pts(data) {
+export function parse_pts(data) {
   const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ret = wasm.parse_pts(ptr0, len0);
   return PointCloudResult.__wrap(ret);
 }
-exports.parse_pts = parse_pts;
 
 /**
  * Parse XYZ / XYZN / XYZRGB. For plain "xyz" the layout is auto-detected from
@@ -560,7 +547,7 @@ exports.parse_pts = parse_pts;
  * @param {string} color_mode
  * @returns {PointCloudResult}
  */
-function parse_xyz(data, variant, color_mode) {
+export function parse_xyz(data, variant, color_mode) {
   const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ptr1 = passStringToWasm0(variant, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -570,7 +557,6 @@ function parse_xyz(data, variant, color_mode) {
   const ret = wasm.parse_xyz(ptr0, len0, ptr1, len1, ptr2, len2);
   return PointCloudResult.__wrap(ret);
 }
-exports.parse_xyz = parse_xyz;
 function __wbg_get_imports() {
   const import0 = {
     __proto__: null,
@@ -712,7 +698,15 @@ function takeFromExternrefTable0(idx) {
 
 let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
 cachedTextDecoder.decode();
+const MAX_SAFARI_DECODE_BYTES = 2146435072;
+let numBytesDecoded = 0;
 function decodeText(ptr, len) {
+  numBytesDecoded += len;
+  if (numBytesDecoded >= MAX_SAFARI_DECODE_BYTES) {
+    cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+    cachedTextDecoder.decode();
+    numBytesDecoded = len;
+  }
   return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
 }
 
@@ -731,9 +725,108 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-const wasmPath = `${__dirname}/pointcloud_parser_bg.wasm`;
-const wasmBytes = require('fs').readFileSync(wasmPath);
-const wasmModule = new WebAssembly.Module(wasmBytes);
-let wasmInstance = new WebAssembly.Instance(wasmModule, __wbg_get_imports());
-let wasm = wasmInstance.exports;
-wasm.__wbindgen_start();
+let wasmModule, wasmInstance, wasm;
+function __wbg_finalize_init(instance, module) {
+  wasmInstance = instance;
+  wasm = instance.exports;
+  wasmModule = module;
+  cachedFloat32ArrayMemory0 = null;
+  cachedFloat64ArrayMemory0 = null;
+  cachedUint8ArrayMemory0 = null;
+  wasm.__wbindgen_start();
+  return wasm;
+}
+
+async function __wbg_load(module, imports) {
+  if (typeof Response === 'function' && module instanceof Response) {
+    if (typeof WebAssembly.instantiateStreaming === 'function') {
+      try {
+        return await WebAssembly.instantiateStreaming(module, imports);
+      } catch (e) {
+        const validResponse = module.ok && expectedResponseType(module.type);
+
+        if (validResponse && module.headers.get('Content-Type') !== 'application/wasm') {
+          console.warn(
+            '`WebAssembly.instantiateStreaming` failed because your server does not serve Wasm with `application/wasm` MIME type. Falling back to `WebAssembly.instantiate` which is slower. Original error:\n',
+            e
+          );
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    const bytes = await module.arrayBuffer();
+    return await WebAssembly.instantiate(bytes, imports);
+  } else {
+    const instance = await WebAssembly.instantiate(module, imports);
+
+    if (instance instanceof WebAssembly.Instance) {
+      return { instance, module };
+    } else {
+      return instance;
+    }
+  }
+
+  function expectedResponseType(type) {
+    switch (type) {
+      case 'basic':
+      case 'cors':
+      case 'default':
+        return true;
+    }
+    return false;
+  }
+}
+
+function initSync(module) {
+  if (wasm !== undefined) return wasm;
+
+  if (module !== undefined) {
+    if (Object.getPrototypeOf(module) === Object.prototype) {
+      ({ module } = module);
+    } else {
+      console.warn('using deprecated parameters for `initSync()`; pass a single object instead');
+    }
+  }
+
+  const imports = __wbg_get_imports();
+  if (!(module instanceof WebAssembly.Module)) {
+    module = new WebAssembly.Module(module);
+  }
+  const instance = new WebAssembly.Instance(module, imports);
+  return __wbg_finalize_init(instance, module);
+}
+
+async function __wbg_init(module_or_path) {
+  if (wasm !== undefined) return wasm;
+
+  if (module_or_path !== undefined) {
+    if (Object.getPrototypeOf(module_or_path) === Object.prototype) {
+      ({ module_or_path } = module_or_path);
+    } else {
+      console.warn(
+        'using deprecated parameters for the initialization function; pass a single object instead'
+      );
+    }
+  }
+
+  if (module_or_path === undefined) {
+    module_or_path = new URL('pointcloud_parser_bg.wasm', import.meta.url);
+  }
+  const imports = __wbg_get_imports();
+
+  if (
+    typeof module_or_path === 'string' ||
+    (typeof Request === 'function' && module_or_path instanceof Request) ||
+    (typeof URL === 'function' && module_or_path instanceof URL)
+  ) {
+    module_or_path = fetch(module_or_path);
+  }
+
+  const { instance, module } = await __wbg_load(await module_or_path, imports);
+
+  return __wbg_finalize_init(instance, module);
+}
+
+export { initSync, __wbg_init as default };

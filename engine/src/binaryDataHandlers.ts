@@ -514,8 +514,13 @@ export async function handleDirectTypedArrayData(
     faceCount: message.faceCount,
     hasColors: message.hasColors,
     hasNormals: message.hasNormals,
+    hasIntensity: message.hasIntensity,
     fileName: message.fileName,
     shortPath: message.shortPath,
+    sourcePointCount: message.sourcePointCount,
+    sourceOrigin: message.sourceOrigin,
+    metadata: message.metadata,
+    useTypedArrays: true,
   };
 
   // Attach direct TypedArrays
@@ -564,8 +569,13 @@ export async function handleBinarySpatialData(
     faceCount: message.faceCount,
     hasColors: message.hasColors,
     hasNormals: message.hasNormals,
+    hasIntensity: message.hasIntensity,
     fileName: message.fileName,
     shortPath: message.shortPath,
+    sourcePointCount: message.sourcePointCount,
+    sourceOrigin: message.sourceOrigin,
+    metadata: message.metadata,
+    useTypedArrays: true,
   };
 
   // Convert position buffer
@@ -583,29 +593,42 @@ export async function handleBinarySpatialData(
     normalArray = new Float32Array(message.normalBuffer);
   }
 
-  // Reconstruct vertices from binary data
-  for (let i = 0; i < message.vertexCount; i++) {
-    const vertex: SpatialVertex = {
-      x: positionArray[i * 3],
-      y: positionArray[i * 3 + 1],
-      z: positionArray[i * 3 + 2],
-    };
+  const scalarFields: Record<string, Float32Array> = {};
+  for (const [name, buffer] of Object.entries(message.scalarFieldBuffers || {})) {
+    scalarFields[name] = new Float32Array(buffer as ArrayBuffer);
+  }
+  spatialData.positionsArray = positionArray;
+  spatialData.colorsArray = colorArray;
+  spatialData.normalsArray = normalArray;
+  spatialData.scalarFields = scalarFields;
+  spatialData.intensityArray = scalarFields.intensity ?? null;
 
-    // Add colors if present
-    if (colorArray && message.hasColors) {
-      vertex.red = colorArray[i * 3];
-      vertex.green = colorArray[i * 3 + 1];
-      vertex.blue = colorArray[i * 3 + 2];
+  // Mesh normals still use the legacy vertex representation during ASCII PLY
+  // export. Point clouds—including LAS/LAZ/E57—stay entirely on typed arrays.
+  if (message.hasNormals) {
+    for (let i = 0; i < message.vertexCount; i++) {
+      const vertex: SpatialVertex = {
+        x: positionArray[i * 3],
+        y: positionArray[i * 3 + 1],
+        z: positionArray[i * 3 + 2],
+      };
+
+      // Add colors if present
+      if (colorArray && message.hasColors) {
+        vertex.red = colorArray[i * 3];
+        vertex.green = colorArray[i * 3 + 1];
+        vertex.blue = colorArray[i * 3 + 2];
+      }
+
+      // Add normals if present
+      if (normalArray) {
+        vertex.nx = normalArray[i * 3];
+        vertex.ny = normalArray[i * 3 + 1];
+        vertex.nz = normalArray[i * 3 + 2];
+      }
+
+      spatialData.vertices.push(vertex);
     }
-
-    // Add normals if present
-    if (normalArray && message.hasNormals) {
-      vertex.nx = normalArray[i * 3];
-      vertex.ny = normalArray[i * 3 + 1];
-      vertex.nz = normalArray[i * 3 + 2];
-    }
-
-    spatialData.vertices.push(vertex);
   }
 
   // Convert face buffer if present

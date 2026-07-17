@@ -7,6 +7,7 @@
 - Add double click onto empty region to automatically fit to point cloud
 - Color point clouds by any extra PLY scalar property (e.g. confidence, error) via Viridis/Gray colormaps in the Color dropdown
 - Add "Save Screenshot" (PNG) and "Copy Camera JSON" (position/target/up/fov) to the camera tab
+- Add LAS/LAZ and E57 file formats
 
 
 ## [1.6.0] - 2026-06-07

@@ -41,7 +41,7 @@ export const DEPTH_UI_BEHAVIOR = {
 
 // Supported file extensions and their categories
 export const SUPPORTED_EXTENSIONS = {
-  pointClouds: ['ply', 'xyz', 'xyzn', 'xyzrgb', 'pcd', 'pts'],
+  pointClouds: ['ply', 'xyz', 'xyzn', 'xyzrgb', 'pcd', 'pts', 'las', 'laz', 'e57'],
   meshes: ['stl', 'obj', 'off', 'gltf', 'glb'],
   depthImages: ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png'],
   poseData: ['json'],
@@ -83,6 +83,9 @@ export interface UnifiedFileData {
   intensityArray?: Float32Array | null;
   scalarFields?: Record<string, Float32Array>;
   useTypedArrays?: boolean;
+  sourcePointCount?: number;
+  sourceOrigin?: [number, number, number];
+  metadata?: Record<string, unknown>;
 }
 
 // Parser result interface

@@ -30,6 +30,14 @@ export interface WasmPointCloud {
   bbox: Float32Array;
 }
 
+export interface WasmLidarCloud extends WasmPointCloud {
+  name: string;
+  sourcePointCount: number;
+  scalarFields: Record<string, Float32Array>;
+  metadata: Record<string, unknown>;
+  sourceOrigin: Float64Array;
+}
+
 let mod: any = null;
 let attempted = false;
 
@@ -67,6 +75,80 @@ function marshal(r: any): WasmPointCloud {
     r.free();
   }
   return out;
+}
+
+function takeNonEmpty(r: any, method: string): Float32Array | null {
+  const value = r[method]() as Float32Array;
+  return value.length > 0 ? value : null;
+}
+
+function marshalLidarScan(r: any): WasmLidarCloud {
+  const scalarFields: Record<string, Float32Array> = {};
+  const fields: Array<[string, string]> = [
+    ['intensity', 'take_intensity'],
+    ['classification', 'take_classification'],
+    ['returnNumber', 'take_return_number'],
+    ['numberOfReturns', 'take_number_of_returns'],
+    ['scanAngle', 'take_scan_angle'],
+    ['gpsTime', 'take_gps_time'],
+    ['userData', 'take_user_data'],
+    ['pointSourceId', 'take_point_source_id'],
+    ['rowIndex', 'take_row_index'],
+    ['columnIndex', 'take_column_index'],
+  ];
+  for (const [name, method] of fields) {
+    const values = takeNonEmpty(r, method);
+    if (values) {
+      scalarFields[name] = values;
+    }
+  }
+  const hasColors = r.has_colors;
+  const metadata = JSON.parse(r.metadata_json || '{}') as Record<string, unknown>;
+  const out: WasmLidarCloud = {
+    name: r.name,
+    vertexCount: r.vertex_count,
+    sourcePointCount: r.source_count,
+    hasColors,
+    hasNormals: false,
+    hasIntensity: !!scalarFields.intensity,
+    positionsArray: r.take_positions(),
+    colorsArray: hasColors ? r.take_colors() : null,
+    normalsArray: null,
+    intensityArray: scalarFields.intensity ?? null,
+    scalarFields,
+    metadata,
+    sourceOrigin: r.source_origin(),
+    bbox: r.bbox(),
+  };
+  if (typeof r.free === 'function') {
+    r.free();
+  }
+  return out;
+}
+
+/** Decode LAS, LAZ, or E57 with the shared Rust implementation. */
+export function parseLidarWasm(
+  bytes: Uint8Array,
+  extension: 'las' | 'laz' | 'e57',
+  fileName: string
+): WasmLidarCloud[] {
+  const m = load();
+  if (!m) {
+    throw new Error('The Rust LiDAR decoder is unavailable');
+  }
+  let collection: any;
+  try {
+    collection = extension === 'e57' ? m.parse_e57(bytes, fileName) : m.parse_las(bytes, fileName);
+    const scans: WasmLidarCloud[] = [];
+    for (let i = 0; i < collection.scan_count; i++) {
+      scans.push(marshalLidarScan(collection.take_scan(i)));
+    }
+    return scans;
+  } finally {
+    if (collection && typeof collection.free === 'function') {
+      collection.free();
+    }
+  }
 }
 
 /**

@@ -1,7 +1,7 @@
 {
   "name": "ply-visualizer",
   "displayName": "3D Point Cloud and Mesh Visualizer (PLY, ...)",
-  "description": "A 3D visualizer for point cloud and mesh files like the PLY format using Three.js. Supports 13+ formats: PLY, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth to point cloud conversions.",
+  "description": "A fast 3D visualizer for point clouds and meshes using Three.js. Supports PLY, LAS/LAZ, E57, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth conversion.",
   "version": "1.6.1",
   "packageManager": "pnpm@10.32.1",
   "publisher": "kleinicke",
@@ -28,6 +28,9 @@
     "off",
     "gltf",
     "glb",
+    "las",
+    "laz",
+    "e57",
     "xyzn",
     "xyzrgb",
     "tif",
@@ -89,6 +92,15 @@
           },
           {
             "filenamePattern": "*.glb"
+          },
+          {
+            "filenamePattern": "*.las"
+          },
+          {
+            "filenamePattern": "*.laz"
+          },
+          {
+            "filenamePattern": "*.e57"
           }
         ]
       }
@@ -159,7 +171,7 @@
       "explorer/context": [
         {
           "command": "plyViewer.openFile",
-          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .xyzn || resourceExtname == .xyzrgb || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl || resourceExtname == .pcd || resourceExtname == .pts || resourceExtname == .off || resourceExtname == .gltf || resourceExtname == .glb",
+          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .xyzn || resourceExtname == .xyzrgb || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl || resourceExtname == .pcd || resourceExtname == .pts || resourceExtname == .off || resourceExtname == .gltf || resourceExtname == .glb || resourceExtname == .las || resourceExtname == .laz || resourceExtname == .e57",
           "group": "navigation"
         },
         {
@@ -215,7 +227,7 @@
   "scripts": {
     "vscode:prepublish": "pnpm run compile",
     "compile": "webpack",
-    "build:wasm": "cd wasm/pointcloud-parser && wasm-pack build --target nodejs --release && echo 'exports.memory = wasm.memory;' >> pkg/pointcloud_parser.js",
+    "build:wasm": "cd wasm/pointcloud-parser && wasm-pack build --target nodejs --release --out-dir pkg && wasm-pack build --target web --release --out-dir pkg-web && node -e \"require('fs').rmSync('pkg-web/.gitignore', { force: true })\"",
     "compile:tests": "tsc",
     "compile:all": "pnpm run compile && pnpm run compile:tests",
     "watch": "webpack --watch",

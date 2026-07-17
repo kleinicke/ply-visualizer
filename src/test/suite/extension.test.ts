@@ -145,6 +145,9 @@ end_header
       assert.ok(supportedPatterns.includes('*.glb'));
       assert.ok(supportedPatterns.includes('*.xyzn'));
       assert.ok(supportedPatterns.includes('*.xyzrgb'));
+      assert.ok(supportedPatterns.includes('*.las'));
+      assert.ok(supportedPatterns.includes('*.laz'));
+      assert.ok(supportedPatterns.includes('*.e57'));
 
       // Note: TIF/TIFF files are handled through conversion commands, not direct opening
     }

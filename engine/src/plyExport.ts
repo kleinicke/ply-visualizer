@@ -52,6 +52,7 @@ export function generatePlyFileContent(
   const colorAttribute = geometry.getAttribute('color') as THREE.BufferAttribute;
   mesh.updateWorldMatrix(true, false);
   const worldPoint = new THREE.Vector3();
+  const sourceOrigin = spatialData.sourceOrigin ?? [0, 0, 0];
 
   const vertexCount = positionAttribute.count;
 
@@ -108,6 +109,12 @@ export function generatePlyFileContent(
   for (let i = 0; i < vertexCount; i++) {
     const i3 = i * 3;
     worldPoint.fromBufferAttribute(positionAttribute, i).applyMatrix4(mesh.matrixWorld);
+    // LiDAR imports are rendered near the origin for float32 GPU precision.
+    // Restore the high-precision source-space origin on export after applying
+    // the visible per-file transform to the local cloud.
+    worldPoint.x += sourceOrigin[0];
+    worldPoint.y += sourceOrigin[1];
+    worldPoint.z += sourceOrigin[2];
     const { x, y, z } = worldPoint;
 
     content += `${x} ${y} ${z}`;

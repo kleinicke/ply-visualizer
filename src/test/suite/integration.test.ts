@@ -190,6 +190,9 @@ end_header
       assert.ok(patterns.includes('*.glb'), 'Should support GLB files');
       assert.ok(patterns.includes('*.xyzn'), 'Should support XYZN files');
       assert.ok(patterns.includes('*.xyzrgb'), 'Should support XYZRGB files');
+      assert.ok(patterns.includes('*.las'), 'Should support LAS files');
+      assert.ok(patterns.includes('*.laz'), 'Should support LAZ files');
+      assert.ok(patterns.includes('*.e57'), 'Should support E57 files');
 
       // Note: TIF files are handled through conversion commands, not direct opening
 

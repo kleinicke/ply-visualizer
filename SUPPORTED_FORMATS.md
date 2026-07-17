@@ -6,16 +6,16 @@ example MTL materials, color images or calibration files.
 
 ## Summary
 
-| Category               | Extensions                                                 | Notes                                                               |
-| ---------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------- |
-| Point clouds           | `.ply`, `.xyz`, `.xyzn`, `.xyzrgb`, `.pcd`, `.pts`, `.npy` | `.npy` is treated as a point cloud when the array shape ends in `3` |
-| Meshes                 | `.ply`, `.obj`, `.stl`, `.off`, `.gltf`, `.glb`            | Meshes can also be shown as points/wireframes where applicable      |
-| Depth/disparity images | `.tif`, `.tiff`, `.png`, `.pfm`, `.npy`, `.npz`            | Converted to point clouds with camera parameters                    |
-| Pose data              | `.json`                                                    | 2D/3D body/keypoint JSON structures                                 |
-| Camera profiles        | `.json`                                                    | JSON with a top-level `cameras` object                              |
-| Auxiliary materials    | `.mtl`                                                     | Loaded for OBJ/material coloring workflows                          |
-| Auxiliary color images | `.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.tif`, `.tiff`   | Applied to depth-derived point clouds                               |
-| Auxiliary calibration  | `.json`, `.yaml`, `.yml`, `.txt`, `.conf`                  | Loaded from depth settings/calibration controls                     |
+| Category               | Extensions                                                                         | Notes                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Point clouds           | `.ply`, `.xyz`, `.xyzn`, `.xyzrgb`, `.pcd`, `.pts`, `.npy`, `.las`, `.laz`, `.e57` | `.npy` is treated as a point cloud when the array shape ends in `3` |
+| Meshes                 | `.ply`, `.obj`, `.stl`, `.off`, `.gltf`, `.glb`                                    | Meshes can also be shown as points/wireframes where applicable      |
+| Depth/disparity images | `.tif`, `.tiff`, `.png`, `.pfm`, `.npy`, `.npz`                                    | Converted to point clouds with camera parameters                    |
+| Pose data              | `.json`                                                                            | 2D/3D body/keypoint JSON structures                                 |
+| Camera profiles        | `.json`                                                                            | JSON with a top-level `cameras` object                              |
+| Auxiliary materials    | `.mtl`                                                                             | Loaded for OBJ/material coloring workflows                          |
+| Auxiliary color images | `.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.tif`, `.tiff`                           | Applied to depth-derived point clouds                               |
+| Auxiliary calibration  | `.json`, `.yaml`, `.yml`, `.txt`, `.conf`                                          | Loaded from depth settings/calibration controls                     |
 
 Note: EXR is currently not fully supported yet.
 
@@ -87,6 +87,36 @@ Note: EXR is currently not fully supported yet.
   little, native or big endian descriptors.
 - **Interpretation**: the final dimension is interpreted as `x y z`; other
   dimensions are flattened.
+
+### LAS and LAZ Files (`.las`, `.laz`)
+
+- **Decoder**: the same optimized Rust/WASM implementation is used by VS Code
+  and the standalone browser host.
+- **Coordinates**: LAS scale and offset are applied as 64-bit values. A
+  source-space origin is retained separately while local float32 positions are
+  sent to the GPU, avoiding visible precision loss for large survey coordinates.
+- **Colors**: LAS RGB records are supported, including both commonly encountered
+  8-bit-in-16-bit and full 16-bit channel encodings.
+- **Scalar coloring**: intensity, classification, return number/count, scan
+  angle, GPS time, user data and point source ID are available as scalar fields.
+- **Metadata**: version, point format, bounds, scale/offset, creation software,
+  GUID and VLR/EVLR summaries are retained with the loaded cloud.
+- **Compression**: LAZ uses the native Rust LAZ decoder behind the same API.
+
+### E57 Files (`.e57`)
+
+- **Decoder**: pure Rust/WASM E57 decoding with Cartesian and spherical-to-
+  Cartesian point support.
+- **Multiple scans**: every scan becomes a separate file-list entry. Scan poses
+  are applied and all entries share one precision-preserving origin, so they
+  remain correctly aligned.
+- **Colors and intensity**: normalized RGB and intensity are available when
+  present; row and column indices are exposed as scalar fields.
+- **Invalid records**: invalid Cartesian/direction-only records are skipped and
+  their count is retained in scan metadata.
+- **Memory behavior**: all valid points are decoded at full quality. Extremely
+  large files can therefore exhaust the memory available to VS Code or the
+  browser; automatic sampling is not currently performed.
 
 ## Mesh Files
 

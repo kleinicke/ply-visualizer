@@ -132,6 +132,9 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
       { filename: 'geometry.off', expectedFormat: 'off' },
       { filename: 'scene.gltf', expectedFormat: 'gltf' },
       { filename: 'model.glb', expectedFormat: 'glb' },
+      { filename: 'survey.las', expectedFormat: 'las' },
+      { filename: 'survey.laz', expectedFormat: 'laz' },
+      { filename: 'scans.e57', expectedFormat: 'e57' },
     ];
 
     for (const testFile of testFiles) {

@@ -92,6 +92,9 @@ suite('Extension Advanced Test Suite', () => {
       '*.glb',
       '*.xyzn',
       '*.xyzrgb',
+      '*.las',
+      '*.laz',
+      '*.e57',
     ];
 
     for (const pattern of expectedPatterns) {

@@ -1,0 +1,17 @@
+{
+  "name": "pointcloud-parser",
+  "type": "module",
+  "description": "Fast WebAssembly parser for ASCII point-cloud formats (XYZ/XYZN/XYZRGB/ASCII-PLY)",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "pointcloud_parser_bg.wasm",
+    "pointcloud_parser.js",
+    "pointcloud_parser.d.ts"
+  ],
+  "main": "pointcloud_parser.js",
+  "types": "pointcloud_parser.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

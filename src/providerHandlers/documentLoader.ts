@@ -18,6 +18,7 @@ import {
   parsePtsWasm,
   streamParseFile,
   detectXyzColorMode,
+  parseLidarWasm,
 } from '../wasmPointcloud';
 import { isPlyBinary } from '../../engine/src/fileHandler';
 import {
@@ -56,6 +57,7 @@ export interface DocumentFileTypeFlags {
   isGltfFile: boolean;
   isXyzVariant: boolean;
   isJsonFile: boolean;
+  isLidarFile: boolean;
 }
 
 /**
@@ -86,11 +88,52 @@ export async function loadDocumentContent(
     isGltfFile,
     isXyzVariant,
     isJsonFile,
+    isLidarFile,
   } = flags;
 
   try {
     const loadStartTime = performance.now();
     const wallStart = new Date().toISOString();
+
+    if (isLidarFile) {
+      const bytes = await readFileFast(documentUri);
+      const readTime = performance.now();
+      const extension = path.extname(documentUri.fsPath).slice(1).toLowerCase() as
+        | 'las'
+        | 'laz'
+        | 'e57';
+      const decoded = parseLidarWasm(bytes, extension, path.basename(documentUri.fsPath));
+      const parsedData = decoded.map((cloud, index) => ({
+        vertices: [],
+        faces: [],
+        format: 'binary_little_endian' as const,
+        version: '1.0',
+        comments: [`Imported from ${extension.toUpperCase()}`],
+        vertexCount: cloud.vertexCount,
+        sourcePointCount: cloud.sourcePointCount,
+        faceCount: 0,
+        hasColors: cloud.hasColors,
+        hasNormals: false,
+        hasIntensity: cloud.hasIntensity,
+        fileName: extension === 'e57' ? cloud.name : path.basename(documentUri.fsPath),
+        shortPath: host.getShortPath(documentUri.fsPath),
+        fileIndex: index,
+        fileSizeInBytes: bytes.byteLength,
+        positionsArray: cloud.positionsArray,
+        colorsArray: cloud.colorsArray,
+        normalsArray: null,
+        intensityArray: cloud.intensityArray,
+        scalarFields: cloud.scalarFields,
+        useTypedArrays: true,
+        sourceOrigin: Array.from(cloud.sourceOrigin) as [number, number, number],
+        metadata: cloud.metadata,
+      }));
+      host.logPerf(
+        `⏱️ PERF[${extension}/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsedData.reduce((n, d) => n + d.vertexCount, 0)} pts) for ${path.basename(documentUri.fsPath)}`
+      );
+      await sendSpatialDataToWebview(webviewPanel, parsedData, 'multiSpatialData');
+      return;
+    }
 
     if (isDepthFile) {
       // Handle depth files (TIF, PFM, NPY, NPZ, PNG, EXR) for point cloud conversion
