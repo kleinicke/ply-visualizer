@@ -96,11 +96,15 @@ Note: EXR is currently not fully supported yet.
   source-space origin is retained separately while local float32 positions are
   sent to the GPU, avoiding visible precision loss for large survey coordinates.
 - **Colors**: LAS RGB records are supported, including both commonly encountered
-  8-bit-in-16-bit and full 16-bit channel encodings.
+  8-bit-in-16-bit and full 16-bit channel encodings. The detected encoding is
+  recorded in metadata. Because LAS has no color-depth flag, files whose full
+  16-bit RGB values all happen to be at most 255 are inherently ambiguous and
+  are interpreted as 8-bit-in-16-bit.
 - **Scalar coloring**: intensity, classification, return number/count, scan
   angle, GPS time, user data and point source ID are available as scalar fields.
 - **Metadata**: version, point format, bounds, scale/offset, creation software,
-  GUID and VLR/EVLR summaries are retained with the loaded cloud.
+  GUID and VLR/EVLR summaries are retained with the loaded cloud. OGC WKT and
+  GeoTIFF projection VLR values are decoded into the `crs` metadata object.
 - **Compression**: LAZ uses the native Rust LAZ decoder behind the same API.
 
 ### E57 Files (`.e57`)
@@ -113,10 +117,14 @@ Note: EXR is currently not fully supported yet.
 - **Colors and intensity**: normalized RGB and intensity are available when
   present; row and column indices are exposed as scalar fields.
 - **Invalid records**: invalid Cartesian/direction-only records are skipped and
-  their count is retained in scan metadata.
-- **Memory behavior**: all valid points are decoded at full quality. Extremely
-  large files can therefore exhaust the memory available to VS Code or the
-  browser; automatic sampling is not currently performed.
+  their count is retained in scan metadata. A damaged E57 scan is reported as a
+  decoder warning while other independently decodable scans still load.
+- **Memory behavior**: browser decoding runs in a worker and transfers packed
+  buffers without blocking the renderer. Extension transfers above 64 MiB are
+  split into awaited 250,000-point chunks. All valid points are still decoded at
+  full quality; inputs estimated to require more than 1 GiB of decoded WASM
+  buffers fail early with a clear error instead of risking a WASM memory trap.
+  Automatic sampling is not currently performed.
 
 ## Mesh Files
 

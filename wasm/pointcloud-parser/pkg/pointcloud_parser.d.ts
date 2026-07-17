@@ -6,6 +6,7 @@ export class LidarCollectionResult {
     free(): void;
     [Symbol.dispose](): void;
     take_scan(index: number): LidarScanResult;
+    readonly errors_json: string;
     readonly scan_count: number;
 }
 

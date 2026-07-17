@@ -290,6 +290,11 @@ class PointCloudVisualizer {
       totalChunks: number;
       receivedChunks: number;
       vertices: SpatialVertex[];
+      positionsArray?: Float32Array;
+      colorsArray?: Uint8Array;
+      normalsArray?: Float32Array;
+      scalarFields?: Record<string, Float32Array>;
+      useTypedArrays: boolean;
       hasColors: boolean;
       hasNormals: boolean;
       faces: SpatialFace[];
@@ -299,6 +304,12 @@ class PointCloudVisualizer {
       startTime: number;
       firstChunkTime: number;
       lastChunkTime: number;
+      shortPath?: string;
+      hasIntensity?: boolean;
+      sourcePointCount?: number;
+      sourceOrigin?: [number, number, number];
+      metadata?: Record<string, unknown>;
+      fileSizeInBytes?: number;
     }
   > = new Map();
 
@@ -2146,6 +2157,9 @@ class PointCloudVisualizer {
           break;
         case 'largeFileComplete':
           await this.handleLargeFileComplete(message);
+          break;
+        case 'cancelLargeFile':
+          largeFileChunking.handleCancelLargeFile(this, message);
           break;
         case 'depthData':
           this.handleDepthData(message);

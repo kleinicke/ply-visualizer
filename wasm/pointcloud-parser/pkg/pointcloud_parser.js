@@ -18,6 +18,21 @@ class LidarCollectionResult {
     wasm.__wbg_lidarcollectionresult_free(ptr, 0);
   }
   /**
+   * @returns {string}
+   */
+  get errors_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.lidarcollectionresult_errors_json(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
    * @returns {number}
    */
   get scan_count() {

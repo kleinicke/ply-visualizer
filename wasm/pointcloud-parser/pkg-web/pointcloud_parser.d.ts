@@ -6,6 +6,7 @@ export class LidarCollectionResult {
     free(): void;
     [Symbol.dispose](): void;
     take_scan(index: number): LidarScanResult;
+    readonly errors_json: string;
     readonly scan_count: number;
 }
 
@@ -148,6 +149,7 @@ export interface InitOutput {
     readonly __wbg_lidarscanresult_free: (a: number, b: number) => void;
     readonly __wbg_pointcloudresult_free: (a: number, b: number) => void;
     readonly __wbg_streamparser_free: (a: number, b: number) => void;
+    readonly lidarcollectionresult_errors_json: (a: number) => [number, number];
     readonly lidarcollectionresult_scan_count: (a: number) => number;
     readonly lidarcollectionresult_take_scan: (a: number, b: number) => [number, number, number];
     readonly lidarscanresult_bbox: (a: number) => [number, number];
@@ -193,8 +195,8 @@ export interface InitOutput {
     readonly alloc: (a: number) => number;
     readonly dealloc: (a: number, b: number) => void;
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_start: () => void;

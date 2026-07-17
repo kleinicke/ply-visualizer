@@ -22,8 +22,19 @@ struct LasMetadata {
     guid: String,
     creation_date: Option<String>,
     has_wkt_crs: bool,
+    crs: LasCrsMetadata,
+    color_encoding: Option<&'static str>,
     gps_time_offset: Option<f64>,
     vlrs: Vec<VlrMetadata>,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LasCrsMetadata {
+    wkt: Option<String>,
+    geo_key_directory: Option<Vec<u16>>,
+    geo_double_params: Option<Vec<f64>>,
+    geo_ascii_params: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -155,6 +166,7 @@ impl LidarScanResult {
 #[wasm_bindgen]
 pub struct LidarCollectionResult {
     scans: Vec<Option<LidarScanResult>>,
+    errors: Vec<String>,
 }
 
 #[wasm_bindgen]
@@ -169,6 +181,76 @@ impl LidarCollectionResult {
             .and_then(Option::take)
             .ok_or_else(|| JsValue::from_str("scan index is invalid or was already taken"))
     }
+    #[wasm_bindgen(getter)]
+    pub fn errors_json(&self) -> String {
+        serde_json::to_string(&self.errors).unwrap_or_else(|_| "[]".into())
+    }
+}
+
+const MAX_DECODED_BUFFER_BYTES: u64 = 1024 * 1024 * 1024;
+
+fn validate_decoded_size(point_count: u64, bytes_per_point: u64) -> Result<usize, String> {
+    let estimated = point_count
+        .checked_mul(bytes_per_point)
+        .ok_or_else(|| "decoded point-cloud size overflow".to_owned())?;
+    if estimated > MAX_DECODED_BUFFER_BYTES {
+        return Err(format!(
+            "point cloud needs about {:.1} GiB of decoded buffers; the safety limit is 1.0 GiB",
+            estimated as f64 / 1024.0 / 1024.0 / 1024.0
+        ));
+    }
+    usize::try_from(point_count)
+        .map_err(|_| "point count is too large for this platform".to_owned())
+}
+
+fn projection_vlrs<'a>(header: &'a las::Header) -> impl Iterator<Item = &'a las::Vlr> {
+    header
+        .vlrs()
+        .iter()
+        .chain(header.evlrs().iter())
+        .filter(|v| v.user_id.trim_end_matches('\0') == "LASF_Projection")
+}
+
+fn read_las_crs(header: &las::Header) -> LasCrsMetadata {
+    let mut crs = LasCrsMetadata::default();
+    for vlr in projection_vlrs(header) {
+        match vlr.record_id {
+            2112 => {
+                let text = String::from_utf8_lossy(&vlr.data)
+                    .trim_end_matches('\0')
+                    .trim()
+                    .to_owned();
+                if !text.is_empty() {
+                    crs.wkt = Some(text);
+                }
+            }
+            34735 => {
+                crs.geo_key_directory = Some(
+                    vlr.data
+                        .chunks_exact(2)
+                        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                        .collect(),
+                );
+            }
+            34736 => {
+                crs.geo_double_params = Some(
+                    vlr.data
+                        .chunks_exact(8)
+                        .map(|b| f64::from_le_bytes(b.try_into().expect("eight-byte chunk")))
+                        .collect(),
+                );
+            }
+            34737 => {
+                crs.geo_ascii_params = Some(
+                    String::from_utf8_lossy(&vlr.data)
+                        .trim_end_matches('\0')
+                        .to_owned(),
+                );
+            }
+            _ => {}
+        }
+    }
+    crs
 }
 
 fn update_bounds(min: &mut [f32; 3], max: &mut [f32; 3], x: f32, y: f32, z: f32) {
@@ -187,13 +269,27 @@ fn finish_bounds(min: &mut [f32; 3], max: &mut [f32; 3]) {
     }
 }
 
+fn las_color_is_16_bit(max_color: u16, channels_above_byte: usize, channel_count: usize) -> bool {
+    // A single slightly out-of-range channel is usually dirty 8-bit-in-16-bit
+    // data, while genuinely high values or a meaningful population above 255
+    // indicate the spec-defined 16-bit encoding.
+    max_color > 4095
+        || (channel_count > 0 && channels_above_byte.saturating_mul(100) >= channel_count)
+}
+
 #[wasm_bindgen]
 pub fn parse_las(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult, JsValue> {
     let cursor = Cursor::new(data);
     let mut reader = LasReader::new(cursor).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let header = reader.header().clone();
-    let count = usize::try_from(header.number_of_points())
-        .map_err(|_| JsValue::from_str("point count is too large for this platform"))?;
+    let has_colors = header.point_format().has_color;
+    let has_gps = header.point_format().has_gps_time;
+    // Positions + seven always-present scalar fields, with optional GPS and
+    // temporary/final RGB storage. This rejects hostile headers before large
+    // Vec allocations can trap the WASM instance.
+    let bytes_per_point = 40 + if has_gps { 4 } else { 0 } + if has_colors { 9 } else { 0 };
+    let count = validate_decoded_size(header.number_of_points(), bytes_per_point)
+        .map_err(|error| JsValue::from_str(&error))?;
     let bounds = header.bounds();
     let origin = [
         (bounds.min.x + bounds.max.x) * 0.5,
@@ -201,8 +297,6 @@ pub fn parse_las(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
         (bounds.min.z + bounds.max.z) * 0.5,
     ];
     let point_format = header.point_format().to_u8().unwrap_or_default();
-    let has_colors = header.point_format().has_color;
-    let has_gps = header.point_format().has_gps_time;
     let transforms = header.transforms();
     let vlrs = header
         .vlrs()
@@ -252,6 +346,8 @@ pub fn parse_las(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
         guid: header.guid().to_string(),
         creation_date: header.date().map(|d| d.to_string()),
         has_wkt_crs: header.has_wkt_crs(),
+        crs: read_las_crs(&header),
+        color_encoding: None,
         gps_time_offset: None,
         vlrs,
     };
@@ -263,6 +359,7 @@ pub fn parse_las(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
         Vec::new()
     };
     let mut max_color = 0u16;
+    let mut color_channels_above_byte = 0usize;
     let mut intensity = Vec::with_capacity(count);
     let mut classification = Vec::with_capacity(count);
     let mut return_number = Vec::with_capacity(count);
@@ -288,6 +385,10 @@ pub fn parse_las(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
         if has_colors {
             let c = p.color.unwrap_or_default();
             max_color = max_color.max(c.red).max(c.green).max(c.blue);
+            color_channels_above_byte += [c.red, c.green, c.blue]
+                .into_iter()
+                .filter(|value| *value > 255)
+                .count();
             colors16.extend_from_slice(&[c.red, c.green, c.blue]);
         }
         intensity.push(p.intensity as f32);
@@ -310,8 +411,9 @@ pub fn parse_las(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
         point_source_id.push(p.point_source_id as f32);
     }
     finish_bounds(&mut min, &mut max);
+    let color_is_16_bit = las_color_is_16_bit(max_color, color_channels_above_byte, colors16.len());
     let colors = if has_colors {
-        let divisor = if max_color > 255 { 257u32 } else { 1u32 };
+        let divisor = if color_is_16_bit { 257u32 } else { 1u32 };
         colors16
             .into_iter()
             .map(|v| ((v as u32 / divisor).min(255)) as u8)
@@ -320,6 +422,11 @@ pub fn parse_las(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
         Vec::new()
     };
     metadata.gps_time_offset = gps_time_offset;
+    metadata.color_encoding = has_colors.then_some(if color_is_16_bit {
+        "16-bit"
+    } else {
+        "8-bit-in-16-bit"
+    });
     let result = LidarScanResult {
         name: file_name.to_owned(),
         source_count: header.number_of_points(),
@@ -343,6 +450,7 @@ pub fn parse_las(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
     };
     Ok(LidarCollectionResult {
         scans: vec![Some(result)],
+        errors: Vec::new(),
     })
 }
 
@@ -353,11 +461,22 @@ pub fn parse_e57(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
     let descriptors = reader.pointclouds();
     let scan_count = descriptors.len();
     let mut scans = Vec::with_capacity(scan_count);
+    let mut errors = Vec::new();
     // The simple reader applies each scan pose. One common origin keeps every
     // scan aligned while retaining small, precise float32 GPU coordinates.
     let mut common_origin: Option<[f64; 3]> = None;
     for (scan_index, pc) in descriptors.iter().enumerate() {
-        let capacity = usize::try_from(pc.records).unwrap_or(0);
+        let bytes_per_point = 12
+            + if pc.has_color() { 3 } else { 0 }
+            + if pc.has_intensity() { 4 } else { 0 }
+            + if pc.has_row_column() { 8 } else { 0 };
+        let capacity = match validate_decoded_size(pc.records, bytes_per_point) {
+            Ok(capacity) => capacity,
+            Err(error) => {
+                errors.push(format!("scan {}: {}", scan_index + 1, error));
+                continue;
+            }
+        };
         let mut positions = Vec::with_capacity(capacity.saturating_mul(3));
         let mut colors = if pc.has_color() {
             Vec::with_capacity(capacity.saturating_mul(3))
@@ -382,12 +501,25 @@ pub fn parse_e57(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
         let mut invalid = 0u64;
         let mut min = [f32::INFINITY; 3];
         let mut max = [f32::NEG_INFINITY; 3];
-        let mut points = reader
-            .pointcloud_simple(pc)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let mut points = match reader.pointcloud_simple(pc) {
+            Ok(points) => points,
+            Err(error) => {
+                errors.push(format!("scan {}: {error}", scan_index + 1));
+                continue;
+            }
+        };
         points.intensity_to_color(false);
         for point in points {
-            let p = point.map_err(|e| JsValue::from_str(&e.to_string()))?;
+            let p = match point {
+                Ok(point) => point,
+                Err(error) => {
+                    invalid += 1;
+                    if errors.len() < 20 {
+                        errors.push(format!("scan {} record error: {error}", scan_index + 1));
+                    }
+                    continue;
+                }
+            };
             let (wx, wy, wz) = match p.cartesian {
                 e57::CartesianCoordinate::Valid { x, y, z } => (x, y, z),
                 _ => {
@@ -479,7 +611,14 @@ pub fn parse_e57(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
             max,
         }));
     }
-    Ok(LidarCollectionResult { scans })
+    if scans.is_empty() && !descriptors.is_empty() {
+        return Err(JsValue::from_str(&format!(
+            "none of the {} E57 scans could be decoded: {}",
+            descriptors.len(),
+            errors.join("; ")
+        )));
+    }
+    Ok(LidarCollectionResult { scans, errors })
 }
 
 #[cfg(test)]
@@ -493,6 +632,12 @@ mod tests {
         builder.point_format.is_compressed = compressed;
         builder.transforms.x.offset = 4_000_000.0;
         builder.transforms.y.offset = 500_000.0;
+        builder.vlrs.push(las::Vlr {
+            user_id: "LASF_Projection".into(),
+            record_id: 2112,
+            description: "OGC coordinate system WKT".into(),
+            data: b"PROJCRS[\"Fixture CRS\"]\0".to_vec(),
+        });
         let header = builder.into_header().unwrap();
         let mut writer = Writer::new(Cursor::new(Vec::new()), header).unwrap();
         writer
@@ -538,7 +683,26 @@ mod tests {
             assert_eq!(&[255, 127, 0, 0, 255, 127], scan.colors.as_slice());
             assert!(scan.positions.iter().all(|v| v.abs() <= 1.01));
             assert!(scan.source_origin[0] > 4_000_000.0);
+            let metadata: serde_json::Value = serde_json::from_str(&scan.metadata_json).unwrap();
+            assert_eq!("16-bit", metadata["colorEncoding"]);
+            assert_eq!("PROJCRS[\"Fixture CRS\"]", metadata["crs"]["wkt"]);
         }
+    }
+
+    #[test]
+    fn rejects_decoded_buffers_above_the_wasm_safety_limit() {
+        assert!(validate_decoded_size(1_000, 49).is_ok());
+        let error = validate_decoded_size(u64::MAX, 49).unwrap_err();
+        assert!(error.contains("overflow"));
+        let error = validate_decoded_size(30_000_000, 49).unwrap_err();
+        assert!(error.contains("safety limit"));
+    }
+
+    #[test]
+    fn las_color_detection_ignores_one_slightly_out_of_range_channel() {
+        assert!(!las_color_is_16_bit(300, 1, 300));
+        assert!(las_color_is_16_bit(300, 3, 300));
+        assert!(las_color_is_16_bit(65_535, 1, 300));
     }
 
     fn e57_fixture() -> Vec<u8> {

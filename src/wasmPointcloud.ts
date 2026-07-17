@@ -139,6 +139,10 @@ export function parseLidarWasm(
   let collection: any;
   try {
     collection = extension === 'e57' ? m.parse_e57(bytes, fileName) : m.parse_las(bytes, fileName);
+    const decodeErrors = JSON.parse(collection.errors_json || '[]') as string[];
+    if (decodeErrors.length) {
+      console.warn(`[pointcloud-wasm] ${fileName} loaded with decoder warnings:`, decodeErrors);
+    }
     const scans: WasmLidarCloud[] = [];
     for (let i = 0; i < collection.scan_count; i++) {
       scans.push(marshalLidarScan(collection.take_scan(i)));

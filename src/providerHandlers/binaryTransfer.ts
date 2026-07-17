@@ -134,12 +134,32 @@ export async function sendSpatialDataToWebview(
       `🚀 Binary transfer for ${spatialData.fileName} (${spatialData.vertexCount} vertices)`
     );
     const startTime = performance.now();
+    let usedChunking = false;
 
     try {
-      await sendBinaryData(webviewPanel, spatialData, messageType);
+      const scalarBytes = Object.values(spatialData.scalarFields || {}).reduce(
+        (sum: number, values: any) => sum + (values?.byteLength || 0),
+        0
+      );
+      const packedBytes =
+        (spatialData.positionsArray?.byteLength || 0) +
+        (spatialData.colorsArray?.byteLength || 0) +
+        (spatialData.normalsArray?.byteLength || 0) +
+        scalarBytes;
+      // Avoid one enormous structured clone. Smaller packed chunks also let
+      // postMessage provide useful backpressure and a precise failure point.
+      if (spatialData.useTypedArrays && packedBytes > 64 * 1024 * 1024) {
+        usedChunking = true;
+        await sendLargeFileInChunksOptimized(webviewPanel, spatialData, messageType);
+      } else {
+        await sendBinaryData(webviewPanel, spatialData, messageType);
+      }
       const transferTime = performance.now() - startTime;
       console.log(`⚡ Binary transfer complete: ${transferTime.toFixed(1)}ms`);
     } catch (error) {
+      if (usedChunking) {
+        throw error;
+      }
       console.log(
         `⚠️ Binary transfer failed for ${spatialData.fileName}, falling back to chunking...`
       );
@@ -226,18 +246,23 @@ export async function sendBinaryData(
   }
 
   // Calculate total binary size
+  const scalarSize = Object.values(spatialData.scalarFields || {}).reduce(
+    (sum: number, values: any) => sum + (values?.byteLength || 0),
+    0
+  );
   const totalSize =
     positionBuffer.byteLength +
     (colorBuffer ? colorBuffer.byteLength : 0) +
     (normalBuffer ? normalBuffer.byteLength : 0) +
-    (indexBuffer ? indexBuffer.byteLength : 0);
+    (indexBuffer ? indexBuffer.byteLength : 0) +
+    scalarSize;
 
   console.log(
     `📦 Binary data: ${(totalSize / 1024 / 1024).toFixed(1)}MB (${vertexCount} vertices)`
   );
 
   // Send metadata + binary buffers
-  webviewPanel.webview.postMessage({
+  const delivered = await webviewPanel.webview.postMessage({
     type: 'binarySpatialData',
     messageType: messageType,
     fileName: spatialData.fileName,
@@ -265,6 +290,9 @@ export async function sendBinaryData(
     metadata: spatialData.metadata,
     fileSizeInBytes: spatialData.fileSizeInBytes,
   });
+  if (!delivered) {
+    throw new Error(`The webview rejected the binary payload for ${spatialData.fileName}`);
+  }
 }
 
 export async function sendLargeFileInChunksOptimized(
@@ -273,8 +301,9 @@ export async function sendLargeFileInChunksOptimized(
   messageType: string
 ): Promise<void> {
   // ULTRA-AGGRESSIVE chunking for maximum transfer speed
-  const CHUNK_SIZE = 1000000; // 1M vertices per chunk!
+  const CHUNK_SIZE = 250000;
   const totalVertices = spatialData.vertexCount;
+  const typed = !!spatialData.useTypedArrays && spatialData.positionsArray instanceof Float32Array;
   const vertices = spatialData.vertices;
   const colors = spatialData.colors;
   const normals = spatialData.normals;
@@ -288,9 +317,14 @@ export async function sendLargeFileInChunksOptimized(
   const startTime = performance.now();
   let firstChunkTime = 0;
 
-  // Send start message
-  webviewPanel.webview.postMessage({
+  const transferId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const scalarFields = (spatialData.scalarFields || {}) as Record<string, Float32Array>;
+
+  // Send start message. A unique key matters for E57 files whose scans may
+  // legally have duplicate or missing names.
+  const started = await webviewPanel.webview.postMessage({
     type: 'startLargeFile',
+    transferId,
     fileName: spatialData.fileName,
     shortPath: spatialData.shortPath,
     totalVertices: totalVertices,
@@ -301,45 +335,101 @@ export async function sendLargeFileInChunksOptimized(
     format: spatialData.format,
     comments: spatialData.comments,
     messageType: messageType,
+    useTypedArrays: typed,
+    hasIntensity: !!spatialData.hasIntensity,
+    scalarFieldNames: Object.keys(scalarFields),
+    sourcePointCount: spatialData.sourcePointCount,
+    sourceOrigin: spatialData.sourceOrigin,
+    metadata: spatialData.metadata,
+    fileSizeInBytes: spatialData.fileSizeInBytes,
   });
-
-  // Send chunks with minimal overhead
-  for (let i = 0; i < totalChunks; i++) {
-    const startIdx = i * CHUNK_SIZE;
-    const endIdx = Math.min(startIdx + CHUNK_SIZE, totalVertices);
-    const chunkSize = endIdx - startIdx;
-
-    // Extract chunk data efficiently
-    const chunkVertices = vertices.slice(startIdx, endIdx);
-    const chunkColors = colors ? colors.slice(startIdx, endIdx) : undefined;
-    const chunkNormals = normals ? normals.slice(startIdx, endIdx) : undefined;
-
-    webviewPanel.webview.postMessage({
-      type: 'largeFileChunk',
-      fileName: spatialData.fileName,
-      chunkIndex: i,
-      totalChunks: totalChunks,
-      vertices: chunkVertices,
-      colors: chunkColors,
-      normals: chunkNormals,
-    });
-
-    if (i === 0) {
-      firstChunkTime = performance.now();
-    }
-
-    // Log only every 5th chunk to reduce console spam
-    if (i % 5 === 0 || i === totalChunks - 1) {
-      console.log(`Chunk ${i + 1}/${totalChunks} (${chunkSize} vertices)`);
-    }
+  if (!started) {
+    throw new Error(`The webview rejected the chunked-transfer header for ${spatialData.fileName}`);
   }
 
-  // Send completion message
-  webviewPanel.webview.postMessage({
-    type: 'largeFileComplete',
-    fileName: spatialData.fileName,
-    messageType: messageType,
-  });
+  try {
+    // Send chunks with minimal overhead
+    for (let i = 0; i < totalChunks; i++) {
+      const startIdx = i * CHUNK_SIZE;
+      const endIdx = Math.min(startIdx + CHUNK_SIZE, totalVertices);
+      const chunkSize = endIdx - startIdx;
+
+      // Typed LiDAR clouds never materialize millions of JS vertex objects.
+      // Slice their packed arrays directly and retain every scalar field.
+      const chunkVertices = typed ? undefined : vertices.slice(startIdx, endIdx);
+      const positionBuffer = typed
+        ? spatialData.positionsArray.slice(startIdx * 3, endIdx * 3).buffer
+        : undefined;
+      const colorBuffer =
+        typed && spatialData.colorsArray
+          ? spatialData.colorsArray.slice(startIdx * 3, endIdx * 3).buffer
+          : undefined;
+      const normalBuffer =
+        typed && spatialData.normalsArray
+          ? spatialData.normalsArray.slice(startIdx * 3, endIdx * 3).buffer
+          : undefined;
+      const scalarFieldBuffers = typed
+        ? Object.fromEntries(
+            Object.entries(scalarFields).map(([name, values]) => [
+              name,
+              values.slice(startIdx, endIdx).buffer,
+            ])
+          )
+        : undefined;
+      const chunkColors = !typed && colors ? colors.slice(startIdx, endIdx) : undefined;
+      const chunkNormals = !typed && normals ? normals.slice(startIdx, endIdx) : undefined;
+
+      const delivered = await webviewPanel.webview.postMessage({
+        type: 'largeFileChunk',
+        transferId,
+        fileName: spatialData.fileName,
+        chunkIndex: i,
+        startIndex: startIdx,
+        vertexCount: chunkSize,
+        totalChunks: totalChunks,
+        vertices: chunkVertices,
+        colors: chunkColors,
+        normals: chunkNormals,
+        positionBuffer,
+        colorBuffer,
+        normalBuffer,
+        scalarFieldBuffers,
+      });
+      if (!delivered) {
+        throw new Error(
+          `The webview rejected chunk ${i + 1}/${totalChunks} for ${spatialData.fileName}`
+        );
+      }
+
+      if (i === 0) {
+        firstChunkTime = performance.now();
+      }
+
+      // Log only every 5th chunk to reduce console spam
+      if (i % 5 === 0 || i === totalChunks - 1) {
+        console.log(`Chunk ${i + 1}/${totalChunks} (${chunkSize} vertices)`);
+      }
+    }
+
+    // Send completion message
+    const completed = await webviewPanel.webview.postMessage({
+      type: 'largeFileComplete',
+      transferId,
+      fileName: spatialData.fileName,
+      messageType: messageType,
+    });
+    if (!completed) {
+      throw new Error(`The webview rejected the completion message for ${spatialData.fileName}`);
+    }
+  } catch (error) {
+    // Best-effort cleanup; the original transfer error remains authoritative.
+    await webviewPanel.webview.postMessage({
+      type: 'cancelLargeFile',
+      transferId,
+      fileName: spatialData.fileName,
+    });
+    throw error;
+  }
 
   const totalTime = performance.now() - startTime;
   console.log(
