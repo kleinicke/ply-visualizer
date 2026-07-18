@@ -3,7 +3,75 @@
 Decisions from the July 2026 roadmap discussion. This file records what was
 considered and _not_ built, so the reasoning isn't lost or re-litigated.
 
+### Rust/WASM implementation preference
+
+For new parsing and compute-heavy features, prefer Rust compiled to WASM when
+the work can be expressed as a coarse, typed-array operation. LAS/LAZ and E57
+decoding, sampling, bounds/scalar extraction and complete film timelines are
+good candidates. DOM interaction, Three.js object management, browser APIs and
+tiny per-click calculations stay in TypeScript unless they can join a larger
+batched Rust geometry API. This keeps Rust useful without paying WASM call and
+copy overhead for trivial UI work.
+
 ## Planned
+
+## Other new file formats
+
+PTX Static FBX 3MF VTK/VTP COPC/EPT FBX gaussian splatting
+
+### Cloud-to-cloud distance comparison
+
+**Prototype branch:** `feature/cloud-distance-comparison` (commit `31c29f3`).
+The branch contains a bounded nearest-neighbor implementation running in a Web
+Worker, with source/reference selection, a maximum-distance clamp and scalar
+heatmap coloring. It is intentionally kept off `main` until its usefulness and
+performance have been validated with representative real-world clouds.
+
+Color cloud A by its nearest-neighbor distance to reference cloud B — a
+CloudCompare-style distance heatmap, useful for comparing reconstruction output
+against ground truth.
+
+Sketch when picked up again:
+
+1. Apply each file's transform so both clouds are in world space.
+2. Build a uniform voxel-grid hash over B (cell size ≈ expected distance scale);
+   no KD-tree needed.
+3. For each point in A, check the 27 neighboring cells, take the min distance.
+   Output is a `Float32Array` — just another scalar field.
+4. Render through the scalar-field colormap infrastructure (which is why
+   colormaps were built first).
+
+Run the compute off the main thread. Per the project's performance rule (below),
+the distance kernel is a candidate for **Rust → WASM** rather than JS in a Web
+Worker. A later extension: point-to-mesh distance against STL/OBJ ground truth
+(same UI, triangle-distance kernel).
+
+### Gaussian splatting preview
+
+Not competing with SuperSplat — their editor/renderer quality is out of reach
+and out of scope. If revisited, only the cheap version: detect the 3DGS PLY
+property layout (`f_dc_0..2`, `opacity`, `scale_*`, `rot_*`) in the PLY parser
+and render gaussian centers as a normal point cloud colored from the DC
+coefficients. That converts "shows nothing useful" into "shows my
+reconstruction" for days of work, not months. A real sorted-splat renderer (e.g.
+integrating `@mkkellogg/GaussianSplats3D`) only if users ask.
+
+## Implemented
+
+### KITTI LiDAR `.bin` support
+
+**Shipped (July 2026, initial version).** `KittiBinParser`
+(`engine/src/parsers/kittiBinParser.ts`) reads the headerless little-endian
+float32 `[x, y, z, reflectance]` layout, validates that the file size is a
+multiple of 16 and reports the format as "KITTI BIN"; reflectance feeds the
+existing intensity color modes. Because `.bin` is ambiguous, the VS Code
+registration is a separate `plyViewer.kittiBin` custom editor with
+`priority: "option"` — users opt in via "Open With..." or the explorer context
+menu instead of the extension hijacking every `.bin` file. Playwright coverage:
+`engine/test/kitti-bin-loading.spec.ts`.
+
+Still open from the original sketch: sequence playback, calibration/pose files
+and SemanticKITTI `.label` overlays.
 
 ### Better point-to-point measurements
 
@@ -21,9 +89,10 @@ multiple clouds and picks near overlapping geometry.
 
 ### LAS and LAZ support
 
-Add `.las` and `.laz` as first-class point-cloud formats in both the VS Code and
-browser hosts. Prefer one Rust parser compiled to WASM rather than separate
-JavaScript and extension-host implementations.
+**Shipped (July 2026, initial version).** Add `.las` and `.laz` as first-class
+point-cloud formats in both the VS Code and browser hosts. Prefer one Rust
+parser compiled to WASM rather than separate JavaScript and extension-host
+implementations.
 
 Implementation sketch:
 
@@ -50,9 +119,10 @@ support. Correct CRS preservation and large-coordinate rendering come first.
 
 ### E57 support
 
-Add `.e57` using Rust/WASM. E57 containers can hold several scans, so each scan
-should become an independently visible and transformable entry in the existing
-file list rather than silently loading only the first one.
+**Shipped (July 2026, initial version).** Add `.e57` using Rust/WASM. E57
+containers can hold several scans, so each scan should become an independently
+visible and transformable entry in the existing file list rather than silently
+loading only the first one.
 
 Implementation sketch:
 
@@ -97,78 +167,6 @@ if a batched Rust geometry API grows anyway.
 
 Still open: pause (currently play/stop only), timeline scrubbing, high-DPI /
 resize-during-recording tests.
-
-### Rust/WASM implementation preference
-
-For new parsing and compute-heavy features, prefer Rust compiled to WASM when
-the work can be expressed as a coarse, typed-array operation. LAS/LAZ and E57
-decoding, sampling, bounds/scalar extraction and complete film timelines are
-good candidates. DOM interaction, Three.js object management, browser APIs and
-tiny per-click calculations stay in TypeScript unless they can join a larger
-batched Rust geometry API. This keeps Rust useful without paying WASM call and
-copy overhead for trivial UI work.
-
-## Skipped for now (worth revisiting)
-
-### Cloud-to-cloud distance comparison
-
-**Prototype branch:** `feature/cloud-distance-comparison` (commit `31c29f3`).
-The branch contains a bounded nearest-neighbor implementation running in a Web
-Worker, with source/reference selection, a maximum-distance clamp and scalar
-heatmap coloring. It is intentionally kept off `main` until its usefulness and
-performance have been validated with representative real-world clouds.
-
-Color cloud A by its nearest-neighbor distance to reference cloud B — a
-CloudCompare-style distance heatmap, useful for comparing reconstruction output
-against ground truth.
-
-Sketch when picked up again:
-
-1. Apply each file's transform so both clouds are in world space.
-2. Build a uniform voxel-grid hash over B (cell size ≈ expected distance scale);
-   no KD-tree needed.
-3. For each point in A, check the 27 neighboring cells, take the min distance.
-   Output is a `Float32Array` — just another scalar field.
-4. Render through the scalar-field colormap infrastructure (which is why
-   colormaps were built first).
-
-Run the compute off the main thread. Per the project's performance rule (below),
-the distance kernel is a candidate for **Rust → WASM** rather than JS in a Web
-Worker. A later extension: point-to-mesh distance against STL/OBJ ground truth
-(same UI, triangle-distance kernel).
-
-### Gaussian splatting preview
-
-Not competing with SuperSplat — their editor/renderer quality is out of reach
-and out of scope. If revisited, only the cheap version: detect the 3DGS PLY
-property layout (`f_dc_0..2`, `opacity`, `scale_*`, `rot_*`) in the PLY parser
-and render gaussian centers as a normal point cloud colored from the DC
-coefficients. That converts "shows nothing useful" into "shows my
-reconstruction" for days of work, not months. A real sorted-splat renderer (e.g.
-integrating `@mkkellogg/GaussianSplats3D`) only if users ask.
-
-### Large-coordinate auto-rebase
-
-Clouds with large absolute coordinates (UTM/LiDAR) currently need Fit to View
-(F) after loading, and float32 precision can make points jitter during rotation.
-An automatic hidden per-file rebase was implemented and tested in July 2026,
-then removed: it added a full point scan, an extra position buffer for affected
-files, and transform/export complexity without a demonstrated visible benefit in
-the available fixtures. Revisit only with a real file that reproduces the
-precision problem and can serve as a regression test.
-
-### Cross-section slab (world-space clipping planes)
-
-Built (axis picker + min/max sliders driving `renderer.clippingPlanes`) and
-**removed on user decision before ever being committed** — not needed in the
-panel. If it ever comes back, the verified recipe: a small
-`visualization/sectionPlanes.ts` module mapping min/max percentages of the
-content bounding box onto two `THREE.Plane`s in global
-`renderer.clippingPlanes`. Use global planes, not per-material clipping —
-per-material needs re-apply hooks on every material recreation — and EDL is
-unaffected because ShaderMaterials don't opt into clipping.
-
-## Closed — do not reattempt
 
 ### CloudCompare-style rotation direction
 
@@ -253,3 +251,26 @@ Why the multiple past attempts failed (post-mortem opinion):
 Cost/benefit verdict: repeated significant effort, no stable result, and users
 adapt to rotation direction quickly — but a lost camera was the real pain, and
 the void-double-click shortcut solves that directly.
+
+## Discarded
+
+### Large-coordinate auto-rebase, discarded
+
+Clouds with large absolute coordinates (UTM/LiDAR) currently need Fit to View
+(F) after loading, and float32 precision can make points jitter during rotation.
+An automatic hidden per-file rebase was implemented and tested in July 2026,
+then removed: it added a full point scan, an extra position buffer for affected
+files, and transform/export complexity without a demonstrated visible benefit in
+the available fixtures. Revisit only with a real file that reproduces the
+precision problem and can serve as a regression test.
+
+### Cross-section slab (world-space clipping planes), discarded
+
+Built (axis picker + min/max sliders driving `renderer.clippingPlanes`) and
+**removed on user decision before ever being committed** — not needed in the
+panel. If it ever comes back, the verified recipe: a small
+`visualization/sectionPlanes.ts` module mapping min/max percentages of the
+content bounding box onto two `THREE.Plane`s in global
+`renderer.clippingPlanes`. Use global planes, not per-material clipping —
+per-material needs re-apply hooks on every material recreation — and EDL is
+unaffected because ShaderMaterials don't opt into clipping.

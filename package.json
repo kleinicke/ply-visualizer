@@ -31,6 +31,8 @@
     "las",
     "laz",
     "e57",
+    "kitti",
+    "bin",
     "xyzn",
     "xyzrgb",
     "tif",
@@ -103,6 +105,16 @@
             "filenamePattern": "*.e57"
           }
         ]
+      },
+      {
+        "viewType": "plyViewer.kittiBin",
+        "displayName": "PLY Pointcloud Visualizer (KITTI BIN)",
+        "priority": "option",
+        "selector": [
+          {
+            "filenamePattern": "*.bin"
+          }
+        ]
       }
     ],
     "commands": [
@@ -171,7 +183,7 @@
       "explorer/context": [
         {
           "command": "plyViewer.openFile",
-          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .xyzn || resourceExtname == .xyzrgb || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl || resourceExtname == .pcd || resourceExtname == .pts || resourceExtname == .off || resourceExtname == .gltf || resourceExtname == .glb || resourceExtname == .las || resourceExtname == .laz || resourceExtname == .e57",
+          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .xyzn || resourceExtname == .xyzrgb || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl || resourceExtname == .pcd || resourceExtname == .pts || resourceExtname == .off || resourceExtname == .gltf || resourceExtname == .glb || resourceExtname == .las || resourceExtname == .laz || resourceExtname == .e57 || resourceExtname == .bin",
           "group": "navigation"
         },
         {

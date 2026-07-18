@@ -8,6 +8,7 @@ import { ObjParser } from './parsers/objParser';
 import { StlParser } from './parsers/stlParser';
 import { PcdParser } from './parsers/pcdParser';
 import { PtsParser } from './parsers/ptsParser';
+import { KittiBinParser } from './parsers/kittiBinParser';
 import { OffParser } from './parsers/offParser';
 import { GltfParser } from './parsers/gltfParser';
 import { NpyParser, isNpyPointCloudData } from './parsers/npyParser';
@@ -41,7 +42,7 @@ export const DEPTH_UI_BEHAVIOR = {
 
 // Supported file extensions and their categories
 export const SUPPORTED_EXTENSIONS = {
-  pointClouds: ['ply', 'xyz', 'xyzn', 'xyzrgb', 'pcd', 'pts', 'las', 'laz', 'e57'],
+  pointClouds: ['ply', 'xyz', 'xyzn', 'xyzrgb', 'pcd', 'pts', 'las', 'laz', 'e57', 'bin'],
   meshes: ['stl', 'obj', 'off', 'gltf', 'glb'],
   depthImages: ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png'],
   poseData: ['json'],
@@ -247,6 +248,14 @@ export async function parseFileData(
       return {
         data: convertToUnifiedFormat(ptsData, fileName),
         type: 'ptsData',
+      };
+
+    case 'bin':
+      const kittiBinParser = new KittiBinParser();
+      const kittiBinData = await kittiBinParser.parse(data, timingCallback);
+      return {
+        data: convertToUnifiedFormat(kittiBinData, fileName),
+        type: 'kittiBinData',
       };
 
     case 'off':

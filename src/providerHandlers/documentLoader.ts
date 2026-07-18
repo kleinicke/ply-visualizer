@@ -6,6 +6,7 @@ import { ObjParser } from '../../engine/src/parsers/objParser';
 import { StlParser } from '../../engine/src/parsers/stlParser';
 import { PcdParser } from '../../engine/src/parsers/pcdParser';
 import { PtsParser } from '../../engine/src/parsers/ptsParser';
+import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
@@ -53,6 +54,7 @@ export interface DocumentFileTypeFlags {
   isStlFile: boolean;
   isPcdFile: boolean;
   isPtsFile: boolean;
+  isKittiBinFile: boolean;
   isOffFile: boolean;
   isGltfFile: boolean;
   isXyzVariant: boolean;
@@ -84,6 +86,7 @@ export async function loadDocumentContent(
     isStlFile,
     isPcdFile,
     isPtsFile,
+    isKittiBinFile,
     isOffFile,
     isGltfFile,
     isXyzVariant,
@@ -565,6 +568,40 @@ export async function loadDocumentContent(
       return; // Exit early for GLTF/GLB files
     }
 
+    if (isKittiBinFile) {
+      // Handle KITTI LiDAR .bin scans - parse in the extension host and send
+      // typed arrays to the webview
+      webviewPanel.webview.postMessage({
+        type: 'timingUpdate',
+        message: '🚀 Extension: Starting KITTI BIN file processing...',
+        timestamp: loadStartTime,
+      });
+
+      const loadStart = performance.now();
+      const binBytes = await readFileFast(documentUri);
+      const kittiParser = new KittiBinParser();
+      const kittiParsed = await kittiParser.parse(binBytes, (msg: string) => {
+        webviewPanel.webview.postMessage({
+          type: 'timingUpdate',
+          message: msg,
+          timestamp: performance.now(),
+        });
+      });
+      host.logPerf(
+        `⏱️ PERF[kitti-bin/ext] load ${(performance.now() - loadStart).toFixed(1)}ms (${kittiParsed.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
+      );
+
+      webviewPanel.webview.postMessage({
+        type: 'kittiBinData',
+        fileName: path.basename(documentUri.fsPath),
+        shortPath: host.getShortPath(documentUri.fsPath),
+        fileSizeInBytes: binBytes.byteLength,
+        data: kittiParsed,
+      });
+
+      return; // Exit early for KITTI BIN files
+    }
+
     if (isXyzVariant) {
       // Handle XYZN/XYZRGB variants - send to webview for processing
       webviewPanel.webview.postMessage({
@@ -884,6 +921,7 @@ export async function loadDocumentContent(
       '.obj': 'OBJ',
       '.xyz': 'XYZ',
       '.pts': 'PTS',
+      '.bin': 'KITTI BIN',
       '.tif': 'TIFF',
       '.tiff': 'TIFF',
       '.pfm': 'PFM',

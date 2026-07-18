@@ -197,6 +197,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const isStlFile = fileType?.extension === 'stl';
     const isPcdFile = fileType?.extension === 'pcd';
     const isPtsFile = fileType?.extension === 'pts';
+    const isKittiBinFile = fileType?.extension === 'bin';
     const isOffFile = fileType?.extension === 'off';
     const isGltfFile = fileType?.extension === 'gltf' || fileType?.extension === 'glb';
     const isXyzVariant =
@@ -326,6 +327,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       isStlFile: isStlFile,
       isPcdFile: isPcdFile,
       isPtsFile: isPtsFile,
+      isKittiBinFile: isKittiBinFile,
       isOffFile: isOffFile,
       isGltfFile: isGltfFile,
       isXyzVariant: isXyzVariant,
@@ -350,6 +352,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         isStlFile,
         isPcdFile,
         isPtsFile,
+        isKittiBinFile,
         isOffFile,
         isGltfFile,
         isXyzVariant,

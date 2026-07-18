@@ -2025,6 +2025,9 @@ class PointCloudVisualizer {
         case 'ptsData':
           await this.loadWithPerf('pts', message, () => this.handlePtsData(message));
           break;
+        case 'kittiBinData':
+          await this.loadWithPerf('kitti-bin', message, () => this.handleKittiBinData(message));
+          break;
         case 'offData':
           await this.loadWithPerf('off', message, () => this.handleOffData(message));
           break;
@@ -3576,6 +3579,10 @@ class PointCloudVisualizer {
 
   private async handlePtsData(message: any): Promise<void> {
     await formatDataHandlers.handlePtsData(this, message);
+  }
+
+  private async handleKittiBinData(message: any): Promise<void> {
+    await formatDataHandlers.handleKittiBinData(this, message);
   }
 
   private async handleOffData(message: any): Promise<void> {

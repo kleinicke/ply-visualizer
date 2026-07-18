@@ -238,6 +238,61 @@ export async function handlePtsData(host: FormatDataHandlersHost, message: any):
   }
 }
 
+export async function handleKittiBinData(
+  host: FormatDataHandlersHost,
+  message: any
+): Promise<void> {
+  try {
+    console.log(`Load: recv KITTI BIN ${message.fileName}`);
+    host.showStatus(`KITTI BIN: processing ${message.fileName}`);
+
+    const kittiData = message.data;
+    console.log(
+      `KITTI BIN: ${kittiData.vertexCount} points, format=${kittiData.detectedFormat}, intensity=${kittiData.hasIntensity}`
+    );
+
+    // Convert KITTI BIN data to the shared spatial format for rendering
+    const spatialData: SpatialData = {
+      vertices: [],
+      faces: [],
+      format: 'binary_little_endian',
+      version: '1.0',
+      comments: [
+        `Converted from KITTI BIN: ${message.fileName}`,
+        `Detected format: ${kittiData.detectedFormat}`,
+        ...(kittiData.comments ?? []),
+      ],
+      vertexCount: kittiData.vertexCount,
+      faceCount: 0,
+      hasColors: kittiData.hasColors,
+      hasNormals: kittiData.hasNormals,
+      hasIntensity: kittiData.hasIntensity,
+      fileName: message.fileName,
+      shortPath: message.shortPath,
+      fileSizeInBytes: message.fileSizeInBytes,
+    };
+    (spatialData as any).useTypedArrays = true;
+    (spatialData as any).positionsArray = kittiData.positionsArray;
+    (spatialData as any).colorsArray = kittiData.colorsArray;
+    (spatialData as any).normalsArray = kittiData.normalsArray;
+    (spatialData as any).intensityArray = kittiData.intensityArray;
+    (spatialData as any).scalarFields = kittiData.scalarFields ?? {};
+
+    if (message.isAddFile) {
+      host.addNewFiles([spatialData]);
+    } else {
+      await host.displayFiles([spatialData]);
+    }
+
+    host.showStatus(`KITTI BIN: loaded ${kittiData.vertexCount} points from ${message.fileName}`);
+  } catch (error) {
+    console.error('Error handling KITTI BIN data:', error);
+    host.showError(
+      `KITTI BIN processing failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 export async function handleOffData(host: FormatDataHandlersHost, message: any): Promise<void> {
   try {
     console.log(`Load: recv OFF ${message.fileName}`);

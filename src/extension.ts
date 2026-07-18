@@ -15,10 +15,26 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Second registration for KITTI LiDAR .bin scans. Uses a distinct viewType
+  // with priority "option" (see package.json) so the extension never hijacks
+  // arbitrary .bin files as their default editor — users opt in via
+  // "Open With..." or the explorer context menu.
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider('plyViewer.kittiBin', provider, {
+      webviewOptions: {
+        retainContextWhenHidden: true,
+      },
+      supportsMultipleEditorsPerDocument: false,
+    })
+  );
+
   // Register command for opening PLY/XYZ files
   context.subscriptions.push(
     vscode.commands.registerCommand('plyViewer.openFile', (uri: vscode.Uri) => {
-      vscode.commands.executeCommand('vscode.openWith', uri, 'plyViewer.plyEditor');
+      const viewType = uri.fsPath.toLowerCase().endsWith('.bin')
+        ? 'plyViewer.kittiBin'
+        : 'plyViewer.plyEditor';
+      vscode.commands.executeCommand('vscode.openWith', uri, viewType);
     })
   );
 
