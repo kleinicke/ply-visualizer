@@ -8,6 +8,7 @@ import {
   convertDepthToUnified,
 } from './fileHandler';
 import { parseLidarFile } from './parsers/lidarParser';
+import { SPLAT_CONTAINER_REGEX } from './visualization/splatMode';
 
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
@@ -34,6 +35,9 @@ export interface BrowserFileDragDropHost {
   handlePoseData(message: any): Promise<void>;
   displayFiles(dataArray: SpatialData[]): Promise<void>;
   updatePrinciplePointFields(fileIndex: number, dims: { width: number; height: number }): void;
+  splatMode: {
+    loadContainer(fileName: string, bytes: Uint8Array): Promise<SpatialData>;
+  };
 }
 
 export function initializeBrowserFileHandler(host: BrowserFileDragDropHost): void {
@@ -401,11 +405,25 @@ export async function handleBrowserFiles(
     }> = [];
 
     const lidarFiles = regularFiles.filter(file => /\.(las|laz|e57)$/i.test(file.name));
-    const conventionalFiles = regularFiles.filter(file => !/\.(las|laz|e57)$/i.test(file.name));
+    const splatContainerFiles = regularFiles.filter(file => SPLAT_CONTAINER_REGEX.test(file.name));
+    const conventionalFiles = regularFiles.filter(
+      file => !/\.(las|laz|e57)$/i.test(file.name) && !SPLAT_CONTAINER_REGEX.test(file.name)
+    );
     for (const file of lidarFiles) {
       try {
         const extension = file.name.split('.').pop()!.toLowerCase() as 'las' | 'laz' | 'e57';
         spatialDataArray.push(...(await parseLidarFile(file.data, extension, file.name)));
+      } catch (error) {
+        host.showError(
+          `Failed to load ${file.name}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    // Splat-native containers (.spz/.splat/.ksplat/.sog): decoded by Spark,
+    // centers join the scene as a point cloud, splat mode turns on after add.
+    for (const file of splatContainerFiles) {
+      try {
+        spatialDataArray.push(await host.splatMode.loadContainer(file.name, file.data));
       } catch (error) {
         host.showError(
           `Failed to load ${file.name}: ${error instanceof Error ? error.message : String(error)}`

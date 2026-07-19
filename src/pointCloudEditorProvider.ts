@@ -443,7 +443,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     // 1. Add Content Security Policy. 'wasm-unsafe-eval' is required to compile
     //    the TIFF decoder WebAssembly module; connect-src already allows
     //    fetching the .wasm binary from the webview resource origin.
-    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; connect-src ${webview.cspSource} https:; worker-src ${webview.cspSource} blob:; script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
+    //    connect-src data: is for Spark (gaussian splats), which fetches its
+    //    inlined WASM sorter from a data:application/wasm URL.
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; connect-src ${webview.cspSource} https: data:; worker-src ${webview.cspSource} blob:; script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
     html = html.replace('<meta name="viewport"', `${cspMeta}\n    <meta name="viewport"`);
 
     // 2. Replace resource URLs with webview URIs

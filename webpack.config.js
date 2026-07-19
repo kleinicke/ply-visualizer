@@ -82,7 +82,11 @@ module.exports = [
       mainFields: ['svelte', 'browser', 'module', 'main'],
       conditionNames: ['svelte', 'browser', 'import', 'default'],
       alias: {
-        // Force single Three.js instance to prevent multiple imports
+        // Force single Three.js instance to prevent multiple imports. The
+        // bare directory alias bypasses three's package "exports" map, so
+        // subpath imports like Spark's `three/addons/*` need their own alias
+        // (listed first — webpack matches more specific aliases first).
+        'three/addons': path.resolve(__dirname, 'node_modules/three/examples/jsm'),
         three: path.resolve(__dirname, 'node_modules/three'),
       },
     },

@@ -20,6 +20,13 @@ export interface RenderModeHost {
   pointSizes: number[];
   allowTransparency: boolean;
   scene: THREE.Scene;
+  /** Present on the full visualizer host; drives the per-file splat mode. */
+  splatMode?: {
+    isActive(fileIndex: number): boolean;
+    toggle(fileIndex: number): Promise<void>;
+    getMesh(fileIndex: number): THREE.Object3D | null;
+    syncVisibility(fileIndex: number): void;
+  };
   requestRender(): void;
   createNormalsVisualizer(data: SpatialData): THREE.LineSegments;
   createComputedNormalsVisualizer(
@@ -62,6 +69,11 @@ export function toggleUniversalRenderMode(
     case 'normals':
       toggleNormalsRendering(host, fileIndex);
       break;
+    case 'splat':
+      // Async (first use lazy-loads Spark); the manager refreshes visibility
+      // and button states itself once the state actually flips.
+      void host.splatMode?.toggle(fileIndex);
+      return;
   }
 
   // Update button states after mode change
@@ -141,8 +153,12 @@ export function updateMeshVisibilityAndMaterial(host: RenderModeHost, fileIndex:
 
   // Set visibility for the target (mesh or multi-material group)
   if (mesh && mesh.type === 'Points') {
-    // Point cloud case
-    mesh.visible = pointsVisible && fileVisible;
+    // Point cloud case. In splat mode the points are hidden (Spark renders
+    // the file) but stay loaded: picking/measurement iterate the meshes via
+    // fileVisibility, not mesh.visible, so they keep working on the centers.
+    const splatActive = !!host.splatMode?.isActive(fileIndex);
+    mesh.visible = pointsVisible && fileVisible && !splatActive;
+    host.splatMode?.syncVisibility(fileIndex);
   } else {
     // Triangle mesh or multi-material group case
     target.visible = (solidVisible || wireframeVisible) && fileVisible;
@@ -439,6 +455,9 @@ export function updateUniversalRenderButtonStates(host: RenderModeHost): void {
         break;
       case 'normals':
         isActive = host.normalsVisible[fileIndex] ?? false;
+        break;
+      case 'splat':
+        isActive = !!host.splatMode?.isActive(fileIndex);
         break;
     }
 

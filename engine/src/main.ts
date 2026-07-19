@@ -51,6 +51,7 @@ import * as intensity from './utils/intensity';
 import * as commentSettings from './depth/commentSettings';
 import * as cameraProfile from './cameraProfile';
 import * as renderModeToggles from './renderModeToggles';
+import { SplatModeManager, handleSplatContainerUri } from './visualization/splatMode';
 import * as colorModeUtils from './colorMode';
 import * as pointSizeScaling from './pointSizeScaling';
 import * as depthPanelState from './depth/panelState';
@@ -190,6 +191,11 @@ class PointCloudVisualizer {
   multiMaterialGroups: (THREE.Group | null)[] = []; // Multi-material Groups for OBJ files
   materialMeshes: (THREE.Object3D[] | null)[] = []; // Sub-meshes for multi-material OBJ files
   fileVisibility: boolean[] = [];
+  // Per-file "render as gaussian splats" mode (3DGS PLY files only). The
+  // manager lives in visualization/splatMode.ts; this array is parallel to
+  // spatialFiles like the render-mode arrays below.
+  splatModeActive: boolean[] = [];
+  splatMode: SplatModeManager = new SplatModeManager(this);
   private isFirstFileLoad: boolean = true; // Track if this is the first file being loaded
 
   // Universal rendering mode states for each file
@@ -466,6 +472,9 @@ class PointCloudVisualizer {
     if (isVSCode) {
       setPerfSink((line: string) => this.vscode.postMessage({ type: 'perfLog', line }));
     }
+    // Splat mode reaches private visibility/button updates through these.
+    this.splatMode.refreshVisibility = fileIndex => this.updateMeshVisibilityAndMaterial(fileIndex);
+    this.splatMode.refreshButtons = () => renderModeToggles.updateUniversalRenderButtonStates(this);
     this.init();
   }
 
@@ -991,6 +1000,12 @@ class PointCloudVisualizer {
 
     // Update FPS calculation (always, to decay to 0 when no renders)
     this.updateFPSCalculation();
+
+    // Spark re-sorts splats asynchronously; render every frame while any
+    // file is in splat mode so finished sorts become visible.
+    if (this.splatMode.anyActive()) {
+      this.needsRender = true;
+    }
 
     // Update controls
     this.controls.update();
@@ -1909,6 +1924,9 @@ class PointCloudVisualizer {
                 (error instanceof Error ? error.message : String(error))
             );
           }
+          break;
+        case 'splatContainerUri':
+          await handleSplatContainerUri(this, message);
           break;
         case 'ultimateRawBinaryData':
           try {
@@ -3035,7 +3053,8 @@ class PointCloudVisualizer {
     this.updateFileStats();
     this.showLoading(false);
 
-    // debug
+    // Splat containers (.spz/.splat/…) render as splats right away.
+    this.splatMode.autoEnablePending();
   }
 
   removeFileByIndex(fileIndex: number): void {
@@ -3196,6 +3215,8 @@ class PointCloudVisualizer {
     }
 
     // Remove from arrays
+    this.splatMode.onFileRemoved(fileIndex);
+    this.splatModeActive.splice(fileIndex, 1);
     this.spatialFiles.splice(fileIndex, 1);
     this.meshes.splice(fileIndex, 1);
     this.normalsVisualizers.splice(fileIndex, 1); // Remove normals visualizer for this file

@@ -15,9 +15,197 @@ copy overhead for trivial UI work.
 
 ## Planned
 
-## Other new file formats
+### KITTI sequence and SemanticKITTI support
 
-PTX Static FBX 3MF VTK/VTP COPC/EPT FBX gaussian splatting
+Build on the shipped single-file KITTI BIN parser in bounded phases:
+
+1. Extend the existing sequence player to load numerically ordered KITTI BIN
+   scans, preserving intensity settings while supporting play/pause, stepping,
+   seeking, small-frame prefetching, cancellation and per-frame errors.
+2. Add an explicit **Open KITTI Sequence** workflow that detects KITTI Odometry
+   and SemanticKITTI folders and parses `times.txt`, `calib.txt` and available
+   `poses.txt` files. Missing poses must remain valid because not every sequence
+   includes ground truth.
+3. Use calibration and poses to show the sensor trajectory and offer current
+   scan in sensor coordinates, current scan in world coordinates, and bounded
+   last-N/all-frame accumulation. Accumulation needs a configurable point and
+   memory budget, sampling notices, cancellation and coordinate rebasing for
+   float32 precision.
+4. Match SemanticKITTI `.label` files to their scans, require one `uint32` per
+   point, and expose the lower 16-bit semantic class and upper 16-bit instance
+   ID as scalar fields. Add the official class names/colors, semantic and
+   instance color modes, a compact legend and class visibility filters.
+
+Test folder discovery variants, numeric ordering, pose/calibration transforms,
+missing metadata, label-count mismatches, playback cancellation and accumulated
+map limits. Reuse `engine/src/sequencePlayback.ts` and the existing scalar-field
+rendering rather than creating a separate KITTI viewer.
+
+Explicitly deferred from the first version: synchronized camera images, object
+tracklets and bounding boxes, raw GPS/IMU processing, KITTI Tracking, KITTI-360,
+semantic-completion voxels, and trajectory or segmentation evaluation.
+
+### Harden Middlebury and ETH3D stereo dataset workflows
+
+**Existing prototype:** `src/dataset/` already provides a scene picker,
+downloads and caches Middlebury Stereo 2014 and ETH3D two-view data, then opens
+the disparity with its calibration and color image. Downloading and extracting
+the complete ETH3D archive is intentional; it is small enough and avoids a more
+fragile partial-download path.
+
+Before presenting this as finished dataset support:
+
+1. Add small deterministic end-to-end fixtures (synthetic or legally
+   redistributable crops) covering PFM disparity, `calib.txt`, color and masks.
+2. Store scene metadata before opening the custom editor so initialization
+   cannot race calibration discovery.
+3. Make downloads cancellable, report byte/stage progress accurately and
+   implement the currently placeholder cache-clearing behavior.
+4. Validate disparity, calibration, mask and color-image dimensions and explain
+   mismatches instead of continuing with subtly incorrect geometry.
+5. Support the provided validity/occlusion masks and make invalid-point handling
+   visible in statistics.
+6. Add an image/point-cloud comparison toggle and tests for Middlebury perfect
+   versus imperfect calibration.
+7. Consolidate duplicated calibration conversion code under the shared engine
+   parser rather than keeping dataset-only interpretations in the extension.
+
+### Automatic calibration, camera poses and sidecar discovery
+
+**Partially implemented:** manual calibration loading already supports native
+and RealSense JSON, OpenCV/ROS/Kalibr YAML, Middlebury/ETH3D `calib.txt`, COLMAP
+`cameras.txt`, TUM text and ZED `.conf`. Automatic loading currently works only
+when the built-in dataset manager supplies explicit paths.
+
+Add a general sidecar workflow for locally opened depth/disparity images:
+
+1. Search the same directory for exact-stem sidecars and conventional names such
+   as `calib.txt`, `calibration.*`, `camera.*`, `intrinsics.*` and
+   `cameras.txt`. Apply only one unambiguous compatible match; otherwise show a
+   concise camera/file picker.
+2. Validate camera dimensions, focal lengths, principal point, distortion,
+   baseline and units against the source image. Calibration must not silently
+   decide whether ambiguous input represents depth or disparity, or guess an
+   unknown depth scale.
+3. Show which sidecar was auto-loaded, allow changing/removing it, and remember
+   an explicit directory association for sibling frames. Optionally discover a
+   matching color image with the same ambiguity safeguards.
+4. Treat intrinsics and camera position as separate data. Intrinsics are enough
+   to project a depth image in its local camera frame; stereo disparity also
+   needs baseline/disparity offset; alignment in a reconstruction or world frame
+   additionally needs an extrinsic camera pose.
+
+Extend COLMAP support from the current intrinsics-only parser into a coherent
+reconstruction-folder adapter:
+
+1. Parse text `cameras.txt` for camera models/intrinsics and `images.txt` for
+   each image's world-to-camera quaternion/translation and `CAMERA_ID`. Invert
+   the pose correctly to obtain camera-to-world coordinates and map image names
+   to corresponding color/depth files.
+2. Support the common COLMAP camera models through a model/parameter registry
+   instead of loose content guessing. Add explicit coordinate-convention tests:
+   COLMAP camera axes are X right, Y down, Z forward.
+3. Visualize registered camera frustums and trajectories and allow a selected
+   COLMAP depth map or point cloud to be placed in the reconstruction frame.
+4. Optionally parse `points3D.txt` as a sparse colored point cloud with
+   reprojection error as a scalar field. Binary sparse models, rigs/frames and
+   COLMAP dense depth-map binaries are later phases after the text workflow is
+   correct.
+
+Use paired calibration/pose fixtures to test matrix direction, quaternion
+ordering, image-to-camera association, multiple cameras, missing files and
+ambiguous sidecars. Do not conflate COLMAP `images.txt` camera poses with the
+unrelated 3D human-body pose feature below.
+
+### Harden camera distortion models and add Fisheye624
+
+**Existing beta:** the depth UI and data types expose ideal pinhole, equidistant
+fisheye, OpenCV pinhole/fisheye and a Kannala-Brandt option. Ideal pinhole and
+basic equidistant projection are usable, but the calibrated models must remain
+beta until their pixel-to-ray equations and parameter conventions are corrected.
+The current TypeScript and Rust/WASM paths duplicate the same math, some
+distortion branches apply a forward equation where unprojection requires its
+numerical inverse, and the tests mostly check types or mock implementations
+rather than production results.
+
+1. Define one explicit camera-model contract with `project` (3D ray to pixel)
+   and `unproject` (pixel to 3D ray), named coefficient layouts, convergence
+   reporting and valid-domain/FOV handling. The numerical source of truth should
+   live in Rust and compile to WASM; remove duplicated advanced-model equations
+   from TypeScript rather than allowing the two paths to drift.
+2. Correct OpenCV pinhole unprojection by iteratively inverting radial and
+   tangential distortion. Correct OpenCV fisheye unprojection by solving for the
+   undistorted angle, respecting both `fx` and `fy` and matching OpenCV's
+   four-coefficient convention exactly.
+3. Replace the ambiguous five-coefficient Kannala-Brandt interpretation with a
+   specifically named convention, initially KB3:
+   `r(theta) = theta + k0*theta^3 + k1*theta^5 + k2*theta^7 + k3*theta^9`.
+   Validate coefficient counts and avoid silently interpreting calibration
+   parameters from a different KB variant.
+4. Add Meta/Project Aria **Fisheye624** (`FisheyeRadTanThinPrism`) with six
+   radial, two tangential and four thin-prism coefficients. Implement robust
+   forward projection and the required iterative inverse, including convergence
+   limits and rejection of invalid rays instead of returning plausible-looking
+   bad geometry.
+5. Use the same projection API anywhere 3D points are mapped back to images,
+   including color reprojection. Keeping original pixel coordinates remains the
+   preferred fast path when depth and color are already pixel-aligned.
+6. Preserve the exact model identity and coefficient ordering when importing
+   OpenCV/ROS/Kalibr, COLMAP and future Project Aria calibration files. Fix the
+   older VS Code camera picker and calibration form mappings so they expose the
+   same supported model names as the Svelte depth panel. Make it explicit
+   whether an input depth image is raw/distorted or already rectified, since
+   applying calibration distortion to a rectified image is incorrect.
+7. Add production tests, not copied formula tests: project/unproject round trips
+   at the center and image edges, anisotropic `fx`/`fy`, strong but valid
+   distortion, non-convergence and out-of-domain cases. Compare OpenCV models
+   with OpenCV reference output and Fisheye624 with Project Aria reference
+   output using small checked-in golden fixtures. Exercise both the Rust unit
+   layer and the compiled WASM boundary.
+
+Rust/WASM owns the batched per-pixel numerical kernels and iterative solvers.
+TypeScript/Svelte still owns calibration-file parsing and model mapping, typed
+parameter transport, validation messages, settings UI and browser/extension
+integration. These parts should not be moved to Rust merely because the camera
+math is implemented there.
+
+### Stabilize and document 3D body-pose JSON support
+
+**Existing experimental feature:** `engine/src/pose.ts` already accepts generic
+joints/edges, Human3.6M-like positions, Halpe, OpenPose/COCO-like arrays and
+generic points; it renders joints/bones and supports multiple Halpe instances,
+labels, transforms, dataset colors and score/uncertainty controls. Several real
+fixtures already exist under `testfiles/json/`, so the README's "accept pose
+files" item is no longer a from-scratch task.
+
+1. Define and document a versioned canonical JSON schema with units, coordinate
+   convention, joint names, confidence and explicit skeleton edges.
+2. Replace array-length guessing and nearest-neighbor anatomy with explicit
+   adapters/presets for supported layouts such as COCO-17, OpenPose BODY_25,
+   Halpe-26 and Human3.6M. Unknown layouts may show points but must not invent a
+   misleading skeleton.
+3. Support every person in multi-person formats, not only the first OpenPose
+   entry, and distinguish true 3D coordinates from 2D keypoints displayed on a
+   `z=0` plane.
+4. Add pose sequences/timeline playback, stable per-person identity where
+   available, unit/axis selection and straightforward alignment with loaded
+   point clouds.
+5. Turn the existing fixtures into exact parser and rendering tests covering
+   invalid joints, confidence thresholds, uncertainties, labels, transforms,
+   multiple people and useful schema errors.
+
+SMPL/SMPL-X body meshes and BVH animation are separate, substantially larger
+features and are not implied by stabilizing skeleton JSON.
+
+### Other new file formats
+
+PTX Static FBX 3MF VTK/VTP COPC/EPT FBX
+
+### Analyze EDL
+
+Eye-dome-lightening on colored point clouds is not really nice. It makes them
+much darker. Analyze what would help here and figure out if its actually
+reasonable from me to want it to also look nice there.
 
 ### Cloud-to-cloud distance comparison
 
@@ -46,17 +234,31 @@ the distance kernel is a candidate for **Rust → WASM** rather than JS in a Web
 Worker. A later extension: point-to-mesh distance against STL/OBJ ground truth
 (same UI, triangle-distance kernel).
 
-### Gaussian splatting preview
-
-Not competing with SuperSplat — their editor/renderer quality is out of reach
-and out of scope. If revisited, only the cheap version: detect the 3DGS PLY
-property layout (`f_dc_0..2`, `opacity`, `scale_*`, `rot_*`) in the PLY parser
-and render gaussian centers as a normal point cloud colored from the DC
-coefficients. That converts "shows nothing useful" into "shows my
-reconstruction" for days of work, not months. A real sorted-splat renderer (e.g.
-integrating `@mkkellogg/GaussianSplats3D`) only if users ask.
-
 ## Implemented
+
+### Gaussian splatting (3DGS PLY)
+
+**Shipped (July 2026).** Both halves of what was once deferred here:
+
+1. **DC-color point preview** — the PLY parser (both the full parser and the
+   webview-side "ultimate" binary reader) detects the INRIA 3DGS layout
+   (`f_dc_0..2` without `red/green/blue`), synthesizes vertex colors from the SH
+   DC coefficients, keeps `opacity`/`scale_*` as scalar fields, and drops
+   `f_rest_*`/`rot_*` (previously 45 junk Float32Arrays ≈ 180 MB per 1M splats).
+   Explicit rgb wins when a file carries both.
+2. **Real splat rendering** — per-file "✨ Splats" toggle backed by
+   `@sparkjsdev/spark` (not the unmaintained `@mkkellogg/GaussianSplats3D`),
+   lazy-loaded as a separate ~4.8 MB webpack chunk on first use
+   (`engine/src/visualization/splatMode.ts`). Points stay loaded but hidden in
+   splat mode, so picking/measurement keep working on gaussian centers;
+   transforms mirror onto the `SplatMesh`. Design history and integration
+   gotchas (CSP `connect-src data:`, `three/addons` alias, ASCII wasm-path
+   guard): [gaussian-splatting-plan.md](gaussian-splatting-plan.md).
+
+Test files: `testfiles/splats/3dgs_*.ply` (regenerate with
+`uv run --with numpy testfiles/splats/generate_3dgs.py`); specs in
+`engine/test/gaussian-splat-*.spec.ts` and
+`src/test/suite/gaussianSplatParser.test.ts`.
 
 ### KITTI BIN support
 
@@ -70,8 +272,8 @@ opt in via "Open With..." or the explorer context menu instead of the extension
 hijacking every `.bin` file. Playwright coverage:
 `engine/test/kitti-bin-loading.spec.ts`.
 
-Still open from the original sketch: sequence playback, calibration/pose files
-and SemanticKITTI `.label` overlays.
+Sequence playback, calibration/poses and SemanticKITTI labels are tracked in the
+planned phased item above.
 
 ### Better point-to-point measurements
 
@@ -274,3 +476,8 @@ content bounding box onto two `THREE.Plane`s in global
 `renderer.clippingPlanes`. Use global planes, not per-material clipping —
 per-material needs re-apply hooks on every material recreation — and EDL is
 unaffected because ShaderMaterials don't opt into clipping.
+
+## Info
+
+For development, some test point clouds and images are here:
+/Users/florian/Projects/cursor/test_data/

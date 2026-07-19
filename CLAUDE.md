@@ -71,11 +71,15 @@ there; put code in the modules above.
   OpenCV axis conventions).
 - Supported formats: PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY (points), PLY, OBJ,
   STL, OFF, GLTF, GLB (meshes), TIFF, PNG, PFM, NPY, NPZ (depth), `.json`
-  (poses, experimental).
+  (poses, experimental). 3DGS PLY files (gaussian splats) get DC-colored points
+  plus a per-file Spark splat-render toggle
+  (`engine/src/visualization/splatMode.ts`).
 - Known issues: (The old "rotation inverted vs CloudCompare" complaint is
   resolved: the default Trackball scheme is now a CloudCompare-style virtual
   ball; the old delta trackball is "Legacy Trackball" (`I`) — see the resolved
   post-mortem in docs/BACKLOG.md.)
+- I've got a tiff extension as well. Sometimes I add a prompt in the wrong
+  window. Tell me.
 
 ## Refactoring rules
 

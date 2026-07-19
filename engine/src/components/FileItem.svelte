@@ -106,6 +106,9 @@
       const buttons: Array<{ mode: string; label: string; cls: string }> = [
         { mode: 'points', label: '👁️ Points', cls: 'points-btn' },
       ];
+      if (kind === 'pointcloud' && data && host.splatMode?.canEnable(data)) {
+        buttons.push({ mode: 'splat', label: '✨ Splats', cls: 'splat-btn' });
+      }
       if (hasGeometry) {
         buttons.push({ mode: 'mesh', label: '🔷 Mesh', cls: 'mesh-btn' });
         buttons.push({ mode: 'wireframe', label: '📐 Wireframe', cls: 'wireframe-btn' });
@@ -273,7 +276,7 @@
   </div>
   <div class="file-item-content" id={`file-content-${index}`} style="display: {collapsed ? 'none' : 'block'}">
     {#if kind === 'pointcloud' && data}
-      <div class="file-info">{data.vertexCount.toLocaleString()} vertices, {data.faceCount.toLocaleString()} faces</div>
+      <div class="file-info">{data.vertexCount.toLocaleString()} vertices, {data.faceCount.toLocaleString()} faces{data.isGaussianSplat ? ' · 3DGS' : ''}</div>
 
       {#if isDepthDerivedFile}
         <DepthSettingsPanel {host} fileIndex={index} {data} />

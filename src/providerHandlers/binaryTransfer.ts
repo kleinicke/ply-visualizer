@@ -289,6 +289,8 @@ export async function sendBinaryData(
     sourceOrigin: spatialData.sourceOrigin,
     metadata: spatialData.metadata,
     fileSizeInBytes: spatialData.fileSizeInBytes,
+    isGaussianSplat: !!spatialData.isGaussianSplat,
+    splatSource: spatialData.splatSource,
   });
   if (!delivered) {
     throw new Error(`The webview rejected the binary payload for ${spatialData.fileName}`);

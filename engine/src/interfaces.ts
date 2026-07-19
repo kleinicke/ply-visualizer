@@ -28,6 +28,14 @@ export interface SpatialData {
   hasColors: boolean;
   hasNormals: boolean;
   hasIntensity?: boolean;
+  /** 3D Gaussian Splatting PLY layout: colors synthesized from f_dc_0..2. */
+  isGaussianSplat?: boolean;
+  /**
+   * Where splat mode can re-read the full original PLY (Spark needs header +
+   * all SH/scale/rot properties, which point-cloud parsing drops). A webview
+   * URI in VS Code; retained bytes on the standalone page.
+   */
+  splatSource?: { url?: string; bytes?: Uint8Array };
   fileName?: string;
   shortPath?: string; // parent/grandparent/filename for tooltip display
   fileIndex?: number;

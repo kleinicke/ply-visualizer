@@ -16,6 +16,8 @@ export interface TransformationMatrixHost {
   poseGroups: THREE.Group[];
   cameraGroups: THREE.Group[];
   pointSizes: number[];
+  /** Present on the full visualizer host; mirrors transforms onto splat meshes. */
+  splatMode?: { applyMatrix(fileIndex: number, matrix: THREE.Matrix4 | undefined): void };
   applyCameraScale(cameraProfileIndex: number, scale: number): void;
 }
 
@@ -109,6 +111,9 @@ export function applyTransformationMatrix(host: TransformationMatrixHost, fileIn
     if (multiMaterialGroup) {
       setObjectMatrix(multiMaterialGroup, matrix);
     }
+
+    // Also mirror onto the splat mesh when this file renders as splats
+    host.splatMode?.applyMatrix(fileIndex, matrix);
 
     return;
   }

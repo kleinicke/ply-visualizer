@@ -27,6 +27,10 @@ export interface SpatialData {
   hasColors: boolean;
   hasNormals: boolean;
   hasIntensity?: boolean;
+  /** 3D Gaussian Splatting PLY layout: colors synthesized from f_dc_0..2. */
+  isGaussianSplat?: boolean;
+  /** Where splat mode can re-read the full original PLY (see interfaces.ts). */
+  splatSource?: { url?: string; bytes?: Uint8Array };
   fileName?: string;
   shortPath?: string; // parent/grandparent/filename for tooltip display
   fileIndex?: number;
@@ -71,24 +75,60 @@ export class PlyParser {
     'nz',
   ];
 
-  private static isExtraScalarProperty(name: string, type: string): boolean {
+  // 3D Gaussian Splatting: degree-0 spherical-harmonics basis constant.
+  // Color channel = 0.5 + SH_C0 * f_dc_i (INRIA reference implementation).
+  private static readonly SH_C0 = 0.28209479177387814;
+
+  private static shDcToU8(v: number): number {
+    const c = (0.5 + PlyParser.SH_C0 * v) * 255;
+    return c <= 0 ? 0 : c >= 255 ? 255 : Math.round(c);
+  }
+
+  // 3DGS layout detection: color lives in f_dc_0..2 and there is no explicit
+  // red/green/blue (rgb wins when both are present).
+  private static isGaussianSplatLayout(
+    vertexProperties: Array<{ name: string; type: string }>
+  ): boolean {
+    let dc = 0;
+    for (const prop of vertexProperties) {
+      const name = prop.name.toLowerCase();
+      if (name === 'red' || name === 'green' || name === 'blue') {
+        return false;
+      }
+      if (name === 'f_dc_0' || name === 'f_dc_1' || name === 'f_dc_2') {
+        dc++;
+      }
+    }
+    return dc === 3;
+  }
+
+  // Splat properties that must not become scalar fields: f_dc_* is the color
+  // source, rot_* is meaningless as a scalar, and f_rest_* (45 props at SH
+  // degree 3) would allocate a Float32Array each. opacity/scale_* stay.
+  private static isSplatConsumedProperty(name: string): boolean {
+    return name.startsWith('f_dc_') || name.startsWith('f_rest_') || name.startsWith('rot_');
+  }
+
+  private static isExtraScalarProperty(name: string, type: string, gaussianSplat = false): boolean {
     if (type === 'list') {
       return false;
     }
     const normalized = name.toLowerCase();
     return (
       !PlyParser.consumedProps.includes(normalized) &&
-      !PlyParser.intensityAliases.includes(normalized)
+      !PlyParser.intensityAliases.includes(normalized) &&
+      !(gaussianSplat && PlyParser.isSplatConsumedProperty(normalized))
     );
   }
 
   private static collectExtraScalarTargets(
     vertexProperties: Array<{ name: string; type: string }>,
-    vertexCount: number
+    vertexCount: number,
+    gaussianSplat = false
   ): { idx: number; name: string; arr: Float32Array }[] {
     const extras: { idx: number; name: string; arr: Float32Array }[] = [];
     vertexProperties.forEach((prop, idx) => {
-      if (PlyParser.isExtraScalarProperty(prop.name, prop.type)) {
+      if (PlyParser.isExtraScalarProperty(prop.name, prop.type, gaussianSplat)) {
         extras.push({ idx, name: prop.name, arr: new Float32Array(vertexCount) });
       }
     });
@@ -275,6 +315,11 @@ export class PlyParser {
     result.hasColors = vertexProperties.some(p => ['red', 'green', 'blue'].includes(p.name));
     result.hasNormals = vertexProperties.some(p => ['nx', 'ny', 'nz'].includes(p.name));
     result.hasIntensity = vertexProperties.some(p => PlyParser.isIntensityField(p.name));
+    result.isGaussianSplat = PlyParser.isGaussianSplatLayout(vertexProperties);
+    if (result.isGaussianSplat) {
+      // Colors are synthesized from the SH DC coefficients during parsing.
+      result.hasColors = true;
+    }
 
     // Find data start position
     const headerEndPos = headerEndIndex + 'end_header'.length;
@@ -445,22 +490,26 @@ export class PlyParser {
     const normals = useNormals ? new Float32Array(vertexCount * 3) : null;
     const intensity = useIntensity ? new Float32Array(vertexCount) : null;
 
+    // 3DGS files carry their color in f_dc_0..2; read those columns as the
+    // color source and convert SH DC → uint8 when writing.
+    const isSplat = !!result.isGaussianSplat;
+
     // Build fast property index map
     const propIndex = new Map<string, number>();
     vertexProperties.forEach((p, i) => propIndex.set(p.name, i));
     const xIdx = propIndex.get('x');
     const yIdx = propIndex.get('y');
     const zIdx = propIndex.get('z');
-    const rIdx = useColors ? propIndex.get('red') : undefined;
-    const gIdx = useColors ? propIndex.get('green') : undefined;
-    const bIdx = useColors ? propIndex.get('blue') : undefined;
+    const rIdx = useColors ? propIndex.get(isSplat ? 'f_dc_0' : 'red') : undefined;
+    const gIdx = useColors ? propIndex.get(isSplat ? 'f_dc_1' : 'green') : undefined;
+    const bIdx = useColors ? propIndex.get(isSplat ? 'f_dc_2' : 'blue') : undefined;
     const nxIdx = useNormals ? propIndex.get('nx') : undefined;
     const nyIdx = useNormals ? propIndex.get('ny') : undefined;
     const nzIdx = useNormals ? propIndex.get('nz') : undefined;
     const intensityIdx = useIntensity
       ? vertexProperties.findIndex(prop => PlyParser.isIntensityField(prop.name))
       : -1;
-    const extras = PlyParser.collectExtraScalarTargets(vertexProperties, vertexCount);
+    const extras = PlyParser.collectExtraScalarTargets(vertexProperties, vertexCount, isSplat);
 
     // Reusable token-boundary buffers for the vertex hot path. Avoids the
     // per-vertex regex split (which allocates an array + a substring for every
@@ -518,12 +567,18 @@ export class PlyParser {
           }
 
           if (colors && rIdx !== undefined && gIdx !== undefined && bIdx !== undefined) {
-            colors[base] =
-              rIdx < ntok ? parseFloat(line.substring(tokStart[rIdx], tokEnd[rIdx])) : 0;
-            colors[base + 1] =
-              gIdx < ntok ? parseFloat(line.substring(tokStart[gIdx], tokEnd[gIdx])) : 0;
-            colors[base + 2] =
-              bIdx < ntok ? parseFloat(line.substring(tokStart[bIdx], tokEnd[bIdx])) : 0;
+            const r = rIdx < ntok ? parseFloat(line.substring(tokStart[rIdx], tokEnd[rIdx])) : 0;
+            const g = gIdx < ntok ? parseFloat(line.substring(tokStart[gIdx], tokEnd[gIdx])) : 0;
+            const b = bIdx < ntok ? parseFloat(line.substring(tokStart[bIdx], tokEnd[bIdx])) : 0;
+            if (isSplat) {
+              colors[base] = PlyParser.shDcToU8(r);
+              colors[base + 1] = PlyParser.shDcToU8(g);
+              colors[base + 2] = PlyParser.shDcToU8(b);
+            } else {
+              colors[base] = r;
+              colors[base + 1] = g;
+              colors[base + 2] = b;
+            }
           }
 
           if (normals && nxIdx !== undefined && nyIdx !== undefined && nzIdx !== undefined) {
@@ -591,13 +646,12 @@ export class PlyParser {
             positions[base + 2] = parseFloat(values[zIdx]);
           }
           if (colors && rIdx !== undefined && gIdx !== undefined && bIdx !== undefined) {
-            colors[base] = (values[rIdx] !== undefined ? parseFloat(values[rIdx]) : 0) as number;
-            colors[base + 1] = (
-              values[gIdx] !== undefined ? parseFloat(values[gIdx]) : 0
-            ) as number;
-            colors[base + 2] = (
-              values[bIdx] !== undefined ? parseFloat(values[bIdx]) : 0
-            ) as number;
+            const r = values[rIdx] !== undefined ? parseFloat(values[rIdx]) : 0;
+            const g = values[gIdx] !== undefined ? parseFloat(values[gIdx]) : 0;
+            const b = values[bIdx] !== undefined ? parseFloat(values[bIdx]) : 0;
+            colors[base] = isSplat ? PlyParser.shDcToU8(r) : r;
+            colors[base + 1] = isSplat ? PlyParser.shDcToU8(g) : g;
+            colors[base + 2] = isSplat ? PlyParser.shDcToU8(b) : b;
           }
           if (normals && nxIdx !== undefined && nyIdx !== undefined && nzIdx !== undefined) {
             normals[base] = values[nxIdx] !== undefined ? parseFloat(values[nxIdx]) : 0;
@@ -710,18 +764,24 @@ export class PlyParser {
     const normals = result.hasNormals ? new Float32Array(result.vertexCount * 3) : null;
     const intensity = result.hasIntensity ? new Float32Array(result.vertexCount) : null;
 
-    // Find property indices once
+    // Find property indices once. 3DGS files read colors from f_dc_0..2
+    // (SH DC coefficients, converted to uint8 in the loop below).
+    const isSplat = !!result.isGaussianSplat;
     const xIdx = propIndices.get('x') ?? -1;
     const yIdx = propIndices.get('y') ?? -1;
     const zIdx = propIndices.get('z') ?? -1;
-    const redIdx = propIndices.get('red') ?? -1;
-    const greenIdx = propIndices.get('green') ?? -1;
-    const blueIdx = propIndices.get('blue') ?? -1;
+    const redIdx = propIndices.get(isSplat ? 'f_dc_0' : 'red') ?? -1;
+    const greenIdx = propIndices.get(isSplat ? 'f_dc_1' : 'green') ?? -1;
+    const blueIdx = propIndices.get(isSplat ? 'f_dc_2' : 'blue') ?? -1;
     const nxIdx = propIndices.get('nx') ?? -1;
     const nyIdx = propIndices.get('ny') ?? -1;
     const nzIdx = propIndices.get('nz') ?? -1;
     const intensityIdx = vertexProperties.findIndex(prop => PlyParser.isIntensityField(prop.name));
-    const extras = PlyParser.collectExtraScalarTargets(vertexProperties, result.vertexCount);
+    const extras = PlyParser.collectExtraScalarTargets(
+      vertexProperties,
+      result.vertexCount,
+      isSplat
+    );
     // Per-propIdx target array (null for consumed/alias/list props) so extra
     // scalars cost one indexed lookup in the unmatched branch of the hot loop.
     const extraByPropIdx: (Float32Array | null)[] = new Array(vertexProperties.length).fill(null);
@@ -745,11 +805,11 @@ export class PlyParser {
         } else if (propIdx === zIdx) {
           positions[i3 + 2] = value;
         } else if (colors && propIdx === redIdx) {
-          colors[i3] = value;
+          colors[i3] = isSplat ? PlyParser.shDcToU8(value) : value;
         } else if (colors && propIdx === greenIdx) {
-          colors[i3 + 1] = value;
+          colors[i3 + 1] = isSplat ? PlyParser.shDcToU8(value) : value;
         } else if (colors && propIdx === blueIdx) {
-          colors[i3 + 2] = value;
+          colors[i3 + 2] = isSplat ? PlyParser.shDcToU8(value) : value;
         } else if (normals && propIdx === nxIdx) {
           normals[i3] = value;
         } else if (normals && propIdx === nyIdx) {
@@ -1019,6 +1079,12 @@ export class PlyParser {
     result.hasColors = vertexProperties.some(p => ['red', 'green', 'blue'].includes(p.name));
     result.hasNormals = vertexProperties.some(p => ['nx', 'ny', 'nz'].includes(p.name));
     result.hasIntensity = vertexProperties.some(p => PlyParser.isIntensityField(p.name));
+    result.isGaussianSplat = PlyParser.isGaussianSplatLayout(vertexProperties);
+    if (result.isGaussianSplat) {
+      // Colors are synthesized from f_dc_0..2 by the webview-side binary
+      // reader (binaryDataHandlers.ts), which keys off this flag.
+      result.hasColors = true;
+    }
 
     // Calculate binary data start position
     const headerEndPos = headerEndIndex + 'end_header'.length;

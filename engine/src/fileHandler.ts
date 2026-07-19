@@ -42,7 +42,24 @@ export const DEPTH_UI_BEHAVIOR = {
 
 // Supported file extensions and their categories
 export const SUPPORTED_EXTENSIONS = {
-  pointClouds: ['ply', 'xyz', 'xyzn', 'xyzrgb', 'pcd', 'pts', 'las', 'laz', 'e57', 'bin'],
+  // Splat containers (spz/splat/ksplat/sog) are point clouds for detection,
+  // but are decoded by Spark (visualization/splatMode.ts), never parseFileData.
+  pointClouds: [
+    'ply',
+    'xyz',
+    'xyzn',
+    'xyzrgb',
+    'pcd',
+    'pts',
+    'las',
+    'laz',
+    'e57',
+    'bin',
+    'spz',
+    'splat',
+    'ksplat',
+    'sog',
+  ],
   meshes: ['stl', 'obj', 'off', 'gltf', 'glb'],
   depthImages: ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png'],
   poseData: ['json'],
@@ -214,6 +231,9 @@ export async function parseFileData(
         data: {
           ...spatialData,
           fileName,
+          // Splat mode needs the full original PLY (SH/scale/rot props are
+          // dropped during point parsing). Only 3DGS files pay this retention.
+          ...(spatialData.isGaussianSplat ? { splatSource: { bytes: data } } : {}),
         },
         type: 'spatialData',
       };

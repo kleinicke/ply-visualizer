@@ -30,6 +30,7 @@
     "webpack-dev-server": "^5.2.3"
   },
   "dependencies": {
+    "@sparkjsdev/spark": "^2.1.0",
     "@types/js-yaml": "^4.0.9",
     "js-yaml": "^4.1.1",
     "pako": "^2.1.0",

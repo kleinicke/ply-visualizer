@@ -1,6 +1,6 @@
 import { SpatialData, SpatialVertex } from './interfaces';
 import { PerfTimer } from './utils/perfLog';
-import { isExtraScalarProperty } from './utils/scalarFields';
+import { isExtraScalarProperty, isGaussianSplatLayout, shDcToU8 } from './utils/scalarFields';
 
 export interface BinaryDataHandlersHost {
   vscode: { postMessage(message: any): void };
@@ -93,6 +93,10 @@ export async function handleUltimateRawBinaryData(
   const vertexStride = message.vertexStride;
   const vertexCount = message.vertexCount;
   const littleEndian = message.littleEndian;
+  // Derived here (not trusted from the message) so every sender of the
+  // ultimate path — initial load, add-files, fetch fallback, sequence
+  // playback — gets 3DGS handling without carrying an extra flag.
+  const isSplat = isGaussianSplatLayout([...propertyOffsets.keys()].map(k => String(k)));
   const faceCountType = message.faceCountType as string | undefined;
   const faceIndexType = message.faceIndexType as string | undefined;
 
@@ -309,6 +313,24 @@ export async function handleUltimateRawBinaryData(
     }
   }
 
+  // 3DGS: the color lives in the f_dc_0..2 SH DC coefficients (float32).
+  // Synthesized in a second pass, like the extra scalar fields below, so the
+  // hand-tuned main loop stays untouched. Normal files skip this entirely.
+  if (colors && isSplat) {
+    const dc0 = propertyOffsets.get('f_dc_0') as { offset: number } | undefined;
+    const dc1 = propertyOffsets.get('f_dc_1') as { offset: number } | undefined;
+    const dc2 = propertyOffsets.get('f_dc_2') as { offset: number } | undefined;
+    if (dc0 && dc1 && dc2) {
+      for (let i = 0; i < vertexCount; i++) {
+        const vo = i * vertexStride;
+        const i3 = i * 3;
+        colors[i3] = shDcToU8(dataView.getFloat32(vo + dc0.offset, littleEndian));
+        colors[i3 + 1] = shDcToU8(dataView.getFloat32(vo + dc1.offset, littleEndian));
+        colors[i3 + 2] = shDcToU8(dataView.getFloat32(vo + dc2.offset, littleEndian));
+      }
+    }
+  }
+
   // Extra scalar fields (confidence, error, label, …) in a per-field second
   // pass, so the hand-tuned main loop above stays untouched. Files without
   // extra properties skip this entirely.
@@ -316,7 +338,7 @@ export async function handleUltimateRawBinaryData(
   for (const [rawName, rawInfo] of propertyOffsets.entries()) {
     const name = String(rawName);
     const info = rawInfo as { offset: number; type: string };
-    if (!isExtraScalarProperty(name, info.type)) {
+    if (!isExtraScalarProperty(name, info.type, isSplat)) {
       continue;
     }
     const arr = new Float32Array(vertexCount);
@@ -349,10 +371,17 @@ export async function handleUltimateRawBinaryData(
     hasColors: message.hasColors,
     hasNormals: message.hasNormals,
     hasIntensity: message.hasIntensity,
+    isGaussianSplat: isSplat,
     fileName: message.fileName,
     shortPath: message.shortPath,
     fileSizeInBytes: message.fileSizeInBytes,
   };
+  if (isSplat && message.fileUri) {
+    // Splat mode re-fetches the full PLY from this webview URI on demand, so
+    // no bytes are retained here. Absent on the postMessage fallback path
+    // (where fetch already failed) — splat mode is unavailable there.
+    spatialData.splatSource = { url: message.fileUri };
+  }
 
   // Attach TypedArrays
   (spatialData as any).useTypedArrays = true;
@@ -570,6 +599,8 @@ export async function handleBinarySpatialData(
     hasColors: message.hasColors,
     hasNormals: message.hasNormals,
     hasIntensity: message.hasIntensity,
+    isGaussianSplat: !!message.isGaussianSplat,
+    splatSource: message.splatSource,
     fileName: message.fileName,
     shortPath: message.shortPath,
     sourcePointCount: message.sourcePointCount,

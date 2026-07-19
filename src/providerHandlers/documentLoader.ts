@@ -860,8 +860,11 @@ export async function loadDocumentContent(
     } else {
       // ASCII PLY. Try the Rust/WASM parser first — it handles point clouds
       // (no faces) and returns null for meshes or on any failure, so those
-      // transparently fall through to the JS parser below.
-      const plyWasm = parseAsciiPlyWasm(spatialData);
+      // transparently fall through to the JS parser below. 3DGS files must
+      // take the JS parser: the WASM path doesn't know the f_dc_* color
+      // layout and would deliver an uncolored cloud.
+      const headSample = new TextDecoder('utf-8').decode(spatialData.slice(0, 4096));
+      const plyWasm = headSample.includes('f_dc_0') ? null : parseAsciiPlyWasm(spatialData);
       if (plyWasm) {
         host.logPerf(
           `⏱️ PERF[ply/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${plyWasm.vertexCount} pts, wasm) for ${path.basename(documentUri.fsPath)}`
@@ -899,6 +902,12 @@ export async function loadDocumentContent(
       parsedData.shortPath = host.getShortPath(documentUri.fsPath);
       parsedData.fileIndex = 0;
       (parsedData as any).fileSizeInBytes = spatialData.byteLength;
+      if (parsedData.isGaussianSplat) {
+        // Splat mode re-reads the full PLY from this URI on demand.
+        parsedData.splatSource = {
+          url: webviewPanel.webview.asWebviewUri(documentUri).toString(),
+        };
+      }
 
       // Send via traditional method (will use binary transfer if possible)
       await sendSpatialDataToWebview(webviewPanel, [parsedData], 'multiSpatialData');
