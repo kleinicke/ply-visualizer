@@ -281,7 +281,7 @@ suite('Webview Interfaces', () => {
 
     test('should create kannala-brandt fisheye params', () => {
       const params: CameraParams = {
-        cameraModel: 'fisheye-kannala-brandt',
+        cameraModel: 'fisheye-kb3',
         fx: 300,
         depthType: 'euclidean',
         k1: 0.1,
@@ -291,7 +291,7 @@ suite('Webview Interfaces', () => {
         k5: 0.005,
       };
 
-      assert.strictEqual(params.cameraModel, 'fisheye-kannala-brandt');
+      assert.strictEqual(params.cameraModel, 'fisheye-kb3');
       assert.strictEqual(params.k5, 0.005);
     });
 
@@ -378,7 +378,8 @@ suite('Webview Interfaces', () => {
         'pinhole-opencv',
         'fisheye-equidistant',
         'fisheye-opencv',
-        'fisheye-kannala-brandt',
+        'fisheye-kb3',
+        'fisheye624',
       ];
 
       models.forEach(model => {

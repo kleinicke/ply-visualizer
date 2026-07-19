@@ -23,6 +23,8 @@ export interface DepthProjectWasmResult {
   width: number;
   height: number;
   pixelCoords?: Uint16Array;
+  rejectedCount: number;
+  nonConvergedCount: number;
 }
 
 export interface DepthProjectWasmParams {
@@ -33,13 +35,23 @@ export interface DepthProjectWasmParams {
   fy: number;
   cx: number;
   cy: number;
-  k1?: number;
-  k2?: number;
-  k3?: number;
-  k4?: number;
-  k5?: number;
-  p1?: number;
-  p2?: number;
+  coefficients: number[];
+}
+
+export interface CameraSolveWasmParams {
+  cameraModel: string;
+  fx: number;
+  fy: number;
+  cx: number;
+  cy: number;
+  coefficients: number[];
+}
+
+export interface CameraSolveWasmResult<T extends readonly number[]> {
+  value: T;
+  valid: boolean;
+  converged: boolean;
+  iterations: number;
 }
 
 export interface NormalizeDepthWasmParams {
@@ -168,13 +180,7 @@ export function projectDepthWasmSync(
       params.fy,
       params.cx,
       params.cy,
-      params.k1 || 0,
-      params.k2 || 0,
-      params.k3 || 0,
-      params.k4 || 0,
-      params.k5 || 0,
-      params.p1 || 0,
-      params.p2 || 0
+      new Float64Array(params.coefficients)
     );
 
     const hasPixelCoords = !!result.has_pixel_coords;
@@ -185,6 +191,8 @@ export function projectDepthWasmSync(
       width: result.width,
       height: result.height,
       pixelCoords: hasPixelCoords ? new Uint16Array(result.take_pixel_coords()) : undefined,
+      rejectedCount: result.rejected_count,
+      nonConvergedCount: result.non_converged_count,
     };
   } catch (error) {
     console.warn('[TiffWasm] depth projection failed, using JS fallback:', error);
@@ -196,6 +204,59 @@ export function projectDepthWasmSync(
       /* already freed */
     }
   }
+}
+
+export function projectCameraRayWasmSync(
+  ray: readonly [number, number, number],
+  params: CameraSolveWasmParams
+): CameraSolveWasmResult<readonly [number, number]> | null {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.camera_project !== 'function') {return null;}
+  const raw = new Float64Array(
+    wasmApi.camera_project(
+      params.cameraModel,
+      params.fx,
+      params.fy,
+      params.cx,
+      params.cy,
+      new Float64Array(params.coefficients),
+      ray[0],
+      ray[1],
+      ray[2]
+    )
+  );
+  return {
+    valid: raw[0] === 1,
+    converged: raw[1] === 1,
+    iterations: raw[2],
+    value: [raw[3], raw[4]],
+  };
+}
+
+export function unprojectCameraPixelWasmSync(
+  pixel: readonly [number, number],
+  params: CameraSolveWasmParams
+): CameraSolveWasmResult<readonly [number, number, number]> | null {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.camera_unproject !== 'function') {return null;}
+  const raw = new Float64Array(
+    wasmApi.camera_unproject(
+      params.cameraModel,
+      params.fx,
+      params.fy,
+      params.cx,
+      params.cy,
+      new Float64Array(params.coefficients),
+      pixel[0],
+      pixel[1]
+    )
+  );
+  return {
+    valid: raw[0] === 1,
+    converged: raw[1] === 1,
+    iterations: raw[2],
+    value: [raw[3], raw[4], raw[5]],
+  };
 }
 
 export function normalizeDepthWasmSync(

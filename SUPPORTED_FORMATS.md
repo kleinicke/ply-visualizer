@@ -266,8 +266,8 @@ filter out low-intensity points.
 
 - **Focal length**: `fx`, `fy` in pixels.
 - **Principal point**: `cx`, `cy` in pixels.
-- **Camera models**: pinhole ideal, pinhole OpenCV, fisheye equidistant, fisheye
-  OpenCV and fisheye Kannala-Brandt.
+- **Camera models**: pinhole ideal, pinhole OpenCV, fisheye equidistant, OpenCV
+  fisheye, explicitly ordered Kannala-Brandt KB3 and Project Aria Fisheye624.
 - **Depth types**: Euclidean, orthogonal, disparity and inverse depth.
 - **Coordinate conventions**: OpenGL and OpenCV.
 - **Stereo options**: baseline and disparity offset.

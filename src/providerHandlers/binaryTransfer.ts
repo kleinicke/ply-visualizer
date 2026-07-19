@@ -124,6 +124,66 @@ export async function sendUltimateRawBinary(
   });
 }
 
+/** Splat-native container formats decoded by Spark in the webview. */
+export const SPLAT_CONTAINER_EXTENSIONS = ['.spz', '.splat', '.ksplat', '.sog'];
+
+/**
+ * Splat containers are not parsed in the extension: the webview fetches the
+ * bytes from this URI, Spark decodes them, and the gaussian centers join the
+ * scene as a point cloud with splat rendering enabled (splatMode.ts).
+ */
+export function sendSplatContainerUri(
+  webviewPanel: vscode.WebviewPanel,
+  fileUri: vscode.Uri,
+  fileName: string,
+  shortPath: string | undefined,
+  messageType: 'multiSpatialData' | 'addFiles',
+  fileSizeInBytes?: number
+): void {
+  void webviewPanel.webview.postMessage({
+    type: 'splatContainerUri',
+    messageType,
+    fileUri: webviewPanel.webview.asWebviewUri(fileUri).toString(),
+    // For the webview's fetch-failure fallback (files outside
+    // localResourceRoots): it sends this back via 'splatContainerFetchFailed'
+    // and the extension re-reads and resends raw bytes.
+    docUri: fileUri.toString(),
+    fileName,
+    shortPath,
+    fileSizeInBytes,
+  });
+}
+
+/**
+ * Fallback for 'splatContainerFetchFailed': re-read the file in the extension
+ * host and resend the raw bytes over postMessage (structured clone).
+ */
+export async function resendSplatContainerBytes(
+  webviewPanel: vscode.WebviewPanel,
+  message: { docUri: string; fileName: string; shortPath?: string; messageType?: string }
+): Promise<void> {
+  try {
+    const uri = vscode.Uri.parse(message.docUri);
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    void webviewPanel.webview.postMessage({
+      type: 'splatContainerUri',
+      messageType: message.messageType || 'addFiles',
+      data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      fileName: message.fileName,
+      shortPath: message.shortPath,
+      fileSizeInBytes: bytes.byteLength,
+    });
+  } catch (error) {
+    console.error('Splat container fallback failed:', error);
+    void webviewPanel.webview.postMessage({
+      type: 'loadingError',
+      fileName: message.fileName,
+      fileType: 'gaussian splat',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export async function sendSpatialDataToWebview(
   webviewPanel: vscode.WebviewPanel,
   spatialDataArray: any[],

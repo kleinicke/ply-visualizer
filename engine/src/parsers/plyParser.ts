@@ -318,7 +318,10 @@ export class PlyParser {
     result.isGaussianSplat = PlyParser.isGaussianSplatLayout(vertexProperties);
     if (result.isGaussianSplat) {
       // Colors are synthesized from the SH DC coefficients during parsing.
+      // 3DGS exporters write nx/ny/nz as all zeros — dropping them avoids a
+      // useless normals array and a no-op Normals button in the UI.
       result.hasColors = true;
+      result.hasNormals = false;
     }
 
     // Find data start position
@@ -1082,8 +1085,10 @@ export class PlyParser {
     result.isGaussianSplat = PlyParser.isGaussianSplatLayout(vertexProperties);
     if (result.isGaussianSplat) {
       // Colors are synthesized from f_dc_0..2 by the webview-side binary
-      // reader (binaryDataHandlers.ts), which keys off this flag.
+      // reader (binaryDataHandlers.ts), which keys off this flag. nx/ny/nz
+      // are all zeros in 3DGS exports — dropped (see parse() above).
       result.hasColors = true;
+      result.hasNormals = false;
     }
 
     // Calculate binary data start position

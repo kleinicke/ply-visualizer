@@ -249,7 +249,10 @@ export function populateFormFromCalibration(
       pinhole_opencv: 'pinhole-opencv',
       fisheye: 'fisheye-equidistant',
       fisheye_equidistant: 'fisheye-equidistant',
-      kannala_brandt: 'fisheye-kannala-brandt',
+      kannala_brandt_k3: 'fisheye-kb3',
+      kb3: 'fisheye-kb3',
+      fisheye_radtan_thinprism: 'fisheye624',
+      fisheye624: 'fisheye624',
     };
 
     const modelName =
@@ -262,6 +265,15 @@ export function populateFormFromCalibration(
         // CRITICAL FIX: Trigger change event to show/hide distortion parameter fields
         cameraModelSelect.dispatchEvent(new Event('change'));
       }
+    }
+  }
+
+  if (Array.isArray(cameraData.coefficients)) {
+    const coefficientsInput = document.getElementById(
+      `camera-coefficients-${fileIndex}`
+    ) as HTMLInputElement | null;
+    if (coefficientsInput) {
+      coefficientsInput.value = cameraData.coefficients.join(',');
     }
   }
 

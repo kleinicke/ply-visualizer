@@ -14,6 +14,8 @@ export interface ColmapCamera {
   p1?: number;
   p2?: number;
   name: string;
+  cameraModel: 'pinhole-ideal' | 'pinhole-opencv' | 'fisheye-opencv';
+  coefficients: number[];
 }
 
 export interface ColmapCalibrationResult {
@@ -26,7 +28,8 @@ export interface ColmapCalibrationResult {
  * Format: CAMERA_ID MODEL WIDTH HEIGHT PARAMS[]
  * Models:
  * - PINHOLE: fx fy cx cy
- * - RADIAL: f cx cy k1
+ * - SIMPLE_RADIAL: f cx cy k1
+ * - RADIAL: f cx cy k1 k2
  * - OPENCV: fx fy cx cy k1 k2 p1 p2
  * - OPENCV_FISHEYE: fx fy cx cy k1 k2 k3 k4
  */
@@ -92,6 +95,8 @@ export class ColmapParser {
       width,
       height,
       name: `camera_${id}`,
+      cameraModel: 'pinhole-ideal',
+      coefficients: [],
     };
 
     switch (model.toUpperCase()) {
@@ -106,9 +111,20 @@ export class ColmapParser {
         camera.cy = params[3];
         break;
 
-      case 'RADIAL':
+      case 'SIMPLE_PINHOLE':
+        if (params.length !== 3) {
+          console.warn(`SIMPLE_PINHOLE model requires 3 parameters, got ${params.length}`);
+          return null;
+        }
+        camera.fx = params[0];
+        camera.fy = params[0];
+        camera.cx = params[1];
+        camera.cy = params[2];
+        break;
+
+      case 'SIMPLE_RADIAL':
         if (params.length !== 4) {
-          console.warn(`RADIAL model requires 4 parameters, got ${params.length}`);
+          console.warn(`SIMPLE_RADIAL model requires 4 parameters, got ${params.length}`);
           return null;
         }
         camera.fx = params[0];
@@ -116,6 +132,23 @@ export class ColmapParser {
         camera.cx = params[1];
         camera.cy = params[2];
         camera.k1 = params[3];
+        camera.cameraModel = 'pinhole-opencv';
+        camera.coefficients = [params[3], 0, 0, 0, 0];
+        break;
+
+      case 'RADIAL':
+        if (params.length !== 5) {
+          console.warn(`RADIAL model requires 5 parameters, got ${params.length}`);
+          return null;
+        }
+        camera.fx = params[0];
+        camera.fy = params[0];
+        camera.cx = params[1];
+        camera.cy = params[2];
+        camera.k1 = params[3];
+        camera.k2 = params[4];
+        camera.cameraModel = 'pinhole-opencv';
+        camera.coefficients = [params[3], params[4], 0, 0, 0];
         break;
 
       case 'OPENCV':
@@ -131,6 +164,8 @@ export class ColmapParser {
         camera.k2 = params[5];
         camera.p1 = params[6];
         camera.p2 = params[7];
+        camera.cameraModel = 'pinhole-opencv';
+        camera.coefficients = [params[4], params[5], params[6], params[7], 0];
         break;
 
       case 'OPENCV_FISHEYE':
@@ -146,6 +181,8 @@ export class ColmapParser {
         camera.k2 = params[5];
         camera.k3 = params[6];
         camera.k4 = params[7];
+        camera.cameraModel = 'fisheye-opencv';
+        camera.coefficients = params.slice(4, 8);
         break;
 
       default:
@@ -164,20 +201,15 @@ export class ColmapParser {
 
     for (const [name, cam] of Object.entries(result.cameras)) {
       // Map COLMAP models to 3D Visualizer camera models
-      let cameraModel = 'pinhole-ideal';
-      if (cam.model === 'opencv' && (cam.k1 || cam.k2 || cam.p1 || cam.p2)) {
-        cameraModel = 'pinhole-opencv';
-      } else if (cam.model === 'opencv_fisheye') {
-        cameraModel = 'fisheye-opencv';
-      }
-
       cameras[name] = {
         name: cam.name,
         fx: cam.fx,
         fy: cam.fy || cam.fx,
         cx: cam.cx,
         cy: cam.cy,
-        camera_model: cameraModel,
+        camera_model: cam.cameraModel,
+        coefficients: cam.coefficients,
+        source_camera_model: cam.model,
         k1: cam.k1,
         k2: cam.k2,
         k3: cam.k3,

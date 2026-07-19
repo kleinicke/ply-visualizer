@@ -10,7 +10,10 @@ import { PcdParser } from '../engine/src/parsers/pcdParser';
 import { PtsParser } from '../engine/src/parsers/ptsParser';
 import { OffParser } from '../engine/src/parsers/offParser';
 import { GltfParser } from '../engine/src/parsers/gltfParser';
-import { sendUltimateRawBinary } from './providerHandlers/binaryTransfer';
+import {
+  resendSplatContainerBytes,
+  sendUltimateRawBinary,
+} from './providerHandlers/binaryTransfer';
 import {
   handleCameraParametersRequest,
   handleCameraParametersWithScaleRequest,
@@ -209,6 +212,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       fileType?.extension === 'las' ||
       fileType?.extension === 'laz' ||
       fileType?.extension === 'e57';
+    const isSplatContainerFile =
+      fileType?.extension === 'spz' ||
+      fileType?.extension === 'splat' ||
+      fileType?.extension === 'ksplat' ||
+      fileType?.extension === 'sog';
     const isNpyPointCloud = fileType?.extension === 'npy' && fileType?.category === 'pointCloud';
 
     // Register before assigning HTML. Restored webviews can initialize very
@@ -229,6 +237,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'plyFetchFailed':
           await this.handlePlyFetchFallback(message);
+          break;
+        case 'splatContainerFetchFailed':
+          await resendSplatContainerBytes(webviewPanel, message);
           break;
         case 'addFile':
           await handleAddFile(this.addFileHost, webviewPanel, this.panelToPath.get(webviewPanel));
@@ -358,6 +369,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         isXyzVariant,
         isJsonFile,
         isLidarFile,
+        isSplatContainerFile,
       })
     );
   }

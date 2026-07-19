@@ -21,6 +21,8 @@ import {
   toArrayBuffer,
   sendUltimateRawBinary,
   sendSpatialDataToWebview,
+  sendSplatContainerUri,
+  SPLAT_CONTAINER_EXTENSIONS,
 } from './binaryTransfer';
 import { parseLidarWasm } from '../wasmPointcloud';
 
@@ -136,6 +138,11 @@ export async function handleAddFile(
         if (fileExtension === '.bin') {
           const bytes = await vscode.workspace.fs.readFile(files[i]);
           await addKittiBinData(host, webviewPanel, bytes, fileName, shortPath);
+          continue;
+        }
+
+        if (SPLAT_CONTAINER_EXTENSIONS.includes(fileExtension)) {
+          sendSplatContainerUri(webviewPanel, files[i], fileName, shortPath, 'addFiles');
           continue;
         }
 
@@ -444,6 +451,11 @@ export async function handleAddFileFromPath(
       return;
     }
 
+    if (SPLAT_CONTAINER_EXTENSIONS.includes(ext)) {
+      sendSplatContainerUri(webviewPanel, fileUri, fileName, shortPath, 'addFiles');
+      return;
+    }
+
     if (
       ext === '.tif' ||
       ext === '.tiff' ||
@@ -665,6 +677,19 @@ export async function handleDroppedFilesFromWebview(
 
       if (ext === '.bin') {
         await addKittiBinData(host, webviewPanel, fileData, fileName, shortPath);
+        continue;
+      }
+
+      if (SPLAT_CONTAINER_EXTENSIONS.includes(ext)) {
+        // No fetchable URI for dropped bytes — send them straight through.
+        webviewPanel.webview.postMessage({
+          type: 'splatContainerUri',
+          messageType: 'addFiles',
+          data: toArrayBuffer(fileData),
+          fileName,
+          shortPath,
+          fileSizeInBytes: fileData.byteLength,
+        });
         continue;
       }
 

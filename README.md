@@ -1,7 +1,7 @@
 # 3D Point Cloud and Mesh Visualizer for VS Code
 
-View, compare and inspect point clouds, meshes, depth maps and disparity images
-directly inside VS Code.
+View, compare and inspect point clouds, meshes, gaussian splats, depth maps and
+disparity images directly inside VS Code.
 
 ![Depth image converted to a point cloud](https://github.com/kleinicke/ply-visualizer/releases/download/v1.0.0/disp2pc.gif)
 
@@ -10,6 +10,7 @@ directly inside VS Code.
 - Open large point clouds quickly, including files with millions of points
 - Compare multiple point clouds in one view and toggle them independently
 - Convert depth and disparity images into point clouds
+- Render gaussian splat reconstructions as sorted splats or center point clouds
 - Inspect meshes as surfaces, wireframes, points and normals
 - Use Eye-Dome Lighting and brightness correction for clearer uncolored geometry
 - Measure distances and adjust camera, rotation center and view parameters
@@ -22,6 +23,7 @@ directly inside VS Code.
 | ---------------------- | --------------------------------------------------------------- |
 | Point clouds           | PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY, LAS, LAZ, E57, KITTI BIN |
 | Meshes                 | PLY, OBJ, STL, OFF, GLTF, GLB                                   |
+| Gaussian splats        | 3DGS PLY, SPZ, SPLAT, KSPLAT, SOG                               |
 | Depth/disparity images | TIFF, PNG, PFM, NPY, NPZ                                        |
 | 3D Body Poses          | JSON pose data (experimental)                                   |
 | Camera Profiles        | JSON pose data (experimental)                                   |
@@ -58,6 +60,16 @@ switch between them with Shift-click.
 Inspect mesh files with controls for surface, wireframe, points and normals.
 This is useful when checking geometry, topology or exported reconstruction
 results without leaving the editor.
+
+### Gaussian Splatting
+
+Open 3D Gaussian Splatting reconstructions (3DGS PLY, SPZ, SPLAT, KSPLAT, SOG)
+and render them as real sorted splats via [Spark](https://sparkjs.dev), or as a
+point cloud of the gaussian centers with colors derived from the
+spherical-harmonics coefficients. Switch per file with the **✨ Splats** button
+in the Files panel. Measurement and picking keep working on the gaussian centers
+in splat mode, and coloring the center points by the `opacity` scalar field
+helps with spotting floaters.
 
 ### Point Cloud Attributes
 
@@ -118,7 +130,7 @@ files are especially helpful when adding support for new formats.
 
 ## Roadmap
 
-- Add support for more file formats, including FBX and Gaussian splats
+- Add support for more file formats, including FBX
 - Improve dataset support with example images from Middlebury stereo and ETH3D
 - Use calibration files next to depth images automatically when available
   (example files needed)

@@ -27,6 +27,7 @@ import {
   readFileHead,
   pcdViewpointIsIdentity,
   sendSpatialDataToWebview,
+  sendSplatContainerUri,
 } from './binaryTransfer';
 
 export interface DocumentLoaderHost {
@@ -60,6 +61,7 @@ export interface DocumentFileTypeFlags {
   isXyzVariant: boolean;
   isJsonFile: boolean;
   isLidarFile: boolean;
+  isSplatContainerFile: boolean;
 }
 
 /**
@@ -92,11 +94,25 @@ export async function loadDocumentContent(
     isXyzVariant,
     isJsonFile,
     isLidarFile,
+    isSplatContainerFile,
   } = flags;
 
   try {
     const loadStartTime = performance.now();
     const wallStart = new Date().toISOString();
+
+    if (isSplatContainerFile) {
+      const stat = await vscode.workspace.fs.stat(documentUri);
+      sendSplatContainerUri(
+        webviewPanel,
+        documentUri,
+        path.basename(documentUri.fsPath),
+        host.getShortPath(documentUri.fsPath),
+        'multiSpatialData',
+        stat.size
+      );
+      return;
+    }
 
     if (isLidarFile) {
       const bytes = await readFileFast(documentUri);

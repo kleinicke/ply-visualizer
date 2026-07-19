@@ -138,12 +138,29 @@ export async function handleCameraParametersWithScaleRequest(
           value: 'pinhole-ideal',
         },
         {
-          label: 'Fisheye Camera',
-          description:
-            defaults.cameraModel === 'fisheye'
-              ? 'Wide-angle fisheye projection model (Default)'
-              : 'Wide-angle fisheye projection model',
-          value: 'fisheye',
+          label: 'Pinhole Camera (OpenCV)',
+          description: 'Radial/tangential OpenCV model',
+          value: 'pinhole-opencv',
+        },
+        {
+          label: 'Fisheye Camera (Equidistant)',
+          description: 'Ideal spherical/equidistant model',
+          value: 'fisheye-equidistant',
+        },
+        {
+          label: 'Fisheye Camera (OpenCV)',
+          description: 'OpenCV four-coefficient fisheye model',
+          value: 'fisheye-opencv',
+        },
+        {
+          label: 'Kannala-Brandt KB3',
+          description: 'k0,k1,k2,k3 with r(theta)=theta+k0 theta^3+...+k3 theta^9',
+          value: 'fisheye-kb3',
+        },
+        {
+          label: 'Project Aria Fisheye624',
+          description: 'Six radial, two tangential, four thin-prism coefficients',
+          value: 'fisheye624',
         },
       ],
       {
@@ -158,6 +175,36 @@ export async function handleCameraParametersWithScaleRequest(
         requestId: message.requestId,
       });
       return;
+    }
+
+    const coefficientNames: Record<string, string[]> = {
+      'pinhole-opencv': ['k1', 'k2', 'p1', 'p2', 'k3'],
+      'fisheye-opencv': ['k1', 'k2', 'k3', 'k4'],
+      'fisheye-kb3': ['k0', 'k1', 'k2', 'k3'],
+      fisheye624: ['k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'p0', 'p1', 's0', 's1', 's2', 's3'],
+    };
+    const expectedCoefficients = coefficientNames[cameraModel.value];
+    let coefficients: number[] | undefined;
+    if (expectedCoefficients) {
+      const coefficientInput = await vscode.window.showInputBox({
+        prompt: `Enter coefficients in this exact order: ${expectedCoefficients.join(', ')}`,
+        value: expectedCoefficients.map(() => '0').join(','),
+        validateInput: value => {
+          const parsed = value.split(',').map(item => Number(item.trim()));
+          return parsed.length === expectedCoefficients.length && parsed.every(Number.isFinite)
+            ? null
+            : `Enter exactly ${expectedCoefficients.length} finite comma-separated values`;
+        },
+        ignoreFocusOut: true,
+      });
+      if (coefficientInput === undefined) {
+        webviewPanel.webview.postMessage({
+          type: 'cameraParamsCancelled',
+          requestId: message.requestId,
+        });
+        return;
+      }
+      coefficients = coefficientInput.split(',').map(item => Number(item.trim()));
     }
 
     // Show scale factor input dialog
@@ -282,6 +329,7 @@ export async function handleCameraParametersWithScaleRequest(
       depthType: 'euclidean', // Default for PNG
       pngScaleFactor: pngScaleFactor,
       convention: convention.value,
+      coefficients,
       requestId: message.requestId,
     });
   } catch (error) {

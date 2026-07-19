@@ -298,12 +298,18 @@ export class SplatModeManager {
 export async function handleSplatContainerUri(
   host: {
     splatMode: SplatModeManager;
+    vscode: { postMessage(message: any): void };
     displayFiles(dataArray: SpatialData[]): Promise<void>;
     addNewFiles(newFiles: SpatialData[]): void;
     showError?(message: string): void;
   },
   message: {
-    fileUri: string;
+    fileUri?: string;
+    /** Raw file bytes for paths without a fetchable URI (webview drag&drop,
+     *  and the extension's resend after a failed fetch). */
+    data?: ArrayBuffer;
+    /** Original vscode document URI, used for the fetch-failure fallback. */
+    docUri?: string;
     fileName: string;
     shortPath?: string;
     fileSizeInBytes?: number;
@@ -311,11 +317,38 @@ export async function handleSplatContainerUri(
   }
 ): Promise<void> {
   try {
-    const response = await fetch(message.fileUri);
-    if (!response.ok) {
-      throw new Error(`fetch failed: HTTP ${response.status}`);
+    let bytes: Uint8Array;
+    if (message.data) {
+      bytes = new Uint8Array(message.data);
+    } else if (message.fileUri) {
+      let response: Response;
+      try {
+        response = await fetch(message.fileUri);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+      } catch (fetchError) {
+        // Files outside the webview's localResourceRoots (e.g. added from a
+        // different directory than the opened document) can't be fetched.
+        // Ask the extension to re-read and resend the bytes over postMessage
+        // — same pattern as the PLY path's 'plyFetchFailed' fallback.
+        if (message.docUri) {
+          console.warn('[splat] fetch failed, requesting postMessage fallback:', fetchError);
+          host.vscode.postMessage({
+            type: 'splatContainerFetchFailed',
+            docUri: message.docUri,
+            fileName: message.fileName,
+            shortPath: message.shortPath,
+            messageType: message.messageType,
+          });
+          return;
+        }
+        throw fetchError;
+      }
+      bytes = new Uint8Array(await response.arrayBuffer());
+    } else {
+      throw new Error('no file source provided');
     }
-    const bytes = new Uint8Array(await response.arrayBuffer());
     const data = await host.splatMode.loadContainer(message.fileName, bytes);
     data.shortPath = message.shortPath;
     data.fileSizeInBytes = message.fileSizeInBytes ?? bytes.byteLength;

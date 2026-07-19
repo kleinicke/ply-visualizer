@@ -103,6 +103,18 @@
           },
           {
             "filenamePattern": "*.e57"
+          },
+          {
+            "filenamePattern": "*.spz"
+          },
+          {
+            "filenamePattern": "*.splat"
+          },
+          {
+            "filenamePattern": "*.ksplat"
+          },
+          {
+            "filenamePattern": "*.sog"
           }
         ]
       },

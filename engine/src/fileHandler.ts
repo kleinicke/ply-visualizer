@@ -560,6 +560,8 @@ export interface CameraParams {
   pngScaleFactor?: number;
   depthScale?: number;
   depthBias?: number;
+  coefficients?: number[];
+  imageRectified?: boolean;
 }
 
 /**
@@ -933,6 +935,8 @@ export async function convertDepthToUnified(
     cx,
     cy,
     cameraModel: cameraParams.cameraModel,
+    coefficients: cameraParams.coefficients,
+    imageRectified: cameraParams.imageRectified,
     convention: cameraParams.convention || 'opengl',
     k1: (cameraParams as any).k1 ? parseFloat(String((cameraParams as any).k1)) : undefined,
     k2: (cameraParams as any).k2 ? parseFloat(String((cameraParams as any).k2)) : undefined,

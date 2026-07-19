@@ -365,7 +365,13 @@ calibration:
 - `pinhole-opencv`: Pinhole with OpenCV distortion model
 - `fisheye-equidistant`: Equidistant fisheye projection
 - `fisheye-opencv`: OpenCV fisheye model
-- `fisheye-kannala-brandt`: Kannala-Brandt polynomial fisheye model
+- `fisheye-kb3`: Kannala-Brandt KB3 with coefficients `k0,k1,k2,k3`
+- `fisheye624`: Project Aria FisheyeRadTanThinPrism with coefficients
+  `k0..k5,p0,p1,s0..s3`
+
+Coefficient order is model-specific and validated exactly. For images that have
+already been undistorted/rectified, enable **Input image is already rectified**
+so calibration distortion is not applied a second time.
 
 **Usage in 3D Visualizer:**
 

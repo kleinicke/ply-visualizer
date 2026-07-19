@@ -1,4 +1,5 @@
 import { CameraParams, DepthConversionResult } from '../interfaces';
+import { cameraCoefficientsFromParameters, projectCameraRay } from './cameraModels';
 
 export function applyColorToDepthResult(
   result: DepthConversionResult,
@@ -64,16 +65,32 @@ export function applyColorToDepthResult(
       let u: number;
       let v: number;
 
-      if (cameraParams.cameraModel === 'fisheye-equidistant') {
-        const r = Math.sqrt(xCV * xCV + yCV * yCV);
-        const theta = Math.atan2(r, zCV);
-        const phi = Math.atan2(yCV, xCV);
-        const rFish = fx * theta;
-        u = Math.round(cx + rFish * Math.cos(phi));
-        v = Math.round(cy + rFish * Math.sin(phi));
-      } else {
-        u = Math.round(fx * (xCV / zCV) + cx);
-        v = Math.round(fy * (yCV / zCV) + cy);
+      try {
+        const projected = projectCameraRay(
+          {
+            ...cameraParams,
+            fy,
+            cx,
+            cy,
+            coefficients: cameraCoefficientsFromParameters(cameraParams as any),
+          },
+          [xCV, yCV, zCV]
+        );
+        if (!projected.valid) {throw new Error('ray is outside the camera model domain');}
+        u = Math.round(projected.value[0]);
+        v = Math.round(projected.value[1]);
+      } catch {
+        // The aligned advanced-model path always has pixelCoords. This fallback
+        // only keeps ideal models usable if WASM initialization is unavailable.
+        if (cameraParams.cameraModel === 'fisheye-equidistant') {
+          const radius = Math.hypot(xCV, yCV);
+          const theta = Math.atan2(radius, zCV);
+          u = Math.round(cx + fx * theta * (radius ? xCV / radius : 0));
+          v = Math.round(cy + fy * theta * (radius ? yCV / radius : 0));
+        } else {
+          u = Math.round(fx * (xCV / zCV) + cx);
+          v = Math.round(fy * (yCV / zCV) + cy);
+        }
       }
 
       if (u >= 0 && u < width && v >= 0 && v < height) {

@@ -90,6 +90,12 @@ module.exports = {
                 .replace(/src="bundle\.js"/g, 'src="../bundle.js"')
                 .replace(/src="media\//g, 'src="../media/')
                 .replace(/href="media\//g, 'href="../media/')
+                // Worker bootstrap URLs are strings rather than script tags;
+                // from /3d-visualizer/ they must also point one level up.
+                .replace(
+                  /'media\/(geotiff\.min\.js|wasm\/tiff_wasm(?:_bg)?\.(?:js|wasm))'/g,
+                  "'../media/$1'"
+                )
                 // Update navigation: About button goes to root (about page is now at root)
                 .replace(
                   /<a href="about\/" class="nav-button">About<\/a>/g,

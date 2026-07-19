@@ -192,6 +192,8 @@ export class DepthConverter {
       cx,
       cy,
       cameraModel: cameraParams.cameraModel,
+      coefficients: cameraParams.coefficients,
+      imageRectified: cameraParams.imageRectified,
       convention: cameraParams.convention || 'opengl',
       k1: cameraParams.k1 ? parseFloat(cameraParams.k1.toString()) : undefined,
       k2: cameraParams.k2 ? parseFloat(cameraParams.k2.toString()) : undefined,
@@ -228,6 +230,15 @@ export class DepthConverter {
   - depthBias: ${cameraParams.depthBias ?? 'not set'}`);
 
     const result = projectToPointCloud(norm, projectionParams);
+
+    if (result.projectionDiagnostics?.rejectedCount) {
+      console.warn(
+        `[CameraModel] Rejected ${result.projectionDiagnostics.rejectedCount} pixel(s) outside the valid model domain` +
+          (result.projectionDiagnostics.nonConvergedCount
+            ? `; ${result.projectionDiagnostics.nonConvergedCount} inverse solve(s) did not converge`
+            : '')
+      );
+    }
 
     return result as unknown as DepthConversionResult;
   }

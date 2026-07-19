@@ -3,7 +3,8 @@ export type CameraModel =
   | 'pinhole-opencv'
   | 'fisheye-equidistant'
   | 'fisheye-opencv'
-  | 'fisheye-kannala-brandt';
+  | 'fisheye-kb3'
+  | 'fisheye624';
 
 export type DepthKind = 'depth' | 'disparity' | 'inverse_depth' | 'z';
 
@@ -29,6 +30,8 @@ export interface DepthMetadata {
   depthScale?: number; // scale factor for depth values (for depth from mono networks)
   depthBias?: number; // bias offset for depth values (for depth from mono networks)
   cameraModel?: CameraModel;
+  coefficients?: number[];
+  imageRectified?: boolean;
   convention?: 'opencv' | 'opengl';
   depthClamp?: { min?: number; max?: number };
   // NPZ-specific metadata

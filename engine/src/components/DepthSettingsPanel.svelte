@@ -24,8 +24,9 @@
   const isDisparity = $derived(depthType === 'disparity');
   const isPinholeOpencv = $derived(cameraModel === 'pinhole-opencv');
   const isFisheyeOpencv = $derived(cameraModel === 'fisheye-opencv');
-  const isKannalaBrandt = $derived(cameraModel === 'fisheye-kannala-brandt');
-  const showDistortionGroup = $derived(isPinholeOpencv || isFisheyeOpencv || isKannalaBrandt);
+  const isKb3 = $derived(cameraModel === 'fisheye-kb3');
+  const isFisheye624 = $derived(cameraModel === 'fisheye624');
+  const showDistortionGroup = $derived(isPinholeOpencv || isFisheyeOpencv || isKb3 || isFisheye624);
 
   const liveUpdateEnabled = $derived(depthSettingsState.liveUpdateFileIndices.includes(fileIndex));
 
@@ -175,11 +176,16 @@
         onchange={onCameraModelChange}
       >
         <option value="pinhole-ideal">Pinhole Ideal</option>
-        <option value="pinhole-opencv">Pinhole + OpenCV Distortion (beta)</option>
+        <option value="pinhole-opencv">Pinhole + OpenCV Distortion</option>
         <option value="fisheye-equidistant">Fisheye Equidistant</option>
-        <option value="fisheye-opencv">Fisheye + OpenCV Distortion (beta)</option>
-        <option value="fisheye-kannala-brandt">Fisheye Kannala-Brandt (beta)</option>
+        <option value="fisheye-opencv">OpenCV Fisheye</option>
+        <option value="fisheye-kb3">Kannala-Brandt KB3</option>
+        <option value="fisheye624">Project Aria Fisheye624</option>
       </select>
+      <label style="display: flex; align-items: center; gap: 5px; margin-top: 4px; font-size: 9px; color: var(--vscode-descriptionForeground);">
+        <input id={`image-rectified-${fileIndex}`} type="checkbox" onchange={onFieldInput} />
+        Input image is already rectified (ignore distortion coefficients)
+      </label>
     </div>
     <div class="depth-group" style="margin-bottom: 8px;">
       <label for={`depth-type-${fileIndex}`} style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;"
@@ -293,7 +299,7 @@
         style="width: 100%; text-align: left; background: transparent; border: none; color: var(--vscode-foreground); cursor: pointer; padding: 2px 0; font-size: 10px; font-weight: bold; display: flex; align-items: center; gap: 4px;"
         onclick={() => (distortionOpen = !distortionOpen)}
       >
-        <span class="toggle-icon" style="font-size: 8px;">{distortionOpen ? '▼' : '▶'}</span> Distortion Parameters (beta)
+        <span class="toggle-icon" style="font-size: 8px;">{distortionOpen ? '▼' : '▶'}</span> Distortion Parameters
       </button>
       <div
         class="depth-section-content"
@@ -333,25 +339,18 @@
           <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">Fisheye radial distortion coefficients</div>
         </div>
 
-        <div id={`kannala-brandt-params-${fileIndex}`} style="display: {isKannalaBrandt ? '' : 'none'};">
-          <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-            {#each ['k1', 'k2', 'k3'] as p (p)}
-              <div style="flex: 1;">
-                <label for={`${p}-${fileIndex}`} style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">{p}:</label>
-                <input type="number" id={`${p}-${fileIndex}`} value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0" oninput={onFieldInput} onwheel={blurOnWheel} />
-              </div>
-            {/each}
-          </div>
-          <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-            {#each ['k4', 'k5'] as p (p)}
-              <div style="flex: 1;">
-                <label for={`${p}-${fileIndex}`} style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">{p}:</label>
-                <input type="number" id={`${p}-${fileIndex}`} value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0" oninput={onFieldInput} onwheel={blurOnWheel} />
-              </div>
-            {/each}
-            <div style="flex: 1;"></div>
-          </div>
-          <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">Polynomial fisheye coefficients</div>
+        <div id={`kannala-brandt-params-${fileIndex}`} style="display: {isKb3 || isFisheye624 ? '' : 'none'};">
+          <label for={`camera-coefficients-${fileIndex}`} style="display: block; font-size: 9px; margin-bottom: 2px; color: var(--vscode-descriptionForeground);">
+            {isFisheye624 ? 'k0,k1,k2,k3,k4,k5,p0,p1,s0,s1,s2,s3' : 'k0,k1,k2,k3'}:
+          </label>
+          <input
+            type="text"
+            id={`camera-coefficients-${fileIndex}`}
+            value={isFisheye624 ? '0,0,0,0,0,0,0,0,0,0,0,0' : '0,0,0,0'}
+            style="width: 100%; padding: 2px; font-size: 11px;"
+            oninput={onFieldInput}
+          />
+          <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 2px;">Exact ordered coefficient layout; coefficient count is validated.</div>
         </div>
       </div>
     </div>

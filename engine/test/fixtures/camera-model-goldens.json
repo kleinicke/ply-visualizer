@@ -1,0 +1,23 @@
+{
+  "opencvPinhole": {
+    "ray": [0.55, -0.35, 1.0],
+    "coefficients": [0.2, -0.08, 0.01, -0.015, 0.02],
+    "pixel": [610.8769301562501, 69.50521609375002],
+    "source": "OpenCV 4.13.0 cv2.projectPoints"
+  },
+  "opencvFisheye": {
+    "ray": [0.8, 0.35, 0.55],
+    "coefficients": [0.08, -0.02, 0.004, -0.0005],
+    "pixel": [821.6494103586108, 442.25815687252805],
+    "source": "OpenCV 4.13.0 cv2.fisheye.projectPoints"
+  },
+  "fisheye624": {
+    "ray": [0.75, -0.45, 0.7],
+    "coefficients": [
+      0.08, -0.02, 0.004, -0.0005, 0.00004, -0.000002, 0.002, -0.003, 0.001, -0.0002, -0.0007,
+      0.0001
+    ],
+    "pixel": [736.4362513019171, 8.932838190229432],
+    "source": "Project Aria FisheyeRadTanThinPrism reference equations"
+  }
+}

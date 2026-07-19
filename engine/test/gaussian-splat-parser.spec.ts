@@ -33,6 +33,8 @@ test('parses a binary 3DGS PLY: DC colors, scalar fields, no f_rest blow-up', as
 
   expect(result.isGaussianSplat).toBe(true);
   expect(result.hasColors).toBe(true);
+  // 3DGS nx/ny/nz are always all zeros — dropped so no no-op Normals button.
+  expect(result.hasNormals).toBe(false);
   expect(result.vertexCount).toBe(2000);
   expect(result.useTypedArrays).toBe(true);
   expectAnchors(result);
@@ -52,6 +54,7 @@ test('parses an ascii 3DGS PLY with the same colors', async () => {
 
   expect(result.isGaussianSplat).toBe(true);
   expect(result.hasColors).toBe(true);
+  expect(result.hasNormals).toBe(false);
   expect(result.vertexCount).toBe(60);
   expectAnchors(result);
   expect(Object.keys(result.scalarFields ?? {})).toContain('opacity');

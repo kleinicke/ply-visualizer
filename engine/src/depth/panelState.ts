@@ -30,6 +30,8 @@ export interface DepthFormValues {
   k5: string | null;
   p1: string | null;
   p2: string | null;
+  coefficients: string | null;
+  imageRectified: string;
   liveUpdate: string;
 }
 
@@ -99,6 +101,11 @@ export function captureDepthFormValues(
     k5: getValue(`k5-${fileIndex}`),
     p1: getValue(`p1-${fileIndex}`),
     p2: getValue(`p2-${fileIndex}`),
+    coefficients: getValue(`camera-coefficients-${fileIndex}`),
+    imageRectified: (document.getElementById(`image-rectified-${fileIndex}`) as HTMLInputElement)
+      ?.checked
+      ? 'true'
+      : 'false',
     liveUpdate: host.liveDepthUpdateFiles.has(fileIndex) ? 'true' : 'false',
   };
 }
@@ -198,6 +205,11 @@ export function restoreDepthFormValues(
   setValue(`k5-${fileIndex}`, formValues.k5);
   setValue(`p1-${fileIndex}`, formValues.p1);
   setValue(`p2-${fileIndex}`, formValues.p2);
+  setValue(`camera-coefficients-${fileIndex}`, formValues.coefficients);
+  const rectifiedInput = document.getElementById(
+    `image-rectified-${fileIndex}`
+  ) as HTMLInputElement | null;
+  if (rectifiedInput) {rectifiedInput.checked = formValues.imageRectified === 'true';}
 
   const liveUpdate = formValues.liveUpdate === 'true';
   host.setLiveDepthUpdateEnabled(fileIndex, liveUpdate);
@@ -227,7 +239,10 @@ export function restoreDepthFormValues(
     } else if (formValues.cameraModel === 'fisheye-opencv') {
       distortionGroup.style.display = '';
       fisheyeOpencvParams.style.display = '';
-    } else if (formValues.cameraModel === 'fisheye-kannala-brandt') {
+    } else if (
+      formValues.cameraModel === 'fisheye-kb3' ||
+      formValues.cameraModel === 'fisheye624'
+    ) {
       distortionGroup.style.display = '';
       kannalaBrandtParams.style.display = '';
     } else {
@@ -296,6 +311,12 @@ export function getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
   const k5Input = document.getElementById(`k5-${fileIndex}`) as HTMLInputElement;
   const p1Input = document.getElementById(`p1-${fileIndex}`) as HTMLInputElement;
   const p2Input = document.getElementById(`p2-${fileIndex}`) as HTMLInputElement;
+  const coefficientsInput = document.getElementById(
+    `camera-coefficients-${fileIndex}`
+  ) as HTMLInputElement;
+  const imageRectifiedInput = document.getElementById(
+    `image-rectified-${fileIndex}`
+  ) as HTMLInputElement;
 
   const cx = cxInput?.value && cxInput.value.trim() !== '' ? parseFloat(cxInput.value) : undefined; // Will be auto-calculated if not provided
   const cy = cyInput?.value && cyInput.value.trim() !== '' ? parseFloat(cyInput.value) : undefined; // Will be auto-calculated if not provided
@@ -311,6 +332,9 @@ export function getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
   const k5 = k5Input?.value && k5Input.value.trim() !== '' ? parseFloat(k5Input.value) : undefined;
   const p1 = p1Input?.value && p1Input.value.trim() !== '' ? parseFloat(p1Input.value) : undefined;
   const p2 = p2Input?.value && p2Input.value.trim() !== '' ? parseFloat(p2Input.value) : undefined;
+  const coefficients = coefficientsInput?.value
+    ? coefficientsInput.value.split(',').map(value => Number(value.trim()))
+    : undefined;
 
   return {
     cameraModel: (cameraModelSelect?.value as any) || 'pinhole-ideal',
@@ -348,5 +372,7 @@ export function getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
     k5: k5,
     p1: p1,
     p2: p2,
+    coefficients,
+    imageRectified: imageRectifiedInput?.checked || false,
   };
 }

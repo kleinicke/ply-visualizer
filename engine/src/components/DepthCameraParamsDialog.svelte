@@ -32,7 +32,19 @@
       | 'pinhole-opencv'
       | 'fisheye-equidistant'
       | 'fisheye-opencv'
-      | 'fisheye-kannala-brandt';
+      | 'fisheye-kb3'
+      | 'fisheye624';
+    const coefficientCounts: Record<string, number> = {
+      'pinhole-opencv': 5,
+      'fisheye-opencv': 4,
+      'fisheye-kb3': 4,
+      fisheye624: 12,
+    };
+    const coefficientText = (document.getElementById('camera-coefficients') as HTMLInputElement).value;
+    const coefficientCount = coefficientCounts[cameraModel] ?? 0;
+    const coefficients = coefficientCount
+      ? coefficientText.split(',').slice(0, coefficientCount).map(value => Number(value.trim()))
+      : undefined;
     const baseline = parseFloat((document.getElementById('depth-baseline') as HTMLInputElement).value);
     const disparityOffset = parseFloat(
       (document.getElementById('depth-disparity-offset') as HTMLInputElement).value
@@ -40,6 +52,10 @@
 
     if (isNaN(fx) || fx <= 0) {
       alert('Invalid focal length X (fx)');
+      return;
+    }
+    if (coefficientCount && (coefficients?.length !== coefficientCount || coefficients.some(value => !Number.isFinite(value)))) {
+      alert(`This model requires exactly ${coefficientCount} finite comma-separated coefficients`);
       return;
     }
     if (depthType === 'disparity' && (isNaN(baseline) || baseline <= 0)) {
@@ -56,6 +72,7 @@
       cameraModel,
       baseline: depthType === 'disparity' ? baseline : undefined,
       disparityOffset: depthType === 'disparity' ? disparityOffset : undefined,
+      coefficients,
     });
   }
 </script>
@@ -171,8 +188,12 @@
         <option value="pinhole-opencv">Pinhole (OpenCV)</option>
         <option value="fisheye-equidistant">Fisheye (Equidistant)</option>
         <option value="fisheye-opencv">Fisheye (OpenCV)</option>
-        <option value="fisheye-kannala-brandt">Fisheye (Kannala-Brandt)</option>
+        <option value="fisheye-kb3">Kannala-Brandt KB3</option>
+        <option value="fisheye624">Project Aria Fisheye624</option>
       </select>
+      <label for="camera-coefficients" style="display: block; margin: 8px 0 5px;">Ordered distortion coefficients:</label>
+      <input id="camera-coefficients" value="0,0,0,0,0,0,0,0,0,0,0,0" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;" />
+      <div style="font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 3px;">OpenCV pinhole: k1,k2,p1,p2,k3 · OpenCV fisheye: k1..k4 · KB3: k0..k3 · Fisheye624: k0..k5,p0,p1,s0..s3</div>
     </div>
 
     <div style="display: flex; justify-content: flex-end; gap: 10px;">

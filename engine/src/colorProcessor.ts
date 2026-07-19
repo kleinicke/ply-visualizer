@@ -9,6 +9,7 @@
  */
 
 import * as THREE from 'three';
+import { cameraCoefficientsFromParameters, projectCameraRay } from './depth/cameraModels';
 import { SpatialData, CameraParams, DepthConversionResult } from './interfaces';
 
 export class ColorProcessor {
@@ -207,20 +208,30 @@ export class ColorProcessor {
 
         // Project 3D point to image coordinates
         let u, v;
-        if (cameraParams.cameraModel === 'fisheye-equidistant') {
-          // Fisheye equidistant projection: r = f * theta
-          const r = Math.sqrt(xCV * xCV + yCV * yCV);
-          const theta = Math.atan2(r, zCV);
-          const phi = Math.atan2(yCV, xCV);
-
-          const rFish = fx * theta;
-          u = Math.round(cx + rFish * Math.cos(phi));
-          v = Math.round(cy + rFish * Math.sin(phi));
-        } else {
-          // Pinhole projection (ideal, no distortion)
-          // For distorted models, pixelCoords should be used instead
-          u = Math.round(fx * (xCV / zCV) + cx);
-          v = Math.round(fy * (yCV / zCV) + cy);
+        try {
+          const projected = projectCameraRay(
+            {
+              ...cameraParams,
+              fy,
+              cx,
+              cy,
+              coefficients: cameraCoefficientsFromParameters(cameraParams as any),
+            },
+            [xCV, yCV, zCV]
+          );
+          if (!projected.valid) {throw new Error('ray is outside the camera model domain');}
+          u = Math.round(projected.value[0]);
+          v = Math.round(projected.value[1]);
+        } catch {
+          if (cameraParams.cameraModel === 'fisheye-equidistant') {
+            const radius = Math.hypot(xCV, yCV);
+            const theta = Math.atan2(radius, zCV);
+            u = Math.round(cx + fx * theta * (radius ? xCV / radius : 0));
+            v = Math.round(cy + fy * theta * (radius ? yCV / radius : 0));
+          } else {
+            u = Math.round(fx * (xCV / zCV) + cx);
+            v = Math.round(fy * (yCV / zCV) + cy);
+          }
         }
 
         // Check bounds and get color

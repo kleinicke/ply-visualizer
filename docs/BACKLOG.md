@@ -117,16 +117,22 @@ ordering, image-to-camera association, multiple cameras, missing files and
 ambiguous sidecars. Do not conflate COLMAP `images.txt` camera poses with the
 unrelated 3D human-body pose feature below.
 
-### Harden camera distortion models and add Fisheye624
+### Harden camera distortion models and add Fisheye624 — shipped July 2026
 
-**Existing beta:** the depth UI and data types expose ideal pinhole, equidistant
-fisheye, OpenCV pinhole/fisheye and a Kannala-Brandt option. Ideal pinhole and
-basic equidistant projection are usable, but the calibrated models must remain
-beta until their pixel-to-ray equations and parameter conventions are corrected.
-The current TypeScript and Rust/WASM paths duplicate the same math, some
-distortion branches apply a forward equation where unprojection requires its
-numerical inverse, and the tests mostly check types or mock implementations
-rather than production results.
+**Implemented.** Advanced project/unproject math now has one Rust/WASM source of
+truth with explicit coefficient layouts, convergence/domain reporting and
+checked browser-boundary goldens. The UI and calibration adapters use
+`fisheye-kb3` and `fisheye624`, expose raw-versus-rectified input, and reject
+the old ambiguous Kannala-Brandt identity rather than guessing its convention.
+
+**Original beta:** the depth UI and data types exposed ideal pinhole,
+equidistant fisheye, OpenCV pinhole/fisheye and a Kannala-Brandt option. Ideal
+pinhole and basic equidistant projection are usable, but the calibrated models
+must remain beta until their pixel-to-ray equations and parameter conventions
+are corrected. The current TypeScript and Rust/WASM paths duplicate the same
+math, some distortion branches apply a forward equation where unprojection
+requires its numerical inverse, and the tests mostly check types or mock
+implementations rather than production results.
 
 1. Define one explicit camera-model contract with `project` (3D ray to pixel)
    and `unproject` (pixel to 3D ray), named coefficient layouts, convergence
@@ -236,9 +242,10 @@ Worker. A later extension: point-to-mesh distance against STL/OBJ ground truth
 
 ## Implemented
 
-### Gaussian splatting (3DGS PLY)
+### Gaussian splatting (3DGS PLY + SPZ/SPLAT/KSPLAT/SOG)
 
-**Shipped (July 2026).** Both halves of what was once deferred here:
+**Shipped (July 2026).** Both halves of what was once deferred here, plus the
+splat-native container formats:
 
 1. **DC-color point preview** — the PLY parser (both the full parser and the
    webview-side "ultimate" binary reader) detects the INRIA 3DGS layout
@@ -251,11 +258,28 @@ Worker. A later extension: point-to-mesh distance against STL/OBJ ground truth
    lazy-loaded as a separate ~4.8 MB webpack chunk on first use
    (`engine/src/visualization/splatMode.ts`). Points stay loaded but hidden in
    splat mode, so picking/measurement keep working on gaussian centers;
-   transforms mirror onto the `SplatMesh`. Design history and integration
-   gotchas (CSP `connect-src data:`, `three/addons` alias, ASCII wasm-path
-   guard): [gaussian-splatting-plan.md](gaussian-splatting-plan.md).
+   transforms mirror onto the `SplatMesh`. Splat load waits on
+   `mesh.initialized` before hiding the points, so failures revert to the point
+   view with a status message instead of an empty scene. Design history and
+   integration gotchas (CSP `connect-src data:`, `three/addons` alias, ASCII
+   wasm-path guard): [gaussian-splatting-plan.md](gaussian-splatting-plan.md).
+3. **Splat-native containers** — `.spz`, `.splat`, `.ksplat`, `.sog` open via
+   Spark directly: the gaussian centers are extracted (`forEachSplat`) into a
+   regular point-cloud entry (opacity as a scalar field) and splat rendering
+   turns on automatically; the Points toggle still works.
 
-Test files: `testfiles/splats/3dgs_*.ply` (regenerate with
+Known limitation: zoomed far out, unbounded captures look like an opaque blob —
+outdoor 3DGS scenes surround their content with huge low-detail environment
+gaussians, so from outside you only see that shell. That is inherent to the
+representation, not a renderer bug; the workflow is to move the camera inside
+(double-click a point to set the rotation center, then zoom in) or inspect in
+points mode. If it bothers users, a possible future feature is a scale/opacity
+filter or crop box implemented via Spark's splat modifiers (dynos).
+
+3DGS nx/ny/nz properties are always all zeros and are deliberately dropped at
+parse (no normals array, no no-op Normals button).
+
+Test files: `testfiles/splats/3dgs_*` (regenerate with
 `uv run --with numpy testfiles/splats/generate_3dgs.py`); specs in
 `engine/test/gaussian-splat-*.spec.ts` and
 `src/test/suite/gaussianSplatParser.test.ts`.

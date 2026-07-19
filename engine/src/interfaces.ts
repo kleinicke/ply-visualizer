@@ -60,7 +60,8 @@ export interface CameraParams {
     | 'pinhole-opencv'
     | 'fisheye-equidistant'
     | 'fisheye-opencv'
-    | 'fisheye-kannala-brandt';
+    | 'fisheye-kb3'
+    | 'fisheye624';
   fx: number; // Focal length in x direction (pixels)
   fy?: number; // Focal length in y direction (pixels) - optional, defaults to fx if not provided
   cx?: number; // Principal point x-coordinate (pixels) - optional, auto-calculated from image dimensions if not provided
@@ -72,6 +73,10 @@ export interface CameraParams {
   depthBias?: number; // Bias offset for depth values (for depth from mono networks)
   convention?: 'opengl' | 'opencv'; // Coordinate convention
   pngScaleFactor?: number; // For PNG files: divisor to convert raw values to meters (1000 for mm)
+  /** Exact model-specific coefficient order; see depth/cameraModels.ts. */
+  coefficients?: number[];
+  /** Set for already-undistorted/rectified input pixels. */
+  imageRectified?: boolean;
   // RGB24 depth image parameters
   rgb24ScaleFactor?: number; // For RGB24 depth images: divisor to convert packed RGB values to meters (e.g., 1000 for mm)
   /**
@@ -90,8 +95,8 @@ export interface CameraParams {
   k3?: number; // Radial distortion coefficient
   // Fisheye OpenCV distortion parameters (k1, k2, k3, k4)
   k4?: number; // Fisheye radial distortion coefficient
-  // Kannala-Brandt polynomial coefficients (k1, k2, k3, k4, k5)
-  k5?: number; // Kannala-Brandt polynomial coefficient
+  // Legacy flattened fields retained for OpenCV calibration compatibility.
+  k5?: number;
 }
 
 export interface DepthConversionResult {
@@ -101,4 +106,5 @@ export interface DepthConversionResult {
   /** Original 2D pixel coordinates (u,v) for each point - length = pointCount * 2. Uint16Array for memory efficiency. */
   pixelCoords?: Float32Array | Uint16Array;
   pointCount: number;
+  projectionDiagnostics?: { rejectedCount: number; nonConvergedCount: number };
 }

@@ -30,9 +30,9 @@ suite('Webview Depth Types', () => {
       assert.strictEqual(model, 'fisheye-opencv');
     });
 
-    test('should accept fisheye-kannala-brandt model', () => {
-      const model: CameraModel = 'fisheye-kannala-brandt';
-      assert.strictEqual(model, 'fisheye-kannala-brandt');
+    test('should accept explicitly named KB3 model', () => {
+      const model: CameraModel = 'fisheye-kb3';
+      assert.strictEqual(model, 'fisheye-kb3');
     });
 
     test('should be used in type checking', () => {
@@ -41,7 +41,8 @@ suite('Webview Depth Types', () => {
         'pinhole-opencv',
         'fisheye-equidistant',
         'fisheye-opencv',
-        'fisheye-kannala-brandt',
+        'fisheye-kb3',
+        'fisheye624',
       ];
 
       assert.strictEqual(models.length, 5);
@@ -591,7 +592,8 @@ suite('Webview Depth Types', () => {
         'pinhole-opencv',
         'fisheye-equidistant',
         'fisheye-opencv',
-        'fisheye-kannala-brandt',
+        'fisheye-kb3',
+        'fisheye624',
       ];
 
       validModels.forEach(model => {

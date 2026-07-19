@@ -83,3 +83,58 @@ test('3DGS file previews with DC colors and toggles into splat mode', async ({ p
   });
   expect(pointsState).toEqual({ active: false, pointsVisible: true, splatMesh: null });
 });
+
+// Splat-native container (.splat): decoded by Spark, centers extracted for
+// picking/points mode, splat rendering enabled automatically on load.
+test('.splat container loads with splat mode on by default', async ({ page }) => {
+  page.on('pageerror', error => console.error('Page error:', error.message));
+
+  await page.goto('/3d-visualizer/');
+  await page.waitForSelector('#three-canvas');
+  await page.waitForTimeout(1000);
+
+  await page.click('#add-file');
+  await page
+    .locator('#hiddenFileInput')
+    .setInputFiles(path.resolve('../testfiles/splats/3dgs_test.splat'));
+
+  await expect(page.locator('#file-list')).toContainText('3dgs_test.splat', { timeout: 60000 });
+  await expect(page.locator('#file-list')).toContainText('3DGS');
+
+  // Splat mode turns on automatically for container formats.
+  const splatBtn = page.locator('.splat-btn[data-file-index="0"]');
+  await expect(splatBtn).toHaveClass(/active/, { timeout: 60000 });
+
+  const state = await page.evaluate(() => {
+    const v = (window as any).visualizer;
+    const data = v.spatialFiles[0];
+    return {
+      active: !!v.splatModeActive[0],
+      pointsVisible: v.meshes[0].visible,
+      splatMeshInScene: !!v.splatMode.getMesh(0)?.parent,
+      vertexCount: data.vertexCount,
+      isSplat: !!data.isGaussianSplat,
+      firstColor: Array.from(data.colorsArray.slice(0, 3)),
+      opacityField: !!data.scalarFields?.opacity,
+      hasSourceBytes: !!data.splatSource?.bytes,
+    };
+  });
+  expect(state.active).toBe(true);
+  expect(state.pointsVisible).toBe(false);
+  expect(state.splatMeshInScene).toBe(true);
+  expect(state.vertexCount).toBe(200);
+  expect(state.isSplat).toBe(true);
+  expect(state.opacityField).toBe(true);
+  expect(state.hasSourceBytes).toBe(true);
+  // First anchor gaussian is (0.8, 0.2, 0.2) — allow small color-space wiggle.
+  const [r, g, b] = state.firstColor as number[];
+  expect(Math.abs(r - 204)).toBeLessThanOrEqual(8);
+  expect(Math.abs(g - 51)).toBeLessThanOrEqual(8);
+  expect(Math.abs(b - 51)).toBeLessThanOrEqual(8);
+
+  // Toggle to points mode works for containers too.
+  await splatBtn.click();
+  await expect(splatBtn).not.toHaveClass(/active/, { timeout: 15000 });
+  const pointsVisible = await page.evaluate(() => (window as any).visualizer.meshes[0].visible);
+  expect(pointsVisible).toBe(true);
+});

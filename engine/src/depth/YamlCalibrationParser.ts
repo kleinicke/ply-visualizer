@@ -14,6 +14,8 @@ export interface YamlCameraData {
   baseline?: number;
   width?: number;
   height?: number;
+  camera_model?: string;
+  coefficients?: number[];
 }
 
 export interface YamlCalibrationResult {
@@ -41,10 +43,10 @@ export class YamlCalibrationParser {
       }
 
       // Detect format based on content structure
-      if (data.camera_matrix || data.distortion_coefficients) {
-        return this.parseOpenCVFormat(data, fileName);
-      } else if (data.image_width && data.camera_matrix && data.distortion_model) {
+      if (data.image_width && data.camera_matrix && data.distortion_model) {
         return this.parseROSFormat(data, fileName);
+      } else if (data.camera_matrix || data.distortion_coefficients) {
+        return this.parseOpenCVFormat(data, fileName);
       } else if (data.left_camera_matrix || data.right_camera_matrix) {
         return this.parseStereoFormat(data, fileName);
       } else if (data.cam0 || data.cam1) {
@@ -87,6 +89,10 @@ export class YamlCalibrationParser {
       camera.p1 = distortion[2];
       camera.p2 = distortion[3];
       camera.k3 = distortion[4];
+      camera.camera_model = 'pinhole-opencv';
+      camera.coefficients = distortion.slice(0, 5);
+    } else {
+      camera.camera_model = 'pinhole-ideal';
     }
 
     if (data.image_width) {
@@ -123,13 +129,34 @@ export class YamlCalibrationParser {
 
     if (data.distortion_coefficients && data.distortion_coefficients.data) {
       const distortion = data.distortion_coefficients.data;
-      if (distortion.length >= 5) {
+      const distortionModel = String(data.distortion_model || '').toLowerCase();
+      if (distortionModel === 'equidistant' && distortion.length === 4) {
+        camera.camera_model = 'fisheye-opencv';
+        camera.coefficients = distortion.slice();
+        camera.k1 = distortion[0];
+        camera.k2 = distortion[1];
+        camera.k3 = distortion[2];
+      } else if (
+        (distortionModel === 'plumb_bob' || distortionModel === 'rational_polynomial') &&
+        distortion.length >= 5
+      ) {
+        if (distortionModel === 'rational_polynomial' && distortion.length > 5) {
+          throw new Error('ROS rational_polynomial coefficients beyond k3 are not supported');
+        }
+        camera.camera_model = 'pinhole-opencv';
+        camera.coefficients = distortion.slice(0, 5);
         camera.k1 = distortion[0];
         camera.k2 = distortion[1];
         camera.p1 = distortion[2];
         camera.p2 = distortion[3];
         camera.k3 = distortion[4];
+      } else if (distortion.length) {
+        throw new Error(
+          `Unsupported ROS distortion model ${data.distortion_model} with ${distortion.length} coefficients`
+        );
       }
+    } else {
+      camera.camera_model = 'pinhole-ideal';
     }
 
     return {
@@ -226,7 +253,24 @@ export class YamlCalibrationParser {
           cy: intrinsics[3],
         };
 
+        const distortionModel = String(cam.distortion_model || '').toLowerCase();
+
         if (cam.distortion_coeffs && cam.distortion_coeffs.length >= 4) {
+          if (distortionModel === 'equidistant' && cam.distortion_coeffs.length === 4) {
+            camera.camera_model = 'fisheye-opencv';
+            camera.coefficients = cam.distortion_coeffs.slice();
+          } else if (distortionModel === 'radtan' && cam.distortion_coeffs.length === 4) {
+            camera.camera_model = 'pinhole-opencv';
+            camera.coefficients = [
+              cam.distortion_coeffs[0],
+              cam.distortion_coeffs[1],
+              cam.distortion_coeffs[2],
+              cam.distortion_coeffs[3],
+              0,
+            ];
+          } else {
+            throw new Error(`Unsupported Kalibr distortion model ${cam.distortion_model}`);
+          }
           camera.k1 = cam.distortion_coeffs[0];
           camera.k2 = cam.distortion_coeffs[1];
           camera.p1 = cam.distortion_coeffs[2];
@@ -235,6 +279,7 @@ export class YamlCalibrationParser {
             camera.k3 = cam.distortion_coeffs[4];
           }
         }
+        camera.camera_model ||= 'pinhole-ideal';
 
         if (cam.resolution) {
           camera.width = cam.resolution[0];
@@ -298,6 +343,8 @@ export class YamlCalibrationParser {
         k3: cam.k3,
         p1: cam.p1,
         p2: cam.p2,
+        camera_model: cam.camera_model || 'pinhole-ideal',
+        coefficients: cam.coefficients,
         width: cam.width,
         height: cam.height,
       };
