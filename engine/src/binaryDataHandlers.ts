@@ -381,6 +381,15 @@ export async function handleUltimateRawBinaryData(
     // no bytes are retained here. Absent on the postMessage fallback path
     // (where fetch already failed) — splat mode is unavailable there.
     spatialData.splatSource = { url: message.fileUri };
+  } else if (isSplat && message.splatHeaderData) {
+    // Add-file/drop routes already transferred the complete binary body for
+    // point parsing. Prefix the small original header and retain that same
+    // body for Spark instead of sending the large file a second time.
+    const header = new Uint8Array(message.splatHeaderData);
+    const source = new Uint8Array(header.byteLength + rawData.byteLength);
+    source.set(header, 0);
+    source.set(rawData, header.byteLength);
+    spatialData.splatSource = { bytes: source };
   }
 
   // Attach TypedArrays

@@ -474,7 +474,12 @@ class PointCloudVisualizer {
     }
     // Splat mode reaches private visibility/button updates through these.
     this.splatMode.refreshVisibility = fileIndex => this.updateMeshVisibilityAndMaterial(fileIndex);
-    this.splatMode.refreshButtons = () => renderModeToggles.updateUniversalRenderButtonStates(this);
+    this.splatMode.refreshButtons = () => {
+      renderModeToggles.updateUniversalRenderButtonStates(this);
+      // FileItem's mode-dependent controls are declarative; wake Svelte after
+      // the asynchronous Spark state changes.
+      filesState.renderTick += 1;
+    };
     this.init();
   }
 
@@ -869,6 +874,7 @@ class PointCloudVisualizer {
       fileVisibility: this.fileVisibility,
       pointSizes: this.pointSizes,
       screenSpaceScaling: this.screenSpaceScaling,
+      splatMeshes: this.spatialFiles.map((_, index) => this.splatMode.getMesh(index)),
     };
   }
 
@@ -1001,12 +1007,6 @@ class PointCloudVisualizer {
     // Update FPS calculation (always, to decay to 0 when no renders)
     this.updateFPSCalculation();
 
-    // Spark re-sorts splats asynchronously; render every frame while any
-    // file is in splat mode so finished sorts become visible.
-    if (this.splatMode.anyActive()) {
-      this.needsRender = true;
-    }
-
     // Update controls
     this.controls.update();
 
@@ -1068,6 +1068,10 @@ class PointCloudVisualizer {
 
     // Always render when needed (this covers camera damping/momentum)
     if (this.needsRender) {
+      // Consume the current invalidation before rendering. Renderer callbacks
+      // (notably Spark's asynchronous sorter) may request another frame while
+      // performRender() is running; that request must survive for the next RAF.
+      this.needsRender = false;
       const now = performance.now();
       // Measure full frame time (time between actual renders)
       if (this.lastFrameTime > 0) {
@@ -1083,7 +1087,6 @@ class PointCloudVisualizer {
       // Update GPU timing results
       this.updateGPUTiming();
 
-      this.needsRender = false;
       // Track render event
       this.trackRender();
     }
@@ -1337,6 +1340,8 @@ class PointCloudVisualizer {
         console.log(`🕺 Selected ${info}`);
       } else if (info.includes('triangle mesh')) {
         console.log(`🔷 Selected ${info}`);
+      } else if (info.includes('gaussian splat')) {
+        console.log(`✨ Selected ${info}`);
       } else {
         console.log(`⚫ Selected point cloud: ${info}`);
       }
@@ -2511,6 +2516,7 @@ class PointCloudVisualizer {
    */
   private toggleUniversalRenderMode(fileIndex: number, mode: string): void {
     renderModeToggles.toggleUniversalRenderMode(this, fileIndex, mode);
+    filesState.renderTick += 1;
   }
 
   private toggleSolidRendering(fileIndex: number): void {

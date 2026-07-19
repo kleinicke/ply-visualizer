@@ -32,6 +32,8 @@ export interface SelectionContext {
   fileVisibility: boolean[];
   pointSizes: number[];
   screenSpaceScaling: boolean;
+  /** Active Spark SplatMesh objects, aligned with spatialFiles. */
+  splatMeshes?: (THREE.Object3D | null)[];
 }
 
 /**
@@ -81,7 +83,14 @@ export class SelectionManager {
       return selectedPoint;
     }
 
-    // 4. Check point clouds with size-aware selection
+    // 4. Raycast the rendered Gaussian ellipsoids when splat mode is active.
+    selectedPoint = this.selectGaussianSplat(mouseScreenX, mouseScreenY, canvas);
+    if (selectedPoint) {
+      return selectedPoint;
+    }
+
+    // 5. Check point clouds with size-aware selection (also the fallback for
+    // hidden Gaussian centers if Spark has no ellipsoid hit).
     selectedPoint = this.selectPointCloud(mouseScreenX, mouseScreenY, canvas);
     if (selectedPoint) {
       return selectedPoint;
@@ -128,13 +137,131 @@ export class SelectionManager {
       };
     }
 
-    // 4. Check point clouds with detailed logging
+    // 4. Check rendered Gaussian ellipsoids before their hidden centers.
+    selectedPoint = this.selectGaussianSplat(mouseScreenX, mouseScreenY, canvas);
+    if (selectedPoint) {
+      const distance = this.context.camera.position.distanceTo(selectedPoint);
+      return {
+        point: selectedPoint,
+        info: `gaussian splat surface at distance ${distance.toFixed(4)}m`,
+      };
+    }
+
+    // 5. Check point clouds with detailed logging
     const pointResult = this.selectPointCloudWithLogging(mouseScreenX, mouseScreenY, canvas);
     if (pointResult) {
       return pointResult;
     }
 
     return null;
+  }
+
+  /**
+   * Use Spark's native ellipsoid raycaster so double-click targets what the
+   * user actually sees, rather than only the hidden Gaussian center cloud.
+   */
+  private selectGaussianSplat(
+    mouseScreenX: number,
+    mouseScreenY: number,
+    canvas: HTMLCanvasElement
+  ): THREE.Vector3 | null {
+    const splats = (this.context.splatMeshes ?? []).filter(
+      (mesh): mesh is THREE.Object3D => !!mesh && mesh.visible
+    );
+    if (splats.length === 0) {
+      return null;
+    }
+
+    const mouse = new THREE.Vector2(
+      (mouseScreenX / canvas.clientWidth) * 2 - 1,
+      -(mouseScreenY / canvas.clientHeight) * 2 + 1
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, this.context.camera);
+    const hit = raycaster.intersectObjects(splats, false)[0];
+    if (hit?.point) {
+      return hit.point.clone();
+    }
+
+    // Spark's accelerated raycaster may omit very small/non-LoD splats on
+    // some encodings. Fall back to an exact CPU ray/ellipsoid intersection
+    // using Spark's decoded center, scale and quaternion data.
+    let closestPoint: THREE.Vector3 | null = null;
+    let closestDistance = Infinity;
+    const localRay = new THREE.Ray();
+    const relativeOrigin = new THREE.Vector3();
+    const ellipsoidOrigin = new THREE.Vector3();
+    const ellipsoidDirection = new THREE.Vector3();
+    const inverseQuaternion = new THREE.Quaternion();
+    const localHit = new THREE.Vector3();
+    const worldHit = new THREE.Vector3();
+
+    for (const mesh of splats) {
+      const splatMesh = mesh as THREE.Object3D & {
+        opacity?: number;
+        forEachSplat?: (
+          callback: (
+            index: number,
+            center: THREE.Vector3,
+            scales: THREE.Vector3,
+            quaternion: THREE.Quaternion,
+            opacity: number
+          ) => void
+        ) => void;
+      };
+      if (!splatMesh.forEachSplat) {
+        continue;
+      }
+      mesh.updateMatrixWorld(true);
+      const inverseWorld = mesh.matrixWorld.clone().invert();
+      localRay.origin.copy(raycaster.ray.origin).applyMatrix4(inverseWorld);
+      localRay.direction.copy(raycaster.ray.direction).transformDirection(inverseWorld);
+
+      splatMesh.forEachSplat((_index, center, scales, quaternion, opacity) => {
+        if (opacity * (splatMesh.opacity ?? 1) < 0.02) {
+          return;
+        }
+        inverseQuaternion.copy(quaternion).invert();
+        relativeOrigin.copy(localRay.origin).sub(center);
+        ellipsoidOrigin.copy(relativeOrigin).applyQuaternion(inverseQuaternion);
+        ellipsoidDirection.copy(localRay.direction).applyQuaternion(inverseQuaternion);
+
+        // Spark draws a Gaussian footprint out to roughly 2.5 standard
+        // deviations; intersect that visible ellipsoid rather than its center.
+        const rx = Math.max(Math.abs(scales.x) * 2.5, 1e-6);
+        const ry = Math.max(Math.abs(scales.y) * 2.5, 1e-6);
+        const rz = Math.max(Math.abs(scales.z) * 2.5, 1e-6);
+        ellipsoidOrigin.set(ellipsoidOrigin.x / rx, ellipsoidOrigin.y / ry, ellipsoidOrigin.z / rz);
+        ellipsoidDirection.set(
+          ellipsoidDirection.x / rx,
+          ellipsoidDirection.y / ry,
+          ellipsoidDirection.z / rz
+        );
+        const a = ellipsoidDirection.lengthSq();
+        const halfB = ellipsoidOrigin.dot(ellipsoidDirection);
+        const c = ellipsoidOrigin.lengthSq() - 1;
+        const discriminant = halfB * halfB - a * c;
+        if (discriminant < 0 || a <= 0) {
+          return;
+        }
+        const root = Math.sqrt(discriminant);
+        let t = (-halfB - root) / a;
+        if (t < 0) {
+          t = (-halfB + root) / a;
+        }
+        if (t < 0) {
+          return;
+        }
+        localRay.at(t, localHit);
+        worldHit.copy(localHit).applyMatrix4(mesh.matrixWorld);
+        const distance = raycaster.ray.origin.distanceTo(worldHit);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestPoint = worldHit.clone();
+        }
+      });
+    }
+    return closestPoint;
   }
 
   /**

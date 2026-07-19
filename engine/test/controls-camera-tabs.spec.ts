@@ -18,7 +18,21 @@ test('Phase 4: controls tab, camera tab, and stats render and respond', async ({
   const edlSettings = page.locator('#edl-settings');
   await expect(edlSettings).toBeVisible();
 
+  const secondRing = page.locator('#edl-second-ring-slider');
+  await secondRing.fill('0.4');
+  await secondRing.dblclick();
+  await expect(secondRing).toHaveValue('0');
+  const edlStrength = page.locator('#edl-strength-slider');
+  await edlStrength.fill('2.5');
+  await edlStrength.dblclick();
+  await expect(edlStrength).toHaveValue('1');
+  const edlRadius = page.locator('#edl-radius-slider');
+  await edlRadius.fill('3');
+  await edlRadius.dblclick();
+  await expect(edlRadius).toHaveValue('1.4');
+
   const trackballBtn = page.locator('#trackball-controls');
+  await trackballBtn.click();
   await expect(trackballBtn).toHaveClass(/active/);
   const orbitBtn = page.locator('#orbit-controls');
   await orbitBtn.click();
@@ -36,6 +50,10 @@ test('Phase 4: controls tab, camera tab, and stats render and respond', async ({
   await page.waitForTimeout(300);
   const fovSlider = page.locator('#camera-fov');
   await expect(fovSlider).toBeVisible();
+  await fovSlider.fill('110');
+  await fovSlider.dblclick();
+  await expect(fovSlider).toHaveValue('75');
+  await expect(page.locator('#fov-input')).toHaveValue('75.00');
   const positionDisplay = page.locator('#camera-controls-panel');
   await expect(positionDisplay).toContainText('Position:');
 

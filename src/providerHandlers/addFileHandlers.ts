@@ -212,6 +212,9 @@ export async function handleAddFile(
             parsedData.fileName = fileName;
             parsedData.shortPath = shortPath;
             parsedData.fileIndex = i;
+            if (parsedData.isGaussianSplat) {
+              parsedData.splatSource = { bytes: spatialData };
+            }
 
             // Send via traditional method (will use binary transfer if possible)
             await sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
@@ -498,6 +501,9 @@ export async function handleAddFileFromPath(
         const parsedData = await parser.parse(spatialData);
         parsedData.fileName = fileName;
         parsedData.shortPath = shortPath;
+        if (parsedData.isGaussianSplat) {
+          parsedData.splatSource = { bytes: spatialData };
+        }
         await sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
       }
       return;
@@ -712,6 +718,9 @@ export async function handleDroppedFilesFromWebview(
           const parsedData = await parser.parse(fileData);
           parsedData.fileName = fileName;
           parsedData.shortPath = shortPath;
+          if (parsedData.isGaussianSplat) {
+            parsedData.splatSource = { bytes: fileData };
+          }
           await sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
         }
         continue;

@@ -23,7 +23,9 @@ export interface RenderModeHost {
   /** Present on the full visualizer host; drives the per-file splat mode. */
   splatMode?: {
     isActive(fileIndex: number): boolean;
+    canEnable(data: SpatialData | undefined): boolean;
     toggle(fileIndex: number): Promise<void>;
+    disable(fileIndex: number): void;
     getMesh(fileIndex: number): THREE.Object3D | null;
     syncVisibility(fileIndex: number): void;
   };
@@ -64,7 +66,20 @@ export function toggleUniversalRenderMode(
       toggleWireframeRendering(host, fileIndex);
       break;
     case 'points':
-      togglePointsRendering(host, fileIndex);
+      if (host.splatMode?.canEnable(data)) {
+        // Gaussian files use Points/Splats as an exclusive mode selector.
+        // File visibility is controlled by the checkbox, so selecting the
+        // already-active Points mode must not hide the file.
+        host.pointsVisible[fileIndex] = true;
+        if (host.splatMode.isActive(fileIndex)) {
+          host.splatMode.disable(fileIndex);
+        } else {
+          updateMeshVisibilityAndMaterial(host, fileIndex);
+          host.requestRender();
+        }
+      } else {
+        togglePointsRendering(host, fileIndex);
+      }
       break;
     case 'normals':
       toggleNormalsRendering(host, fileIndex);
@@ -72,7 +87,9 @@ export function toggleUniversalRenderMode(
     case 'splat':
       // Async (first use lazy-loads Spark); the manager refreshes visibility
       // and button states itself once the state actually flips.
-      void host.splatMode?.toggle(fileIndex);
+      if (!host.splatMode?.isActive(fileIndex)) {
+        void host.splatMode?.toggle(fileIndex);
+      }
       return;
   }
 
@@ -451,7 +468,9 @@ export function updateUniversalRenderButtonStates(host: RenderModeHost): void {
         isActive = host.wireframeVisible[fileIndex] ?? false;
         break;
       case 'points':
-        isActive = host.pointsVisible[fileIndex] ?? true;
+        isActive = host.splatMode?.canEnable(host.spatialFiles[fileIndex])
+          ? !host.splatMode.isActive(fileIndex)
+          : (host.pointsVisible[fileIndex] ?? true);
         break;
       case 'normals':
         isActive = host.normalsVisible[fileIndex] ?? false;

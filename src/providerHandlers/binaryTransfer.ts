@@ -91,6 +91,15 @@ export async function sendUltimateRawBinary(
     binaryVertexData.byteOffset,
     binaryVertexData.byteOffset + binaryVertexData.byteLength
   );
+  // Spark needs the original PLY header as well as the complete binary body.
+  // The body is already being sent as slicedBuffer, so Gaussian files only
+  // need this small prefix to reconstruct the source in the webview.
+  const splatHeaderData = parsedData.isGaussianSplat
+    ? rawFileData.buffer.slice(
+        rawFileData.byteOffset,
+        rawFileData.byteOffset + headerResult.binaryDataStart
+      )
+    : undefined;
   const copyMs = performance.now() - copyStart;
   logPerf(
     `⏱️ PERF[ply/ext] copy ${copyMs.toFixed(1)}ms (${(binaryVertexData.byteLength / 1048576).toFixed(1)}MB) for ${parsedData.fileName}`
@@ -116,6 +125,7 @@ export async function sendUltimateRawBinary(
 
     // Raw binary data + parsing info
     rawBinaryData: slicedBuffer,
+    splatHeaderData,
     vertexStride: headerResult.vertexStride,
     propertyOffsets: Array.from(headerResult.propertyOffsets.entries()),
     littleEndian: headerResult.headerInfo.format === 'binary_little_endian',
@@ -404,6 +414,8 @@ export async function sendLargeFileInChunksOptimized(
     sourceOrigin: spatialData.sourceOrigin,
     metadata: spatialData.metadata,
     fileSizeInBytes: spatialData.fileSizeInBytes,
+    isGaussianSplat: !!spatialData.isGaussianSplat,
+    splatSource: spatialData.splatSource,
   });
   if (!started) {
     throw new Error(`The webview rejected the chunked-transfer header for ${spatialData.fileName}`);

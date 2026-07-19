@@ -123,9 +123,89 @@
     { 1: '1fr', 2: '1fr 1fr', 3: '1fr 1fr 1fr', 4: '1fr 1fr 1fr 1fr' }[renderModeButtons.length] ||
       '1fr'
   );
+  const canRenderSplats = $derived(
+    kind === 'pointcloud' && !!data && !!host.splatMode?.canEnable(data)
+  );
+  const splatActive = $derived.by(() => {
+    filesState.renderTick;
+    return canRenderSplats && !!host.splatMode?.isActive(index);
+  });
 
   function onRenderModeClick(mode: string) {
     host.toggleUniversalRenderMode(index, mode);
+  }
+
+  function isRenderModeActive(mode: string): boolean {
+    // Re-evaluate parallel-array state after main.ts bumps the render tick.
+    filesState.renderTick;
+    switch (mode) {
+      case 'points':
+        return canRenderSplats ? !splatActive : (host.pointsVisible[index] ?? true);
+      case 'splat':
+        return splatActive;
+      case 'mesh':
+      case 'solid':
+        return host.solidVisible[index] ?? true;
+      case 'wireframe':
+        return host.wireframeVisible[index] ?? false;
+      case 'normals':
+        return host.normalsVisible[index] ?? false;
+      default:
+        return false;
+    }
+  }
+
+  function formatSplatSize(value: number): string {
+    const magnitude = Math.abs(value);
+    if (magnitude > 0 && (magnitude < 0.001 || magnitude >= 1000)) {
+      return value.toExponential(3);
+    }
+    return Number(value.toPrecision(6)).toString();
+  }
+
+  function syncMaxSplatSizeControls(value: number) {
+    const slider = document.getElementById(`max-splat-size-${index}`) as HTMLInputElement | null;
+    const input = document.getElementById(
+      `max-splat-size-value-${index}`
+    ) as HTMLInputElement | null;
+    if (slider) {
+      slider.value = String(host.splatMode.getMaxSplatSizeSlider(index));
+    }
+    if (input) {
+      input.value = formatSplatSize(value);
+    }
+  }
+
+  function onMaxSplatSizeSliderInput(e: Event) {
+    const value = host.splatMode?.setMaxSplatSizeSlider(
+      index,
+      parseFloat((e.target as HTMLInputElement).value)
+    );
+    if (value !== undefined) {
+      syncMaxSplatSizeControls(value);
+    }
+  }
+
+  function onMaxSplatSizeCommit(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const parsed = parseFloat(input.value);
+    const value =
+      Number.isFinite(parsed) && parsed > 0
+        ? host.splatMode.setMaxSplatSizeValue(index, parsed)
+        : host.splatMode.getMaxSplatSizeValue(index);
+    syncMaxSplatSizeControls(value);
+  }
+
+  function onMaxSplatSizeKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      onMaxSplatSizeCommit(e);
+      (e.target as HTMLInputElement).blur();
+    }
+  }
+
+  function onMaxSplatSizeReset(e: MouseEvent) {
+    e.preventDefault();
+    syncMaxSplatSizeControls(host.splatMode.resetMaxSplatSize(index));
   }
 
   const pointSize = $derived(
@@ -137,21 +217,37 @@
   );
   const sizePrecision = $derived(kind === 'pose' ? 3 : kind === 'camera' ? 1 : 4);
 
+  function defaultPointSize(): number {
+    return kind === 'pose' ? 0.02 : kind === 'camera' ? 1.0 : 0.001;
+  }
+
+  function setPointSize(value: number) {
+    host.updatePointSize(index, value);
+    filesState.pointSizes[index] = value;
+    const slider = document.getElementById(`size-${index}`) as HTMLInputElement | null;
+    const input = document.getElementById(`size-input-${index}`) as HTMLInputElement | null;
+    if (slider) slider.value = String(value);
+    if (input) input.value = value.toFixed(sizePrecision);
+    host.requestRender();
+  }
+
   function onSizeSliderInput(e: Event) {
     const newSize = parseFloat((e.target as HTMLInputElement).value);
-    host.updatePointSize(index, newSize);
-    host.requestRender();
+    setPointSize(newSize);
+  }
+
+  function onSizeSliderReset(e: MouseEvent) {
+    e.preventDefault();
+    setPointSize(defaultPointSize());
   }
 
   function onSizeInputCommit(e: Event) {
     const input = e.target as HTMLInputElement;
     const newSize = parseFloat(input.value);
     if (!isNaN(newSize) && newSize > 0) {
-      host.updatePointSize(index, newSize);
-      host.requestRender();
-      input.value = newSize.toFixed(sizePrecision);
+      setPointSize(newSize);
     } else {
-      const currentSize = host.pointSizes[index] || 0.001;
+      const currentSize = host.pointSizes[index] || defaultPointSize();
       input.value = currentSize.toFixed(sizePrecision);
     }
   }
@@ -199,12 +295,26 @@
   function onPoseMinScoreInput(e: Event) {
     const v = Math.max(0, Math.min(1, parseFloat((e.target as HTMLInputElement).value)));
     host.poseMinScoreThreshold[poseIndex] = v;
+    const value = document.getElementById(`pose-minscore-val-${index}`);
+    if (value) value.textContent = v.toFixed(2);
     host.applyPoseFilters(poseIndex);
+  }
+  function onPoseMinScoreReset(e: MouseEvent) {
+    e.preventDefault();
+    (e.currentTarget as HTMLInputElement).value = '0';
+    onPoseMinScoreInput(e);
   }
   function onPoseMaxUncInput(e: Event) {
     const v = Math.max(0, Math.min(1, parseFloat((e.target as HTMLInputElement).value)));
     host.poseMaxUncertaintyThreshold[poseIndex] = v;
+    const value = document.getElementById(`pose-maxunc-val-${index}`);
+    if (value) value.textContent = v.toFixed(2);
     host.applyPoseFilters(poseIndex);
+  }
+  function onPoseMaxUncReset(e: MouseEvent) {
+    e.preventDefault();
+    (e.currentTarget as HTMLInputElement).value = '1';
+    onPoseMaxUncInput(e);
   }
 
   function onCameraShowLabelsChange(e: Event) {
@@ -289,39 +399,75 @@
           {#each renderModeButtons as btn (btn.mode)}
             <button
               class={`render-mode-btn ${btn.cls}`}
+              class:active={isRenderModeActive(btn.mode)}
               data-file-index={index}
               data-mode={btn.mode}
-              style="padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer;"
+              style={`padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer; background: ${isRenderModeActive(btn.mode) ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)'}; color: ${isRenderModeActive(btn.mode) ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)'};`}
               onclick={() => onRenderModeClick(btn.mode)}>{btn.label}</button
             >
           {/each}
         </div>
       </div>
 
-      <div class="point-size-control" style="margin-top: 4px;">
-        <label for={`size-${index}`} style="font-size: 11px;">Point Size:</label>
-        <input
-          type="range"
-          id={`size-${index}`}
-          min="0.0001"
-          max="0.1"
-          step="0.0001"
-          value={pointSize}
-          class="size-slider"
-          style="width: 100%;"
-          oninput={onSizeSliderInput}
-        />
-        <input
-          type="text"
-          id={`size-input-${index}`}
-          class="size-input"
-          value={pointSize.toFixed(4)}
-          style="font-size: 10px; width: 30px; border: none; background: transparent; color: var(--vscode-foreground); text-align: left; padding: 0; margin: 0; outline: none; cursor: text;"
-          onblur={onSizeInputCommit}
-          onkeydown={onSizeInputKeydown}
-          onfocus={onSizeInputFocus}
-        />
-      </div>
+      {#if canRenderSplats && splatActive}
+        <div class="point-size-control max-splat-size-control" style="margin-top: 4px;">
+          <label for={`max-splat-size-${index}`} style="font-size: 11px;">Max splat size:</label>
+          <input
+            type="range"
+            id={`max-splat-size-${index}`}
+            min="0"
+            max="100"
+            step="0.1"
+            value={host.splatMode.getMaxSplatSizeSlider(index)}
+            class="size-slider"
+            title="Logarithmic scale from 0.01; double-click to reset"
+            style="width: 100%;"
+            oninput={onMaxSplatSizeSliderInput}
+            ondblclick={onMaxSplatSizeReset}
+          />
+          <input
+            type="text"
+            id={`max-splat-size-value-${index}`}
+            class="size-input"
+            value={formatSplatSize(host.splatMode.getMaxSplatSizeValue(index))}
+            title="Exact maximum size in scene units"
+            aria-label="Maximum splat size in scene units"
+            style="font-size: 10px; width: 64px; border: none; background: transparent; color: var(--vscode-foreground); text-align: left; padding: 0; margin: 0; outline: none; cursor: text;"
+            onblur={onMaxSplatSizeCommit}
+            onkeydown={onMaxSplatSizeKeydown}
+            onfocus={(e) => (e.target as HTMLInputElement).select()}
+          />
+        </div>
+      {/if}
+
+      {#if !splatActive}
+        <div class="point-size-control" style="margin-top: 4px;">
+          <label for={`size-${index}`} style="font-size: 11px;">Point Size:</label>
+          <input
+            type="range"
+            id={`size-${index}`}
+            min="0.0001"
+            max="0.1"
+            step="0.0001"
+            value={pointSize}
+            class="size-slider"
+            style="width: 100%;"
+            oninput={onSizeSliderInput}
+            ondblclick={onSizeSliderReset}
+            title="Double-click to reset"
+          />
+          <input
+            type="text"
+            id={`size-input-${index}`}
+            class="size-input"
+            value={pointSize.toFixed(4)}
+            style="font-size: 10px; width: 30px; border: none; background: transparent; color: var(--vscode-foreground); text-align: left; padding: 0; margin: 0; outline: none; cursor: text;"
+            onblur={onSizeInputCommit}
+            onkeydown={onSizeInputKeydown}
+            onfocus={onSizeInputFocus}
+          />
+        </div>
+      {/if}
 
       {#if isObjWireframeOrFile}
         <div class="obj-controls" style="margin-top: 8px;">
@@ -341,9 +487,10 @@
         </div>
       {/if}
 
-      <div class="color-control">
-        <label for={`color-${index}`}>Color:</label>
-        <select id={`color-${index}`} class="color-selector" value={colorMode} onchange={onColorModeChange}>
+      {#if !splatActive}
+        <div class="color-control">
+          <label for={`color-${index}`}>Color:</label>
+          <select id={`color-${index}`} class="color-selector" value={colorMode} onchange={onColorModeChange}>
           {#if data.hasColors}
             <option value="original">Original</option>
           {/if}
@@ -358,8 +505,9 @@
           {/each}
           <option value="assigned">Assigned ({host.getColorName(index)})</option>
           {@html host.getColorOptions(index)}
-        </select>
-      </div>
+          </select>
+        </div>
+      {/if}
     {:else if kind === 'pose' && meta}
       <div class="file-info">
         {meta.jointCount} joints, {meta.edgeCount} edges{meta.invalidJoints
@@ -422,6 +570,8 @@
               value={(host.poseMinScoreThreshold[poseIndex] ?? 0).toFixed(2)}
               style="flex:1;"
               oninput={onPoseMinScoreInput}
+              ondblclick={onPoseMinScoreReset}
+              title="Double-click to reset"
             />
             <span id={`pose-minscore-val-${index}`} style="font-size:10px;">{(host.poseMinScoreThreshold[poseIndex] ?? 0).toFixed(2)}</span>
           </div>
@@ -436,6 +586,8 @@
               value={(host.poseMaxUncertaintyThreshold[poseIndex] ?? 1).toFixed(2)}
               style="flex:1;"
               oninput={onPoseMaxUncInput}
+              ondblclick={onPoseMaxUncReset}
+              title="Double-click to reset"
             />
             <span id={`pose-maxunc-val-${index}`} style="font-size:10px;">{(host.poseMaxUncertaintyThreshold[poseIndex] ?? 1).toFixed(2)}</span>
           </div>
@@ -444,7 +596,7 @@
       <TransformSection {host} fileIndex={index} {matrixText} />
       <div class="point-size-control">
         <label for={`size-${index}`}>Joint Radius (m):</label>
-        <input type="range" id={`size-${index}`} min="0.001" max="0.1" step="0.001" value={pointSize} class="size-slider" oninput={onSizeSliderInput} />
+        <input type="range" id={`size-${index}`} min="0.001" max="0.1" step="0.001" value={pointSize} class="size-slider" oninput={onSizeSliderInput} ondblclick={onSizeSliderReset} title="Double-click to reset" />
         <input
           type="text"
           id={`size-input-${index}`}
@@ -489,7 +641,7 @@
       </div>
       <div class="size-control">
         <label for={`size-${index}`}>Scale:</label>
-        <input type="range" id={`size-${index}`} min="0.1" max="5.0" step="0.1" value={pointSize} oninput={onSizeSliderInput} />
+        <input type="range" id={`size-${index}`} min="0.1" max="5.0" step="0.1" value={pointSize} oninput={onSizeSliderInput} ondblclick={onSizeSliderReset} title="Double-click to reset" />
         <input
           type="text"
           id={`size-input-${index}`}

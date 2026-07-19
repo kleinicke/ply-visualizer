@@ -776,7 +776,28 @@ export async function loadDocumentContent(
       }
     }
 
-    const spatialData = await vscode.workspace.fs.readFile(documentUri);
+    // Read only a header-sized prefix first. Binary PLYs take the
+    // transfer-via-fetch path, where the webview fetches the full file bytes
+    // itself — so reading all bytes here just to parse a few-KB header adds
+    // a second full-disk pass (~200 ms for a 200 MB cloud). ASCII files (and
+    // rare over-long headers) lazily fall back to the full read below.
+    let fullBytes: Uint8Array | null = null;
+    let prefix: Uint8Array | null = null;
+    if (documentUri.scheme === 'file') {
+      try {
+        prefix = await readFileHead(documentUri, 65536);
+      } catch {
+        prefix = null;
+      }
+    }
+    if (!prefix) {
+      fullBytes = await vscode.workspace.fs.readFile(documentUri);
+      prefix = fullBytes;
+    }
+    const readFullBytes = async (): Promise<Uint8Array> => {
+      fullBytes ??= await vscode.workspace.fs.readFile(documentUri);
+      return fullBytes;
+    };
     const fileReadTime = performance.now();
     webviewPanel.webview.postMessage({
       type: 'timing',
@@ -802,11 +823,17 @@ export async function loadDocumentContent(
     };
 
     // Detect format first using shared functionality
-    const isBinary = isPlyBinary(spatialData);
+    const isBinary = isPlyBinary(prefix);
 
     if (isBinary) {
-      // Binary PLY - use ULTIMATE parsing
-      const headerResult = await parser.parseHeaderOnly(spatialData, timingCallback);
+      // Binary PLY - use ULTIMATE parsing. The prefix covers any realistic
+      // header; if end_header lies beyond it, retry on the full bytes.
+      let headerResult;
+      try {
+        headerResult = await parser.parseHeaderOnly(prefix, timingCallback);
+      } catch {
+        headerResult = await parser.parseHeaderOnly(await readFullBytes(), timingCallback);
+      }
       const parsedData = headerResult.headerInfo;
       const parseTime = performance.now();
       webviewPanel.webview.postMessage({
@@ -859,7 +886,9 @@ export async function loadDocumentContent(
         binaryDataStart: headerResult.binaryDataStart,
         fileName: parsedData.fileName,
         shortPath: parsedData.shortPath,
-        fileSizeInBytes: spatialData.byteLength,
+        fileSizeInBytes: fullBytes
+          ? fullBytes.byteLength
+          : (await vscode.workspace.fs.stat(documentUri)).size,
         vertexCount: parsedData.vertexCount,
         faceCount: parsedData.faceCount,
         hasColors: parsedData.hasColors,
@@ -879,8 +908,9 @@ export async function loadDocumentContent(
       // transparently fall through to the JS parser below. 3DGS files must
       // take the JS parser: the WASM path doesn't know the f_dc_* color
       // layout and would deliver an uncolored cloud.
-      const headSample = new TextDecoder('utf-8').decode(spatialData.slice(0, 4096));
-      const plyWasm = headSample.includes('f_dc_0') ? null : parseAsciiPlyWasm(spatialData);
+      const asciiBytes = await readFullBytes();
+      const headSample = new TextDecoder('utf-8').decode(asciiBytes.slice(0, 4096));
+      const plyWasm = headSample.includes('f_dc_0') ? null : parseAsciiPlyWasm(asciiBytes);
       if (plyWasm) {
         host.logPerf(
           `⏱️ PERF[ply/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${plyWasm.vertexCount} pts, wasm) for ${path.basename(documentUri.fsPath)}`
@@ -889,7 +919,7 @@ export async function loadDocumentContent(
           type: 'xyzVariantData',
           fileName: path.basename(documentUri.fsPath),
           shortPath: host.getShortPath(documentUri.fsPath),
-          fileSizeInBytes: spatialData.byteLength,
+          fileSizeInBytes: asciiBytes.byteLength,
           data: plyWasm,
           variant: 'ply',
           parseMode: 'wasm',
@@ -899,7 +929,7 @@ export async function loadDocumentContent(
       console.log(
         `📝 ASCII PLY detected: ${path.basename(documentUri.fsPath)} - using traditional parsing`
       );
-      const parsedData = await parser.parse(spatialData, timingCallback);
+      const parsedData = await parser.parse(asciiBytes, timingCallback);
       const parseTime = performance.now();
       const isXyz = /\.xyz$/i.test(documentUri.fsPath);
       host.logPerf(
@@ -917,7 +947,7 @@ export async function loadDocumentContent(
       parsedData.fileName = path.basename(documentUri.fsPath);
       parsedData.shortPath = host.getShortPath(documentUri.fsPath);
       parsedData.fileIndex = 0;
-      (parsedData as any).fileSizeInBytes = spatialData.byteLength;
+      (parsedData as any).fileSizeInBytes = asciiBytes.byteLength;
       if (parsedData.isGaussianSplat) {
         // Splat mode re-reads the full PLY from this URI on demand.
         parsedData.splatSource = {

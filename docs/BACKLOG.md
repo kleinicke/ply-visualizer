@@ -182,7 +182,10 @@ joints/edges, Human3.6M-like positions, Halpe, OpenPose/COCO-like arrays and
 generic points; it renders joints/bones and supports multiple Halpe instances,
 labels, transforms, dataset colors and score/uncertainty controls. Several real
 fixtures already exist under `testfiles/json/`, so the README's "accept pose
-files" item is no longer a from-scratch task.
+files" item is no longer a from-scratch task. I actually have no idea, what
+standard for these actually exist and which ones are coming. I want to support
+them as long as they are logical, consistent and have the potential to gain some
+traction.
 
 1. Define and document a versioned canonical JSON schema with units, coordinate
    convention, joint names, confidence and explicit skeleton edges.
@@ -202,6 +205,60 @@ files" item is no longer a from-scratch task.
 
 SMPL/SMPL-X body meshes and BVH animation are separate, substantially larger
 features and are not implied by stabilizing skeleton JSON.
+
+### Load-pipeline IO: remaining fetch/transfer costs
+
+Analysis from a 201 MB / 850k-splat binary PLY (July 2026):
+`read+parse 199ms · transfer 335ms · fetch 1346ms · parse(js) 137ms · build 56ms | total 2257ms`.
+Parsing is NOT the bottleneck — IO is. Per-path IO behavior:
+
+| Path                                 | Disk reads | Transfer to webview             |
+| ------------------------------------ | ---------- | ------------------------------- |
+| Initial open, binary PLY             | 1 (fixed)  | webview fetch (no copy)         |
+| Initial open, ascii PLY/XYZ/LAS/…    | 1          | parsed arrays via postMessage   |
+| Add file / sequence / fetch-fallback | 1          | full bytes via structured clone |
+| Splat containers (.spz/…)            | 1          | webview fetch (no copy)         |
+
+**Fixed (July 2026):** the initial binary-PLY open used to read the full file in
+the extension host only to parse a few-KB header, then the webview fetched all
+bytes again — two full disk passes. `documentLoader` now reads a 64 KB header
+prefix (`readFileHead`, same pattern as the PCD gate) and falls back to a full
+read only for ascii files or over-long headers. Expected: `read+parse` drops
+from ~200 ms to single-digit ms on large clouds; the webview fetch may gain a
+little (it no longer starts with an OS cache pre-warmed by the extension read),
+net win expected clearly positive on SSDs — verify by comparing PERF lines
+before/after.
+
+Remaining ideas, roughly by expected value:
+
+1. **The webview fetch itself is slow**: 1346 ms for 201 MB ≈ 150 MB/s through
+   the `vscode-webview-resource` protocol — far below SSD speed. Investigate:
+   streaming `response.body` reader vs one `arrayBuffer()` call, protocol chunk
+   sizes, and whether newer VS Code versions improved it. This is the single
+   biggest lever left (~1s on a 200 MB file).
+2. **Clone vs fetch — measure, then let the winner own both paths.** Add-file
+   and sequence loads send full bytes via structured clone; the initial open
+   uses the webview fetch. Which is faster at 200 MB scale is an open empirical
+   question: fetch measured ~150 MB/s (1346 ms), while a Node `readFileFast`
+   (~100–200 ms) + clone (`transfer` phase in add-file PERF lines) might total
+   well under that. Comparing the PERF lines of opening vs adding the _same
+   large file_ settles it; whichever wins should serve both paths (possibly
+   size-dependent). Note there is no third option: the extension and webview are
+   separate processes with no shared memory — "read once and hand the buffer
+   over" _is_ the structured clone, and VS Code webview postMessage does not
+   support transferables.
+3. **Creative acceleration of the JS fetch+parse hop** (speculative, no concrete
+   design yet): today the webview fetches and parses in JS on the main thread.
+   Options worth exploring even without a clear win-path: doing fetch+parse in a
+   Worker (unblocks UI; transferable ArrayBuffers work between webview workers),
+   a Rust/WASM streaming binary parser that parses chunks while the fetch
+   streams (overlapping IO and parse instead of sequencing them), or extending
+   the existing wasm-stream approach (PCD) to binary PLY. Note the constraint
+   that makes naive Rust unattractive: WASM cannot read JS buffers in place, so
+   a plain "parse in Rust" pays a full extra copy of the file for a parse phase
+   that is already bandwidth-bound.
+
+Per the general bar: reliable wins ≥ ~50 ms are worth shipping.
 
 ### Other new file formats
 

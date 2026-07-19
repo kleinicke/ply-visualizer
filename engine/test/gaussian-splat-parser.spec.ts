@@ -103,11 +103,15 @@ test('ultimate binary path (parseHeaderOnly + webview reader) synthesizes DC col
     vertexStride: header.vertexStride,
     propertyOffsets: Array.from(header.propertyOffsets.entries()),
     littleEndian: true,
+    splatHeaderData: bytes.slice(0, header.binaryDataStart).buffer,
   });
 
   expect(captured).toHaveLength(1);
   const data = captured[0];
   expect(data.isGaussianSplat).toBe(true);
+  expect(data.splatSource?.bytes).toBeDefined();
+  expect(new TextDecoder().decode(data.splatSource!.bytes!.slice(0, 3))).toBe('ply');
+  expect(data.splatSource!.bytes!.byteLength).toBe(bytes.byteLength);
   expectAnchors(data);
   const fields = Object.keys(data.scalarFields ?? {});
   expect(fields).toEqual(expect.arrayContaining(['opacity', 'scale_0']));

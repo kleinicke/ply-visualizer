@@ -61,6 +61,8 @@
   function onEdlSecondRingInput(e: Event) {
     const val = parseFloat((e.target as HTMLInputElement).value);
     host.edlSecondRingWeight = Number.isFinite(val) ? val : 0.0;
+    const value = document.getElementById('edl-second-ring-value');
+    if (value) value.textContent = host.edlSecondRingWeight.toFixed(2);
     if (host.edlPass) {
       host.edlPass.secondRingWeight = host.edlSecondRingWeight;
     }
@@ -70,6 +72,12 @@
         : 'Advanced EDL neighborhood: OFF'
     );
     host.requestRender();
+  }
+
+  function resetEdlSecondRing(e: MouseEvent) {
+    e.preventDefault();
+    (e.currentTarget as HTMLInputElement).value = '0';
+    onEdlSecondRingInput(e);
   }
 
   function onEdlStrengthInput(e: Event) {
@@ -90,6 +98,20 @@
       host.edlPass.edlRadius = val;
     }
     host.requestRender();
+  }
+
+  function resetEdlStrength(e: MouseEvent) {
+    e.preventDefault();
+    const input = e.currentTarget as HTMLInputElement;
+    input.value = '1';
+    onEdlStrengthInput(e);
+  }
+
+  function resetEdlRadius(e: MouseEvent) {
+    e.preventDefault();
+    const input = e.currentTarget as HTMLInputElement;
+    input.value = '1.4';
+    onEdlRadiusInput(e);
   }
 
   function onFitCamera() {
@@ -258,6 +280,7 @@
         style="flex: 1; margin: 0 8px;"
         oninput={onBrightnessInput}
         ondblclick={resetBrightness}
+        title="Double-click to reset"
       />
       <span id="brightness-value" style="font-size: 11px; min-width: 32px; text-align: right;"
         >{viewerState.brightnessStops.toFixed(1)}</span
@@ -276,6 +299,7 @@
         style="flex: 1; margin: 0 8px;"
         oninput={onBackgroundInput}
         ondblclick={resetBackground}
+        title="Double-click to reset"
       />
       <span
         id="background-brightness-value"
@@ -319,6 +343,8 @@
             class="control-input"
             style="flex: 1; margin: 0 8px;"
             oninput={onEdlSecondRingInput}
+            ondblclick={resetEdlSecondRing}
+            title="Double-click to reset"
           />
           <span id="edl-second-ring-value" style="font-size: 11px; min-width: 28px; text-align: right;"
             >{host.edlSecondRingWeight.toFixed(2)}</span
@@ -340,6 +366,8 @@
           class="control-input"
           style="flex: 1; margin: 0 8px;"
           oninput={onEdlStrengthInput}
+          ondblclick={resetEdlStrength}
+          title="Double-click to reset"
         />
         <span id="edl-strength-value" style="font-size: 11px; min-width: 28px; text-align: right;"
           >{viewerState.edlStrength.toFixed(1)}</span
@@ -357,6 +385,8 @@
           class="control-input"
           style="flex: 1; margin: 0 8px;"
           oninput={onEdlRadiusInput}
+          ondblclick={resetEdlRadius}
+          title="Double-click to reset"
         />
         <span id="edl-radius-value" style="font-size: 11px; min-width: 28px; text-align: right;"
           >{viewerState.edlRadius.toFixed(1)}</span

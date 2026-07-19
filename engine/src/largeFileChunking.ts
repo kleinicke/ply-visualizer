@@ -30,6 +30,8 @@ export interface LargeFileChunkingHost {
       sourceOrigin?: [number, number, number];
       metadata?: Record<string, unknown>;
       fileSizeInBytes?: number;
+      isGaussianSplat?: boolean;
+      splatSource?: SpatialData['splatSource'];
     }
   >;
   updateWelcomeMessageVisibility(): void;
@@ -93,6 +95,8 @@ export function handleStartLargeFile(host: LargeFileChunkingHost, message: any):
     sourceOrigin: message.sourceOrigin,
     metadata: message.metadata,
     fileSizeInBytes: message.fileSizeInBytes,
+    isGaussianSplat: !!message.isGaussianSplat,
+    splatSource: message.splatSource,
   });
 }
 
@@ -209,6 +213,8 @@ export async function handleLargeFileComplete(
     sourceOrigin: fileState.sourceOrigin,
     metadata: fileState.metadata,
     fileSizeInBytes: fileState.fileSizeInBytes,
+    isGaussianSplat: fileState.isGaussianSplat,
+    splatSource: fileState.splatSource,
   };
 
   const assemblyTime = performance.now() - assemblyStartTime;

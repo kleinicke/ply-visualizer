@@ -1,9 +1,21 @@
 import * as THREE from 'three';
 import { SpatialData } from '../interfaces';
+import { perfLog } from '../utils/perfLog';
 
 type SparkModule = typeof import('@sparkjsdev/spark');
 type SplatMesh = import('@sparkjsdev/spark').SplatMesh;
 type SparkRenderer = import('@sparkjsdev/spark').SparkRenderer;
+
+interface MaxSplatSizeData {
+  originalScales: Float32Array;
+  maxScale: Float32Array;
+  largestScale: number;
+}
+
+export interface MaxSplatSizeRange {
+  min: number;
+  max: number;
+}
 
 /** File extensions of splat-native container formats Spark can decode. */
 export const SPLAT_CONTAINER_EXTENSIONS = ['spz', 'splat', 'ksplat', 'sog'] as const;
@@ -49,7 +61,13 @@ export class SplatModeManager {
   private sparkRenderer: SparkRenderer | null = null;
   // Parallel to host.spatialFiles; kept aligned by onFileRemoved().
   private splatMeshes: (SplatMesh | null)[] = [];
-  private pending = new Set<number>();
+  // Identity-based rather than index-based: file indices shift when an entry
+  // is removed while Spark is fetching/decoding.
+  private pending = new Set<SpatialData>();
+  // Actual local-space splat size threshold. Undefined means uncapped.
+  private maxSplatSizeValue: (number | undefined)[] = [];
+  private maxSplatSizeData = new WeakMap<SplatMesh, MaxSplatSizeData>();
+  private filterTimers = new Map<SpatialData, number>();
   // Meshes built by loadContainer() before their file has an index; adopted
   // by enable() (keyed by the SpatialData object, so index shifts are safe).
   private pendingMeshes = new Map<SpatialData, SplatMesh>();
@@ -85,7 +103,8 @@ export class SplatModeManager {
   }
 
   async toggle(fileIndex: number): Promise<void> {
-    if (this.pending.has(fileIndex)) {
+    const data = this.host.spatialFiles[fileIndex];
+    if (!data || this.pending.has(data)) {
       return;
     }
     if (this.isActive(fileIndex)) {
@@ -95,6 +114,143 @@ export class SplatModeManager {
     }
   }
 
+  getMaxSplatSizeRange(fileIndex: number): MaxSplatSizeRange {
+    const mesh = this.splatMeshes[fileIndex];
+    if (!mesh) {
+      return { min: 0.01, max: 1 };
+    }
+    const sizeData = this.ensureMaxSplatSizeData(mesh);
+    return {
+      min: Math.min(0.01, sizeData.largestScale),
+      max: sizeData.largestScale,
+    };
+  }
+
+  getMaxSplatSizeValue(fileIndex: number): number {
+    const range = this.getMaxSplatSizeRange(fileIndex);
+    const value = this.maxSplatSizeValue[fileIndex];
+    return value === undefined ? range.max : Math.max(range.min, Math.min(range.max, value));
+  }
+
+  /** Slider coordinates are 0..100, logarithmically mapped to real splat sizes. */
+  getMaxSplatSizeSlider(fileIndex: number): number {
+    const range = this.getMaxSplatSizeRange(fileIndex);
+    if (range.max <= range.min) {
+      return 100;
+    }
+    const value = this.getMaxSplatSizeValue(fileIndex);
+    return (100 * Math.log(value / range.min)) / Math.log(range.max / range.min);
+  }
+
+  setMaxSplatSizeSlider(fileIndex: number, sliderValue: number): number {
+    const range = this.getMaxSplatSizeRange(fileIndex);
+    const position = Math.max(0, Math.min(100, sliderValue)) / 100;
+    const value =
+      range.max <= range.min ? range.max : range.min * Math.pow(range.max / range.min, position);
+    return this.setMaxSplatSizeValue(fileIndex, value);
+  }
+
+  setMaxSplatSizeValue(fileIndex: number, value: number): number {
+    const data = this.host.spatialFiles[fileIndex];
+    if (!data || !Number.isFinite(value) || value <= 0) {
+      return this.getMaxSplatSizeValue(fileIndex);
+    }
+    const range = this.getMaxSplatSizeRange(fileIndex);
+    const clampedValue = Math.max(range.min, Math.min(range.max, value));
+    this.maxSplatSizeValue[fileIndex] = clampedValue;
+    const oldTimer = this.filterTimers.get(data);
+    if (oldTimer !== undefined) {
+      window.clearTimeout(oldTimer);
+    }
+    // Re-encoding every splat is intentionally debounced while dragging.
+    this.filterTimers.set(
+      data,
+      window.setTimeout(() => {
+        this.filterTimers.delete(data);
+        const currentIndex = this.host.spatialFiles.indexOf(data);
+        if (currentIndex >= 0) {
+          this.applyMaxSplatSize(currentIndex);
+        }
+      }, 100)
+    );
+    return clampedValue;
+  }
+
+  resetMaxSplatSize(fileIndex: number): number {
+    return this.setMaxSplatSizeValue(fileIndex, this.getMaxSplatSizeRange(fileIndex).max);
+  }
+
+  private ensureMaxSplatSizeData(mesh: SplatMesh): MaxSplatSizeData {
+    const cached = this.maxSplatSizeData.get(mesh);
+    if (cached) {
+      return cached;
+    }
+
+    let count = 0;
+    mesh.forEachSplat(index => {
+      count = Math.max(count, index + 1);
+    });
+    const originalScales = new Float32Array(count * 3);
+    const maxScale = new Float32Array(count);
+    let largestScale = 0;
+    mesh.forEachSplat((index, _center, scales) => {
+      const i3 = index * 3;
+      originalScales[i3] = scales.x;
+      originalScales[i3 + 1] = scales.y;
+      originalScales[i3 + 2] = scales.z;
+      const splatMaxScale = Math.max(Math.abs(scales.x), Math.abs(scales.y), Math.abs(scales.z));
+      maxScale[index] = splatMaxScale;
+      if (splatMaxScale > 0 && Number.isFinite(splatMaxScale)) {
+        largestScale = Math.max(largestScale, splatMaxScale);
+      }
+    });
+    if (!(largestScale > 0)) {
+      largestScale = 1;
+    }
+    const sizeData = { originalScales, maxScale, largestScale };
+    this.maxSplatSizeData.set(mesh, sizeData);
+    return sizeData;
+  }
+
+  private applyMaxSplatSize(fileIndex: number): void {
+    const mesh = this.splatMeshes[fileIndex];
+    if (!mesh) {
+      return;
+    }
+    const editableSplats = mesh.extSplats ?? mesh.packedSplats;
+    if (!editableSplats) {
+      this.host.showStatus('Maximum splat size is unavailable for this streamed format.');
+      return;
+    }
+
+    const filterData = this.ensureMaxSplatSizeData(mesh);
+    const threshold = this.getMaxSplatSizeValue(fileIndex);
+    const adjustedScales = new THREE.Vector3();
+    mesh.forEachSplat((index, center, _scales, quaternion, opacity, color) => {
+      const i3 = index * 3;
+      adjustedScales.set(
+        filterData!.originalScales[i3],
+        filterData!.originalScales[i3 + 1],
+        filterData!.originalScales[i3 + 2]
+      );
+      const originalMax = filterData!.maxScale[index];
+      if (originalMax > threshold && threshold > 0) {
+        adjustedScales.multiplyScalar(threshold / originalMax);
+      }
+      editableSplats.setSplat(index, center, adjustedScales, quaternion, opacity, color);
+    });
+    if (mesh.packedSplats) {
+      mesh.packedSplats.needsUpdate = true;
+    }
+    if (mesh.extSplats) {
+      mesh.extSplats.textures[0].needsUpdate = true;
+      mesh.extSplats.textures[1].needsUpdate = true;
+    }
+    mesh.updateVersion();
+    this.host.showStatus('');
+    this.host.requestRender();
+  }
+
   /**
    * Decode a splat-native container (.spz/.splat/.ksplat/.sog) and extract
    * its gaussian centers/colors into a SpatialData entry. The decoded
@@ -102,9 +258,12 @@ export class SplatModeManager {
    * autoEnablePending) doesn't decode twice.
    */
   async loadContainer(fileName: string, bytes: Uint8Array): Promise<SpatialData> {
+    const t0 = performance.now();
     const spark = await this.loadSpark();
+    const sparkMs = performance.now() - t0;
     const mesh = new spark.SplatMesh({ fileBytes: bytes, fileName });
     await mesh.initialized;
+    const decodeDone = performance.now();
 
     // Size the arrays via a counting pass — numSplats isn't part of the
     // typed public surface across Spark versions.
@@ -146,6 +305,9 @@ export class SplatModeManager {
       scalarFields: { opacity },
     };
     this.pendingMeshes.set(data, mesh);
+    perfLog(
+      `⏱️ PERF[splat ${fileName}] spark-load ${sparkMs.toFixed(1)}ms · decode ${(decodeDone - t0 - sparkMs).toFixed(1)}ms · extract ${(performance.now() - decodeDone).toFixed(1)}ms | total ${(performance.now() - t0).toFixed(1)}ms  (${count.toLocaleString()} splats · spark)`
+    );
     return data;
   }
 
@@ -171,11 +333,16 @@ export class SplatModeManager {
 
   private async enable(fileIndex: number): Promise<void> {
     const data = this.host.spatialFiles[fileIndex];
-    if (!data?.isGaussianSplat || this.pending.has(fileIndex)) {
+    if (!data?.isGaussianSplat || this.pending.has(data)) {
       return;
     }
 
-    this.pending.add(fileIndex);
+    this.pending.add(data);
+    const t0 = performance.now();
+    let fetchMs = 0;
+    let sparkMs = 0;
+    let decodeMs = 0;
+    let builtFresh = false;
     try {
       let mesh = this.pendingMeshes.get(data) ?? null;
       if (mesh) {
@@ -193,6 +360,7 @@ export class SplatModeManager {
             throw new Error(`fetching splat source failed: HTTP ${response.status}`);
           }
           bytes = new Uint8Array(await response.arrayBuffer());
+          fetchMs = performance.now() - t0;
         }
         if (!bytes) {
           this.host.showStatus(
@@ -202,7 +370,9 @@ export class SplatModeManager {
         }
 
         this.host.showStatus('Building gaussian splats…');
+        const sparkStart = performance.now();
         const spark = await this.loadSpark();
+        sparkMs = performance.now() - sparkStart;
         mesh = new spark.SplatMesh({
           fileBytes: bytes,
           fileName: data.fileName ?? 'splats.ply',
@@ -210,35 +380,59 @@ export class SplatModeManager {
         // Wait for decode + GPU upload; a failure rejects here and lands in
         // the catch below with the points still visible.
         await mesh.initialized;
+        decodeMs = performance.now() - sparkStart - sparkMs;
+        builtFresh = true;
       }
 
       const spark = await this.loadSpark();
+      const currentIndex = this.host.spatialFiles.indexOf(data);
+      if (currentIndex < 0) {
+        mesh.dispose();
+        this.host.showStatus('');
+        return;
+      }
       if (!this.sparkRenderer) {
-        this.sparkRenderer = new spark.SparkRenderer({ renderer: this.host.renderer });
+        this.sparkRenderer = new spark.SparkRenderer({
+          renderer: this.host.renderer,
+          onDirty: () => this.host.requestRender(),
+        });
         this.host.scene.add(this.sparkRenderer);
       }
 
-      this.splatMeshes[fileIndex] = mesh;
+      this.splatMeshes[currentIndex] = mesh;
       this.host.scene.add(mesh);
-      this.applyMatrix(fileIndex, this.host.transformationMatrices[fileIndex]);
+      this.applyMatrix(currentIndex, this.host.transformationMatrices[currentIndex]);
 
-      this.host.splatModeActive[fileIndex] = true;
-      this.refreshVisibility(fileIndex);
-      this.syncVisibility(fileIndex);
+      this.host.splatModeActive[currentIndex] = true;
+      if (this.maxSplatSizeValue[currentIndex] !== undefined) {
+        this.applyMaxSplatSize(currentIndex);
+      }
+      this.refreshVisibility(currentIndex);
+      this.syncVisibility(currentIndex);
       this.refreshButtons();
       this.host.showStatus('');
       this.host.requestRender();
+      if (builtFresh) {
+        perfLog(
+          `⏱️ PERF[splat ${data.fileName ?? `file ${fileIndex}`}] fetch ${fetchMs.toFixed(1)}ms · spark-load ${sparkMs.toFixed(1)}ms · decode ${decodeMs.toFixed(1)}ms | total ${(performance.now() - t0).toFixed(1)}ms  (${(data.vertexCount ?? 0).toLocaleString()} splats · spark)`
+        );
+      }
     } catch (error) {
       console.error('Splat mode failed:', error);
-      this.host.showStatus(
-        `Splat rendering failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-      this.disposeMesh(fileIndex);
-      this.host.splatModeActive[fileIndex] = false;
-      this.refreshVisibility(fileIndex);
+      const currentIndex = this.host.spatialFiles.indexOf(data);
+      if (currentIndex >= 0) {
+        this.host.showStatus(
+          `Splat rendering failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+        this.disposeMesh(currentIndex);
+        this.host.splatModeActive[currentIndex] = false;
+        this.refreshVisibility(currentIndex);
+      } else {
+        this.host.showStatus('');
+      }
       this.refreshButtons();
     } finally {
-      this.pending.delete(fileIndex);
+      this.pending.delete(data);
     }
   }
 
@@ -274,9 +468,21 @@ export class SplatModeManager {
 
   /** Keep the parallel mesh array aligned when main splices its file arrays. */
   onFileRemoved(fileIndex: number): void {
-    this.pendingMeshes.delete(this.host.spatialFiles[fileIndex]);
+    const data = this.host.spatialFiles[fileIndex];
+    const timer = this.filterTimers.get(data);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      this.filterTimers.delete(data);
+    }
+    const parkedMesh = this.pendingMeshes.get(data);
+    if (parkedMesh) {
+      parkedMesh.dispose();
+      this.pendingMeshes.delete(data);
+    }
+    this.pending.delete(data);
     this.disposeMesh(fileIndex);
     this.splatMeshes.splice(fileIndex, 1);
+    this.maxSplatSizeValue.splice(fileIndex, 1);
   }
 
   private disposeMesh(fileIndex: number): void {

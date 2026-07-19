@@ -6,20 +6,26 @@
 
   function onFovSliderInput(e: Event) {
     const newFov = parseFloat((e.target as HTMLInputElement).value);
+    setFov(newFov);
+  }
+
+  function setFov(newFov: number) {
     host.camera.fov = newFov;
     host.camera.updateProjectionMatrix();
     viewerState.cameraFov = newFov;
     host.requestRender();
   }
 
+  function onFovSliderReset(e: MouseEvent) {
+    e.preventDefault();
+    setFov(75);
+  }
+
   function onFovInputCommit(e: Event) {
     const input = e.target as HTMLInputElement;
     const newFov = parseFloat(input.value);
     if (!isNaN(newFov) && newFov > 0) {
-      host.camera.fov = newFov;
-      host.camera.updateProjectionMatrix();
-      viewerState.cameraFov = newFov;
-      host.requestRender();
+      setFov(newFov);
     } else {
       input.value = host.camera.fov.toFixed(2);
     }
@@ -97,6 +103,8 @@
     value={viewerState.cameraFov}
     style="width:100%;margin:2px 0;"
     oninput={onFovSliderInput}
+    ondblclick={onFovSliderReset}
+    title="Double-click to reset"
   />
   <input
     type="text"

@@ -41,6 +41,8 @@ test('typed LiDAR chunks preserve packed arrays, scalar fields, and metadata', a
     sourcePointCount: 3,
     sourceOrigin: [4_000_000, 500_000, 100],
     metadata: { format: 'LAZ' },
+    isGaussianSplat: true,
+    splatSource: { bytes: new Uint8Array([112, 108, 121]) },
   };
   handleStartLargeFile(host, header);
 
@@ -81,5 +83,7 @@ test('typed LiDAR chunks preserve packed arrays, scalar fields, and metadata', a
   expect(Array.from(received?.scalarFields?.classification ?? [])).toEqual([2, 6, 9]);
   expect(received?.sourceOrigin).toEqual([4_000_000, 500_000, 100]);
   expect(received?.metadata?.format).toBe('LAZ');
+  expect(received?.isGaussianSplat).toBe(true);
+  expect(Array.from(received?.splatSource?.bytes ?? [])).toEqual([112, 108, 121]);
   expect(host.chunkedFileState.size).toBe(0);
 });

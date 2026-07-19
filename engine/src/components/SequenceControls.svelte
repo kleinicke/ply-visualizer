@@ -17,6 +17,11 @@
     const value = parseInt((e.target as HTMLInputElement).value, 10) || 0;
     onSeek(value);
   }
+
+  function resetSlider(e: MouseEvent) {
+    e.preventDefault();
+    onSeek(0);
+  }
 </script>
 
 <div id="sequence-controls" class="sequence-controls" class:hidden={!uiState.sequenceMode}>
@@ -33,6 +38,8 @@
     value={uiState.sequenceIndex}
     class="seq-slider"
     oninput={handleSliderInput}
+    ondblclick={resetSlider}
+    title="Double-click to reset to the first frame"
   />
   <span id="seq-label" class="seq-label"
     >{uiState.sequenceTotal ? uiState.sequenceIndex + 1 : 0} / {uiState.sequenceTotal}</span
