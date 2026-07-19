@@ -569,7 +569,7 @@ export async function loadDocumentContent(
     }
 
     if (isKittiBinFile) {
-      // Handle KITTI LiDAR .bin scans - parse in the extension host and send
+      // Handle KITTI BIN scans - parse in the extension host and send
       // typed arrays to the webview
       webviewPanel.webview.postMessage({
         type: 'timingUpdate',

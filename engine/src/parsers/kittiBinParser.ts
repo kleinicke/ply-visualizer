@@ -1,5 +1,5 @@
 /**
- * Parser for KITTI / SemanticKITTI LiDAR `.bin` scans.
+ * Parser for KITTI BIN and SemanticKITTI scan files.
  *
  * Headerless little-endian float32 records: [x, y, z, reflectance] repeated.
  * No metadata of any kind — validity is inferred purely from file size being
@@ -37,8 +37,12 @@ export class KittiBinParser {
     if (data.byteLength % RECORD_BYTES !== 0) {
       throw new Error(
         `Invalid KITTI BIN file: size ${data.byteLength} bytes is not a multiple of ${RECORD_BYTES} ` +
-          `(4 × float32 for x, y, z, reflectance). This does not look like a KITTI LiDAR scan.`
+          `(4 × float32 for x, y, z, reflectance). This does not look like a KITTI BIN scan.`
       );
+    }
+
+    if (data.byteLength === 0) {
+      throw new Error('Invalid KITTI BIN file: the scan is empty.');
     }
 
     const vertexCount = data.byteLength / RECORD_BYTES;
@@ -56,10 +60,24 @@ export class KittiBinParser {
     for (let i = 0; i < vertexCount; i++) {
       const f4 = i * 4;
       const p3 = i * 3;
-      positions[p3] = floats[f4];
-      positions[p3 + 1] = floats[f4 + 1];
-      positions[p3 + 2] = floats[f4 + 2];
-      intensity[i] = floats[f4 + 3];
+      const x = floats[f4];
+      const y = floats[f4 + 1];
+      const z = floats[f4 + 2];
+      const reflectance = floats[f4 + 3];
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        !Number.isFinite(z) ||
+        !Number.isFinite(reflectance)
+      ) {
+        throw new Error(
+          `Invalid KITTI BIN file: point ${i} contains a non-finite x, y, z or reflectance value.`
+        );
+      }
+      positions[p3] = x;
+      positions[p3 + 1] = y;
+      positions[p3 + 2] = z;
+      intensity[i] = reflectance;
     }
 
     const elapsed = (performance.now() - startTime).toFixed(1);

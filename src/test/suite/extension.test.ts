@@ -127,11 +127,12 @@ end_header
       const customEditors = packageJSON.contributes?.customEditors;
 
       assert.ok(customEditors, 'Custom editors should be defined');
-      assert.strictEqual(customEditors.length, 1);
+      assert.strictEqual(customEditors.length, 2);
 
-      const editor = customEditors[0];
+      const editor = customEditors.find((item: any) => item.viewType === 'plyViewer.plyEditor');
+      assert.ok(editor, 'Main 3D custom editor should be defined');
       assert.strictEqual(editor.viewType, 'plyViewer.plyEditor');
-      assert.strictEqual(editor.displayName, 'PLY Pointcloud Visualizer');
+      assert.strictEqual(editor.displayName, '3D Point Cloud and Mesh Visualizer (PLY, ...)');
 
       const supportedPatterns = editor.selector.map((s: any) => s.filenamePattern);
       assert.ok(supportedPatterns.includes('*.ply'));
@@ -148,6 +149,15 @@ end_header
       assert.ok(supportedPatterns.includes('*.las'));
       assert.ok(supportedPatterns.includes('*.laz'));
       assert.ok(supportedPatterns.includes('*.e57'));
+
+      const kittiEditor = customEditors.find((item: any) => item.viewType === 'plyViewer.kittiBin');
+      assert.ok(kittiEditor, 'Optional KITTI BIN custom editor should be defined');
+      assert.strictEqual(kittiEditor.displayName, '3D Point Cloud and Mesh Visualizer (KITTI BIN)');
+      assert.strictEqual(kittiEditor.priority, 'option');
+      assert.deepStrictEqual(
+        kittiEditor.selector.map((s: any) => s.filenamePattern),
+        ['*.bin']
+      );
 
       // Note: TIF/TIFF files are handled through conversion commands, not direct opening
     }
@@ -178,6 +188,7 @@ end_header
       );
 
       assert.ok(openFileItem, 'Open file context menu item should exist');
+      assert.ok(openFileItem.when.includes('resourceExtname == .bin'));
       assert.ok(convertTifItem, 'Convert TIF context menu item should exist');
       assert.ok(loadJsonPoseItem, 'Load JSON as 3D Pose context menu item should exist');
     }

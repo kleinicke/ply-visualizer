@@ -15,7 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Second registration for KITTI LiDAR .bin scans. Uses a distinct viewType
+  // Second registration for KITTI BIN scans. Uses a distinct viewType
   // with priority "option" (see package.json) so the extension never hijacks
   // arbitrary .bin files as their default editor — users opt in via
   // "Open With..." or the explorer context menu.

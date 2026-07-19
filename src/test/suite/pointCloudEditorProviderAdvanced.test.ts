@@ -2,6 +2,8 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
+import { handleAddFileFromPath } from '../../providerHandlers/addFileHandlers';
 
 suite('Point Cloud Editor Provider Advanced Test Suite', () => {
   let extension: vscode.Extension<any> | undefined;
@@ -70,9 +72,10 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
     const customEditors = packageJSON?.contributes?.customEditors;
 
     assert.ok(customEditors, 'Custom editors should be registered');
-    assert.strictEqual(customEditors.length, 1);
+    assert.strictEqual(customEditors.length, 2);
 
-    const editor = customEditors[0];
+    const editor = customEditors.find((item: any) => item.viewType === 'plyViewer.plyEditor');
+    assert.ok(editor, 'Main 3D custom editor should be registered');
     assert.strictEqual(editor.viewType, 'plyViewer.plyEditor');
     assert.ok(editor.selector, 'Editor should have file selector');
     assert.ok(Array.isArray(editor.selector), 'Selector should be an array');
@@ -80,6 +83,59 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
     // Verify selector patterns
     const patterns = editor.selector.map((s: any) => s.filenamePattern);
     assert.ok(patterns.length > 5, 'Should support multiple file types');
+
+    const kittiEditor = customEditors.find((item: any) => item.viewType === 'plyViewer.kittiBin');
+    assert.ok(kittiEditor, 'KITTI BIN custom editor should be registered');
+    assert.strictEqual(kittiEditor.priority, 'option');
+    assert.deepStrictEqual(
+      kittiEditor.selector.map((s: any) => s.filenamePattern),
+      ['*.bin']
+    );
+  });
+
+  test('Should add a KITTI BIN file to an existing scene', async () => {
+    const fileName = `add-kitti-test-${process.pid}-${Date.now()}.bin`;
+    const filePath = path.join(os.tmpdir(), fileName);
+    const buffer = Buffer.alloc(32);
+    const values = [1, 2, 3, 0.25, -4, 5, -6, 0.75];
+    values.forEach((value, index) => buffer.writeFloatLE(value, index * 4));
+    fs.writeFileSync(filePath, buffer);
+
+    const messages: any[] = [];
+    const host = {
+      getShortPath: (value: string) => path.basename(value),
+      logPerf: () => undefined,
+      setLoadStartedAt: () => undefined,
+      tryAutoLoadMtl: async () => undefined,
+    };
+    const webviewPanel = {
+      webview: {
+        postMessage: async (message: any) => {
+          messages.push(message);
+          return true;
+        },
+      },
+    } as unknown as vscode.WebviewPanel;
+
+    try {
+      await handleAddFileFromPath(host, webviewPanel, filePath);
+    } finally {
+      fs.unlinkSync(filePath);
+    }
+
+    const dataMessage = messages.find(message => message.type === 'binarySpatialData');
+    assert.ok(dataMessage, 'The KITTI scan should be sent as spatial data');
+    assert.strictEqual(dataMessage.messageType, 'addFiles');
+    assert.strictEqual(dataMessage.fileName, fileName);
+    assert.strictEqual(dataMessage.vertexCount, 2);
+    assert.deepStrictEqual(
+      Array.from(new Float32Array(dataMessage.positionBuffer)),
+      [1, 2, 3, -4, 5, -6]
+    );
+    assert.deepStrictEqual(
+      Array.from(new Float32Array(dataMessage.scalarFieldBuffers.intensity)),
+      [0.25, 0.75]
+    );
   });
 
   test('Should support webview serialization', () => {

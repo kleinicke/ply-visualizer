@@ -58,16 +58,16 @@ integrating `@mkkellogg/GaussianSplats3D`) only if users ask.
 
 ## Implemented
 
-### KITTI LiDAR `.bin` support
+### KITTI BIN support
 
 **Shipped (July 2026, initial version).** `KittiBinParser`
 (`engine/src/parsers/kittiBinParser.ts`) reads the headerless little-endian
-float32 `[x, y, z, reflectance]` layout, validates that the file size is a
-multiple of 16 and reports the format as "KITTI BIN"; reflectance feeds the
-existing intensity color modes. Because `.bin` is ambiguous, the VS Code
-registration is a separate `plyViewer.kittiBin` custom editor with
-`priority: "option"` — users opt in via "Open With..." or the explorer context
-menu instead of the extension hijacking every `.bin` file. Playwright coverage:
+float32 `[x, y, z, reflectance]` layout, rejects empty, mis-sized or non-finite
+records and reports the format as "KITTI BIN"; reflectance feeds the existing
+intensity color modes. Because `.bin` is ambiguous, the VS Code registration is
+a separate `plyViewer.kittiBin` custom editor with `priority: "option"` — users
+opt in via "Open With..." or the explorer context menu instead of the extension
+hijacking every `.bin` file. Playwright coverage:
 `engine/test/kitti-bin-loading.spec.ts`.
 
 Still open from the original sketch: sequence playback, calibration/pose files

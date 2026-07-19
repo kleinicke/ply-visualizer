@@ -61,15 +61,24 @@ suite('Extension Advanced Test Suite', () => {
     const customEditors = packageJSON?.contributes?.customEditors;
 
     assert.ok(customEditors, 'Custom editors should be defined');
-    assert.strictEqual(customEditors.length, 1);
+    assert.strictEqual(customEditors.length, 2);
 
-    const editor = customEditors[0];
+    const editor = customEditors.find((item: any) => item.viewType === 'plyViewer.plyEditor');
+    assert.ok(editor, 'Main 3D custom editor should be defined');
     assert.strictEqual(editor.viewType, 'plyViewer.plyEditor');
-    assert.strictEqual(editor.displayName, 'PLY Pointcloud Visualizer');
+    assert.strictEqual(editor.displayName, '3D Point Cloud and Mesh Visualizer (PLY, ...)');
     // Priority may be undefined or 'default'
     assert.ok(
       editor.priority === 'default' || editor.priority === undefined,
       'Priority should be default or undefined'
+    );
+
+    const kittiEditor = customEditors.find((item: any) => item.viewType === 'plyViewer.kittiBin');
+    assert.ok(kittiEditor, 'KITTI BIN custom editor should be defined');
+    assert.strictEqual(kittiEditor.priority, 'option');
+    assert.deepStrictEqual(
+      kittiEditor.selector.map((s: any) => s.filenamePattern),
+      ['*.bin']
     );
   });
 

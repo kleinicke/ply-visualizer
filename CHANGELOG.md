@@ -1,12 +1,16 @@
 # Change Log
 
-## [1.7.0] - 2026-07-??
+## [1.8.0] - 2026-
+
+- Add Kitti's .bin file support
+
+## [1.7.0] - 2026-07-17
 
 - Internal refactoring - move to svelte
 - Speedup for computing point clouds out of depth
 - Add double click onto empty region to automatically fit to point cloud
 - Color point clouds by any extra PLY scalar property (e.g. confidence, error) via Viridis/Gray colormaps in the Color dropdown
-- Add "Save Screenshot" (PNG) and "Copy Camera JSON" (position/target/up/fov) to the camera tab
+- Add Clip Planes (near / far), Save Screenshot (PNG) and Copy Camera JSON (position/target/up/fov) to the camera tab
 - Add LAS/LAZ and E57 file formats
 - Finally Inverse Camera Rotation
 - Add video mode
@@ -99,7 +103,7 @@
 - Implemented file management with visibility controls
 - Performance optimization with binary data transfer
 - Advanced camera controls and coordinate conventions
-- The name of the extension is now PLY Pointcloud Visualizer
+- Renamed the extension (that historical name has since been superseded)
 
 ## [0.0.1] - 2025-06-29
 
@@ -107,4 +111,3 @@
 - Support for PLY file visualization using Three.js
 - Interactive 3D controls and multiple rendering modes
 - Complete PLY parser with ASCII and binary format support
-

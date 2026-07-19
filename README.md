@@ -18,13 +18,18 @@ directly inside VS Code.
 
 ## Supported formats
 
-| Type                   | Formats                                              |
-| ---------------------- | ---------------------------------------------------- |
-| Point clouds           | PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY, LAS, LAZ, E57 |
-| Meshes                 | PLY, OBJ, STL, OFF, GLTF, GLB                        |
-| Depth/disparity images | TIFF, PNG, PFM, NPY, NPZ                             |
-| 3D Body Poses          | JSON pose data (experimental)                        |
-| Camera Profiles        | JSON pose data (experimental)                        |
+| Type                   | Formats                                                         |
+| ---------------------- | --------------------------------------------------------------- |
+| Point clouds           | PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY, LAS, LAZ, E57, KITTI BIN |
+| Meshes                 | PLY, OBJ, STL, OFF, GLTF, GLB                                   |
+| Depth/disparity images | TIFF, PNG, PFM, NPY, NPZ                                        |
+| 3D Body Poses          | JSON pose data (experimental)                                   |
+| Camera Profiles        | JSON pose data (experimental)                                   |
+
+Because `.bin` and `.json` are generic extensions, neither is opened with the 3D
+Visualizer by default. For KITTI BIN, use **Open With...** or right-click and
+choose **Open with 3D Visualizer**. For a supported JSON pose, right-click and
+choose **Load JSON as 3D Pose**.
 
 ## Features
 

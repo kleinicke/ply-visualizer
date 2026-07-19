@@ -5,6 +5,7 @@ import { ObjParser } from '../../engine/src/parsers/objParser';
 import { StlParser } from '../../engine/src/parsers/stlParser';
 import { PcdParser } from '../../engine/src/parsers/pcdParser';
 import { PtsParser } from '../../engine/src/parsers/ptsParser';
+import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
@@ -67,6 +68,22 @@ function decodeLidarData(
   }));
 }
 
+async function addKittiBinData(
+  host: AddFileHost,
+  webviewPanel: vscode.WebviewPanel,
+  bytes: Uint8Array,
+  fileName: string,
+  shortPath: string
+): Promise<void> {
+  const parsedData: any = await new KittiBinParser().parse(bytes, host.logPerf.bind(host));
+  parsedData.fileName = fileName;
+  parsedData.shortPath = shortPath;
+  parsedData.fileSizeInBytes = bytes.byteLength;
+  parsedData.faceCount = 0;
+  parsedData.faces = [];
+  await sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
+}
+
 export async function handleAddFile(
   host: AddFileHost,
   webviewPanel: vscode.WebviewPanel,
@@ -113,6 +130,12 @@ export async function handleAddFile(
           const extension = fileExtension.slice(1) as 'las' | 'laz' | 'e57';
           const data = decodeLidarData(bytes, extension, fileName, shortPath);
           await sendSpatialDataToWebview(webviewPanel, data, 'multiSpatialData');
+          continue;
+        }
+
+        if (fileExtension === '.bin') {
+          const bytes = await vscode.workspace.fs.readFile(files[i]);
+          await addKittiBinData(host, webviewPanel, bytes, fileName, shortPath);
           continue;
         }
 
@@ -415,6 +438,12 @@ export async function handleAddFileFromPath(
       return;
     }
 
+    if (ext === '.bin') {
+      const bytes = await vscode.workspace.fs.readFile(fileUri);
+      await addKittiBinData(host, webviewPanel, bytes, fileName, shortPath);
+      return;
+    }
+
     if (
       ext === '.tif' ||
       ext === '.tiff' ||
@@ -631,6 +660,11 @@ export async function handleDroppedFilesFromWebview(
           shortPath
         );
         await sendSpatialDataToWebview(webviewPanel, data, 'multiSpatialData');
+        continue;
+      }
+
+      if (ext === '.bin') {
+        await addKittiBinData(host, webviewPanel, fileData, fileName, shortPath);
         continue;
       }
 
