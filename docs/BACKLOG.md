@@ -260,6 +260,48 @@ Remaining ideas, roughly by expected value:
 
 Per the general bar: reliable wins ≥ ~50 ms are worth shipping.
 
+### LingBot-Map multi-array NPZ prediction import
+
+**Reference: [Robbyant/lingbot-map](https://github.com/Robbyant/lingbot-map)** — a
+feed-forward, VGGT/DUSt3R-style streaming 3D reconstruction model ("Geometric
+Context Transformer"). Investigated July 2026 to see what it's good for and
+what's missing. Notes for whoever picks this up:
+
+- It outputs **point clouds only** (per-pixel unprojection), never meshes.
+  Camera poses go `pose_enc` → world-to-camera extrinsic → inverted to
+  camera-to-world (`closed_form_inverse_se3_general`), OpenCV-style convention
+  (X right, Y down, Z forward) per the VGGT/DUSt3R lineage, though their own
+  README never states axis handedness explicitly.
+- `--save_predictions` writes **per-frame NPZ archives** bundling several
+  arrays together: `world_points`, `world_points_conf`, `depth`, `depth_conf`,
+  `extrinsic`, `intrinsic`, `images`, `pose_enc`, plus chunk-transform
+  bookkeeping. No PLY/OBJ export exists in their pipeline; their own viewer is
+  viser/Open3D with `--conf_threshold`/`--point_size`/`--downsample_factor`.
+
+**Already works today:** `engine/src/parsers/npyParser.ts`'s content-based
+detection (`isNpyPointCloudData`, routed in `fileHandler.ts:181-197`) already
+opens a standalone `.npy` whose last dimension is 3 — `(N,3)`, `(H,W,3)`, even
+batched — as a point cloud with no changes needed. Extracting `world_points`
+to its own `.npy` is a working path right now.
+
+**Missing — their actual `.npz` output isn't usable as-is:**
+
+1. `fileHandler.ts` only does the point-cloud-vs-depth content sniff for the
+   `npy` extension (line 181: `basicType.extension === 'npy'`); `.npz` always
+   falls through to `NpyReader.handleNpzFile`
+   (`engine/src/depth/readers/NpyReader.ts:360-446`), which requires a **2D**
+   array and throws otherwise. Extend the same shape-based sniff to `.npz` so
+   an archive containing a `(...,3)` array routes to the point-cloud pipeline
+   instead of the depth-only one.
+2. Add a dedicated importer for this multi-key layout: read `world_points` for
+   XYZ, `world_points_conf` for confidence-based filtering (mirroring their
+   own `--conf_threshold`), and `images` for per-point RGB — today the depth
+   reader has no concept of sibling arrays in the same archive, so `extrinsic`/
+   `intrinsic`/`images` are invisible to it even when present.
+3. Optional follow-up: since output is one NPZ per frame, wire it into
+   `engine/src/sequencePlayback.ts` so a folder of per-frame predictions plays
+   back as an animated point-cloud sequence instead of one file at a time.
+
 ### Other new file formats
 
 PTX Static FBX 3MF VTK/VTP COPC/EPT FBX
