@@ -3,6 +3,7 @@
 ## [1.8.0] - 2026-
 
 - Add Kitti's .bin file support
+- Add Gaussian Splatting support
 
 ## [1.7.0] - 2026-07-17
 

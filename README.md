@@ -68,8 +68,9 @@ and render them as real sorted splats via [Spark](https://sparkjs.dev), or as a
 point cloud of the gaussian centers with colors derived from the
 spherical-harmonics coefficients. Switch per file with the **✨ Splats** button
 in the Files panel. Measurement and picking keep working on the gaussian centers
-in splat mode, and coloring the center points by the `opacity` scalar field
-helps with spotting floaters.
+in splat mode. Oversized background gaussians can be reduced with the
+logarithmic **Max splat size** control, while coloring center points by the
+`opacity` scalar field in Points mode helps with spotting floaters.
 
 ### Point Cloud Attributes
 

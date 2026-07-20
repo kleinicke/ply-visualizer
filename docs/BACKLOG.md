@@ -324,14 +324,39 @@ splat-native container formats:
    Spark directly: the gaussian centers are extracted (`forEachSplat`) into a
    regular point-cloud entry (opacity as a scalar field) and splat rendering
    turns on automatically; the Points toggle still works.
+4. **Interaction and rendering hardening** — Points and Splats are mutually
+   exclusive per file and the Files panel shows only the controls relevant to
+   the active representation. Double-click selection raycasts the gaussian
+   ellipsoid surfaces directly (with center picking retained as a fallback), so
+   rotation-center changes work naturally in splat mode. Spark invalidates
+   frames only while it is dirty; an idle splat scene returns to demand-driven
+   rendering instead of holding a constant frame rate. Switching modes and live
+   splat edits request an immediate frame.
+5. **Interior inspection** — a per-file maximum splat-size control clamps only
+   oversized ellipsoids while preserving their color and opacity, instead of
+   making both the outer shell and useful interior splats transparent. The
+   slider is logarithmic from `0.01` to the file's largest splat, has an exact
+   scene-unit field, updates the GPU data live, and resets to the uncapped
+   maximum on double-click.
+6. **Robust lifecycle/source handling** — original splat sources survive the
+   extension's initial-open, add-file and fetch-fallback transfer paths;
+   asynchronous decode cannot attach a ghost mesh after its file is removed.
 
-Known limitation: zoomed far out, unbounded captures look like an opaque blob —
-outdoor 3DGS scenes surround their content with huge low-detail environment
-gaussians, so from outside you only see that shell. That is inherent to the
-representation, not a renderer bug; the workflow is to move the camera inside
-(double-click a point to set the rotation center, then zoom in) or inspect in
-points mode. If it bothers users, a possible future feature is a scale/opacity
-filter or crop box implemented via Spark's splat modifiers (dynos).
+The original GS scope is complete. Remaining ideas are optional follow-ups, not
+missing pieces of the initial implementation:
+
+- Sequence playback still uses the gaussian-center point representation; a
+  `SplatMesh` rebuild for every frame is not currently intended to be real-time.
+- Points and Spark data coexist in splat mode so picking and instant mode
+  switching remain available. Large-scene memory could be reduced by dropping
+  recreatable point color/scalar attributes while splats are active.
+- The max-size edit is a debounced O(N) rewrite. A Spark dyno/GPU modifier may
+  be worthwhile if profiling shows slider updates are too slow on multi-million
+  splat scenes. A crop box or clipping plane would provide more targeted
+  inspection than a global size cap.
+- Automated fixtures currently cover 3DGS PLY and `.splat`; add SPZ, KSPLAT and
+  SOG fixtures when small redistributable samples or deterministic generators
+  are available.
 
 3DGS nx/ny/nz properties are always all zeros and are deliberately dropped at
 parse (no normals array, no no-op Normals button).
