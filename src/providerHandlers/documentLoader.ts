@@ -161,7 +161,7 @@ export async function loadDocumentContent(
       const bytes = await readFileFast(documentUri);
       const readTime = performance.now();
       const parser = new StonexX3aParser();
-      const parsed = await parser.parse(
+      const parsed = await parser.parseAll(
         bytes,
         path.basename(documentUri.fsPath),
         message =>
@@ -171,13 +171,15 @@ export async function loadDocumentContent(
             timestamp: performance.now(),
           })
       );
-      parsed.fileName = path.basename(documentUri.fsPath);
-      (parsed as any).shortPath = host.getShortPath(documentUri.fsPath);
-      (parsed as any).fileSizeInBytes = bytes.byteLength;
+      for (const scan of parsed) {
+        (scan as any).shortPath = host.getShortPath(documentUri.fsPath);
+        (scan as any).fileSizeInBytes =
+          (scan.metadata.embeddedMemberSize as number | undefined) ?? bytes.byteLength;
+      }
       host.logPerf(
-        `⏱️ PERF[x3a/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsed.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
+        `⏱️ PERF[x3a/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsed.reduce((sum, scan) => sum + scan.vertexCount, 0)} pts in ${parsed.length} scans) for ${path.basename(documentUri.fsPath)}`
       );
-      await sendSpatialDataToWebview(webviewPanel, [parsed], 'multiSpatialData');
+      await sendSpatialDataToWebview(webviewPanel, parsed, 'multiSpatialData');
       return;
     }
 

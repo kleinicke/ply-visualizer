@@ -167,6 +167,9 @@ function createFrameVisualization(frame: StonexCameraFrameMetadata): THREE.Group
     new THREE.MeshBasicMaterial({
       map: texture,
       side: THREE.DoubleSide,
+      // Camera previews are reference imagery. Keep their decoded sRGB values
+      // independent of the renderer exposure used by the geometry brightness control.
+      toneMapped: false,
       transparent: true,
       opacity: 0.88,
       depthWrite: false,
@@ -190,8 +193,11 @@ export function addStonexCameraVisualization(host: StonexCameraHost, data: Spati
     return false;
   }
 
+  const profileName =
+    (data.metadata?.stonexCameraProfileName as string | undefined) || data.fileName || 'X3A';
+
   const profile = new THREE.Group();
-  profile.name = `stonex_cameras_${data.fileName || 'scan'}`;
+  profile.name = `stonex_cameras_${profileName}`;
   profile.userData.hasImagePlanes = true;
   profile.userData.hasScannerMarker = true;
   profile.userData.excludeFromFit = true;
@@ -205,7 +211,7 @@ export function addStonexCameraVisualization(host: StonexCameraHost, data: Spati
 
   host.scene.add(profile);
   host.cameraGroups.push(profile);
-  host.cameraNames.push(`${data.fileName || 'X3A'} cameras`);
+  host.cameraNames.push(`${profileName} cameras`);
   host.cameraShowLabels.push(false);
   host.cameraShowCoords.push(false);
 

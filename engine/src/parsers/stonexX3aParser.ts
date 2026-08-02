@@ -18,6 +18,7 @@ export interface StonexX3aData {
   format: 'binary_little_endian';
   version: '1.0';
   fileName: string;
+  fileIndex?: number;
   comments: string[];
   vertices: never[];
   faces: never[];
@@ -42,6 +43,15 @@ interface ScanLayout extends ArchiveMember {
   columnOffset: number;
   columnStride: number;
   validPoints: number;
+}
+
+interface ScanPointRange {
+  name: string;
+  memberSize: number;
+  sourcePointCount: number;
+  pointOffset: number;
+  pointCount: number;
+  photographicallyColoredPoints: number;
 }
 
 interface CameraCalibration {
@@ -102,6 +112,7 @@ const PULSE_WIDTH_MAX = 16_383;
 const INVALID_RANGE_MAX = 0x7fffffff;
 const VERTICAL_MIN_DEGREES = -25;
 const VERTICAL_SPAN_DEGREES = 90;
+const VERTICAL_MAX_DEGREES = VERTICAL_MIN_DEGREES + VERTICAL_SPAN_DEGREES;
 const X3I_HEADER_BYTES = 64;
 
 function ascii(data: Uint8Array, offset: number, length: number): string {
@@ -545,8 +556,11 @@ export class StonexX3aParser {
     const photographicScanStems = new Set(cameraFrames.map(frame => frame.scanStem));
     let outputIndex = 0;
     let photographicallyColoredPoints = 0;
+    const scanPointRanges: ScanPointRange[] = [];
 
     for (const layout of layouts) {
+      const pointOffset = outputIndex;
+      const coloredPointOffset = photographicallyColoredPoints;
       const scanStem = layout.name.replace(/\.x3r$/i, '');
       const exactFrames = cameraFrames.filter(frame => frame.scanStem === scanStem);
       // Abschnitt_A contains several scan passes in one scanner coordinate
@@ -559,7 +573,9 @@ export class StonexX3aParser {
       const verticalSin = new Float64Array(layout.rows);
       const verticalCos = new Float64Array(layout.rows);
       for (let row = 0; row < layout.rows; row++) {
-        const elevation = (VERTICAL_MIN_DEGREES + row * verticalStep) * (Math.PI / 180);
+        // X3R rows follow the vertically rotating mirror from its upper limit
+        // downwards: low row indices see sky, high indices see the ground.
+        const elevation = (VERTICAL_MAX_DEGREES - row * verticalStep) * (Math.PI / 180);
         verticalSin[row] = Math.sin(elevation);
         verticalCos[row] = Math.cos(elevation);
       }
@@ -624,6 +640,14 @@ export class StonexX3aParser {
           outputIndex++;
         }
       }
+      scanPointRanges.push({
+        name: layout.name,
+        memberSize: layout.size,
+        sourcePointCount: layout.columns * layout.rows,
+        pointOffset,
+        pointCount: outputIndex - pointOffset,
+        photographicallyColoredPoints: photographicallyColoredPoints - coloredPointOffset,
+      });
     }
 
     timingCallback?.(
@@ -658,6 +682,7 @@ export class StonexX3aParser {
       metadata: {
         container: isArchive ? 'Stonex X300 RAW Archive (CRAX)' : 'Stonex X300 scan record',
         embeddedScans: scanMembers.map(member => member.name),
+        embeddedScanPointRanges: scanPointRanges,
         cameraFrames: cameraFrames.map(frame => frame.member.name),
         cameraCalibrations: [...calibrations.keys()],
         stonexCameraFrames: cameraFrames.map(frame => cameraFrameMetadata(data, frame)),
@@ -675,5 +700,57 @@ export class StonexX3aParser {
         ],
       },
     };
+  }
+
+  /** Decode an archive into one viewer object per embedded X3R member. */
+  async parseAll(
+    data: Uint8Array,
+    fileName = '',
+    timingCallback?: (message: string) => void
+  ): Promise<StonexX3aData[]> {
+    const combined = await this.parse(data, fileName, timingCallback);
+    const ranges = combined.metadata.embeddedScanPointRanges as ScanPointRange[] | undefined;
+    if (!ranges || ranges.length <= 1) {
+      return [combined];
+    }
+
+    const cameraFrames = combined.metadata.stonexCameraFrames;
+    return ranges.map((range, index) => {
+      const pointEnd = range.pointOffset + range.pointCount;
+      const componentStart = range.pointOffset * 3;
+      const componentEnd = pointEnd * 3;
+      const intensityArray = combined.intensityArray.slice(range.pointOffset, pointEnd);
+      return {
+        ...combined,
+        vertexCount: range.pointCount,
+        sourcePointCount: range.sourcePointCount,
+        fileName: range.name,
+        comments: [
+          'Experimental Stonex X300 X3A/X3R decoder',
+          `Embedded scan ${range.name} from ${fileName}`,
+          combined.hasColors
+            ? `Photographic color: ${range.photographicallyColoredPoints.toLocaleString()} points`
+            : 'No usable X3I camera frames and calibration were found',
+        ],
+        positionsArray: combined.positionsArray.slice(componentStart, componentEnd),
+        colorsArray: combined.colorsArray?.slice(componentStart, componentEnd) ?? null,
+        intensityArray,
+        scalarFields: { intensity: intensityArray },
+        metadata: {
+          ...combined.metadata,
+          containerFileName: fileName,
+          embeddedScans: [range.name],
+          embeddedScanName: range.name,
+          embeddedMemberSize: range.memberSize,
+          embeddedScanPointRanges: [range],
+          photographicallyColoredPoints: range.photographicallyColoredPoints,
+          // All members share a scanner station. Register its camera rig once,
+          // after the final cloud so sequential extension transfers cannot shift
+          // the camera entry's unified UI index as later clouds arrive.
+          stonexCameraFrames: index === ranges.length - 1 ? cameraFrames : [],
+          stonexCameraProfileName: fileName,
+        },
+      };
+    });
   }
 }

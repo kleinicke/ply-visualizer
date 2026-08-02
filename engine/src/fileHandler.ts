@@ -506,9 +506,17 @@ export async function processFiles(
         continue;
       }
 
-      const result = await parseFileData(file.data, fileType, file.name, timingCallback);
-      result.data.fileIndex = i;
-      results.push(result);
+      if (fileType.extension === 'x3a') {
+        const scans = await new StonexX3aParser().parseAll(file.data, file.name, timingCallback);
+        for (const scan of scans) {
+          scan.fileIndex = results.length;
+          results.push({ data: scan, type: 'spatialData' });
+        }
+      } else {
+        const result = await parseFileData(file.data, fileType, file.name, timingCallback);
+        result.data.fileIndex = results.length;
+        results.push(result);
+      }
     } catch (error) {
       const fileError: FileError = {
         fileName: file.name,

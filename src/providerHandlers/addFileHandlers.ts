@@ -94,15 +94,16 @@ async function addStonexX3aData(
   fileName: string,
   shortPath: string
 ): Promise<void> {
-  const parsedData: any = await new StonexX3aParser().parse(
+  const parsedData: any[] = await new StonexX3aParser().parseAll(
     bytes,
     fileName,
     host.logPerf.bind(host)
   );
-  parsedData.fileName = fileName;
-  parsedData.shortPath = shortPath;
-  parsedData.fileSizeInBytes = bytes.byteLength;
-  await sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
+  for (const scan of parsedData) {
+    scan.shortPath = shortPath;
+    scan.fileSizeInBytes = scan.metadata?.embeddedMemberSize ?? bytes.byteLength;
+  }
+  await sendSpatialDataToWebview(webviewPanel, parsedData, 'addFiles');
 }
 
 export async function handleAddFile(
