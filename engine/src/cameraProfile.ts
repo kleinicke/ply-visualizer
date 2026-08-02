@@ -141,6 +141,16 @@ export function createCameraVisualization(
   // Store original position for coordinate label
   (group as any).originalPosition = { x: location[0], y: location[1], z: location[2] };
 
+  // Rows for the per-camera panel list. The group carries a real rotation and
+  // the body looks along local +Z, so no explicit look-through view is needed.
+  group.userData.frameDetails = [
+    {
+      label: 'Rotation',
+      value: `x ${quaternion.x.toFixed(5)}, y ${quaternion.y.toFixed(5)}, z ${quaternion.z.toFixed(5)}, w ${quaternion.w.toFixed(5)}`,
+    },
+    ...(rotationType ? [{ label: 'Convention', value: rotationType }] : []),
+  ];
+
   return group;
 }
 

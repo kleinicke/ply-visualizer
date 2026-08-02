@@ -1,6 +1,7 @@
 <script lang="ts">
   import { filesState } from '../state/files.svelte';
   import { getExtraScalarFieldNames } from '../utils/scalarFields';
+  import CameraFrameList from './CameraFrameList.svelte';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
   import TransformSection from './TransformSection.svelte';
   import {
@@ -10,6 +11,7 @@
     setStonexScannerVisible,
   } from '../visualization/stonexCameras';
   import {
+    DEFAULT_STONEX_COLOR_CORRECTION,
     normalizeStonexColorCorrection,
     type StonexColorCorrection,
   } from '../visualization/stonexColorCorrection';
@@ -74,12 +76,19 @@
 
   function onVisibilityClick(e: MouseEvent) {
     if (e.shiftKey) {
+      const checkbox = e.currentTarget as HTMLInputElement;
       e.preventDefault();
       host.soloPointCloud(index);
+      // A checkbox's native checked toggle is finalized after its click
+      // handler. The soloed entry remains logically true, so that same-value
+      // state write does not necessarily make Svelte touch this DOM property.
+      // Synchronize once the browser has completed the cancelled default
+      // action; all other checkboxes update reactively through filesState.
+      window.setTimeout(() => {
+        checkbox.checked = filesState.visibility[index] ?? true;
+      }, 0);
+      return;
     }
-  }
-
-  function onVisibilityChange() {
     host.toggleFileVisibility(index);
   }
 
@@ -355,9 +364,14 @@
     imageDistortionAvailable = cameraGroup.userData.imageDistortionAvailable !== false;
     host.requestRender();
   }
+  // Bumped whenever this panel changes plane visibility for the whole
+  // profile, so CameraFrameList's per-camera checkboxes re-read the scene.
+  let cameraSceneTick = $state(0);
+
   async function onCameraShowImagesChange(e: Event) {
     imagesVisible = (e.target as HTMLInputElement).checked;
     setStonexImagesVisible(cameraGroup, imagesVisible);
+    cameraSceneTick++;
     host.requestRender();
     if (imagesVisible) {
       await applyImageDistortion(imagesDistorted);
@@ -377,6 +391,16 @@
   let colorCorrection = $state(
     normalizeStonexColorCorrection(initialCameraUserData().colorCorrection)
   );
+  // Matches the double-click-to-reset every other slider in the panel offers.
+  function onColorSliderReset(
+    e: MouseEvent,
+    key: 'manualRedGain' | 'manualBlueGain' | 'exposureStops'
+  ) {
+    e.preventDefault();
+    const value = DEFAULT_STONEX_COLOR_CORRECTION[key];
+    (e.currentTarget as HTMLInputElement).value = String(value);
+    applyColorCorrection({ [key]: value });
+  }
   function applyColorCorrection(patch: Partial<StonexColorCorrection>) {
     colorCorrection = { ...colorCorrection, ...patch };
     setStonexColorCorrection(host, cameraGroup, colorCorrection);
@@ -435,7 +459,6 @@
       id={`file-${index}`}
       checked={visible}
       onclick={onVisibilityClick}
-      onchange={onVisibilityChange}
     />
     <span class="color-indicator" style={colorIndicatorStyle()}></span>
     <label for={`file-${index}`} class="file-name" data-short-path={shortPath}>{name}</label>
@@ -768,10 +791,12 @@
                   max="3"
                   step="0.01"
                   value={colorCorrection.manualRedGain}
+                  title="Double-click to reset"
                   oninput={e =>
                     applyColorCorrection({
                       manualRedGain: Number((e.currentTarget as HTMLInputElement).value),
                     })}
+                  ondblclick={e => onColorSliderReset(e, 'manualRedGain')}
                 />
                 <span>{colorCorrection.manualRedGain.toFixed(2)}</span>
               </label>
@@ -785,10 +810,12 @@
                   max="3"
                   step="0.01"
                   value={colorCorrection.manualBlueGain}
+                  title="Double-click to reset"
                   oninput={e =>
                     applyColorCorrection({
                       manualBlueGain: Number((e.currentTarget as HTMLInputElement).value),
                     })}
+                  ondblclick={e => onColorSliderReset(e, 'manualBlueGain')}
                 />
                 <span>{colorCorrection.manualBlueGain.toFixed(2)}</span>
               </label>
@@ -823,10 +850,12 @@
                   max="2"
                   step="0.05"
                   value={colorCorrection.exposureStops}
+                  title="Double-click to reset"
                   oninput={e =>
                     applyColorCorrection({
                       exposureStops: Number((e.currentTarget as HTMLInputElement).value),
                     })}
+                  ondblclick={e => onColorSliderReset(e, 'exposureStops')}
                 />
                 <span>{colorCorrection.exposureStops.toFixed(2)}</span>
               </label>
@@ -851,6 +880,7 @@
             </label>
           {/if}
         </div>
+        <CameraFrameList {host} {cameraGroup} sceneTick={cameraSceneTick} />
       </div>
       <div class="size-control">
         <label for={`size-${index}`}>Scale:</label>

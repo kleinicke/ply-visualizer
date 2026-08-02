@@ -39,16 +39,48 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
 
     const first = page.locator('#file-0');
     const second = page.locator('#file-1');
+    const namesBefore = await page.locator('#file-list .file-name').allTextContents();
     await expect(first).toBeChecked();
     await expect(second).toBeChecked();
 
+    // Use a real browser click first: preventDefault on a checkbox click can
+    // roll its visual state back after the application has applied solo mode.
+    await second.click({ modifiers: ['Shift'] });
+    await expect(first).not.toBeChecked();
+    await expect(second).toBeChecked();
+    await expect(page.locator('#file-list .file-name')).toHaveText(namesBefore);
+
+    // Force a small scroll container to catch full-list remounts: those reset
+    // scrollTop and made the Shift-clicked cloud appear to jump to row one.
+    const scrollTopBefore = await page.locator('#file-list').evaluate(element => {
+      const list = element as HTMLElement;
+      list.style.height = '32px';
+      list.style.overflowY = 'auto';
+      list.scrollTop = list.scrollHeight;
+      return list.scrollTop;
+    });
+    expect(scrollTopBefore).toBeGreaterThan(0);
+
+    // dispatchEvent avoids Playwright's own scroll-into-view behavior, so any
+    // scroll movement below comes from the application itself. This second
+    // Shift-click restores all entries.
+    await second.dispatchEvent('click', { shiftKey: true });
+    await expect(first).toBeChecked();
+    await expect(second).toBeChecked();
+    await expect(page.locator('#file-list .file-name')).toHaveText(namesBefore);
+    expect(await page.locator('#file-list').evaluate(element => element.scrollTop)).toBe(
+      scrollTopBefore
+    );
+
+    await second.click({ modifiers: ['Shift'] });
+    await expect(first).not.toBeChecked();
+    await expect(second).toBeChecked();
+
+    // Switching directly from one soloed cloud to another must update the
+    // newly selected checkbox as well as clearing the previous one.
     await first.click({ modifiers: ['Shift'] });
     await expect(first).toBeChecked();
     await expect(second).not.toBeChecked();
-
-    await first.click({ modifiers: ['Shift'] });
-    await expect(first).toBeChecked();
-    await expect(second).toBeChecked();
   });
 
   test('collapse and expand a file item', async ({ page }) => {

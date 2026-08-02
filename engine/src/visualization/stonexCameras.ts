@@ -3,6 +3,7 @@ import type { SpatialData } from '../interfaces';
 import type { StonexCameraFrameMetadata } from '../parsers/stonexX3aParser';
 import { createCameraLabel } from '../cameraProfile';
 import { unprojectCameraPixel } from '../depth/cameraModels';
+import type { CameraFrameDetail, CameraFrameView } from './cameraFrames';
 import { initTiffWasm } from '../depth/readers/tiffWasm';
 import { filesState } from '../state/files.svelte';
 import {
@@ -243,6 +244,52 @@ function createFrameGeometries(
   return { plane, frustum };
 }
 
+/**
+ * Look-through basis for a frame.
+ *
+ * modelToViewer swaps X and Y, which is a reflection, so the frame's rotation
+ * matrix cannot be handed to the viewer camera as-is. Transforming points and
+ * deriving the basis from them keeps the result consistent with the geometry
+ * that is actually drawn, whatever the handedness.
+ */
+function frameView(
+  frame: StonexCameraFrameMetadata,
+  cameraToModel: THREE.Matrix4,
+  origin: THREE.Vector3
+): CameraFrameView {
+  const atPixel = (u: number, v: number) =>
+    transformCameraPoint(pinholePoint(frame, u, v, FRUSTUM_DEPTH_METRES), cameraToModel).sub(
+      origin
+    );
+  const topCentre = atPixel(frame.imageWidth / 2, 0);
+  const bottomCentre = atPixel(frame.imageWidth / 2, frame.imageHeight);
+  return {
+    forward: atPixel(frame.imageWidth / 2, frame.imageHeight / 2),
+    up: topCentre.sub(bottomCentre).normalize(),
+    fovYDegrees: 2 * Math.atan(frame.imageHeight / (2 * frame.fy)) * (180 / Math.PI),
+  };
+}
+
+function frameDetails(frame: StonexCameraFrameMetadata): CameraFrameDetail[] {
+  const coefficients = frame.distortionCoefficients;
+  // OpenCV pads to a fixed layout; trailing zeros carry no information.
+  const lastSet = coefficients.reduce((last, value, i) => (value !== 0 ? i : last), -1);
+  return [
+    { label: 'Family', value: frame.type === 'U' ? 'U (upper)' : 'D (lower)' },
+    { label: 'Pan', value: `${frame.panDegrees.toFixed(3)}°` },
+    { label: 'Image', value: `${frame.imageWidth} x ${frame.imageHeight} px` },
+    { label: 'Focal', value: `fx ${frame.fx.toFixed(2)}, fy ${frame.fy.toFixed(2)} px` },
+    { label: 'Principal', value: `cx ${frame.cx.toFixed(2)}, cy ${frame.cy.toFixed(2)} px` },
+    {
+      label: 'Distortion',
+      value: coefficients
+        .slice(0, Math.max(lastSet + 1, 5))
+        .map(value => value.toFixed(6))
+        .join(', '),
+    },
+  ];
+}
+
 function createFrameVisualization(
   frame: StonexCameraFrameMetadata,
   frameNumber: number,
@@ -259,6 +306,8 @@ function createFrameVisualization(
   (group as any).originalPosition = { x: origin.x, y: origin.y, z: origin.z };
   group.userData.frame = frame;
   group.userData.geometries = { pinhole: geometries } as Record<string, FrameGeometries>;
+  group.userData.view = frameView(frame, cameraToModel, origin);
+  group.userData.frameDetails = frameDetails(frame);
 
   const helper = new THREE.LineSegments(
     geometries.frustum,

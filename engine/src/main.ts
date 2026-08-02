@@ -3460,9 +3460,9 @@ class PointCloudVisualizer {
       this.setFileEntryVisibility(i, showAll || i === fileIndex);
     }
 
-    // Update UI
-    this.updateFileList();
-    // Request render to show visibility changes
+    // filesState.visibility is reactive, so rebuilding the complete file list
+    // here is unnecessary. Keeping the existing rows also preserves scroll,
+    // focus, expanded panels, and each row's identity during Shift-click solo.
     this.requestRender();
   }
 

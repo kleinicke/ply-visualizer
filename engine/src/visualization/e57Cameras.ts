@@ -4,6 +4,7 @@ import { unprojectCameraPixel } from '../depth/cameraModels';
 import { initTiffWasm, projectCameraPointsWasmSync } from '../depth/readers/tiffWasm';
 import type { E57EmbeddedImage, SpatialData } from '../interfaces';
 import { filesState } from '../state/files.svelte';
+import type { CameraFrameDetail, CameraFrameView } from './cameraFrames';
 
 interface E57CameraHost {
   scene: THREE.Scene;
@@ -92,7 +93,12 @@ function imagePose(
   };
 }
 
-function localImagePoint(image: E57EmbeddedImage, u: number, v: number): THREE.Vector3 | null {
+function localImagePoint(
+  image: E57EmbeddedImage,
+  u: number,
+  v: number,
+  azimuthCorrection = 0
+): THREE.Vector3 | null {
   const result = unprojectCameraPixel(
     {
       cameraModel: image.cameraModel!,
@@ -108,6 +114,12 @@ function localImagePoint(image: E57EmbeddedImage, u: number, v: number): THREE.V
     return null;
   }
   const point = new THREE.Vector3(...result.value);
+  if (image.representation !== 'pinhole' && azimuthCorrection !== 0) {
+    // A few exporters store a spherical JPEG whose azimuth zero is shifted
+    // relative to its declared E57 pose. Rotate the unprojected footprint by
+    // the independently measured image-to-point-colour correction.
+    point.applyAxisAngle(new THREE.Vector3(0, 0, 1), -azimuthCorrection);
+  }
   if (image.representation === 'pinhole') {
     if (point.z >= -1e-8) {
       return null;
@@ -125,7 +137,70 @@ function localImagePoint(image: E57EmbeddedImage, u: number, v: number): THREE.V
   return point;
 }
 
-function createProjectionGeometry(image: E57EmbeddedImage): {
+/**
+ * Look-through basis, derived from the projection itself rather than assumed:
+ * E57 pinhole images look along local -Z, and the panoramic representations
+ * have no single forward axis of their own.
+ */
+function imageView(image: E57EmbeddedImage, azimuthCorrection = 0): CameraFrameView | undefined {
+  const centre = localImagePoint(image, image.width / 2, image.height / 2, azimuthCorrection);
+  const top = localImagePoint(image, image.width / 2, 0, azimuthCorrection);
+  const bottom = localImagePoint(image, image.width / 2, image.height, azimuthCorrection);
+  if (!centre || !top || !bottom) {
+    return undefined;
+  }
+  const up = top.sub(bottom).normalize();
+  return {
+    forward: centre,
+    up: up.lengthSq() > 0 ? up : new THREE.Vector3(0, 1, 0),
+    fovYDegrees:
+      image.representation === 'pinhole' && image.fy
+        ? 2 * Math.atan(image.height / (2 * image.fy)) * (180 / Math.PI)
+        : undefined,
+  };
+}
+
+function imageDetails(image: E57EmbeddedImage, azimuthCorrection = 0): CameraFrameDetail[] {
+  const details: CameraFrameDetail[] = [
+    { label: 'Representation', value: image.representation },
+    { label: 'Image', value: `${image.width} x ${image.height} px` },
+  ];
+  if (image.fx && image.fy) {
+    details.push({
+      label: 'Focal',
+      value: `fx ${image.fx.toFixed(2)}, fy ${image.fy.toFixed(2)} px`,
+    });
+  }
+  if (image.cx !== undefined && image.cy !== undefined) {
+    details.push({
+      label: 'Principal',
+      value: `cx ${image.cx.toFixed(2)}, cy ${image.cy.toFixed(2)} px`,
+    });
+  }
+  const [, , , qw, qx, qy, qz] = image.pose;
+  details.push({
+    label: 'Rotation',
+    value: `w ${qw.toFixed(5)}, x ${qx.toFixed(5)}, y ${qy.toFixed(5)}, z ${qz.toFixed(5)}`,
+  });
+  if (azimuthCorrection !== 0) {
+    details.push({
+      label: 'RGB azimuth correction',
+      value: `${THREE.MathUtils.radToDeg(azimuthCorrection).toFixed(1)}°`,
+    });
+  }
+  if (image.sensorModel || image.sensorVendor) {
+    details.push({
+      label: 'Sensor',
+      value: [image.sensorVendor, image.sensorModel].filter(Boolean).join(' '),
+    });
+  }
+  return details;
+}
+
+function createProjectionGeometry(
+  image: E57EmbeddedImage,
+  azimuthCorrection = 0
+): {
   surface: THREE.BufferGeometry;
   frustum: THREE.BufferGeometry;
 } {
@@ -138,7 +213,8 @@ function createProjectionGeometry(image: E57EmbeddedImage): {
       const s = column / columns;
       const t = row / rows;
       const point =
-        localImagePoint(image, s * image.width, t * image.height) ?? new THREE.Vector3();
+        localImagePoint(image, s * image.width, t * image.height, azimuthCorrection) ??
+        new THREE.Vector3();
       positions.push(point.x, point.y, point.z);
       uvs.push(s, 1 - t);
     }
@@ -291,6 +367,96 @@ function sampleBilinear(
   return result;
 }
 
+function estimatePanoramaAzimuthCorrection(
+  data: SpatialData,
+  image: E57EmbeddedImage,
+  canvas: HTMLCanvasElement
+): number {
+  if (
+    image.representation === 'pinhole' ||
+    !data.hasColors ||
+    !data.positionsArray ||
+    !data.colorsArray ||
+    data.vertexCount < 500
+  ) {
+    return 0;
+  }
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) {
+    return 0;
+  }
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  const transform = viewerToImageTransform(image, data.sourceOrigin ?? [0, 0, 0]);
+  const positions = data.positionsArray;
+  const colors = data.colorsArray;
+  const scaleX = canvas.width / image.width;
+  const scaleY = canvas.height / image.height;
+  const wrapsHorizontally = image.width / image.fx! >= Math.PI * 2 - 0.02;
+  const stride = Math.max(1, Math.floor(data.vertexCount / 10_000));
+  const candidates = Array.from({ length: 24 }, (_, index) => (index - 12) * (Math.PI / 12));
+
+  const score = (correction: number): { error: number; count: number } => {
+    let error = 0;
+    let count = 0;
+    for (let index = 0; index < data.vertexCount; index += stride) {
+      const offset = index * 3;
+      const red = colors[offset];
+      const green = colors[offset + 1];
+      const blue = colors[offset + 2];
+      const sum = red + green + blue;
+      // Almost-black/white samples provide little alignment information and
+      // otherwise let sky or invalid fill dominate the score.
+      if (sum < 20 || sum > 745) {
+        continue;
+      }
+      const px = positions[offset];
+      const py = positions[offset + 1];
+      const pz = positions[offset + 2];
+      const x = transform[0] * px + transform[1] * py + transform[2] * pz + transform[3];
+      const y = transform[4] * px + transform[5] * py + transform[6] * pz + transform[7];
+      const z = transform[8] * px + transform[9] * py + transform[10] * pz + transform[11];
+      const rho = Math.hypot(x, y);
+      if (rho < 1e-8) {
+        continue;
+      }
+      let imageX = image.cx! - image.fx! * (Math.atan2(y, x) + correction);
+      if (wrapsHorizontally) {
+        imageX = ((imageX % image.width) + image.width) % image.width;
+      }
+      const vertical = image.representation === 'spherical' ? Math.atan2(z, rho) : z / rho;
+      const imageY = image.cy! - image.fy! * vertical;
+      const sampleX = Math.floor(imageX * scaleX);
+      const sampleY = Math.floor(imageY * scaleY);
+      if (sampleX < 0 || sampleY < 0 || sampleX >= canvas.width || sampleY >= canvas.height) {
+        continue;
+      }
+      const sampleOffset = (sampleY * canvas.width + sampleX) * 4;
+      if (pixels[sampleOffset + 3] < 250) {
+        continue;
+      }
+      const dr = pixels[sampleOffset] - red;
+      const dg = pixels[sampleOffset + 1] - green;
+      const db = pixels[sampleOffset + 2] - blue;
+      error += dr * dr + dg * dg + db * db;
+      count++;
+    }
+    return { error: error / Math.max(1, count), count };
+  };
+
+  const baseline = score(0);
+  let best = { correction: 0, ...baseline };
+  for (const correction of candidates) {
+    const candidate = score(correction);
+    if (candidate.count >= 500 && candidate.error < best.error) {
+      best = { correction, ...candidate };
+    }
+  }
+  // Only override standard E57 pose/projection data when native RGB provides
+  // strong evidence. This preserves conforming files and fixes exporters that
+  // shifted the panorama pixels without updating the image pose.
+  return best.correction !== 0 && best.error < baseline.error * 0.6 ? best.correction : 0;
+}
+
 async function colorPointCloudFromImages(
   host: E57CameraHost,
   data: SpatialData,
@@ -423,17 +589,36 @@ async function populateImages(
         z: pose.position.z,
       };
       frame.add(createCameraBodyGeometry());
-      const geometry = createProjectionGeometry(image);
+      const { texture, canvas } = await decodeHalfResolutionTexture(image);
+      const azimuthCorrection = estimatePanoramaAzimuthCorrection(
+        profile.userData.spatialData as SpatialData,
+        image,
+        canvas
+      );
+      frame.userData.e57AzimuthCorrectionDegrees = THREE.MathUtils.radToDeg(azimuthCorrection);
+      frame.userData.view = imageView(image, azimuthCorrection);
+      frame.userData.frameDetails = imageDetails(image, azimuthCorrection);
+      if (azimuthCorrection !== 0) {
+        console.info(
+          `[E57] Corrected ${image.name || image.guid || `image ${index + 1}`} panorama azimuth by ${frame.userData.e57AzimuthCorrectionDegrees.toFixed(1)}° from native point colours`
+        );
+      }
+      const geometry = createProjectionGeometry(image, azimuthCorrection);
       frame.add(
         new THREE.LineSegments(geometry.frustum, new THREE.LineBasicMaterial({ color: 0x42a5f5 }))
       );
-      const { texture, canvas } = await decodeHalfResolutionTexture(image);
       decodedForColor.push({ image, canvas });
       const surface = new THREE.Mesh(
         geometry.surface,
         new THREE.MeshBasicMaterial({
           map: texture,
-          side: THREE.DoubleSide,
+          // An enclosing panorama cannot be drawn double-sided: when viewed
+          // from outside, its near hemisphere represents the direction from
+          // the scanner towards the viewer while the cloud behind the scanner
+          // lies along the opposite ray. Showing only back faces selects the
+          // far hemisphere outside the sphere and still shows the correct
+          // interior surface when the viewer is placed at the scanner.
+          side: image.representation === 'pinhole' ? THREE.DoubleSide : THREE.BackSide,
           transparent: true,
           opacity: 0.88,
           depthWrite: false,
@@ -441,7 +626,10 @@ async function populateImages(
         })
       );
       surface.name = 'stonexImagePlane';
-      surface.visible = false;
+      // Images decode asynchronously, so "Show images" may already have been
+      // switched on before this frame existed. Adopt the profile's current
+      // setting instead of always starting hidden.
+      surface.visible = profile.userData.imagesVisible === true;
       frame.add(surface);
       const label = createCameraLabel(image.name || `${image.representation} ${index + 1}`);
       label.name = 'cameraLabel';
