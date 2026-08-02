@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import type { SpatialData } from '../interfaces';
 import type { StonexCameraFrameMetadata } from '../parsers/stonexX3aParser';
 import { createCameraLabel } from '../cameraProfile';
+import { unprojectCameraPixel } from '../depth/cameraModels';
+import { initTiffWasm } from '../depth/readers/tiffWasm';
 import { filesState } from '../state/files.svelte';
 
 interface StonexCameraHost {
@@ -19,6 +21,10 @@ interface StonexCameraHost {
 }
 
 const FRUSTUM_DEPTH_METRES = 5;
+// Segments per image axis for the distorted preview. The X300's k1 is around
+// -0.485, so the corner rays leave the pinhole model by ~200 px; 16 segments
+// keep the residual between grid vertices well under a pixel.
+const IMAGE_GRID_SEGMENTS = 16;
 
 function modelToViewer(point: THREE.Vector3): THREE.Vector3 {
   return new THREE.Vector3(point.y, point.x, point.z);
@@ -83,55 +89,165 @@ function createScannerMarker(): THREE.Group {
   return marker;
 }
 
-function imageCorners(frame: StonexCameraFrameMetadata, depth: number): THREE.Vector3[] {
-  return [
-    [0, 0],
-    [frame.imageWidth, 0],
-    [frame.imageWidth, frame.imageHeight],
-    [0, frame.imageHeight],
-  ].map(
-    ([u, v]) =>
-      new THREE.Vector3(
-        ((u - frame.cx) / frame.fx) * depth,
-        ((v - frame.cy) / frame.fy) * depth,
-        depth
-      )
+function pinholePoint(frame: StonexCameraFrameMetadata, u: number, v: number, depth: number) {
+  return new THREE.Vector3(
+    ((u - frame.cx) / frame.fx) * depth,
+    ((v - frame.cy) / frame.fy) * depth,
+    depth
   );
+}
+
+/**
+ * Camera-space position of image pixel (u, v) on the plane z = depth.
+ *
+ * The distorted variant unprojects through the same OpenCV model the point
+ * colouring uses, so the preview covers the pixels the colours actually came
+ * from. Rays stay on the constant-z plane: the surface is still flat, only its
+ * outline and texture mapping bend.
+ */
+function imagePoint(
+  frame: StonexCameraFrameMetadata,
+  u: number,
+  v: number,
+  depth: number,
+  distorted: boolean
+): THREE.Vector3 {
+  if (!distorted) {
+    return pinholePoint(frame, u, v, depth);
+  }
+  const result = unprojectCameraPixel(
+    {
+      cameraModel: 'pinhole-opencv',
+      fx: frame.fx,
+      fy: frame.fy,
+      cx: frame.cx,
+      cy: frame.cy,
+      coefficients: frame.distortionCoefficients,
+    },
+    [u, v]
+  );
+  const [x, y, z] = result.value;
+  if (!result.valid || !result.converged || !(z > 1e-6)) {
+    // Strong polynomials can fail to invert near the corners; the pinhole ray
+    // keeps the mesh well-formed instead of folding it through the origin.
+    return pinholePoint(frame, u, v, depth);
+  }
+  const scale = depth / z;
+  return new THREE.Vector3(x * scale, y * scale, depth);
+}
+
+interface ImageGrid {
+  /** (segments + 1)^2 camera-space vertices, row-major from the image's top-left. */
+  points: THREE.Vector3[];
+  uvs: number[];
+  triangles: number[];
+  /** Vertex indices tracing the image border, closed back to the first corner. */
+  border: number[];
+  /** Border indices of the four image corners, top-left first, clockwise. */
+  corners: number[];
+}
+
+function imageGrid(frame: StonexCameraFrameMetadata, depth: number, distorted: boolean): ImageGrid {
+  const segments = distorted ? IMAGE_GRID_SEGMENTS : 1;
+  const points: THREE.Vector3[] = [];
+  const uvs: number[] = [];
+  for (let row = 0; row <= segments; row++) {
+    const t = row / segments;
+    for (let column = 0; column <= segments; column++) {
+      const s = column / segments;
+      points.push(imagePoint(frame, s * frame.imageWidth, t * frame.imageHeight, depth, distorted));
+      uvs.push(s, t);
+    }
+  }
+
+  const triangles: number[] = [];
+  const index = (row: number, column: number) => row * (segments + 1) + column;
+  for (let row = 0; row < segments; row++) {
+    for (let column = 0; column < segments; column++) {
+      const a = index(row, column);
+      const b = index(row, column + 1);
+      const c = index(row + 1, column + 1);
+      const d = index(row + 1, column);
+      triangles.push(a, b, c, a, c, d);
+    }
+  }
+
+  const border: number[] = [];
+  for (let column = 0; column <= segments; column++) {
+    border.push(index(0, column));
+  }
+  for (let row = 1; row <= segments; row++) {
+    border.push(index(row, segments));
+  }
+  for (let column = segments - 1; column >= 0; column--) {
+    border.push(index(segments, column));
+  }
+  for (let row = segments - 1; row >= 0; row--) {
+    border.push(index(row, 0));
+  }
+  border.push(border[0]);
+
+  return {
+    points,
+    uvs,
+    triangles,
+    border,
+    corners: [index(0, 0), index(0, segments), index(segments, segments), index(segments, 0)],
+  };
+}
+
+interface FrameGeometries {
+  plane: THREE.BufferGeometry;
+  frustum: THREE.BufferGeometry;
+}
+
+function createFrameGeometries(
+  frame: StonexCameraFrameMetadata,
+  distorted: boolean
+): FrameGeometries {
+  const cameraToModel = cameraToViewer(frame);
+  const origin = transformCameraPoint(new THREE.Vector3(), cameraToModel);
+  const grid = imageGrid(frame, FRUSTUM_DEPTH_METRES, distorted);
+  const vertices = grid.points.map(point => transformCameraPoint(point, cameraToModel).sub(origin));
+
+  const plane = new THREE.BufferGeometry();
+  plane.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(
+      vertices.flatMap(vertex => vertex.toArray()),
+      3
+    )
+  );
+  // DataTexture row zero is the image's top row, so map it to the top edge.
+  plane.setAttribute('uv', new THREE.Float32BufferAttribute(grid.uvs, 2));
+  plane.setIndex(grid.triangles);
+
+  const linePoints: THREE.Vector3[] = [];
+  for (const corner of grid.corners) {
+    linePoints.push(new THREE.Vector3(), vertices[corner]);
+  }
+  for (let i = 0; i + 1 < grid.border.length; i++) {
+    linePoints.push(vertices[grid.border[i]], vertices[grid.border[i + 1]]);
+  }
+  const frustum = new THREE.BufferGeometry().setFromPoints(linePoints);
+
+  return { plane, frustum };
 }
 
 function createFrameVisualization(frame: StonexCameraFrameMetadata): THREE.Group {
   const cameraToModel = cameraToViewer(frame);
   const origin = transformCameraPoint(new THREE.Vector3(), cameraToModel);
-  const corners = imageCorners(frame, FRUSTUM_DEPTH_METRES).map(point =>
-    transformCameraPoint(point, cameraToModel).sub(origin)
-  );
+  const geometries = createFrameGeometries(frame, false);
 
   const group = new THREE.Group();
   group.name = `camera_${frame.name}`;
   group.position.copy(origin);
   (group as any).originalPosition = { x: origin.x, y: origin.y, z: origin.z };
+  group.userData.frame = frame;
+  group.userData.geometries = { pinhole: geometries } as Record<string, FrameGeometries>;
 
-  const linePoints = [
-    new THREE.Vector3(),
-    corners[0],
-    new THREE.Vector3(),
-    corners[1],
-    new THREE.Vector3(),
-    corners[2],
-    new THREE.Vector3(),
-    corners[3],
-    corners[0],
-    corners[1],
-    corners[1],
-    corners[2],
-    corners[2],
-    corners[3],
-    corners[3],
-    corners[0],
-  ];
-  const helperGeometry = new THREE.BufferGeometry().setFromPoints(linePoints);
   const helper = new THREE.LineSegments(
-    helperGeometry,
+    geometries.frustum,
     new THREE.LineBasicMaterial({ color: frame.type === 'U' ? 0x42a5f5 : 0xffa726 })
   );
   helper.name = 'cameraFrustum';
@@ -151,19 +267,8 @@ function createFrameVisualization(frame: StonexCameraFrameMetadata): THREE.Group
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.needsUpdate = true;
 
-  const planeGeometry = new THREE.BufferGeometry();
-  planeGeometry.setAttribute(
-    'position',
-    new THREE.Float32BufferAttribute(
-      corners.flatMap(corner => corner.toArray()),
-      3
-    )
-  );
-  // DataTexture row zero is the image's top row, so map it to the top edge.
-  planeGeometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
-  planeGeometry.setIndex([0, 1, 2, 0, 2, 3]);
   const plane = new THREE.Mesh(
-    planeGeometry,
+    geometries.plane,
     new THREE.MeshBasicMaterial({
       map: texture,
       side: THREE.DoubleSide,
@@ -203,6 +308,10 @@ export function addStonexCameraVisualization(host: StonexCameraHost, data: Spati
   profile.userData.excludeFromFit = true;
   profile.userData.cameraCount = frames.length;
   profile.userData.imagesVisible = false;
+  // Distortion is the physically correct footprint, so it is the default; the
+  // geometry is built on the first setStonexImageDistortion call.
+  profile.userData.imagesDistorted = true;
+  profile.userData.imageDistortionAvailable = true;
   profile.userData.scannerVisible = true;
   profile.add(createScannerMarker());
   for (const frame of frames) {
@@ -250,6 +359,47 @@ export function setStonexImagesVisible(group: THREE.Group, visible: boolean): vo
       object.visible = visible;
     }
   });
+}
+
+/**
+ * Swaps every frame in the profile between the pinhole quad and the mesh
+ * unprojected through the calibrated distortion.
+ *
+ * The distorted geometry needs the Rust/WASM camera kernel, which the webview
+ * only initialises on demand, so this is async and caches per frame group.
+ * Resolves to the mode actually applied — callers should re-render afterwards
+ * and read `userData.imageDistortionAvailable` to reflect a failed kernel.
+ */
+export async function setStonexImageDistortion(
+  group: THREE.Group,
+  distorted: boolean
+): Promise<boolean> {
+  if (distorted && !(await initTiffWasm())) {
+    group.userData.imageDistortionAvailable = false;
+    group.userData.imagesDistorted = false;
+    return false;
+  }
+  group.userData.imageDistortionAvailable = true;
+
+  for (const child of group.children) {
+    const frame = child.userData?.frame as StonexCameraFrameMetadata | undefined;
+    if (!frame) {
+      continue;
+    }
+    const cache = (child.userData.geometries ??= {}) as Record<string, FrameGeometries>;
+    const key = distorted ? 'distorted' : 'pinhole';
+    const geometries = (cache[key] ??= createFrameGeometries(frame, distorted));
+    const plane = child.getObjectByName('stonexImagePlane') as THREE.Mesh | undefined;
+    const frustum = child.getObjectByName('cameraFrustum') as THREE.LineSegments | undefined;
+    if (plane) {
+      plane.geometry = geometries.plane;
+    }
+    if (frustum) {
+      frustum.geometry = geometries.frustum;
+    }
+  }
+  group.userData.imagesDistorted = distorted;
+  return distorted;
 }
 
 export function setStonexScannerVisible(group: THREE.Group, visible: boolean): void {

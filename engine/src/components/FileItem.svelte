@@ -4,6 +4,7 @@
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
   import TransformSection from './TransformSection.svelte';
   import {
+    setStonexImageDistortion,
     setStonexImagesVisible,
     setStonexScannerVisible,
   } from '../visualization/stonexCameras';
@@ -335,9 +336,30 @@
   function onCameraShowCoordsChange(e: Event) {
     host.toggleCameraProfileCoordinates(cameraIndex, (e.target as HTMLInputElement).checked);
   }
-  function onCameraShowImagesChange(e: Event) {
-    setStonexImagesVisible(cameraGroup, (e.target as HTMLInputElement).checked);
+  // Seeded once from the group so a re-created panel keeps the scene's current
+  // state; the scene, not this component, owns it from then on.
+  const initialCameraUserData = () => cameraGroup?.userData ?? {};
+  let imagesVisible = $state(initialCameraUserData().imagesVisible === true);
+  let imagesDistorted = $state(initialCameraUserData().imagesDistorted !== false);
+  let imageDistortionAvailable = $state(
+    initialCameraUserData().imageDistortionAvailable !== false
+  );
+
+  async function applyImageDistortion(distorted: boolean) {
+    imagesDistorted = await setStonexImageDistortion(cameraGroup, distorted);
+    imageDistortionAvailable = cameraGroup.userData.imageDistortionAvailable !== false;
     host.requestRender();
+  }
+  async function onCameraShowImagesChange(e: Event) {
+    imagesVisible = (e.target as HTMLInputElement).checked;
+    setStonexImagesVisible(cameraGroup, imagesVisible);
+    host.requestRender();
+    if (imagesVisible) {
+      await applyImageDistortion(imagesDistorted);
+    }
+  }
+  async function onCameraDistortImagesChange(e: Event) {
+    await applyImageDistortion((e.target as HTMLInputElement).checked);
   }
   function onCameraShowScannerChange(e: Event) {
     setStonexScannerVisible(cameraGroup, (e.target as HTMLInputElement).checked);
@@ -667,6 +689,23 @@
               />
               Show images
             </label>
+            {#if imagesVisible}
+              <label
+                style="font-size:10px;display:flex;align-items:center;gap:6px;padding-left:14px;"
+                title={imageDistortionAvailable
+                  ? 'Shape the preview with the calibrated lens distortion, matching the projection used to colour the points'
+                  : 'Unavailable: the Rust/WASM camera kernel did not initialise'}
+              >
+                <input
+                  type="checkbox"
+                  id={`camera-distort-images-${index}`}
+                  checked={imagesDistorted}
+                  disabled={!imageDistortionAvailable}
+                  onchange={onCameraDistortImagesChange}
+                />
+                Apply lens distortion
+              </label>
+            {/if}
           {/if}
           {#if cameraGroup.userData.hasScannerMarker}
             <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
