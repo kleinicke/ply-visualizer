@@ -10,6 +10,7 @@ import { PcdParser } from './parsers/pcdParser';
 import { PtsParser } from './parsers/ptsParser';
 import { KittiBinParser } from './parsers/kittiBinParser';
 import { StonexX3aParser } from './parsers/stonexX3aParser';
+import { initTiffWasm, projectCameraPointsWasmSync } from './depth/readers/tiffWasm';
 import { OffParser } from './parsers/offParser';
 import { GltfParser } from './parsers/gltfParser';
 import { NpyParser, isNpyPointCloudData } from './parsers/npyParser';
@@ -31,6 +32,20 @@ export const DEFAULT_COLORS = {
     [0.5, 0.5, 0.5], // Gray
   ] as [number, number, number][],
 };
+
+async function createStonexParser(): Promise<StonexX3aParser> {
+  const ready = await initTiffWasm();
+  return new StonexX3aParser(
+    ready
+      ? request =>
+          projectCameraPointsWasmSync({
+            ...request,
+            cameraModel: 'pinhole-opencv',
+            coefficients: [...request.coefficients],
+          })
+      : undefined
+  );
+}
 
 export const DEPTH_UI_BEHAVIOR = {
   // Whether to show depth conversion UI or use defaults immediately
@@ -283,7 +298,7 @@ export async function parseFileData(
 
     case 'x3a':
     case 'x3r':
-      const stonexX3aParser = new StonexX3aParser();
+      const stonexX3aParser = await createStonexParser();
       const stonexX3aData = await stonexX3aParser.parse(data, fileName, timingCallback);
       return {
         data: stonexX3aData,
@@ -507,7 +522,9 @@ export async function processFiles(
       }
 
       if (fileType.extension === 'x3a') {
-        const scans = await new StonexX3aParser().parseAll(file.data, file.name, timingCallback);
+        const scans = await (
+          await createStonexParser()
+        ).parseAll(file.data, file.name, timingCallback);
         for (const scan of scans) {
           scan.fileIndex = results.length;
           results.push({ data: scan, type: 'spatialData' });

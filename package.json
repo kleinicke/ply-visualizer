@@ -259,7 +259,7 @@
   "scripts": {
     "vscode:prepublish": "pnpm run clean && pnpm run compile",
     "compile": "webpack",
-    "build:wasm": "cd wasm/pointcloud-parser && wasm-pack build --target nodejs --release --out-dir pkg && wasm-pack build --target web --release --out-dir pkg-web && node -e \"require('fs').rmSync('pkg-web/.gitignore', { force: true })\"",
+    "build:wasm": "cd wasm/pointcloud-parser && wasm-pack build --target nodejs --release --out-dir pkg && wasm-pack build --target web --release --out-dir pkg-web && node -e \"require('fs').rmSync('pkg-web/.gitignore', { force: true })\" && cd ../tiff-decoder && wasm-pack build --target nodejs --release --out-dir pkg-nodejs && wasm-pack build --target no-modules --release --out-dir pkg-nomodules && cp pkg-nomodules/tiff_wasm.js ../../engine/media/wasm/tiff_wasm.js && cp pkg-nomodules/tiff_wasm_bg.wasm ../../engine/media/wasm/tiff_wasm_bg.wasm",
     "compile:tests": "tsc",
     "compile:all": "pnpm run compile && pnpm run compile:tests",
     "watch": "webpack --watch",

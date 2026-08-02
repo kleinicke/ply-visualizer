@@ -13,10 +13,11 @@ test.beforeEach(async ({ page }) => {
 
 for (const [name, model] of [
   ['opencvPinhole', 'pinhole-opencv'],
+  ['opencvPinholeExtended', 'pinhole-opencv'],
   ['opencvFisheye', 'fisheye-opencv'],
   ['fisheye624', 'fisheye624'],
 ] as const) {
-  test(`${model} matches its golden and round-trips through the WASM boundary`, async ({
+  test(`${name} (${model}) matches its golden and round-trips through the WASM boundary`, async ({
     page,
   }) => {
     const fixture = goldens[name];
@@ -102,6 +103,34 @@ test('WASM reports coefficient errors and rejects out-of-domain pixels', async (
   expect(result.coefficientError).toContain('exactly 4 coefficients');
   expect(result.rejected[0]).toBe(0);
   expect(result.rejected[1]).toBe(0);
+});
+
+test('indexed camera batch uses the extended OpenCV model and FOV guard', async ({ page }) => {
+  const result = await page.evaluate(
+    ({ intrinsics, fixture }) => {
+      const api = (0, eval)('wasm_bindgen');
+      return Array.from(
+        api.camera_project_points_indexed(
+          'pinhole-opencv',
+          intrinsics.fx,
+          intrinsics.fy,
+          intrinsics.cx,
+          intrinsics.cy,
+          new Float64Array(fixture.coefficients),
+          new Float32Array([...fixture.ray, 2, 0, 1]),
+          new Uint32Array([0, 1]),
+          new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+          1,
+          1
+        ) as Float32Array
+      );
+    },
+    { intrinsics, fixture: goldens.opencvPinholeExtended }
+  );
+  expect(result[0]).toBeCloseTo(goldens.opencvPinholeExtended.pixel[0], 4);
+  expect(result[1]).toBeCloseTo(goldens.opencvPinholeExtended.pixel[1], 4);
+  expect(result[2]).toBeNaN();
+  expect(result[3]).toBeNaN();
 });
 
 test('batched depth projection uses the same inverse and reports rejected pixels', async ({

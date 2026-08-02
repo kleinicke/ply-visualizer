@@ -64,13 +64,26 @@ interface CameraCalibration {
   fy: number;
   cx: number;
   cy: number;
-  k1: number;
-  k2: number;
-  k3: number;
-  p1: number;
-  p2: number;
+  distortionCoefficients: number[];
   modelToCamera: number[];
 }
+
+export interface StonexCameraProjectionRequest {
+  positions: Float32Array;
+  indices: Uint32Array;
+  fx: number;
+  fy: number;
+  cx: number;
+  cy: number;
+  coefficients: readonly number[];
+  transform: readonly number[];
+  maxNormalizedX: number;
+  maxNormalizedY: number;
+}
+
+export type StonexCameraBatchProjector = (
+  request: StonexCameraProjectionRequest
+) => Float32Array | null;
 
 interface CameraFrame {
   member: ArchiveMember;
@@ -102,6 +115,7 @@ export interface StonexCameraFrameMetadata {
   fy: number;
   cx: number;
   cy: number;
+  distortionCoefficients: number[];
   modelToCamera: number[];
   previewWidth: number;
   previewHeight: number;
@@ -159,6 +173,10 @@ function xmlAttribute(tag: string, name: string): number {
   return match ? Number(match[1]) : Number.NaN;
 }
 
+function xmlStringAttribute(tag: string, name: string): string | null {
+  return tag.match(new RegExp(`${name}="([^"]+)"`))?.[1] ?? null;
+}
+
 function parseCalibration(data: Uint8Array, member: ArchiveMember): CameraCalibration | null {
   const type = member.name.toUpperCase().startsWith('U_')
     ? 'U'
@@ -176,6 +194,9 @@ function parseCalibration(data: Uint8Array, member: ArchiveMember): CameraCalibr
     return null;
   }
   const modelToCamera = matrixText.trim().split(/\s+/).map(Number);
+  const distortionCoefficients = (xmlStringAttribute(intrinsics, 'DistCoeffs') ?? '')
+    .split(',')
+    .map(value => Number(value.trim()));
   const calibration: CameraCalibration = {
     type,
     width: xmlAttribute(root, 'Width'),
@@ -186,14 +207,11 @@ function parseCalibration(data: Uint8Array, member: ArchiveMember): CameraCalibr
     fy: xmlAttribute(intrinsics, 'fy'),
     cx: xmlAttribute(intrinsics, 'cx'),
     cy: xmlAttribute(intrinsics, 'cy'),
-    k1: xmlAttribute(intrinsics, 'k1'),
-    k2: xmlAttribute(intrinsics, 'k2'),
-    k3: xmlAttribute(intrinsics, 'k3'),
-    p1: xmlAttribute(intrinsics, 'p1'),
-    p2: xmlAttribute(intrinsics, 'p2'),
+    distortionCoefficients,
     modelToCamera,
   };
   return modelToCamera.length === 16 &&
+    [4, 5, 8, 12, 14].includes(distortionCoefficients.length) &&
     Object.values(calibration).every(value =>
       Array.isArray(value)
         ? value.every(Number.isFinite)
@@ -493,6 +511,7 @@ function cameraFrameMetadata(data: Uint8Array, frame: CameraFrame): StonexCamera
     fy: calibration.fy,
     cx: calibration.cx,
     cy: calibration.cy,
+    distortionCoefficients: [...calibration.distortionCoefficients],
     modelToCamera: [...calibration.modelToCamera],
     previewWidth,
     previewHeight,
@@ -500,62 +519,20 @@ function cameraFrameMetadata(data: Uint8Array, frame: CameraFrame): StonexCamera
   };
 }
 
-function projectIntoFrame(
-  data: Uint8Array,
-  frame: CameraFrame,
-  modelX: number,
-  modelY: number,
-  modelZ: number
-): { color: [number, number, number]; score: number; edgeWeight: number } | null {
+function viewerToCameraTransform(frame: CameraFrame): number[] {
   const pan = frame.panDegrees * (Math.PI / 180);
   const cosPan = Math.cos(pan);
   const sinPan = Math.sin(pan);
-  const x = cosPan * modelX - sinPan * modelY;
-  const y = sinPan * modelX + cosPan * modelY;
   const m = frame.calibration.modelToCamera;
-  const cameraX = m[0] * x + m[1] * y + m[2] * modelZ + m[3];
-  const cameraY = m[4] * x + m[5] * y + m[6] * modelZ + m[7];
-  const cameraZ = m[8] * x + m[9] * y + m[10] * modelZ + m[11];
-  if (cameraZ <= 0.05) {
-    return null;
+  const result = new Array<number>(16).fill(0);
+  for (let row = 0; row < 4; row++) {
+    const offset = row * 4;
+    result[offset] = -m[offset] * sinPan + m[offset + 1] * cosPan;
+    result[offset + 1] = m[offset] * cosPan + m[offset + 1] * sinPan;
+    result[offset + 2] = m[offset + 2];
+    result[offset + 3] = m[offset + 3];
   }
-  const normalizedX = cameraX / cameraZ;
-  const normalizedY = cameraY / cameraZ;
-  // OpenCV's polynomial is only calibrated over the physical image FOV. At
-  // larger radii (especially with D's strong k3), it can fold invalid rays
-  // back into the pixel rectangle and create ghost image bands.
-  const maxNormalizedX = Math.tan((frame.calibration.fovX * Math.PI) / 360);
-  const maxNormalizedY = Math.tan((frame.calibration.fovY * Math.PI) / 360);
-  if (Math.abs(normalizedX) > maxNormalizedX || Math.abs(normalizedY) > maxNormalizedY) {
-    return null;
-  }
-  const radius2 = normalizedX * normalizedX + normalizedY * normalizedY;
-  const c = frame.calibration;
-  const useDistortion = !(CAMERA_COLOR_DIAGNOSTIC_IDEAL_PINHOLE && frame.type === 'D');
-  const radial = useDistortion ? 1 + c.k1 * radius2 + c.k2 * radius2 ** 2 + c.k3 * radius2 ** 3 : 1;
-  const distortedX =
-    normalizedX * radial +
-    (useDistortion ? 2 * c.p1 * normalizedX * normalizedY : 0) +
-    (useDistortion ? c.p2 * (radius2 + 2 * normalizedX ** 2) : 0);
-  const distortedY =
-    normalizedY * radial +
-    (useDistortion ? c.p1 * (radius2 + 2 * normalizedY ** 2) : 0) +
-    (useDistortion ? 2 * c.p2 * normalizedX * normalizedY : 0);
-  const pixelX = c.fx * distortedX + c.cx;
-  const pixelY = c.fy * distortedY + c.cy;
-  if (pixelX < 1 || pixelY < 1 || pixelX >= c.width - 1 || pixelY >= c.height - 1) {
-    return null;
-  }
-  const centerX = (pixelX - c.cx) / (c.width * 0.5);
-  const centerY = (pixelY - c.cy) / (c.height * 0.5);
-  const edgeDistance = Math.min(pixelX, pixelY, c.width - 1 - pixelX, c.height - 1 - pixelY);
-  const edgeMargin = Math.min(c.width, c.height) * 0.08;
-  const edgeT = Math.max(0, Math.min(1, edgeDistance / edgeMargin));
-  return {
-    color: sampleCameraRgb(data, frame, pixelX, pixelY),
-    score: centerX * centerX + centerY * centerY,
-    edgeWeight: edgeT * edgeT * (3 - 2 * edgeT),
-  };
+  return result;
 }
 
 function angularDifference(a: number, b: number): number {
@@ -563,6 +540,8 @@ function angularDifference(a: number, b: number): number {
 }
 
 export class StonexX3aParser {
+  constructor(private readonly cameraProjector?: StonexCameraBatchProjector) {}
+
   async parse(
     data: Uint8Array,
     fileName = '',
@@ -672,7 +651,16 @@ export class StonexX3aParser {
 
     const positions = new Float32Array(vertexCount * 3);
     const intensity = new Float32Array(vertexCount);
-    const colors = cameraFrames.length > 0 ? new Uint8Array(vertexCount * 3) : null;
+    const colors =
+      cameraFrames.length > 0 && this.cameraProjector
+        ? new Uint8Array(vertexCount * 3).fill(255)
+        : null;
+    const candidateIndices = new Map<CameraFrame, number[]>();
+    if (colors) {
+      for (const frame of cameraFrames) {
+        candidateIndices.set(frame, []);
+      }
+    }
     const photographicScanStems = new Set(cameraFrames.map(frame => frame.scanStem));
     let outputIndex = 0;
     let photographicallyColoredPoints = 0;
@@ -680,7 +668,6 @@ export class StonexX3aParser {
 
     for (const layout of layouts) {
       const pointOffset = outputIndex;
-      const coloredPointOffset = photographicallyColoredPoints;
       const scanStem = layout.name.replace(/\.x3r$/i, '');
       const exactFrames = cameraFrames.filter(frame => frame.scanStem === scanStem);
       // Abschnitt_A contains several scan passes in one scanner coordinate
@@ -734,29 +721,8 @@ export class StonexX3aParser {
           );
           intensity[outputIndex] = normalizedIntensity;
           if (colors) {
-            // Deliberately conspicuous diagnostic fallback: pure white marks
-            // points that no calibrated photograph covers. This makes them
-            // distinguishable from projection, overlap, or occlusion artifacts.
-            colors[positionOffset] = 255;
-            colors[positionOffset + 1] = 255;
-            colors[positionOffset + 2] = 255;
-            let bestColor: [number, number, number] | null = null;
-            let bestWeight = 0;
             for (const frame of columnFrames) {
-              const projection = projectIntoFrame(data, frame, modelX, modelY, modelZ);
-              if (projection) {
-                const weight = projection.edgeWeight / (0.05 + projection.score) ** 2;
-                if (weight > bestWeight) {
-                  bestWeight = weight;
-                  bestColor = projection.color;
-                }
-              }
-            }
-            if (bestColor) {
-              colors[positionOffset] = Math.round(bestColor[0]);
-              colors[positionOffset + 1] = Math.round(bestColor[1]);
-              colors[positionOffset + 2] = Math.round(bestColor[2]);
-              photographicallyColoredPoints++;
+              candidateIndices.get(frame)!.push(outputIndex);
             }
           }
           outputIndex++;
@@ -768,8 +734,85 @@ export class StonexX3aParser {
         sourcePointCount: layout.columns * layout.rows,
         pointOffset,
         pointCount: outputIndex - pointOffset,
-        photographicallyColoredPoints: photographicallyColoredPoints - coloredPointOffset,
+        photographicallyColoredPoints: 0,
       });
+    }
+
+    if (colors && this.cameraProjector) {
+      const bestWeights = new Float64Array(vertexCount);
+      const colored = new Uint8Array(vertexCount);
+      for (const frame of cameraFrames) {
+        const candidates = new Uint32Array(candidateIndices.get(frame) ?? []);
+        if (candidates.length === 0) {
+          continue;
+        }
+        const calibration = frame.calibration;
+        const idealDiagnostic = CAMERA_COLOR_DIAGNOSTIC_IDEAL_PINHOLE && frame.type === 'D';
+        const pixels = this.cameraProjector({
+          positions,
+          indices: candidates,
+          fx: calibration.fx,
+          fy: calibration.fy,
+          cx: calibration.cx,
+          cy: calibration.cy,
+          coefficients: idealDiagnostic ? [0, 0, 0, 0, 0] : calibration.distortionCoefficients,
+          transform: viewerToCameraTransform(frame),
+          // Keep the physical calibration-domain guard before distortion. It
+          // prevents strong polynomials from folding invalid rays into pixels.
+          maxNormalizedX: Math.tan((calibration.fovX * Math.PI) / 360),
+          maxNormalizedY: Math.tan((calibration.fovY * Math.PI) / 360),
+        });
+        if (!pixels || pixels.length !== candidates.length * 2) {
+          throw new Error(`Stonex X3A: Rust camera projection failed for ${frame.member.name}.`);
+        }
+        for (let index = 0; index < candidates.length; index++) {
+          const pixelX = pixels[index * 2];
+          const pixelY = pixels[index * 2 + 1];
+          if (
+            !Number.isFinite(pixelX) ||
+            !Number.isFinite(pixelY) ||
+            pixelX < 1 ||
+            pixelY < 1 ||
+            pixelX >= calibration.width - 1 ||
+            pixelY >= calibration.height - 1
+          ) {
+            continue;
+          }
+          const centerX = (pixelX - calibration.cx) / (calibration.width * 0.5);
+          const centerY = (pixelY - calibration.cy) / (calibration.height * 0.5);
+          const score = centerX * centerX + centerY * centerY;
+          const edgeDistance = Math.min(
+            pixelX,
+            pixelY,
+            calibration.width - 1 - pixelX,
+            calibration.height - 1 - pixelY
+          );
+          const edgeMargin = Math.min(calibration.width, calibration.height) * 0.08;
+          const edgeT = Math.max(0, Math.min(1, edgeDistance / edgeMargin));
+          const edgeWeight = edgeT * edgeT * (3 - 2 * edgeT);
+          const weight = edgeWeight / (0.05 + score) ** 2;
+          const pointIndex = candidates[index];
+          if (weight <= bestWeights[pointIndex]) {
+            continue;
+          }
+          bestWeights[pointIndex] = weight;
+          const color = sampleCameraRgb(data, frame, pixelX, pixelY);
+          const offset = pointIndex * 3;
+          colors[offset] = Math.round(color[0]);
+          colors[offset + 1] = Math.round(color[1]);
+          colors[offset + 2] = Math.round(color[2]);
+          colored[pointIndex] = 1;
+        }
+      }
+      for (const range of scanPointRanges) {
+        let rangeColored = 0;
+        const end = range.pointOffset + range.pointCount;
+        for (let index = range.pointOffset; index < end; index++) {
+          rangeColored += colored[index];
+        }
+        range.photographicallyColoredPoints = rangeColored;
+        photographicallyColoredPoints += rangeColored;
+      }
     }
 
     timingCallback?.(
@@ -815,6 +858,7 @@ export class StonexX3aParser {
         cameraOverlapPolicy: 'best-centered valid frame (no color averaging)',
         cameraColorDiagnostic: null,
         cameraProjectionDomain: 'CAL FOV guard before OpenCV distortion',
+        cameraProjectionKernel: 'shared Rust/WASM OpenCV pinhole batch projector',
         // X300 archives cover hundreds of metres. The viewer's generic 1 mm
         // default projects to far below one pixel at the initial overview.
         recommendedPointSize: 0.25,

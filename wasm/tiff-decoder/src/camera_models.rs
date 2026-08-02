@@ -1,7 +1,8 @@
 //! Authoritative camera projection and unprojection kernels.
 //!
 //! Coefficient layouts are deliberately model-specific and exact:
-//! - `pinhole-opencv`: `[k1, k2, p1, p2, k3]`
+//! - `pinhole-opencv`: OpenCV's 4, 5, 8, 12, or 14 coefficient layouts:
+//!   `[k1, k2, p1, p2, k3, k4, k5, k6, s1, s2, s3, s4, tau_x, tau_y]`
 //! - `fisheye-opencv`: `[k1, k2, k3, k4]`
 //! - `fisheye-kb3`: `[k0, k1, k2, k3]`
 //! - `fisheye624`: `[k0..k5, p0, p1, s0..s3]`
@@ -43,7 +44,7 @@ impl CameraModel {
     pub fn coefficient_count(self) -> usize {
         match self {
             Self::PinholeIdeal | Self::FisheyeEquidistant => 0,
-            Self::PinholeOpenCv => 5,
+            Self::PinholeOpenCv => 14,
             Self::FisheyeOpenCv | Self::FisheyeKb3 => 4,
             Self::Fisheye624 => 12,
         }
@@ -80,10 +81,21 @@ pub fn validate(
     if !intrinsics.cx.is_finite() || !intrinsics.cy.is_finite() {
         return Err("Principal point must be finite".to_owned());
     }
-    let expected = model.coefficient_count();
-    if coefficients.len() != expected {
+    let valid_length = match model {
+        CameraModel::PinholeOpenCv => matches!(coefficients.len(), 4 | 5 | 8 | 12 | 14),
+        _ => coefficients.len() == model.coefficient_count(),
+    };
+    if !valid_length {
+        let requirement = if model == CameraModel::PinholeOpenCv {
+            "requires 4, 5, 8, 12, or 14 coefficients".to_owned()
+        } else {
+            format!(
+                "requires exactly {} coefficients",
+                model.coefficient_count()
+            )
+        };
         return Err(format!(
-            "{} requires exactly {expected} coefficients, got {}",
+            "{} {requirement}, got {}",
             model_name(model),
             coefficients.len()
         ));
@@ -146,7 +158,13 @@ pub fn project(
     };
 
     let distorted = match model {
-        CameraModel::PinholeOpenCv => distort_opencv_pinhole(normalized, coefficients),
+        CameraModel::PinholeOpenCv => {
+            let distortion = OpenCvPinhole::new(coefficients);
+            match distortion.distort(normalized) {
+                Some(value) => value,
+                None => return invalid2(),
+            }
+        }
         CameraModel::Fisheye624 => distort_fisheye624(normalized, coefficients),
         _ => normalized,
     };
@@ -180,11 +198,11 @@ pub fn unproject(
     ];
 
     let undistorted = match model {
-        CameraModel::PinholeOpenCv => invert_2d(observed, |point| {
-            distortion_with_jacobian_opencv(point, coefficients)
-        }),
+        CameraModel::PinholeOpenCv => {
+            return unproject_opencv_pinhole(intrinsics, &OpenCvPinhole::new(coefficients), pixel)
+        }
         CameraModel::Fisheye624 => invert_2d(observed, |point| {
-            distortion_with_jacobian_fisheye624(point, coefficients)
+            Some(distortion_with_jacobian_fisheye624(point, coefficients))
         }),
         _ => SolveResult {
             value: observed,
@@ -356,11 +374,191 @@ fn invert_radial(target: f64, coefficients: &[f64], model: CameraModel) -> Solve
     }
 }
 
-fn distort_opencv_pinhole(point: [f64; 2], coefficients: &[f64]) -> [f64; 2] {
-    distortion_with_jacobian_opencv(point, coefficients).0
+#[derive(Clone, Copy, Debug)]
+pub struct OpenCvPinhole {
+    coefficients: [f64; 14],
+    has_rational: bool,
+    has_prism: bool,
+    has_tilt: bool,
+    tilt: [[f64; 3]; 3],
+    inverse_tilt: [[f64; 3]; 3],
 }
 
-fn distortion_with_jacobian_opencv(point: [f64; 2], c: &[f64]) -> ([f64; 2], [[f64; 2]; 2]) {
+impl OpenCvPinhole {
+    pub fn new(coefficients: &[f64]) -> Self {
+        let mut c = [0.0; 14];
+        c[..coefficients.len()].copy_from_slice(coefficients);
+        let has_rational = c[5..8].iter().any(|value| *value != 0.0);
+        let has_prism = c[8..12].iter().any(|value| *value != 0.0);
+        let has_tilt = c[12] != 0.0 || c[13] != 0.0;
+        let (tilt, inverse_tilt) = if has_tilt {
+            tilt_projection_matrices(c[12], c[13])
+        } else {
+            (identity3(), identity3())
+        };
+        Self {
+            coefficients: c,
+            has_rational,
+            has_prism,
+            has_tilt,
+            tilt,
+            inverse_tilt,
+        }
+    }
+
+    pub fn distort(&self, point: [f64; 2]) -> Option<[f64; 2]> {
+        let distorted = self.distort_without_tilt(point)?.0;
+        if self.has_tilt {
+            project_homogeneous(self.tilt, distorted)
+        } else {
+            Some(distorted)
+        }
+    }
+
+    pub fn undistort(&self, observed: [f64; 2]) -> SolveResult<[f64; 2]> {
+        let untilted = if self.has_tilt {
+            match project_homogeneous(self.inverse_tilt, observed) {
+                Some(value) => value,
+                None => return invalid2(),
+            }
+        } else {
+            observed
+        };
+        invert_2d(untilted, |point| self.distort_without_tilt(point))
+    }
+
+    fn distort_without_tilt(&self, point: [f64; 2]) -> Option<([f64; 2], [[f64; 2]; 2])> {
+        if !self.has_rational && !self.has_prism {
+            return Some(distortion_with_jacobian_opencv_5(point, &self.coefficients));
+        }
+
+        let [x, y] = point;
+        let c = &self.coefficients;
+        let (k1, k2, p1, p2, k3) = (c[0], c[1], c[2], c[3], c[4]);
+        let r2 = x * x + y * y;
+        let r4 = r2 * r2;
+        let r6 = r4 * r2;
+        let numerator = 1.0 + k1 * r2 + k2 * r4 + k3 * r6;
+        let denominator = if self.has_rational {
+            1.0 + c[5] * r2 + c[6] * r4 + c[7] * r6
+        } else {
+            1.0
+        };
+        if !denominator.is_finite() || denominator.abs() <= EPS {
+            return None;
+        }
+        let radial = numerator / denominator;
+        let numerator_slope = k1 + 2.0 * k2 * r2 + 3.0 * k3 * r4;
+        let denominator_slope = if self.has_rational {
+            c[5] + 2.0 * c[6] * r2 + 3.0 * c[7] * r4
+        } else {
+            0.0
+        };
+        let radial_slope = (numerator_slope * denominator - numerator * denominator_slope)
+            / (denominator * denominator);
+        let drdx = 2.0 * x * radial_slope;
+        let drdy = 2.0 * y * radial_slope;
+        let prism_x = if self.has_prism {
+            c[8] * r2 + c[9] * r4
+        } else {
+            0.0
+        };
+        let prism_y = if self.has_prism {
+            c[10] * r2 + c[11] * r4
+        } else {
+            0.0
+        };
+        let prism_x_slope = if self.has_prism {
+            c[8] + 2.0 * c[9] * r2
+        } else {
+            0.0
+        };
+        let prism_y_slope = if self.has_prism {
+            c[10] + 2.0 * c[11] * r2
+        } else {
+            0.0
+        };
+        let value = [
+            x * radial + 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x) + prism_x,
+            y * radial + p1 * (r2 + 2.0 * y * y) + 2.0 * p2 * x * y + prism_y,
+        ];
+        let jacobian = [
+            [
+                radial + x * drdx + 2.0 * p1 * y + 6.0 * p2 * x + 2.0 * x * prism_x_slope,
+                x * drdy + 2.0 * p1 * x + 2.0 * p2 * y + 2.0 * y * prism_x_slope,
+            ],
+            [
+                y * drdx + 2.0 * p1 * x + 2.0 * p2 * y + 2.0 * x * prism_y_slope,
+                radial + y * drdy + 6.0 * p1 * y + 2.0 * p2 * x + 2.0 * y * prism_y_slope,
+            ],
+        ];
+        if value.iter().all(|value| value.is_finite()) {
+            Some((value, jacobian))
+        } else {
+            None
+        }
+    }
+}
+
+pub fn project_opencv_pinhole(
+    intrinsics: Intrinsics,
+    distortion: &OpenCvPinhole,
+    ray: [f64; 3],
+) -> SolveResult<[f64; 2]> {
+    let [x, y, z] = ray;
+    if !x.is_finite() || !y.is_finite() || !z.is_finite() || z <= EPS {
+        return invalid2();
+    }
+    let normalized = [x / z, y / z];
+    let distorted = match distortion.distort(normalized) {
+        Some(value) => value,
+        None => return invalid2(),
+    };
+    let pixel = [
+        intrinsics.fx * distorted[0] + intrinsics.cx,
+        intrinsics.fy * distorted[1] + intrinsics.cy,
+    ];
+    if pixel.iter().all(|value| value.is_finite()) {
+        SolveResult {
+            value: pixel,
+            converged: true,
+            iterations: 0,
+        }
+    } else {
+        invalid2()
+    }
+}
+
+pub fn unproject_opencv_pinhole(
+    intrinsics: Intrinsics,
+    distortion: &OpenCvPinhole,
+    pixel: [f64; 2],
+) -> SolveResult<[f64; 3]> {
+    if pixel.iter().any(|value| !value.is_finite()) {
+        return invalid3();
+    }
+    let observed = [
+        (pixel[0] - intrinsics.cx) / intrinsics.fx,
+        (pixel[1] - intrinsics.cy) / intrinsics.fy,
+    ];
+    let undistorted = distortion.undistort(observed);
+    if !undistorted.converged {
+        return SolveResult {
+            value: [f64::NAN; 3],
+            converged: false,
+            iterations: undistorted.iterations,
+        };
+    }
+    let [x, y] = undistorted.value;
+    let inv_norm = 1.0 / (x * x + y * y + 1.0).sqrt();
+    SolveResult {
+        value: [x * inv_norm, y * inv_norm, inv_norm],
+        converged: true,
+        iterations: undistorted.iterations,
+    }
+}
+
+fn distortion_with_jacobian_opencv_5(point: [f64; 2], c: &[f64; 14]) -> ([f64; 2], [[f64; 2]; 2]) {
     let [x, y] = point;
     let (k1, k2, p1, p2, k3) = (c[0], c[1], c[2], c[3], c[4]);
     let r2 = x * x + y * y;
@@ -384,6 +582,63 @@ fn distortion_with_jacobian_opencv(point: [f64; 2], c: &[f64]) -> ([f64; 2], [[f
         ],
     ];
     (value, jacobian)
+}
+
+fn identity3() -> [[f64; 3]; 3] {
+    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+}
+
+fn multiply3(a: [[f64; 3]; 3], b: [[f64; 3]; 3]) -> [[f64; 3]; 3] {
+    let mut result = [[0.0; 3]; 3];
+    for row in 0..3 {
+        for column in 0..3 {
+            result[row][column] =
+                a[row][0] * b[0][column] + a[row][1] * b[1][column] + a[row][2] * b[2][column];
+        }
+    }
+    result
+}
+
+fn tilt_projection_matrices(tau_x: f64, tau_y: f64) -> ([[f64; 3]; 3], [[f64; 3]; 3]) {
+    let (sin_x, cos_x) = tau_x.sin_cos();
+    let (sin_y, cos_y) = tau_y.sin_cos();
+    let rotation_x = [[1.0, 0.0, 0.0], [0.0, cos_x, sin_x], [0.0, -sin_x, cos_x]];
+    let rotation_y = [[cos_y, 0.0, -sin_y], [0.0, 1.0, 0.0], [sin_y, 0.0, cos_y]];
+    let rotation = multiply3(rotation_y, rotation_x);
+    let projection_z = [
+        [rotation[2][2], 0.0, -rotation[0][2]],
+        [0.0, rotation[2][2], -rotation[1][2]],
+        [0.0, 0.0, 1.0],
+    ];
+    let tilt = multiply3(projection_z, rotation);
+
+    let inverse_scale = 1.0 / rotation[2][2];
+    let inverse_projection_z = [
+        [inverse_scale, 0.0, inverse_scale * rotation[0][2]],
+        [0.0, inverse_scale, inverse_scale * rotation[1][2]],
+        [0.0, 0.0, 1.0],
+    ];
+    let rotation_transpose = [
+        [rotation[0][0], rotation[1][0], rotation[2][0]],
+        [rotation[0][1], rotation[1][1], rotation[2][1]],
+        [rotation[0][2], rotation[1][2], rotation[2][2]],
+    ];
+    (tilt, multiply3(rotation_transpose, inverse_projection_z))
+}
+
+fn project_homogeneous(matrix: [[f64; 3]; 3], point: [f64; 2]) -> Option<[f64; 2]> {
+    let x = matrix[0][0] * point[0] + matrix[0][1] * point[1] + matrix[0][2];
+    let y = matrix[1][0] * point[0] + matrix[1][1] * point[1] + matrix[1][2];
+    let z = matrix[2][0] * point[0] + matrix[2][1] * point[1] + matrix[2][2];
+    if !z.is_finite() || z.abs() <= EPS {
+        None
+    } else {
+        let result = [x / z, y / z];
+        result
+            .iter()
+            .all(|value| value.is_finite())
+            .then_some(result)
+    }
 }
 
 fn distort_fisheye624(point: [f64; 2], coefficients: &[f64]) -> [f64; 2] {
@@ -418,11 +673,20 @@ fn distortion_with_jacobian_fisheye624(point: [f64; 2], c: &[f64]) -> ([f64; 2],
 
 fn invert_2d<F>(target: [f64; 2], distortion: F) -> SolveResult<[f64; 2]>
 where
-    F: Fn([f64; 2]) -> ([f64; 2], [[f64; 2]; 2]),
+    F: Fn([f64; 2]) -> Option<([f64; 2], [[f64; 2]; 2])>,
 {
     let mut estimate = target;
     for iteration in 1..=MAX_ITERATIONS {
-        let (value, jacobian) = distortion(estimate);
+        let (value, jacobian) = match distortion(estimate) {
+            Some(value) => value,
+            None => {
+                return SolveResult {
+                    value: [f64::NAN; 2],
+                    converged: false,
+                    iterations: iteration,
+                }
+            }
+        };
         let residual = [value[0] - target[0], value[1] - target[1]];
         if residual[0].hypot(residual[1]) <= RESIDUAL_TOLERANCE * (1.0 + target[0].hypot(target[1]))
         {
@@ -544,6 +808,40 @@ mod tests {
             ],
             [0.75, -0.45, 0.7],
             1e-8,
+        );
+    }
+
+    #[test]
+    fn extended_opencv_model_matches_reference_and_round_trips() {
+        let coefficients = [
+            0.12, -0.035, 0.004, -0.006, 0.008, 0.015, -0.004, 0.001, 0.0008, -0.00015, -0.0006,
+            0.00011, 0.025, -0.018,
+        ];
+        let ray = [0.42, -0.27, 1.3];
+        let projected = project(CameraModel::PinholeOpenCv, intrinsics(), &coefficients, ray);
+        // Generated independently with OpenCV 5.0 cv2.projectPoints.
+        assert!((projected.value[0] - 486.03457588556324).abs() < 1e-9);
+        assert!((projected.value[1] - 141.6931413953823).abs() < 1e-9);
+        round_trip(CameraModel::PinholeOpenCv, &coefficients, ray, 1e-8);
+    }
+
+    #[test]
+    fn opencv_accepts_standard_lengths_and_zero_extensions_keep_basic_result() {
+        for length in [4, 5, 8, 12, 14] {
+            assert!(validate(CameraModel::PinholeOpenCv, intrinsics(), &vec![0.0; length]).is_ok());
+        }
+        for length in [0, 3, 6, 13, 15] {
+            assert!(
+                validate(CameraModel::PinholeOpenCv, intrinsics(), &vec![0.0; length]).is_err()
+            );
+        }
+        let basic = [0.2, -0.08, 0.01, -0.015, 0.02];
+        let mut extended = [0.0; 14];
+        extended[..5].copy_from_slice(&basic);
+        let ray = [0.55, -0.35, 1.0];
+        assert_eq!(
+            project(CameraModel::PinholeOpenCv, intrinsics(), &basic, ray).value,
+            project(CameraModel::PinholeOpenCv, intrinsics(), &extended, ray).value
         );
     }
 

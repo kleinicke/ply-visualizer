@@ -7,6 +7,7 @@ import { PcdParser } from '../../engine/src/parsers/pcdParser';
 import { PtsParser } from '../../engine/src/parsers/ptsParser';
 import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
+import { stonexCameraProjector } from '../wasmCameraModels';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
@@ -94,7 +95,7 @@ async function addStonexX3aData(
   fileName: string,
   shortPath: string
 ): Promise<void> {
-  const parsedData: any[] = await new StonexX3aParser().parseAll(
+  const parsedData: any[] = await new StonexX3aParser(stonexCameraProjector).parseAll(
     bytes,
     fileName,
     host.logPerf.bind(host)

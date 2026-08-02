@@ -39,6 +39,14 @@ module.exports = [
               ignore: ['**/package.json', '**/.gitignore', '**/*.d.ts'],
             },
           },
+          {
+            // Shared camera-model kernel for extension-host X3A coloring.
+            from: 'wasm/tiff-decoder/pkg-nodejs',
+            to: 'wasm/tiff-camera',
+            globOptions: {
+              ignore: ['**/package.json', '**/.gitignore', '**/*.d.ts'],
+            },
+          },
         ],
       }),
     ],

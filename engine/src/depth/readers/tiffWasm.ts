@@ -54,6 +54,14 @@ export interface CameraSolveWasmResult<T extends readonly number[]> {
   iterations: number;
 }
 
+export interface CameraProjectPointsWasmParams extends CameraSolveWasmParams {
+  positions: Float32Array;
+  indices: Uint32Array;
+  transform: readonly number[];
+  maxNormalizedX: number;
+  maxNormalizedY: number;
+}
+
 export interface NormalizeDepthWasmParams {
   kind: string;
   unit?: string;
@@ -211,7 +219,9 @@ export function projectCameraRayWasmSync(
   params: CameraSolveWasmParams
 ): CameraSolveWasmResult<readonly [number, number]> | null {
   const wasmApi = getWasmBindgen();
-  if (!ready || typeof wasmApi?.camera_project !== 'function') {return null;}
+  if (!ready || typeof wasmApi?.camera_project !== 'function') {
+    return null;
+  }
   const raw = new Float64Array(
     wasmApi.camera_project(
       params.cameraModel,
@@ -233,12 +243,38 @@ export function projectCameraRayWasmSync(
   };
 }
 
+export function projectCameraPointsWasmSync(
+  params: CameraProjectPointsWasmParams
+): Float32Array | null {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.camera_project_points_indexed !== 'function') {
+    return null;
+  }
+  return new Float32Array(
+    wasmApi.camera_project_points_indexed(
+      params.cameraModel,
+      params.fx,
+      params.fy,
+      params.cx,
+      params.cy,
+      new Float64Array(params.coefficients),
+      params.positions,
+      params.indices,
+      new Float64Array(params.transform),
+      params.maxNormalizedX,
+      params.maxNormalizedY
+    )
+  );
+}
+
 export function unprojectCameraPixelWasmSync(
   pixel: readonly [number, number],
   params: CameraSolveWasmParams
 ): CameraSolveWasmResult<readonly [number, number, number]> | null {
   const wasmApi = getWasmBindgen();
-  if (!ready || typeof wasmApi?.camera_unproject !== 'function') {return null;}
+  if (!ready || typeof wasmApi?.camera_unproject !== 'function') {
+    return null;
+  }
   const raw = new Float64Array(
     wasmApi.camera_unproject(
       params.cameraModel,

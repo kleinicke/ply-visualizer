@@ -8,6 +8,7 @@ import { PcdParser } from '../../engine/src/parsers/pcdParser';
 import { PtsParser } from '../../engine/src/parsers/ptsParser';
 import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
+import { stonexCameraProjector } from '../wasmCameraModels';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
@@ -160,7 +161,7 @@ export async function loadDocumentContent(
     if (isStonexX3aFile) {
       const bytes = await readFileFast(documentUri);
       const readTime = performance.now();
-      const parser = new StonexX3aParser();
+      const parser = new StonexX3aParser(stonexCameraProjector);
       const parsed = await parser.parseAll(
         bytes,
         path.basename(documentUri.fsPath),

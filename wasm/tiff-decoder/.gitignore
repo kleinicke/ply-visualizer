@@ -1,4 +1,5 @@
 /target
 /pkg
-/pkg-nodejs
+# The nodejs package is checked in because the extension host loads it at
+# runtime. Web/no-modules intermediate packages remain generated.
 /pkg-nomodules

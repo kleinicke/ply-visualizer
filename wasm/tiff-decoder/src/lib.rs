@@ -569,6 +569,8 @@ pub fn project_depth_fast(
     };
     camera_models::validate(model, intrinsics, coefficients)
         .map_err(|error| JsValue::from_str(&error))?;
+    let opencv = (model == CameraModel::PinholeOpenCv)
+        .then(|| camera_models::OpenCvPinhole::new(coefficients));
 
     let mut valid_count = 0usize;
     let mut min_depth = f32::INFINITY;
@@ -602,7 +604,15 @@ pub fn project_depth_fast(
             if !depth_value.is_finite() || depth_value <= 0.0 {
                 continue;
             }
-            let ray = camera_models::unproject(model, intrinsics, coefficients, [u as f64, v as f64]);
+            let pixel = [u as f64, v as f64];
+            let ray = match &opencv {
+                Some(distortion) => camera_models::unproject_opencv_pinhole(
+                    intrinsics,
+                    distortion,
+                    pixel,
+                ),
+                None => camera_models::unproject(model, intrinsics, coefficients, pixel),
+            };
             if !ray.converged || ray.value.iter().any(|value| !value.is_finite()) {
                 rejected_count += 1;
                 if ray.iterations > 0 { non_converged_count += 1; }
@@ -671,6 +681,84 @@ pub fn camera_project(
         result.value[0],
         result.value[1],
     ])
+}
+
+/// Project selected 3D points after applying a row-major 4x4 transform.
+///
+/// `positions` contains interleaved xyz values and `indices` selects the
+/// points to project. The result contains interleaved uv values in index order;
+/// rejected points are returned as NaN pairs. `max_normalized_x/y` provide an
+/// optional pre-distortion calibration-domain guard (use infinity to disable).
+#[wasm_bindgen]
+pub fn camera_project_points_indexed(
+    camera_model: &str,
+    fx: f64,
+    fy: f64,
+    cx: f64,
+    cy: f64,
+    coefficients: &[f64],
+    positions: &[f32],
+    indices: &[u32],
+    transform: &[f64],
+    max_normalized_x: f64,
+    max_normalized_y: f64,
+) -> Result<Vec<f32>, JsValue> {
+    let model = CameraModel::parse(camera_model).map_err(|error| JsValue::from_str(&error))?;
+    let intrinsics = Intrinsics { fx, fy, cx, cy };
+    camera_models::validate(model, intrinsics, coefficients)
+        .map_err(|error| JsValue::from_str(&error))?;
+    if positions.len() % 3 != 0 {
+        return Err(JsValue::from_str("positions must contain interleaved xyz values"));
+    }
+    if transform.len() != 16 || transform.iter().any(|value| !value.is_finite()) {
+        return Err(JsValue::from_str("transform must contain 16 finite row-major values"));
+    }
+    if max_normalized_x <= 0.0 || max_normalized_y <= 0.0 {
+        return Err(JsValue::from_str("normalized projection limits must be positive"));
+    }
+
+    let opencv = (model == CameraModel::PinholeOpenCv)
+        .then(|| camera_models::OpenCvPinhole::new(coefficients));
+    let mut pixels = Vec::with_capacity(indices.len() * 2);
+    for &index in indices {
+        let offset = index as usize * 3;
+        if offset + 2 >= positions.len() {
+            return Err(JsValue::from_str("point index is outside positions"));
+        }
+        let x = positions[offset] as f64;
+        let y = positions[offset + 1] as f64;
+        let z = positions[offset + 2] as f64;
+        let camera_ray = [
+            transform[0] * x + transform[1] * y + transform[2] * z + transform[3],
+            transform[4] * x + transform[5] * y + transform[6] * z + transform[7],
+            transform[8] * x + transform[9] * y + transform[10] * z + transform[11],
+        ];
+        let normalized_valid = camera_ray[2] > 0.0
+            && (camera_ray[0] / camera_ray[2]).abs() <= max_normalized_x
+            && (camera_ray[1] / camera_ray[2]).abs() <= max_normalized_y;
+        let projected = if normalized_valid {
+            match &opencv {
+                Some(distortion) => camera_models::project_opencv_pinhole(
+                    intrinsics,
+                    distortion,
+                    camera_ray,
+                ),
+                None => camera_models::project(model, intrinsics, coefficients, camera_ray),
+            }
+        } else {
+            camera_models::SolveResult {
+                value: [f64::NAN; 2],
+                converged: false,
+                iterations: 0,
+            }
+        };
+        if projected.converged {
+            pixels.extend_from_slice(&[projected.value[0] as f32, projected.value[1] as f32]);
+        } else {
+            pixels.extend_from_slice(&[f32::NAN; 2]);
+        }
+    }
+    Ok(pixels)
 }
 
 /// Unproject one pixel to a unit OpenCV-coordinate ray. Returns

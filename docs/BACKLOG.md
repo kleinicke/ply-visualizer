@@ -177,26 +177,28 @@ math is implemented there.
 
 ### Complete OpenCV extended distortion and route Stonex through shared camera transforms
 
-**Current state:** the shared camera-model layer supports the five-parameter
-OpenCV pinhole model, and Fisheye624 has its own thin-prism model. Stonex CAL
-files carry OpenCV's complete 14-slot `DistCoeffs` vector, but the current X3A
-adapter reads only `k1`, `k2`, `p1`, `p2`, and `k3`. Its `k4-k6`, `s1-s4`, and
-`tauX/tauY` values happen to be zero in `Abschnitt_A.x3a`, so this is correct
-for that fixture but not complete support for other calibrations.
+**Current state (August 2026):** the shared Rust/WASM camera-model layer accepts
+OpenCV's standard 4, 5, 8, 12, and 14 coefficient pinhole layouts. It implements
+the rational denominator, thin-prism correction, tilted-sensor projection, and
+iterative inverse, with a specialized five-parameter path when all extensions
+are zero. Stonex preserves the complete CAL `DistCoeffs` vector and colors
+points through the indexed Rust batch projector while retaining its CAL FOV
+guard.
 
-1. Add the standard OpenCV extended pinhole model with the exact coefficient
-   order `k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY`. Implement the rational
-   radial denominator, thin-prism terms, and tilted-sensor projection and
-   iterative inverse according to OpenCV semantics. Keep the existing
-   five-coefficient model as a compatible subset rather than inventing a
-   Stonex-specific camera model.
-2. Preserve all coefficients when importing Stonex CAL and other OpenCV/ROS
-   calibration files. Retain `fx`, `fy`, `cx`, and `cy` as ordinary shared
-   intrinsics; principal-point offset is not a separate lens-shift transform.
-3. Remove the hand-written radial/tangential projection in `stonexX3aParser.ts`.
-   Route point coloring, image-plane/frustum construction, and any future X3I
-   undistortion through the existing shared `project`/`unproject` camera-model
-   API and its Rust/WASM implementation.
+1. **Completed.** Add the standard OpenCV extended pinhole model with the exact
+   coefficient order `k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY`. Implement
+   the rational radial denominator, thin-prism terms, and tilted-sensor
+   projection and iterative inverse according to OpenCV semantics. Keep the
+   existing five-coefficient model as a compatible subset rather than inventing
+   a Stonex-specific camera model.
+2. **Completed for Stonex; other importers remain.** Preserve all coefficients
+   when importing Stonex CAL and other OpenCV/ROS calibration files. Retain
+   `fx`, `fy`, `cx`, and `cy` as ordinary shared intrinsics; principal-point
+   offset is not a separate lens-shift transform.
+3. **Completed for point coloring.** Remove the hand-written radial/tangential
+   projection in `stonexX3aParser.ts`. Route point coloring, image-plane/frustum
+   construction, and any future X3I undistortion through the existing shared
+   `project`/`unproject` camera-model API and its Rust/WASM implementation.
 4. Route model-to-camera, panorama rotation, camera-to-world inversion, and
    viewer-axis conversion through the extension's standard matrix/convention
    utilities. Keep file adapters responsible only for parsing and mapping vendor
