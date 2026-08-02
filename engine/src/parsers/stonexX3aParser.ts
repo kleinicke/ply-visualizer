@@ -6,7 +6,24 @@
  * each containing an azimuth and an organized column of range/pulse-width
  * samples. X3I members are uncompressed 8-bit GRBG Bayer frames; the paired
  * XML calibration files contain OpenCV intrinsics and model-to-camera poses.
+ *
+ * Photographic colour is decoded RAW here. White balance and exposure are
+ * measured but not baked in; the parser emits the raw colours, a per-point
+ * camera-frame index and the measurements, and
+ * `visualization/stonexColorCorrection` applies the user's chosen modes. A
+ * re-parse of a 113 MB archive costs ~5 s, so switching modes has to be a
+ * colour-array pass rather than a reload.
  */
+
+import {
+  applyStonexColorCorrectionToPoints,
+  buildStonexColorCalibration,
+  computeStonexFrameMultipliers,
+  DEFAULT_STONEX_COLOR_CORRECTION,
+  STONEX_NO_FRAME,
+  type StonexBandGains,
+  type StonexFrameCalibration,
+} from '../visualization/stonexColorCorrection';
 
 export interface StonexX3aData {
   vertexCount: number;
@@ -93,8 +110,14 @@ interface CameraFrame {
   rawWidth: number;
   rawHeight: number;
   pixelsOffset: number;
-  redGain: number;
-  blueGain: number;
+  /**
+   * Measured per-frame characteristics. Gains are NOT applied while decoding —
+   * pixels stay raw and `stonexColorCorrection` applies the user's chosen mode
+   * afterwards, so the modes stay switchable without a re-parse.
+   */
+  grayRedGain: number;
+  grayBlueGain: number;
+  meanGreen: number;
   rgbImage?: CameraRgbImage;
   calibration: CameraCalibration;
 }
@@ -119,6 +142,7 @@ export interface StonexCameraFrameMetadata {
   modelToCamera: number[];
   previewWidth: number;
   previewHeight: number;
+  /** RAW (un-white-balanced) thumbnail; stonexCameras corrects it per frame. */
   previewRgba: Uint8Array;
 }
 
@@ -226,7 +250,7 @@ function bayerWhiteBalance(
   pixelsOffset: number,
   width: number,
   height: number
-): { redGain: number; blueGain: number } {
+): { grayRedGain: number; grayBlueGain: number; meanGreen: number } {
   let red = 0;
   let green = 0;
   let blue = 0;
@@ -246,9 +270,13 @@ function bayerWhiteBalance(
     }
   }
   if (samples === 0 || red === 0 || blue === 0) {
-    return { redGain: 1, blueGain: 1 };
+    return { grayRedGain: 1, grayBlueGain: 1, meanGreen: green / Math.max(1, samples) };
   }
-  return { redGain: green / red, blueGain: green / blue };
+  return {
+    grayRedGain: green / red,
+    grayBlueGain: green / blue,
+    meanGreen: green / samples,
+  };
 }
 
 function parseCameraFrames(
@@ -256,8 +284,9 @@ function parseCameraFrames(
   view: DataView,
   members: ArchiveMember[],
   calibrations: Map<'U' | 'D', CameraCalibration>
-): CameraFrame[] {
+): { frames: CameraFrame[]; bandGains: Partial<Record<'U' | 'D', StonexBandGains>> } {
   const frames: CameraFrame[] = [];
+  const bandGains: Partial<Record<'U' | 'D', StonexBandGains>> = {};
   for (const member of members) {
     const match = member.name.match(/^(.*)-([UD])(\d{9})\.x3i$/i);
     if (!match || member.size < X3I_HEADER_BYTES) {
@@ -300,24 +329,24 @@ function parseCameraFrames(
         continue;
       }
       const fallback = {
-        redGain: typedFrames.reduce((sum, frame) => sum + frame.redGain, 0) / typedFrames.length,
-        blueGain: typedFrames.reduce((sum, frame) => sum + frame.blueGain, 0) / typedFrames.length,
+        redGain:
+          typedFrames.reduce((sum, frame) => sum + frame.grayRedGain, 0) / typedFrames.length,
+        blueGain:
+          typedFrames.reduce((sum, frame) => sum + frame.grayBlueGain, 0) / typedFrames.length,
       };
       const references = typedFrames
         .map(frame => portraitTopLeftWhiteBalance(data, frame))
         .filter((value): value is { redGain: number; blueGain: number; score: number } => !!value)
         .sort((a, b) => b.score - a.score);
-      const balance = references[0] ?? fallback;
-      for (const frame of typedFrames) {
-        frame.redGain = balance.redGain;
-        frame.blueGain = balance.blueGain;
-      }
+      bandGains[type] = references[0]
+        ? { redGain: references[0].redGain, blueGain: references[0].blueGain }
+        : fallback;
     }
     for (const frame of frames) {
       frame.rgbImage = decodeCameraRgb(data, frame);
     }
   }
-  return frames;
+  return { frames, bandGains };
 }
 
 function portraitTopLeftWhiteBalance(
@@ -400,12 +429,13 @@ function sampleGrbgInterpolated(
 ): [number, number, number] {
   const rawX = portraitY;
   const rawY = frame.rawHeight - 1 - portraitX;
-  const red = sampleBayerLattice(data, frame, rawX, rawY, 1, 0) * frame.redGain;
+  // Raw sensor values: white balance is applied later by stonexColorCorrection.
+  const red = sampleBayerLattice(data, frame, rawX, rawY, 1, 0);
   const green =
     (sampleBayerLattice(data, frame, rawX, rawY, 0, 0) +
       sampleBayerLattice(data, frame, rawX, rawY, 1, 1)) *
     0.5;
-  const blue = sampleBayerLattice(data, frame, rawX, rawY, 0, 1) * frame.blueGain;
+  const blue = sampleBayerLattice(data, frame, rawX, rawY, 0, 1);
   return [Math.min(255, red), Math.min(255, green), Math.min(255, blue)];
 }
 
@@ -471,10 +501,11 @@ function sampleGrbg(
   const blueY = nearestParity(rawY, 1, frame.rawHeight);
   const greenX = nearestParity(rawX, Math.round(rawY) & 1 ? 1 : 0, frame.rawWidth);
   const greenY = nearestParity(rawY, Math.round(rawY) & 1 ? 1 : 0, frame.rawHeight);
-  const red = data[frame.pixelsOffset + redY * frame.rawWidth + redX] * frame.redGain;
+  // Raw sensor values: white balance is applied later by stonexColorCorrection.
+  const red = data[frame.pixelsOffset + redY * frame.rawWidth + redX];
   const green = data[frame.pixelsOffset + greenY * frame.rawWidth + greenX];
-  const blue = data[frame.pixelsOffset + blueY * frame.rawWidth + blueX] * frame.blueGain;
-  return [Math.min(255, red), green, Math.min(255, blue)];
+  const blue = data[frame.pixelsOffset + blueY * frame.rawWidth + blueX];
+  return [red, green, blue];
 }
 
 function cameraFrameMetadata(data: Uint8Array, frame: CameraFrame): StonexCameraFrameMetadata {
@@ -600,7 +631,12 @@ export class StonexX3aParser {
         calibrations.set(calibration.type, calibration);
       }
     }
-    const cameraFrames = parseCameraFrames(data, view, members, calibrations);
+    const { frames: cameraFrames, bandGains } = parseCameraFrames(
+      data,
+      view,
+      members,
+      calibrations
+    );
 
     timingCallback?.(`Stonex X3A: inspecting ${scanMembers.length} embedded scan records...`);
     let sourcePointCount = 0;
@@ -651,10 +687,15 @@ export class StonexX3aParser {
 
     const positions = new Float32Array(vertexCount * 3);
     const intensity = new Float32Array(vertexCount);
-    const colors =
-      cameraFrames.length > 0 && this.cameraProjector
-        ? new Uint8Array(vertexCount * 3).fill(255)
-        : null;
+    const photographicColor = cameraFrames.length > 0 && this.cameraProjector;
+    // Raw (un-white-balanced) samples plus the frame each point came from. Both
+    // are kept so colour correction stays switchable; `colors` is the corrected
+    // array the GPU attribute shares.
+    const rawColors = photographicColor ? new Uint8Array(vertexCount * 3).fill(255) : null;
+    const colors = photographicColor ? new Uint8Array(vertexCount * 3).fill(255) : null;
+    const frameIndices = photographicColor
+      ? new Uint16Array(vertexCount).fill(STONEX_NO_FRAME)
+      : null;
     const candidateIndices = new Map<CameraFrame, number[]>();
     if (colors) {
       for (const frame of cameraFrames) {
@@ -738,10 +779,11 @@ export class StonexX3aParser {
       });
     }
 
-    if (colors && this.cameraProjector) {
+    if (rawColors && colors && frameIndices && this.cameraProjector) {
       const bestWeights = new Float64Array(vertexCount);
       const colored = new Uint8Array(vertexCount);
-      for (const frame of cameraFrames) {
+      for (let frameNumber = 0; frameNumber < cameraFrames.length; frameNumber++) {
+        const frame = cameraFrames[frameNumber];
         const candidates = new Uint32Array(candidateIndices.get(frame) ?? []);
         if (candidates.length === 0) {
           continue;
@@ -798,9 +840,10 @@ export class StonexX3aParser {
           bestWeights[pointIndex] = weight;
           const color = sampleCameraRgb(data, frame, pixelX, pixelY);
           const offset = pointIndex * 3;
-          colors[offset] = Math.round(color[0]);
-          colors[offset + 1] = Math.round(color[1]);
-          colors[offset + 2] = Math.round(color[2]);
+          rawColors[offset] = Math.round(color[0]);
+          rawColors[offset + 1] = Math.round(color[1]);
+          rawColors[offset + 2] = Math.round(color[2]);
+          frameIndices[pointIndex] = frameNumber;
           colored[pointIndex] = 1;
         }
       }
@@ -813,6 +856,28 @@ export class StonexX3aParser {
         range.photographicallyColoredPoints = rangeColored;
         photographicallyColoredPoints += rangeColored;
       }
+    }
+
+    const colorCalibration = buildStonexColorCalibration(
+      cameraFrames.map(
+        (frame): StonexFrameCalibration => ({
+          type: frame.type,
+          grayRedGain: frame.grayRedGain,
+          grayBlueGain: frame.grayBlueGain,
+          meanGreen: frame.meanGreen,
+        })
+      ),
+      bandGains
+    );
+    if (rawColors && colors && frameIndices) {
+      // Seed the shipped default so a freshly opened file looks unchanged.
+      applyStonexColorCorrectionToPoints(
+        rawColors,
+        frameIndices,
+        computeStonexFrameMultipliers(colorCalibration, DEFAULT_STONEX_COLOR_CORRECTION),
+        DEFAULT_STONEX_COLOR_CORRECTION,
+        colors
+      );
     }
 
     timingCallback?.(
@@ -855,6 +920,10 @@ export class StonexX3aParser {
         scannerCoordinateConvention: 'viewer X=model Y, viewer Y=model X, viewer Z=model Z',
         sharedScannerFrameAssumed: photographicScanStems.size === 1 && scanMembers.length > 1,
         photographicallyColoredPoints,
+        stonexRawColors: rawColors,
+        stonexFrameIndices: frameIndices,
+        stonexColorCalibration: colorCalibration,
+        stonexColorCorrection: { ...DEFAULT_STONEX_COLOR_CORRECTION },
         cameraOverlapPolicy: 'best-centered valid frame (no color averaging)',
         cameraColorDiagnostic: null,
         cameraProjectionDomain: 'CAL FOV guard before OpenCV distortion',
@@ -884,6 +953,8 @@ export class StonexX3aParser {
     }
 
     const cameraFrames = combined.metadata.stonexCameraFrames;
+    const rawColors = combined.metadata.stonexRawColors as Uint8Array | null;
+    const frameIndices = combined.metadata.stonexFrameIndices as Uint16Array | null;
     return ranges.map((range, index) => {
       const pointEnd = range.pointOffset + range.pointCount;
       const componentStart = range.pointOffset * 3;
@@ -913,6 +984,10 @@ export class StonexX3aParser {
           embeddedMemberSize: range.memberSize,
           embeddedScanPointRanges: [range],
           photographicallyColoredPoints: range.photographicallyColoredPoints,
+          // Colour correction runs per scan, so these must be sliced alongside
+          // colorsArray rather than inherited whole from the combined result.
+          stonexRawColors: rawColors?.slice(componentStart, componentEnd) ?? null,
+          stonexFrameIndices: frameIndices?.slice(range.pointOffset, pointEnd) ?? null,
           // All members share a scanner station. Register its camera rig once,
           // after the final cloud so sequential extension transfers cannot shift
           // the camera entry's unified UI index as later clouds arrive.

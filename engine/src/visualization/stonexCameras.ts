@@ -5,10 +5,19 @@ import { createCameraLabel } from '../cameraProfile';
 import { unprojectCameraPixel } from '../depth/cameraModels';
 import { initTiffWasm } from '../depth/readers/tiffWasm';
 import { filesState } from '../state/files.svelte';
+import {
+  applyStonexColorCorrectionToPoints,
+  applyStonexColorCorrectionToPreview,
+  computeStonexFrameMultipliers,
+  normalizeStonexColorCorrection,
+  type StonexColorCalibration,
+  type StonexColorCorrection,
+} from './stonexColorCorrection';
 
 interface StonexCameraHost {
   scene: THREE.Scene;
   spatialFiles: SpatialData[];
+  meshes: THREE.Object3D[];
   poseGroups: THREE.Group[];
   cameraGroups: THREE.Group[];
   cameraNames: string[];
@@ -234,7 +243,12 @@ function createFrameGeometries(
   return { plane, frustum };
 }
 
-function createFrameVisualization(frame: StonexCameraFrameMetadata): THREE.Group {
+function createFrameVisualization(
+  frame: StonexCameraFrameMetadata,
+  frameNumber: number,
+  multipliers: Float32Array,
+  settings: StonexColorCorrection
+): THREE.Group {
   const cameraToModel = cameraToViewer(frame);
   const origin = transformCameraPoint(new THREE.Vector3(), cameraToModel);
   const geometries = createFrameGeometries(frame, false);
@@ -253,10 +267,14 @@ function createFrameVisualization(frame: StonexCameraFrameMetadata): THREE.Group
   helper.name = 'cameraFrustum';
   group.add(helper);
 
-  const rgba =
+  // previewRgba is raw sensor data; the texture holds the corrected copy so
+  // switching modes only rewrites this buffer.
+  const rawRgba =
     frame.previewRgba instanceof Uint8Array
       ? frame.previewRgba
       : new Uint8Array(frame.previewRgba as unknown as ArrayBuffer);
+  const rgba = new Uint8Array(rawRgba.length);
+  applyStonexColorCorrectionToPreview(rawRgba, multipliers, frameNumber, settings, rgba);
   const texture = new THREE.DataTexture(
     rgba,
     frame.previewWidth,
@@ -266,6 +284,9 @@ function createFrameVisualization(frame: StonexCameraFrameMetadata): THREE.Group
   );
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.needsUpdate = true;
+  group.userData.frameNumber = frameNumber;
+  group.userData.rawPreviewRgba = rawRgba;
+  group.userData.previewTexture = texture;
 
   const plane = new THREE.Mesh(
     geometries.plane,
@@ -313,10 +334,23 @@ export function addStonexCameraVisualization(host: StonexCameraHost, data: Spati
   profile.userData.imagesDistorted = true;
   profile.userData.imageDistortionAvailable = true;
   profile.userData.scannerVisible = true;
+
+  const calibration = data.metadata?.stonexColorCalibration as StonexColorCalibration | undefined;
+  const settings = normalizeStonexColorCorrection(
+    data.metadata?.stonexColorCorrection as Partial<StonexColorCorrection> | undefined
+  );
+  profile.userData.colorCalibration = calibration ?? null;
+  profile.userData.colorCorrection = settings;
+  profile.userData.colorCorrectionAvailable = !!calibration;
+  profile.userData.profileName = profileName;
+  const multipliers = calibration
+    ? computeStonexFrameMultipliers(calibration, settings)
+    : new Float32Array(frames.length * 3).fill(1);
+
   profile.add(createScannerMarker());
-  for (const frame of frames) {
-    profile.add(createFrameVisualization(frame));
-  }
+  frames.forEach((frame, frameNumber) => {
+    profile.add(createFrameVisualization(frame, frameNumber, multipliers, settings));
+  });
 
   host.scene.add(profile);
   host.cameraGroups.push(profile);
@@ -400,6 +434,74 @@ export async function setStonexImageDistortion(
   }
   group.userData.imagesDistorted = distorted;
   return distorted;
+}
+
+/**
+ * Re-derives photographic colour for a Stonex profile: the preview thumbnails
+ * on the image planes and every point cloud decoded from the same archive.
+ *
+ * This is a pure channel multiply over the raw arrays the parser retained, so
+ * it costs one O(points) pass instead of the ~5 s a re-parse would take. Point
+ * colours are mutated in place because `buildOriginalColorArray` shares the
+ * parser's `colorsArray` with the GPU attribute zero-copy.
+ */
+export function setStonexColorCorrection(
+  host: StonexCameraHost,
+  group: THREE.Group,
+  settings: StonexColorCorrection
+): void {
+  const calibration = group.userData.colorCalibration as StonexColorCalibration | null;
+  if (!calibration) {
+    return;
+  }
+  const resolved = normalizeStonexColorCorrection(settings);
+  group.userData.colorCorrection = resolved;
+  const multipliers = computeStonexFrameMultipliers(calibration, resolved);
+
+  for (const child of group.children) {
+    const rawRgba = child.userData?.rawPreviewRgba as Uint8Array | undefined;
+    const texture = child.userData?.previewTexture as THREE.DataTexture | undefined;
+    if (!rawRgba || !texture) {
+      continue;
+    }
+    applyStonexColorCorrectionToPreview(
+      rawRgba,
+      multipliers,
+      child.userData.frameNumber as number,
+      resolved,
+      texture.image.data as Uint8Array
+    );
+    texture.needsUpdate = true;
+  }
+
+  const profileName = group.userData.profileName as string | undefined;
+  for (let index = 0; index < host.spatialFiles.length; index++) {
+    const data = host.spatialFiles[index];
+    if (data?.metadata?.stonexCameraProfileName !== profileName) {
+      continue;
+    }
+    const rawColors = data.metadata?.stonexRawColors as Uint8Array | null | undefined;
+    const frameIndices = data.metadata?.stonexFrameIndices as Uint16Array | null | undefined;
+    if (!rawColors || !frameIndices || !data.colorsArray) {
+      continue;
+    }
+    applyStonexColorCorrectionToPoints(
+      rawColors,
+      frameIndices,
+      multipliers,
+      resolved,
+      data.colorsArray
+    );
+    data.metadata.stonexColorCorrection = resolved;
+
+    // Only flag the attribute when it is the shared colorsArray; other colour
+    // modes rebuild from it when the user switches back to "original".
+    const geometry = (host.meshes[index] as THREE.Mesh | undefined)?.geometry;
+    const attribute = geometry?.getAttribute('color');
+    if (attribute && (attribute.array as unknown) === data.colorsArray) {
+      attribute.needsUpdate = true;
+    }
+  }
 }
 
 export function setStonexScannerVisible(group: THREE.Group, visible: boolean): void {

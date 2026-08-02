@@ -4,10 +4,15 @@
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
   import TransformSection from './TransformSection.svelte';
   import {
+    setStonexColorCorrection,
     setStonexImageDistortion,
     setStonexImagesVisible,
     setStonexScannerVisible,
   } from '../visualization/stonexCameras';
+  import {
+    normalizeStonexColorCorrection,
+    type StonexColorCorrection,
+  } from '../visualization/stonexColorCorrection';
 
   let {
     host,
@@ -366,6 +371,18 @@
     host.requestRender();
   }
 
+  // Photographic colour correction. The parser keeps the raw samples and a
+  // per-point frame index, so every mode here is a colour-array pass rather
+  // than a reload.
+  let colorCorrection = $state(
+    normalizeStonexColorCorrection(initialCameraUserData().colorCorrection)
+  );
+  function applyColorCorrection(patch: Partial<StonexColorCorrection>) {
+    colorCorrection = { ...colorCorrection, ...patch };
+    setStonexColorCorrection(host, cameraGroup, colorCorrection);
+    host.requestRender();
+  }
+
   const matrixText = $derived(
     (() => {
       const arr = host.getTransformationMatrixAsArray(index);
@@ -716,6 +733,121 @@
                 onchange={onCameraShowScannerChange}
               />
               Show scanner origin
+            </label>
+          {/if}
+          {#if cameraGroup.userData.colorCorrectionAvailable}
+            <div style="font-size:10px;opacity:0.7;margin-top:6px;">Photographic colour</div>
+            <label
+              style="font-size:10px;display:flex;align-items:center;gap:6px;"
+              title="How red and blue are balanced against the raw sensor's green. Applies to the point colours and the image previews."
+            >
+              White balance
+              <select
+                id={`camera-wb-${index}`}
+                value={colorCorrection.whiteBalance}
+                onchange={e =>
+                  applyColorCorrection({
+                    whiteBalance: (e.currentTarget as HTMLSelectElement)
+                      .value as StonexColorCorrection['whiteBalance'],
+                  })}
+              >
+                <option value="band">Reference patch (per camera)</option>
+                <option value="per-frame">Gray world (per frame)</option>
+                <option value="manual">Manual</option>
+                <option value="off">Off (raw sensor)</option>
+              </select>
+            </label>
+            {#if colorCorrection.whiteBalance === 'manual'}
+              <label
+                style="font-size:10px;display:flex;align-items:center;gap:6px;padding-left:14px;"
+              >
+                Red gain
+                <input
+                  type="range"
+                  min="0.5"
+                  max="3"
+                  step="0.01"
+                  value={colorCorrection.manualRedGain}
+                  oninput={e =>
+                    applyColorCorrection({
+                      manualRedGain: Number((e.currentTarget as HTMLInputElement).value),
+                    })}
+                />
+                <span>{colorCorrection.manualRedGain.toFixed(2)}</span>
+              </label>
+              <label
+                style="font-size:10px;display:flex;align-items:center;gap:6px;padding-left:14px;"
+              >
+                Blue gain
+                <input
+                  type="range"
+                  min="0.5"
+                  max="3"
+                  step="0.01"
+                  value={colorCorrection.manualBlueGain}
+                  oninput={e =>
+                    applyColorCorrection({
+                      manualBlueGain: Number((e.currentTarget as HTMLInputElement).value),
+                    })}
+                />
+                <span>{colorCorrection.manualBlueGain.toFixed(2)}</span>
+              </label>
+            {/if}
+            <label
+              style="font-size:10px;display:flex;align-items:center;gap:6px;"
+              title="Each X3I frame is auto-exposed on its own, so adjacent frames can differ in brightness. Matching levels them to the scan median and removes the seams."
+            >
+              Exposure
+              <select
+                id={`camera-exposure-${index}`}
+                value={colorCorrection.exposure}
+                onchange={e =>
+                  applyColorCorrection({
+                    exposure: (e.currentTarget as HTMLSelectElement)
+                      .value as StonexColorCorrection['exposure'],
+                  })}
+              >
+                <option value="off">Off (as captured)</option>
+                <option value="match">Match frames to scan median</option>
+                <option value="manual">Manual</option>
+              </select>
+            </label>
+            {#if colorCorrection.exposure === 'manual'}
+              <label
+                style="font-size:10px;display:flex;align-items:center;gap:6px;padding-left:14px;"
+              >
+                Stops
+                <input
+                  type="range"
+                  min="-2"
+                  max="2"
+                  step="0.05"
+                  value={colorCorrection.exposureStops}
+                  oninput={e =>
+                    applyColorCorrection({
+                      exposureStops: Number((e.currentTarget as HTMLInputElement).value),
+                    })}
+                />
+                <span>{colorCorrection.exposureStops.toFixed(2)}</span>
+              </label>
+            {/if}
+            <label
+              style="font-size:10px;display:flex;align-items:center;gap:6px;"
+              title="Clipping cuts red and blue at 255 first and leaves bright surfaces looking green. Preserving hue scales all three channels down instead."
+            >
+              Highlights
+              <select
+                id={`camera-highlight-${index}`}
+                value={colorCorrection.highlight}
+                onchange={e =>
+                  applyColorCorrection({
+                    highlight: (e.currentTarget as HTMLSelectElement)
+                      .value as StonexColorCorrection['highlight'],
+                  })}
+              >
+                <option value="clip">Clip per channel</option>
+                <option value="preserve-hue">Preserve hue</option>
+              </select>
             </label>
           {/if}
         </div>
