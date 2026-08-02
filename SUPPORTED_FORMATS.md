@@ -6,16 +6,16 @@ example MTL materials, color images or calibration files.
 
 ## Summary
 
-| Category               | Extensions                                                                         | Notes                                                               |
-| ---------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Point clouds           | `.ply`, `.xyz`, `.xyzn`, `.xyzrgb`, `.pcd`, `.pts`, `.npy`, `.las`, `.laz`, `.e57` | `.npy` is treated as a point cloud when the array shape ends in `3` |
-| Meshes                 | `.ply`, `.obj`, `.stl`, `.off`, `.gltf`, `.glb`                                    | Meshes can also be shown as points/wireframes where applicable      |
-| Depth/disparity images | `.tif`, `.tiff`, `.png`, `.pfm`, `.npy`, `.npz`                                    | Converted to point clouds with camera parameters                    |
-| Pose data              | `.json`                                                                            | 2D/3D body/keypoint JSON structures                                 |
-| Camera profiles        | `.json`                                                                            | JSON with a top-level `cameras` object                              |
-| Auxiliary materials    | `.mtl`                                                                             | Loaded for OBJ/material coloring workflows                          |
-| Auxiliary color images | `.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.tif`, `.tiff`                           | Applied to depth-derived point clouds                               |
-| Auxiliary calibration  | `.json`, `.yaml`, `.yml`, `.txt`, `.conf`                                          | Loaded from depth settings/calibration controls                     |
+| Category               | Extensions                                                                                 | Notes                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| Point clouds           | `.ply`, `.xyz`, `.xyzn`, `.xyzrgb`, `.pcd`, `.pts`, `.npy`, `.las`, `.laz`, `.e57`, `.x3a` | `.npy` is treated as a point cloud when the array shape ends in `3` |
+| Meshes                 | `.ply`, `.obj`, `.stl`, `.off`, `.gltf`, `.glb`                                            | Meshes can also be shown as points/wireframes where applicable      |
+| Depth/disparity images | `.tif`, `.tiff`, `.png`, `.pfm`, `.npy`, `.npz`                                            | Converted to point clouds with camera parameters                    |
+| Pose data              | `.json`                                                                                    | 2D/3D body/keypoint JSON structures                                 |
+| Camera profiles        | `.json`                                                                                    | JSON with a top-level `cameras` object                              |
+| Auxiliary materials    | `.mtl`                                                                                     | Loaded for OBJ/material coloring workflows                          |
+| Auxiliary color images | `.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.tif`, `.tiff`                                   | Applied to depth-derived point clouds                               |
+| Auxiliary calibration  | `.json`, `.yaml`, `.yml`, `.txt`, `.conf`                                                  | Loaded from depth settings/calibration controls                     |
 
 Note: EXR is currently not fully supported yet.
 
@@ -76,6 +76,16 @@ Note: EXR is currently not fully supported yet.
 - **Colors**: `x y z r g b` or `x y z intensity r g b`.
 - **Normals**: `x y z r g b nx ny nz`.
 - **Intensity**: `x y z intensity` and `x y z intensity r g b`.
+
+### Stonex X300 RAW Archives (`.x3a`, experimental)
+
+- **Container**: proprietary `CRAX` archive containing X300 `.x3r` scan, `.x3i`
+  camera and `.cal` calibration records.
+- **Geometry**: organized X3R range columns are projected through the X300's
+  90-degree vertical field of view; invalid/no-return samples are discarded.
+- **Intensity**: the raw pulse-width return is exposed as normalized intensity.
+- **Current limit**: embedded camera images and calibration are not decoded, so
+  X3A scans currently load without photographic RGB color.
 
 ### NPY Point Clouds (`.npy`)
 

@@ -9,6 +9,7 @@ import { StlParser } from './parsers/stlParser';
 import { PcdParser } from './parsers/pcdParser';
 import { PtsParser } from './parsers/ptsParser';
 import { KittiBinParser } from './parsers/kittiBinParser';
+import { StonexX3aParser } from './parsers/stonexX3aParser';
 import { OffParser } from './parsers/offParser';
 import { GltfParser } from './parsers/gltfParser';
 import { NpyParser, isNpyPointCloudData } from './parsers/npyParser';
@@ -55,6 +56,7 @@ export const SUPPORTED_EXTENSIONS = {
     'laz',
     'e57',
     'bin',
+    'x3a',
     'spz',
     'splat',
     'ksplat',
@@ -276,6 +278,14 @@ export async function parseFileData(
       return {
         data: convertToUnifiedFormat(kittiBinData, fileName),
         type: 'kittiBinData',
+      };
+
+    case 'x3a':
+      const stonexX3aParser = new StonexX3aParser();
+      const stonexX3aData = await stonexX3aParser.parse(data, fileName, timingCallback);
+      return {
+        data: stonexX3aData,
+        type: 'spatialData',
       };
 
     case 'off':

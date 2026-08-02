@@ -5,8 +5,8 @@ from the VS Code 3D Visualizer extension.
 
 ## Features
 
-- **Multiple File Format Support**: PLY, XYZ, LAS/LAZ, E57, OBJ, STL, PCD, PTS,
-  OFF, GLTF/GLB
+- **Multiple File Format Support**: PLY, XYZ, LAS/LAZ, E57, Stonex X3A, OBJ,
+  STL, PCD, PTS, OFF, GLTF/GLB
 - **3D Visualization**: Interactive 3D rendering using Three.js
 - **File Management**: Load multiple files simultaneously with individual
   controls

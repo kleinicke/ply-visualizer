@@ -6,6 +6,7 @@ import { StlParser } from '../../engine/src/parsers/stlParser';
 import { PcdParser } from '../../engine/src/parsers/pcdParser';
 import { PtsParser } from '../../engine/src/parsers/ptsParser';
 import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
+import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
@@ -86,6 +87,24 @@ async function addKittiBinData(
   await sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
 }
 
+async function addStonexX3aData(
+  host: AddFileHost,
+  webviewPanel: vscode.WebviewPanel,
+  bytes: Uint8Array,
+  fileName: string,
+  shortPath: string
+): Promise<void> {
+  const parsedData: any = await new StonexX3aParser().parse(
+    bytes,
+    fileName,
+    host.logPerf.bind(host)
+  );
+  parsedData.fileName = fileName;
+  parsedData.shortPath = shortPath;
+  parsedData.fileSizeInBytes = bytes.byteLength;
+  await sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
+}
+
 export async function handleAddFile(
   host: AddFileHost,
   webviewPanel: vscode.WebviewPanel,
@@ -138,6 +157,12 @@ export async function handleAddFile(
         if (fileExtension === '.bin') {
           const bytes = await vscode.workspace.fs.readFile(files[i]);
           await addKittiBinData(host, webviewPanel, bytes, fileName, shortPath);
+          continue;
+        }
+
+        if (fileExtension === '.x3a') {
+          const bytes = await vscode.workspace.fs.readFile(files[i]);
+          await addStonexX3aData(host, webviewPanel, bytes, fileName, shortPath);
           continue;
         }
 
@@ -454,6 +479,12 @@ export async function handleAddFileFromPath(
       return;
     }
 
+    if (ext === '.x3a') {
+      const bytes = await vscode.workspace.fs.readFile(fileUri);
+      await addStonexX3aData(host, webviewPanel, bytes, fileName, shortPath);
+      return;
+    }
+
     if (SPLAT_CONTAINER_EXTENSIONS.includes(ext)) {
       sendSplatContainerUri(webviewPanel, fileUri, fileName, shortPath, 'addFiles');
       return;
@@ -683,6 +714,11 @@ export async function handleDroppedFilesFromWebview(
 
       if (ext === '.bin') {
         await addKittiBinData(host, webviewPanel, fileData, fileName, shortPath);
+        continue;
+      }
+
+      if (ext === '.x3a') {
+        await addStonexX3aData(host, webviewPanel, fileData, fileName, shortPath);
         continue;
       }
 

@@ -7,6 +7,7 @@ import { StlParser } from '../../engine/src/parsers/stlParser';
 import { PcdParser } from '../../engine/src/parsers/pcdParser';
 import { PtsParser } from '../../engine/src/parsers/ptsParser';
 import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
+import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
@@ -56,6 +57,7 @@ export interface DocumentFileTypeFlags {
   isPcdFile: boolean;
   isPtsFile: boolean;
   isKittiBinFile: boolean;
+  isStonexX3aFile: boolean;
   isOffFile: boolean;
   isGltfFile: boolean;
   isXyzVariant: boolean;
@@ -89,6 +91,7 @@ export async function loadDocumentContent(
     isPcdFile,
     isPtsFile,
     isKittiBinFile,
+    isStonexX3aFile,
     isOffFile,
     isGltfFile,
     isXyzVariant,
@@ -151,6 +154,30 @@ export async function loadDocumentContent(
         `⏱️ PERF[${extension}/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsedData.reduce((n, d) => n + d.vertexCount, 0)} pts) for ${path.basename(documentUri.fsPath)}`
       );
       await sendSpatialDataToWebview(webviewPanel, parsedData, 'multiSpatialData');
+      return;
+    }
+
+    if (isStonexX3aFile) {
+      const bytes = await readFileFast(documentUri);
+      const readTime = performance.now();
+      const parser = new StonexX3aParser();
+      const parsed = await parser.parse(
+        bytes,
+        path.basename(documentUri.fsPath),
+        message =>
+          void webviewPanel.webview.postMessage({
+            type: 'timingUpdate',
+            message,
+            timestamp: performance.now(),
+          })
+      );
+      parsed.fileName = path.basename(documentUri.fsPath);
+      (parsed as any).shortPath = host.getShortPath(documentUri.fsPath);
+      (parsed as any).fileSizeInBytes = bytes.byteLength;
+      host.logPerf(
+        `⏱️ PERF[x3a/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsed.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
+      );
+      await sendSpatialDataToWebview(webviewPanel, [parsed], 'multiSpatialData');
       return;
     }
 

@@ -19,14 +19,14 @@ disparity images directly inside VS Code.
 
 ## Supported formats
 
-| Type                   | Formats                                                         |
-| ---------------------- | --------------------------------------------------------------- |
-| Point clouds           | PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY, LAS, LAZ, E57, KITTI BIN |
-| Meshes                 | PLY, OBJ, STL, OFF, GLTF, GLB                                   |
-| Gaussian splats        | 3DGS PLY, SPZ, SPLAT, KSPLAT, SOG                               |
-| Depth/disparity images | TIFF, PNG, PFM, NPY, NPZ                                        |
-| 3D Body Poses          | JSON pose data (experimental)                                   |
-| Camera Profiles        | JSON pose data (experimental)                                   |
+| Type                   | Formats                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| Point clouds           | PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY, LAS, LAZ, E57, KITTI BIN, Stonex X3A (experimental) |
+| Meshes                 | PLY, OBJ, STL, OFF, GLTF, GLB                                                              |
+| Gaussian splats        | 3DGS PLY, SPZ, SPLAT, KSPLAT, SOG                                                          |
+| Depth/disparity images | TIFF, PNG, PFM, NPY, NPZ                                                                   |
+| 3D Body Poses          | JSON pose data (experimental)                                                              |
+| Camera Profiles        | JSON pose data (experimental)                                                              |
 
 Because `.bin` and `.json` are generic extensions, neither is opened with the 3D
 Visualizer by default. For KITTI BIN, use **Open With...** or right-click and
