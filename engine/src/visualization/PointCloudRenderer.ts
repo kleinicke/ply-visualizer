@@ -43,20 +43,75 @@ export function getRoundPointTexture(): THREE.Texture {
 }
 
 /**
+ * Point sizes at or below this render as roughly one pixel, where a disc and a
+ * square are the same handful of fragments. The viewer's universal default is
+ * 0.001; the small margin keeps slider values that round to the default on the
+ * cheap path.
+ */
+const ROUND_POINT_MIN_SIZE = 0.0015;
+
+/**
+ * Round points cost real frame time on large clouds: sampling the disc texture
+ * and discarding the corners forces the fragment shader to run before the depth
+ * test can reject anything (a `discard` disables early-Z). Zoomed out, millions
+ * of points pile onto the same pixels and every one of those hidden fragments is
+ * shaded anyway. Below one pixel there is no disc to see, so skip the texture
+ * entirely and let early-Z do its job.
+ */
+export function shouldUseRoundPoints(size: number): boolean {
+  return size > ROUND_POINT_MIN_SIZE;
+}
+
+/**
+ * Apply the round-vs-square decision for the material's current size.
+ *
+ * Idempotent by design: flipping `map`/`alphaTest` triggers a shader recompile,
+ * so this returns without touching `needsUpdate` when the material is already in
+ * the right mode. That makes it safe to call from per-frame paths such as
+ * screen-space scaling.
+ */
+export function applyPointShape(material: THREE.PointsMaterial, allowTransparency: boolean): void {
+  const wantRound = shouldUseRoundPoints(material.size);
+  const isRound = material.map !== null;
+
+  if (wantRound === isRound) {
+    return;
+  }
+
+  if (wantRound) {
+    material.map = getRoundPointTexture();
+    material.alphaTest = 0.5; // keep the disc, discard the corners
+  } else {
+    material.map = null;
+    material.alphaTest = 0;
+  }
+
+  // Transparency only affects the soft rim; the disc shape comes from alphaTest.
+  material.transparent = allowTransparency;
+  material.needsUpdate = true;
+}
+
+/**
  * Render points as discs instead of the default GL squares. A small circular
  * alpha texture is sampled per fragment (via gl_PointCoord) and alphaTest
  * discards the corners — so points are round and still opaque (no alpha
  * blending pipeline). The white texture only carries the round mask; the
  * per-vertex color is preserved (PointsMaterial multiplies map × color).
+ *
+ * Sub-pixel points skip the texture — see applyPointShape.
  */
 export function optimizeForPointCount(
   material: THREE.PointsMaterial,
   allowTransparency: boolean
 ): void {
-  material.map = getRoundPointTexture();
-  material.alphaTest = 0.5; // keep the disc, discard the corners
+  if (shouldUseRoundPoints(material.size)) {
+    material.map = getRoundPointTexture();
+    material.alphaTest = 0.5;
+  } else {
+    material.map = null;
+    material.alphaTest = 0;
+  }
 
-  // Transparency only affects the soft rim; the disc shape comes from alphaTest.
   material.transparent = allowTransparency;
 
   material.depthTest = true;

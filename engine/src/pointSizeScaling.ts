@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
+import { applyPointShape } from './visualization/PointCloudRenderer';
 
 export interface PointSizeScalingHost {
   screenSpaceScaling: boolean;
+  allowTransparency: boolean;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
@@ -15,6 +17,20 @@ export interface PointSizeScalingHost {
   requestRender(): void;
   showStatus(message: string): void;
   applyTransformationMatrix(fileIndex: number): void;
+}
+
+/**
+ * Set a point size and keep the round-point decision in sync with it. Points
+ * only get the disc texture once they are wide enough to show one; applyPointShape
+ * is a no-op unless that crosses the threshold, so this is safe on hot paths.
+ */
+function setPointSize(
+  host: PointSizeScalingHost,
+  material: THREE.PointsMaterial,
+  size: number
+): void {
+  material.size = size;
+  applyPointShape(material, host.allowTransparency);
 }
 
 export function toggleScreenSpaceScaling(host: PointSizeScalingHost): void {
@@ -74,7 +90,7 @@ export function updateAllPointSizesForDistance(host: PointSizeScalingHost): void
     if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
       const material = mesh.material as THREE.PointsMaterial;
       const baseSize = host.pointSizes[index] || 1.0;
-      material.size = calculateScreenSpacePointSize(baseSize, cameraDistance);
+      setPointSize(host, material, calculateScreenSpacePointSize(baseSize, cameraDistance));
       material.needsUpdate = true;
     }
   });
@@ -84,7 +100,7 @@ export function updateAllPointSizesForDistance(host: PointSizeScalingHost): void
     if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
       const material = vertexPoints.material as THREE.PointsMaterial;
       const baseSize = host.pointSizes[index] || 1.0;
-      material.size = calculateScreenSpacePointSize(baseSize, cameraDistance);
+      setPointSize(host, material, calculateScreenSpacePointSize(baseSize, cameraDistance));
       material.needsUpdate = true;
     }
   });
@@ -96,7 +112,7 @@ export function updateAllPointSizesForDistance(host: PointSizeScalingHost): void
         if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
           const material = child.material as THREE.PointsMaterial;
           const baseSize = host.pointSizes[index] || 0.001;
-          material.size = calculateScreenSpacePointSize(baseSize, cameraDistance);
+          setPointSize(host, material, calculateScreenSpacePointSize(baseSize, cameraDistance));
           material.needsUpdate = true;
         }
       });
@@ -168,7 +184,7 @@ export function updatePointSize(
             // Update point size
             const material = (subMesh as any).material;
             if (material instanceof THREE.PointsMaterial) {
-              material.size = newSize; // Use direct size for OBJ points
+              setPointSize(host, material, newSize); // Use direct size for OBJ points
               pointsUpdated++;
             }
           }
@@ -180,7 +196,7 @@ export function updatePointSize(
         // Single OBJ mesh
         const mesh = host.meshes[fileIndex];
         if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
-          mesh.material.size = newSize; // Use direct size for OBJ points
+          setPointSize(host, mesh.material, newSize); // Use direct size for OBJ points
           console.log(`✅ Point size applied to single OBJ mesh for file ${fileIndex}: ${newSize}`);
         }
       }
@@ -191,7 +207,7 @@ export function updatePointSize(
 
       if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
         // Point cloud files
-        mesh.material.size = newSize;
+        setPointSize(host, mesh.material, newSize);
         console.log(`✅ Point size applied to point cloud for file ${fileIndex}: ${newSize}`);
       } else if (mesh instanceof THREE.Mesh && data && data.faceCount > 0) {
         // Triangle mesh files (STL, PLY with faces) - create a point representation
@@ -217,7 +233,7 @@ export function updatePointSize(
         }
 
         if (pointsOverlay && pointsOverlay.material instanceof THREE.PointsMaterial) {
-          pointsOverlay.material.size = newSize;
+          setPointSize(host, pointsOverlay.material, newSize);
           // For meshes, we'll show the points overlay when point size is adjusted
           pointsOverlay.visible = newSize > 0.5; // Show points when size is meaningful
           console.log(`✅ Point size applied to mesh overlay for file ${fileIndex}: ${newSize}`);
@@ -232,7 +248,7 @@ export function updatePointSize(
     // Always update vertex points object if it exists (used by render modes for ALL file types)
     const vertexPointsObject = host.vertexPointsObjects[fileIndex];
     if (vertexPointsObject && vertexPointsObject.material instanceof THREE.PointsMaterial) {
-      vertexPointsObject.material.size = newSize;
+      setPointSize(host, vertexPointsObject.material, newSize);
       console.log(`✅ Point size applied to vertex points for file ${fileIndex}: ${newSize}`);
     }
   } else {
@@ -247,7 +263,7 @@ export function restoreOriginalPointSizes(host: PointSizeScalingHost): void {
   host.meshes.forEach((mesh, index) => {
     if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
       const material = mesh.material as THREE.PointsMaterial;
-      material.size = host.pointSizes[index] || 1.0;
+      setPointSize(host, material, host.pointSizes[index] || 1.0);
       material.needsUpdate = true;
     }
   });
@@ -255,7 +271,7 @@ export function restoreOriginalPointSizes(host: PointSizeScalingHost): void {
   host.vertexPointsObjects.forEach((vertexPoints, index) => {
     if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
       const material = vertexPoints.material as THREE.PointsMaterial;
-      material.size = host.pointSizes[index] || 1.0;
+      setPointSize(host, material, host.pointSizes[index] || 1.0);
       material.needsUpdate = true;
     }
   });
@@ -265,7 +281,7 @@ export function restoreOriginalPointSizes(host: PointSizeScalingHost): void {
       group.traverse(child => {
         if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
           const material = child.material as THREE.PointsMaterial;
-          material.size = host.pointSizes[index] || 0.001;
+          setPointSize(host, material, host.pointSizes[index] || 0.001);
           material.needsUpdate = true;
         }
       });
