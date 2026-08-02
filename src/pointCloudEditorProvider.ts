@@ -201,7 +201,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const isPcdFile = fileType?.extension === 'pcd';
     const isPtsFile = fileType?.extension === 'pts';
     const isKittiBinFile = fileType?.extension === 'bin';
-    const isStonexX3aFile = fileType?.extension === 'x3a';
+    const isStonexX3aFile = fileType?.extension === 'x3a' || fileType?.extension === 'x3r';
     const isOffFile = fileType?.extension === 'off';
     const isGltfFile = fileType?.extension === 'gltf' || fileType?.extension === 'glb';
     const isXyzVariant =

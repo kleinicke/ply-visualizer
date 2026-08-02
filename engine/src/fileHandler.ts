@@ -57,6 +57,7 @@ export const SUPPORTED_EXTENSIONS = {
     'e57',
     'bin',
     'x3a',
+    'x3r',
     'spz',
     'splat',
     'ksplat',
@@ -281,6 +282,7 @@ export async function parseFileData(
       };
 
     case 'x3a':
+    case 'x3r':
       const stonexX3aParser = new StonexX3aParser();
       const stonexX3aData = await stonexX3aParser.parse(data, fileName, timingCallback);
       return {

@@ -46,6 +46,7 @@ import * as pose from './pose';
 import * as renderStats from './renderStats';
 import * as pointCloudRenderer from './visualization/PointCloudRenderer';
 import * as meshBuilder from './visualization/MeshBuilder';
+import * as stonexCameras from './visualization/stonexCameras';
 import * as uiStatus from './ui/status';
 import * as intensity from './utils/intensity';
 import * as commentSettings from './depth/commentSettings';
@@ -2347,6 +2348,9 @@ class PointCloudVisualizer {
       box.expandByObject(group);
     }
     for (const group of this.cameraGroups) {
+      if (group.userData.excludeFromFit) {
+        continue;
+      }
       box.expandByObject(group);
     }
 
@@ -2693,6 +2697,7 @@ class PointCloudVisualizer {
         pts > 0 ? `Building geometry (${pts.toLocaleString()} points)…` : 'Building geometry…'
       );
     }
+    const stonexCameraFiles: SpatialData[] = [];
     for (const data of newFiles) {
       alignSourceOrigin(data, this.spatialFiles);
       // Assign new file index
@@ -2758,9 +2763,13 @@ class PointCloudVisualizer {
         this.pointSizes.push(0.001); // Placeholder for non-existent files
         filesState.pointSizes.push(0.001);
       }
-      // IMPORTANT: Always set PLY file point size to 0.001, overwriting any placeholder values
-      this.pointSizes[data.fileIndex] = 0.001;
-      filesState.pointSizes[data.fileIndex] = 0.001;
+      const recommendedPointSize = data.metadata?.recommendedPointSize;
+      const initialPointSize =
+        typeof recommendedPointSize === 'number' && recommendedPointSize > 0
+          ? recommendedPointSize
+          : 0.001;
+      this.pointSizes[data.fileIndex] = initialPointSize;
+      filesState.pointSizes[data.fileIndex] = initialPointSize;
       // debug
 
       // Create geometry and material
@@ -3050,6 +3059,19 @@ class PointCloudVisualizer {
 
       // Initialize transformation matrix for this file
       this.transformationMatrices.push(new THREE.Matrix4());
+      if ((data.metadata?.stonexCameraFrames as unknown[])?.length) {
+        stonexCameraFiles.push(data);
+      }
+    }
+
+    for (const data of stonexCameraFiles) {
+      try {
+        stonexCameras.addStonexCameraVisualization(this, data);
+      } catch (error) {
+        // Camera helpers are auxiliary. A malformed preview or calibration must
+        // never prevent the point cloud from being fitted and rendered.
+        console.error(`Could not add Stonex camera visualization for ${data.fileName}:`, error);
+      }
     }
 
     // Update UI (preserve depth panel states)
@@ -3088,6 +3110,8 @@ class PointCloudVisualizer {
           if (Array.isArray(obj.material)) {
             obj.material.forEach((m: any) => m.dispose && m.dispose());
           } else if (typeof obj.material.dispose === 'function') {
+            const material = obj.material as THREE.Material & { map?: THREE.Texture };
+            material.map?.dispose();
             obj.material.dispose();
           }
         }

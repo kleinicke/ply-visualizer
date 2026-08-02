@@ -150,6 +150,7 @@ end_header
       assert.ok(supportedPatterns.includes('*.laz'));
       assert.ok(supportedPatterns.includes('*.e57'));
       assert.ok(supportedPatterns.includes('*.x3a'));
+      assert.ok(supportedPatterns.includes('*.x3r'));
 
       const kittiEditor = customEditors.find((item: any) => item.viewType === 'plyViewer.kittiBin');
       assert.ok(kittiEditor, 'Optional KITTI BIN custom editor should be defined');

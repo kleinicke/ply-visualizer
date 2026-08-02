@@ -194,6 +194,7 @@ end_header
       assert.ok(patterns.includes('*.laz'), 'Should support LAZ files');
       assert.ok(patterns.includes('*.e57'), 'Should support E57 files');
       assert.ok(patterns.includes('*.x3a'), 'Should support Stonex X3A files');
+      assert.ok(patterns.includes('*.x3r'), 'Should support standalone Stonex X3R files');
 
       // Note: TIF files are handled through conversion commands, not direct opening
 

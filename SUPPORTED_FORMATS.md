@@ -77,15 +77,28 @@ Note: EXR is currently not fully supported yet.
 - **Normals**: `x y z r g b nx ny nz`.
 - **Intensity**: `x y z intensity` and `x y z intensity r g b`.
 
-### Stonex X300 RAW Archives (`.x3a`, experimental)
+### Stonex X300 RAW Archives and Scans (`.x3a`, `.x3r`, experimental)
+
+See [Stonex X300 X3A reverse-engineering notes](docs/STONEX_X3A_FORMAT.md) for
+the observed binary layouts, calibration equations, image conversion, and X3R to
+PLY mapping.
 
 - **Container**: proprietary `CRAX` archive containing X300 `.x3r` scan, `.x3i`
   camera and `.cal` calibration records.
+- **Standalone scans**: extracted `.x3r` members can be opened directly; without
+  the parent archive they retain geometry and intensity but have no X3I/CAL
+  photographic context.
 - **Geometry**: organized X3R range columns are projected through the X300's
   90-degree vertical field of view; invalid/no-return samples are discarded.
 - **Intensity**: the raw pulse-width return is exposed as normalized intensity.
-- **Current limit**: embedded camera images and calibration are not decoded, so
-  X3A scans currently load without photographic RGB color.
+- **Photographic color**: embedded `.x3i` GRBG Bayer frames are demosaiced while
+  loading and projected with the paired OpenCV `.cal` intrinsics, distortion
+  coefficients and camera poses. When an archive contains one photographed scan
+  stem and several X3R passes in the same scanner frame, its panorama is reused
+  for every pass; uncovered points fall back to intensity grayscale.
+- **Calibration visualization**: X3A loads a separate, toggleable camera group
+  with the scanner origin, calibrated U/D camera frustums, labels, coordinates,
+  and optional image planes.
 
 ### NPY Point Clouds (`.npy`)
 

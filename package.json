@@ -1,7 +1,7 @@
 {
   "name": "ply-visualizer",
   "displayName": "3D Point Cloud and Mesh Visualizer (PLY, ...)",
-  "description": "A fast 3D visualizer for point clouds and meshes using Three.js. Supports PLY, LAS/LAZ, E57, Stonex X3A, KITTI BIN, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth conversion.",
+  "description": "A fast 3D visualizer for point clouds and meshes using Three.js. Supports PLY, LAS/LAZ, E57, KITTI BIN, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth conversion.",
   "version": "1.7.1",
   "packageManager": "pnpm@10.32.1",
   "publisher": "kleinicke",
@@ -34,6 +34,7 @@
     "kitti",
     "bin",
     "x3a",
+    "x3r",
     "xyzn",
     "xyzrgb",
     "tif",
@@ -107,6 +108,9 @@
           },
           {
             "filenamePattern": "*.x3a"
+          },
+          {
+            "filenamePattern": "*.x3r"
           },
           {
             "filenamePattern": "*.spz"
@@ -199,7 +203,7 @@
       "explorer/context": [
         {
           "command": "plyViewer.openFile",
-          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .xyzn || resourceExtname == .xyzrgb || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl || resourceExtname == .pcd || resourceExtname == .pts || resourceExtname == .off || resourceExtname == .gltf || resourceExtname == .glb || resourceExtname == .las || resourceExtname == .laz || resourceExtname == .e57 || resourceExtname == .x3a || resourceExtname == .bin",
+          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .xyzn || resourceExtname == .xyzrgb || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl || resourceExtname == .pcd || resourceExtname == .pts || resourceExtname == .off || resourceExtname == .gltf || resourceExtname == .glb || resourceExtname == .las || resourceExtname == .laz || resourceExtname == .e57 || resourceExtname == .x3a || resourceExtname == .x3r || resourceExtname == .bin",
           "group": "navigation"
         },
         {

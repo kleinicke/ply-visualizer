@@ -175,6 +175,47 @@ parameter transport, validation messages, settings UI and browser/extension
 integration. These parts should not be moved to Rust merely because the camera
 math is implemented there.
 
+### Complete OpenCV extended distortion and route Stonex through shared camera transforms
+
+**Current state:** the shared camera-model layer supports the five-parameter
+OpenCV pinhole model, and Fisheye624 has its own thin-prism model. Stonex CAL
+files carry OpenCV's complete 14-slot `DistCoeffs` vector, but the current X3A
+adapter reads only `k1`, `k2`, `p1`, `p2`, and `k3`. Its `k4-k6`, `s1-s4`, and
+`tauX/tauY` values happen to be zero in `Abschnitt_A.x3a`, so this is correct
+for that fixture but not complete support for other calibrations.
+
+1. Add the standard OpenCV extended pinhole model with the exact coefficient
+   order `k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY`. Implement the rational
+   radial denominator, thin-prism terms, and tilted-sensor projection and
+   iterative inverse according to OpenCV semantics. Keep the existing
+   five-coefficient model as a compatible subset rather than inventing a
+   Stonex-specific camera model.
+2. Preserve all coefficients when importing Stonex CAL and other OpenCV/ROS
+   calibration files. Retain `fx`, `fy`, `cx`, and `cy` as ordinary shared
+   intrinsics; principal-point offset is not a separate lens-shift transform.
+3. Remove the hand-written radial/tangential projection in `stonexX3aParser.ts`.
+   Route point coloring, image-plane/frustum construction, and any future X3I
+   undistortion through the existing shared `project`/`unproject` camera-model
+   API and its Rust/WASM implementation.
+4. Route model-to-camera, panorama rotation, camera-to-world inversion, and
+   viewer-axis conversion through the extension's standard matrix/convention
+   utilities. Keep file adapters responsible only for parsing and mapping vendor
+   fields, not for maintaining another transformation implementation.
+5. Use inverse distortion when constructing calibration frustum edge rays and
+   image planes. The camera origin and central orientation are already correct,
+   but strong edge distortion should be represented by the same model used for
+   point-to-image projection.
+6. Add OpenCV-reference golden tests with nonzero `k4-k6`, `s1-s4`, and
+   `tauX/tauY`, including forward projection, iterative unprojection,
+   project/unproject round trips, failure to converge, and regression coverage
+   for the current five-coefficient Stonex fixture.
+
+Do not reinterpret these coefficients as a fisheye model. This remains an OpenCV
+rectilinear/pinhole camera with optional rational, decentering, thin-prism, and
+sensor-tilt corrections. Make sure if some parameter are 0, that these extra
+options do not lead to worse performance. So when loading a complex camera model
+with all parameter 0, it should be as quick as a very easy camera model.
+
 ### Stabilize and document 3D body-pose JSON support
 
 **Existing experimental feature:** `engine/src/pose.ts` already accepts generic
@@ -262,8 +303,8 @@ Per the general bar: reliable wins ≥ ~50 ms are worth shipping.
 
 ### LingBot-Map multi-array NPZ prediction import
 
-**Reference: [Robbyant/lingbot-map](https://github.com/Robbyant/lingbot-map)** — a
-feed-forward, VGGT/DUSt3R-style streaming 3D reconstruction model ("Geometric
+**Reference: [Robbyant/lingbot-map](https://github.com/Robbyant/lingbot-map)** —
+a feed-forward, VGGT/DUSt3R-style streaming 3D reconstruction model ("Geometric
 Context Transformer"). Investigated July 2026 to see what it's good for and
 what's missing. Notes for whoever picks this up:
 
@@ -272,8 +313,8 @@ what's missing. Notes for whoever picks this up:
   camera-to-world (`closed_form_inverse_se3_general`), OpenCV-style convention
   (X right, Y down, Z forward) per the VGGT/DUSt3R lineage, though their own
   README never states axis handedness explicitly.
-- `--save_predictions` writes **per-frame NPZ archives** bundling several
-  arrays together: `world_points`, `world_points_conf`, `depth`, `depth_conf`,
+- `--save_predictions` writes **per-frame NPZ archives** bundling several arrays
+  together: `world_points`, `world_points_conf`, `depth`, `depth_conf`,
   `extrinsic`, `intrinsic`, `images`, `pose_enc`, plus chunk-transform
   bookkeeping. No PLY/OBJ export exists in their pipeline; their own viewer is
   viser/Open3D with `--conf_threshold`/`--point_size`/`--downsample_factor`.
@@ -281,8 +322,8 @@ what's missing. Notes for whoever picks this up:
 **Already works today:** `engine/src/parsers/npyParser.ts`'s content-based
 detection (`isNpyPointCloudData`, routed in `fileHandler.ts:181-197`) already
 opens a standalone `.npy` whose last dimension is 3 — `(N,3)`, `(H,W,3)`, even
-batched — as a point cloud with no changes needed. Extracting `world_points`
-to its own `.npy` is a working path right now.
+batched — as a point cloud with no changes needed. Extracting `world_points` to
+its own `.npy` is a working path right now.
 
 **Missing — their actual `.npz` output isn't usable as-is:**
 
@@ -290,13 +331,13 @@ to its own `.npy` is a working path right now.
    `npy` extension (line 181: `basicType.extension === 'npy'`); `.npz` always
    falls through to `NpyReader.handleNpzFile`
    (`engine/src/depth/readers/NpyReader.ts:360-446`), which requires a **2D**
-   array and throws otherwise. Extend the same shape-based sniff to `.npz` so
-   an archive containing a `(...,3)` array routes to the point-cloud pipeline
+   array and throws otherwise. Extend the same shape-based sniff to `.npz` so an
+   archive containing a `(...,3)` array routes to the point-cloud pipeline
    instead of the depth-only one.
 2. Add a dedicated importer for this multi-key layout: read `world_points` for
-   XYZ, `world_points_conf` for confidence-based filtering (mirroring their
-   own `--conf_threshold`), and `images` for per-point RGB — today the depth
-   reader has no concept of sibling arrays in the same archive, so `extrinsic`/
+   XYZ, `world_points_conf` for confidence-based filtering (mirroring their own
+   `--conf_threshold`), and `images` for per-point RGB — today the depth reader
+   has no concept of sibling arrays in the same archive, so `extrinsic`/
    `intrinsic`/`images` are invisible to it even when present.
 3. Optional follow-up: since output is one NPZ per frame, wire it into
    `engine/src/sequencePlayback.ts` so a folder of per-frame predictions plays

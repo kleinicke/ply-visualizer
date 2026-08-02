@@ -160,7 +160,7 @@ export async function handleAddFile(
           continue;
         }
 
-        if (fileExtension === '.x3a') {
+        if (fileExtension === '.x3a' || fileExtension === '.x3r') {
           const bytes = await vscode.workspace.fs.readFile(files[i]);
           await addStonexX3aData(host, webviewPanel, bytes, fileName, shortPath);
           continue;
@@ -479,7 +479,7 @@ export async function handleAddFileFromPath(
       return;
     }
 
-    if (ext === '.x3a') {
+    if (ext === '.x3a' || ext === '.x3r') {
       const bytes = await vscode.workspace.fs.readFile(fileUri);
       await addStonexX3aData(host, webviewPanel, bytes, fileName, shortPath);
       return;
@@ -717,7 +717,7 @@ export async function handleDroppedFilesFromWebview(
         continue;
       }
 
-      if (ext === '.x3a') {
+      if (ext === '.x3a' || ext === '.x3r') {
         await addStonexX3aData(host, webviewPanel, fileData, fileName, shortPath);
         continue;
       }

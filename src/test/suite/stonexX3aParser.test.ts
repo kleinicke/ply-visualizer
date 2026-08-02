@@ -38,24 +38,37 @@ function makeArchive(): Uint8Array {
   return bytes;
 }
 
-suite('Stonex X3A Parser', () => {
+suite('Stonex X3A/X3R Parser', () => {
   test('decodes valid X3R ranges and filters invalid returns', async () => {
     const result = await new StonexX3aParser().parse(makeArchive(), 'sample.x3a');
 
     assert.strictEqual(result.vertexCount, 1);
     assert.strictEqual(result.sourcePointCount, 2);
     assert.strictEqual(result.hasIntensity, true);
+    assert.strictEqual(result.hasColors, false);
     assert.strictEqual(result.fileName, 'sample.x3a');
+    assert.strictEqual(result.metadata.recommendedPointSize, 0.25);
     assert.ok(Math.abs(result.positionsArray[0] - Math.cos((25 * Math.PI) / 180)) < 1e-6);
     assert.ok(Math.abs(result.positionsArray[1]) < 1e-6);
     assert.ok(Math.abs(result.positionsArray[2] + Math.sin((25 * Math.PI) / 180)) < 1e-6);
     assert.ok(Math.abs(result.intensityArray[0] - 8191 / 16383) < 1e-6);
   });
 
-  test('rejects files without a CRAX signature', async () => {
+  test('decodes a standalone X3R member', async () => {
+    const archive = makeArchive();
+    const memberOffset = 88 + 512;
+    const result = await new StonexX3aParser().parse(archive.slice(memberOffset), 'standalone.x3r');
+
+    assert.strictEqual(result.vertexCount, 1);
+    assert.strictEqual(result.fileName, 'standalone.x3r');
+    assert.strictEqual(result.metadata.container, 'Stonex X300 scan record');
+    assert.deepStrictEqual(result.metadata.embeddedScans, ['standalone.x3r']);
+  });
+
+  test('rejects files without a CRAX or X3R signature', async () => {
     await assert.rejects(
       () => new StonexX3aParser().parse(new Uint8Array(100)),
-      /missing CRAX archive signature/
+      /missing CRAX or 003X signature/
     );
   });
 });

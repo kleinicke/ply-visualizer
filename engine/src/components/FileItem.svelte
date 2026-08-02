@@ -3,6 +3,10 @@
   import { getExtraScalarFieldNames } from '../utils/scalarFields';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
   import TransformSection from './TransformSection.svelte';
+  import {
+    setStonexImagesVisible,
+    setStonexScannerVisible,
+  } from '../visualization/stonexCameras';
 
   let {
     host,
@@ -208,17 +212,25 @@
     syncMaxSplatSizeControls(host.splatMode.resetMaxSplatSize(index));
   }
 
+  const recommendedPointSize = $derived(
+    kind === 'pointcloud' &&
+      typeof (data as any)?.metadata?.recommendedPointSize === 'number' &&
+      (data as any).metadata.recommendedPointSize > 0
+      ? (data as any).metadata.recommendedPointSize
+      : 0.001
+  );
   const pointSize = $derived(
     kind === 'pose'
       ? (filesState.pointSizes[index] ?? 0.02)
       : kind === 'camera'
         ? (filesState.pointSizes[index] ?? 1.0)
-        : filesState.pointSizes[index] || 0.001
+        : filesState.pointSizes[index] || recommendedPointSize
   );
   const sizePrecision = $derived(kind === 'pose' ? 3 : kind === 'camera' ? 1 : 4);
+  const pointSizeSliderMax = $derived(Math.max(0.1, recommendedPointSize * 4));
 
   function defaultPointSize(): number {
-    return kind === 'pose' ? 0.02 : kind === 'camera' ? 1.0 : 0.001;
+    return kind === 'pose' ? 0.02 : kind === 'camera' ? 1.0 : recommendedPointSize;
   }
 
   function setPointSize(value: number) {
@@ -322,6 +334,14 @@
   }
   function onCameraShowCoordsChange(e: Event) {
     host.toggleCameraProfileCoordinates(cameraIndex, (e.target as HTMLInputElement).checked);
+  }
+  function onCameraShowImagesChange(e: Event) {
+    setStonexImagesVisible(cameraGroup, (e.target as HTMLInputElement).checked);
+    host.requestRender();
+  }
+  function onCameraShowScannerChange(e: Event) {
+    setStonexScannerVisible(cameraGroup, (e.target as HTMLInputElement).checked);
+    host.requestRender();
   }
 
   const matrixText = $derived(
@@ -447,7 +467,7 @@
             type="range"
             id={`size-${index}`}
             min="0.0001"
-            max="0.1"
+            max={pointSizeSliderMax}
             step="0.0001"
             value={pointSize}
             class="size-slider"
@@ -616,7 +636,7 @@
         </select>
       </div>
     {:else if kind === 'camera' && cameraGroup}
-      <div class="file-info">{cameraGroup.children.length} cameras</div>
+      <div class="file-info">{cameraGroup.userData.cameraCount ?? cameraGroup.children.length} cameras</div>
       <div class="panel-section" style="margin-top:6px;">
         <div class="control-buttons">
           <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
@@ -637,6 +657,28 @@
             />
             Show coordinates
           </label>
+          {#if cameraGroup.userData.hasImagePlanes}
+            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
+              <input
+                type="checkbox"
+                id={`camera-show-images-${index}`}
+                checked={cameraGroup.userData.imagesVisible}
+                onchange={onCameraShowImagesChange}
+              />
+              Show images
+            </label>
+          {/if}
+          {#if cameraGroup.userData.hasScannerMarker}
+            <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
+              <input
+                type="checkbox"
+                id={`camera-show-scanner-${index}`}
+                checked={cameraGroup.userData.scannerVisible}
+                onchange={onCameraShowScannerChange}
+              />
+              Show scanner origin
+            </label>
+          {/if}
         </div>
       </div>
       <div class="size-control">
