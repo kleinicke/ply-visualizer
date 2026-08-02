@@ -1,12 +1,29 @@
 /* tslint:disable */
 /* eslint-disable */
 
+/**
+ * An embedded E57 JPEG/PNG representation and its optional PNG validity mask.
+ * Encoded bytes are kept encoded across the WASM boundary so callers can
+ * decode one image at a time instead of retaining every full-resolution RGB
+ * buffer.
+ */
+export class E57ImageResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_data(): Uint8Array;
+    take_mask(): Uint8Array;
+    readonly metadata_json: string;
+}
+
 export class LidarCollectionResult {
     private constructor();
     free(): void;
     [Symbol.dispose](): void;
+    take_image(index: number): E57ImageResult;
     take_scan(index: number): LidarScanResult;
     readonly errors_json: string;
+    readonly image_count: number;
     readonly scan_count: number;
 }
 

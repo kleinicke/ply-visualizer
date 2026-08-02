@@ -4,7 +4,10 @@ export type CameraModel =
   | 'fisheye-equidistant'
   | 'fisheye-opencv'
   | 'fisheye-kb3'
-  | 'fisheye624';
+  | 'fisheye624'
+  | 'e57-pinhole'
+  | 'e57-spherical'
+  | 'e57-cylindrical';
 
 export type DepthKind = 'depth' | 'disparity' | 'inverse_depth' | 'z';
 

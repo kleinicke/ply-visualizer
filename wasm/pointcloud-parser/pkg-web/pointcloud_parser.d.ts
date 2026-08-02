@@ -1,12 +1,29 @@
 /* tslint:disable */
 /* eslint-disable */
 
+/**
+ * An embedded E57 JPEG/PNG representation and its optional PNG validity mask.
+ * Encoded bytes are kept encoded across the WASM boundary so callers can
+ * decode one image at a time instead of retaining every full-resolution RGB
+ * buffer.
+ */
+export class E57ImageResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_data(): Uint8Array;
+    take_mask(): Uint8Array;
+    readonly metadata_json: string;
+}
+
 export class LidarCollectionResult {
     private constructor();
     free(): void;
     [Symbol.dispose](): void;
+    take_image(index: number): E57ImageResult;
     take_scan(index: number): LidarScanResult;
     readonly errors_json: string;
+    readonly image_count: number;
     readonly scan_count: number;
 }
 
@@ -145,12 +162,18 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_e57imageresult_free: (a: number, b: number) => void;
     readonly __wbg_lidarcollectionresult_free: (a: number, b: number) => void;
     readonly __wbg_lidarscanresult_free: (a: number, b: number) => void;
     readonly __wbg_pointcloudresult_free: (a: number, b: number) => void;
     readonly __wbg_streamparser_free: (a: number, b: number) => void;
+    readonly e57imageresult_metadata_json: (a: number) => [number, number];
+    readonly e57imageresult_take_data: (a: number) => [number, number];
+    readonly e57imageresult_take_mask: (a: number) => [number, number];
     readonly lidarcollectionresult_errors_json: (a: number) => [number, number];
+    readonly lidarcollectionresult_image_count: (a: number) => number;
     readonly lidarcollectionresult_scan_count: (a: number) => number;
+    readonly lidarcollectionresult_take_image: (a: number, b: number) => [number, number, number];
     readonly lidarcollectionresult_take_scan: (a: number, b: number) => [number, number, number];
     readonly lidarscanresult_bbox: (a: number) => [number, number];
     readonly lidarscanresult_has_colors: (a: number) => number;
@@ -183,7 +206,6 @@ export interface InitOutput {
     readonly pointcloudresult_has_colors: (a: number) => number;
     readonly pointcloudresult_has_intensity: (a: number) => number;
     readonly pointcloudresult_has_normals: (a: number) => number;
-    readonly pointcloudresult_take_colors: (a: number) => [number, number];
     readonly pointcloudresult_take_intensity: (a: number) => [number, number];
     readonly pointcloudresult_take_normals: (a: number) => [number, number];
     readonly pointcloudresult_take_positions: (a: number) => [number, number];
@@ -192,6 +214,7 @@ export interface InitOutput {
     readonly streamparser_finish: (a: number) => number;
     readonly streamparser_new: (a: number, b: number, c: number, d: number) => number;
     readonly streamparser_push: (a: number, b: number, c: number) => void;
+    readonly pointcloudresult_take_colors: (a: number) => [number, number];
     readonly alloc: (a: number) => number;
     readonly dealloc: (a: number, b: number) => void;
     readonly __wbindgen_externrefs: WebAssembly.Table;

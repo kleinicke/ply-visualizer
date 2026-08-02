@@ -105,6 +105,13 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await fxInput.fill('700');
     await expect(fxInput).toHaveValue('700');
 
+    await page.locator('#camera-model-0').selectOption('pinhole-opencv');
+    await page.locator('[data-section="distortion-content-0"]').click();
+    await expect(page.locator('label[for="camera-coefficients-0"]')).toContainText(
+      'k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY'
+    );
+    await expect(page.locator('#camera-coefficients-0')).toHaveValue('0,0,0,0,0,0,0,0,0,0,0,0,0,0');
+
     const liveUpdateCheckbox = page.locator('.live-depth-update[data-file-index="0"]');
     await expect(liveUpdateCheckbox).not.toBeChecked();
     await liveUpdateCheckbox.click();

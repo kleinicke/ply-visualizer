@@ -27,6 +27,16 @@
   const isKb3 = $derived(cameraModel === 'fisheye-kb3');
   const isFisheye624 = $derived(cameraModel === 'fisheye624');
   const showDistortionGroup = $derived(isPinholeOpencv || isFisheyeOpencv || isKb3 || isFisheye624);
+  const coefficientLayout = $derived(
+    isPinholeOpencv
+      ? 'k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY'
+      : isFisheye624
+        ? 'k0,k1,k2,k3,k4,k5,p0,p1,s0,s1,s2,s3'
+        : isKb3
+          ? 'k0,k1,k2,k3'
+          : 'k1,k2,k3,k4'
+  );
+  const coefficientDefaults = $derived(coefficientLayout.split(',').map(() => '0').join(','));
 
   const liveUpdateEnabled = $derived(depthSettingsState.liveUpdateFileIndices.includes(fileIndex));
 
@@ -306,51 +316,22 @@
         id={`distortion-content-${fileIndex}`}
         style="display: {distortionOpen ? 'block' : 'none'}; margin-top: 4px;"
       >
-        <div id={`pinhole-params-${fileIndex}`} style="display: {isPinholeOpencv ? '' : 'none'};">
-          <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-            {#each ['k1', 'k2', 'k3'] as p (p)}
-              <div style="flex: 1;">
-                <label for={`${p}-${fileIndex}`} style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">{p}:</label>
-                <input type="number" id={`${p}-${fileIndex}`} value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0" oninput={onFieldInput} onwheel={blurOnWheel} />
-              </div>
-            {/each}
-          </div>
-          <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-            {#each ['p1', 'p2'] as p (p)}
-              <div style="flex: 1;">
-                <label for={`${p}-${fileIndex}`} style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">{p}:</label>
-                <input type="number" id={`${p}-${fileIndex}`} value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0" oninput={onFieldInput} onwheel={blurOnWheel} />
-              </div>
-            {/each}
-            <div style="flex: 1;"></div>
-          </div>
-          <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">k1,k2,k3: radial; p1,p2: tangential</div>
-        </div>
-
-        <div id={`fisheye-opencv-params-${fileIndex}`} style="display: {isFisheyeOpencv ? '' : 'none'};">
-          <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-            {#each ['k1', 'k2', 'k3', 'k4'] as p (p)}
-              <div style="flex: 1;">
-                <label for={`${p}-${fileIndex}`} style="display: block; font-size: 9px; margin-bottom: 1px; color: var(--vscode-descriptionForeground);">{p}:</label>
-                <input type="number" id={`${p}-${fileIndex}`} value="0" step="0.001" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="0" oninput={onFieldInput} onwheel={blurOnWheel} />
-              </div>
-            {/each}
-          </div>
-          <div style="font-size: 9px; color: var(--vscode-descriptionForeground);">Fisheye radial distortion coefficients</div>
-        </div>
-
-        <div id={`kannala-brandt-params-${fileIndex}`} style="display: {isKb3 || isFisheye624 ? '' : 'none'};">
+        <div id={`camera-coefficient-params-${fileIndex}`}>
           <label for={`camera-coefficients-${fileIndex}`} style="display: block; font-size: 9px; margin-bottom: 2px; color: var(--vscode-descriptionForeground);">
-            {isFisheye624 ? 'k0,k1,k2,k3,k4,k5,p0,p1,s0,s1,s2,s3' : 'k0,k1,k2,k3'}:
+            {coefficientLayout}:
           </label>
           <input
             type="text"
             id={`camera-coefficients-${fileIndex}`}
-            value={isFisheye624 ? '0,0,0,0,0,0,0,0,0,0,0,0' : '0,0,0,0'}
+            value={coefficientDefaults}
             style="width: 100%; padding: 2px; font-size: 11px;"
             oninput={onFieldInput}
           />
-          <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 2px;">Exact ordered coefficient layout; coefficient count is validated.</div>
+          <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 2px;">
+            {isPinholeOpencv
+              ? 'OpenCV layouts: radial/tangential (4/5), rational (8), thin prism (12), tilted sensor (14). Trailing zero groups use the fast basic path.'
+              : 'Exact ordered coefficient layout; coefficient count is validated.'}
+          </div>
         </div>
       </div>
     </div>

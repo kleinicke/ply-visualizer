@@ -325,6 +325,7 @@ export function addStonexCameraVisualization(host: StonexCameraHost, data: Spati
   const profile = new THREE.Group();
   profile.name = `stonex_cameras_${profileName}`;
   profile.userData.hasImagePlanes = true;
+  profile.userData.supportsDistortionToggle = true;
   profile.userData.hasScannerMarker = true;
   profile.userData.excludeFromFit = true;
   profile.userData.cameraCount = frames.length;
@@ -492,7 +493,7 @@ export function setStonexColorCorrection(
       resolved,
       data.colorsArray
     );
-    data.metadata.stonexColorCorrection = resolved;
+    (data.metadata ??= {}).stonexColorCorrection = resolved;
 
     // Only flag the attribute when it is the shared colorsArray; other colour
     // modes rebuild from it when the user switches back to "original".

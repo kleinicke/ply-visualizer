@@ -47,6 +47,7 @@ import * as renderStats from './renderStats';
 import * as pointCloudRenderer from './visualization/PointCloudRenderer';
 import * as meshBuilder from './visualization/MeshBuilder';
 import * as stonexCameras from './visualization/stonexCameras';
+import { addE57CameraVisualization } from './visualization/e57Cameras';
 import * as uiStatus from './ui/status';
 import * as intensity from './utils/intensity';
 import * as commentSettings from './depth/commentSettings';
@@ -2698,6 +2699,7 @@ class PointCloudVisualizer {
       );
     }
     const stonexCameraFiles: SpatialData[] = [];
+    const e57CameraFiles: SpatialData[] = [];
     for (const data of newFiles) {
       alignSourceOrigin(data, this.spatialFiles);
       // Assign new file index
@@ -3062,6 +3064,9 @@ class PointCloudVisualizer {
       if ((data.metadata?.stonexCameraFrames as unknown[])?.length) {
         stonexCameraFiles.push(data);
       }
+      if ((data.metadata?.e57Images as unknown[])?.length) {
+        e57CameraFiles.push(data);
+      }
     }
 
     for (const data of stonexCameraFiles) {
@@ -3071,6 +3076,13 @@ class PointCloudVisualizer {
         // Camera helpers are auxiliary. A malformed preview or calibration must
         // never prevent the point cloud from being fitted and rendered.
         console.error(`Could not add Stonex camera visualization for ${data.fileName}:`, error);
+      }
+    }
+    for (const data of e57CameraFiles) {
+      try {
+        addE57CameraVisualization(this, data);
+      } catch (error) {
+        console.error(`Could not add E57 camera visualization for ${data.fileName}:`, error);
       }
     }
 

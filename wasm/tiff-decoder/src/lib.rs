@@ -733,9 +733,21 @@ pub fn camera_project_points_indexed(
             transform[4] * x + transform[5] * y + transform[6] * z + transform[7],
             transform[8] * x + transform[9] * y + transform[10] * z + transform[11],
         ];
-        let normalized_valid = camera_ray[2] > 0.0
-            && (camera_ray[0] / camera_ray[2]).abs() <= max_normalized_x
-            && (camera_ray[1] / camera_ray[2]).abs() <= max_normalized_y;
+        let normalized_valid = if matches!(
+            model,
+            CameraModel::PinholeIdeal | CameraModel::PinholeOpenCv | CameraModel::E57Pinhole
+        ) {
+            let depth = if model == CameraModel::E57Pinhole {
+                -camera_ray[2]
+            } else {
+                camera_ray[2]
+            };
+            depth > 0.0
+                && (camera_ray[0] / depth).abs() <= max_normalized_x
+                && (camera_ray[1] / depth).abs() <= max_normalized_y
+        } else {
+            true
+        };
         let projected = if normalized_valid {
             match &opencv {
                 Some(distortion) => camera_models::project_opencv_pinhole(

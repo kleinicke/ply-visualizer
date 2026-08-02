@@ -54,6 +54,36 @@ export interface SpatialData {
   metadata?: Record<string, unknown>;
 }
 
+export interface E57EmbeddedImage {
+  format: 'E57 image';
+  imageIndex: number;
+  representation: 'pinhole' | 'spherical' | 'cylindrical' | 'visual-reference';
+  projectable: boolean;
+  cameraModel?: 'e57-pinhole' | 'e57-spherical' | 'e57-cylindrical';
+  mimeType: 'image/png' | 'image/jpeg';
+  width: number;
+  height: number;
+  fx?: number;
+  fy?: number;
+  cx?: number;
+  cy?: number;
+  guid?: string;
+  associatedPointcloudGuid?: string;
+  name?: string;
+  description?: string;
+  sensorVendor?: string;
+  sensorModel?: string;
+  sensorSerial?: string;
+  /** E57 local-image to file coordinates: tx,ty,tz,qw,qx,qy,qz. */
+  pose: [number, number, number, number, number, number, number];
+  sourceOrigin: [number, number, number];
+  hasMask: boolean;
+  /** Original encoded JPEG/PNG. Decode only while displaying/coloring this image. */
+  data: Uint8Array;
+  /** Original encoded PNG validity mask, when present. */
+  mask?: Uint8Array;
+}
+
 export interface CameraParams {
   cameraModel:
     | 'pinhole-ideal'

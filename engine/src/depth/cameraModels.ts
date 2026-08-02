@@ -23,6 +23,9 @@ export const CAMERA_MODEL_COEFFICIENTS: Readonly<Record<CameraModel, readonly st
   'fisheye-opencv': ['k1', 'k2', 'k3', 'k4'],
   'fisheye-kb3': ['k0', 'k1', 'k2', 'k3'],
   fisheye624: ['k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'p0', 'p1', 's0', 's1', 's2', 's3'],
+  'e57-pinhole': [],
+  'e57-spherical': [],
+  'e57-cylindrical': [],
 };
 
 export interface CameraModelParameters {

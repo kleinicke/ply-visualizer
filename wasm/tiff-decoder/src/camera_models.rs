@@ -6,6 +6,9 @@
 //! - `fisheye-opencv`: `[k1, k2, k3, k4]`
 //! - `fisheye-kb3`: `[k0, k1, k2, k3]`
 //! - `fisheye624`: `[k0..k5, p0, p1, s0..s3]`
+//! - `e57-spherical`: E57 azimuth/elevation panorama (no coefficients)
+//! - `e57-cylindrical`: E57 cylindrical panorama (no coefficients)
+//! - `e57-pinhole`: E57 pinhole axes (+X right, +Y down, -Z visible)
 
 use std::f64::consts::PI;
 
@@ -22,6 +25,9 @@ pub enum CameraModel {
     FisheyeOpenCv,
     FisheyeKb3,
     Fisheye624,
+    E57Pinhole,
+    E57Spherical,
+    E57Cylindrical,
 }
 
 impl CameraModel {
@@ -33,6 +39,9 @@ impl CameraModel {
             "fisheye-opencv" => Ok(Self::FisheyeOpenCv),
             "fisheye-kb3" => Ok(Self::FisheyeKb3),
             "fisheye624" => Ok(Self::Fisheye624),
+            "e57-pinhole" => Ok(Self::E57Pinhole),
+            "e57-spherical" => Ok(Self::E57Spherical),
+            "e57-cylindrical" => Ok(Self::E57Cylindrical),
             "fisheye-kannala-brandt" => Err(
                 "Legacy fisheye-kannala-brandt is ambiguous; select fisheye-kb3 and provide [k0,k1,k2,k3]"
                     .to_owned(),
@@ -43,7 +52,11 @@ impl CameraModel {
 
     pub fn coefficient_count(self) -> usize {
         match self {
-            Self::PinholeIdeal | Self::FisheyeEquidistant => 0,
+            Self::PinholeIdeal
+            | Self::FisheyeEquidistant
+            | Self::E57Pinhole
+            | Self::E57Spherical
+            | Self::E57Cylindrical => 0,
             Self::PinholeOpenCv => 14,
             Self::FisheyeOpenCv | Self::FisheyeKb3 => 4,
             Self::Fisheye624 => 12,
@@ -114,6 +127,9 @@ fn model_name(model: CameraModel) -> &'static str {
         CameraModel::FisheyeOpenCv => "fisheye-opencv",
         CameraModel::FisheyeKb3 => "fisheye-kb3",
         CameraModel::Fisheye624 => "fisheye624",
+        CameraModel::E57Pinhole => "e57-pinhole",
+        CameraModel::E57Spherical => "e57-spherical",
+        CameraModel::E57Cylindrical => "e57-cylindrical",
     }
 }
 
@@ -128,6 +144,54 @@ pub fn project(
         return invalid2();
     }
 
+    if model == CameraModel::E57Pinhole {
+        if z >= -EPS {
+            return invalid2();
+        }
+        let pixel = [
+            intrinsics.cx - intrinsics.fx * x / z,
+            intrinsics.cy - intrinsics.fy * y / z,
+        ];
+        return if pixel.iter().all(|value| value.is_finite()) {
+            SolveResult {
+                value: pixel,
+                converged: true,
+                iterations: 0,
+            }
+        } else {
+            invalid2()
+        };
+    }
+
+    if matches!(
+        model,
+        CameraModel::E57Spherical | CameraModel::E57Cylindrical
+    ) {
+        let rho = x.hypot(y);
+        if rho <= EPS {
+            return invalid2();
+        }
+        let azimuth = y.atan2(x);
+        let vertical = match model {
+            CameraModel::E57Spherical => z.atan2(rho),
+            CameraModel::E57Cylindrical => z / rho,
+            _ => unreachable!(),
+        };
+        let pixel = [
+            intrinsics.cx - intrinsics.fx * azimuth,
+            intrinsics.cy - intrinsics.fy * vertical,
+        ];
+        return if pixel.iter().all(|value| value.is_finite()) {
+            SolveResult {
+                value: pixel,
+                converged: true,
+                iterations: 0,
+            }
+        } else {
+            invalid2()
+        };
+    }
+
     let normalized = match model {
         CameraModel::PinholeIdeal | CameraModel::PinholeOpenCv => {
             if z <= EPS {
@@ -135,7 +199,10 @@ pub fn project(
             }
             [x / z, y / z]
         }
-        _ => {
+        CameraModel::FisheyeEquidistant
+        | CameraModel::FisheyeOpenCv
+        | CameraModel::FisheyeKb3
+        | CameraModel::Fisheye624 => {
             let rho = x.hypot(y);
             let theta = rho.atan2(z);
             if theta < 0.0 || theta >= MAX_THETA {
@@ -154,6 +221,9 @@ pub fn project(
                 _ => unreachable!(),
             };
             [radius * cos_phi, radius * sin_phi]
+        }
+        CameraModel::E57Pinhole | CameraModel::E57Spherical | CameraModel::E57Cylindrical => {
+            unreachable!()
         }
     };
 
@@ -192,6 +262,43 @@ pub fn unproject(
     if pixel.iter().any(|v| !v.is_finite()) {
         return invalid3();
     }
+    if model == CameraModel::E57Pinhole {
+        let x = (pixel[0] - intrinsics.cx) / intrinsics.fx;
+        let y = (pixel[1] - intrinsics.cy) / intrinsics.fy;
+        let inverse_norm = 1.0 / (x * x + y * y + 1.0).sqrt();
+        return SolveResult {
+            value: [x * inverse_norm, y * inverse_norm, -inverse_norm],
+            converged: true,
+            iterations: 0,
+        };
+    }
+
+    if matches!(
+        model,
+        CameraModel::E57Spherical | CameraModel::E57Cylindrical
+    ) {
+        let azimuth = (intrinsics.cx - pixel[0]) / intrinsics.fx;
+        let vertical = (intrinsics.cy - pixel[1]) / intrinsics.fy;
+        let (horizontal, z) = match model {
+            CameraModel::E57Spherical => (vertical.cos(), vertical.sin()),
+            CameraModel::E57Cylindrical => {
+                let inverse_norm = 1.0 / (1.0 + vertical * vertical).sqrt();
+                (inverse_norm, vertical * inverse_norm)
+            }
+            _ => unreachable!(),
+        };
+        let value = [horizontal * azimuth.cos(), horizontal * azimuth.sin(), z];
+        return if value.iter().all(|component| component.is_finite()) {
+            SolveResult {
+                value,
+                converged: true,
+                iterations: 0,
+            }
+        } else {
+            invalid3()
+        };
+    }
+
     let observed = [
         (pixel[0] - intrinsics.cx) / intrinsics.fx,
         (pixel[1] - intrinsics.cy) / intrinsics.fy,
@@ -228,7 +335,10 @@ pub fn unproject(
                 iterations: undistorted.iterations,
             }
         }
-        _ => {
+        CameraModel::FisheyeEquidistant
+        | CameraModel::FisheyeOpenCv
+        | CameraModel::FisheyeKb3
+        | CameraModel::Fisheye624 => {
             let [x, y] = undistorted.value;
             let observed_radius = x.hypot(y);
             let radial_result = match model {
@@ -260,6 +370,9 @@ pub fn unproject(
                 converged: true,
                 iterations: undistorted.iterations + radial_result.iterations,
             }
+        }
+        CameraModel::E57Pinhole | CameraModel::E57Spherical | CameraModel::E57Cylindrical => {
+            unreachable!()
         }
     }
 }
@@ -809,6 +922,59 @@ mod tests {
             [0.75, -0.45, 0.7],
             1e-8,
         );
+        round_trip(CameraModel::E57Spherical, &[], [-0.7, 0.5, 0.3], 1e-10);
+        round_trip(CameraModel::E57Cylindrical, &[], [-0.7, 0.5, 0.3], 1e-10);
+        round_trip(CameraModel::E57Pinhole, &[], [0.4, -0.2, -1.0], 1e-10);
+    }
+
+    #[test]
+    fn e57_projection_modes_match_standard_equations() {
+        let calibration = Intrinsics {
+            fx: 100.0,
+            fy: 80.0,
+            cx: 400.0,
+            cy: 200.0,
+        };
+        let ray = [3.0, 4.0, 2.0];
+        let azimuth = 4.0_f64.atan2(3.0);
+        let rho = 5.0;
+
+        let spherical = project(CameraModel::E57Spherical, calibration, &[], ray);
+        assert!((spherical.value[0] - (400.0 - 100.0 * azimuth)).abs() < 1e-12);
+        assert!((spherical.value[1] - (200.0 - 80.0 * 2.0_f64.atan2(rho))).abs() < 1e-12);
+
+        let cylindrical = project(CameraModel::E57Cylindrical, calibration, &[], ray);
+        assert!((cylindrical.value[0] - (400.0 - 100.0 * azimuth)).abs() < 1e-12);
+        assert!((cylindrical.value[1] - (200.0 - 80.0 * 2.0 / rho)).abs() < 1e-12);
+
+        let pinhole_ray = [0.3, -0.2, -2.0];
+        let pinhole = project(CameraModel::E57Pinhole, calibration, &[], pinhole_ray);
+        assert!((pinhole.value[0] - 415.0).abs() < 1e-12);
+        assert!((pinhole.value[1] - 192.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn e57_models_cycle_across_image_domain() {
+        let calibration = Intrinsics {
+            fx: 160.0,
+            // Full-height spherical imagery spans elevation [-pi/2, pi/2].
+            fy: 160.0,
+            cx: 512.0,
+            cy: 256.0,
+        };
+        for model in [CameraModel::E57Spherical, CameraModel::E57Cylindrical] {
+            for u in (16..1008).step_by(31) {
+                for v in (16..496).step_by(29) {
+                    let pixel = [u as f64, v as f64];
+                    let ray = unproject(model, calibration, &[], pixel);
+                    assert!(ray.converged, "{model:?} {pixel:?}");
+                    let recovered = project(model, calibration, &[], ray.value);
+                    assert!(recovered.converged, "{model:?} {pixel:?}");
+                    assert!((recovered.value[0] - pixel[0]).abs() < 1e-9);
+                    assert!((recovered.value[1] - pixel[1]).abs() < 1e-9);
+                }
+            }
+        }
     }
 
     #[test]

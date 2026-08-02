@@ -1,12 +1,18 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const __wbg_e57imageresult_free: (a: number, b: number) => void;
 export const __wbg_lidarcollectionresult_free: (a: number, b: number) => void;
 export const __wbg_lidarscanresult_free: (a: number, b: number) => void;
 export const __wbg_pointcloudresult_free: (a: number, b: number) => void;
 export const __wbg_streamparser_free: (a: number, b: number) => void;
+export const e57imageresult_metadata_json: (a: number) => [number, number];
+export const e57imageresult_take_data: (a: number) => [number, number];
+export const e57imageresult_take_mask: (a: number) => [number, number];
 export const lidarcollectionresult_errors_json: (a: number) => [number, number];
+export const lidarcollectionresult_image_count: (a: number) => number;
 export const lidarcollectionresult_scan_count: (a: number) => number;
+export const lidarcollectionresult_take_image: (a: number, b: number) => [number, number, number];
 export const lidarcollectionresult_take_scan: (a: number, b: number) => [number, number, number];
 export const lidarscanresult_bbox: (a: number) => [number, number];
 export const lidarscanresult_has_colors: (a: number) => number;
@@ -39,7 +45,6 @@ export const pointcloudresult_bbox: (a: number) => [number, number];
 export const pointcloudresult_has_colors: (a: number) => number;
 export const pointcloudresult_has_intensity: (a: number) => number;
 export const pointcloudresult_has_normals: (a: number) => number;
-export const pointcloudresult_take_colors: (a: number) => [number, number];
 export const pointcloudresult_take_intensity: (a: number) => [number, number];
 export const pointcloudresult_take_normals: (a: number) => [number, number];
 export const pointcloudresult_take_positions: (a: number) => [number, number];
@@ -48,6 +53,7 @@ export const streamparser_failed: (a: number) => number;
 export const streamparser_finish: (a: number) => number;
 export const streamparser_new: (a: number, b: number, c: number, d: number) => number;
 export const streamparser_push: (a: number, b: number, c: number) => void;
+export const pointcloudresult_take_colors: (a: number) => [number, number];
 export const alloc: (a: number) => number;
 export const dealloc: (a: number, b: number) => void;
 export const __wbindgen_externrefs: WebAssembly.Table;

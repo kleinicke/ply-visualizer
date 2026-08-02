@@ -706,7 +706,7 @@
               />
               Show images
             </label>
-            {#if imagesVisible}
+            {#if imagesVisible && cameraGroup.userData.supportsDistortionToggle !== false}
               <label
                 style="font-size:10px;display:flex;align-items:center;gap:6px;padding-left:14px;"
                 title={imageDistortionAvailable

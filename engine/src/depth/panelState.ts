@@ -209,7 +209,9 @@ export function restoreDepthFormValues(
   const rectifiedInput = document.getElementById(
     `image-rectified-${fileIndex}`
   ) as HTMLInputElement | null;
-  if (rectifiedInput) {rectifiedInput.checked = formValues.imageRectified === 'true';}
+  if (rectifiedInput) {
+    rectifiedInput.checked = formValues.imageRectified === 'true';
+  }
 
   const liveUpdate = formValues.liveUpdate === 'true';
   host.setLiveDepthUpdateEnabled(fileIndex, liveUpdate);
@@ -220,34 +222,18 @@ export function restoreDepthFormValues(
     liveUpdateCheckbox.checked = liveUpdate;
   }
 
-  // Show/hide distortion parameters based on camera model
+  // Show/hide distortion parameters based on camera model. Coefficients now
+  // share one exact ordered input instead of model-specific duplicate IDs.
   const distortionGroup = document.getElementById(`distortion-params-${fileIndex}`);
-  const pinholeParams = document.getElementById(`pinhole-params-${fileIndex}`);
-  const fisheyeOpencvParams = document.getElementById(`fisheye-opencv-params-${fileIndex}`);
-  const kannalaBrandtParams = document.getElementById(`kannala-brandt-params-${fileIndex}`);
-
-  if (distortionGroup && pinholeParams && fisheyeOpencvParams && kannalaBrandtParams) {
-    // Hide all parameter sections first
-    pinholeParams.style.display = 'none';
-    fisheyeOpencvParams.style.display = 'none';
-    kannalaBrandtParams.style.display = 'none';
-
-    // Show appropriate parameter section based on model
-    if (formValues.cameraModel === 'pinhole-opencv') {
-      distortionGroup.style.display = '';
-      pinholeParams.style.display = '';
-    } else if (formValues.cameraModel === 'fisheye-opencv') {
-      distortionGroup.style.display = '';
-      fisheyeOpencvParams.style.display = '';
-    } else if (
-      formValues.cameraModel === 'fisheye-kb3' ||
-      formValues.cameraModel === 'fisheye624'
-    ) {
-      distortionGroup.style.display = '';
-      kannalaBrandtParams.style.display = '';
-    } else {
-      distortionGroup.style.display = 'none';
-    }
+  if (distortionGroup) {
+    distortionGroup.style.display = [
+      'pinhole-opencv',
+      'fisheye-opencv',
+      'fisheye-kb3',
+      'fisheye624',
+    ].includes(formValues.cameraModel ?? '')
+      ? ''
+      : 'none';
   }
 
   // Also ensure dimensions are displayed correctly

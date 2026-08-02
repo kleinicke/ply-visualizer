@@ -65,6 +65,58 @@ struct E57Metadata {
     invalid_cartesian_records: u64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct E57ImageMetadata {
+    format: &'static str,
+    image_index: usize,
+    representation: &'static str,
+    projectable: bool,
+    camera_model: Option<&'static str>,
+    mime_type: &'static str,
+    width: u32,
+    height: u32,
+    fx: Option<f64>,
+    fy: Option<f64>,
+    cx: Option<f64>,
+    cy: Option<f64>,
+    guid: Option<String>,
+    associated_pointcloud_guid: Option<String>,
+    name: Option<String>,
+    description: Option<String>,
+    sensor_vendor: Option<String>,
+    sensor_model: Option<String>,
+    sensor_serial: Option<String>,
+    pose: [f64; 7],
+    source_origin: [f64; 3],
+    has_mask: bool,
+}
+
+/// An embedded E57 JPEG/PNG representation and its optional PNG validity mask.
+/// Encoded bytes are kept encoded across the WASM boundary so callers can
+/// decode one image at a time instead of retaining every full-resolution RGB
+/// buffer.
+#[wasm_bindgen]
+pub struct E57ImageResult {
+    metadata_json: String,
+    data: Vec<u8>,
+    mask: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl E57ImageResult {
+    #[wasm_bindgen(getter)]
+    pub fn metadata_json(&self) -> String {
+        self.metadata_json.clone()
+    }
+    pub fn take_data(&mut self) -> Vec<u8> {
+        mem::take(&mut self.data)
+    }
+    pub fn take_mask(&mut self) -> Vec<u8> {
+        mem::take(&mut self.mask)
+    }
+}
+
 /// A single decoded LAS/LAZ cloud or E57 scan. Buffers are moved to JS with
 /// `take_*`, avoiding an additional Rust-side clone at the WASM boundary.
 #[wasm_bindgen]
@@ -166,6 +218,7 @@ impl LidarScanResult {
 #[wasm_bindgen]
 pub struct LidarCollectionResult {
     scans: Vec<Option<LidarScanResult>>,
+    images: Vec<Option<E57ImageResult>>,
     errors: Vec<String>,
 }
 
@@ -182,12 +235,23 @@ impl LidarCollectionResult {
             .ok_or_else(|| JsValue::from_str("scan index is invalid or was already taken"))
     }
     #[wasm_bindgen(getter)]
+    pub fn image_count(&self) -> u32 {
+        self.images.len() as u32
+    }
+    pub fn take_image(&mut self, index: usize) -> Result<E57ImageResult, JsValue> {
+        self.images
+            .get_mut(index)
+            .and_then(Option::take)
+            .ok_or_else(|| JsValue::from_str("image index is invalid or was already taken"))
+    }
+    #[wasm_bindgen(getter)]
     pub fn errors_json(&self) -> String {
         serde_json::to_string(&self.errors).unwrap_or_else(|_| "[]".into())
     }
 }
 
 const MAX_DECODED_BUFFER_BYTES: u64 = 1024 * 1024 * 1024;
+const MAX_EMBEDDED_IMAGE_BYTES: u64 = 512 * 1024 * 1024;
 
 fn validate_decoded_size(point_count: u64, bytes_per_point: u64) -> Result<usize, String> {
     let estimated = point_count
@@ -450,6 +514,7 @@ pub fn parse_las(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
     };
     Ok(LidarCollectionResult {
         scans: vec![Some(result)],
+        images: Vec::new(),
         errors: Vec::new(),
     })
 }
@@ -618,7 +683,174 @@ pub fn parse_e57(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
             errors.join("; ")
         )));
     }
-    Ok(LidarCollectionResult { scans, errors })
+    let image_descriptors = reader.images();
+    let mut images = Vec::new();
+    let source_origin = common_origin.unwrap_or([0.0; 3]);
+    for (image_index, descriptor) in image_descriptors.iter().enumerate() {
+        let pose = descriptor
+            .transform
+            .as_ref()
+            .map(|transform| {
+                [
+                    transform.translation.x,
+                    transform.translation.y,
+                    transform.translation.z,
+                    transform.rotation.w,
+                    transform.rotation.x,
+                    transform.rotation.y,
+                    transform.rotation.z,
+                ]
+            })
+            .unwrap_or([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]);
+
+        let mut append_representation = |
+            representation: &'static str,
+            projectable: bool,
+            camera_model: Option<&'static str>,
+            blob: &e57::ImageBlob,
+            mask_blob: Option<&e57::Blob>,
+            width: u32,
+            height: u32,
+            fx: Option<f64>,
+            fy: Option<f64>,
+            cx: Option<f64>,
+            cy: Option<f64>,
+        | {
+            if blob.data.length > MAX_EMBEDDED_IMAGE_BYTES {
+                errors.push(format!(
+                    "image {} {representation}: {:.1} MiB blob exceeds the 512 MiB safety limit",
+                    image_index + 1,
+                    blob.data.length as f64 / 1024.0 / 1024.0
+                ));
+                return;
+            }
+            let mut data = Vec::with_capacity(blob.data.length.min(usize::MAX as u64) as usize);
+            if let Err(error) = reader.blob(&blob.data, &mut data) {
+                errors.push(format!("image {} {representation}: {error}", image_index + 1));
+                return;
+            }
+            let mut mask = Vec::new();
+            if let Some(mask_blob) = mask_blob {
+                if mask_blob.length > MAX_EMBEDDED_IMAGE_BYTES {
+                    errors.push(format!(
+                        "image {} {representation} mask exceeds the 512 MiB safety limit",
+                        image_index + 1
+                    ));
+                    return;
+                }
+                mask.reserve(mask_blob.length.min(usize::MAX as u64) as usize);
+                if let Err(error) = reader.blob(mask_blob, &mut mask) {
+                    errors.push(format!("image {} {representation} mask: {error}", image_index + 1));
+                    mask.clear();
+                }
+            }
+            let metadata = E57ImageMetadata {
+                format: "E57 image",
+                image_index,
+                representation,
+                projectable,
+                camera_model,
+                mime_type: match blob.format {
+                    e57::ImageFormat::Png => "image/png",
+                    e57::ImageFormat::Jpeg => "image/jpeg",
+                },
+                width,
+                height,
+                fx,
+                fy,
+                cx,
+                cy,
+                guid: descriptor.guid.clone(),
+                associated_pointcloud_guid: descriptor.pointcloud_guid.clone(),
+                name: descriptor.name.clone(),
+                description: descriptor.description.clone(),
+                sensor_vendor: descriptor.sensor_vendor.clone(),
+                sensor_model: descriptor.sensor_model.clone(),
+                sensor_serial: descriptor.sensor_serial.clone(),
+                pose,
+                source_origin,
+                has_mask: !mask.is_empty(),
+            };
+            images.push(Some(E57ImageResult {
+                metadata_json: serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".into()),
+                data,
+                mask,
+            }));
+        };
+
+        if let Some(projection) = &descriptor.projection {
+            match projection {
+                e57::Projection::Pinhole(image) => {
+                    let p = &image.properties;
+                    append_representation(
+                        "pinhole",
+                        true,
+                        Some("e57-pinhole"),
+                        &image.blob,
+                        image.mask.as_ref(),
+                        p.width,
+                        p.height,
+                        Some(p.focal_length / p.pixel_width),
+                        Some(p.focal_length / p.pixel_height),
+                        Some(p.principal_x),
+                        Some(p.principal_y),
+                    );
+                }
+                e57::Projection::Spherical(image) => {
+                    let p = &image.properties;
+                    append_representation(
+                        "spherical",
+                        true,
+                        Some("e57-spherical"),
+                        &image.blob,
+                        image.mask.as_ref(),
+                        p.width,
+                        p.height,
+                        Some(1.0 / p.pixel_width),
+                        Some(1.0 / p.pixel_height),
+                        Some(p.width as f64 / 2.0),
+                        Some(p.height as f64 / 2.0),
+                    );
+                }
+                e57::Projection::Cylindrical(image) => {
+                    let p = &image.properties;
+                    append_representation(
+                        "cylindrical",
+                        true,
+                        Some("e57-cylindrical"),
+                        &image.blob,
+                        image.mask.as_ref(),
+                        p.width,
+                        p.height,
+                        Some(1.0 / p.pixel_width),
+                        Some(p.radius / p.pixel_height),
+                        Some(p.width as f64 / 2.0),
+                        Some(p.principal_y),
+                    );
+                }
+            }
+        }
+        if let Some(image) = &descriptor.visual_reference {
+            append_representation(
+                "visual-reference",
+                false,
+                None,
+                &image.blob,
+                image.mask.as_ref(),
+                image.properties.width,
+                image.properties.height,
+                None,
+                None,
+                None,
+                None,
+            );
+        }
+    }
+    Ok(LidarCollectionResult {
+        scans,
+        images,
+        errors,
+    })
 }
 
 #[cfg(test)]
@@ -706,7 +938,10 @@ mod tests {
     }
 
     fn e57_fixture() -> Vec<u8> {
-        use e57::{E57Writer, Record, RecordValue, Transform, Translation};
+        use e57::{
+            E57Writer, ImageFormat, Record, RecordValue, SphericalImageProperties, Transform,
+            Translation,
+        };
         let mut bytes = Vec::new();
         {
             let cursor = Cursor::new(&mut bytes);
@@ -760,6 +995,27 @@ mod tests {
                 .unwrap();
                 scan.finalize().unwrap();
             }
+            {
+                let mut image = writer.add_image("image-one-guid").unwrap();
+                image.set_name("Spherical image");
+                image.set_pointcloud_guid("scan-one-guid");
+                let mut encoded = Cursor::new(b"fixture-encoded-png".to_vec());
+                let mut mask = Cursor::new(b"fixture-mask-png".to_vec());
+                image
+                    .add_spherical(
+                        ImageFormat::Png,
+                        &mut encoded,
+                        SphericalImageProperties {
+                            width: 400,
+                            height: 200,
+                            pixel_width: std::f64::consts::TAU / 400.0,
+                            pixel_height: std::f64::consts::PI / 200.0,
+                        },
+                        Some(&mut mask),
+                    )
+                    .unwrap();
+                image.finalize().unwrap();
+            }
             writer.finalize().unwrap();
         }
         bytes
@@ -777,6 +1033,14 @@ mod tests {
         assert_eq!(&[10.0, 0.0, 0.0], second.positions.as_slice());
         assert_eq!(&[255, 64, 0], first.colors.as_slice());
         assert_eq!(1, first.intensity.len());
+        assert_eq!(1, collection.images.len());
+        let image = collection.images[0].as_ref().unwrap();
+        assert_eq!(b"fixture-encoded-png", image.data.as_slice());
+        assert_eq!(b"fixture-mask-png", image.mask.as_slice());
+        let metadata: serde_json::Value = serde_json::from_str(&image.metadata_json).unwrap();
+        assert_eq!("e57-spherical", metadata["cameraModel"]);
+        assert_eq!("scan-one-guid", metadata["associatedPointcloudGuid"]);
+        assert_eq!(400.0 / std::f64::consts::TAU, metadata["fx"]);
     }
 
     #[test]

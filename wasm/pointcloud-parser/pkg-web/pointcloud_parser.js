@@ -1,5 +1,64 @@
 /* @ts-self-types="./pointcloud_parser.d.ts" */
 
+/**
+ * An embedded E57 JPEG/PNG representation and its optional PNG validity mask.
+ * Encoded bytes are kept encoded across the WASM boundary so callers can
+ * decode one image at a time instead of retaining every full-resolution RGB
+ * buffer.
+ */
+export class E57ImageResult {
+  static __wrap(ptr) {
+    const obj = Object.create(E57ImageResult.prototype);
+    obj.__wbg_ptr = ptr;
+    E57ImageResultFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    E57ImageResultFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_e57imageresult_free(ptr, 0);
+  }
+  /**
+   * @returns {string}
+   */
+  get metadata_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.e57imageresult_metadata_json(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
+   * @returns {Uint8Array}
+   */
+  take_data() {
+    const ret = wasm.e57imageresult_take_data(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {Uint8Array}
+   */
+  take_mask() {
+    const ret = wasm.e57imageresult_take_mask(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+}
+if (Symbol.dispose) E57ImageResult.prototype[Symbol.dispose] = E57ImageResult.prototype.free;
+
 export class LidarCollectionResult {
   static __wrap(ptr) {
     const obj = Object.create(LidarCollectionResult.prototype);
@@ -35,9 +94,27 @@ export class LidarCollectionResult {
   /**
    * @returns {number}
    */
+  get image_count() {
+    const ret = wasm.lidarcollectionresult_image_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
   get scan_count() {
     const ret = wasm.lidarcollectionresult_scan_count(this.__wbg_ptr);
     return ret >>> 0;
+  }
+  /**
+   * @param {number} index
+   * @returns {E57ImageResult}
+   */
+  take_image(index) {
+    const ret = wasm.lidarcollectionresult_take_image(this.__wbg_ptr, index);
+    if (ret[2]) {
+      throw takeFromExternrefTable0(ret[1]);
+    }
+    return E57ImageResult.__wrap(ret[0]);
   }
   /**
    * @param {number} index
@@ -599,6 +676,10 @@ function __wbg_get_imports() {
   };
 }
 
+const E57ImageResultFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_e57imageresult_free(ptr, 1));
 const LidarCollectionResultFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }

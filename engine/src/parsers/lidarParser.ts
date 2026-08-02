@@ -2,7 +2,7 @@ import initWasm, {
   parse_e57,
   parse_las,
 } from '../../../wasm/pointcloud-parser/pkg-web/pointcloud_parser';
-import { SpatialData } from '../interfaces';
+import { E57EmbeddedImage, SpatialData } from '../interfaces';
 
 let initPromise: Promise<unknown> | null = null;
 let worker: Worker | null = null;
@@ -13,14 +13,20 @@ const pending = new Map<
 >();
 
 function ensureWorker(): Worker | null {
-  if (typeof Worker === 'undefined') {return null;}
-  if (worker) {return worker;}
+  if (typeof Worker === 'undefined') {
+    return null;
+  }
+  if (worker) {
+    return worker;
+  }
   // @ts-ignore -- the extension-host tsconfig type-checks shared parser files
   // as CommonJS, while this expression is emitted only by the web bundle.
   worker = new Worker(new URL('./lidarWorker.ts', import.meta.url), { type: 'module' });
   worker.onmessage = event => {
     const request = pending.get(event.data.id);
-    if (!request) {return;}
+    if (!request) {
+      return;
+    }
     pending.delete(event.data.id);
     if (event.data.error) {
       request.reject(new Error(event.data.error));
@@ -36,7 +42,9 @@ function ensureWorker(): Worker | null {
   };
   worker.onerror = event => {
     const error = new Error(event.message || 'LiDAR decoder worker failed');
-    for (const request of pending.values()) {request.reject(error);}
+    for (const request of pending.values()) {
+      request.reject(error);
+    }
     pending.clear();
     worker?.terminate();
     worker = null;
@@ -105,6 +113,52 @@ function marshalScan(scan: any, fallbackName: string): SpatialData {
   return result;
 }
 
+function takeE57Images(collection: any): E57EmbeddedImage[] {
+  const images: E57EmbeddedImage[] = [];
+  for (let index = 0; index < Number(collection.image_count || 0); index++) {
+    const image = collection.take_image(index);
+    try {
+      const metadata = JSON.parse(image.metadata_json || '{}') as Omit<
+        E57EmbeddedImage,
+        'data' | 'mask'
+      >;
+      const data = new Uint8Array(image.take_data());
+      const maskBytes = new Uint8Array(image.take_mask());
+      images.push({ ...metadata, data, mask: maskBytes.length ? maskBytes : undefined });
+    } finally {
+      image.free();
+    }
+  }
+  return images;
+}
+
+function associateE57Images(scans: SpatialData[], images: E57EmbeddedImage[]): void {
+  if (!images.length || !scans.length) {
+    return;
+  }
+  for (const scan of scans) {
+    const guid = scan.metadata?.guid;
+    const associated = images.filter(image => image.associatedPointcloudGuid === guid);
+    if (associated.length) {
+      scan.metadata = { ...scan.metadata, e57Images: associated };
+    }
+  }
+  const unassociated = images.filter(
+    image =>
+      !image.associatedPointcloudGuid ||
+      !scans.some(scan => scan.metadata?.guid === image.associatedPointcloudGuid)
+  );
+  if (unassociated.length) {
+    scans[0].metadata = {
+      ...scans[0].metadata,
+      e57Images: [
+        ...((scans[0].metadata?.e57Images as E57EmbeddedImage[] | undefined) ?? []),
+        ...unassociated,
+      ],
+    };
+  }
+}
+
 export async function parseLidarFile(
   data: Uint8Array,
   extension: 'las' | 'laz' | 'e57',
@@ -138,6 +192,7 @@ export async function parseLidarFile(
     for (let i = 0; i < collection.scan_count; i++) {
       scans.push(marshalScan(collection.take_scan(i), fileName));
     }
+    associateE57Images(scans, takeE57Images(collection));
     return scans;
   } finally {
     collection.free();

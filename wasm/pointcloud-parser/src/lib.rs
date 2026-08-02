@@ -16,7 +16,7 @@ use std::mem;
 use wasm_bindgen::prelude::*;
 
 mod lidar;
-pub use lidar::{parse_e57, parse_las, LidarCollectionResult, LidarScanResult};
+pub use lidar::{parse_e57, parse_las, E57ImageResult, LidarCollectionResult, LidarScanResult};
 
 /// Parsed point cloud, returned to JS. Large buffers are moved out with the
 /// `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.

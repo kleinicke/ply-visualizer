@@ -38,6 +38,12 @@ export interface WasmLidarCloud extends WasmPointCloud {
   sourceOrigin: Float64Array;
 }
 
+interface WasmE57Image extends Record<string, unknown> {
+  associatedPointcloudGuid?: string;
+  data: Uint8Array;
+  mask?: Uint8Array;
+}
+
 let mod: any = null;
 let attempted = false;
 
@@ -126,6 +132,48 @@ function marshalLidarScan(r: any): WasmLidarCloud {
   return out;
 }
 
+function takeE57Images(collection: any): WasmE57Image[] {
+  const images: WasmE57Image[] = [];
+  for (let index = 0; index < Number(collection.image_count || 0); index++) {
+    const image = collection.take_image(index);
+    try {
+      const metadata = JSON.parse(image.metadata_json || '{}') as Record<string, unknown>;
+      const data = new Uint8Array(image.take_data());
+      const maskBytes = new Uint8Array(image.take_mask());
+      images.push({ ...metadata, data, mask: maskBytes.length ? maskBytes : undefined });
+    } finally {
+      if (typeof image.free === 'function') {
+        image.free();
+      }
+    }
+  }
+  return images;
+}
+
+function associateE57Images(scans: WasmLidarCloud[], images: WasmE57Image[]): void {
+  if (!images.length || !scans.length) {
+    return;
+  }
+  for (const scan of scans) {
+    const guid = scan.metadata.guid;
+    const associated = images.filter(image => image.associatedPointcloudGuid === guid);
+    if (associated.length) {
+      scan.metadata.e57Images = associated;
+    }
+  }
+  const unassociated = images.filter(
+    image =>
+      !image.associatedPointcloudGuid ||
+      !scans.some(scan => scan.metadata.guid === image.associatedPointcloudGuid)
+  );
+  if (unassociated.length) {
+    scans[0].metadata.e57Images = [
+      ...((scans[0].metadata.e57Images as WasmE57Image[] | undefined) ?? []),
+      ...unassociated,
+    ];
+  }
+}
+
 /** Decode LAS, LAZ, or E57 with the shared Rust implementation. */
 export function parseLidarWasm(
   bytes: Uint8Array,
@@ -147,6 +195,7 @@ export function parseLidarWasm(
     for (let i = 0; i < collection.scan_count; i++) {
       scans.push(marshalLidarScan(collection.take_scan(i)));
     }
+    associateE57Images(scans, takeE57Images(collection));
     return scans;
   } finally {
     if (collection && typeof collection.free === 'function') {

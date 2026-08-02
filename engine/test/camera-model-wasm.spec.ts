@@ -16,6 +16,9 @@ for (const [name, model] of [
   ['opencvPinholeExtended', 'pinhole-opencv'],
   ['opencvFisheye', 'fisheye-opencv'],
   ['fisheye624', 'fisheye624'],
+  ['e57Pinhole', 'e57-pinhole'],
+  ['e57Spherical', 'e57-spherical'],
+  ['e57Cylindrical', 'e57-cylindrical'],
 ] as const) {
   test(`${name} (${model}) matches its golden and round-trips through the WASM boundary`, async ({
     page,
@@ -131,6 +134,53 @@ test('indexed camera batch uses the extended OpenCV model and FOV guard', async 
   expect(result[1]).toBeCloseTo(goldens.opencvPinholeExtended.pixel[1], 4);
   expect(result[2]).toBeNaN();
   expect(result[3]).toBeNaN();
+});
+
+test('indexed camera batch supports E57 all-around and negative-Z conventions', async ({
+  page,
+}) => {
+  const result = await page.evaluate(
+    ({ intrinsics }) => {
+      const api = (0, eval)('wasm_bindgen');
+      const identity = new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+      const spherical = Array.from(
+        api.camera_project_points_indexed(
+          'e57-spherical',
+          intrinsics.fx,
+          intrinsics.fy,
+          intrinsics.cx,
+          intrinsics.cy,
+          new Float64Array(),
+          new Float32Array([3, 4, 2]),
+          new Uint32Array([0]),
+          identity,
+          Number.POSITIVE_INFINITY,
+          Number.POSITIVE_INFINITY
+        ) as Float32Array
+      );
+      const pinhole = Array.from(
+        api.camera_project_points_indexed(
+          'e57-pinhole',
+          intrinsics.fx,
+          intrinsics.fy,
+          intrinsics.cx,
+          intrinsics.cy,
+          new Float64Array(),
+          new Float32Array([0.3, -0.2, -2]),
+          new Uint32Array([0]),
+          identity,
+          Number.POSITIVE_INFINITY,
+          Number.POSITIVE_INFINITY
+        ) as Float32Array
+      );
+      return { spherical, pinhole };
+    },
+    { intrinsics }
+  );
+  expect(result.spherical[0]).toBeCloseTo(goldens.e57Spherical.pixel[0], 4);
+  expect(result.spherical[1]).toBeCloseTo(goldens.e57Spherical.pixel[1], 4);
+  expect(result.pinhole[0]).toBeCloseTo(goldens.e57Pinhole.pixel[0], 4);
+  expect(result.pinhole[1]).toBeCloseTo(goldens.e57Pinhole.pixel[1], 4);
 });
 
 test('batched depth projection uses the same inverse and reports rejected pixels', async ({

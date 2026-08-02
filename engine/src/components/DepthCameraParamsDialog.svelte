@@ -35,7 +35,7 @@
       | 'fisheye-kb3'
       | 'fisheye624';
     const coefficientCounts: Record<string, number> = {
-      'pinhole-opencv': 5,
+      'pinhole-opencv': 14,
       'fisheye-opencv': 4,
       'fisheye-kb3': 4,
       fisheye624: 12,
@@ -192,8 +192,8 @@
         <option value="fisheye624">Project Aria Fisheye624</option>
       </select>
       <label for="camera-coefficients" style="display: block; margin: 8px 0 5px;">Ordered distortion coefficients:</label>
-      <input id="camera-coefficients" value="0,0,0,0,0,0,0,0,0,0,0,0" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;" />
-      <div style="font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 3px;">OpenCV pinhole: k1,k2,p1,p2,k3 · OpenCV fisheye: k1..k4 · KB3: k0..k3 · Fisheye624: k0..k5,p0,p1,s0..s3</div>
+      <input id="camera-coefficients" value="0,0,0,0,0,0,0,0,0,0,0,0,0,0" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;" />
+      <div style="font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 3px;">OpenCV pinhole: k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY · OpenCV fisheye: k1..k4 · KB3: k0..k3 · Fisheye624: k0..k5,p0,p1,s0..s3</div>
     </div>
 
     <div style="display: flex; justify-content: flex-end; gap: 10px;">
