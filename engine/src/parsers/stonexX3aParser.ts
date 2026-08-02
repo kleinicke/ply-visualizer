@@ -58,6 +58,8 @@ interface CameraCalibration {
   type: 'U' | 'D';
   width: number;
   height: number;
+  fovX: number;
+  fovY: number;
   fx: number;
   fy: number;
   cx: number;
@@ -80,7 +82,14 @@ interface CameraFrame {
   pixelsOffset: number;
   redGain: number;
   blueGain: number;
+  rgbImage?: CameraRgbImage;
   calibration: CameraCalibration;
+}
+
+interface CameraRgbImage {
+  width: number;
+  height: number;
+  data: Uint8Array;
 }
 
 export interface StonexCameraFrameMetadata {
@@ -114,6 +123,11 @@ const VERTICAL_MIN_DEGREES = -25;
 const VERTICAL_SPAN_DEGREES = 90;
 const VERTICAL_MAX_DEGREES = VERTICAL_MIN_DEGREES + VERTICAL_SPAN_DEGREES;
 const X3I_HEADER_BYTES = 64;
+const CAMERA_RGB_SCALE = 0.5;
+// Diagnostic switches retained for future calibration investigations. Normal
+// loading uses both camera families and their calibrated distortion.
+const CAMERA_COLOR_DIAGNOSTIC_TYPE: 'U' | 'D' | null = null;
+const CAMERA_COLOR_DIAGNOSTIC_IDEAL_PINHOLE = false;
 
 function ascii(data: Uint8Array, offset: number, length: number): string {
   let result = '';
@@ -166,6 +180,8 @@ function parseCalibration(data: Uint8Array, member: ArchiveMember): CameraCalibr
     type,
     width: xmlAttribute(root, 'Width'),
     height: xmlAttribute(root, 'Height'),
+    fovX: xmlAttribute(root, 'FOVX'),
+    fovY: xmlAttribute(root, 'FOVY'),
     fx: xmlAttribute(intrinsics, 'fx'),
     fy: xmlAttribute(intrinsics, 'fy'),
     cx: xmlAttribute(intrinsics, 'cx'),
@@ -279,6 +295,9 @@ function parseCameraFrames(
         frame.blueGain = balance.blueGain;
       }
     }
+    for (const frame of frames) {
+      frame.rgbImage = decodeCameraRgb(data, frame);
+    }
   }
   return frames;
 }
@@ -330,6 +349,94 @@ function nearestParity(value: number, parity: 0 | 1, maximum: number): number {
   return Math.max(0, Math.min(maximum - 1, result));
 }
 
+function sampleBayerLattice(
+  data: Uint8Array,
+  frame: CameraFrame,
+  rawX: number,
+  rawY: number,
+  parityX: 0 | 1,
+  parityY: 0 | 1
+): number {
+  const latticeX = (rawX - parityX) * 0.5;
+  const latticeY = (rawY - parityY) * 0.5;
+  const x0 = Math.floor(latticeX);
+  const y0 = Math.floor(latticeY);
+  const tx = latticeX - x0;
+  const ty = latticeY - y0;
+  const maxX = Math.floor((frame.rawWidth - 1 - parityX) * 0.5);
+  const maxY = Math.floor((frame.rawHeight - 1 - parityY) * 0.5);
+  const clampX = (value: number) => Math.max(0, Math.min(maxX, value));
+  const clampY = (value: number) => Math.max(0, Math.min(maxY, value));
+  const read = (x: number, y: number) =>
+    data[frame.pixelsOffset + (clampY(y) * 2 + parityY) * frame.rawWidth + clampX(x) * 2 + parityX];
+  const top = read(x0, y0) * (1 - tx) + read(x0 + 1, y0) * tx;
+  const bottom = read(x0, y0 + 1) * (1 - tx) + read(x0 + 1, y0 + 1) * tx;
+  return top * (1 - ty) + bottom * ty;
+}
+
+function sampleGrbgInterpolated(
+  data: Uint8Array,
+  frame: CameraFrame,
+  portraitX: number,
+  portraitY: number
+): [number, number, number] {
+  const rawX = portraitY;
+  const rawY = frame.rawHeight - 1 - portraitX;
+  const red = sampleBayerLattice(data, frame, rawX, rawY, 1, 0) * frame.redGain;
+  const green =
+    (sampleBayerLattice(data, frame, rawX, rawY, 0, 0) +
+      sampleBayerLattice(data, frame, rawX, rawY, 1, 1)) *
+    0.5;
+  const blue = sampleBayerLattice(data, frame, rawX, rawY, 0, 1) * frame.blueGain;
+  return [Math.min(255, red), Math.min(255, green), Math.min(255, blue)];
+}
+
+function decodeCameraRgb(data: Uint8Array, frame: CameraFrame): CameraRgbImage {
+  const width = Math.ceil(frame.calibration.width * CAMERA_RGB_SCALE);
+  const height = Math.ceil(frame.calibration.height * CAMERA_RGB_SCALE);
+  const rgb = new Uint8Array(width * height * 3);
+  for (let y = 0; y < height; y++) {
+    const portraitY = (y + 0.5) / CAMERA_RGB_SCALE - 0.5;
+    for (let x = 0; x < width; x++) {
+      const portraitX = (x + 0.5) / CAMERA_RGB_SCALE - 0.5;
+      const color = sampleGrbgInterpolated(data, frame, portraitX, portraitY);
+      const offset = (y * width + x) * 3;
+      rgb[offset] = Math.round(color[0]);
+      rgb[offset + 1] = Math.round(color[1]);
+      rgb[offset + 2] = Math.round(color[2]);
+    }
+  }
+  return { width, height, data: rgb };
+}
+
+function sampleCameraRgb(
+  data: Uint8Array,
+  frame: CameraFrame,
+  portraitX: number,
+  portraitY: number
+): [number, number, number] {
+  const image = frame.rgbImage;
+  if (!image) {
+    return sampleGrbg(data, frame, portraitX, portraitY);
+  }
+  const imageX = (portraitX + 0.5) * CAMERA_RGB_SCALE - 0.5;
+  const imageY = (portraitY + 0.5) * CAMERA_RGB_SCALE - 0.5;
+  const x0 = Math.floor(imageX);
+  const y0 = Math.floor(imageY);
+  const tx = imageX - x0;
+  const ty = imageY - y0;
+  const clampX = (value: number) => Math.max(0, Math.min(image.width - 1, value));
+  const clampY = (value: number) => Math.max(0, Math.min(image.height - 1, value));
+  const channel = (x: number, y: number, component: number) =>
+    image.data[(clampY(y) * image.width + clampX(x)) * 3 + component];
+  return [0, 1, 2].map(component => {
+    const top = channel(x0, y0, component) * (1 - tx) + channel(x0 + 1, y0, component) * tx;
+    const bottom =
+      channel(x0, y0 + 1, component) * (1 - tx) + channel(x0 + 1, y0 + 1, component) * tx;
+    return top * (1 - ty) + bottom * ty;
+  }) as [number, number, number];
+}
+
 function sampleGrbg(
   data: Uint8Array,
   frame: CameraFrame,
@@ -367,7 +474,7 @@ function cameraFrameMetadata(data: Uint8Array, frame: CameraFrame): StonexCamera
         frame.calibration.width - 1,
         ((x + 0.5) * frame.calibration.width) / previewWidth
       );
-      const color = sampleGrbg(data, frame, portraitX, portraitY);
+      const color = sampleCameraRgb(data, frame, portraitX, portraitY);
       const offset = (y * previewWidth + x) * 4;
       previewRgba[offset] = Math.round(color[0]);
       previewRgba[offset + 1] = Math.round(color[1]);
@@ -399,7 +506,7 @@ function projectIntoFrame(
   modelX: number,
   modelY: number,
   modelZ: number
-): { color: [number, number, number]; score: number } | null {
+): { color: [number, number, number]; score: number; edgeWeight: number } | null {
   const pan = frame.panDegrees * (Math.PI / 180);
   const cosPan = Math.cos(pan);
   const sinPan = Math.sin(pan);
@@ -414,17 +521,26 @@ function projectIntoFrame(
   }
   const normalizedX = cameraX / cameraZ;
   const normalizedY = cameraY / cameraZ;
+  // OpenCV's polynomial is only calibrated over the physical image FOV. At
+  // larger radii (especially with D's strong k3), it can fold invalid rays
+  // back into the pixel rectangle and create ghost image bands.
+  const maxNormalizedX = Math.tan((frame.calibration.fovX * Math.PI) / 360);
+  const maxNormalizedY = Math.tan((frame.calibration.fovY * Math.PI) / 360);
+  if (Math.abs(normalizedX) > maxNormalizedX || Math.abs(normalizedY) > maxNormalizedY) {
+    return null;
+  }
   const radius2 = normalizedX * normalizedX + normalizedY * normalizedY;
   const c = frame.calibration;
-  const radial = 1 + c.k1 * radius2 + c.k2 * radius2 ** 2 + c.k3 * radius2 ** 3;
+  const useDistortion = !(CAMERA_COLOR_DIAGNOSTIC_IDEAL_PINHOLE && frame.type === 'D');
+  const radial = useDistortion ? 1 + c.k1 * radius2 + c.k2 * radius2 ** 2 + c.k3 * radius2 ** 3 : 1;
   const distortedX =
     normalizedX * radial +
-    2 * c.p1 * normalizedX * normalizedY +
-    c.p2 * (radius2 + 2 * normalizedX ** 2);
+    (useDistortion ? 2 * c.p1 * normalizedX * normalizedY : 0) +
+    (useDistortion ? c.p2 * (radius2 + 2 * normalizedX ** 2) : 0);
   const distortedY =
     normalizedY * radial +
-    c.p1 * (radius2 + 2 * normalizedY ** 2) +
-    2 * c.p2 * normalizedX * normalizedY;
+    (useDistortion ? c.p1 * (radius2 + 2 * normalizedY ** 2) : 0) +
+    (useDistortion ? 2 * c.p2 * normalizedX * normalizedY : 0);
   const pixelX = c.fx * distortedX + c.cx;
   const pixelY = c.fy * distortedY + c.cy;
   if (pixelX < 1 || pixelY < 1 || pixelX >= c.width - 1 || pixelY >= c.height - 1) {
@@ -432,9 +548,13 @@ function projectIntoFrame(
   }
   const centerX = (pixelX - c.cx) / (c.width * 0.5);
   const centerY = (pixelY - c.cy) / (c.height * 0.5);
+  const edgeDistance = Math.min(pixelX, pixelY, c.width - 1 - pixelX, c.height - 1 - pixelY);
+  const edgeMargin = Math.min(c.width, c.height) * 0.08;
+  const edgeT = Math.max(0, Math.min(1, edgeDistance / edgeMargin));
   return {
-    color: sampleGrbg(data, frame, pixelX, pixelY),
+    color: sampleCameraRgb(data, frame, pixelX, pixelY),
     score: centerX * centerX + centerY * centerY,
+    edgeWeight: edgeT * edgeT * (3 - 2 * edgeT),
   };
 }
 
@@ -587,7 +707,9 @@ export class StonexX3aParser {
         const sinAzimuth = Math.sin(azimuth);
         const cosAzimuth = Math.cos(azimuth);
         const columnFrames = layoutFrames.filter(
-          frame => angularDifference(frame.panDegrees, azimuthDegrees) <= 30
+          frame =>
+            angularDifference(frame.panDegrees, azimuthDegrees) <= 30 &&
+            (CAMERA_COLOR_DIAGNOSTIC_TYPE === null || frame.type === CAMERA_COLOR_DIAGNOSTIC_TYPE)
         );
         let sampleOffset = blockOffset + X3R_COLUMN_HEADER_BYTES;
         for (let row = 0; row < layout.rows; row++, sampleOffset += 8) {
@@ -612,28 +734,28 @@ export class StonexX3aParser {
           );
           intensity[outputIndex] = normalizedIntensity;
           if (colors) {
-            const fallback = Math.round(normalizedIntensity * 255);
-            colors[positionOffset] = fallback;
-            colors[positionOffset + 1] = fallback;
-            colors[positionOffset + 2] = fallback;
-            let red = 0;
-            let green = 0;
-            let blue = 0;
-            let totalWeight = 0;
+            // Deliberately conspicuous diagnostic fallback: pure white marks
+            // points that no calibrated photograph covers. This makes them
+            // distinguishable from projection, overlap, or occlusion artifacts.
+            colors[positionOffset] = 255;
+            colors[positionOffset + 1] = 255;
+            colors[positionOffset + 2] = 255;
+            let bestColor: [number, number, number] | null = null;
+            let bestWeight = 0;
             for (const frame of columnFrames) {
               const projection = projectIntoFrame(data, frame, modelX, modelY, modelZ);
               if (projection) {
-                const weight = 1 / (0.05 + projection.score) ** 2;
-                red += projection.color[0] * weight;
-                green += projection.color[1] * weight;
-                blue += projection.color[2] * weight;
-                totalWeight += weight;
+                const weight = projection.edgeWeight / (0.05 + projection.score) ** 2;
+                if (weight > bestWeight) {
+                  bestWeight = weight;
+                  bestColor = projection.color;
+                }
               }
             }
-            if (totalWeight > 0) {
-              colors[positionOffset] = Math.round(red / totalWeight);
-              colors[positionOffset + 1] = Math.round(green / totalWeight);
-              colors[positionOffset + 2] = Math.round(blue / totalWeight);
+            if (bestColor) {
+              colors[positionOffset] = Math.round(bestColor[0]);
+              colors[positionOffset + 1] = Math.round(bestColor[1]);
+              colors[positionOffset + 2] = Math.round(bestColor[2]);
               photographicallyColoredPoints++;
             }
           }
@@ -690,6 +812,9 @@ export class StonexX3aParser {
         scannerCoordinateConvention: 'viewer X=model Y, viewer Y=model X, viewer Z=model Z',
         sharedScannerFrameAssumed: photographicScanStems.size === 1 && scanMembers.length > 1,
         photographicallyColoredPoints,
+        cameraOverlapPolicy: 'best-centered valid frame (no color averaging)',
+        cameraColorDiagnostic: null,
+        cameraProjectionDomain: 'CAL FOV guard before OpenCV distortion',
         // X300 archives cover hundreds of metres. The viewer's generic 1 mm
         // default projects to far below one pixel at the initial overview.
         recommendedPointSize: 0.25,
