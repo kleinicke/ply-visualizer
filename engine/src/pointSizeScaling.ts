@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import { FileEntryRegistry } from './state/fileEntries';
 import { SpatialData } from './interfaces';
 import { applyPointShape } from './visualization/PointCloudRenderer';
 
 export interface PointSizeScalingHost {
+  fileEntries: FileEntryRegistry;
   screenSpaceScaling: boolean;
   allowTransparency: boolean;
   scene: THREE.Scene;
@@ -138,10 +140,9 @@ export function updatePointSize(
     console.log(`🎚️ Updating point size for file ${fileIndex}: ${oldSize} → ${newSize}`);
     host.pointSizes[fileIndex] = newSize;
 
-    const isPose =
-      fileIndex >= host.spatialFiles.length &&
-      fileIndex < host.spatialFiles.length + host.poseGroups.length;
-    const isCamera = fileIndex >= host.spatialFiles.length + host.poseGroups.length;
+    const kind = host.fileEntries.kindAt(fileIndex);
+    const isPose = kind === 'pose';
+    const isCamera = kind === 'camera';
     const data = !isPose && !isCamera ? host.spatialFiles[fileIndex] : (undefined as any);
     const isObjFile = data ? (data as any).isObjFile : false;
 
@@ -150,8 +151,7 @@ export function updatePointSize(
       host.applyTransformationMatrix(fileIndex);
     } else if (isPose) {
       // Update instanced sphere scale in pose group if stored using PointsMaterial size semantics is different.
-      const poseIndex = fileIndex - host.spatialFiles.length;
-      const group = host.poseGroups[poseIndex];
+      const group = host.poseGroups[host.fileEntries.kindIndexAt(fileIndex)];
       if (group) {
         group.traverse(obj => {
           if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {

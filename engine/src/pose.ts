@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { FileEntryRegistry } from './state/fileEntries';
+import { insertEntryState } from './state/fileEntryState';
 
 export interface PoseJoint {
   x: number;
@@ -32,6 +34,7 @@ export interface NormalizedPose {
  */
 export interface PoseHost {
   scene: THREE.Scene;
+  fileEntries: FileEntryRegistry;
   spatialFiles: { length: number };
   poseGroups: THREE.Group[];
   poseMeta: PoseMeta[];
@@ -312,9 +315,35 @@ export function normalizePose(raw: any): NormalizedPose {
   throw new Error('Unsupported pose JSON structure');
 }
 
-export function buildPoseGroup(host: PoseHost, pose: NormalizedPose): THREE.Group {
+/**
+ * Claims the file-list slot for a pose that is about to be added, and seeds its
+ * per-pose toggles.
+ *
+ * The toggles are keyed by pose index, matching poseGroups/poseMeta/poseJoints
+ * and the checkboxes in FileItem.svelte; only the shared entry state uses the
+ * unified index. Registering before the group is built lets buildPoseGroup read
+ * the colour and joint radius the entry will actually use.
+ */
+export function registerPoseEntry(host: PoseHost): { unifiedIndex: number; poseIndex: number } {
+  const { index } = host.fileEntries.add('pose');
+  insertEntryState(host, index, { visible: true, pointSize: 0.02, colorMode: 'assigned' });
+  const poseIndex = host.fileEntries.kindIndexAt(index);
+  host.poseUseDatasetColors.splice(poseIndex, 0, false);
+  host.poseShowLabels.splice(poseIndex, 0, false);
+  host.poseScaleByScore.splice(poseIndex, 0, false);
+  host.poseScaleByUncertainty.splice(poseIndex, 0, false);
+  host.poseConvention.splice(poseIndex, 0, 'opengl');
+  host.poseMinScoreThreshold.splice(poseIndex, 0, 0);
+  host.poseMaxUncertaintyThreshold.splice(poseIndex, 0, 1);
+  return { unifiedIndex: index, poseIndex };
+}
+
+export function buildPoseGroup(
+  host: PoseHost,
+  pose: NormalizedPose,
+  unifiedIndex: number
+): THREE.Group {
   const group = new THREE.Group();
-  const unifiedIndex = host.spatialFiles.length + host.poseGroups.length;
   // Default pose color: use assigned color for this index
   const colorMode = host.individualColorModes[unifiedIndex] ?? 'assigned';
   let baseRGB: [number, number, number];
@@ -398,13 +427,13 @@ export function buildPoseGroup(host: PoseHost, pose: NormalizedPose): THREE.Grou
 }
 
 export function updatePoseAppearance(host: PoseHost, fileIndex: number): void {
-  const poseIndex = fileIndex - host.spatialFiles.length;
+  const poseIndex = host.fileEntries.kindIndexAt(fileIndex);
   if (poseIndex < 0 || poseIndex >= host.poseGroups.length) {
     return;
   }
   const group = host.poseGroups[poseIndex];
   const meta = host.poseMeta[poseIndex];
-  const useDataset = host.poseUseDatasetColors[fileIndex];
+  const useDataset = host.poseUseDatasetColors[poseIndex];
   const paletteColor = host.fileColors[fileIndex % host.fileColors.length];
   group.traverse(obj => {
     if ((obj as any).isInstancedMesh && obj instanceof THREE.InstancedMesh) {
@@ -470,11 +499,11 @@ export function updatePoseAppearance(host: PoseHost, fileIndex: number): void {
 }
 
 export function updatePoseLabels(host: PoseHost, fileIndex: number): void {
-  const poseIndex = fileIndex - host.spatialFiles.length;
+  const poseIndex = host.fileEntries.kindIndexAt(fileIndex);
   if (poseIndex < 0 || poseIndex >= host.poseGroups.length) {
     return;
   }
-  const show = host.poseShowLabels[fileIndex];
+  const show = host.poseShowLabels[poseIndex];
   const group = host.poseGroups[poseIndex];
   const joints = host.poseJoints[poseIndex] || [];
   const validMap: number[] = (group as any).userData?.validJointIndices || [];
@@ -525,14 +554,14 @@ export function updatePoseLabels(host: PoseHost, fileIndex: number): void {
 }
 
 export function updatePoseScaling(host: PoseHost, fileIndex: number): void {
-  const poseIndex = fileIndex - host.spatialFiles.length;
+  const poseIndex = host.fileEntries.kindIndexAt(fileIndex);
   if (poseIndex < 0 || poseIndex >= host.poseGroups.length) {
     return;
   }
   const group = host.poseGroups[poseIndex];
   const baseRadius = host.pointSizes[fileIndex] ?? 0.02;
-  const scaleByScore = host.poseScaleByScore[fileIndex];
-  const scaleByUnc = host.poseScaleByUncertainty[fileIndex];
+  const scaleByScore = host.poseScaleByScore[poseIndex];
+  const scaleByUnc = host.poseScaleByUncertainty[poseIndex];
   // Fetch scores/uncertainties if available
   const meta = host.poseMeta[poseIndex];
   // Traverse instances and update scales
@@ -573,12 +602,12 @@ export function applyPoseConvention(
   fileIndex: number,
   conv: 'opengl' | 'opencv'
 ): void {
-  const poseIndex = fileIndex - host.spatialFiles.length;
+  const poseIndex = host.fileEntries.kindIndexAt(fileIndex);
   if (poseIndex < 0 || poseIndex >= host.poseGroups.length) {
     return;
   }
   const group = host.poseGroups[poseIndex];
-  const prev = host.poseConvention[fileIndex] || 'opengl';
+  const prev = host.poseConvention[poseIndex] || 'opengl';
   if (prev === conv) {
     return;
   } // already applied
@@ -586,18 +615,18 @@ export function applyPoseConvention(
   const mat = new THREE.Matrix4().set(1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1);
   group.applyMatrix4(mat);
   group.updateMatrixWorld(true);
-  host.poseConvention[fileIndex] = conv;
+  host.poseConvention[poseIndex] = conv;
 }
 
 export function applyPoseFilters(host: PoseHost, fileIndex: number): void {
-  const poseIndex = fileIndex - host.spatialFiles.length;
+  const poseIndex = host.fileEntries.kindIndexAt(fileIndex);
   if (poseIndex < 0 || poseIndex >= host.poseGroups.length) {
     return;
   }
   const group = host.poseGroups[poseIndex];
   const meta = host.poseMeta[poseIndex];
-  const minScore = host.poseMinScoreThreshold[fileIndex] ?? 0;
-  const maxUnc = host.poseMaxUncertaintyThreshold[fileIndex] ?? 1;
+  const minScore = host.poseMinScoreThreshold[poseIndex] ?? 0;
+  const maxUnc = host.poseMaxUncertaintyThreshold[poseIndex] ?? 1;
   // Compute uncertainty magnitude per joint if available
   const uncMag = (meta.jointUncertainties || []).map(u =>
     Math.sqrt(u[0] * u[0] + u[1] * u[1] + u[2] * u[2])
@@ -704,7 +733,8 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
       for (let i = 0; i < data.instance_info.length; i++) {
         const single = { ...data, instance_info: [data.instance_info[i]] };
         const parsedPose = normalizePose(single);
-        const group = buildPoseGroup(host, parsedPose);
+        const { unifiedIndex } = registerPoseEntry(host);
+        const group = buildPoseGroup(host, parsedPose, unifiedIndex);
         host.scene.add(group);
         host.poseGroups.push(group);
         host.poseJoints.push(parsedPose.joints as any);
@@ -735,17 +765,6 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
           jointScores,
           jointUncertainties: jointUnc,
         });
-        const unifiedIndex = host.spatialFiles.length + (host.poseGroups.length - 1);
-        host.fileVisibility[unifiedIndex] = true;
-        host.pointSizes[unifiedIndex] = 0.02; // 20x larger for 2cm joint radius
-        host.individualColorModes[unifiedIndex] = 'assigned';
-        // Per-pose defaults
-        host.poseUseDatasetColors[unifiedIndex] = false;
-        host.poseShowLabels[unifiedIndex] = false;
-        host.poseScaleByScore[unifiedIndex] = false;
-        host.poseScaleByUncertainty[unifiedIndex] = false;
-        host.poseConvention[unifiedIndex] = 'opengl';
-        host.transformationMatrices.push(new THREE.Matrix4());
         host.applyTransformationMatrix(unifiedIndex);
       }
       host.updateFileList();
@@ -755,7 +774,8 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
       document.getElementById('loading')?.classList.add('hidden');
     } else {
       const parsedPose = normalizePose(data);
-      const group = buildPoseGroup(host, parsedPose);
+      const { unifiedIndex } = registerPoseEntry(host);
+      const group = buildPoseGroup(host, parsedPose, unifiedIndex);
       host.scene.add(group);
       // Track pose group and meta
       host.poseGroups.push(group);
@@ -799,19 +819,6 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
         jointScores,
         jointUncertainties: jointUnc,
       });
-      // Initialize UI state slots aligned after spatialFiles
-      const unifiedIndex = host.spatialFiles.length + (host.poseGroups.length - 1);
-      host.fileVisibility[unifiedIndex] = true;
-      host.pointSizes[unifiedIndex] = 0.02; // 20x larger for 2cm joint radius
-      host.individualColorModes[unifiedIndex] = 'assigned';
-      // Per-pose defaults
-      host.poseUseDatasetColors[unifiedIndex] = false;
-      host.poseShowLabels[unifiedIndex] = false;
-      host.poseScaleByScore[unifiedIndex] = false;
-      host.poseScaleByUncertainty[unifiedIndex] = false;
-      host.poseConvention[unifiedIndex] = 'opengl';
-      // Initialize transformation matrix for this pose
-      host.transformationMatrices.push(new THREE.Matrix4());
       host.applyTransformationMatrix(unifiedIndex);
       // Update UI
       host.updateFileList();

@@ -4,6 +4,8 @@ import { unprojectCameraPixel } from '../depth/cameraModels';
 import { initTiffWasm, projectCameraPointsWasmSync } from '../depth/readers/tiffWasm';
 import type { E57EmbeddedImage, SpatialData } from '../interfaces';
 import { filesState } from '../state/files.svelte';
+import { FileEntryRegistry } from '../state/fileEntries';
+import { registerCameraEntry } from '../state/fileEntryState';
 import type { CameraFrameDetail, CameraFrameView } from './cameraFrames';
 import {
   correctUnprojectedRay,
@@ -16,6 +18,7 @@ import {
 
 interface E57CameraHost {
   scene: THREE.Scene;
+  fileEntries: FileEntryRegistry;
   spatialFiles: SpatialData[];
   poseGroups: THREE.Group[];
   cameraGroups: THREE.Group[];
@@ -60,31 +63,7 @@ function registerCameraGroup(host: E57CameraHost, profile: THREE.Group, name: st
   host.scene.add(profile);
   host.cameraGroups.push(profile);
   host.cameraNames.push(name);
-  host.cameraShowLabels.push(false);
-  host.cameraShowCoords.push(false);
-  const cameraIndex = host.cameraGroups.length - 1;
-  const unifiedIndex = host.spatialFiles.length + host.poseGroups.length + cameraIndex;
-  while (host.fileVisibility.length <= unifiedIndex) {
-    host.fileVisibility.push(false);
-  }
-  while (host.pointSizes.length <= unifiedIndex) {
-    host.pointSizes.push(1);
-  }
-  while (host.individualColorModes.length <= unifiedIndex) {
-    host.individualColorModes.push('assigned');
-  }
-  while (filesState.visibility.length <= unifiedIndex) {
-    filesState.visibility.push(false);
-  }
-  while (filesState.pointSizes.length <= unifiedIndex) {
-    filesState.pointSizes.push(1);
-  }
-  while (filesState.colorModes.length <= unifiedIndex) {
-    filesState.colorModes.push('assigned');
-  }
-  host.fileVisibility[unifiedIndex] = true;
-  filesState.visibility[unifiedIndex] = true;
-  host.transformationMatrices.push(new THREE.Matrix4());
+  registerCameraEntry(host);
 }
 
 function imagePose(

@@ -98,6 +98,8 @@ import { mountFileList } from './fileListMount';
 import { mountStats } from './statsMount';
 import { mountControlsTab } from './controlsTabMount';
 import { filesState } from './state/files.svelte';
+import { FileEntryRegistry } from './state/fileEntries';
+import { insertEntryState, removeEntryState } from './state/fileEntryState';
 import { viewerState } from './state/viewer.svelte';
 import { uiState } from './state/ui.svelte';
 import { flushSync } from 'svelte';
@@ -194,6 +196,12 @@ class PointCloudVisualizer {
   private lastScalingUpdate: number = 0;
 
   // Unified file management
+  //
+  // The file list addresses spatialFiles, poseGroups and cameraGroups through
+  // one index space. fileEntries owns that ordering and hands out the index for
+  // each entry, so nothing derives it from collection lengths - see
+  // state/fileEntries.ts for why that derivation was unsafe.
+  readonly fileEntries = new FileEntryRegistry();
   spatialFiles: SpatialData[] = [];
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
   normalsVisualizers: (THREE.LineSegments | null)[] = [];
@@ -879,6 +887,7 @@ class PointCloudVisualizer {
    */
   private getSelectionContext(): SelectionContext {
     return {
+      fileEntries: this.fileEntries,
       camera: this.camera,
       meshes: this.meshes,
       spatialFiles: this.spatialFiles,
@@ -2735,6 +2744,17 @@ class PointCloudVisualizer {
       // Add to data array
       this.spatialFiles.push(data);
 
+      // Claim the entry's slot before anything writes per-file state into it.
+      // Spatial files sort first, so the unified index equals data.fileIndex,
+      // but the insert still has to happen here: appending would land past any
+      // pose or camera entries already loaded and hand this file their slots.
+      const { index: entryIndex } = this.fileEntries.add('spatial');
+      insertEntryState(this, entryIndex, {
+        visible: true,
+        pointSize: 0.001,
+        colorMode: 'assigned',
+      });
+
       // Update welcome message visibility
       this.updateWelcomeMessageVisibility();
 
@@ -2768,30 +2788,20 @@ class PointCloudVisualizer {
       // Initialize vertex points object (null initially, created on demand)
       this.vertexPointsObjects.push(null);
 
-      // Initialize color mode before creating material
-      // Ensure the individualColorModes array is large enough for this file's index
-      // (it might have camera/pose entries that extend beyond spatialFiles)
+      // Initialize color mode before creating material. The slot already exists
+      // at entryIndex, so this only assigns.
       const initialColorMode =
         this.useOriginalColors && data.hasColors
           ? 'original'
           : this.hasIntensityData(data)
             ? 'intensity'
             : 'assigned';
-      while (this.individualColorModes.length <= data.fileIndex) {
-        this.individualColorModes.push('assigned'); // Placeholder for non-existent files
-        filesState.colorModes.push('assigned');
-      }
       this.individualColorModes[data.fileIndex] = initialColorMode;
       filesState.colorModes[data.fileIndex] = initialColorMode;
       console.log(
         `🎨 addNewFiles - fileIndex: ${data.fileIndex}, hasColors: ${data.hasColors}, colorMode: ${initialColorMode}, useOriginalColors: ${this.useOriginalColors}`
       );
 
-      // Ensure pointSizes array is large enough and set correct default for this PLY
-      while (this.pointSizes.length <= data.fileIndex) {
-        this.pointSizes.push(0.001); // Placeholder for non-existent files
-        filesState.pointSizes.push(0.001);
-      }
       const recommendedPointSize = data.metadata?.recommendedPointSize;
       const initialPointSize =
         typeof recommendedPointSize === 'number' && recommendedPointSize > 0
@@ -3067,27 +3077,19 @@ class PointCloudVisualizer {
       // If sequence mode is active, only the current frame stays visible to avoid overloading the scene
       const isSeqMode = this.sequenceFiles.length > 0;
       const shouldBeVisible = !isSeqMode || data.fileIndex === this.sequenceIndex;
-      this.fileVisibility.push(shouldBeVisible);
-      filesState.visibility.push(shouldBeVisible);
+      this.fileVisibility[data.fileIndex] = shouldBeVisible;
+      filesState.visibility[data.fileIndex] = shouldBeVisible;
       const lastObject = this.meshes[this.meshes.length - 1];
       if (lastObject) {
         lastObject.visible = shouldBeVisible;
       }
       const isObjFile3 = (data as any).isObjFile;
-      // Universal default point size for all file types (now that all use world-space sizing)
-      // Note: pointSizes array is pre-allocated in the material creation step above
-      if (this.pointSizes.length <= data.fileIndex) {
-        this.pointSizes.push(0.001);
-        filesState.pointSizes.push(0.001);
-      }
       this.appliedMtlColors.push(null); // No MTL color applied initially
       this.appliedMtlNames.push(null); // No MTL material applied initially
       this.appliedMtlData.push(null); // No MTL data applied initially
       this.multiMaterialGroups.push(null); // No multi-material group initially
       this.materialMeshes.push(null); // No sub-meshes initially
 
-      // Initialize transformation matrix for this file
-      this.transformationMatrices.push(new THREE.Matrix4());
       if ((data.metadata?.stonexCameraFrames as unknown[])?.length) {
         stonexCameraFiles.push(data);
       }
@@ -3129,12 +3131,11 @@ class PointCloudVisualizer {
       return;
     }
 
-    // Determine if this index refers to a camera profile, pose, or pointcloud/mesh
-    const cameraStartIndex = this.spatialFiles.length + this.poseGroups.length;
+    // Which collection this index refers to is the registry's to answer.
+    const kind = this.fileEntries.kindAt(fileIndex);
 
-    if (fileIndex >= cameraStartIndex) {
-      // Camera profile removal
-      const cameraIndex = fileIndex - cameraStartIndex;
+    if (kind === 'camera') {
+      const cameraIndex = this.fileEntries.kindIndexAt(fileIndex);
       if (cameraIndex < 0 || cameraIndex >= this.cameraGroups.length) {
         return;
       }
@@ -3160,16 +3161,8 @@ class PointCloudVisualizer {
       this.cameraShowLabels.splice(cameraIndex, 1);
       this.cameraShowCoords.splice(cameraIndex, 1);
 
-      // Remove UI-aligned state for this unified index
-      this.fileVisibility.splice(fileIndex, 1);
-      this.pointSizes.splice(fileIndex, 1);
-      filesState.visibility.splice(fileIndex, 1);
-      filesState.pointSizes.splice(fileIndex, 1);
-      if (this.individualColorModes[fileIndex] !== undefined) {
-        this.individualColorModes.splice(fileIndex, 1);
-        filesState.colorModes.splice(fileIndex, 1);
-      }
-      this.transformationMatrices.splice(fileIndex, 1);
+      this.fileEntries.removeAt(fileIndex);
+      removeEntryState(this, fileIndex);
 
       // Preserve depth panel states when removing files
       const openPanelStates = this.captureDepthPanelStates();
@@ -3179,9 +3172,8 @@ class PointCloudVisualizer {
       return;
     }
 
-    if (fileIndex >= this.spatialFiles.length) {
-      // Pose removal
-      const poseIndex = fileIndex - this.spatialFiles.length;
+    if (kind === 'pose') {
+      const poseIndex = this.fileEntries.kindIndexAt(fileIndex);
       if (poseIndex < 0 || poseIndex >= this.poseGroups.length) {
         return;
       }
@@ -3202,15 +3194,24 @@ class PointCloudVisualizer {
       });
       this.poseGroups.splice(poseIndex, 1);
       this.poseMeta.splice(poseIndex, 1);
-      // Remove UI-aligned state for this unified index
-      this.fileVisibility.splice(fileIndex, 1);
-      this.pointSizes.splice(fileIndex, 1);
-      filesState.visibility.splice(fileIndex, 1);
-      filesState.pointSizes.splice(fileIndex, 1);
-      if (this.individualColorModes[fileIndex] !== undefined) {
-        this.individualColorModes.splice(fileIndex, 1);
-        filesState.colorModes.splice(fileIndex, 1);
-      }
+      this.poseLabelsGroups.splice(poseIndex, 1);
+      this.poseJoints.splice(poseIndex, 1);
+      this.poseEdges.splice(poseIndex, 1);
+
+      // pose.ts keys its per-pose toggles by the unified index, not by the pose
+      // index, so they are spliced here alongside the shared entry state rather
+      // than with poseGroups above.
+      this.poseUseDatasetColors.splice(fileIndex, 1);
+      this.poseShowLabels.splice(fileIndex, 1);
+      this.poseScaleByScore.splice(fileIndex, 1);
+      this.poseScaleByUncertainty.splice(fileIndex, 1);
+      this.poseConvention.splice(fileIndex, 1);
+      this.poseMinScoreThreshold.splice(fileIndex, 1);
+      this.poseMaxUncertaintyThreshold.splice(fileIndex, 1);
+
+      this.fileEntries.removeAt(fileIndex);
+      removeEntryState(this, fileIndex);
+
       // Preserve depth panel states when removing files
       const openPanelStates = this.captureDepthPanelStates();
       this.updateFileList();
@@ -3292,12 +3293,8 @@ class PointCloudVisualizer {
     this.vertexPointsObjects.splice(fileIndex, 1); // Remove vertex points object for this file
     this.multiMaterialGroups.splice(fileIndex, 1); // Remove multi-material group for this file
     this.materialMeshes.splice(fileIndex, 1); // Remove sub-meshes for this file
-    this.fileVisibility.splice(fileIndex, 1);
-    this.pointSizes.splice(fileIndex, 1); // Remove point size for this file
-    this.individualColorModes.splice(fileIndex, 1); // Remove color mode for this file
-    filesState.visibility.splice(fileIndex, 1);
-    filesState.pointSizes.splice(fileIndex, 1);
-    filesState.colorModes.splice(fileIndex, 1);
+    this.fileEntries.removeAt(fileIndex);
+    removeEntryState(this, fileIndex);
     this.appliedMtlColors.splice(fileIndex, 1); // Remove MTL color for this file
     this.appliedMtlNames.splice(fileIndex, 1); // Remove MTL name for this file
     this.appliedMtlData.splice(fileIndex, 1); // Remove MTL data for this file
@@ -3307,9 +3304,6 @@ class PointCloudVisualizer {
     this.wireframeVisible.splice(fileIndex, 1);
     this.pointsVisible.splice(fileIndex, 1);
     this.normalsVisible.splice(fileIndex, 1);
-
-    // Remove transformation matrix for this file
-    this.transformationMatrices.splice(fileIndex, 1);
 
     // Remove Depth data if it exists for this file
     this.fileDepthData.delete(fileIndex);
@@ -3472,8 +3466,7 @@ class PointCloudVisualizer {
   }
 
   private soloPointCloud(fileIndex: number): void {
-    const totalEntries =
-      this.spatialFiles.length + this.poseGroups.length + this.cameraGroups.length;
+    const totalEntries = this.fileEntries.length;
     const selectedIsSoleVisible =
       (this.fileVisibility[fileIndex] ?? filesState.visibility[fileIndex] ?? true) &&
       Array.from({ length: totalEntries }, (_, index) => index).every(

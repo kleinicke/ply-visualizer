@@ -1,7 +1,10 @@
 import * as THREE from 'three';
+import { FileEntryRegistry } from './state/fileEntries';
+import { registerCameraEntry } from './state/fileEntryState';
 
 export interface CameraProfileHost {
   scene: THREE.Scene;
+  fileEntries: FileEntryRegistry;
   cameraGroups: THREE.Group[];
   cameraNames: string[];
   cameraVisibility: boolean;
@@ -54,30 +57,8 @@ export function handleCameraProfile(host: CameraProfileHost, data: any, fileName
       host.cameraGroups.push(cameraProfileGroup);
       host.cameraNames.push(fileName); // Store filename instead of individual camera names
 
-      // Initialize as single file entry (like poses)
-      // Use camera-specific index arrays instead of unified arrays to avoid conflicts with spatialFiles
-      const cameraIndex = host.cameraGroups.length - 1;
-
-      // Ensure visibility array has enough space
-      while (
-        host.fileVisibility.length <=
-        host.spatialFiles.length + host.poseGroups.length + cameraIndex
-      ) {
-        host.fileVisibility.push(false);
-      }
-
-      const unifiedIndex = host.spatialFiles.length + host.poseGroups.length + cameraIndex;
-      host.fileVisibility[unifiedIndex] = true;
-      host.pointSizes[unifiedIndex] = 1.0; // Default camera scale (different from point size)
-      host.individualColorModes[unifiedIndex] = 'assigned';
-
-      // Initialize transformation matrix for camera profile
-      host.transformationMatrices.push(new THREE.Matrix4());
+      const unifiedIndex = registerCameraEntry(host);
       host.applyTransformationMatrix(unifiedIndex);
-
-      // Initialize camera UI state arrays
-      host.cameraShowLabels.push(false);
-      host.cameraShowCoords.push(false);
     }
 
     // Update UI

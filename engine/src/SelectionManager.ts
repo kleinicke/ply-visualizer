@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FileEntryRegistry } from './state/fileEntries';
 
 /**
  * Result from a selection operation with logging information
@@ -24,6 +25,7 @@ interface PointPickHit {
  * Context interface providing access to scene state needed for selection
  */
 export interface SelectionContext {
+  fileEntries: FileEntryRegistry;
   camera: THREE.PerspectiveCamera;
   meshes: THREE.Object3D[];
   spatialFiles: any[];
@@ -273,7 +275,7 @@ export class SelectionManager {
     mouseScreenY: number,
     canvas: HTMLCanvasElement
   ): THREE.Vector3 | null {
-    const cameraStartIndex = this.context.spatialFiles.length + this.context.poseGroups.length;
+    const cameraStartIndex = this.context.fileEntries.startOf('camera');
 
     let closestCamera: THREE.Vector3 | null = null;
     let closestDistance = Infinity;
@@ -375,7 +377,7 @@ export class SelectionManager {
     canvas: HTMLCanvasElement
   ): THREE.Vector3 | null {
     for (let i = 0; i < this.context.poseGroups.length; i++) {
-      const unifiedIndex = this.context.spatialFiles.length + i;
+      const unifiedIndex = this.context.fileEntries.indexOfKind('pose', i);
       if (!this.context.fileVisibility[unifiedIndex]) {
         continue;
       }
@@ -854,13 +856,11 @@ export class SelectionManager {
       }
     }
 
-    // Pose and camera groups use the unified visibility index layout
-    // (spatial files, then poses, then cameras)
     const groupSets = [
-      { groups: this.context.poseGroups, indexOffset: this.context.spatialFiles.length },
+      { groups: this.context.poseGroups, indexOffset: this.context.fileEntries.startOf('pose') },
       {
         groups: this.context.cameraGroups,
-        indexOffset: this.context.spatialFiles.length + this.context.poseGroups.length,
+        indexOffset: this.context.fileEntries.startOf('camera'),
       },
     ];
     const box = new THREE.Box3();

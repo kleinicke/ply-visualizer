@@ -24,9 +24,11 @@
   }: { host: any; index: number; kind: 'pointcloud' | 'pose' | 'camera' } = $props();
 
   const data = $derived(kind === 'pointcloud' ? host.spatialFiles[index] : null);
-  const poseIndex = $derived(index - host.spatialFiles.length);
+  // Position within poseGroups/cameraGroups. The per-pose toggle arrays and the
+  // camera label arrays are keyed by it; host methods take the unified index.
+  const poseIndex = $derived(host.fileEntries.kindIndexAt(index));
   const meta = $derived(kind === 'pose' ? host.poseMeta[poseIndex] : null);
-  const cameraIndex = $derived(index - host.spatialFiles.length - host.poseGroups.length);
+  const cameraIndex = $derived(host.fileEntries.kindIndexAt(index));
   const cameraGroup = $derived(kind === 'camera' ? host.cameraGroups[cameraIndex] : null);
   const cameraProfileName = $derived(kind === 'camera' ? host.cameraNames[cameraIndex] : '');
 
@@ -318,30 +320,30 @@
 
   function onPoseDatasetColorsChange(e: Event) {
     host.poseUseDatasetColors[poseIndex] = (e.target as HTMLInputElement).checked;
-    host.updatePoseAppearance(poseIndex);
+    host.updatePoseAppearance(index);
   }
   function onPoseShowLabelsChange(e: Event) {
     host.poseShowLabels[poseIndex] = (e.target as HTMLInputElement).checked;
-    host.updatePoseLabels(poseIndex);
+    host.updatePoseLabels(index);
   }
   function onPoseScaleScoreChange(e: Event) {
     host.poseScaleByScore[poseIndex] = (e.target as HTMLInputElement).checked;
-    host.updatePoseScaling(poseIndex);
+    host.updatePoseScaling(index);
   }
   function onPoseScaleUncertaintyChange(e: Event) {
     host.poseScaleByUncertainty[poseIndex] = (e.target as HTMLInputElement).checked;
-    host.updatePoseScaling(poseIndex);
+    host.updatePoseScaling(index);
   }
   function onPoseConventionChange(e: Event) {
     const val = (e.target as HTMLSelectElement).value === 'opencv' ? 'opencv' : 'opengl';
-    host.applyPoseConvention(poseIndex, val);
+    host.applyPoseConvention(index, val);
   }
   function onPoseMinScoreInput(e: Event) {
     const v = Math.max(0, Math.min(1, parseFloat((e.target as HTMLInputElement).value)));
     host.poseMinScoreThreshold[poseIndex] = v;
     const value = document.getElementById(`pose-minscore-val-${index}`);
     if (value) value.textContent = v.toFixed(2);
-    host.applyPoseFilters(poseIndex);
+    host.applyPoseFilters(index);
   }
   function onPoseMinScoreReset(e: MouseEvent) {
     e.preventDefault();
@@ -353,7 +355,7 @@
     host.poseMaxUncertaintyThreshold[poseIndex] = v;
     const value = document.getElementById(`pose-maxunc-val-${index}`);
     if (value) value.textContent = v.toFixed(2);
-    host.applyPoseFilters(poseIndex);
+    host.applyPoseFilters(index);
   }
   function onPoseMaxUncReset(e: MouseEvent) {
     e.preventDefault();

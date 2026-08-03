@@ -5,7 +5,8 @@ import { createCameraLabel } from '../cameraProfile';
 import { unprojectCameraPixel } from '../depth/cameraModels';
 import type { CameraFrameDetail, CameraFrameView } from './cameraFrames';
 import { initTiffWasm } from '../depth/readers/tiffWasm';
-import { filesState } from '../state/files.svelte';
+import { FileEntryRegistry } from '../state/fileEntries';
+import { registerCameraEntry } from '../state/fileEntryState';
 import {
   applyStonexColorCorrectionToPoints,
   applyStonexColorCorrectionToPreview,
@@ -17,6 +18,7 @@ import {
 
 interface StonexCameraHost {
   scene: THREE.Scene;
+  fileEntries: FileEntryRegistry;
   spatialFiles: SpatialData[];
   meshes: THREE.Object3D[];
   poseGroups: THREE.Group[];
@@ -411,34 +413,7 @@ export function addStonexCameraVisualization(host: StonexCameraHost, data: Spati
   host.scene.add(profile);
   host.cameraGroups.push(profile);
   host.cameraNames.push(`${profileName} cameras`);
-  host.cameraShowLabels.push(false);
-  host.cameraShowCoords.push(false);
-
-  const cameraIndex = host.cameraGroups.length - 1;
-  const unifiedIndex = host.spatialFiles.length + host.poseGroups.length + cameraIndex;
-  while (host.fileVisibility.length <= unifiedIndex) {
-    host.fileVisibility.push(false);
-  }
-  while (host.pointSizes.length <= unifiedIndex) {
-    host.pointSizes.push(1);
-  }
-  while (host.individualColorModes.length <= unifiedIndex) {
-    host.individualColorModes.push('assigned');
-  }
-  while (filesState.visibility.length <= unifiedIndex) {
-    filesState.visibility.push(false);
-  }
-  while (filesState.pointSizes.length <= unifiedIndex) {
-    filesState.pointSizes.push(1);
-  }
-  while (filesState.colorModes.length <= unifiedIndex) {
-    filesState.colorModes.push('assigned');
-  }
-  host.fileVisibility[unifiedIndex] = true;
-  host.pointSizes[unifiedIndex] = 1;
-  filesState.visibility[unifiedIndex] = true;
-  filesState.pointSizes[unifiedIndex] = 1;
-  host.transformationMatrices.push(new THREE.Matrix4());
+  registerCameraEntry(host);
   return true;
 }
 

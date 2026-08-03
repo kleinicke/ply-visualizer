@@ -23,7 +23,7 @@
     {#key filesState.statsTick}
       {#if host.spatialFiles.length === 0 && host.poseGroups.length === 0 && host.cameraGroups.length === 0}
         <div>No objects loaded</div>
-      {:else if host.spatialFiles.length + host.poseGroups.length + host.cameraGroups.length === 1 && host.spatialFiles.length === 1}
+      {:else if host.fileEntries.length === 1 && host.spatialFiles.length === 1}
         {@const data = host.spatialFiles[0]}
         {@const renderingMode = data.faceCount === 0 ? 'Points' : 'Mesh'}
         <div><strong>File Size:</strong> {formatFileSize(data.fileSizeInBytes)}</div>
@@ -46,7 +46,7 @@
         {@const totalVertices = host.spatialFiles.reduce((sum: number, data: any) => sum + data.vertexCount, 0)}
         {@const totalFaces = host.spatialFiles.reduce((sum: number, data: any) => sum + data.faceCount, 0)}
         {@const totalSize = host.spatialFiles.reduce((sum: number, data: any) => sum + (data.fileSizeInBytes || 0), 0)}
-        {@const totalObjects = host.spatialFiles.length + host.poseGroups.length + host.cameraGroups.length}
+        {@const totalObjects = host.fileEntries.length}
         <div>
           <strong>Total Objects:</strong>
           {totalObjects} (Pointclouds: {host.spatialFiles.length}, Poses: {host.poseGroups.length}, Cameras:

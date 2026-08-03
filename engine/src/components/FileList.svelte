@@ -10,10 +10,17 @@
   // renderTick changes, mirroring the old updateFileList()'s
   // "regenerate everything on every call" model without needing every
   // underlying field to be individually reactive (see files.svelte.js).
-  const spatialFilesCount = $derived((filesState.renderTick, host.spatialFiles.length));
-  const poseGroupsCount = $derived((filesState.renderTick, host.poseGroups.length));
-  const cameraGroupsCount = $derived((filesState.renderTick, host.cameraGroups.length));
-  const totalEntries = $derived(spatialFilesCount + poseGroupsCount + cameraGroupsCount);
+  // Rows come from the entry registry rather than from three separate counts,
+  // so the index each FileItem receives is the one every host method expects.
+  const entryRows = $derived(
+    (filesState.renderTick,
+    Array.from({ length: host.fileEntries.length }, (_, index) => ({
+      index,
+      id: host.fileEntries.at(index).id,
+      kind: host.fileEntries.kindAt(index),
+    })))
+  );
+  const totalEntries = $derived(entryRows.length);
 
   const isSequenceFrame = $derived(
     (filesState.renderTick, host.sequenceMode && host.sequenceFiles.length > 0)
@@ -62,14 +69,12 @@
   {:else if totalEntries === 0 && !pendingLoadLabel}
     <div class="no-files">No objects loaded</div>
   {:else}
-    {#each Array.from({ length: spatialFilesCount }) as _, i (i)}
-      <FileItem {host} index={i} kind="pointcloud" />
-    {/each}
-    {#each Array.from({ length: poseGroupsCount }) as _, p (spatialFilesCount + p)}
-      <FileItem {host} index={spatialFilesCount + p} kind="pose" />
-    {/each}
-    {#each Array.from({ length: cameraGroupsCount }) as _, c (spatialFilesCount + poseGroupsCount + c)}
-      <FileItem {host} index={spatialFilesCount + poseGroupsCount + c} kind="camera" />
+    {#each entryRows as row (row.id)}
+      <FileItem
+        {host}
+        index={row.index}
+        kind={row.kind === 'spatial' ? 'pointcloud' : row.kind}
+      />
     {/each}
     {#if pendingLoadLabel !== null}
       <div class="file-item file-item-loading">
