@@ -361,6 +361,8 @@ export async function sendBinaryData(
     fileSizeInBytes: spatialData.fileSizeInBytes,
     isGaussianSplat: !!spatialData.isGaussianSplat,
     splatSource: spatialData.splatSource,
+    // Container identity (E57/X3A scans) so the webview can total the whole file.
+    container: spatialData.container,
   });
   if (!delivered) {
     throw new Error(`The webview rejected the binary payload for ${spatialData.fileName}`);
@@ -416,6 +418,8 @@ export async function sendLargeFileInChunksOptimized(
     fileSizeInBytes: spatialData.fileSizeInBytes,
     isGaussianSplat: !!spatialData.isGaussianSplat,
     splatSource: spatialData.splatSource,
+    // Container identity (E57/X3A scans) so the webview can total the whole file.
+    container: spatialData.container,
   });
   if (!started) {
     throw new Error(`The webview rejected the chunked-transfer header for ${spatialData.fileName}`);

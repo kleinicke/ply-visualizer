@@ -45,6 +45,8 @@ import * as sequencePlayback from './sequencePlayback';
 import * as pose from './pose';
 import * as renderStats from './renderStats';
 import * as pointCloudRenderer from './visualization/PointCloudRenderer';
+import * as containerPerf from './utils/containerPerf';
+import { useAntialiasing } from './rendering/rendererOptions';
 import * as meshBuilder from './visualization/MeshBuilder';
 import * as stonexCameras from './visualization/stonexCameras';
 import { addE57CameraVisualization } from './visualization/e57Cameras';
@@ -564,7 +566,10 @@ class PointCloudVisualizer {
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: canvas,
-      antialias: true, // Re-enable antialiasing for quality
+      // Off by default: MSAA multiplies the per-sample depth work that dominates
+      // zoomed-out point clouds, and smooths nothing on 1-pixel points.
+      // See rendering/rendererOptions.ts; `?antialias=1` restores it.
+      antialias: useAntialiasing(),
       alpha: true,
       preserveDrawingBuffer: false, // better performance
       powerPreference: 'high-performance', // Keep discrete GPU preference
@@ -4105,6 +4110,10 @@ class PointCloudVisualizer {
 
 // Export for global access
 (window as any).PointCloudVisualizer = PointCloudVisualizer;
+
+// Test hook: container totals only arise from multi-scan E57/X3A loads driven by
+// the extension host, so specs exercise the accumulator directly.
+(window as any).__plyContainerPerf = containerPerf;
 
 // Initialize when DOM is ready
 let visualizer: PointCloudVisualizer | null = null;

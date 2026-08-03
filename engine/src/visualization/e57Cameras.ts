@@ -160,7 +160,48 @@ function imageView(image: E57EmbeddedImage, azimuthCorrection = 0): CameraFrameV
   };
 }
 
-function imageDetails(image: E57EmbeddedImage, azimuthCorrection = 0): CameraFrameDetail[] {
+function createE57CameraBody(image: E57EmbeddedImage, azimuthCorrection = 0): THREE.Mesh {
+  const body = createCameraBodyGeometry();
+  const imageCentre = localImagePoint(image, image.width / 2, image.height / 2, azimuthCorrection);
+  if (imageCentre?.lengthSq()) {
+    // The shared icon is authored looking along local +Z. E57 does not use a
+    // single generic camera forward axis: pinhole looks along -Z, while the
+    // centre of spherical/cylindrical images is azimuth 0 along +X. Point the
+    // icon along the centre ray produced by the actual E57 projection.
+    body.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), imageCentre.normalize());
+  }
+  return body;
+}
+
+/**
+ * Explains what the azimuth estimator did, including the cases where it could
+ * not run. Without this the panel could not distinguish "measured, no shift
+ * needed" from "never had a reference to measure against" — and the latter is
+ * exactly when a shifted panorama stays uncorrected.
+ */
+function azimuthCorrectionStatus(
+  data: SpatialData | undefined,
+  image: E57EmbeddedImage,
+  azimuthCorrection: number
+): string {
+  if (image.representation === 'pinhole') {
+    return 'not applicable (pinhole)';
+  }
+  if (azimuthCorrection !== 0) {
+    const degrees = THREE.MathUtils.radToDeg(azimuthCorrection);
+    return `${degrees > 0 ? '+' : ''}${degrees.toFixed(1)}° (measured against native point colours)`;
+  }
+  if (!data?.hasColors || !data?.colorsArray || (data?.vertexCount ?? 0) < 500) {
+    return 'not measured — no native point colours to match against; E57 pose used as-is';
+  }
+  return 'none needed — E57 pose matched the native point colours';
+}
+
+function imageDetails(
+  image: E57EmbeddedImage,
+  azimuthCorrection = 0,
+  azimuthStatus?: string
+): CameraFrameDetail[] {
   const details: CameraFrameDetail[] = [
     { label: 'Representation', value: image.representation },
     { label: 'Image', value: `${image.width} x ${image.height} px` },
@@ -182,9 +223,11 @@ function imageDetails(image: E57EmbeddedImage, azimuthCorrection = 0): CameraFra
     label: 'Rotation',
     value: `w ${qw.toFixed(5)}, x ${qx.toFixed(5)}, y ${qy.toFixed(5)}, z ${qz.toFixed(5)}`,
   });
-  if (azimuthCorrection !== 0) {
+  if (azimuthStatus) {
+    details.push({ label: 'Azimuth correction', value: azimuthStatus });
+  } else if (azimuthCorrection !== 0) {
     details.push({
-      label: 'RGB azimuth correction',
+      label: 'Azimuth correction',
       value: `${THREE.MathUtils.radToDeg(azimuthCorrection).toFixed(1)}°`,
     });
   }
@@ -588,7 +631,6 @@ async function populateImages(
         y: pose.position.y,
         z: pose.position.z,
       };
-      frame.add(createCameraBodyGeometry());
       const { texture, canvas } = await decodeHalfResolutionTexture(image);
       const azimuthCorrection = estimatePanoramaAzimuthCorrection(
         profile.userData.spatialData as SpatialData,
@@ -597,7 +639,16 @@ async function populateImages(
       );
       frame.userData.e57AzimuthCorrectionDegrees = THREE.MathUtils.radToDeg(azimuthCorrection);
       frame.userData.view = imageView(image, azimuthCorrection);
-      frame.userData.frameDetails = imageDetails(image, azimuthCorrection);
+      frame.userData.frameDetails = imageDetails(
+        image,
+        azimuthCorrection,
+        azimuthCorrectionStatus(
+          profile.userData.spatialData as SpatialData,
+          image,
+          azimuthCorrection
+        )
+      );
+      frame.add(createE57CameraBody(image, azimuthCorrection));
       if (azimuthCorrection !== 0) {
         console.info(
           `[E57] Corrected ${image.name || image.guid || `image ${index + 1}`} panorama azimuth by ${frame.userData.e57AzimuthCorrectionDegrees.toFixed(1)}° from native point colours`

@@ -1,5 +1,6 @@
 import { SpatialData, SpatialVertex } from './interfaces';
 import { PerfTimer } from './utils/perfLog';
+import { noteContainerScanLoaded } from './utils/containerPerf';
 import { isExtraScalarProperty, isGaussianSplatLayout, shDcToU8 } from './utils/scalarFields';
 
 export interface BinaryDataHandlersHost {
@@ -34,6 +35,7 @@ export async function loadWithPerf(
       perf.note('mode', String(message.parseMode));
     }
     perf.summary();
+    noteContainerScanLoaded(message.container, verts);
   }
 }
 

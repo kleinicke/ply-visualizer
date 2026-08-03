@@ -84,10 +84,5 @@ there; put code in the modules above.
 
 ## Refactoring rules
 
-- **No big-bang refactors.** They failed repeatedly here; use the strangler-fig
-  pattern — new code goes in modules, old code stays until naturally touched.
-- Two items are **deliberately deferred** — don't tackle them casually:
-  extracting `SceneManager`/`LightingManager` from `main.ts` (heavily
-  state-entangled), and inverting `depth/panelState.ts`'s DOM-scrape design
-  (thin test coverage, feeds the depth pipeline). Reasoning and full migration
-  history: [docs/SVELTE_MIGRATION_PLAN.md](docs/SVELTE_MIGRATION_PLAN.md).
+Full migration history:
+[docs/SVELTE_MIGRATION_PLAN.md](docs/SVELTE_MIGRATION_PLAN.md).

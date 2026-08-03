@@ -68,6 +68,28 @@ export interface DocumentFileTypeFlags {
 }
 
 /**
+ * Stamp every scan of a container file (E57, X3A) with shared identity so the
+ * webview can report one honest end-to-end total for the whole file.
+ *
+ * Each scan is transferred and displayed independently — and large ones go down
+ * the chunked path — so the extension cannot know when the container as a whole
+ * is finished. It can only say "this scan is 1 of N, and the file started at T";
+ * the webview counts the arrivals and closes the books on the last one.
+ */
+function tagContainer(scans: any[], kind: string, name: string, startedAt: number): void {
+  const container = {
+    id: `${startedAt}-${name}`,
+    kind,
+    name,
+    scanCount: scans.length,
+    startedAt,
+  };
+  for (const scan of scans) {
+    scan.container = container;
+  }
+}
+
+/**
  * Reads, parses (or streams), and posts a just-opened document's content to
  * the webview, dispatching by the already-detected file type. Runs inside the
  * `setImmediate` callback resolveCustomEditor schedules so the webview HTML
@@ -103,6 +125,10 @@ export async function loadDocumentContent(
 
   try {
     const loadStartTime = performance.now();
+    // Wall-clock twin of loadStartTime. Container formats (E57, X3A) fan out into
+    // many scans that finish in the webview at different times, so the honest
+    // end-to-end total has to be measured against a clock both processes share.
+    const loadStartedAtEpoch = Date.now();
     const wallStart = new Date().toISOString();
 
     if (isSplatContainerFile) {
@@ -154,6 +180,7 @@ export async function loadDocumentContent(
       host.logPerf(
         `⏱️ PERF[${extension}/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsedData.reduce((n, d) => n + d.vertexCount, 0)} pts) for ${path.basename(documentUri.fsPath)}`
       );
+      tagContainer(parsedData, extension, path.basename(documentUri.fsPath), loadStartedAtEpoch);
       await sendSpatialDataToWebview(webviewPanel, parsedData, 'multiSpatialData');
       return;
     }
@@ -180,6 +207,7 @@ export async function loadDocumentContent(
       host.logPerf(
         `⏱️ PERF[x3a/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsed.reduce((sum, scan) => sum + scan.vertexCount, 0)} pts in ${parsed.length} scans) for ${path.basename(documentUri.fsPath)}`
       );
+      tagContainer(parsed, 'x3a', path.basename(documentUri.fsPath), loadStartedAtEpoch);
       await sendSpatialDataToWebview(webviewPanel, parsed, 'multiSpatialData');
       return;
     }

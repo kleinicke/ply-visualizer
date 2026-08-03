@@ -1,4 +1,5 @@
 import { SpatialData, SpatialFace, SpatialVertex } from './interfaces';
+import { noteContainerScanLoaded } from './utils/containerPerf';
 
 export interface LargeFileChunkingHost {
   isFileLoading: boolean;
@@ -30,6 +31,7 @@ export interface LargeFileChunkingHost {
       sourceOrigin?: [number, number, number];
       metadata?: Record<string, unknown>;
       fileSizeInBytes?: number;
+      container?: unknown;
       isGaussianSplat?: boolean;
       splatSource?: SpatialData['splatSource'];
     }
@@ -95,6 +97,7 @@ export function handleStartLargeFile(host: LargeFileChunkingHost, message: any):
     sourceOrigin: message.sourceOrigin,
     metadata: message.metadata,
     fileSizeInBytes: message.fileSizeInBytes,
+    container: message.container,
     isGaussianSplat: !!message.isGaussianSplat,
     splatSource: message.splatSource,
   });
@@ -234,6 +237,10 @@ export async function handleLargeFileComplete(
   console.log(`  • PLY assembly time: ${assemblyTime.toFixed(2)}ms
   • File processing time: ${processTime.toFixed(2)}ms
   • TOTAL TIME: ${totalTime.toFixed(2)}ms`);
+
+  // Chunked scans emit no PerfTimer line of their own, but they still have to
+  // report in so their container can be totalled.
+  noteContainerScanLoaded(fileState.container, fileState.totalVertices);
 
   // Hide loading indicator
   document.getElementById('loading')?.classList.add('hidden');
