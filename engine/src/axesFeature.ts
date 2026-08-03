@@ -204,6 +204,9 @@ export function setUpVector(host: AxesFeatureHost, upVector: THREE.Vector3): voi
 
   // Set the camera's up vector
   host.camera.up.copy(upVector);
+  // Controls that track their own up (TurntableControls) reapply it to the
+  // camera while rotating, which would undo this on the first drag.
+  (host.controls as { worldUp?: THREE.Vector3 }).worldUp?.copy(upVector);
 
   // Force the camera to look at the current target with the new up vector
   host.camera.lookAt(host.controls.target);

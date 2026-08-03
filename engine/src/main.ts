@@ -68,6 +68,12 @@ import * as edl from './edl';
 import * as transparency from './transparency';
 import * as plyExport from './plyExport';
 import * as rotationCenterFeature from './rotationCenterFeature';
+import {
+  applyScannerStartView,
+  applyZUpOrientation,
+  scannerCapturePointFor,
+  shouldOrientZUp,
+} from './cameraOrientation';
 import * as axesFeature from './axesFeature';
 import * as transformationMatrix from './transformationMatrix';
 import * as depthCameraParamsPrompt from './depthCameraParamsPrompt';
@@ -2376,6 +2382,11 @@ class PointCloudVisualizer {
 
     // Keep current camera viewing direction and move along it.
     const direction = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
+    // A direction along the up axis leaves lookAt without a defined roll (the
+    // world tips so X reads as up) and the trackball without a rotation basis.
+    if (Math.abs(direction.dot(this.camera.up)) > 0.999) {
+      direction.set(-1, -1, -1).normalize();
+    }
     this.camera.position.copy(center.clone().sub(direction.multiplyScalar(distance)));
     this.camera.lookAt(center);
 
@@ -2390,11 +2401,22 @@ class PointCloudVisualizer {
   }
 
   autoFitCameraOnFirstLoad(): void {
-    // Only auto-fit camera on first file load
-    if (this.isFirstFileLoad) {
-      this.fitCameraToAllObjects();
-      this.isFirstFileLoad = false;
+    // Only on the first file: adding one later must never move the user's view.
+    if (!this.isFirstFileLoad) {
+      return;
     }
+    // Terrestrial scans centre the scanner capture point in the view and use
+    // it as the orbit pivot.
+    // Everything else is framed by its bounding box, with a Z-up camera for
+    // the formats that specify a vertical axis.
+    const capturePoint = scannerCapturePointFor(this.spatialFiles);
+    if (!capturePoint || !applyScannerStartView(this, capturePoint, this.meshes)) {
+      if (shouldOrientZUp(this.spatialFiles)) {
+        applyZUpOrientation(this);
+      }
+      this.fitCameraToAllObjects();
+    }
+    this.isFirstFileLoad = false;
   }
 
   updateFileStats(): void {
