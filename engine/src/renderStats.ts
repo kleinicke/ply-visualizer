@@ -1,16 +1,17 @@
 import { uiState } from './state/ui.svelte';
+import type { GpuTimer } from './rendering/gpuTimer';
 
 /**
- * GPU timing (via EXT_disjoint_timer_query) and FPS/frame-time tracking for
- * the render loop. Extracted out of PointCloudVisualizer; main.ts's animate()
- * still owns frame scheduling and calls into these functions each frame.
+ * FPS and frame-time tracking for the render loop. Extracted out of
+ * PointCloudVisualizer; main.ts's animate() still owns frame scheduling and
+ * calls into these functions each frame.
+ *
+ * GPU timing itself lives in rendering/gpuTimer.ts behind a backend-neutral
+ * interface - the query juggling here was WebGL-only. This module just reads
+ * the measurement for display.
  */
 export interface RenderStatsHost {
-  renderer: { getContext(): WebGLRenderingContext | WebGL2RenderingContext };
-  gpuTimerExtension: any;
-  gpuQueries: any[];
-  gpuTimes: number[];
-  currentGpuTime: number;
+  gpuTimer: GpuTimer;
 
   fpsFrameTimes: number[];
   previousFps: number;
@@ -18,121 +19,6 @@ export interface RenderStatsHost {
   lastFpsUpdate: number;
   frameRenderTimes: number[];
   currentFrameTime: number;
-}
-
-export function initGPUTiming(host: RenderStatsHost): void {
-  const gl = host.renderer.getContext();
-
-  // Try to get timer query extension
-  host.gpuTimerExtension =
-    gl.getExtension('EXT_disjoint_timer_query_webgl2') ||
-    gl.getExtension('EXT_disjoint_timer_query');
-
-  if (host.gpuTimerExtension) {
-    console.log('GPU timing available - measuring actual render time');
-  } else {
-    console.log('GPU timing not available - using CPU frame time');
-  }
-}
-
-export function startGPUTiming(host: RenderStatsHost): any {
-  if (!host.gpuTimerExtension) {
-    return null;
-  }
-
-  const gl = host.renderer.getContext() as any; // Cast to handle extension methods
-
-  if (gl.createQuery) {
-    // WebGL2 approach
-    const query = gl.createQuery();
-    gl.beginQuery(host.gpuTimerExtension.TIME_ELAPSED_EXT, query);
-    return query;
-  } else if (host.gpuTimerExtension.createQueryEXT) {
-    // WebGL1 extension approach
-    const query = host.gpuTimerExtension.createQueryEXT();
-    host.gpuTimerExtension.beginQueryEXT(host.gpuTimerExtension.TIME_ELAPSED_EXT, query);
-    return query;
-  }
-
-  return null;
-}
-
-export function endGPUTiming(host: RenderStatsHost, query: any): void {
-  if (!query || !host.gpuTimerExtension) {
-    return;
-  }
-
-  const gl = host.renderer.getContext() as any;
-
-  if (gl.endQuery) {
-    // WebGL2 approach
-    gl.endQuery(host.gpuTimerExtension.TIME_ELAPSED_EXT);
-  } else if (host.gpuTimerExtension.endQueryEXT) {
-    // WebGL1 extension approach
-    host.gpuTimerExtension.endQueryEXT(host.gpuTimerExtension.TIME_ELAPSED_EXT);
-  }
-
-  host.gpuQueries.push(query);
-}
-
-export function updateGPUTiming(host: RenderStatsHost): void {
-  if (!host.gpuTimerExtension) {
-    return;
-  }
-
-  const gl = host.renderer.getContext() as any;
-
-  // Check completed queries
-  for (let i = host.gpuQueries.length - 1; i >= 0; i--) {
-    const query = host.gpuQueries[i];
-    let available = false;
-    let timeElapsed = 0;
-
-    if (gl.getQueryParameter) {
-      // WebGL2 approach
-      available = gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE);
-      if (available) {
-        timeElapsed = gl.getQueryParameter(query, gl.QUERY_RESULT);
-      }
-    } else if (host.gpuTimerExtension.getQueryObjectEXT) {
-      // WebGL1 extension approach
-      available = host.gpuTimerExtension.getQueryObjectEXT(
-        query,
-        host.gpuTimerExtension.QUERY_RESULT_AVAILABLE_EXT
-      );
-      if (available) {
-        timeElapsed = host.gpuTimerExtension.getQueryObjectEXT(
-          query,
-          host.gpuTimerExtension.QUERY_RESULT_EXT
-        );
-      }
-    }
-
-    const disjoint = gl.getParameter(host.gpuTimerExtension.GPU_DISJOINT_EXT);
-
-    if (available && !disjoint) {
-      const timeMs = timeElapsed / 1000000; // Convert nanoseconds to milliseconds
-
-      host.gpuTimes.push(timeMs);
-
-      // Keep only last 30 GPU times for averaging
-      if (host.gpuTimes.length > 30) {
-        host.gpuTimes.shift();
-      }
-
-      // Calculate average GPU time
-      host.currentGpuTime = host.gpuTimes.reduce((a, b) => a + b, 0) / host.gpuTimes.length;
-
-      // Clean up query
-      if (gl.deleteQuery) {
-        gl.deleteQuery(query);
-      } else if (host.gpuTimerExtension.deleteQueryEXT) {
-        host.gpuTimerExtension.deleteQueryEXT(query);
-      }
-
-      host.gpuQueries.splice(i, 1);
-    }
-  }
 }
 
 export function trackRender(host: RenderStatsHost): void {
@@ -192,9 +78,9 @@ export function updateFPSCalculation(host: RenderStatsHost): void {
 
 export function updateFPSDisplay(host: RenderStatsHost): void {
   let timeStr;
-  if (host.gpuTimerExtension && host.currentGpuTime > 0) {
+  if (host.gpuTimer.available && host.gpuTimer.averageMs > 0) {
     // Show actual GPU render time when available
-    timeStr = `${host.currentGpuTime.toFixed(1)} ms`;
+    timeStr = `${host.gpuTimer.averageMs.toFixed(1)} ms`;
   } else {
     // Fallback to frame time
     timeStr = `${host.currentFrameTime.toFixed(1)} ms`;

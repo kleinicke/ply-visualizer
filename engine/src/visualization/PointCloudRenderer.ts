@@ -43,10 +43,29 @@ export function getRoundPointTexture(): THREE.Texture {
 }
 
 /**
+ * Universal default point size, in world units, for every format.
+ *
+ * **This value is only visible because of a WebGL behaviour.** At 0.001 world
+ * units a point is far below one pixel at normal viewing distances; WebGL
+ * clamps `gl_PointSize` up to the minimum of `ALIASED_POINT_SIZE_RANGE`, which
+ * is at least 1, so the point still covers a pixel and the cloud is visible.
+ *
+ * No such implicit clamp exists elsewhere. The abandoned WebGPU attempt
+ * (commit 970ee42) drew points as sprite quads, which are *not* clamped, and
+ * the entire cloud disappeared at this default — that was the bug that stopped
+ * the port, not anything about the port itself. Any future backend must apply
+ * a one-pixel minimum explicitly.
+ */
+export const DEFAULT_POINT_SIZE = 0.001;
+
+/** Minimum size a point must cover to remain visible, in device pixels. */
+export const MIN_POINT_PIXELS = 1;
+
+/**
  * Point sizes at or below this render as roughly one pixel, where a disc and a
- * square are the same handful of fragments. The viewer's universal default is
- * 0.001; the small margin keeps slider values that round to the default on the
- * cheap path.
+ * square are the same handful of fragments. The small margin above
+ * DEFAULT_POINT_SIZE keeps slider values that round to the default on the cheap
+ * path.
  */
 const ROUND_POINT_MIN_SIZE = 0.0015;
 

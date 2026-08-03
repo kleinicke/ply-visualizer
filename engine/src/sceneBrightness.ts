@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
+import type { ViewerRenderer } from './rendering/viewerRenderer';
 
 export interface SceneBrightnessHost {
-  renderer: THREE.WebGLRenderer;
+  renderer: ViewerRenderer;
   scene: THREE.Scene;
   brightnessStops: number;
   backgroundBrightness: number;

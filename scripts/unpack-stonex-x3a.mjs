@@ -18,7 +18,10 @@ const inputPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
 const outputPath = process.argv[3]
   ? path.resolve(process.argv[3])
   : inputPath
-    ? path.join(path.dirname(inputPath), `${path.basename(inputPath, path.extname(inputPath))}_unpacked`)
+    ? path.join(
+        path.dirname(inputPath),
+        `${path.basename(inputPath, path.extname(inputPath))}_unpacked`
+      )
     : null;
 
 if (!inputPath || !outputPath) {
@@ -47,7 +50,12 @@ function archiveMembers(bytes) {
     const nameBytes = bytes.subarray(entry + 16, entry + 512);
     const nul = nameBytes.indexOf(0);
     const name = nameBytes.subarray(0, nul < 0 ? nameBytes.length : nul).toString('utf8');
-    if (!name || path.basename(name) !== name || offset < directoryEnd || offset + size > bytes.length) {
+    if (
+      !name ||
+      path.basename(name) !== name ||
+      offset < directoryEnd ||
+      offset + size > bytes.length
+    ) {
       throw new Error(`Invalid archive member at directory index ${index}`);
     }
     members.push({ name, offset, size });
@@ -116,9 +124,7 @@ function grayWorldBalance(bytes, frames) {
       usable++;
     }
   }
-  return usable
-    ? { red: redGain / usable, blue: blueGain / usable }
-    : { red: 1, blue: 1 };
+  return usable ? { red: redGain / usable, blue: blueGain / usable } : { red: 1, blue: 1 };
 }
 
 function portraitTopLeftBalance(bytes, frame) {
@@ -154,9 +160,7 @@ function portraitTopLeftBalance(bytes, frame) {
   const meanRed = red / samples;
   const meanGreen = green / samples;
   const meanBlue = blue / samples;
-  const greenDeviation = Math.sqrt(
-    Math.max(0, greenSquares / samples - meanGreen * meanGreen)
-  );
+  const greenDeviation = Math.sqrt(Math.max(0, greenSquares / samples - meanGreen * meanGreen));
   // Reject clipped patches: equal 255 values contain no color-response data.
   if (Math.max(meanRed, meanGreen, meanBlue) >= 250) {
     return null;
@@ -182,12 +186,7 @@ function whiteBalances(bytes, frames) {
       .filter(Boolean)
       .sort((a, b) => b.score - a.score);
     const reference = references[0];
-    result.set(
-      type,
-      reference
-        ? { red: reference.red, blue: reference.blue }
-        : fallback
-    );
+    result.set(type, reference ? { red: reference.red, blue: reference.blue } : fallback);
   }
   return result;
 }
@@ -318,7 +317,9 @@ async function main() {
     pointOffset += layout.validPoints;
   }
   if (pointOffset !== cloud.vertexCount) {
-    throw new Error(`PLY split produced ${pointOffset} points, parser produced ${cloud.vertexCount}`);
+    throw new Error(
+      `PLY split produced ${pointOffset} points, parser produced ${cloud.vertexCount}`
+    );
   }
 
   const manifest = {
@@ -333,7 +334,10 @@ async function main() {
     totalValidPoints: cloud.vertexCount,
     photographicallyColoredPoints: cloud.metadata.photographicallyColoredPoints,
   };
-  await fsp.writeFile(path.join(outputPath, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  await fsp.writeFile(
+    path.join(outputPath, 'manifest.json'),
+    `${JSON.stringify(manifest, null, 2)}\n`
+  );
   console.log(JSON.stringify({ outputPath, ...manifest }, null, 2));
 }
 

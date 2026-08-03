@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { FileEntryRegistry } from './state/fileEntries';
 import { SpatialData } from './interfaces';
-import { applyPointShape } from './visualization/PointCloudRenderer';
+import { applyPointShape, DEFAULT_POINT_SIZE } from './visualization/PointCloudRenderer';
 
 export interface PointSizeScalingHost {
   fileEntries: FileEntryRegistry;
@@ -113,7 +113,7 @@ export function updateAllPointSizesForDistance(host: PointSizeScalingHost): void
       group.traverse(child => {
         if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
           const material = child.material as THREE.PointsMaterial;
-          const baseSize = host.pointSizes[index] || 0.001;
+          const baseSize = host.pointSizes[index] || DEFAULT_POINT_SIZE;
           setPointSize(host, material, calculateScreenSpacePointSize(baseSize, cameraDistance));
           material.needsUpdate = true;
         }
@@ -281,7 +281,7 @@ export function restoreOriginalPointSizes(host: PointSizeScalingHost): void {
       group.traverse(child => {
         if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
           const material = child.material as THREE.PointsMaterial;
-          setPointSize(host, material, host.pointSizes[index] || 0.001);
+          setPointSize(host, material, host.pointSizes[index] || DEFAULT_POINT_SIZE);
           material.needsUpdate = true;
         }
       });

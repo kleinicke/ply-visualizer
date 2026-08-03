@@ -43,6 +43,7 @@ import * as sequencePlayback from './sequencePlayback';
 import * as pose from './pose';
 import * as renderStats from './renderStats';
 import * as pointCloudRenderer from './visualization/PointCloudRenderer';
+import { DEFAULT_POINT_SIZE } from './visualization/PointCloudRenderer';
 import * as containerPerf from './utils/containerPerf';
 import { useAntialiasing } from './rendering/rendererOptions';
 import * as meshBuilder from './visualization/MeshBuilder';
@@ -96,6 +97,7 @@ import { mountFileList } from './fileListMount';
 import { mountStats } from './statsMount';
 import { mountControlsTab } from './controlsTabMount';
 import { filesState } from './state/files.svelte';
+import { GpuTimer, NULL_GPU_TIMER, createGpuTimer } from './rendering/gpuTimer';
 import { FileEntryRegistry } from './state/fileEntries';
 import { insertEntryState, removeEntryState } from './state/fileEntryState';
 import { viewerState } from './state/viewer.svelte';
@@ -185,10 +187,9 @@ class PointCloudVisualizer {
   currentFrameTime: number = 0;
 
   // GPU timing
-  gpuTimerExtension: any = null;
-  gpuQueries: any[] = [];
-  gpuTimes: number[] = [];
-  currentGpuTime: number = 0;
+  // Backend-neutral GPU timing; see rendering/gpuTimer.ts. Starts as the null
+  // timer so the render loop needs no guards before the renderer exists.
+  gpuTimer: GpuTimer = NULL_GPU_TIMER;
 
   // Camera tracking for screen-space scaling
   private lastScalingUpdate: number = 0;
@@ -457,22 +458,6 @@ class PointCloudVisualizer {
     pointSizeScaling.restoreOriginalPointSizes(this);
   }
 
-  private initGPUTiming(): void {
-    renderStats.initGPUTiming(this);
-  }
-
-  private startGPUTiming(): any {
-    return renderStats.startGPUTiming(this);
-  }
-
-  private endGPUTiming(query: any): void {
-    renderStats.endGPUTiming(this, query);
-  }
-
-  private updateGPUTiming(): void {
-    renderStats.updateGPUTiming(this);
-  }
-
   private createOptimizedPointCloud(
     geometry: THREE.BufferGeometry,
     material: THREE.PointsMaterial
@@ -602,7 +587,7 @@ class PointCloudVisualizer {
     this.updateWelcomeMessageVisibility();
 
     // Initialize GPU timing if supported
-    this.initGPUTiming();
+    this.gpuTimer = createGpuTimer(this.renderer);
 
     // Re-enable object sorting for better visual quality
     this.renderer.sortObjects = true;
@@ -1012,10 +997,10 @@ class PointCloudVisualizer {
     this.lastFrameTime = now;
 
     // Start GPU timing for resize render
-    const gpuQuery = this.startGPUTiming();
+    this.gpuTimer.begin();
     this.performRender();
-    this.endGPUTiming(gpuQuery);
-    this.updateGPUTiming();
+    this.gpuTimer.end();
+    this.gpuTimer.poll();
 
     // Track render event for resize renders too
     this.trackRender();
@@ -1100,12 +1085,12 @@ class PointCloudVisualizer {
       this.lastFrameTime = now;
 
       // Start GPU timing
-      const gpuQuery = this.startGPUTiming();
+      this.gpuTimer.begin();
       this.performRender();
-      this.endGPUTiming(gpuQuery);
+      this.gpuTimer.end();
 
       // Update GPU timing results
-      this.updateGPUTiming();
+      this.gpuTimer.poll();
 
       // Track render event
       this.trackRender();
@@ -2311,8 +2296,8 @@ class PointCloudVisualizer {
 
       // Initialize point size if not set
       if (!this.pointSizes[fileIndex]) {
-        this.pointSizes[fileIndex] = 0.001; // Universal default for all file types
-        filesState.pointSizes[fileIndex] = 0.001;
+        this.pointSizes[fileIndex] = DEFAULT_POINT_SIZE;
+        filesState.pointSizes[fileIndex] = DEFAULT_POINT_SIZE;
       }
 
       material.size = this.pointSizes[fileIndex];
@@ -2749,7 +2734,7 @@ class PointCloudVisualizer {
       const { index: entryIndex } = this.fileEntries.add('spatial');
       insertEntryState(this, entryIndex, {
         visible: true,
-        pointSize: 0.001,
+        pointSize: DEFAULT_POINT_SIZE,
         colorMode: 'assigned',
       });
 
@@ -2804,7 +2789,7 @@ class PointCloudVisualizer {
       const initialPointSize =
         typeof recommendedPointSize === 'number' && recommendedPointSize > 0
           ? recommendedPointSize
-          : 0.001;
+          : DEFAULT_POINT_SIZE;
       this.pointSizes[data.fileIndex] = initialPointSize;
       filesState.pointSizes[data.fileIndex] = initialPointSize;
       // debug

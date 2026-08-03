@@ -76,7 +76,9 @@ export function applyColorToDepthResult(
           },
           [xCV, yCV, zCV]
         );
-        if (!projected.valid) {throw new Error('ray is outside the camera model domain');}
+        if (!projected.valid) {
+          throw new Error('ray is outside the camera model domain');
+        }
         u = Math.round(projected.value[0]);
         v = Math.round(projected.value[1]);
       } catch {

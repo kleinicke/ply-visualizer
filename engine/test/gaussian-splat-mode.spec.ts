@@ -111,7 +111,9 @@ test('3DGS file previews with DC colors and toggles into splat mode', async ({ p
       let hidden = 0;
       mesh.forEachSplat(
         (_index: number, _center: any, _scales: any, _quaternion: any, opacity: number) => {
-          if (opacity === 0) {hidden++;}
+          if (opacity === 0) {
+            hidden++;
+          }
         }
       );
       return hidden;

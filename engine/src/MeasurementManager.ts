@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { measurementState } from './state/measurement.svelte';
+import type { ViewerRenderer } from './rendering/viewerRenderer';
 
 /**
  * Format a distance with appropriate units. Shared by the 3D labels and the
@@ -46,7 +47,7 @@ export class MeasurementManager {
   private measurements: Measurement[] = [];
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
-  private renderer: THREE.WebGLRenderer;
+  private renderer: ViewerRenderer;
   private labelsContainer: HTMLDivElement | null = null;
 
   // Completed paths keep their visuals while the newest path remains editable.
@@ -60,7 +61,7 @@ export class MeasurementManager {
   private pendingStartMode: PathStartMode | null = 'center';
   private lastUsedStartMode: PathStartMode = 'center';
 
-  constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, renderer: THREE.WebGLRenderer) {
+  constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, renderer: ViewerRenderer) {
     this.scene = scene;
     this.camera = camera;
     this.renderer = renderer;

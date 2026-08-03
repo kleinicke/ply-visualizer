@@ -928,9 +928,11 @@ export class StonexX3aParser {
         cameraColorDiagnostic: null,
         cameraProjectionDomain: 'CAL FOV guard before OpenCV distortion',
         cameraProjectionKernel: 'shared Rust/WASM OpenCV pinhole batch projector',
-        // X300 archives cover hundreds of metres. The viewer's generic 1 mm
-        // default projects to far below one pixel at the initial overview.
-        recommendedPointSize: 0.25,
+        // X300 archives cover hundreds of metres, where the viewer's generic
+        // 1 mm default projects to far below one pixel. 25 mm stays visible at
+        // range without turning into blobs near the scanner, where the initial
+        // view now starts.
+        recommendedPointSize: 0.025,
         rangeScaleMetres: RANGE_SCALE_METRES,
         verticalFieldOfViewDegrees: [
           VERTICAL_MIN_DEGREES,

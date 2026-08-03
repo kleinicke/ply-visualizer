@@ -4,17 +4,8 @@
  */
 
 import { PerfTimer } from './utils/perfLog';
-import { PlyParser } from './parsers/plyParser';
-import { ObjParser } from './parsers/objParser';
-import { StlParser } from './parsers/stlParser';
-import { PcdParser } from './parsers/pcdParser';
-import { PtsParser } from './parsers/ptsParser';
-import { KittiBinParser } from './parsers/kittiBinParser';
-import { StonexX3aParser } from './parsers/stonexX3aParser';
-import { initTiffWasm, projectCameraPointsWasmSync } from './depth/readers/tiffWasm';
-import { OffParser } from './parsers/offParser';
-import { GltfParser } from './parsers/gltfParser';
-import { NpyParser, isNpyPointCloudData } from './parsers/npyParser';
+import { formats } from './formats/formatRegistry';
+import { registerBuiltinFormats, createStonexParser } from './formats/builtinFormats';
 
 // Shared constants for consistent behavior across extension and website
 export const DEFAULT_COLORS = {
@@ -34,20 +25,6 @@ export const DEFAULT_COLORS = {
   ] as [number, number, number][],
 };
 
-async function createStonexParser(): Promise<StonexX3aParser> {
-  const ready = await initTiffWasm();
-  return new StonexX3aParser(
-    ready
-      ? request =>
-          projectCameraPointsWasmSync({
-            ...request,
-            cameraModel: 'pinhole-opencv',
-            coefficients: [...request.coefficients],
-          })
-      : undefined
-  );
-}
-
 export const DEPTH_UI_BEHAVIOR = {
   // Whether to show depth conversion UI or use defaults immediately
   SHOW_UI_IN_VSCODE: true,
@@ -57,39 +34,18 @@ export const DEPTH_UI_BEHAVIOR = {
   USE_EXTENSION_UI_IN_VSCODE: true,
 };
 
-// Supported file extensions and their categories
-export const SUPPORTED_EXTENSIONS = {
-  // Splat containers (spz/splat/ksplat/sog) are point clouds for detection,
-  // but are decoded by Spark (visualization/splatMode.ts), never parseFileData.
-  pointClouds: [
-    'ply',
-    'xyz',
-    'xyzn',
-    'xyzrgb',
-    'pcd',
-    'pts',
-    'las',
-    'laz',
-    'e57',
-    'bin',
-    'x3a',
-    'x3r',
-    'spz',
-    'splat',
-    'ksplat',
-    'sog',
-  ],
-  meshes: ['stl', 'obj', 'off', 'gltf', 'glb'],
-  depthImages: ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png', 'exr'],
-  poseData: ['json'],
-} as const;
+// Supported file extensions, derived from the format registry so the lists and
+// the parse dispatch cannot drift apart. See formats/formatRegistry.ts.
+registerBuiltinFormats(formats, (data, fileName) => convertToUnifiedFormat(data as any, fileName));
 
-export const ALL_SUPPORTED_EXTENSIONS = [
-  ...SUPPORTED_EXTENSIONS.pointClouds,
-  ...SUPPORTED_EXTENSIONS.meshes,
-  ...SUPPORTED_EXTENSIONS.depthImages,
-  ...SUPPORTED_EXTENSIONS.poseData,
-];
+export const SUPPORTED_EXTENSIONS = {
+  pointClouds: formats.extensionsFor('pointCloud'),
+  meshes: formats.extensionsFor('mesh'),
+  depthImages: formats.extensionsFor('depthImage'),
+  poseData: formats.extensionsFor('poseData'),
+};
+
+export const ALL_SUPPORTED_EXTENSIONS = formats.allExtensions();
 
 // File type detection interface
 export interface FileTypeInfo {
@@ -146,41 +102,15 @@ export function detectFileType(fileName: string): FileTypeInfo | null {
   if (!extension) {
     return null;
   }
-
-  // Check each category
-  if (SUPPORTED_EXTENSIONS.pointClouds.includes(extension as any)) {
-    return {
-      extension,
-      category: 'pointCloud',
-      isDepthFile: false,
-    };
+  const definition = formats.find(extension);
+  if (!definition) {
+    return null;
   }
-
-  if (SUPPORTED_EXTENSIONS.meshes.includes(extension as any)) {
-    return {
-      extension,
-      category: 'mesh',
-      isDepthFile: false,
-    };
-  }
-
-  if (SUPPORTED_EXTENSIONS.depthImages.includes(extension as any)) {
-    return {
-      extension,
-      category: 'depthImage',
-      isDepthFile: true,
-    };
-  }
-
-  if (SUPPORTED_EXTENSIONS.poseData.includes(extension as any)) {
-    return {
-      extension,
-      category: 'poseData',
-      isDepthFile: false,
-    };
-  }
-
-  return null;
+  return {
+    extension,
+    category: definition.category,
+    isDepthFile: definition.category === 'depthImage',
+  };
 }
 
 /**
@@ -192,32 +122,18 @@ export function detectFileTypeWithContent(
   fileData?: Uint8Array
 ): FileTypeInfo | null {
   const basicType = detectFileType(fileName);
-  if (!basicType) {
-    return null;
+  if (!basicType || !fileData) {
+    return basicType;
   }
-
-  // For NPY files, analyze content to determine if it's point cloud data or depth data
-  if (basicType.extension === 'npy' && fileData) {
-    try {
-      const arrayBuffer = fileData.buffer.slice(
-        fileData.byteOffset,
-        fileData.byteOffset + fileData.byteLength
-      ) as ArrayBuffer;
-      if (isNpyPointCloudData(arrayBuffer)) {
-        // NPY contains XYZ point cloud data - route to point cloud pipeline
-        return {
-          extension: basicType.extension,
-          category: 'pointCloud',
-          isDepthFile: false,
-        };
-      }
-    } catch (error) {
-      // If we can't analyze the NPY content, fall back to depth image assumption
-      console.warn('Failed to analyze NPY content, treating as depth image:', error);
-    }
+  const refined = formats.find(basicType.extension)?.refineCategory?.(fileData);
+  if (!refined) {
+    return basicType;
   }
-
-  return basicType;
+  return {
+    extension: basicType.extension,
+    category: refined,
+    isDepthFile: refined === 'depthImage',
+  };
 }
 
 /**
@@ -240,145 +156,18 @@ export async function parseFileData(
   fileName: string,
   timingCallback?: (message: string) => void
 ): Promise<ParseResult> {
-  const { extension } = fileInfo;
-
-  switch (extension) {
-    case 'ply':
-      const plyParser = new PlyParser();
-      const spatialData = await plyParser.parse(data, timingCallback);
-      return {
-        data: {
-          ...spatialData,
-          fileName,
-          // Splat mode needs the full original PLY (SH/scale/rot props are
-          // dropped during point parsing). Only 3DGS files pay this retention.
-          ...(spatialData.isGaussianSplat ? { splatSource: { bytes: data } } : {}),
-        },
-        type: 'spatialData',
-      };
-
-    case 'stl':
-      const stlParser = new StlParser();
-      const stlData = await stlParser.parse(data, timingCallback);
-      return {
-        data: convertToUnifiedFormat(stlData, fileName),
-        type: 'stlData',
-      };
-
-    case 'obj':
-      const objParser = new ObjParser();
-      const objData = await objParser.parse(data, timingCallback);
-      return {
-        data: convertToUnifiedFormat(objData, fileName),
-        type: 'objData',
-      };
-
-    case 'pcd':
-      const pcdParser = new PcdParser();
-      const pcdData = await pcdParser.parse(data, timingCallback);
-      return {
-        data: convertToUnifiedFormat(pcdData, fileName),
-        type: 'pcdData',
-      };
-
-    case 'pts':
-      const ptsParser = new PtsParser();
-      const ptsData = await ptsParser.parse(data, timingCallback);
-      return {
-        data: convertToUnifiedFormat(ptsData, fileName),
-        type: 'ptsData',
-      };
-
-    case 'bin':
-      const kittiBinParser = new KittiBinParser();
-      const kittiBinData = await kittiBinParser.parse(data, timingCallback);
-      return {
-        data: convertToUnifiedFormat(kittiBinData, fileName),
-        type: 'kittiBinData',
-      };
-
-    case 'x3a':
-    case 'x3r':
-      const stonexX3aParser = await createStonexParser();
-      const stonexX3aData = await stonexX3aParser.parse(data, fileName, timingCallback);
-      return {
-        data: stonexX3aData,
-        type: 'spatialData',
-      };
-
-    case 'off':
-      const offParser = new OffParser();
-      const offData = await offParser.parse(data, timingCallback);
-      return {
-        data: convertToUnifiedFormat(offData, fileName),
-        type: 'offData',
-      };
-
-    case 'gltf':
-    case 'glb':
-      const gltfParser = new GltfParser();
-      const gltfData = await gltfParser.parse(data, timingCallback);
-      return {
-        data: convertToUnifiedFormat(gltfData, fileName),
-        type: 'gltfData',
-      };
-
-    case 'xyz':
-    case 'xyzn':
-    case 'xyzrgb':
-      // XYZ variants can be parsed with PLY parser
-      const xyzParser = new PlyParser();
-      const xyzData = await xyzParser.parse(data, timingCallback);
-      return {
-        data: {
-          ...xyzData,
-          fileName,
-        },
-        type: 'xyzData',
-      };
-
-    case 'npy':
-      // NPY files containing XYZ point cloud data (detected by content analysis)
-      if (fileInfo.category === 'pointCloud') {
-        const npyParser = new NpyParser();
-        const npyData = await npyParser.parse(data, timingCallback);
-        return {
-          data: {
-            ...npyData,
-            fileName,
-          },
-          type: 'npyData',
-        };
-      } else {
-        // This should not happen if detectFileTypeWithContent works correctly
-        throw new Error(
-          `NPY file ${fileName} was not detected as point cloud data. Shape may not end with dimension 3.`
-        );
-      }
-
-    case 'json':
-      // JSON files for pose data and camera profiles - create empty geometry structure
-      // Actual parsing is handled in main.ts based on content structure
-      const textContent = new TextDecoder().decode(data);
-      return {
-        data: {
-          vertices: [],
-          faces: [],
-          format: 'json',
-          vertexCount: 0,
-          faceCount: 0,
-          hasColors: false,
-          hasNormals: false,
-          fileName,
-          // Store JSON content in comments field for access in main.ts
-          comments: [textContent],
-        },
-        type: 'jsonData',
-      };
-
-    default:
-      throw new Error(`Unsupported file format: ${extension}`);
+  const definition = formats.find(fileInfo.extension);
+  if (!definition?.parse) {
+    // Either unknown, or a format decoded elsewhere (lidar worker, Spark,
+    // DepthRegistry) and therefore never routed here.
+    throw new Error(`Unsupported file format: ${fileInfo.extension}`);
   }
+  return definition.parse({
+    data,
+    fileName,
+    category: fileInfo.category,
+    timingCallback,
+  });
 }
 
 /**

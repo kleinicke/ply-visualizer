@@ -8,6 +8,7 @@ import {
 import { filmState } from '../state/film.svelte';
 import { viewerState } from '../state/viewer.svelte';
 import { getBackgroundCssColor } from '../sceneBrightness';
+import type { ViewerRenderer } from '../rendering/viewerRenderer';
 
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
@@ -15,7 +16,7 @@ const isVSCode = typeof acquireVsCodeApi !== 'undefined';
 export interface FilmHost {
   camera: THREE.PerspectiveCamera;
   controls: { target: THREE.Vector3; enabled: boolean; update(): void };
-  renderer: THREE.WebGLRenderer;
+  renderer: ViewerRenderer;
   scene: THREE.Scene;
   backgroundBrightness: number;
   vscode: { postMessage(message: any): void };

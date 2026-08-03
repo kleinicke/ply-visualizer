@@ -1,10 +1,11 @@
 import * as THREE from 'three';
+import type { ViewerRenderer } from '../rendering/viewerRenderer';
 
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
 
 export interface ViewCaptureHost {
-  renderer: THREE.WebGLRenderer;
+  renderer: ViewerRenderer;
   camera: THREE.PerspectiveCamera;
   controls: { target: THREE.Vector3 };
   vscode: { postMessage(message: any): void };
