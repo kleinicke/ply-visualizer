@@ -2,6 +2,7 @@
   import { filesState } from '../state/files.svelte';
   import { getExtraScalarFieldNames } from '../utils/scalarFields';
   import CameraFrameList from './CameraFrameList.svelte';
+  import E57CorrectionPanel from './E57CorrectionPanel.svelte';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
   import TransformSection from './TransformSection.svelte';
   import {
@@ -42,6 +43,22 @@
   const scalarFieldNames = $derived(
     kind === 'pointcloud' && data ? getExtraScalarFieldNames(data) : []
   );
+
+  // Set when an E57's points were painted from its embedded photos because the
+  // scan itself stored no colour. Worth saying out loud: those colours are a
+  // projection result, not measured data.
+  const photoColoredPoints = $derived.by(() => {
+    filesState.renderTick;
+    return kind === 'pointcloud'
+      ? ((data?.metadata?.e57PhotographicallyColoredPoints as number | undefined) ?? null)
+      : null;
+  });
+  const photoColoredPercent = $derived(
+    photoColoredPoints && data?.vertexCount
+      ? Math.round((photoColoredPoints / data.vertexCount) * 100)
+      : 0
+  );
+
 
   function colorIndicatorStyle(): string {
     if (kind === 'pointcloud' && colorMode === 'original' && data?.hasColors) {
@@ -588,6 +605,14 @@
           <option value="assigned">Assigned ({host.getColorName(index)})</option>
           {@html host.getColorOptions(index)}
           </select>
+          {#if photoColoredPoints}
+            <div
+              style="font-size:10px;opacity:0.75;margin-top:2px;"
+              title={`Not original scan colour: this scan stored none, so ${photoColoredPoints?.toLocaleString()} of ${data.vertexCount.toLocaleString()} points were coloured by sampling the E57's embedded photos. Depends on the image alignment correction in the camera entry.`}
+            >
+              📷 Photo colour ({photoColoredPercent}%)
+            </div>
+          {/if}
         </div>
       {/if}
     {:else if kind === 'pose' && meta}
@@ -699,7 +724,7 @@
       </div>
     {:else if kind === 'camera' && cameraGroup}
       <div class="file-info">{cameraGroup.userData.cameraCount ?? cameraGroup.children.length} cameras</div>
-      <div class="panel-section" style="margin-top:6px;">
+      <div class="panel-section" style="margin-top:6px;margin-bottom:6px;padding-bottom:6px;">
         <div class="control-buttons">
           <label style="font-size:10px;display:flex;align-items:center;gap:6px;">
             <input
@@ -880,6 +905,9 @@
             </label>
           {/if}
         </div>
+        {#if cameraGroup.userData.imageCorrectionAvailable}
+          <E57CorrectionPanel {host} {cameraGroup} {index} />
+        {/if}
         <CameraFrameList {host} {cameraGroup} sceneTick={cameraSceneTick} />
       </div>
       <div class="size-control">

@@ -267,6 +267,12 @@ function frameView(
     forward: atPixel(frame.imageWidth / 2, frame.imageHeight / 2),
     up: topCentre.sub(bottomCentre).normalize(),
     fovYDegrees: 2 * Math.atan(frame.imageHeight / (2 * frame.fy)) * (180 / Math.PI),
+    corners: [
+      atPixel(0, 0),
+      atPixel(frame.imageWidth, 0),
+      atPixel(frame.imageWidth, frame.imageHeight),
+      atPixel(0, frame.imageHeight),
+    ],
   };
 }
 

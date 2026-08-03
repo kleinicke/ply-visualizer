@@ -83,7 +83,7 @@
   // then fails with "PostCSS received undefined instead of CSS string", the
   // module is dropped, and the component is undefined at runtime.
   const BUTTON =
-    'background:transparent;border:none;color:var(--vscode-foreground);font-size:10px;padding:2px 0;cursor:pointer;text-align:left;';
+    'background:transparent;border:none;color:var(--vscode-foreground);font-size:10px;padding:1px 0;cursor:pointer;text-align:left;';
   const DISCLOSURE = `${BUTTON}opacity:0.85;`;
   const NAME_BUTTON = `${BUTTON}flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`;
   const VIEW_BUTTON = `${BUTTON}border:1px solid var(--vscode-panel-border, rgba(128,128,128,0.4));border-radius:2px;padding:1px 6px;`;
@@ -91,7 +91,7 @@
   const VALUE = 'margin:0;overflow-wrap:anywhere;';
 </script>
 
-<div class="camera-frame-list" style="margin-top:6px;font-size:10px;">
+<div class="camera-frame-list" style="margin-top:2px;font-size:10px;">
   <button
     type="button"
     class="camera-frame-disclosure"

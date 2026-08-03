@@ -11,7 +11,8 @@ One shared visualization engine with two thin hosts:
    custom editor webview
 2. **Standalone page** (`engine/`, deployed at https://f-kleinicke.de) — public
    demo and the fast test surface (Playwright against a browser page skips
-   booting VS Code/Electron)
+   booting VS Code/Electron). The usable extension is on the subpage
+   /3d-visualizer
 
 **Core rule:** all shared functionality (parsers, rendering, controls, depth
 processing, webview UI) lives in `engine/src/`. `src/` stays thin and only does
@@ -79,10 +80,5 @@ there; put code in the modules above.
   resolved: the default Trackball scheme is now a CloudCompare-style virtual
   ball; the old delta trackball is "Legacy Trackball" (`I`) — see the resolved
   post-mortem in docs/BACKLOG.md.)
-- I've got a tiff extension as well. Sometimes I add a prompt in the wrong
-  window. Tell me.
-
-## Refactoring rules
-
-Full migration history:
-[docs/SVELTE_MIGRATION_PLAN.md](docs/SVELTE_MIGRATION_PLAN.md).
+- I've got a tiff/image viewing extension as well. Sometimes I add a prompt in
+  the wrong window. Tell me.

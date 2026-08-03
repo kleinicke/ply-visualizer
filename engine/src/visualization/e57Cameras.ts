@@ -5,6 +5,14 @@ import { initTiffWasm, projectCameraPointsWasmSync } from '../depth/readers/tiff
 import type { E57EmbeddedImage, SpatialData } from '../interfaces';
 import { filesState } from '../state/files.svelte';
 import type { CameraFrameDetail, CameraFrameView } from './cameraFrames';
+import {
+  correctUnprojectedRay,
+  correctionMatrixForProjection,
+  describeE57ImageCorrection,
+  DEFAULT_E57_IMAGE_CORRECTION,
+  normalizeE57ImageCorrection,
+  type E57ImageCorrection,
+} from './e57ImageCorrection';
 
 interface E57CameraHost {
   scene: THREE.Scene;
@@ -97,7 +105,7 @@ function localImagePoint(
   image: E57EmbeddedImage,
   u: number,
   v: number,
-  azimuthCorrection = 0
+  correction: E57ImageCorrection = DEFAULT_E57_IMAGE_CORRECTION
 ): THREE.Vector3 | null {
   const result = unprojectCameraPixel(
     {
@@ -114,12 +122,7 @@ function localImagePoint(
     return null;
   }
   const point = new THREE.Vector3(...result.value);
-  if (image.representation !== 'pinhole' && azimuthCorrection !== 0) {
-    // A few exporters store a spherical JPEG whose azimuth zero is shifted
-    // relative to its declared E57 pose. Rotate the unprojected footprint by
-    // the independently measured image-to-point-colour correction.
-    point.applyAxisAngle(new THREE.Vector3(0, 0, 1), -azimuthCorrection);
-  }
+  correctUnprojectedRay(point, correction, image.representation);
   if (image.representation === 'pinhole') {
     if (point.z >= -1e-8) {
       return null;
@@ -142,14 +145,30 @@ function localImagePoint(
  * E57 pinhole images look along local -Z, and the panoramic representations
  * have no single forward axis of their own.
  */
-function imageView(image: E57EmbeddedImage, azimuthCorrection = 0): CameraFrameView | undefined {
-  const centre = localImagePoint(image, image.width / 2, image.height / 2, azimuthCorrection);
-  const top = localImagePoint(image, image.width / 2, 0, azimuthCorrection);
-  const bottom = localImagePoint(image, image.width / 2, image.height, azimuthCorrection);
+function imageView(
+  image: E57EmbeddedImage,
+  correction: E57ImageCorrection
+): CameraFrameView | undefined {
+  const centre = localImagePoint(image, image.width / 2, image.height / 2, correction);
+  const top = localImagePoint(image, image.width / 2, 0, correction);
+  const bottom = localImagePoint(image, image.width / 2, image.height, correction);
   if (!centre || !top || !bottom) {
     return undefined;
   }
   const up = top.sub(bottom).normalize();
+  // Only a pinhole frame has corners worth framing; a panorama wraps past the
+  // viewport whatever the field of view.
+  const corners =
+    image.representation === 'pinhole'
+      ? [
+          [0, 0],
+          [image.width, 0],
+          [image.width, image.height],
+          [0, image.height],
+        ]
+          .map(([u, v]) => localImagePoint(image, u, v, correction))
+          .filter((point): point is THREE.Vector3 => !!point)
+      : undefined;
   return {
     forward: centre,
     up: up.lengthSq() > 0 ? up : new THREE.Vector3(0, 1, 0),
@@ -157,12 +176,13 @@ function imageView(image: E57EmbeddedImage, azimuthCorrection = 0): CameraFrameV
       image.representation === 'pinhole' && image.fy
         ? 2 * Math.atan(image.height / (2 * image.fy)) * (180 / Math.PI)
         : undefined,
+    corners: corners?.length === 4 ? corners : undefined,
   };
 }
 
-function createE57CameraBody(image: E57EmbeddedImage, azimuthCorrection = 0): THREE.Mesh {
+function createE57CameraBody(image: E57EmbeddedImage, correction: E57ImageCorrection): THREE.Mesh {
   const body = createCameraBodyGeometry();
-  const imageCentre = localImagePoint(image, image.width / 2, image.height / 2, azimuthCorrection);
+  const imageCentre = localImagePoint(image, image.width / 2, image.height / 2, correction);
   if (imageCentre?.lengthSq()) {
     // The shared icon is authored looking along local +Z. E57 does not use a
     // single generic camera forward axis: pinhole looks along -Z, while the
@@ -173,34 +193,9 @@ function createE57CameraBody(image: E57EmbeddedImage, azimuthCorrection = 0): TH
   return body;
 }
 
-/**
- * Explains what the azimuth estimator did, including the cases where it could
- * not run. Without this the panel could not distinguish "measured, no shift
- * needed" from "never had a reference to measure against" — and the latter is
- * exactly when a shifted panorama stays uncorrected.
- */
-function azimuthCorrectionStatus(
-  data: SpatialData | undefined,
-  image: E57EmbeddedImage,
-  azimuthCorrection: number
-): string {
-  if (image.representation === 'pinhole') {
-    return 'not applicable (pinhole)';
-  }
-  if (azimuthCorrection !== 0) {
-    const degrees = THREE.MathUtils.radToDeg(azimuthCorrection);
-    return `${degrees > 0 ? '+' : ''}${degrees.toFixed(1)}° (measured against native point colours)`;
-  }
-  if (!data?.hasColors || !data?.colorsArray || (data?.vertexCount ?? 0) < 500) {
-    return 'not measured — no native point colours to match against; E57 pose used as-is';
-  }
-  return 'none needed — E57 pose matched the native point colours';
-}
-
 function imageDetails(
   image: E57EmbeddedImage,
-  azimuthCorrection = 0,
-  azimuthStatus?: string
+  correction: E57ImageCorrection
 ): CameraFrameDetail[] {
   const details: CameraFrameDetail[] = [
     { label: 'Representation', value: image.representation },
@@ -223,14 +218,10 @@ function imageDetails(
     label: 'Rotation',
     value: `w ${qw.toFixed(5)}, x ${qx.toFixed(5)}, y ${qy.toFixed(5)}, z ${qz.toFixed(5)}`,
   });
-  if (azimuthStatus) {
-    details.push({ label: 'Azimuth correction', value: azimuthStatus });
-  } else if (azimuthCorrection !== 0) {
-    details.push({
-      label: 'Azimuth correction',
-      value: `${THREE.MathUtils.radToDeg(azimuthCorrection).toFixed(1)}°`,
-    });
-  }
+  details.push({
+    label: 'Alignment correction',
+    value: describeE57ImageCorrection(correction, image.representation),
+  });
   if (image.sensorModel || image.sensorVendor) {
     details.push({
       label: 'Sensor',
@@ -242,7 +233,7 @@ function imageDetails(
 
 function createProjectionGeometry(
   image: E57EmbeddedImage,
-  azimuthCorrection = 0
+  correction: E57ImageCorrection
 ): {
   surface: THREE.BufferGeometry;
   frustum: THREE.BufferGeometry;
@@ -256,7 +247,7 @@ function createProjectionGeometry(
       const s = column / columns;
       const t = row / rows;
       const point =
-        localImagePoint(image, s * image.width, t * image.height, azimuthCorrection) ??
+        localImagePoint(image, s * image.width, t * image.height, correction) ??
         new THREE.Vector3();
       positions.push(point.x, point.y, point.z);
       uvs.push(s, 1 - t);
@@ -350,15 +341,22 @@ async function decodeHalfResolutionTexture(image: E57EmbeddedImage): Promise<{
   return { texture, canvas };
 }
 
-function viewerToImageTransform(image: E57EmbeddedImage, origin: readonly number[]): number[] {
+function viewerToImageTransform(
+  image: E57EmbeddedImage,
+  origin: readonly number[],
+  correction: E57ImageCorrection
+): number[] {
   const [tx, ty, tz, qw, qx, qy, qz] = image.pose;
   const imageToFile = new THREE.Matrix4().compose(
     new THREE.Vector3(tx, ty, tz),
     new THREE.Quaternion(qx, qy, qz, qw).normalize(),
     new THREE.Vector3(1, 1, 1)
   );
-  const transform = imageToFile
-    .invert()
+  // The same correction the drawn plane gets, so sampled colours and the
+  // surface in the scene share one mapping. It applies after the pose, in the
+  // projection direction (localImagePoint corrects the opposite way).
+  const transform = correctionMatrixForProjection(correction, image.representation)
+    .multiply(imageToFile.invert())
     .multiply(new THREE.Matrix4().makeTranslation(origin[0], origin[1], origin[2]));
   const e = transform.elements;
   return [
@@ -410,100 +408,11 @@ function sampleBilinear(
   return result;
 }
 
-function estimatePanoramaAzimuthCorrection(
-  data: SpatialData,
-  image: E57EmbeddedImage,
-  canvas: HTMLCanvasElement
-): number {
-  if (
-    image.representation === 'pinhole' ||
-    !data.hasColors ||
-    !data.positionsArray ||
-    !data.colorsArray ||
-    data.vertexCount < 500
-  ) {
-    return 0;
-  }
-  const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (!context) {
-    return 0;
-  }
-  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-  const transform = viewerToImageTransform(image, data.sourceOrigin ?? [0, 0, 0]);
-  const positions = data.positionsArray;
-  const colors = data.colorsArray;
-  const scaleX = canvas.width / image.width;
-  const scaleY = canvas.height / image.height;
-  const wrapsHorizontally = image.width / image.fx! >= Math.PI * 2 - 0.02;
-  const stride = Math.max(1, Math.floor(data.vertexCount / 10_000));
-  const candidates = Array.from({ length: 24 }, (_, index) => (index - 12) * (Math.PI / 12));
-
-  const score = (correction: number): { error: number; count: number } => {
-    let error = 0;
-    let count = 0;
-    for (let index = 0; index < data.vertexCount; index += stride) {
-      const offset = index * 3;
-      const red = colors[offset];
-      const green = colors[offset + 1];
-      const blue = colors[offset + 2];
-      const sum = red + green + blue;
-      // Almost-black/white samples provide little alignment information and
-      // otherwise let sky or invalid fill dominate the score.
-      if (sum < 20 || sum > 745) {
-        continue;
-      }
-      const px = positions[offset];
-      const py = positions[offset + 1];
-      const pz = positions[offset + 2];
-      const x = transform[0] * px + transform[1] * py + transform[2] * pz + transform[3];
-      const y = transform[4] * px + transform[5] * py + transform[6] * pz + transform[7];
-      const z = transform[8] * px + transform[9] * py + transform[10] * pz + transform[11];
-      const rho = Math.hypot(x, y);
-      if (rho < 1e-8) {
-        continue;
-      }
-      let imageX = image.cx! - image.fx! * (Math.atan2(y, x) + correction);
-      if (wrapsHorizontally) {
-        imageX = ((imageX % image.width) + image.width) % image.width;
-      }
-      const vertical = image.representation === 'spherical' ? Math.atan2(z, rho) : z / rho;
-      const imageY = image.cy! - image.fy! * vertical;
-      const sampleX = Math.floor(imageX * scaleX);
-      const sampleY = Math.floor(imageY * scaleY);
-      if (sampleX < 0 || sampleY < 0 || sampleX >= canvas.width || sampleY >= canvas.height) {
-        continue;
-      }
-      const sampleOffset = (sampleY * canvas.width + sampleX) * 4;
-      if (pixels[sampleOffset + 3] < 250) {
-        continue;
-      }
-      const dr = pixels[sampleOffset] - red;
-      const dg = pixels[sampleOffset + 1] - green;
-      const db = pixels[sampleOffset + 2] - blue;
-      error += dr * dr + dg * dg + db * db;
-      count++;
-    }
-    return { error: error / Math.max(1, count), count };
-  };
-
-  const baseline = score(0);
-  let best = { correction: 0, ...baseline };
-  for (const correction of candidates) {
-    const candidate = score(correction);
-    if (candidate.count >= 500 && candidate.error < best.error) {
-      best = { correction, ...candidate };
-    }
-  }
-  // Only override standard E57 pose/projection data when native RGB provides
-  // strong evidence. This preserves conforming files and fixes exporters that
-  // shifted the panorama pixels without updating the image pose.
-  return best.correction !== 0 && best.error < baseline.error * 0.6 ? best.correction : 0;
-}
-
 async function colorPointCloudFromImages(
   host: E57CameraHost,
   data: SpatialData,
-  decoded: Array<{ image: E57EmbeddedImage; canvas: HTMLCanvasElement }>
+  decoded: Array<{ image: E57EmbeddedImage; canvas: HTMLCanvasElement }>,
+  correction: E57ImageCorrection
 ): Promise<void> {
   if (data.hasColors || !data.positionsArray || !decoded.length) {
     return;
@@ -521,7 +430,7 @@ async function colorPointCloudFromImages(
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
     const scaleX = canvas.width / image.width;
     const scaleY = canvas.height / image.height;
-    const transform = viewerToImageTransform(image, data.sourceOrigin ?? [0, 0, 0]);
+    const transform = viewerToImageTransform(image, data.sourceOrigin ?? [0, 0, 0], correction);
     for (let start = 0; start < count; start += chunkSize) {
       const end = Math.min(count, start + chunkSize);
       const indices = new Uint32Array(end - start);
@@ -605,6 +514,9 @@ async function colorPointCloudFromImages(
     points.material = host.createMaterialForFile(data, fileIndex) as THREE.PointsMaterial;
     previous.dispose();
   }
+  // Colouring finishes after the file list has rendered, so nudge it to pick up
+  // the new "Original" mode and the photo-provenance note.
+  filesState.renderTick++;
   host.requestRender();
 }
 
@@ -612,7 +524,8 @@ async function populateImages(
   host: E57CameraHost,
   profile: THREE.Group,
   images: E57EmbeddedImage[],
-  origin: readonly number[]
+  origin: readonly number[],
+  correction: E57ImageCorrection
 ): Promise<void> {
   if (!(await initTiffWasm())) {
     profile.userData.imageProjectionAvailable = false;
@@ -632,29 +545,10 @@ async function populateImages(
         z: pose.position.z,
       };
       const { texture, canvas } = await decodeHalfResolutionTexture(image);
-      const azimuthCorrection = estimatePanoramaAzimuthCorrection(
-        profile.userData.spatialData as SpatialData,
-        image,
-        canvas
-      );
-      frame.userData.e57AzimuthCorrectionDegrees = THREE.MathUtils.radToDeg(azimuthCorrection);
-      frame.userData.view = imageView(image, azimuthCorrection);
-      frame.userData.frameDetails = imageDetails(
-        image,
-        azimuthCorrection,
-        azimuthCorrectionStatus(
-          profile.userData.spatialData as SpatialData,
-          image,
-          azimuthCorrection
-        )
-      );
-      frame.add(createE57CameraBody(image, azimuthCorrection));
-      if (azimuthCorrection !== 0) {
-        console.info(
-          `[E57] Corrected ${image.name || image.guid || `image ${index + 1}`} panorama azimuth by ${frame.userData.e57AzimuthCorrectionDegrees.toFixed(1)}° from native point colours`
-        );
-      }
-      const geometry = createProjectionGeometry(image, azimuthCorrection);
+      frame.userData.view = imageView(image, correction);
+      frame.userData.frameDetails = imageDetails(image, correction);
+      frame.add(createE57CameraBody(image, correction));
+      const geometry = createProjectionGeometry(image, correction);
       frame.add(
         new THREE.LineSegments(geometry.frustum, new THREE.LineBasicMaterial({ color: 0x42a5f5 }))
       );
@@ -694,7 +588,8 @@ async function populateImages(
   await colorPointCloudFromImages(
     host,
     profile.userData.spatialData as SpatialData,
-    decodedForColor
+    decodedForColor,
+    correction
   );
   profile.userData.imageProjectionAvailable = true;
   host.requestRender();
@@ -720,8 +615,75 @@ export function addE57CameraVisualization(host: E57CameraHost, data: SpatialData
   profile.userData.imageDistortionAvailable = true;
   profile.userData.spatialData = data;
   profile.userData.scannerVisible = true;
+  profile.userData.imageCorrectionAvailable = true;
+  profile.userData.imageCorrection = { ...DEFAULT_E57_IMAGE_CORRECTION };
+  profile.userData.imageRepresentations = [...new Set(images.map(image => image.representation))];
+  profile.userData.e57Images = images;
   profile.add(createScannerMarker(data));
   registerCameraGroup(host, profile, name);
-  void populateImages(host, profile, images, data.sourceOrigin ?? [0, 0, 0]);
+  void populateImages(
+    host,
+    profile,
+    images,
+    data.sourceOrigin ?? [0, 0, 0],
+    profile.userData.imageCorrection as E57ImageCorrection
+  );
   return true;
+}
+
+/**
+ * Rebuilds a profile's imagery under a new correction.
+ *
+ * Both the drawn planes and any colours we sampled for the points have to be
+ * redone, so this tears the frames down and re-runs the whole population pass,
+ * re-decoding the JPEGs. That is slow and deliberately so: correctness across
+ * display and colouring matters more here than interactivity.
+ */
+export async function setE57ImageCorrection(
+  host: E57CameraHost,
+  profile: THREE.Group,
+  correction: E57ImageCorrection
+): Promise<void> {
+  const images = profile.userData.e57Images as E57EmbeddedImage[] | undefined;
+  const data = profile.userData.spatialData as SpatialData | undefined;
+  if (!images?.length || !data) {
+    return;
+  }
+  profile.userData.imageCorrection = normalizeE57ImageCorrection(correction);
+
+  for (const frame of [...profile.children]) {
+    if (!frame.name.startsWith('camera_')) {
+      continue;
+    }
+    frame.traverse(object => {
+      const mesh = object as THREE.Mesh;
+      mesh.geometry?.dispose?.();
+      const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      for (const entry of Array.isArray(material) ? material : material ? [material] : []) {
+        (entry as any).map?.dispose?.();
+        entry.dispose();
+      }
+    });
+    profile.remove(frame);
+  }
+
+  // Colours sampled from the old mapping have to go, or the repaint below is
+  // skipped and the points keep pointing at the previous alignment.
+  if (data.metadata?.e57PhotographicallyColoredPoints != null) {
+    data.hasColors = false;
+    data.colorsArray = undefined;
+    const { e57PhotographicallyColoredPoints: _dropped, ...rest } = data.metadata as Record<
+      string,
+      unknown
+    >;
+    data.metadata = rest;
+  }
+
+  await populateImages(
+    host,
+    profile,
+    images,
+    data.sourceOrigin ?? [0, 0, 0],
+    profile.userData.imageCorrection as E57ImageCorrection
+  );
 }

@@ -26,6 +26,12 @@ export interface CameraFrameView {
   up: THREE.Vector3;
   /** Vertical field of view matching the image, in degrees. */
   fovYDegrees?: number;
+  /**
+   * Image corners in the frame group's local space. Used to frame the whole
+   * image whatever its shape and roll; a single vertical FOV cannot do that,
+   * since a portrait or rolled photo needs the horizontal extent instead.
+   */
+  corners?: THREE.Vector3[];
 }
 
 export interface CameraFrameInfo {
@@ -47,6 +53,9 @@ export interface LookThroughHost {
 
 /** Distance of the look-at target for frames that do not declare a view. */
 const FALLBACK_TARGET_DISTANCE = 5;
+
+/** Scene up. E57 and X3A both define +Z as up, as does the viewer's axes helper. */
+const WORLD_UP = new THREE.Vector3(0, 0, 1);
 
 /**
  * Orbit radius left after moving the pivot onto the optical centre. Controls
@@ -102,7 +111,28 @@ export function lookThroughCameraFrame(host: LookThroughHost, group: THREE.Group
 
   const position = new THREE.Vector3().setFromMatrixPosition(group.matrixWorld);
   const target = forwardLocal.applyMatrix4(group.matrixWorld);
-  const up = upLocal.transformDirection(group.matrixWorld).normalize();
+  const imageUp = upLocal.transformDirection(group.matrixWorld).normalize();
+
+  // Snap the roll to the image's own axes, choosing the quarter turn that comes
+  // closest to standing upright. A portrait-mounted camera is rolled 90
+  // degrees, so its picture ends up portrait on screen instead of laid on its
+  // side, and the screen edges stay parallel to the image edges. Nothing here
+  // invents an intermediate angle, and it does not read camera.up, which the
+  // trackball controls rewrite while orbiting.
+  const direction = target.clone().sub(position).normalize();
+  const up = imageUp.clone();
+  let bestUpright = -Infinity;
+  for (let quarter = 0; quarter < 4; quarter++) {
+    const candidate = imageUp
+      .clone()
+      .applyAxisAngle(direction, (quarter * Math.PI) / 2)
+      .normalize();
+    const upright = candidate.dot(WORLD_UP);
+    if (upright > bestUpright) {
+      bestUpright = upright;
+      up.copy(candidate);
+    }
+  }
 
   host.camera.position.copy(position);
   host.camera.up.copy(up);
@@ -111,6 +141,7 @@ export function lookThroughCameraFrame(host: LookThroughHost, group: THREE.Group
     host.camera.fov = view.fovYDegrees;
   }
   host.camera.updateProjectionMatrix();
+  fitFieldOfViewToImage(host, group, view);
   if (host.controls) {
     // Pivot on the optical centre rather than the image plane, so rotating
     // turns the view without leaving the camera's viewpoint. Sitting a hair
@@ -128,4 +159,40 @@ export function lookThroughCameraFrame(host: LookThroughHost, group: THREE.Group
   host.updateCameraMatrix?.();
   host.updateCameraControlsPanel?.();
   host.requestRender();
+}
+
+/**
+ * Widens the vertical FOV until every image corner is on screen.
+ *
+ * The image's own vertical FOV only frames it when the photo is upright and
+ * its aspect is no wider than the viewport. A rolled or portrait frame needs
+ * the horizontal extent, divided by the viewport aspect, instead.
+ */
+function fitFieldOfViewToImage(
+  host: LookThroughHost,
+  group: THREE.Group,
+  view: CameraFrameView | undefined
+): void {
+  if (!view?.corners?.length) {
+    return;
+  }
+  host.camera.updateMatrixWorld(true);
+  const worldToCamera = new THREE.Matrix4().copy(host.camera.matrixWorld).invert();
+  const aspect = host.camera.aspect || 1;
+  let tangent = 0;
+  for (const corner of view.corners) {
+    const point = corner.clone().applyMatrix4(group.matrixWorld).applyMatrix4(worldToCamera);
+    // Three.js cameras look down -Z; corners behind the camera cannot be framed.
+    if (point.z >= -1e-6) {
+      continue;
+    }
+    const depth = -point.z;
+    tangent = Math.max(tangent, Math.abs(point.y) / depth, Math.abs(point.x) / depth / aspect);
+  }
+  if (tangent <= 0) {
+    return;
+  }
+  // A little air so the border is not exactly on the viewport edge.
+  host.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(tangent * 1.04));
+  host.camera.updateProjectionMatrix();
 }
