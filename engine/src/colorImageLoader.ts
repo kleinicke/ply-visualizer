@@ -6,11 +6,10 @@
  * - PNG, JPEG (regular image formats)
  * - PPM (ASCII P3 format)
  *
- * Auto-detects bit depth from actual data (getBitsPerSample() is unreliable)
+ * Auto-detects bit depth from actual data (the reported bit depth is unreliable)
  */
 
-// GeoTIFF is loaded globally in the webview
-declare const GeoTIFF: any;
+import { decodeTiffWasm } from './depth/readers/tiffWasm';
 
 export interface ColorImageDimensions {
   width: number;
@@ -91,15 +90,15 @@ export class ColorImageLoader {
         console.log('Loading as regular image file');
         img.src = URL.createObjectURL(file);
       } else {
-        // Handle TIF files using GeoTIFF
-        console.log('Loading as TIF file using GeoTIFF');
+        // Handle TIF files with the WASM decoder
+        console.log('Loading as TIF file using the WASM decoder');
         this.loadTiffImage(file, expectedDimensions, resolve);
       }
     });
   }
 
   /**
-   * Load TIFF image using GeoTIFF library
+   * Load a TIFF colour image with the Rust/WASM decoder.
    */
   private async loadTiffImage(
     file: File,
@@ -110,13 +109,12 @@ export class ColorImageLoader {
     reader.onload = async e => {
       try {
         const buffer = e.target!.result as ArrayBuffer;
-        const tiff = await GeoTIFF.fromArrayBuffer(buffer);
-        const image = await tiff.getImage();
-        const rasters = await image.readRasters();
+        const decoded = await decodeTiffWasm(buffer);
+        if (!decoded) {
+          throw new Error('the WASM TIFF decoder is unavailable');
+        }
 
-        // Validate dimensions
-        const width = image.getWidth();
-        const height = image.getHeight();
+        const { width, height, channels } = decoded;
 
         if (width !== dimensions.width || height !== dimensions.height) {
           this.showStatus(
@@ -127,6 +125,10 @@ export class ColorImageLoader {
           return;
         }
 
+        // The decoder returns interleaved samples; the normalization helpers
+        // below work per band, so split once up front.
+        const rasters = this.deinterleaveBands(decoded.data, width * height, channels);
+
         // Convert TIF data to ImageData
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
@@ -136,16 +138,12 @@ export class ColorImageLoader {
         const imageData = ctx!.createImageData(width, height);
         const data = imageData.data;
 
-        // Detect bit depth and sample format for proper normalization
-        const bitsPerSample = image.getBitsPerSample();
-        const reportedBitDepth = bitsPerSample && bitsPerSample.length > 0 ? bitsPerSample[0] : 8;
-        const sampleFormat = image.getSampleFormat();
-
+        const reportedBitDepth = decoded.bitsPerSample || 8;
         // Sample format: 1 = uint, 2 = int, 3 = float
-        const isFloat = sampleFormat && sampleFormat.length > 0 && sampleFormat[0] === 3;
+        const isFloat = decoded.sampleFormat === 3;
 
         console.log(
-          `TIF color image reported bit depth: ${reportedBitDepth}, sample format: ${sampleFormat?.[0] || 'unknown'}, isFloat: ${isFloat}`
+          `TIF color image reported bit depth: ${reportedBitDepth}, sample format: ${decoded.sampleFormat}, isFloat: ${isFloat}`
         );
 
         if (rasters.length >= 3) {
@@ -167,6 +165,26 @@ export class ColorImageLoader {
       }
     };
     reader.readAsArrayBuffer(file);
+  }
+
+  /** Split an interleaved sample buffer into one array per channel. */
+  private deinterleaveBands(
+    data: Float32Array,
+    pixelCount: number,
+    channels: number
+  ): Float32Array[] {
+    if (channels <= 1) {
+      return [data.length === pixelCount ? data : data.subarray(0, pixelCount)];
+    }
+    const bands: Float32Array[] = [];
+    for (let c = 0; c < channels; c++) {
+      const band = new Float32Array(pixelCount);
+      for (let i = 0; i < pixelCount; i++) {
+        band[i] = data[i * channels + c];
+      }
+      bands.push(band);
+    }
+    return bands;
   }
 
   /**

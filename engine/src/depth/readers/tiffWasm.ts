@@ -1,16 +1,15 @@
 /**
  * Rust/WebAssembly TIFF decoder wrapper.
  *
- * Drop-in accelerator for the pure-JS geotiff.js path, mirroring the
- * tiff-visualizer sister extension's TiffWasmProcessor. The wasm-bindgen
+ * The only TIFF/EXR/PNG16 decoder in this extension — there is no JS fallback.
+ * Ported from the tiff-visualizer sister extension's decoder. The wasm-bindgen
  * "no-modules" glue is loaded via a <script> tag before the bundle and exposes
  * a global `wasm_bindgen` (init function + exports). The .wasm binary URL is
  * provided on `window.__TIFF_WASM_URL__` (set by index.html for the standalone
  * site, overridden with a webview-resource URI by the VS Code extension).
  *
- * Everything here is best-effort: if the global is missing, init fails, or a
- * decode throws, the caller falls back to geotiff.js — same behavior and
- * performance as before WASM existed.
+ * Init is best-effort and reports availability via a null/false return, but a
+ * decode failure on an available module is a genuine error and propagates.
  */
 
 // Provided by media/wasm/tiff_wasm.js (no-modules build). Lexical global.
@@ -80,6 +79,28 @@ export interface NormalizeDepthWasmResult {
   data: Float32Array;
   kind: string;
   unit: string;
+}
+
+export interface Png16WasmResult {
+  width: number;
+  height: number;
+  channels: number;
+  bitDepth: number;
+  colorType: number;
+  /** Interleaved samples at full 16-bit precision. */
+  data: Uint16Array;
+}
+
+export interface ExrWasmResult {
+  width: number;
+  height: number;
+  channels: number;
+  /** Names of the channels present in the file, in file order. */
+  channelNames: string[];
+  /** Names of the channels actually packed into `data`, in packed order. */
+  displayedChannels: string[];
+  /** Interleaved float samples, `channels` per pixel. */
+  data: Float32Array;
 }
 
 export interface TiffWasmResult {
@@ -153,7 +174,7 @@ export async function initTiffWasm(): Promise<boolean> {
       ready = typeof wasmApi.decode_tiff_fast === 'function';
       return ready;
     } catch (error) {
-      console.warn('[TiffWasm] init failed, using geotiff.js fallback:', error);
+      console.warn('[TiffWasm] init failed, image decoding is unavailable:', error);
       return false;
     }
   })();
@@ -346,8 +367,71 @@ export function normalizeDepthWasmSync(
 }
 
 /**
- * Decode a TIFF with the WASM decoder. Returns null (caller should fall back)
- * if WASM is unavailable or the decode fails for any reason.
+ * Decode a 16-bit PNG at full precision. Returns null when WASM is
+ * unavailable; throws when the buffer is not a PNG the decoder accepts.
+ */
+export async function decodePng16Wasm(buffer: ArrayBuffer): Promise<Png16WasmResult | null> {
+  const ok = await initTiffWasm();
+  const wasmApi = getWasmBindgen();
+  if (!ok || typeof wasmApi?.decode_png16_fast !== 'function') {
+    return null;
+  }
+  let result: any = null;
+  try {
+    result = wasmApi.decode_png16_fast(new Uint8Array(buffer));
+    return {
+      width: result.width,
+      height: result.height,
+      channels: result.channels,
+      bitDepth: result.bit_depth,
+      colorType: result.color_type,
+      data: new Uint16Array(result.take_data_as_u16()),
+    };
+  } finally {
+    try {
+      result?.free?.();
+    } catch {
+      /* already freed */
+    }
+  }
+}
+
+/**
+ * Decode an OpenEXR image. Returns null when WASM is unavailable; throws when
+ * the buffer is not an EXR the decoder accepts.
+ */
+export async function decodeExrWasm(buffer: ArrayBuffer): Promise<ExrWasmResult | null> {
+  const ok = await initTiffWasm();
+  const wasmApi = getWasmBindgen();
+  if (!ok || typeof wasmApi?.decode_exr_fast !== 'function') {
+    return null;
+  }
+  let result: any = null;
+  try {
+    result = wasmApi.decode_exr_fast(new Uint8Array(buffer));
+    const splitCsv = (csv: string): string[] =>
+      typeof csv === 'string' && csv.length > 0 ? csv.split(',') : [];
+    return {
+      width: result.width,
+      height: result.height,
+      channels: result.channels,
+      channelNames: splitCsv(result.channel_names_csv),
+      displayedChannels: splitCsv(result.displayed_channels_csv),
+      data: new Float32Array(result.take_data_as_f32()),
+    };
+  } finally {
+    try {
+      result?.free?.();
+    } catch {
+      /* already freed */
+    }
+  }
+}
+
+/**
+ * Decode a TIFF with the WASM decoder. Returns null only when the module is
+ * unavailable; a decode failure throws so the caller can surface the real
+ * reason instead of a generic "unsupported file".
  */
 export async function decodeTiffWasm(buffer: ArrayBuffer): Promise<TiffWasmResult | null> {
   const ok = await initTiffWasm();
@@ -376,9 +460,6 @@ export async function decodeTiffWasm(buffer: ArrayBuffer): Promise<TiffWasmResul
       max: result.max_value,
     };
     return out;
-  } catch (error) {
-    console.warn('[TiffWasm] decode failed, using geotiff.js fallback:', error);
-    return null;
   } finally {
     // Release wasm-side memory regardless of success.
     try {

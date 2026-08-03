@@ -71,7 +71,7 @@ there; put code in the modules above.
   intrinsics → `DepthProjector` projects to 3D (pinhole/fisheye; OpenGL and
   OpenCV axis conventions).
 - Supported formats: PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY (points), PLY, OBJ,
-  STL, OFF, GLTF, GLB (meshes), TIFF, PNG, PFM, NPY, NPZ (depth), `.json`
+  STL, OFF, GLTF, GLB (meshes), TIFF, PNG, PFM, NPY, NPZ, EXR (depth), `.json`
   (poses, experimental). Gaussian splats: 3DGS PLY gets DC-colored points plus a
   per-file Spark splat-render toggle; SPZ/SPLAT/KSPLAT/SOG containers open
   through Spark with splat mode on by default

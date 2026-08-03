@@ -3,6 +3,7 @@
  * Provides unified file type detection, parsing, and error handling
  */
 
+import { PerfTimer } from './utils/perfLog';
 import { PlyParser } from './parsers/plyParser';
 import { ObjParser } from './parsers/objParser';
 import { StlParser } from './parsers/stlParser';
@@ -79,7 +80,7 @@ export const SUPPORTED_EXTENSIONS = {
     'sog',
   ],
   meshes: ['stl', 'obj', 'off', 'gltf', 'glb'],
-  depthImages: ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png'],
+  depthImages: ['tif', 'tiff', 'pfm', 'npy', 'npz', 'png', 'exr'],
   poseData: ['json'],
 } as const;
 
@@ -926,6 +927,13 @@ export async function convertDepthToUnified(
 
   registerDefaultReaders();
 
+  // One PERF line for this path too (the extension path builds its own in
+  // depth/depthConversionPipeline.ts). No extension epochs exist here - the
+  // file came from a drop or picker - so the span is webview-only.
+  const perf = new PerfTimer(/\.tif(f)?$/i.test(fileName) ? 'tiff' : 'depth');
+  perf.file(fileName);
+  perf.note('MB', (data.byteLength / 1048576).toFixed(2));
+
   if (/\.png$/i.test(fileName) && cameraParams.pngScaleFactor) {
     const pngReader = new PngReader();
     pngReader.setConfig({ pngScaleFactor: cameraParams.pngScaleFactor, invalidValue: 0 });
@@ -933,6 +941,10 @@ export async function convertDepthToUnified(
   }
 
   const { image, meta: baseMeta } = await readDepth(fileName, data);
+  perf.mark('decode');
+  if ((baseMeta as any).decodeInfo) {
+    perf.note('layout', (baseMeta as any).decodeInfo);
+  }
 
   const cx = cameraParams.cx ?? (image.width - 1) / 2;
   const cy = cameraParams.cy ?? (image.height - 1) / 2;
@@ -992,6 +1004,8 @@ export async function convertDepthToUnified(
     height?: number;
   };
 
+  perf.mark('project');
+
   const verts: any[] = new Array(result.pointCount);
   const colorsAreUint8 = result.colors instanceof Uint8Array;
   for (let i = 0; i < result.pointCount; i++) {
@@ -1044,6 +1058,10 @@ export async function convertDepthToUnified(
   if (result.width && result.height) {
     (unified as any).depthDimensions = { width: result.width, height: result.height };
   }
+
+  perf.mark('build-vertices');
+  perf.note('verts', result.pointCount);
+  perf.summary();
 
   return { data: unified, type: 'spatialData' };
 }

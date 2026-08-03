@@ -1,5 +1,5 @@
 import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
-import { PerfTimer, perfLog } from '../utils/perfLog';
+import { PerfTimer } from '../utils/perfLog';
 import { colorsToUint8 } from './depthResultArrays';
 import {
   collectCameraParamsForBrowserPrompt,
@@ -20,6 +20,11 @@ export interface DepthConversionPipelineHost {
       isAddFile: boolean;
       requestId: string;
       sceneMetadata?: any;
+      /** Load epochs carried from the extension for the single PERF line. */
+      loadStartedAt?: number;
+      postedAt?: number;
+      receivedAt?: number;
+      byteLength?: number;
     }
   >;
   vscode: { postMessage(message: any): void };
@@ -59,24 +64,23 @@ export async function handleDepthData(
 ): Promise<void> {
   try {
     console.log('Received depth data for processing:', message.fileName);
-    if (typeof message.postedAt === 'number') {
-      const transferMs = Math.max(0, Date.now() - message.postedAt);
-      const bytes = (message.data && message.data.byteLength) || 0;
-      perfLog(
-        `⏱️ PERF[tiff] transfer ${transferMs.toFixed(1)}ms (${(bytes / 1048576).toFixed(2)}MB raw file) (file=${message.fileName})`
-      );
-    }
 
     // Generate unique request ID for this depth file using shared function
     const requestId = generateDepthRequestId();
 
-    // Store depth data in the map
+    // Store depth data in the map, along with the load epochs so the PERF line
+    // emitted after conversion can cover the whole load (extension read,
+    // transfer, decode, projection, display) instead of just its own span.
     host.pendingDepthFiles.set(requestId, {
       data: message.data,
       fileName: message.fileName,
       shortPath: message.shortPath,
       isAddFile: message.isAddFile || false,
       requestId: requestId,
+      loadStartedAt: message.loadStartedAt,
+      postedAt: message.postedAt,
+      receivedAt: Date.now(),
+      byteLength: (message.data && message.data.byteLength) || 0,
     });
 
     // Check if this is a dataset scene - store metadata but let UI load normally
@@ -245,23 +249,59 @@ export async function processDepthWithParams(
   console.log('Processing depth with camera params:', cameraParams);
   host.showStatus('Converting depth image to point cloud...');
 
-  // Complete-load timing for depth → point cloud (the wasm/geotiff decode is
-  // logged separately inside the reader; `convert` here includes it).
+  // One PERF line for the whole load. Anchoring to the extension's epochs makes
+  // read+parse and transfer part of the same total the user actually waited
+  // for; `decode` and `project` come back from wherever the conversion ran.
   const perfKind = /\.(tif|tiff)$/i.test(depthFileData.fileName) ? 'tiff' : 'depth';
-  const perf = new PerfTimer(perfKind);
+  const perf = new PerfTimer(
+    perfKind,
+    depthFileData.loadStartedAt,
+    depthFileData.postedAt,
+    depthFileData.receivedAt
+  );
   perf.file(depthFileData.fileName);
+  if (depthFileData.byteLength) {
+    perf.note('MB', (depthFileData.byteLength / 1048576).toFixed(2));
+  }
+
+  // Time spent waiting for camera parameters (extension round-trip, or the user
+  // filling in the depth dialog) is real wall-clock between receipt and here,
+  // but it is not work. Shown as its own phase so the phases still sum to the
+  // total instead of silently inflating `decode`.
+  if (depthFileData.receivedAt) {
+    perf.add('params', Date.now() - depthFileData.receivedAt);
+  }
 
   // Store original data for re-processing
   host.originalDepthFileName = depthFileData.fileName;
   host.currentCameraParams = cameraParams;
 
   // Process the depth data using the new depth processing system
+  const convertStart = performance.now();
   const result = await host.processDepthToPointCloud(
     depthFileData.data,
     depthFileData.fileName,
     cameraParams
   );
-  perf.mark('convert');
+  const convertMs = performance.now() - convertStart;
+
+  // Split the conversion span using the breakdown the converter reported, so
+  // the decode cost is visible without a second log line. Whatever is left is
+  // the worker round-trip (posting the file in, transferring arrays back).
+  const timings = result.timings;
+  if (timings) {
+    perf.add(timings.decodeCached ? 'decode(cached)' : 'decode', timings.decodeMs);
+    perf.add('project', timings.projectMs);
+    const workerIo = convertMs - timings.decodeMs - timings.projectMs;
+    if (workerIo > 0.5) {
+      perf.add('worker-io', workerIo);
+    }
+    if (timings.info) {
+      perf.note('layout', timings.info);
+    }
+  } else {
+    perf.add('convert', convertMs);
+  }
 
   const isPfm = /\.pfm$/i.test(depthFileData.fileName);
   const isNpy = /\.(npy|npz)$/i.test(depthFileData.fileName);
@@ -358,7 +398,7 @@ export async function processDepthWithParams(
   }
   perf.mark('geometry+display');
   perf.note('verts', result.pointCount);
-  perf.note('file', depthFileData.fileName);
+  // The file name is already in the PERF[kind name] tag; no need to repeat it.
   perf.summary();
 
   // Auto-open Depth Settings panel for newly created depth-derived file in browser

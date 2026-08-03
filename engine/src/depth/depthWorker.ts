@@ -10,7 +10,6 @@ interface DepthWorkerRequest {
   fileName: string;
   cameraParams: CameraParams;
   colorImageData?: ImageData;
-  geotiffUrl?: string;
   tiffWasmGlueUrl?: string;
   tiffWasmUrl?: string;
 }
@@ -28,24 +27,9 @@ interface DepthWorkerFailure {
 }
 
 const converter = new DepthConverter();
-const importedScripts = new Set<string>();
 const decodedCache = new Map<string, DecodedDepthImage>();
 const decodedCacheOrder: string[] = [];
 const maxDecodedCacheEntries = 4;
-
-function importClassicScript(url?: string): void {
-  if (!url || importedScripts.has(url)) {
-    return;
-  }
-  const importScriptsFn = (globalThis as any).importScripts as
-    | ((...urls: string[]) => void)
-    | undefined;
-  if (typeof importScriptsFn !== 'function') {
-    return;
-  }
-  importScriptsFn(url);
-  importedScripts.add(url);
-}
 
 function transferListFor(result: DepthConversionResult): Transferable[] {
   const transfers: Transferable[] = [result.vertices.buffer];
@@ -91,14 +75,26 @@ self.onmessage = async (event: MessageEvent<DepthWorkerRequest>) => {
     }
     ensureTiffWasmGlueLoaded(message.tiffWasmGlueUrl);
     await initTiffWasm();
-    importClassicScript(message.geotiffUrl);
 
+    // Timed here rather than logged here: the main thread folds these into the
+    // single PERF line for the load (see utils/perfLog.ts).
+    const wasCached = decodedCache.has(message.cacheKey);
+    const decodeStart = performance.now();
     const decoded = await getDecodedDepth(message);
+    const decodeMs = performance.now() - decodeStart;
+
+    const projectStart = performance.now();
     const result = converter.projectDecodedDepthImage(
       decoded,
       message.fileName,
       message.cameraParams
     );
+    result.timings = {
+      decodeMs,
+      projectMs: performance.now() - projectStart,
+      decodeCached: wasCached,
+      info: decoded.meta?.decodeInfo,
+    };
 
     if (message.colorImageData) {
       applyColorToDepthResult(result, message.colorImageData, message.cameraParams);

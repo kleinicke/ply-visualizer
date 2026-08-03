@@ -43,6 +43,7 @@
     "npy",
     "npz",
     "png",
+    "exr",
     "3d",
     "point cloud",
     "pointcloud",
@@ -230,6 +231,11 @@
           "command": "plyViewer.convertPngToPointCloud",
           "when": "resourceExtname == .png",
           "group": "navigation"
+        },
+        {
+          "command": "plyViewer.convertExrToPointCloud",
+          "when": "resourceExtname == .exr",
+          "group": "navigation"
         }
       ],
       "editor/title/context": [
@@ -251,6 +257,11 @@
         {
           "command": "plyViewer.convertPngToPointCloud",
           "when": "resourceExtname == .png",
+          "group": "navigation"
+        },
+        {
+          "command": "plyViewer.convertExrToPointCloud",
+          "when": "resourceExtname == .exr",
           "group": "navigation"
         }
       ]
@@ -312,7 +323,6 @@
   "dependencies": {
     "7zip-min": "^3.0.1",
     "@types/js-yaml": "^4.0.9",
-    "geotiff": "^3.0.5",
     "js-yaml": "^4.1.1",
     "lzma": "^2.3.2",
     "pako": "^2.1.0",

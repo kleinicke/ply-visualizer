@@ -137,4 +137,17 @@ export interface DepthConversionResult {
   pixelCoords?: Float32Array | Uint16Array;
   pointCount: number;
   projectionDiagnostics?: { rejectedCount: number; nonConvergedCount: number };
+  /**
+   * Phase timings measured wherever the conversion actually ran (worker or main
+   * thread), so the caller can fold them into the one PERF line for the load
+   * rather than emitting separate ones. See utils/perfLog.ts.
+   */
+  timings?: {
+    decodeMs: number;
+    projectMs: number;
+    /** True when the decode was served from the worker's decoded-image cache. */
+    decodeCached?: boolean;
+    /** Decoded layout description from the reader (DepthMetadata.decodeInfo). */
+    info?: string;
+  };
 }

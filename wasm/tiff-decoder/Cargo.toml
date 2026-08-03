@@ -17,6 +17,13 @@ tiff = { version = "0.11.3", features = ["webp"] }
 exr = { version = "1.74", default-features = false }
 png = { version = "0.17", default-features = false }
 ruzstd = "0.8"
+# Already pulled in transitively via tiff's default "lzw"/"deflate" features;
+# declared directly so the sub-16-bit direct decode path in decode_tiff_impl
+# can decompress strips itself (the tiff crate's read_image() rejects
+# non-byte-aligned bit depths like 10/12/14-bit before decompression even
+# matters).
+weezl = "0.1.12"
+flate2 = "1.1"
 zune-jpeg = "0.5"
 hayro-ccitt = "0.3"
 console_error_panic_hook = { version = "0.1.6", optional = true }

@@ -19,8 +19,6 @@ import { mountFilmPanel } from './filmPanelMount';
 import { mountMeasurementQuickActions } from './measurementQuickActionsMount';
 import { SelectionManager, SelectionContext } from './SelectionManager';
 
-// eslint-disable-next-line @typescript-eslint/naming-convention -- ambient global from media/geotiff.min.js
-declare const GeoTIFF: any;
 declare const acquireVsCodeApi: () => any;
 
 // Environment detection - works in both VSCode and browser

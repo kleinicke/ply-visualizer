@@ -4,6 +4,13 @@
 
 - Add Kitti's .bin file support
 - Add Gaussian Splatting support
+- Depth images are now decoded only by the Rust/WASM decoder; the geotiff.js
+  fallback is gone. TIFF support gains tiled and planar layouts, sub-byte bit
+  depths (10/12/14-bit), PackBits/CCITT/JPEG/WebP compression, CMYK, and the
+  Orientation tag
+- 16-bit depth PNGs keep their full precision instead of being quantised to
+  8 bits by the canvas
+- Add EXR depth images
 
 ## [1.7.0] - 2026-07-17
 

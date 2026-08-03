@@ -66,7 +66,6 @@ export class DepthWorkerClient {
             fileName,
             cameraParams: { ...cameraParams },
             colorImageData,
-            geotiffUrl: (globalThis as any).__GEOTIFF_URL__,
             tiffWasmGlueUrl: (globalThis as any).__TIFF_WASM_GLUE_URL__,
             tiffWasmUrl: (globalThis as any).__TIFF_WASM_URL__,
           },

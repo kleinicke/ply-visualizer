@@ -66,8 +66,18 @@ export class DepthConverter {
         `[2025-10-25T${new Date().toISOString().split('T')[1]}] Converting depth image to point cloud...`
       );
 
+      // Timed for the caller's single PERF line, mirroring depthWorker.ts.
+      const decodeStart = performance.now();
       const decoded = await this.decodeDepthImage(depthData, fileName, cameraParams);
+      const decodeMs = performance.now() - decodeStart;
+
+      const projectStart = performance.now();
       const result = this.projectDecodedDepthImage(decoded, fileName, cameraParams);
+      result.timings = {
+        decodeMs,
+        projectMs: performance.now() - projectStart,
+        info: decoded.meta?.decodeInfo,
+      };
 
       console.log(`TIF to PLY conversion complete: ${result.pointCount} points`);
 

@@ -37,10 +37,10 @@ suite('3D Visualization Pipeline Test Suite', () => {
       const mediaFiles = fs.readdirSync(mediaPath);
       console.log('Media files:', mediaFiles);
 
-      const hasGeoTIFF = mediaFiles.some(f => f.includes('geotiff'));
+      const hasTiffWasm = mediaFiles.some(f => f.includes('wasm'));
       const hasCSS = mediaFiles.some(f => f.endsWith('.css'));
 
-      assert.ok(hasGeoTIFF, 'Should have GeoTIFF library for TIF processing');
+      assert.ok(hasTiffWasm, 'Should have the Rust/WASM decoder for TIF processing');
       assert.ok(hasCSS, 'Should have CSS styles for webview');
     }
   });

@@ -1,5 +1,6 @@
 import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata, DepthKind } from '../types';
 import { Rgb24Converter } from './Rgb24Reader';
+import { decodePng16Wasm } from './tiffWasm';
 
 export interface PngDepthConfig {
   pngScaleFactor: number; // Depth/disparity is divided to get applied value in meters/disparities (1000 for mm, 256 for disparity, 1 for meters)
@@ -173,8 +174,15 @@ export class PngReader implements DepthReader {
       throw new Error('Only grayscale or RGB PNG images are supported for depth');
     }
 
-    // For now, use a simplified approach with canvas API and scale values
-    // This will lose 16-bit precision but provides basic functionality
+    // Full-precision path: the Rust decoder returns the real 16-bit samples.
+    // The canvas below can only ever give 8 bits per channel, which quantises
+    // millimetre depth maps into ~256 visible steps.
+    const wasm = await this.decode16BitPngWasm(data);
+    if (wasm) {
+      return wasm;
+    }
+
+    // Fallback only when the WASM module itself is unavailable.
     const imageData = await this.decodePng(data);
 
     // Check if this is an RGB image (not grayscale)
@@ -227,6 +235,64 @@ export class PngReader implements DepthReader {
       height: pngInfo.height,
       data: depthData,
     };
+  }
+
+  /**
+   * Decode a 16-bit PNG through the Rust decoder, keeping the full sample
+   * range. Returns null when the WASM module is unavailable so the caller can
+   * fall back to the lossy canvas path.
+   */
+  private async decode16BitPngWasm(data: Uint8Array): Promise<DepthImage | null> {
+    const copy = new ArrayBuffer(data.byteLength);
+    new Uint8Array(copy).set(data);
+    const png = await decodePng16Wasm(copy);
+    if (!png) {
+      return null;
+    }
+
+    const { width, height, channels, data: samples } = png;
+    const pixelCount = width * height;
+    const depthData = new Float32Array(pixelCount);
+    const scale = this.config.pngScaleFactor || 1;
+    const invalid = this.config.invalidValue;
+
+    if (channels >= 3) {
+      // RGB-packed 24-bit depth. The packing is defined on 8-bit channels, so
+      // take the high byte of each 16-bit sample before combining.
+      const rgba = new Uint8ClampedArray(pixelCount * 4);
+      for (let i = 0; i < pixelCount; i++) {
+        const src = i * channels;
+        const dst = i * 4;
+        rgba[dst] = samples[src] >> 8;
+        rgba[dst + 1] = samples[src + 1] >> 8;
+        rgba[dst + 2] = samples[src + 2] >> 8;
+        rgba[dst + 3] = 255;
+      }
+      const imageData = new ImageData(rgba, width, height);
+      if (Rgb24Converter.isRgbImage(imageData)) {
+        return {
+          width,
+          height,
+          data: Rgb24Converter.convertRgbToDepth(imageData, {
+            conversionMode: this.config.rgb24ConversionMode || 'shift',
+            scaleFactor: this.config.rgb24ScaleFactor || 1000,
+            invalidValue: this.config.rgb24InvalidValue,
+          }),
+        };
+      }
+      // Grayscale replicated across channels: keep channel 0 at 16-bit.
+      for (let i = 0; i < pixelCount; i++) {
+        const raw = samples[i * channels];
+        depthData[i] = raw === invalid ? 0 : raw / scale;
+      }
+      return { width, height, data: depthData };
+    }
+
+    for (let i = 0; i < pixelCount; i++) {
+      const raw = samples[i * channels];
+      depthData[i] = raw === invalid ? 0 : raw / scale;
+    }
+    return { width, height, data: depthData };
   }
 
   private convertCanvasToDepth(imageData: ImageData): DepthImage {

@@ -3,6 +3,7 @@ import { NpyReader } from './readers/NpyReader';
 import { PfmReader } from './readers/PfmReader';
 import { PngReader } from './readers/PngReader';
 import { TifReader } from './readers/TifReader';
+import { ExrReader } from './readers/ExrReader';
 
 const readers: DepthReader[] = [];
 
@@ -12,13 +13,11 @@ export function registerReader(reader: DepthReader): void {
 
 export function registerDefaultReaders(): void {
   // Register depth format readers
-  // const { ExrReader } = require('./readers/ExrReader');
-
   registerReader(new PfmReader());
   registerReader(new TifReader());
   registerReader(new NpyReader());
   registerReader(new PngReader());
-  // registerReader(new ExrReader());
+  registerReader(new ExrReader());
 
   // Note: Rgb24Reader is no longer used as a reader.
   // RGB24 conversion is now handled by TifReader and PngReader directly

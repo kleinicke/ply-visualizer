@@ -10,14 +10,15 @@ example MTL materials, color images or calibration files.
 | ---------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
 | Point clouds           | `.ply`, `.xyz`, `.xyzn`, `.xyzrgb`, `.pcd`, `.pts`, `.npy`, `.las`, `.laz`, `.e57`, `.x3a` | `.npy` is treated as a point cloud when the array shape ends in `3` |
 | Meshes                 | `.ply`, `.obj`, `.stl`, `.off`, `.gltf`, `.glb`                                            | Meshes can also be shown as points/wireframes where applicable      |
-| Depth/disparity images | `.tif`, `.tiff`, `.png`, `.pfm`, `.npy`, `.npz`                                            | Converted to point clouds with camera parameters                    |
+| Depth/disparity images | `.tif`, `.tiff`, `.png`, `.pfm`, `.npy`, `.npz`, `.exr`                                    | Converted to point clouds with camera parameters                    |
 | Pose data              | `.json`                                                                                    | 2D/3D body/keypoint JSON structures                                 |
 | Camera profiles        | `.json`                                                                                    | JSON with a top-level `cameras` object                              |
 | Auxiliary materials    | `.mtl`                                                                                     | Loaded for OBJ/material coloring workflows                          |
 | Auxiliary color images | `.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.tif`, `.tiff`                                   | Applied to depth-derived point clouds                               |
 | Auxiliary calibration  | `.json`, `.yaml`, `.yml`, `.txt`, `.conf`                                                  | Loaded from depth settings/calibration controls                     |
 
-Note: EXR is currently not fully supported yet.
+TIFF, EXR and 16-bit PNG are decoded by the bundled Rust/WebAssembly decoder;
+there is no JavaScript decoding fallback.
 
 ## Point Cloud Files
 
@@ -195,18 +196,28 @@ interpretation selected in the UI.
 
 - **Dimensions**: 2D image data.
 - **Data types**: unsigned integer, signed integer and floating-point samples.
-- **Compression**: uncompressed, LZW and Deflate paths are supported by the TIFF
-  reader.
+- **Compression**: uncompressed, LZW, Deflate, PackBits, Zstd, CCITT G3/G4, JPEG
+  and WebP.
+- **Layouts**: striped and tiled, chunky and planar configuration, predictors 2
+  and 3, and sub-byte bit depths (10/12/14-bit).
 - **Depth types**: Euclidean depth, orthogonal depth, disparity and inverse
   depth can be selected during conversion.
 
 ### PNG Files (`.png`)
 
 - **Modes**: 8-bit/16-bit depth-style PNGs and RGB24-packed depth workflows.
+  16-bit files are decoded at full precision by the WASM decoder.
 - **Scale**: PNG scale factor converts raw values to meters or disparity units
   depending on the selected depth type.
 - **RGB24 extraction**: shift, multiply, red, green and blue channel extraction
   modes are available for packed-depth images.
+
+### EXR Files (`.exr`)
+
+- **Format**: OpenEXR, decoded by the Rust/WebAssembly decoder.
+- **Channels**: a conventionally named depth channel (`Z`, `depth`, `distance`,
+  `Y`) is preferred; otherwise the first channel is used.
+- **Data types**: half and float samples are returned as 32-bit floats.
 
 ### PFM Files (`.pfm`)
 

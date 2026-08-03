@@ -311,6 +311,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "exr",
+ "flate2",
  "hayro-ccitt",
  "js-sys",
  "png",
@@ -319,6 +320,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-test",
  "web-sys",
+ "weezl",
  "wide",
  "zune-jpeg",
 ]

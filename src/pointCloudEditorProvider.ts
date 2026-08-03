@@ -423,17 +423,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     );
     const styleUri = webview.asWebviewUri(stylePathOnDisk).toString();
 
-    const geotiffPathOnDisk = vscode.Uri.joinPath(
-      this.context.extensionUri,
-      'engine',
-      'media',
-      'geotiff.min.js'
-    );
-    const geotiffUri = webview.asWebviewUri(geotiffPathOnDisk).toString();
-
-    // Rust/WASM TIFF decoder (drop-in accelerator for geotiff.js, mirrors the
-    // tiff-visualizer sister extension). The glue defines a global wasm_bindgen;
-    // the webview fetches the .wasm binary from this URI at init time.
+    // Rust/WASM TIFF/EXR/PNG16 decoder (ported from the tiff-visualizer sister
+    // extension; the only image decoder in the webview). The glue defines a
+    // global wasm_bindgen; the webview fetches the .wasm binary from this URI
+    // at init time.
     const tiffWasmGlueOnDisk = vscode.Uri.joinPath(
       this.context.extensionUri,
       'engine',
@@ -465,16 +458,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // 2. Replace resource URLs with webview URIs
     html = html.replace(/href="media\/style\.css"/, `href="${styleUri}"`);
-    html = html.replace(/src="media\/geotiff\.min\.js"/, `nonce="${nonce}" src="${geotiffUri}"`);
     html = html.replace(
       /src="media\/wasm\/tiff_wasm\.js"/,
       `nonce="${nonce}" src="${tiffWasmGlueUri}"`
     );
     // Point the webview at the webview-resource URI for the .wasm binary.
-    html = html.replace(
-      /window\.__GEOTIFF_URL__ = window\.__GEOTIFF_URL__ \|\| 'media\/geotiff\.min\.js';/,
-      `window.__GEOTIFF_URL__ = '${geotiffUri}';`
-    );
     html = html.replace(
       /window\.__TIFF_WASM_GLUE_URL__ = window\.__TIFF_WASM_GLUE_URL__ \|\| 'media\/wasm\/tiff_wasm\.js';/,
       `window.__TIFF_WASM_GLUE_URL__ = '${tiffWasmGlueUri}';`

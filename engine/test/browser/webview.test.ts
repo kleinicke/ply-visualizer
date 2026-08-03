@@ -236,7 +236,7 @@ end_header
       assert.ok(isTIF, 'File should have valid TIF magic number');
       assert.ok(tifData.length > 100, 'TIF file should have substantial data');
 
-      // Validate the file can be opened (this would normally require GeoTIFF in webview)
+      // Validate the file can be opened (decoding itself happens in the WASM decoder)
       console.log(`TIF validation passed: ${tifData.length} bytes, magic: 0x${magic.toString(16)}`);
     }
   });

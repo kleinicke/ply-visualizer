@@ -45,6 +45,13 @@ export interface DepthMetadata {
   // PNG-specific metadata
   invalidValue?: number; // Value representing invalid pixels (default: 0)
   bitDepth?: number; // 8-bit or 16-bit PNG
+  /**
+   * Human-readable description of the decoded layout (dimensions, channels, bit
+   * depth, compression). Readers fill this in so the single PERF line for the
+   * load can show what was actually decoded, instead of each reader logging its
+   * own line. See utils/perfLog.ts.
+   */
+  decodeInfo?: string;
 }
 
 export interface DepthReaderResult {
