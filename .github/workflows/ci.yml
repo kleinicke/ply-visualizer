@@ -1,9 +1,10 @@
 name: CI
 
+# Runs on every branch, so work in progress is checked before it reaches main.
+# `pull_request` is deliberately absent: for branches in this repo it would
+# duplicate the push run.
 on:
   push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 # A new push to the same branch supersedes the previous run.
@@ -82,8 +83,15 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
         working-directory: engine
 
-      - name: Run engine tests
-        run: pnpm exec playwright test
+      # testfiles/ is 8.2 GB and deliberately gitignored, so the fixture-heavy
+      # specs cannot run on a clean checkout. Select the specs that build their
+      # own data at run time. The list is computed rather than hardcoded, so a
+      # new spec is picked up (or excluded) automatically instead of rotting.
+      - name: Run engine tests (specs that need no large fixtures)
+        # xargs rather than an unquoted variable: word-splitting an unquoted
+        # expansion is shell-dependent (zsh does not split), and this should not
+        # silently collapse into a single non-matching regex.
+        run: grep -L '\.\./testfiles/' test/*.spec.ts | xargs pnpm exec playwright test
         working-directory: engine
 
       - uses: actions/upload-artifact@v4
