@@ -60,6 +60,16 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "3D Visualizer",
+      "properties": {
+        "plyViewer.experimentalWebGPU": {
+          "type": "boolean",
+          "default": false,
+          "description": "Render with WebGPU instead of WebGL. Experimental and slower on large point clouds; points are drawn at 1 pixel, and Eye Dome Lighting and gaussian splat rendering are unavailable. Falls back to WebGL when WebGPU cannot start. Reopen the viewer to apply."
+        }
+      }
+    },
     "customEditors": [
       {
         "viewType": "plyViewer.plyEditor",

@@ -1,15 +1,21 @@
 /**
  * Per-frame GPU time, behind a backend-neutral interface.
  *
- * The only implementation today is WebGL's `EXT_disjoint_timer_query`, which is
- * the single place in the viewer that reaches through the renderer to the raw
- * graphics context. WebGPU has no equivalent extension - it exposes timestamp
- * queries, enabled by constructing the renderer with `trackTimestamp: true` and
- * read back from `renderer.info`, which is a different shape entirely.
+ * Two implementations, because the backends measure nothing alike. WebGL uses
+ * `EXT_disjoint_timer_query` and brackets the draw with explicit begin/end
+ * calls on the raw graphics context. WebGPU has no such extension: timestamps
+ * are enabled once by constructing the renderer with `trackTimestamp: true`,
+ * three brackets the render pass itself, and the result is read back
+ * asynchronously from `renderer.info`.
  *
- * Keeping that difference behind `GpuTimer` means adding a WebGPU backend is a
- * new file implementing three methods, rather than an edit to the render loop.
- * `renderStats.ts` owns FPS and CPU frame time and is already backend-neutral.
+ * Keeping that difference here means the render loop calls the same three
+ * methods either way. `renderStats.ts` owns FPS and CPU frame time and is
+ * already backend-neutral.
+ *
+ * **The two numbers are not strictly comparable.** WebGL's query brackets
+ * whatever the viewer draws between `begin()` and `end()`; WebGPU's brackets
+ * three's render pass. They measure nearly the same work, but a difference of a
+ * few percent between backends should not be read as a real difference.
  */
 export interface GpuTimer {
   /** False when the backend cannot measure GPU time; callers fall back to CPU time. */
@@ -166,12 +172,96 @@ export class WebGLGpuTimer implements GpuTimer {
   }
 }
 
+/** The subset of three's WebGPU renderer this file needs, kept import-free. */
+interface TimestampCapableRenderer {
+  isWebGPURenderer?: boolean;
+  hasFeature?(name: string): boolean;
+  resolveTimestampsAsync?(): Promise<number | undefined>;
+  info?: { render?: { timestamp?: number } };
+}
+
 /**
- * Builds the timer for the renderer in use. Only a WebGL renderer exposes
- * `getContext`; anything else gets the null timer until a backend-specific
- * implementation exists.
+ * WebGPU implementation.
+ *
+ * three brackets the render pass itself when the renderer is built with
+ * `trackTimestamp: true`, so `begin`/`end` have nothing to do. The work is all
+ * in `poll`: resolving timestamps is asynchronous, and asking for a second
+ * resolve while the first is in flight both wastes work and can interleave
+ * results, so only one request is ever outstanding.
+ */
+export class WebGPUGpuTimer implements GpuTimer {
+  private readonly renderer: TimestampCapableRenderer;
+  private readonly samples: number[] = [];
+  private average = 0;
+  private resolving = false;
+  private supported: boolean;
+
+  constructor(renderer: TimestampCapableRenderer) {
+    this.renderer = renderer;
+    // 'timestamp-query' is an optional WebGPU feature; adapters may omit it,
+    // and browsers gate it behind precision settings. Without it three still
+    // renders, it just never reports a timestamp.
+    this.supported = renderer.hasFeature?.('timestamp-query') === true;
+  }
+
+  get available(): boolean {
+    return this.supported;
+  }
+
+  get averageMs(): number {
+    return this.average;
+  }
+
+  begin(): void {}
+
+  end(): void {}
+
+  poll(): void {
+    if (!this.supported || this.resolving || !this.renderer.resolveTimestampsAsync) {
+      return;
+    }
+    this.resolving = true;
+    this.renderer
+      .resolveTimestampsAsync()
+      .then(elapsed => {
+        // The promise resolves with the duration in milliseconds; older three
+        // revisions only update renderer.info, so fall back to that.
+        const timeMs = elapsed ?? this.renderer.info?.render?.timestamp;
+        if (typeof timeMs === 'number' && timeMs > 0) {
+          this.record(timeMs);
+        }
+      })
+      .catch(() => {
+        // A rejected resolve means the backend withdrew timing support (device
+        // lost, feature disabled mid-run). Stop asking rather than spinning.
+        this.supported = false;
+      })
+      .finally(() => {
+        this.resolving = false;
+      });
+  }
+
+  private record(timeMs: number): void {
+    this.samples.push(timeMs);
+    if (this.samples.length > SAMPLE_WINDOW) {
+      this.samples.shift();
+    }
+    this.average = this.samples.reduce((total, value) => total + value, 0) / this.samples.length;
+  }
+}
+
+/**
+ * Builds the timer for the renderer in use: timestamp queries for WebGPU, the
+ * disjoint-timer extension for WebGL, and the null timer when neither backend
+ * can measure anything.
  */
 export function createGpuTimer(renderer: unknown): GpuTimer {
+  const candidate = renderer as TimestampCapableRenderer;
+  if (candidate.isWebGPURenderer === true) {
+    const timer = new WebGPUGpuTimer(candidate);
+    return timer.available ? timer : NULL_GPU_TIMER;
+  }
+
   const getContext = (renderer as { getContext?: () => unknown }).getContext;
   if (typeof getContext !== 'function') {
     return NULL_GPU_TIMER;

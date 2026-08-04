@@ -1,5 +1,6 @@
 import { uiState } from './state/ui.svelte';
 import type { GpuTimer } from './rendering/gpuTimer';
+import type { RendererBackend } from './rendering/rendererBackend';
 
 /**
  * FPS and frame-time tracking for the render loop. Extracted out of
@@ -12,6 +13,9 @@ import type { GpuTimer } from './rendering/gpuTimer';
  */
 export interface RenderStatsHost {
   gpuTimer: GpuTimer;
+  /** Shown in the readout when it is not the default, so a measurement is never
+   * attributed to the wrong backend. */
+  rendererBackend: RendererBackend;
 
   fpsFrameTimes: number[];
   previousFps: number;
@@ -85,5 +89,6 @@ export function updateFPSDisplay(host: RenderStatsHost): void {
     // Fallback to frame time
     timeStr = `${host.currentFrameTime.toFixed(1)} ms`;
   }
-  uiState.perfStatsText = `${host.currentFps} fps / ${timeStr}`;
+  const backendStr = host.rendererBackend === 'webgpu' ? ' / WebGPU' : '';
+  uiState.perfStatsText = `${host.currentFps} fps / ${timeStr}${backendStr}`;
 }

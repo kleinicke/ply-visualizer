@@ -4,7 +4,12 @@ import { EDLPass } from './postprocessing/EDLPass';
 import { viewerState } from './state/viewer.svelte';
 
 export interface EDLHost {
-  renderer: THREE.WebGLRenderer;
+  /**
+   * Null on the WebGPU backend. EDL is an EffectComposer pass with raw GLSL and
+   * has no WebGPU implementation, so the whole feature switches itself off
+   * rather than half-working. See docs/WEBGPU_READINESS.md.
+   */
+  webglRenderer: THREE.WebGLRenderer | null;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   edlEnabled: boolean;
@@ -22,12 +27,16 @@ export function initEDLComposer(host: EDLHost): void {
   if (!container) {
     return;
   }
+  if (!host.webglRenderer) {
+    console.log('🔦 EDL unavailable: the WebGPU backend has no EDL implementation');
+    return;
+  }
 
   const width = container.clientWidth;
   const height = container.clientHeight;
 
   // EffectComposer manages the post-processing pipeline
-  host.effectComposer = new EffectComposer(host.renderer);
+  host.effectComposer = new EffectComposer(host.webglRenderer);
 
   // EDLPass handles both scene rendering and the EDL effect in one pass
   host.edlPass = new EDLPass(host.scene, host.camera, width, height, {
@@ -45,6 +54,10 @@ export function initEDLComposer(host: EDLHost): void {
  * Toggle Eye Dome Lighting on/off.
  */
 export function toggleEDL(host: EDLHost): void {
+  if (!host.effectComposer) {
+    host.showStatus('Eye Dome Lighting is not available on the WebGPU backend');
+    return;
+  }
   host.edlEnabled = !host.edlEnabled;
   viewerState.edlEnabled = host.edlEnabled;
   updateEDLButtonState(host);

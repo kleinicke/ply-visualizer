@@ -14,7 +14,14 @@
     "resolveJsonModule": true,
     "allowJs": true,
     "checkJs": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    // "node" module resolution predates package `exports` maps, which is the
+    // only place three declares its WebGPU entry point. The webpack alias
+    // handles the runtime side; this handles the types.
+    "paths": {
+      "three/webgpu": ["../node_modules/@types/three/build/three.webgpu.d.ts"]
+    }
   },
   "include": ["**/*.ts", "**/*.js"]
 }

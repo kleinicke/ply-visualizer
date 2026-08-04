@@ -600,6 +600,16 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       /<script>\s*\n\s*\/\/ Default WASM binary location/,
       `<script nonce="${nonce}">\n      // Default WASM binary location`
     );
+    // The webview has no URL query string, so the engine's `?webgpu=1` switch
+    // is unreachable here; the setting is forwarded as the global instead.
+    // Injected before bundle.js because the viewer reads it while booting.
+    const useWebGPU = vscode.workspace
+      .getConfiguration('plyViewer')
+      .get<boolean>('experimentalWebGPU', false);
+    html = html.replace(
+      /window\.__TIFF_WASM_URL__ = '/,
+      `window.__PLY_WEBGPU__ = ${useWebGPU};\n      window.__TIFF_WASM_URL__ = '`
+    );
     html = html.replace(/src="bundle\.js"/, `nonce="${nonce}" src="${scriptUri}"`);
 
     // 3. Remove browser-specific elements (file input, navigation links)

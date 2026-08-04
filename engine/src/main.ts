@@ -47,7 +47,6 @@ import * as pointCloudRenderer from './visualization/PointCloudRenderer';
 import { boundsAreOutlierDominated, robustPointBounds } from './visualization/robustBounds';
 import { DEFAULT_POINT_SIZE } from './visualization/PointCloudRenderer';
 import * as containerPerf from './utils/containerPerf';
-import { useAntialiasing } from './rendering/rendererOptions';
 import * as meshBuilder from './visualization/MeshBuilder';
 import * as stonexCameras from './visualization/stonexCameras';
 import { addE57CameraVisualization } from './visualization/e57Cameras';
@@ -108,6 +107,8 @@ import { mountStats } from './statsMount';
 import { mountControlsTab } from './controlsTabMount';
 import { filesState } from './state/files.svelte';
 import { GpuTimer, NULL_GPU_TIMER, createGpuTimer } from './rendering/gpuTimer';
+import type { ViewerRenderer } from './rendering/viewerRenderer';
+import { RendererBackend, WEBGPU_CAVEATS, createViewerRenderer } from './rendering/rendererBackend';
 import { FileEntryRegistry } from './state/fileEntries';
 import { insertEntryState, removeEntryState } from './state/fileEntryState';
 import { viewerState } from './state/viewer.svelte';
@@ -139,7 +140,15 @@ class PointCloudVisualizer {
   browserFileHandler: BrowserMessageHandler | null = null;
   scene!: THREE.Scene;
   camera!: THREE.PerspectiveCamera;
-  renderer!: THREE.WebGLRenderer;
+  renderer!: ViewerRenderer;
+  /** Which backend `renderer` actually is; see rendering/rendererBackend.ts. */
+  rendererBackend: RendererBackend = 'webgl';
+  /**
+   * The same renderer as `renderer`, typed concretely — but null on the WebGPU
+   * backend. EDL and Spark splat rendering are WebGL-only and use this to tell
+   * whether they can run at all.
+   */
+  webglRenderer: THREE.WebGLRenderer | null = null;
   // True between a WebGL context loss and its restoration. While lost, the GPU
   // is gone, so we must not render or touch GL objects — doing so throws and
   // crashes the webview. This is the safety net for the multi-window
@@ -496,7 +505,7 @@ class PointCloudVisualizer {
 
   private async init(): Promise<void> {
     try {
-      this.initThreeJS();
+      await this.initThreeJS();
       this.applyEnvironmentSpecificUI();
       this.setupEventListeners();
       mountSvelteSmokeTest();
@@ -542,7 +551,12 @@ class PointCloudVisualizer {
     }
   }
 
-  private initThreeJS(): void {
+  /**
+   * Asynchronous only because of the WebGPU backend, which needs a dynamic
+   * import and an `await renderer.init()` before its first draw. Nothing here
+   * may render before that await completes — the render loop starts later.
+   */
+  private async initThreeJS(): Promise<void> {
     // Scene
     this.scene = new THREE.Scene();
     this.applyBackgroundBrightness();
@@ -571,16 +585,22 @@ class PointCloudVisualizer {
       throw new Error('Canvas not found');
     }
 
-    this.renderer = new THREE.WebGLRenderer({
-      canvas: canvas,
-      // Off by default: MSAA multiplies the per-sample depth work that dominates
-      // zoomed-out point clouds, and smooths nothing on 1-pixel points.
-      // See rendering/rendererOptions.ts; `?antialias=1` restores it.
-      antialias: useAntialiasing(),
-      alpha: true,
-      preserveDrawingBuffer: false, // better performance
-      powerPreference: 'high-performance', // Keep discrete GPU preference
-    });
+    // Backend selection and construction both live in rendering/rendererBackend.ts;
+    // WebGL stays the default and every WebGPU failure falls back to it.
+    const selection = await createViewerRenderer(canvas);
+    this.renderer = selection.renderer;
+    this.rendererBackend = selection.backend;
+    this.webglRenderer = selection.webglRenderer;
+    if (selection.fallbackReason) {
+      console.warn(`⚠️ Falling back to WebGL. ${selection.fallbackReason}`);
+    }
+    if (this.rendererBackend === 'webgpu') {
+      console.log('🧪 WebGPU backend active. Read measurements with these in mind:');
+      for (const caveat of WEBGPU_CAVEATS) {
+        console.log(`   • ${caveat}`);
+      }
+    }
+
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.applySceneBrightness();
@@ -591,7 +611,9 @@ class PointCloudVisualizer {
     // and set castShadow/receiveShadow on them.)
     this.renderer.shadowMap.enabled = false;
 
-    this.setupContextLossHandling(canvas);
+    // Not `canvas`: a failed WebGPU start swaps in a fresh element, because a
+    // canvas keeps the first graphics context it was given.
+    this.setupContextLossHandling(this.renderer.domElement);
 
     // Initial check for formatted welcome message
     this.updateWelcomeMessageVisibility();
@@ -1123,6 +1145,13 @@ class PointCloudVisualizer {
    * next render because their CPU-side arrays still exist).
    */
   private setupContextLossHandling(canvas: HTMLCanvasElement): void {
+    // `webglcontextlost` never fires for a WebGPU canvas; that backend reports
+    // device loss through the renderer instead. Nothing listens for it yet, so
+    // a lost WebGPU device is simply not recovered from — acceptable while the
+    // backend is an opt-in experiment, and noted in docs/WEBGPU_READINESS.md.
+    if (this.rendererBackend !== 'webgl') {
+      return;
+    }
     canvas.addEventListener(
       'webglcontextlost',
       event => {

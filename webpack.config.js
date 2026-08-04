@@ -95,6 +95,11 @@ module.exports = [
         // subpath imports like Spark's `three/addons/*` need their own alias
         // (listed first — webpack matches more specific aliases first).
         'three/addons': path.resolve(__dirname, 'node_modules/three/examples/jsm'),
+        // Same reason as three/addons: the bare `three` alias below bypasses
+        // the exports map, so the WebGPU build needs its own entry. It is only
+        // reached through the dynamic import in rendering/rendererBackend.ts,
+        // so it lands in a separate chunk rather than the main bundle.
+        'three/webgpu': path.resolve(__dirname, 'node_modules/three/build/three.webgpu.js'),
         three: path.resolve(__dirname, 'node_modules/three'),
       },
     },

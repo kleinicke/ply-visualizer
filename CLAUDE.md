@@ -28,6 +28,7 @@ npm run test             # Unit tests (Mocha, src/test/suite/)
 npm run test:ui          # UI tests (VS Code Extension Tester, ui-tests/)
 cd engine && npm test    # Playwright engine tests — fastest feedback loop
 cd engine && npm run dev # Standalone page dev server
+cd engine && npm run bench:backend -- <file>   # WebGL vs WebGPU on one file
 ```
 
 - **F5** launches the Extension Development Host for manual testing. Test data

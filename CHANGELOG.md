@@ -12,6 +12,11 @@
 - 16-bit depth PNGs keep their full precision instead of being quantised to
   8 bits by the canvas
 - Add EXR depth images
+- Add an experimental, opt-in WebGPU renderer
+  (`plyViewer.experimentalWebGPU`, or `?webgpu=1` on the standalone page). Off
+  by default and roughly half the speed of WebGL on large clouds; EDL, gaussian
+  splats and point sizes above one pixel are unavailable on it. See
+  docs/WEBGPU_READINESS.md
 
 ## [1.7.0] - 2026-07-17
 

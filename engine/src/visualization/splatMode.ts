@@ -28,7 +28,12 @@ export const SPLAT_CONTAINER_REGEX = /\.(spz|splat|ksplat|sog)$/i;
  */
 export interface SplatModeHost {
   scene: THREE.Scene;
-  renderer: THREE.WebGLRenderer;
+  /**
+   * Null on the WebGPU backend. Spark reaches into the raw WebGL context, so
+   * splat rendering is unavailable there — an upstream constraint, not
+   * something this codebase can refactor away. See docs/WEBGPU_READINESS.md.
+   */
+  webglRenderer: THREE.WebGLRenderer | null;
   spatialFiles: SpatialData[];
   splatModeActive: boolean[];
   fileVisibility: boolean[];
@@ -105,6 +110,10 @@ export class SplatModeManager {
   async toggle(fileIndex: number): Promise<void> {
     const data = this.host.spatialFiles[fileIndex];
     if (!data || this.pending.has(data)) {
+      return;
+    }
+    if (!this.host.webglRenderer && !this.isActive(fileIndex)) {
+      this.host.showStatus('Gaussian splat rendering requires the WebGL backend');
       return;
     }
     if (this.isActive(fileIndex)) {
@@ -319,6 +328,13 @@ export class SplatModeManager {
     if (this.pendingMeshes.size === 0) {
       return;
     }
+    if (!this.host.webglRenderer) {
+      // Container formats open with splat mode on by default; on WebGPU they
+      // stay as points instead of failing inside Spark.
+      this.pendingMeshes.clear();
+      this.host.showStatus('Gaussian splat rendering requires the WebGL backend');
+      return;
+    }
     for (let i = 0; i < this.host.spatialFiles.length; i++) {
       if (this.pendingMeshes.has(this.host.spatialFiles[i]) && !this.isActive(i)) {
         void this.enable(i);
@@ -393,7 +409,7 @@ export class SplatModeManager {
       }
       if (!this.sparkRenderer) {
         this.sparkRenderer = new spark.SparkRenderer({
-          renderer: this.host.renderer,
+          renderer: this.host.webglRenderer!,
           onDirty: () => this.host.requestRender(),
         });
         this.host.scene.add(this.sparkRenderer);
