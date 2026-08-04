@@ -8,7 +8,10 @@ out
 package-lock.json
 testfiles/new_formats/**
 testfiles
-dataset/
+# Root-anchored: this is for the scratch dataset cache at the repo root. An
+# unanchored `dataset/` also matches src/dataset/, which is real source — new
+# files there were silently unstageable while the existing ones stayed tracked.
+/dataset/
 coverage/
 .nyc_output/
 

@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the previous run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build, static analysis, and the tests that need no browser or VS Code.
+  # This is the fast gate: it catches type errors, lint, and parser regressions
+  # in a couple of minutes.
+  build:
+    name: Build and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --frozen-lockfile is the point of the workspace conversion: it fails if
+      # pnpm-lock.yaml does not match the manifests, so a dependency change that
+      # was not committed cannot pass CI.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build extension
+        run: pnpm run compile
+
+      - name: Lint and type-check
+        run: pnpm run lint
+
+      - name: Unit tests (no VS Code)
+        run: pnpm run test:node
+
+      # Guards the packaging path, which is otherwise only exercised at release
+      # time, and surfaces the VSIX size in the log so growth is visible.
+      - name: Package VSIX
+        run: |
+          pnpm exec vsce package --no-dependencies -o ply-visualizer-ci.vsix
+          ls -lh ply-visualizer-ci.vsix
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: ply-visualizer-ci.vsix
+
+  # The engine's Playwright suite. Runs against the standalone build, which is
+  # the same code the extension webview loads.
+  engine:
+    name: Engine (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # playwright.config.ts serves engine/dist over http, so the standalone
+      # bundle has to exist before the tests start.
+      - name: Build standalone page
+        run: pnpm --filter ply-visualizer-engine run build
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+        working-directory: engine
+
+      - name: Run engine tests
+        run: pnpm exec playwright test
+        working-directory: engine
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: engine/playwright-report/
+          retention-days: 7
+
+  # The tests that need a real VS Code instance. Slowest job, and the only one
+  # needing a display, so it is kept separate from the fast gate.
+  extension:
+    name: VS Code integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # VS Code is an Electron app: without a display it exits before the
+      # extension host starts.
+      - name: Run VS Code tests
+        run: xvfb-run -a pnpm run test

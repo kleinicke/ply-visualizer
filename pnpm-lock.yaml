@@ -8,9 +8,9 @@ importers:
 
   .:
     dependencies:
-      7zip-min:
-        specifier: ^3.0.1
-        version: 3.0.1
+      7z-wasm:
+        specifier: ^1.2.0
+        version: 1.2.0
       js-yaml:
         specifier: ^5.2.3
         version: 5.2.3
@@ -45,6 +45,9 @@ importers:
       '@vscode/test-electron':
         specifier: ^3.1.0
         version: 3.1.0
+      '@vscode/vsce':
+        specifier: ^3.9.2
+        version: 3.9.2
       c8:
         specifier: ^12.0.0
         version: 12.0.0
@@ -163,11 +166,10 @@ importers:
 
 packages:
 
-  7zip-bin@5.1.1:
-    resolution: {integrity: sha512-sAP4LldeWNz0lNzmTird3uWfFDWWTeg6V/MsmyyLR9X1idwKBWIgt/ZvinqQldJm3LecKEs1emkbquO6PCiLVQ==}
-
-  7zip-min@3.0.1:
-    resolution: {integrity: sha512-WB4VCA/KSKzxhj+BAp8fI3ZYMMAftclkXlUTckuiDacsqyubQxxG3lGcpBcgzWWuJqnfQncEq1xrJpPLSxqsxw==}
+  7z-wasm@1.2.0:
+    resolution: {integrity: sha512-AZjtWXFleAe5nQ27JYISs70cICjO0zZr4LU45I9pXKcrhG0qiEWgq3Vjwr9JHHihFLuqgc7uSHYVn/z3vXCjdw==}
+    engines: {node: '>=8.0.0'}
+    hasBin: true
 
   '@azu/format-text@1.0.2':
     resolution: {integrity: sha512-Swi4N7Edy1Eqq82GxgEECXSSLyn6GOb5htRFPzBDdUkECGXtlf12ynO5oJSpWKPwCaUssOu7NfhDcCWpIC6Ywg==}
@@ -2750,6 +2752,10 @@ packages:
     resolution: {integrity: sha512-9u/XQ1pvrQtYyMpZe7DXKv2p5CNvyVwzUB6uhLAnQwHMSgKMBR62lc7AHljaeteeHXn11XTAaLLUVZYVZyuRBQ==}
     engines: {node: '>= 20.19.0'}
 
+  readline-sync@1.4.10:
+    resolution: {integrity: sha512-gNva8/6UAe8QYepIQH/jQ2qn91Qj0B9sYjMBBs3QOB8F2CXcKgLxQaJRP76sWVRQt+QU+8fAkCbCvjjMFu7Ycw==}
+    engines: {node: '>= 0.8.0'}
+
   rechoir@0.8.0:
     resolution: {integrity: sha512-/vxpCXddiX8NGfGO/mTafwjq4aFa/71pvamip0++IQk3zG8cbCj0fifNPrjjF1XMXUne91jL9OoxmdykoEtifQ==}
     engines: {node: '>= 10.13.0'}
@@ -3188,10 +3194,6 @@ packages:
     resolution: {integrity: sha512-pn99VhoACYR8nFHhxqix+uvsbXineAasWm5ojXoN8xEwK5Kd3/TrhNn1wByuD52UxWRLy8pu+kRMniEi6Eq9Zg==}
     engines: {node: '>=12.0.0'}
 
-  tmp@0.2.5:
-    resolution: {integrity: sha512-voyz6MApa1rQGUxT3E+BK7/ROe8itEx7vD8/HEvt4xwXucvQ5G5oeEiHkmHZJuBO21RpOf+YYm9MOivj709jow==}
-    engines: {node: '>=14.14'}
-
   tmp@0.2.7:
     resolution: {integrity: sha512-e0votIpp4Uo2AJYSzVHV6xCcawuiez3DzqDAbrTc3YxBkplN6e+dM13ZeIcZnDg/QpSuU2zfZ3rzwY8ukEnaXw==}
     engines: {node: '>=14.14'}
@@ -3565,11 +3567,9 @@ packages:
 
 snapshots:
 
-  7zip-bin@5.1.1: {}
-
-  7zip-min@3.0.1:
+  7z-wasm@1.2.0:
     dependencies:
-      7zip-bin: 5.1.1
+      readline-sync: 1.4.10
 
   '@azu/format-text@1.0.2': {}
 
@@ -4411,7 +4411,7 @@ snapshots:
       read: 1.0.7
       secretlint: 10.2.2
       semver: 7.7.4
-      tmp: 0.2.5
+      tmp: 0.2.7
       typed-rest-client: 1.8.11
       url-join: 4.0.1
       xml2js: 0.5.0
@@ -6385,6 +6385,8 @@ snapshots:
 
   readdirp@5.0.0: {}
 
+  readline-sync@1.4.10: {}
+
   rechoir@0.8.0:
     dependencies:
       resolve: 1.22.12
@@ -6888,8 +6890,6 @@ snapshots:
       fdir: 6.5.0(picomatch@4.0.4)
       picomatch: 4.0.4
 
-  tmp@0.2.5: {}
-
   tmp@0.2.7: {}
 
   to-buffer@1.2.2:
@@ -6969,7 +6969,7 @@ snapshots:
 
   typed-rest-client@1.8.11:
     dependencies:
-      qs: 6.15.1
+      qs: 6.15.3
       tunnel: 0.0.6
       underscore: 1.13.8
 

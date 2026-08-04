@@ -314,6 +314,7 @@
     "@typescript-eslint/eslint-plugin": "^8.66.0",
     "@typescript-eslint/parser": "^8.66.0",
     "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
     "c8": "^12.0.0",
     "copy-webpack-plugin": "^14.0.0",
     "css-loader": "^7",
@@ -336,7 +337,7 @@
     "webpack-dev-server": "^6.0.0"
   },
   "dependencies": {
-    "7zip-min": "^3.0.1",
+    "7z-wasm": "^1.2.0",
     "js-yaml": "^5.2.3",
     "lzma": "^2.3.2",
     "three": "^0.185.1"
