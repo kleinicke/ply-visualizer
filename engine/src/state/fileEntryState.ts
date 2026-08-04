@@ -74,9 +74,12 @@ export interface CameraEntryHost extends EntryStateHost {
  *
  * Returns the unified index; the label/coordinate toggles are keyed by camera
  * index, matching cameraGroups and cameraNames.
+ *
+ * `parentId` ties the profile to the file that produced it, so removing that
+ * file takes its cameras with it.
  */
-export function registerCameraEntry(host: CameraEntryHost): number {
-  const { index } = host.fileEntries.add('camera');
+export function registerCameraEntry(host: CameraEntryHost, parentId: number | null = null): number {
+  const { index } = host.fileEntries.add('camera', parentId);
   insertEntryState(host, index, { visible: true, pointSize: 1, colorMode: 'assigned' });
   const cameraIndex = host.fileEntries.kindIndexAt(index);
   host.cameraShowLabels.splice(cameraIndex, 0, false);

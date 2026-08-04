@@ -16,6 +16,7 @@ import type { ColmapModel } from '../formats/colmap/colmapModel';
 
 interface ColmapCameraHost {
   scene: THREE.Scene;
+  spatialFiles: { length: number };
   fileEntries: FileEntryRegistry;
   cameraGroups: THREE.Group[];
   cameraNames: string[];
@@ -34,7 +35,11 @@ export function addColmapCameraVisualization(host: ColmapCameraHost, data: Spati
   }
 
   const profileName = (data.metadata?.colmapProfileName as string) || data.fileName || 'COLMAP';
-  const profile = buildCameraProfile(model, profileName);
+  const textures = data.metadata?.colmapTextures as Map<string, THREE.Texture> | undefined;
+  const profile = buildCameraProfile(model, profileName, textures);
+  // The panel only offers the image toggle when a frame actually has a plane.
+  profile.userData.hasImagePlanes = (textures?.size ?? 0) > 0;
+  profile.userData.imagesVisible = false;
 
   // The cloud is shifted by its source origin when one was applied; the
   // cameras are in the same reconstruction frame and must move with it.
@@ -46,6 +51,11 @@ export function addColmapCameraVisualization(host: ColmapCameraHost, data: Spati
   host.scene.add(profile);
   host.cameraGroups.push(profile);
   host.cameraNames.push(`${profileName} cameras`);
-  registerCameraEntry(host);
+  // The cameras belong to the cloud that carried the model - the entry that
+  // was just added, which is the last spatial one. Removing it removes them.
+  const parent = host.fileEntries.at(
+    host.fileEntries.indexOfKind('spatial', host.spatialFiles.length - 1)
+  );
+  registerCameraEntry(host, parent?.id ?? null);
   return true;
 }

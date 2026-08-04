@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import { createCameraBodyGeometry, createCameraLabel } from '../cameraProfile';
+import { createCameraLabel } from '../cameraProfile';
+import { createFrustumObjects, IMAGE_PLANE_NAME } from './cameraFrustum';
+import { SCENE_UP_Z } from '../cameraOrientation';
 import { unprojectCameraPixel } from '../depth/cameraModels';
 import { initTiffWasm, projectCameraPointsWasmSync } from '../depth/readers/tiffWasm';
 import type { E57EmbeddedImage, SpatialData } from '../interfaces';
@@ -156,17 +158,40 @@ function imageView(
         ? 2 * Math.atan(image.height / (2 * image.fy)) * (180 / Math.PI)
         : undefined,
     corners: corners?.length === 4 ? corners : undefined,
+    // The E57 standard puts Z in the up direction, so upright is well defined
+    // and the roll can be snapped to it.
+    rollSnapAxis: SCENE_UP_Z,
   };
 }
 
-function createE57CameraBody(image: E57EmbeddedImage, correction: E57ImageCorrection): THREE.Mesh {
-  const body = createCameraBodyGeometry();
+/** Locator frustum size, in metres. E57 scans are metric. */
+const MARKER_FRUSTUM_DEPTH = 0.3;
+
+/**
+ * A small frustum marking where the camera sat.
+ *
+ * The picture itself is drawn by the projection surface further out, so this
+ * carries no texture - it is the locator that used to be a pyramid icon.
+ */
+function createE57CameraBody(image: E57EmbeddedImage, correction: E57ImageCorrection): THREE.Group {
+  const body = new THREE.Group();
+  for (const object of createFrustumObjects({
+    depth: MARKER_FRUSTUM_DEPTH,
+    fovYDegrees:
+      image.representation === 'pinhole' && image.fy
+        ? 2 * Math.atan(image.height / (2 * image.fy)) * (180 / Math.PI)
+        : undefined,
+    aspect: image.height > 0 ? image.width / image.height : undefined,
+    color: 0xffd54f,
+  })) {
+    body.add(object);
+  }
   const imageCentre = localImagePoint(image, image.width / 2, image.height / 2, correction);
   if (imageCentre?.lengthSq()) {
-    // The shared icon is authored looking along local +Z. E57 does not use a
+    // The frustum is authored looking along local +Z. E57 does not use a
     // single generic camera forward axis: pinhole looks along -Z, while the
-    // centre of spherical/cylindrical images is azimuth 0 along +X. Point the
-    // icon along the centre ray produced by the actual E57 projection.
+    // centre of spherical/cylindrical images is azimuth 0 along +X. Point it
+    // along the centre ray produced by the actual E57 projection.
     body.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), imageCentre.normalize());
   }
   return body;
@@ -549,7 +574,7 @@ async function populateImages(
           toneMapped: false,
         })
       );
-      surface.name = 'stonexImagePlane';
+      surface.name = IMAGE_PLANE_NAME;
       // Images decode asynchronously, so "Show images" may already have been
       // switched on before this frame existed. Adopt the profile's current
       // setting instead of always starting hidden.

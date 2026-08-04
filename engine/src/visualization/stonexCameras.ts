@@ -4,6 +4,8 @@ import type { StonexCameraFrameMetadata } from '../parsers/stonexX3aParser';
 import { createCameraLabel } from '../cameraProfile';
 import { unprojectCameraPixel } from '../depth/cameraModels';
 import type { CameraFrameDetail, CameraFrameView } from './cameraFrames';
+import { FRUSTUM_NAME, IMAGE_PLANE_NAME } from './cameraFrustum';
+import { SCENE_UP_Z } from '../cameraOrientation';
 import { initTiffWasm } from '../depth/readers/tiffWasm';
 import { FileEntryRegistry } from '../state/fileEntries';
 import { registerCameraEntry } from '../state/fileEntryState';
@@ -269,6 +271,9 @@ function frameView(
     forward: atPixel(frame.imageWidth / 2, frame.imageHeight / 2),
     up: topCentre.sub(bottomCentre).normalize(),
     fovYDegrees: 2 * Math.atan(frame.imageHeight / (2 * frame.fy)) * (180 / Math.PI),
+    // X3A archives measure their vertical angle about Z, so upright is +Z and
+    // the roll can be snapped to it.
+    rollSnapAxis: SCENE_UP_Z,
     corners: [
       atPixel(0, 0),
       atPixel(frame.imageWidth, 0),
@@ -321,7 +326,7 @@ function createFrameVisualization(
     geometries.frustum,
     new THREE.LineBasicMaterial({ color: frame.type === 'U' ? 0x42a5f5 : 0xffa726 })
   );
-  helper.name = 'cameraFrustum';
+  helper.name = FRUSTUM_NAME;
   group.add(helper);
 
   // previewRgba is raw sensor data; the texture holds the corrected copy so
@@ -358,7 +363,7 @@ function createFrameVisualization(
       depthWrite: false,
     })
   );
-  plane.name = 'stonexImagePlane';
+  plane.name = IMAGE_PLANE_NAME;
   plane.visible = false;
   plane.renderOrder = 2;
   group.add(plane);
@@ -420,7 +425,7 @@ export function addStonexCameraVisualization(host: StonexCameraHost, data: Spati
 export function setStonexImagesVisible(group: THREE.Group, visible: boolean): void {
   group.userData.imagesVisible = visible;
   group.traverse(object => {
-    if (object.name === 'stonexImagePlane') {
+    if (object.name === IMAGE_PLANE_NAME) {
       object.visible = visible;
     }
   });
@@ -454,8 +459,8 @@ export async function setStonexImageDistortion(
     const cache = (child.userData.geometries ??= {}) as Record<string, FrameGeometries>;
     const key = distorted ? 'distorted' : 'pinhole';
     const geometries = (cache[key] ??= createFrameGeometries(frame, distorted));
-    const plane = child.getObjectByName('stonexImagePlane') as THREE.Mesh | undefined;
-    const frustum = child.getObjectByName('cameraFrustum') as THREE.LineSegments | undefined;
+    const plane = child.getObjectByName(IMAGE_PLANE_NAME) as THREE.Mesh | undefined;
+    const frustum = child.getObjectByName(FRUSTUM_NAME) as THREE.LineSegments | undefined;
     if (plane) {
       plane.geometry = geometries.plane;
     }

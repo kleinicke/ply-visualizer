@@ -75,22 +75,39 @@ export class FileEntryRegistry {
   }
 
   /**
-   * Drops the entry at a unified index and returns it.
+   * Drops the entry at a unified index, and any entry that named it as a
+   * parent, and so on down.
    *
-   * This removes exactly one entry. Cascading to `parentId` children is
-   * deliberately not implemented yet: every caller splices one slot out of its
-   * own per-entry arrays, so a registry that dropped several entries here would
-   * silently desync from them. Whoever introduces real children (a COLMAP
-   * reconstruction publishing its cameras) owns making both sides cascade
-   * together - `childrenOf` is there to build that on.
+   * Returns everything removed in **descending index order**, which is what
+   * makes the caller's job safe: splicing its own per-entry arrays from the
+   * highest index first leaves earlier positions valid. Removing a container
+   * without its children would strand their scene objects with no row to
+   * control them.
    */
-  removeAt(index: number): FileEntry | null {
-    const entry = this.entries[index];
-    if (!entry) {
-      return null;
+  removeAt(index: number): { entry: FileEntry; index: number }[] {
+    if (!this.entries[index]) {
+      return [];
     }
-    this.entries.splice(index, 1);
-    return entry;
+    const doomed = new Set<number>([this.entries[index].id]);
+    // Repeat to a fixed point so grandchildren go too, whatever the order.
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const entry of this.entries) {
+        if (entry.parentId !== null && doomed.has(entry.parentId) && !doomed.has(entry.id)) {
+          doomed.add(entry.id);
+          changed = true;
+        }
+      }
+    }
+
+    const removed: { entry: FileEntry; index: number }[] = [];
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      if (doomed.has(this.entries[i].id)) {
+        removed.push({ entry: this.entries[i], index: i });
+        this.entries.splice(i, 1);
+      }
+    }
+    return removed;
   }
 
   at(index: number): FileEntry | null {

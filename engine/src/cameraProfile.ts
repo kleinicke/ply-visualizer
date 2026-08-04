@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createFrustumObjects, frustumDepthForExtent } from './visualization/cameraFrustum';
 import { FileEntryRegistry } from './state/fileEntries';
 import { registerCameraEntry } from './state/fileEntryState';
 
@@ -34,6 +35,14 @@ export function handleCameraProfile(host: CameraProfileHost, data: any, fileName
     const cameraProfileGroup = new THREE.Group();
     cameraProfileGroup.name = `camera_profile_${fileName}`;
 
+    // Frustum size comes from how far apart the cameras are, so a profile in
+    // millimetres and one in metres both read sensibly. A fixed size only ever
+    // suited one of them.
+    const locations: number[][] = cameraNames
+      .map(name => cameras[name]?.local_extrinsics?.params?.location)
+      .filter((location: unknown): location is number[] => Array.isArray(location));
+    const frustumDepth = frustumDepthForExtent(spreadOf(locations));
+
     let cameraCount = 0;
     for (const cameraName of cameraNames) {
       const camera = cameras[cameraName];
@@ -44,7 +53,8 @@ export function handleCameraProfile(host: CameraProfileHost, data: any, fileName
             cameraName,
             params.location,
             params.rotation_quaternion,
-            camera.local_extrinsics.type
+            camera.local_extrinsics.type,
+            frustumDepth
           );
           cameraProfileGroup.add(cameraViz);
           cameraCount++;
@@ -77,11 +87,27 @@ export function handleCameraProfile(host: CameraProfileHost, data: any, fileName
   }
 }
 
+/**
+ * Diagonal of the box containing every point, for scaling decisions. Returns 0
+ * for a single point, which frustumDepthForExtent turns into its own default.
+ */
+export function spreadOf(points: number[][]): number {
+  if (points.length < 2) {
+    return 0;
+  }
+  const box = new THREE.Box3();
+  for (const point of points) {
+    box.expandByPoint(new THREE.Vector3(point[0], point[1], point[2]));
+  }
+  return box.getSize(new THREE.Vector3()).length();
+}
+
 export function createCameraVisualization(
   cameraName: string,
   location: number[],
   rotationQuaternion: number[],
-  rotationType?: string
+  rotationType?: string,
+  frustumDepth = 0.05
 ): THREE.Group {
   const group = new THREE.Group();
   group.name = `camera_${cameraName}`;
@@ -105,13 +131,12 @@ export function createCameraVisualization(
   const quaternion = new THREE.Quaternion(qx, qy, qz, qw).normalize();
   group.setRotationFromQuaternion(quaternion);
 
-  // Create camera body (triangle shape)
-  const cameraBody = createCameraBodyGeometry();
-  group.add(cameraBody);
-
-  // Create up arrow on the flat side of the pyramid
-  const upArrow = createCameraUpArrow();
-  group.add(upArrow);
+  // A wireframe frustum, the same shape X3A, E57 and COLMAP draw. A JSON
+  // profile carries only a pose, so the frustum uses the generic fallback
+  // field of view rather than claiming intrinsics the file never gave.
+  for (const object of createFrustumObjects({ depth: frustumDepth })) {
+    group.add(object);
+  }
 
   // Create text label
   const textLabel = createCameraLabel(cameraName);
@@ -123,7 +148,8 @@ export function createCameraVisualization(
   (group as any).originalPosition = { x: location[0], y: location[1], z: location[2] };
 
   // Rows for the per-camera panel list. The group carries a real rotation and
-  // the body looks along local +Z, so no explicit look-through view is needed.
+  // the frustum is built looking along local +Z, so no explicit look-through
+  // view is needed.
   group.userData.frameDetails = [
     {
       label: 'Rotation',
@@ -132,68 +158,6 @@ export function createCameraVisualization(
     ...(rotationType ? [{ label: 'Convention', value: rotationType }] : []),
   ];
 
-  return group;
-}
-
-export function createCameraBodyGeometry(): THREE.Mesh {
-  // Create a 4-sided pyramid shape
-  const size = 0.02; // 2cm base size
-  const height = size * 1.5;
-
-  const geometry = new THREE.ConeGeometry(size, height, 4); // 4 sides for square pyramid
-  // Align one face flat to the axes (avoid 45° appearance) by rotating the base square
-  geometry.rotateY(Math.PI / 4);
-  const material = new THREE.MeshBasicMaterial({
-    color: 0x4caf50, // Green color for cameras
-    transparent: true,
-    opacity: 0.9,
-  });
-
-  // Translate geometry so the tip (originally at +Y * height/2) sits at the local origin.
-  // This ensures scaling does not move the tip from the origin.
-  geometry.translate(0, -height / 2, 0);
-
-  const mesh = new THREE.Mesh(geometry, material);
-  // Orient pyramid to extend forward along +Z with tip anchored at origin
-  mesh.rotation.x = -Math.PI / 2;
-  // Rotate pyramid 180 degrees so flat side faces forward (camera look direction)
-  mesh.rotation.z = Math.PI;
-
-  return mesh;
-}
-
-export function createCameraUpArrow(): THREE.Group {
-  // Create a red arrow on the flat side of the pyramid pointing in the camera's up direction (+Y in local camera space)
-  const group = new THREE.Group();
-  const arrowLength = 0.012; // 1.2cm arrow length
-  const arrowColor = 0xff0000; // Red
-
-  // Create arrow shaft (line) - starts at origin and extends upward
-  const shaftGeometry = new THREE.BufferGeometry();
-  const shaftPositions = new Float32Array([0, 0, 0, 0, arrowLength, 0]); // Starts at origin
-  shaftGeometry.setAttribute('position', new THREE.BufferAttribute(shaftPositions, 3));
-
-  const lineMaterial = new THREE.LineBasicMaterial({
-    color: arrowColor,
-    linewidth: 2,
-  });
-
-  const shaft = new THREE.Line(shaftGeometry, lineMaterial);
-  group.add(shaft);
-
-  // Create arrow head (cone)
-  const headGeometry = new THREE.ConeGeometry(0.003, 0.005, 8); // Small cone for arrowhead
-  const headMaterial = new THREE.MeshBasicMaterial({ color: arrowColor });
-
-  // Position arrowhead at the tip of the shaft
-  headGeometry.translate(0, arrowLength, 0);
-  const arrowHead = new THREE.Mesh(headGeometry, headMaterial);
-  group.add(arrowHead);
-
-  // Arrow origin stays at (0,0,0) where the camera is located
-  // The flat side of the pyramid faces forward along +Z
-
-  group.name = 'upArrow';
   return group;
 }
 
@@ -251,9 +215,9 @@ export function createCameraLabel(cameraName: string): THREE.Sprite {
 
   // Scale proportionally to canvas aspect ratio, accounting for pixel ratio
   const aspectRatio = canvas.width / canvas.height;
-  // Match label height roughly to the pyramid height at base scale
-  const pyramidHeight = 0.03; // must stay in sync with createCameraBodyGeometry
-  const baseScaleY = pyramidHeight; // label height ~= pyramid height
+  // Label height is a fixed fraction of a metre; applyCameraScale rescales it
+  // with the rest of the frame.
+  const baseScaleY = 0.03;
   const baseScaleX = baseScaleY * aspectRatio;
   sprite.scale.set(baseScaleX, baseScaleY, 1);
   // Preserve original scale for proper proportional scaling later

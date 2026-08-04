@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { IMAGE_PLANE_NAME } from './cameraFrustum';
 
 /**
  * Per-camera access shared by every camera source.
@@ -32,6 +33,20 @@ export interface CameraFrameView {
    * since a portrait or rolled photo needs the horizontal extent instead.
    */
   corners?: THREE.Vector3[];
+  /**
+   * Scene vertical axis, for sources whose world has one.
+   *
+   * When set, look-through snaps the roll to the quarter turn that stands
+   * closest to this axis, which is what makes a portrait-mounted scanner
+   * camera come out portrait rather than on its side. E57 and X3A both define
+   * +Z as up, so they set it.
+   *
+   * Leave it undefined when the world frame is arbitrary. A COLMAP
+   * reconstruction is expressed in whatever frame the solve chose - commonly
+   * Y-down - so snapping towards +Z there rotates a correctly-oriented camera
+   * by a quarter turn. Those frames use their declared `up` verbatim.
+   */
+  rollSnapAxis?: THREE.Vector3;
 }
 
 export interface CameraFrameInfo {
@@ -54,9 +69,6 @@ export interface LookThroughHost {
 /** Distance of the look-at target for frames that do not declare a view. */
 const FALLBACK_TARGET_DISTANCE = 5;
 
-/** Scene up. E57 and X3A both define +Z as up, as does the viewer's axes helper. */
-const WORLD_UP = new THREE.Vector3(0, 0, 1);
-
 /**
  * Orbit radius left after moving the pivot onto the optical centre. Controls
  * derive their eye vector from camera - target, so a true zero would be
@@ -76,17 +88,17 @@ export function listCameraFrames(profile: THREE.Group | null | undefined): Camer
       group,
       name: group.name.replace(/^camera_/, '').replace(/\.x3i$/i, ''),
       position: (group as any).originalPosition ?? null,
-      hasImagePlane: !!group.getObjectByName('stonexImagePlane'),
+      hasImagePlane: !!group.getObjectByName(IMAGE_PLANE_NAME),
       details: (group.userData.frameDetails as CameraFrameDetail[] | undefined) ?? [],
     }));
 }
 
 export function isCameraFrameImageVisible(group: THREE.Group): boolean {
-  return group.getObjectByName('stonexImagePlane')?.visible === true;
+  return group.getObjectByName(IMAGE_PLANE_NAME)?.visible === true;
 }
 
 export function setCameraFrameImageVisible(group: THREE.Group, visible: boolean): void {
-  const plane = group.getObjectByName('stonexImagePlane');
+  const plane = group.getObjectByName(IMAGE_PLANE_NAME);
   if (plane) {
     plane.visible = visible;
   }
@@ -101,9 +113,8 @@ export function setCameraFrameImageVisible(group: THREE.Group, visible: boolean)
 export function lookThroughCameraFrame(host: LookThroughHost, group: THREE.Group): void {
   group.updateWorldMatrix(true, false);
   const view = group.userData.view as CameraFrameView | undefined;
-  // Camera bodies are modelled looking along local +Z with +Y up
-  // (createCameraBodyGeometry), which covers every source that stores a real
-  // rotation on the group.
+  // Frames are modelled looking along local +Z (cameraFrustum.ts), which
+  // covers every source that stores a real rotation on the group.
   const forwardLocal = view
     ? view.forward.clone()
     : new THREE.Vector3(0, 0, FALLBACK_TARGET_DISTANCE);
@@ -113,24 +124,31 @@ export function lookThroughCameraFrame(host: LookThroughHost, group: THREE.Group
   const target = forwardLocal.applyMatrix4(group.matrixWorld);
   const imageUp = upLocal.transformDirection(group.matrixWorld).normalize();
 
-  // Snap the roll to the image's own axes, choosing the quarter turn that comes
-  // closest to standing upright. A portrait-mounted camera is rolled 90
-  // degrees, so its picture ends up portrait on screen instead of laid on its
-  // side, and the screen edges stay parallel to the image edges. Nothing here
-  // invents an intermediate angle, and it does not read camera.up, which the
-  // trackball controls rewrite while orbiting.
+  // Snap the roll to the image's own axes, choosing the quarter turn that
+  // stands closest to the scene's vertical axis. A portrait-mounted camera is
+  // rolled 90 degrees, so its picture ends up portrait on screen instead of on
+  // its side, and the screen edges stay parallel to the image edges. Nothing
+  // here invents an intermediate angle, and it does not read camera.up, which
+  // the trackball controls rewrite while orbiting.
+  //
+  // Only for sources that declare which way is up. Applying it to a frame in an
+  // arbitrary world frame rotates a correctly-oriented camera by a quarter turn
+  // instead of correcting one - see CameraFrameView.rollSnapAxis.
   const direction = target.clone().sub(position).normalize();
   const up = imageUp.clone();
-  let bestUpright = -Infinity;
-  for (let quarter = 0; quarter < 4; quarter++) {
-    const candidate = imageUp
-      .clone()
-      .applyAxisAngle(direction, (quarter * Math.PI) / 2)
-      .normalize();
-    const upright = candidate.dot(WORLD_UP);
-    if (upright > bestUpright) {
-      bestUpright = upright;
-      up.copy(candidate);
+  const snapAxis = view?.rollSnapAxis;
+  if (snapAxis) {
+    let bestUpright = -Infinity;
+    for (let quarter = 0; quarter < 4; quarter++) {
+      const candidate = imageUp
+        .clone()
+        .applyAxisAngle(direction, (quarter * Math.PI) / 2)
+        .normalize();
+      const upright = candidate.dot(snapAxis);
+      if (upright > bestUpright) {
+        bestUpright = upright;
+        up.copy(candidate);
+      }
     }
   }
 

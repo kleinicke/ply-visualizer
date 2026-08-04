@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { DatasetManager } from './dataset/datasetManager';
 import { isColmapModelFile } from '../engine/src/formats/colmap/colmapFiles';
+import { isImageFile, MAX_TEXTURES } from '../engine/src/formats/colmap/colmapTextures';
 import { PlyParser } from '../engine/src/parsers/plyParser';
 import { ObjParser } from '../engine/src/parsers/objParser';
 import { MtlParser } from '../engine/src/parsers/mtlParser';
@@ -426,6 +427,20 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         throw new Error('No COLMAP model files found next to this file');
       }
 
+      // The photographs live in a sibling `images/` folder, usually one level
+      // above the model. Without them the frames are bare wireframes.
+      for (const imagesDirectory of [
+        vscode.Uri.joinPath(directory, 'images'),
+        vscode.Uri.joinPath(directory, '..', 'images'),
+        vscode.Uri.joinPath(directory, '..', '..', 'images'),
+      ]) {
+        const loaded = await this.readColmapImages(imagesDirectory);
+        if (loaded.length > 0) {
+          modelFiles.push(...loaded);
+          break;
+        }
+      }
+
       void webviewPanel.webview.postMessage({ type: 'colmapModelFiles', files: modelFiles });
     } catch (error) {
       const message = `Failed to load COLMAP reconstruction: ${
@@ -434,6 +449,56 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       vscode.window.showErrorMessage(message);
       void webviewPanel.webview.postMessage({ type: 'loadingError', error: message });
     }
+  }
+
+  /**
+   * Reads a COLMAP `images/` folder, one level deep so per-camera subfolders
+   * (`images/left/…`) are picked up. Names keep the `images/` prefix so the
+   * webview can match them against what the model calls each photograph.
+   */
+  private async readColmapImages(
+    directory: vscode.Uri
+  ): Promise<Array<{ name: string; data: ArrayBuffer }>> {
+    const results: Array<{ name: string; data: ArrayBuffer }> = [];
+    let entries: [string, vscode.FileType][];
+    try {
+      entries = await vscode.workspace.fs.readDirectory(directory);
+    } catch {
+      return results;
+    }
+
+    const read = async (uri: vscode.Uri, name: string): Promise<void> => {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      results.push({
+        name,
+        data: (bytes.buffer as ArrayBuffer).slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
+        ),
+      });
+    };
+
+    for (const [name, kind] of entries) {
+      if (results.length >= MAX_TEXTURES) {
+        break;
+      }
+      if (kind === vscode.FileType.File && isImageFile(name)) {
+        await read(vscode.Uri.joinPath(directory, name), name);
+      } else if (kind === vscode.FileType.Directory) {
+        const nested = await vscode.workspace.fs.readDirectory(
+          vscode.Uri.joinPath(directory, name)
+        );
+        for (const [child, childKind] of nested) {
+          if (results.length >= MAX_TEXTURES) {
+            break;
+          }
+          if (childKind === vscode.FileType.File && isImageFile(child)) {
+            await read(vscode.Uri.joinPath(directory, name, child), `${name}/${child}`);
+          }
+        }
+      }
+    }
+    return results;
   }
 
   // Start sequence playback in current active webview with background loading hint

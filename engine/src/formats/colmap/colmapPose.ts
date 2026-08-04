@@ -23,17 +23,12 @@ import { focalYIndex, type ColmapImage } from './colmapModel';
  * negated Y, which is a reflection, not a rotation - no orientation of the
  * group can satisfy both the direction and the roll.
  *
- * So the group carries the honest COLMAP-to-world rotation, and the two
- * consumers are told about the convention separately:
- *
- * - the body mesh gets a 180 degrees roll about its own Z, a proper rotation
- *   that maps its +Y up onto COLMAP's -Y up while leaving +Z forward alone;
- * - look-through uses `cameraFrames`'s `view` escape hatch, declaring forward
- *   as local +Z and up as local -Y.
+ * So the group carries the honest COLMAP-to-world rotation, and the frustum is
+ * built directly in camera space (visualization/cameraFrustum.ts), which uses
+ * the same +Z forward / +Y down convention - nothing needs correcting.
+ * Look-through uses `cameraFrames`'s `view` escape hatch, declaring forward as
+ * local +Z and up as local -Y, so the viewer camera lands upright.
  */
-
-/** Rotation applied to the body mesh so its up-arrow points the camera's up. */
-export const BODY_ROLL_ABOUT_Z = Math.PI;
 
 export interface ColmapPlacement {
   /** Camera centre in world coordinates. */

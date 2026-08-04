@@ -44,6 +44,7 @@ import * as sequencePlayback from './sequencePlayback';
 import * as pose from './pose';
 import * as renderStats from './renderStats';
 import * as pointCloudRenderer from './visualization/PointCloudRenderer';
+import { boundsAreOutlierDominated, robustPointBounds } from './visualization/robustBounds';
 import { DEFAULT_POINT_SIZE } from './visualization/PointCloudRenderer';
 import * as containerPerf from './utils/containerPerf';
 import { useAntialiasing } from './rendering/rendererOptions';
@@ -57,6 +58,7 @@ import {
   colmapReconstructionName,
   parseColmapModel,
 } from './formats/colmap/colmapFiles';
+import { isImageFile, loadColmapTextures } from './formats/colmap/colmapTextures';
 import * as uiStatus from './ui/status';
 import * as intensity from './utils/intensity';
 import * as commentSettings from './depth/commentSettings';
@@ -2373,8 +2375,28 @@ class PointCloudVisualizer {
       return;
     }
 
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
+    // Structure-from-motion clouds carry a few badly triangulated points that
+    // can stretch the box by an order of magnitude, which would park the orbit
+    // pivot in empty space. When that has happened, frame what the points
+    // actually occupy instead. Well-behaved clouds keep their previous
+    // framing - see visualization/robustBounds.ts.
+    const trimmed = new THREE.Box3();
+    for (let index = 0; index < this.spatialFiles.length; index++) {
+      const positions = this.spatialFiles[index]?.positionsArray;
+      const mesh = this.meshes[index];
+      if (!positions || !mesh) {
+        continue;
+      }
+      const local = robustPointBounds(positions);
+      if (local) {
+        mesh.updateWorldMatrix(true, false);
+        trimmed.union(local.applyMatrix4(mesh.matrixWorld));
+      }
+    }
+    const fitBox = !trimmed.isEmpty() && boundsAreOutlierDominated(box, trimmed) ? trimmed : box;
+
+    const size = fitBox.getSize(new THREE.Vector3());
+    const center = fitBox.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 1e-6);
 
     const vFov = this.camera.fov * (Math.PI / 180);
@@ -3131,6 +3153,57 @@ class PointCloudVisualizer {
     this.splatMode.autoEnablePending();
   }
 
+  /**
+   * Drops an entry's registry slot and per-entry state, together with any
+   * entry that declared it as a parent.
+   *
+   * A container publishes children - a COLMAP reconstruction's cloud owns its
+   * camera profile - and removing the parent alone would strand their scene
+   * objects with no row to control them.
+   */
+  private removeEntryAndChildren(fileIndex: number): void {
+    const entry = this.fileEntries.at(fileIndex);
+
+    // Collection positions must be read before the registry forgets them.
+    const children = entry
+      ? this.fileEntries.childrenOf(entry.id).map(child => {
+          const unified = this.fileEntries.indexOf(child.id);
+          return { kind: child.kind, kindIndex: this.fileEntries.kindIndexAt(unified) };
+        })
+      : [];
+
+    // Only camera profiles are published as children today. Highest index
+    // first so the remaining positions stay valid.
+    const cameraChildren = children
+      .filter(child => child.kind === 'camera')
+      .sort((a, b) => b.kindIndex - a.kindIndex);
+    for (const child of cameraChildren) {
+      const group = this.cameraGroups[child.kindIndex];
+      if (!group) {
+        continue;
+      }
+      this.scene.remove(group);
+      group.traverse((object: any) => {
+        object.geometry?.dispose?.();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        for (const material of materials) {
+          material?.map?.dispose?.();
+          material?.dispose?.();
+        }
+      });
+      this.cameraGroups.splice(child.kindIndex, 1);
+      this.cameraNames.splice(child.kindIndex, 1);
+      this.cameraShowLabels.splice(child.kindIndex, 1);
+      this.cameraShowCoords.splice(child.kindIndex, 1);
+    }
+
+    // The registry returns removals in descending index order, so these
+    // per-entry splices stay valid as they go.
+    for (const removal of this.fileEntries.removeAt(fileIndex)) {
+      removeEntryState(this, removal.index);
+    }
+  }
+
   removeFileByIndex(fileIndex: number): void {
     if (fileIndex < 0) {
       return;
@@ -3166,8 +3239,7 @@ class PointCloudVisualizer {
       this.cameraShowLabels.splice(cameraIndex, 1);
       this.cameraShowCoords.splice(cameraIndex, 1);
 
-      this.fileEntries.removeAt(fileIndex);
-      removeEntryState(this, fileIndex);
+      this.removeEntryAndChildren(fileIndex);
 
       // Preserve depth panel states when removing files
       const openPanelStates = this.captureDepthPanelStates();
@@ -3214,8 +3286,7 @@ class PointCloudVisualizer {
       this.poseMinScoreThreshold.splice(fileIndex, 1);
       this.poseMaxUncertaintyThreshold.splice(fileIndex, 1);
 
-      this.fileEntries.removeAt(fileIndex);
-      removeEntryState(this, fileIndex);
+      this.removeEntryAndChildren(fileIndex);
 
       // Preserve depth panel states when removing files
       const openPanelStates = this.captureDepthPanelStates();
@@ -3298,8 +3369,7 @@ class PointCloudVisualizer {
     this.vertexPointsObjects.splice(fileIndex, 1); // Remove vertex points object for this file
     this.multiMaterialGroups.splice(fileIndex, 1); // Remove multi-material group for this file
     this.materialMeshes.splice(fileIndex, 1); // Remove sub-meshes for this file
-    this.fileEntries.removeAt(fileIndex);
-    removeEntryState(this, fileIndex);
+    this.removeEntryAndChildren(fileIndex);
     this.appliedMtlColors.splice(fileIndex, 1); // Remove MTL color for this file
     this.appliedMtlNames.splice(fileIndex, 1); // Remove MTL name for this file
     this.appliedMtlData.splice(fileIndex, 1); // Remove MTL data for this file
@@ -3693,6 +3763,14 @@ class PointCloudVisualizer {
     }
 
     const model = parseColmapModel(collected.model);
+
+    // Photographs are optional; without them the frames stay wireframes.
+    const photos = files.filter(file => isImageFile(file.name));
+    const textures = await loadColmapTextures(
+      photos,
+      model.images.map(image => image.name)
+    );
+
     const cloud = buildSparseCloud(model, colmapReconstructionName(files));
     if (!cloud) {
       this.showError(
@@ -3702,7 +3780,7 @@ class PointCloudVisualizer {
       );
       return;
     }
-    cloud.metadata = { ...cloud.metadata, colmapModel: model };
+    cloud.metadata = { ...cloud.metadata, colmapModel: model, colmapTextures: textures };
     await this.displayFiles([cloud]);
   }
 

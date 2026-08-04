@@ -153,3 +153,49 @@ test('a model without cameras and images is left to the normal pipelines', async
   const cameraGroups = await page.evaluate(() => (window as any).visualizer.cameraGroups.length);
   expect(cameraGroups).toBe(0);
 });
+
+test('frames are frustums, not the old pyramid body', async ({ page }) => {
+  await load(page, binaryModel);
+  const shapes = await page.evaluate(() => {
+    const frame = (window as any).visualizer.cameraGroups[0].children[0];
+    return frame.children.map((child: any) => ({ name: child.name, type: child.type }));
+  });
+  // A wireframe frustum plus the (hidden) label. No Mesh pyramid.
+  expect(shapes.some((s: any) => s.name === 'cameraFrustum' && s.type === 'LineSegments')).toBe(
+    true
+  );
+  expect(shapes.some((s: any) => s.type === 'Mesh')).toBe(false);
+});
+
+test('removing the cloud takes its camera profile with it', async ({ page }) => {
+  await load(page, binaryModel);
+  await expect(page.locator(ROWS)).toHaveCount(2);
+
+  await page.evaluate(() => (window as any).visualizer.removeFileByIndex(0));
+
+  // Both rows go, and the camera group leaves the scene rather than lingering
+  // with no row to control it.
+  await expect(page.locator(ROWS)).toHaveCount(0);
+  const groups = await page.evaluate(() => (window as any).visualizer.cameraGroups.length);
+  expect(groups).toBe(0);
+});
+
+test('View keeps the camera upright instead of rolling it a quarter turn', async ({ page }) => {
+  await load(page, binaryModel);
+  await page.getByRole('button', { name: /Individual cameras/ }).click();
+
+  // frame_0003 is rotated 90 degrees about Y. Its true up is world (0, -1, 0);
+  // snapping the roll towards world +Z used to pick (0, 0, 1) instead, which
+  // is the sideways view. COLMAP's world frame has no defined vertical axis,
+  // so no snapping should happen at all.
+  // Frames are listed sorted by name, so index 2 is frame_0003.
+  await page.getByRole('button', { name: 'View' }).nth(2).click();
+
+  const up = await page.evaluate(() => {
+    const camera = (window as any).visualizer.camera;
+    return [camera.up.x, camera.up.y, camera.up.z];
+  });
+  expect(up[0]).toBeCloseTo(0, 5);
+  expect(up[1]).toBeCloseTo(-1, 5);
+  expect(up[2]).toBeCloseTo(0, 5);
+});

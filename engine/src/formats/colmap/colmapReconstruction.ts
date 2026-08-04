@@ -1,12 +1,14 @@
 import * as THREE from 'three';
+import { createCameraLabel } from '../../cameraProfile';
 import {
-  createCameraBodyGeometry,
-  createCameraLabel,
-  createCameraUpArrow,
-} from '../../cameraProfile';
+  createFrustumObjects,
+  frustumDepthForExtent,
+  type FrustumIntrinsics,
+} from '../../visualization/cameraFrustum';
 import type { CameraFrameDetail } from '../../visualization/cameraFrames';
-import type { ColmapCamera, ColmapImage, ColmapModel } from './colmapModel';
-import { BODY_ROLL_ABOUT_Z, placementFor, verticalFovDegrees } from './colmapPose';
+import { focalYIndex, type ColmapCamera, type ColmapImage, type ColmapModel } from './colmapModel';
+import { placementFor, verticalFovDegrees } from './colmapPose';
+import { spreadOf } from '../../cameraProfile';
 
 /**
  * Scene objects for a COLMAP reconstruction: one camera frame per registered
@@ -44,7 +46,37 @@ function frameDetails(image: ColmapImage, camera: ColmapCamera | undefined): Cam
  */
 const LOOK_TARGET_DISTANCE = 1;
 
-function buildFrame(image: ColmapImage, camera: ColmapCamera | undefined): THREE.Group {
+/**
+ * Intrinsics for the frustum, when the model's camera provides them.
+ *
+ * `fx`/`fy` sit in different slots per model (focalYIndex), and the principal
+ * point follows immediately after. Models without a focal length - the
+ * equirectangular one - get no intrinsics and fall back to a generic frustum.
+ */
+function frustumIntrinsicsFor(camera: ColmapCamera | undefined): FrustumIntrinsics | undefined {
+  if (!camera) {
+    return undefined;
+  }
+  const fyIndex = focalYIndex(camera.model);
+  if (fyIndex === null) {
+    return undefined;
+  }
+  const fx = camera.params[0];
+  const fy = camera.params[fyIndex];
+  const cx = camera.params[fyIndex + 1];
+  const cy = camera.params[fyIndex + 2];
+  if (![fx, fy, cx, cy].every(value => Number.isFinite(value) && value !== 0)) {
+    return undefined;
+  }
+  return { fx, fy, cx, cy, imageWidth: camera.width, imageHeight: camera.height };
+}
+
+function buildFrame(
+  image: ColmapImage,
+  camera: ColmapCamera | undefined,
+  depth: number,
+  texture: THREE.Texture | null
+): THREE.Group {
   const group = new THREE.Group();
   group.name = `camera_${image.name}`;
 
@@ -52,15 +84,17 @@ function buildFrame(image: ColmapImage, camera: ColmapCamera | undefined): THREE
   group.position.copy(position);
   group.quaternion.copy(quaternion);
 
-  // The body looks along +Z with +Y up; COLMAP's up is -Y. Rolling the body
-  // about its own Z maps one onto the other without disturbing the direction
-  // it points - see colmapPose.ts for why a group-level fix cannot work.
-  const body = createCameraBodyGeometry();
-  const bodyHolder = new THREE.Group();
-  bodyHolder.rotation.z = BODY_ROLL_ABOUT_Z;
-  bodyHolder.add(body);
-  bodyHolder.add(createCameraUpArrow());
-  group.add(bodyHolder);
+  // The frustum is built in camera space - +Z forward, +Y down - which is
+  // exactly COLMAP's convention, so it needs no correction. (The old pyramid
+  // did: it was modelled +Y up and had to be rolled. See colmapPose.ts.)
+  for (const object of createFrustumObjects({
+    depth,
+    intrinsics: frustumIntrinsicsFor(camera),
+    color: 0x42a5f5,
+    texture,
+  })) {
+    group.add(object);
+  }
 
   const label = createCameraLabel(image.name);
   label.name = 'cameraLabel';
@@ -89,7 +123,11 @@ function buildFrame(image: ColmapImage, camera: ColmapCamera | undefined): THREE
  * One profile group holding every registered image as a `camera_*` child, which
  * is the shape visualization/cameraFrames.ts expects from any camera source.
  */
-export function buildCameraProfile(model: ColmapModel, profileName: string): THREE.Group {
+export function buildCameraProfile(
+  model: ColmapModel,
+  profileName: string,
+  textures: Map<string, THREE.Texture> = new Map()
+): THREE.Group {
   const profile = new THREE.Group();
   profile.name = `colmap_cameras_${profileName}`;
   profile.userData.cameraCount = model.images.length;
@@ -100,9 +138,19 @@ export function buildCameraProfile(model: ColmapModel, profileName: string): THR
 
   // Registration order is not guaranteed to be sorted, and the panel lists
   // frames in child order.
+  // A reconstruction is in arbitrary units, so frustum size comes from how far
+  // apart the cameras themselves are rather than from a fixed distance.
+  const centres = model.images.map(image => {
+    const { position } = placementFor(image);
+    return [position.x, position.y, position.z];
+  });
+  const depth = frustumDepthForExtent(spreadOf(centres));
+
   const images = [...model.images].sort((a, b) => a.name.localeCompare(b.name));
   for (const image of images) {
-    profile.add(buildFrame(image, model.cameras.get(image.cameraId)));
+    profile.add(
+      buildFrame(image, model.cameras.get(image.cameraId), depth, textures.get(image.name) ?? null)
+    );
   }
   return profile;
 }
