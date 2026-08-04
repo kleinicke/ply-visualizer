@@ -15,8 +15,6 @@ coverage/
 # Engine (shared viz core + standalone page) build outputs and dependencies
 engine/node_modules/
 engine/dist/
-engine/package-lock.json
-engine/pnpm-lock.yaml
 
 # Test outputs
 engine/test-results/

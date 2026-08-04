@@ -110,7 +110,13 @@ there; put code in the modules above.
 - `7zip-bin` is transitive (via `7zip-min`), so `webpack.config.js` resolves it
   through its parent rather than assuming `node_modules/7zip-bin` — that path
   only exists when the package manager hoists it, which pnpm does not.
-- `engine/` is not a pnpm workspace member and its lockfile is gitignored, so
-  its dependency tree is not reproducible — and the extension bundle pulls
-  `@sparkjsdev/spark` and `svelte-preprocess`'s TypeScript out of
-  `engine/node_modules`. Install in both places after a fresh clone.
+- `engine/` is a pnpm workspace member (`pnpm-workspace.yaml`), so one
+  `pnpm install` at the root provisions both trees from the single committed
+  `pnpm-lock.yaml`. Do not run `npm install` inside `engine/` — that recreates
+  the split, unlocked tree this replaced. The extension bundle legitimately
+  resolves `@sparkjsdev/spark` out of `engine/`, which is why the engine has to
+  be installed for the root build to work.
+- The engine Playwright suite is GPU- and memory-bound, so
+  `engine/playwright.config.ts` caps workers rather than using Playwright's
+  default of half the cores. Raising it makes the heavy file-loading specs time
+  out whenever anything else is building.

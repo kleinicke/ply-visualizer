@@ -85,3 +85,10 @@ implementation/**
 docs/**
 assets/**
 template
+
+# Test artefacts — Playwright writes these into the repo root and they were
+# being packaged into the VSIX.
+test-results/**
+playwright-report/**
+engine/test/**
+ui-tests/**
