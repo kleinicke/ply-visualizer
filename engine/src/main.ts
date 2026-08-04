@@ -57,7 +57,8 @@ import {
   colmapReconstructionName,
   parseColmapModel,
 } from './formats/colmap/colmapFiles';
-import { isImageFile, loadColmapTextures } from './formats/colmap/colmapTextures';
+import { loadColmapTextures } from './formats/colmap/colmapTextures';
+import { attachColmapFrameImage } from './formats/colmap/colmapReconstruction';
 import * as uiStatus from './ui/status';
 import * as intensity from './utils/intensity';
 import * as commentSettings from './depth/commentSettings';
@@ -220,6 +221,9 @@ class PointCloudVisualizer {
   // each entry, so nothing derives it from collection lengths - see
   // state/fileEntries.ts for why that derivation was unsafe.
   readonly fileEntries = new FileEntryRegistry();
+  /** Image names of the loaded COLMAP model, for matching streamed photos. */
+  private colmapImageNames: string[] = [];
+  private colmapImagesDone = 0;
   spatialFiles: SpatialData[] = [];
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[] = [];
   normalsVisualizers: (THREE.LineSegments | null)[] = [];
@@ -2104,6 +2108,9 @@ class PointCloudVisualizer {
         case 'colmapModelFiles':
           await this.loadWithPerf('colmap', message, () => this.handleColmapModelFiles(message));
           break;
+        case 'colmapImages':
+          await this.handleColmapImages(message);
+          break;
         case 'npyData':
           await this.loadWithPerf('npy', message, () => this.handleNpyData(message));
           break;
@@ -3792,14 +3799,6 @@ class PointCloudVisualizer {
     }
 
     const model = parseColmapModel(collected.model);
-
-    // Photographs are optional; without them the frames stay wireframes.
-    const photos = files.filter(file => isImageFile(file.name));
-    const textures = await loadColmapTextures(
-      photos,
-      model.images.map(image => image.name)
-    );
-
     const cloud = buildSparseCloud(model, colmapReconstructionName(files));
     if (!cloud) {
       this.showError(
@@ -3809,8 +3808,66 @@ class PointCloudVisualizer {
       );
       return;
     }
-    cloud.metadata = { ...cloud.metadata, colmapModel: model, colmapTextures: textures };
+    cloud.metadata = { ...cloud.metadata, colmapModel: model };
+    // Read back by loadWithPerf's summary, so the PERF line for the
+    // reconstruction reports the cloud it actually built.
+    message.vertexCount = cloud.vertexCount;
     await this.displayFiles([cloud]);
+
+    // The frames are on screen now; photographs arrive separately and attach
+    // themselves as they decode.
+    this.colmapImageNames = model.images.map(image => image.name);
+    this.colmapImagesDone = 0;
+  }
+
+  /**
+   * A batch of reconstruction photographs. Each is decoded and hung on its own
+   * frame as soon as it is ready, so the frames fill in progressively instead
+   * of the whole set appearing at the end.
+   */
+  private async handleColmapImages(message: any): Promise<void> {
+    const profile = this.cameraGroups.find(group => group.name.startsWith('colmap_cameras_'));
+    if (!profile || this.colmapImageNames.length === 0) {
+      return;
+    }
+    const total: number = message.total ?? 0;
+    const sources = (message.files || []).map((file: any) => ({
+      name: file.name,
+      data: messageBytes(file.data),
+    }));
+
+    let attached = false;
+    await loadColmapTextures(sources, this.colmapImageNames, (name, texture) => {
+      if (attachColmapFrameImage(profile, name, texture)) {
+        attached = true;
+      }
+      this.colmapImagesDone += 1;
+      profile.userData.imageProgress = { done: this.colmapImagesDone, total };
+    });
+
+    if (attached) {
+      // The panel only offers the image toggle once a frame actually has one.
+      profile.userData.hasImagePlanes = true;
+      this.requestRender();
+    }
+    filesState.renderTick += 1;
+
+    if (total > 0 && this.colmapImagesDone >= total) {
+      // One PERF line for the whole background phase, separate from the
+      // reconstruction's own line, so the two costs can be read apart.
+      const perf = new PerfTimer('colmap-images', message.loadStartedAt);
+      perf.mark('read+decode');
+      // Not `verts`: that note is formatted as "pts", which would read as a
+      // point count rather than an image count.
+      perf.note('images', total);
+      if (typeof message.totalBytes === 'number') {
+        perf.note('MB', (message.totalBytes / 1048576).toFixed(1));
+      }
+      perf.summary();
+      // Clearing it removes the counter; the "Show images" toggle stays.
+      profile.userData.imageProgress = null;
+      filesState.renderTick += 1;
+    }
   }
 
   private async handlePtsData(message: any): Promise<void> {
@@ -4282,6 +4339,10 @@ class PointCloudVisualizer {
 // Test hook: container totals only arise from multi-scan E57/X3A loads driven by
 // the extension host, so specs exercise the accumulator directly.
 (window as any).__plyContainerPerf = containerPerf;
+// Test handle for the file-list state, following __plyContainerPerf above.
+// Lets a browser test drive the background-work row without needing the
+// extension host to stream real images.
+(window as any).__plyFilesState = filesState;
 
 // Initialize when DOM is ready
 let visualizer: PointCloudVisualizer | null = null;

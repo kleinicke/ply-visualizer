@@ -79,6 +79,48 @@ export function frustumCorners(options: FrustumOptions): THREE.Vector3[] {
 }
 
 /**
+ * The textured quad on its own, for images that arrive after the frame is
+ * already in the scene.
+ *
+ * A COLMAP reconstruction shows its cloud and cameras immediately and decodes
+ * photographs afterwards, so the plane has to be addable later. The options
+ * must be the ones the frame was built with, or the plane will not sit on the
+ * frustum - frames record them in `userData.frustumOptions`.
+ */
+export function createImagePlane(options: FrustumOptions, texture: THREE.Texture): THREE.Mesh {
+  const corners = frustumCorners(options);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(
+      corners.flatMap(corner => corner.toArray()),
+      3
+    )
+  );
+  // Row zero of a decoded image is its top row, which is the first corner.
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 1, 1, 1, 1, 0, 0, 0], 2));
+  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+
+  const plane = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({
+      map: texture,
+      side: THREE.DoubleSide,
+      // Reference imagery: keep decoded sRGB independent of the exposure
+      // control that applies to geometry.
+      toneMapped: false,
+      transparent: true,
+      opacity: 0.88,
+      depthWrite: false,
+    })
+  );
+  plane.name = IMAGE_PLANE_NAME;
+  plane.visible = false;
+  plane.renderOrder = 2;
+  return plane;
+}
+
+/**
  * Builds the frame: four rays from the optical centre to the image corners,
  * the rectangle closing them, and the textured plane when an image exists.
  *
@@ -104,35 +146,7 @@ export function createFrustumObjects(options: FrustumOptions): THREE.Object3D[] 
   objects.push(frustum);
 
   if (options.texture) {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(
-        corners.flatMap(corner => corner.toArray()),
-        3
-      )
-    );
-    // Row zero of a decoded image is its top row, which is the first corner.
-    geometry.setAttribute('uv', new THREE.Float32BufferAttribute([0, 1, 1, 1, 1, 0, 0, 0], 2));
-    geometry.setIndex([0, 1, 2, 0, 2, 3]);
-
-    const plane = new THREE.Mesh(
-      geometry,
-      new THREE.MeshBasicMaterial({
-        map: options.texture,
-        side: THREE.DoubleSide,
-        // Reference imagery: keep decoded sRGB independent of the exposure
-        // control that applies to geometry.
-        toneMapped: false,
-        transparent: true,
-        opacity: 0.88,
-        depthWrite: false,
-      })
-    );
-    plane.name = IMAGE_PLANE_NAME;
-    plane.visible = false;
-    plane.renderOrder = 2;
-    objects.push(plane);
+    objects.push(createImagePlane(options, options.texture));
   }
 
   return objects;

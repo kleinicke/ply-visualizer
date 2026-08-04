@@ -396,6 +396,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     uri: vscode.Uri,
     webviewPanel: vscode.WebviewPanel
   ): Promise<void> {
+    const loadStartedAt = Date.now();
     try {
       const directory = vscode.Uri.joinPath(uri, '..');
       const entries = await vscode.workspace.fs.readDirectory(directory);
@@ -427,27 +428,65 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         throw new Error('No COLMAP model files found next to this file');
       }
 
-      // The photographs live in a sibling `images/` folder, usually one level
-      // above the model. Without them the frames are bare wireframes.
-      for (const imagesDirectory of [
-        vscode.Uri.joinPath(directory, 'images'),
-        vscode.Uri.joinPath(directory, '..', 'images'),
-        vscode.Uri.joinPath(directory, '..', '..', 'images'),
-      ]) {
-        const loaded = await this.readColmapImages(imagesDirectory);
-        if (loaded.length > 0) {
-          modelFiles.push(...loaded);
-          break;
-        }
-      }
+      // The model goes first and on its own. It is small and parses in well
+      // under a second, so the cloud and the camera frames are on screen while
+      // the photographs - often hundreds of megabytes - are still being read.
+      void webviewPanel.webview.postMessage({
+        type: 'colmapModelFiles',
+        files: modelFiles,
+        fileName: path.basename(directory.fsPath),
+        loadStartedAt,
+        postedAt: Date.now(),
+      });
 
-      void webviewPanel.webview.postMessage({ type: 'colmapModelFiles', files: modelFiles });
+      // Photographs follow in batches, so decoding overlaps with reading and
+      // the frames fill in as they arrive rather than all at the end.
+      void this.streamColmapImages(directory, webviewPanel);
     } catch (error) {
       const message = `Failed to load COLMAP reconstruction: ${
         error instanceof Error ? error.message : String(error)
       }`;
       vscode.window.showErrorMessage(message);
       void webviewPanel.webview.postMessage({ type: 'loadingError', error: message });
+    }
+  }
+
+  /**
+   * Sends the reconstruction's photographs after the model, a batch at a time.
+   *
+   * Reading 256 MB of JPEGs and copying it across the webview boundary in one
+   * message stalls everything until it completes. Batching keeps each transfer
+   * small and lets the webview decode one batch while the next is read.
+   */
+  private async streamColmapImages(
+    modelDirectory: vscode.Uri,
+    webviewPanel: vscode.WebviewPanel
+  ): Promise<void> {
+    const candidates = [
+      vscode.Uri.joinPath(modelDirectory, 'images'),
+      vscode.Uri.joinPath(modelDirectory, '..', 'images'),
+      vscode.Uri.joinPath(modelDirectory, '..', '..', 'images'),
+    ];
+    const imagesStartedAt = Date.now();
+    for (const directory of candidates) {
+      const files = await this.readColmapImages(directory);
+      if (files.length === 0) {
+        continue;
+      }
+      // `total` rides on every batch so the webview can show progress without
+      // a separate announcement message, and knows when the last one lands.
+      const totalBytes = files.reduce((sum, file) => sum + file.data.byteLength, 0);
+      const BATCH = 8;
+      for (let start = 0; start < files.length; start += BATCH) {
+        void webviewPanel.webview.postMessage({
+          type: 'colmapImages',
+          files: files.slice(start, start + BATCH),
+          total: files.length,
+          totalBytes,
+          loadStartedAt: imagesStartedAt,
+        });
+      }
+      return;
     }
   }
 

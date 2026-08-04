@@ -2,8 +2,11 @@ import * as THREE from 'three';
 import { createCameraLabel } from '../../cameraProfile';
 import {
   createFrustumObjects,
+  createImagePlane,
   frustumDepthForExtent,
+  IMAGE_PLANE_NAME,
   type FrustumIntrinsics,
+  type FrustumOptions,
 } from '../../visualization/cameraFrustum';
 import type { CameraFrameDetail } from '../../visualization/cameraFrames';
 import { focalYIndex, type ColmapCamera, type ColmapImage, type ColmapModel } from './colmapModel';
@@ -87,12 +90,16 @@ function buildFrame(
   // The frustum is built in camera space - +Z forward, +Y down - which is
   // exactly COLMAP's convention, so it needs no correction. (The old pyramid
   // did: it was modelled +Y up and had to be rolled. See colmapPose.ts.)
-  for (const object of createFrustumObjects({
+  const frustumOptions = {
     depth,
     intrinsics: frustumIntrinsicsFor(camera),
     color: 0x42a5f5,
     texture,
-  })) {
+  };
+  // Recorded so a photograph decoded later can be given a plane that sits on
+  // exactly this frustum - see attachColmapFrameImage.
+  group.userData.frustumOptions = frustumOptions;
+  for (const object of createFrustumObjects(frustumOptions)) {
     group.add(object);
   }
 
@@ -153,4 +160,29 @@ export function buildCameraProfile(
     );
   }
   return profile;
+}
+
+/**
+ * Adds a photograph to a frame that is already in the scene.
+ *
+ * Used by the progressive load: the cloud and the camera frames appear as soon
+ * as the model is parsed, and images arrive over the following seconds.
+ * Returns false when the frame is unknown or already has its image.
+ */
+export function attachColmapFrameImage(
+  profile: THREE.Group,
+  imageName: string,
+  texture: THREE.Texture
+): boolean {
+  const frame = profile.getObjectByName(`camera_${imageName}`) as THREE.Group | undefined;
+  const options = frame?.userData.frustumOptions as FrustumOptions | undefined;
+  if (!frame || !options || frame.getObjectByName(IMAGE_PLANE_NAME)) {
+    return false;
+  }
+  const plane = createImagePlane(options, texture);
+  // Match whatever the profile-wide toggle is currently set to, so images
+  // arriving after the user switched it on are not invisible.
+  plane.visible = profile.userData.imagesVisible === true;
+  frame.add(plane);
+  return true;
 }

@@ -40,6 +40,13 @@ export function addColmapCameraVisualization(host: ColmapCameraHost, data: Spati
   // The panel only offers the image toggle when a frame actually has a plane.
   profile.userData.hasImagePlanes = (textures?.size ?? 0) > 0;
   profile.userData.imagesVisible = false;
+  // Declared up front so the panel shows "images 0 / N" on the first render
+  // rather than only once the first batch arrives. Cleared when all arrive.
+  const alreadyLoaded = textures?.size ?? 0;
+  profile.userData.imageProgress =
+    alreadyLoaded < model.images.length
+      ? { done: alreadyLoaded, total: model.images.length }
+      : null;
 
   // The cloud is shifted by its source origin when one was applied; the
   // cameras are in the same reconstruction frame and must move with it.

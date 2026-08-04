@@ -31,6 +31,14 @@
   const cameraIndex = $derived(host.fileEntries.kindIndexAt(index));
   const cameraGroup = $derived(kind === 'camera' ? host.cameraGroups[cameraIndex] : null);
   const cameraProfileName = $derived(kind === 'camera' ? host.cameraNames[cameraIndex] : '');
+  // Set by sources that fetch their images after the frames are on screen
+  // (COLMAP). Absent for sources whose previews are embedded and already
+  // decoded, so nothing extra is shown for those.
+  const cameraImageProgress = $derived(
+    kind === 'camera'
+      ? (cameraGroup?.userData.imageProgress as { done: number; total: number } | undefined) ?? null
+      : null
+  );
 
   const visible = $derived(filesState.visibility[index] ?? true);
   const collapsed = $derived(filesState.collapsed[index] ?? false);
@@ -725,7 +733,17 @@
         </select>
       </div>
     {:else if kind === 'camera' && cameraGroup}
-      <div class="file-info">{cameraGroup.userData.cameraCount ?? cameraGroup.children.length} cameras</div>
+      <div class="file-info" style="display:flex;justify-content:space-between;gap:8px;">
+        <span>{cameraGroup.userData.cameraCount ?? cameraGroup.children.length} cameras</span>
+        {#if cameraImageProgress}
+          <!-- Shown from the first render with 0 loaded, so it is clear the
+               photographs are still to come rather than absent. Cleared once
+               every image has arrived. -->
+          <span id={`camera-image-progress-${index}`} style="opacity:0.75;">
+            images {cameraImageProgress.done} / {cameraImageProgress.total}
+          </span>
+        {/if}
+      </div>
       <div class="panel-section" style="margin-top:6px;margin-bottom:6px;padding-bottom:6px;">
         <div class="control-buttons">
           <label style="font-size:10px;display:flex;align-items:center;gap:6px;">

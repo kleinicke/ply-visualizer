@@ -199,3 +199,35 @@ test('View keeps the camera upright instead of rolling it a quarter turn', async
   expect(up[1]).toBeCloseTo(-1, 5);
   expect(up[2]).toBeCloseTo(0, 5);
 });
+
+test('the camera row reports image progress from the first render', async ({ page }) => {
+  await load(page, binaryModel);
+
+  // Nothing has been decoded yet - the browser path never receives an images
+  // folder - so the counter must already say 0 of 3 rather than being absent.
+  // Otherwise a reconstruction whose photographs are still coming looks like
+  // one that simply has none.
+  const cameraRow = page.locator(ROWS).nth(1);
+  await expect(cameraRow).toContainText('3 cameras');
+  await expect(cameraRow).toContainText('images 0 / 3');
+});
+
+test('the progress counter clears once every image has arrived', async ({ page }) => {
+  await load(page, binaryModel);
+
+  await page.evaluate(() => {
+    const visualizer = (window as any).visualizer;
+    const profile = visualizer.cameraGroups[0];
+    profile.userData.imageProgress = { done: 2, total: 3 };
+    (window as any).__plyFilesState.renderTick += 1;
+  });
+  await expect(page.locator(ROWS).nth(1)).toContainText('images 2 / 3');
+
+  await page.evaluate(() => {
+    const visualizer = (window as any).visualizer;
+    visualizer.cameraGroups[0].userData.imageProgress = null;
+    (window as any).__plyFilesState.renderTick += 1;
+  });
+  await expect(page.locator(ROWS).nth(1)).not.toContainText('images');
+  await expect(page.locator(ROWS).nth(1)).toContainText('3 cameras');
+});
