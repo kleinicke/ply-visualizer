@@ -8,6 +8,12 @@ import {
   convertDepthToUnified,
 } from './fileHandler';
 import { parseLidarFile } from './parsers/lidarParser';
+import {
+  buildSparseCloud,
+  collectColmapModelFiles,
+  colmapReconstructionName,
+  parseColmapModel,
+} from './formats/colmap/colmapFiles';
 import { SPLAT_CONTAINER_REGEX } from './visualization/splatMode';
 
 declare const acquireVsCodeApi: () => any;
@@ -404,9 +410,37 @@ export async function handleBrowserFiles(
       dims?: { width: number; height: number };
     }> = [];
 
-    const lidarFiles = regularFiles.filter(file => /\.(las|laz|e57)$/i.test(file.name));
-    const splatContainerFiles = regularFiles.filter(file => SPLAT_CONTAINER_REGEX.test(file.name));
-    const conventionalFiles = regularFiles.filter(
+    // A COLMAP sparse model arrives as several files at once (cameras/images/
+    // points3D). They are recognised as a set and consumed together, so they
+    // never reach the per-file pipelines below.
+    const colmap = collectColmapModelFiles(regularFiles);
+    if (colmap) {
+      try {
+        const model = parseColmapModel(colmap.model);
+        const cloud = buildSparseCloud(model, colmapReconstructionName(regularFiles));
+        if (cloud) {
+          cloud.metadata = { ...cloud.metadata, colmapModel: model };
+          spatialDataArray.push(cloud);
+        } else {
+          host.showError(
+            'COLMAP model has no points3D file; load it alongside cameras and images to see the sparse cloud.'
+          );
+        }
+      } catch (error) {
+        host.showError(
+          `Failed to read COLMAP model: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    const remainingFiles = colmap
+      ? regularFiles.filter(file => !colmap.consumed.has(file.name))
+      : regularFiles;
+
+    const lidarFiles = remainingFiles.filter(file => /\.(las|laz|e57)$/i.test(file.name));
+    const splatContainerFiles = remainingFiles.filter(file =>
+      SPLAT_CONTAINER_REGEX.test(file.name)
+    );
+    const conventionalFiles = remainingFiles.filter(
       file => !/\.(las|laz|e57)$/i.test(file.name) && !SPLAT_CONTAINER_REGEX.test(file.name)
     );
     for (const file of lidarFiles) {

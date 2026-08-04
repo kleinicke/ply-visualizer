@@ -150,6 +150,11 @@
         "category": "3D Visualizer"
       },
       {
+        "command": "plyViewer.openColmapReconstruction",
+        "title": "Open COLMAP Reconstruction",
+        "category": "3D Visualizer"
+      },
+      {
         "command": "plyViewer.playPointCloudSequence",
         "title": "Play Point Cloud Sequence (Wildcard)",
         "category": "3D Visualizer"

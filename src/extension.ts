@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { isColmapModelFile } from '../engine/src/formats/colmap/colmapFiles';
 import { PointCloudEditorProvider } from './pointCloudEditorProvider';
 import { DatasetManager } from './dataset/datasetManager';
 import { glob } from 'glob';
@@ -147,6 +148,15 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Register command for opening a COLMAP reconstruction folder
+  context.subscriptions.push(
+    vscode.commands.registerCommand('plyViewer.openColmapReconstruction', async () => {
+      setImmediate(() => {
+        void handleOpenColmapReconstruction();
+      });
+    })
+  );
+
   // Register command for resetting all extension settings
   context.subscriptions.push(
     vscode.commands.registerCommand('plyViewer.resetSettings', async () => {
@@ -280,4 +290,79 @@ async function handleOpenMultipleFiles(): Promise<void> {
 
 export function deactivate() {
   console.log('3D Visualizer extension is now deactivated!');
+}
+
+/**
+ * Opens a COLMAP reconstruction from a folder.
+ *
+ * The model files live in a `sparse` directory that may or may not have a
+ * numbered sub-model inside it, and users think in terms of the dataset folder
+ * rather than of `cameras.bin`. This accepts any of those: the dataset root,
+ * `sparse`, or `sparse/0`.
+ */
+async function handleOpenColmapReconstruction(): Promise<void> {
+  try {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      title: 'Select a COLMAP reconstruction folder',
+      openLabel: 'Open Reconstruction',
+    });
+    if (!picked || picked.length === 0) {
+      return;
+    }
+
+    const modelFile = await findColmapModelFile(picked[0]);
+    if (!modelFile) {
+      vscode.window.showErrorMessage(
+        'No COLMAP model found. Expected cameras/images/points3D files in the folder, in "sparse", or in "sparse/0".'
+      );
+      return;
+    }
+
+    // The provider recognises a model file and reads the rest of the set from
+    // the same directory.
+    await vscode.commands.executeCommand('vscode.openWith', modelFile, 'plyViewer.plyEditor');
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Failed to open COLMAP reconstruction: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/** Searches a folder and the usual COLMAP sub-folders for a model file. */
+async function findColmapModelFile(folder: vscode.Uri): Promise<vscode.Uri | null> {
+  const candidates = [folder, vscode.Uri.joinPath(folder, 'sparse')];
+  for (const directory of candidates) {
+    let entries: [string, vscode.FileType][];
+    try {
+      entries = await vscode.workspace.fs.readDirectory(directory);
+    } catch {
+      continue;
+    }
+
+    const model = entries.find(
+      ([name, kind]) => kind === vscode.FileType.File && isColmapModelFile(name)
+    );
+    if (model) {
+      return vscode.Uri.joinPath(directory, model[0]);
+    }
+
+    // Numbered sub-models: sparse/0, sparse/1, ... Take the lowest.
+    const subModels = entries
+      .filter(([name, kind]) => kind === vscode.FileType.Directory && /^\d+$/.test(name))
+      .sort((a, b) => Number(a[0]) - Number(b[0]));
+    for (const [name] of subModels) {
+      const subDirectory = vscode.Uri.joinPath(directory, name);
+      const subEntries = await vscode.workspace.fs.readDirectory(subDirectory);
+      const subModel = subEntries.find(
+        ([entryName, kind]) => kind === vscode.FileType.File && isColmapModelFile(entryName)
+      );
+      if (subModel) {
+        return vscode.Uri.joinPath(subDirectory, subModel[0]);
+      }
+    }
+  }
+  return null;
 }

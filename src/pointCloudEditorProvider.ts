@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { DatasetManager } from './dataset/datasetManager';
+import { isColmapModelFile } from '../engine/src/formats/colmap/colmapFiles';
 import { PlyParser } from '../engine/src/parsers/plyParser';
 import { ObjParser } from '../engine/src/parsers/objParser';
 import { MtlParser } from '../engine/src/parsers/mtlParser';
@@ -350,6 +351,14 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     // deliver it safely instead of blocking resolveCustomEditor.
     void this.handleRequestDefaultDepthSettings(webviewPanel);
 
+    // A COLMAP sparse model is several files that only mean anything together,
+    // and none of them parses as a point cloud on its own. Opening any one of
+    // them loads the whole reconstruction from its directory instead.
+    if (isColmapModelFile(path.basename(document.uri.fsPath))) {
+      setImmediate(() => void this.loadColmapReconstruction(document.uri, webviewPanel));
+      return;
+    }
+
     // Continue parsing immediately so normal loading retains its overlap with
     // webview startup. Result messages wait at the ready gate if necessary.
     setImmediate(() =>
@@ -375,6 +384,56 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         isSplatContainerFile,
       })
     );
+  }
+
+  /**
+   * Reads every part of the COLMAP model that sits beside `uri` and hands them
+   * to the webview as a set. Assembly happens there, so the standalone page and
+   * the extension share one implementation.
+   */
+  private async loadColmapReconstruction(
+    uri: vscode.Uri,
+    webviewPanel: vscode.WebviewPanel
+  ): Promise<void> {
+    try {
+      const directory = vscode.Uri.joinPath(uri, '..');
+      const entries = await vscode.workspace.fs.readDirectory(directory);
+      const modelFiles: Array<{ name: string; data: ArrayBuffer }> = [];
+
+      for (const [name, kind] of entries) {
+        if (kind !== vscode.FileType.File || !isColmapModelFile(name)) {
+          continue;
+        }
+        const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(directory, name));
+        // Two levels of directory ride along in the name so the entry is
+        // titled after the dataset ("south-building/sparse") rather than after
+        // "cameras". See colmapReconstructionName.
+        const parent = path.basename(directory.fsPath);
+        const grandparent = path.basename(path.dirname(directory.fsPath));
+        // An ArrayBuffer, not the Uint8Array: the webview boundary does not
+        // preserve typed-array identity, and a view arrives as a plain object
+        // that reconstructs to zero bytes. Same convention as binaryTransfer.ts.
+        modelFiles.push({
+          name: `${grandparent}/${parent}/${name}`,
+          data: (bytes.buffer as ArrayBuffer).slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength
+          ),
+        });
+      }
+
+      if (modelFiles.length === 0) {
+        throw new Error('No COLMAP model files found next to this file');
+      }
+
+      void webviewPanel.webview.postMessage({ type: 'colmapModelFiles', files: modelFiles });
+    } catch (error) {
+      const message = `Failed to load COLMAP reconstruction: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      vscode.window.showErrorMessage(message);
+      void webviewPanel.webview.postMessage({ type: 'loadingError', error: message });
+    }
   }
 
   // Start sequence playback in current active webview with background loading hint

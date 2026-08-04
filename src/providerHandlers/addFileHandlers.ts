@@ -8,6 +8,7 @@ import { PtsParser } from '../../engine/src/parsers/ptsParser';
 import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
+import { isColmapModelFile } from '../../engine/src/formats/colmap/colmapFiles';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
@@ -655,8 +656,30 @@ export async function handleDroppedFilesFromWebview(
   webviewPanel: vscode.WebviewPanel,
   files: Array<{ name?: string; data?: ArrayBuffer | Uint8Array }>
 ): Promise<void> {
-  for (let i = 0; i < files.length; i++) {
-    const droppedFile = files[i];
+  // A COLMAP sparse model only means anything as a set, and its parts would be
+  // misread individually - `cameras.bin` looks like a KITTI scan by extension.
+  // Forward them together and let the webview assemble the reconstruction.
+  const colmapFiles = files.filter(file => file.name && isColmapModelFile(file.name) && file.data);
+  if (colmapFiles.length > 0) {
+    webviewPanel.webview.postMessage({
+      type: 'colmapModelFiles',
+      files: colmapFiles.map(file => {
+        const bytes = toUint8Array(file.data!);
+        return {
+          name: file.name,
+          // ArrayBuffer, not a view - see pointCloudEditorProvider.
+          data: (bytes.buffer as ArrayBuffer).slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength
+          ),
+        };
+      }),
+    });
+  }
+  const remaining = files.filter(file => !colmapFiles.includes(file));
+
+  for (let i = 0; i < remaining.length; i++) {
+    const droppedFile = remaining[i];
     const fileName = path.basename(droppedFile.name || `dropped-file-${i + 1}`);
 
     try {

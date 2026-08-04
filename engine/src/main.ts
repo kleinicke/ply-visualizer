@@ -39,6 +39,7 @@ import {
 import { ColorImageLoader } from './colorImageLoader';
 import { PerfTimer, perfLog, setPerfSink } from './utils/perfLog';
 import { createRotationMatrix, parseMatrixInput } from './utils/matrix';
+import { messageBytes } from './utils/messageBytes';
 import * as sequencePlayback from './sequencePlayback';
 import * as pose from './pose';
 import * as renderStats from './renderStats';
@@ -49,6 +50,13 @@ import { useAntialiasing } from './rendering/rendererOptions';
 import * as meshBuilder from './visualization/MeshBuilder';
 import * as stonexCameras from './visualization/stonexCameras';
 import { addE57CameraVisualization } from './visualization/e57Cameras';
+import { addColmapCameraVisualization } from './visualization/colmapCameras';
+import {
+  buildSparseCloud,
+  collectColmapModelFiles,
+  colmapReconstructionName,
+  parseColmapModel,
+} from './formats/colmap/colmapFiles';
 import * as uiStatus from './ui/status';
 import * as intensity from './utils/intensity';
 import * as commentSettings from './depth/commentSettings';
@@ -2062,6 +2070,9 @@ class PointCloudVisualizer {
         case 'gltfData':
           await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
           break;
+        case 'colmapModelFiles':
+          await this.loadWithPerf('colmap', message, () => this.handleColmapModelFiles(message));
+          break;
         case 'npyData':
           await this.loadWithPerf('npy', message, () => this.handleNpyData(message));
           break;
@@ -2719,6 +2730,7 @@ class PointCloudVisualizer {
     }
     const stonexCameraFiles: SpatialData[] = [];
     const e57CameraFiles: SpatialData[] = [];
+    const colmapCameraFiles: SpatialData[] = [];
     for (const data of newFiles) {
       alignSourceOrigin(data, this.spatialFiles);
       // Assign new file index
@@ -3079,6 +3091,9 @@ class PointCloudVisualizer {
       if ((data.metadata?.e57Images as unknown[])?.length) {
         e57CameraFiles.push(data);
       }
+      if (data.metadata?.colmapModel) {
+        colmapCameraFiles.push(data);
+      }
     }
 
     for (const data of stonexCameraFiles) {
@@ -3088,6 +3103,13 @@ class PointCloudVisualizer {
         // Camera helpers are auxiliary. A malformed preview or calibration must
         // never prevent the point cloud from being fitted and rendered.
         console.error(`Could not add Stonex camera visualization for ${data.fileName}:`, error);
+      }
+    }
+    for (const data of colmapCameraFiles) {
+      try {
+        addColmapCameraVisualization(this, data);
+      } catch (error) {
+        console.error(`Could not add COLMAP camera visualization for ${data.fileName}:`, error);
       }
     }
     for (const data of e57CameraFiles) {
@@ -3641,6 +3663,47 @@ class PointCloudVisualizer {
 
   private async handleNpyData(message: any): Promise<void> {
     await formatDataHandlers.handleNpyData(this, message);
+  }
+
+  /**
+   * A COLMAP sparse model arriving from the extension host as a set of raw
+   * files. The extension cannot parse them one at a time - the model only makes
+   * sense as a whole - so it forwards the bytes and the assembly happens here,
+   * the same way the standalone page does it.
+   */
+  private async handleColmapModelFiles(message: any): Promise<void> {
+    const files: Array<{ name: string; data: Uint8Array }> = (message.files || []).map(
+      (file: any) => ({ name: file.name, data: messageBytes(file.data) })
+    );
+
+    // An empty part means the transfer dropped the payload rather than that the
+    // model is empty; saying "no points3D" here would send you looking in the
+    // wrong place entirely.
+    const empty = files.filter(file => file.data.byteLength === 0).map(file => file.name);
+    if (empty.length > 0) {
+      this.showError(`COLMAP model files arrived empty: ${empty.join(', ')}`);
+      return;
+    }
+
+    const collected = collectColmapModelFiles(files);
+    if (!collected) {
+      const found = files.map(file => file.name).join(', ') || 'none';
+      this.showError(`COLMAP model needs a cameras and an images file. Found: ${found}.`);
+      return;
+    }
+
+    const model = parseColmapModel(collected.model);
+    const cloud = buildSparseCloud(model, colmapReconstructionName(files));
+    if (!cloud) {
+      this.showError(
+        collected.model.points3D
+          ? 'COLMAP points3D file contained no points.'
+          : 'COLMAP model has no points3D file; load it alongside cameras and images to see the sparse cloud.'
+      );
+      return;
+    }
+    cloud.metadata = { ...cloud.metadata, colmapModel: model };
+    await this.displayFiles([cloud]);
   }
 
   private async handlePtsData(message: any): Promise<void> {
