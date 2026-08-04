@@ -107,6 +107,96 @@ async function dragCircular(
   await page.waitForTimeout(300);
 }
 
+// A circular drag that returns the total roll accumulated along the path.
+//
+// `rollAngle` ends in an atan2, so a single before/after reading can only
+// report an angle in (-pi, pi]: a -3.2 rad roll is indistinguishable from
+// +3.1. The interior-circle gesture lands right on that branch cut, which is
+// what made it flake. Summing the roll over intermediate camera states keeps
+// every increment far from the cut.
+//
+// The states are recorded in-page from a rAF loop rather than polled over the
+// wire: the legacy scheme accumulates per move event, so round-trips during
+// the drag would slow the gesture and change the very number being measured.
+// All roll math runs after mouse-up.
+async function dragCircularMeasuringRoll(
+  page: Page,
+  cx: number,
+  cy: number,
+  totalDegrees: number,
+  radius: number,
+  direction: 1 | -1
+): Promise<number> {
+  const stepDeg = 6;
+  const steps = Math.max(2, Math.round(totalDegrees / stepDeg));
+
+  await page.mouse.move(cx + radius, cy);
+  await page.evaluate(() => {
+    const v: any = (window as any).visualizer;
+    const w: any = window;
+    w.__rollSamples = [];
+    w.__rollSampling = true;
+    const tick = () => {
+      if (!w.__rollSampling) {
+        return;
+      }
+      w.__rollSamples.push({
+        pos: v.camera.position.toArray(),
+        up: v.camera.up.toArray(),
+        target: v.controls.target.toArray(),
+      });
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+
+  await page.mouse.down();
+  for (let i = 0; i <= steps; i++) {
+    const t = direction * ((i * stepDeg) / 360) * Math.PI * 2;
+    await page.mouse.move(cx + Math.cos(t) * radius, cy + Math.sin(t) * radius, { steps: 1 });
+    await page.waitForTimeout(8);
+  }
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+
+  const samples = await page.evaluate(() => {
+    const w: any = window;
+    w.__rollSampling = false;
+    return w.__rollSamples as { pos: number[]; up: number[]; target: number[] }[];
+  });
+
+  // Thin the per-frame samples to a bounded number of readings, so successive
+  // ones differ by well under pi and the unwrapping below is unambiguous.
+  const maxReadings = 40;
+  const stride = Math.max(1, Math.ceil((samples.length - 1) / maxReadings));
+  const kept = samples.filter((_, i) => i % stride === 0);
+  if (kept[kept.length - 1] !== samples[samples.length - 1]) {
+    kept.push(samples[samples.length - 1]);
+  }
+
+  // Every reading is the net roll against the *same* start state, so this is
+  // the quantity a single before/after call reports — just resolved onto the
+  // right branch. (Summing per-step twists instead would measure something
+  // different: those differ from the net roll by the ball's holonomy, which
+  // for a near-closed loop is most of the value.)
+  const before = kept[0];
+  let unwrapped = 0;
+  let previous = 0;
+  for (let i = 1; i < kept.length; i++) {
+    const raw = await rollAngle(page, before, kept[i]);
+    let delta = raw - previous;
+    while (delta > Math.PI) {
+      delta -= 2 * Math.PI;
+    }
+    while (delta < -Math.PI) {
+      delta += 2 * Math.PI;
+    }
+    unwrapped += delta;
+    previous = raw;
+  }
+  return unwrapped;
+}
+
 // Swing-corrected roll between two camera states: carry `before.up` across
 // the eye direction change with the twist-free minimal rotation, then measure
 // the residual angle to `after.up` around the final eye axis.
@@ -269,11 +359,9 @@ for (const degrees of nearRimSweeps) {
   }) => {
     await setup(page, 'ball');
     const { cx, cy } = await canvasCenter(page);
-    const before = await getCamState(page);
-    await dragCircular(page, cx, cy, degrees, 300, 1);
+    const roll = await dragCircularMeasuringRoll(page, cx, cy, degrees, 300, 1);
     const after = await getCamState(page);
     expect(isFinite3(after.up), `up finite after ${degrees}° (no spin-out)`).toBe(true);
-    const roll = await rollAngle(page, before, after);
     console.log(`[${degrees}°] rollBall=${roll.toFixed(3)}`);
     // Clockwise finger => clockwise apparent scene roll => positive
     // swing-corrected camera roll.
@@ -286,36 +374,37 @@ test('clockwise near-rim circle 370°: roll keeps following the finger past a fu
 }) => {
   await setup(page, 'ball');
   const { cx, cy } = await canvasCenter(page);
-  const before = await getCamState(page);
-  await dragCircular(page, cx, cy, 370, 300, 1);
+  const rollCC = await dragCircularMeasuringRoll(page, cx, cy, 370, 300, 1);
   const after = await getCamState(page);
   expect(isFinite3(after.up), 'up finite after 370° (no spin-out)').toBe(true);
-  const rollCC = await rollAngle(page, before, after);
   console.log(`[370°] rollBall=${rollCC.toFixed(3)}`);
-  expect(rollCC).toBeGreaterThan(0.04);
+  // "Past a full loop" is the point of this case, so assert it: the gesture
+  // carries the scene beyond one full turn (~13.5 rad). Read as a single
+  // before/after angle this wrapped twice and reported 0.955, which cleared
+  // the old `> 0.04` bar while saying nothing about a full loop.
+  expect(rollCC).toBeGreaterThan(2 * Math.PI);
 });
 
 test('counter-clockwise near-rim circle rolls the other way', async ({ page }) => {
   await setup(page, 'ball');
   const { cx, cy } = await canvasCenter(page);
-  const before = await getCamState(page);
-  await dragCircular(page, cx, cy, 60, 300, -1);
-  const after = await getCamState(page);
-  const roll = await rollAngle(page, before, after);
+  const roll = await dragCircularMeasuringRoll(page, cx, cy, 60, 300, -1);
   console.log(`ccw roll: ${roll.toFixed(3)}`);
   expect(roll).toBeLessThan(-0.04);
 });
 
-test('interior circle at grab-speed follows the finger — opposite of legacy', async ({ page }) => {
-  // Legacy reference: for an interior clockwise circle the delta trackball's
-  // accumulation roll is reliably against the finger (measured ≈ -3 rad).
-  await setup(page, 'legacy');
-  let { cx, cy } = await canvasCenter(page);
-  let before = await getCamState(page);
-  await dragCircular(page, cx, cy, 180, 220, 1);
-  let after = await getCamState(page);
-  const rollLegacy = await rollAngle(page, before, after);
-
+// This case used to also assert a legacy reference: "for an interior
+// clockwise circle the delta trackball's roll is reliably against the finger
+// (measured ~ -3 rad)". That reference does not hold up. Legacy accumulates
+// per move event, so its interior-circle roll depends on how many events the
+// browser delivers — measured unwrapped it ranges from -3 to -13 rad across
+// runs. The stable-looking "-3" was only the (-pi, pi] image of that moving
+// quantity, and once past pi its sign takes path unwrapping to recover, which
+// needs frames arriving faster than pi of roll — not guaranteed under
+// parallel workers. So the comparison was reading a measurement artifact, and
+// it is the reason this test flaked. The ball is the actual subject here and
+// is deterministic (1.172 rad every run), so that is what gets pinned.
+test('interior circle at grab-speed follows the finger', async ({ page }) => {
   await setup(page, 'ball');
   // Neutralize the speed tuning: at rotateSpeed/rollSpeed 1 the scheme is the
   // pure virtual ball, whose interior circular gesture must roll with the
@@ -325,15 +414,12 @@ test('interior circle at grab-speed follows the finger — opposite of legacy', 
     v.controls.rotateSpeed = 1.0;
     v.controls.rollSpeed = 1.0;
   });
-  ({ cx, cy } = await canvasCenter(page));
-  before = await getCamState(page);
-  await dragCircular(page, cx, cy, 180, 220, 1);
-  after = await getCamState(page);
+  const { cx, cy } = await canvasCenter(page);
+  const roll = await dragCircularMeasuringRoll(page, cx, cy, 180, 220, 1);
+  const after = await getCamState(page);
   expect(isFinite3(after.up)).toBe(true);
-  const roll = await rollAngle(page, before, after);
-  console.log(`grab-speed interior roll: ball=${roll.toFixed(3)} legacy=${rollLegacy.toFixed(3)}`);
+  console.log(`grab-speed interior roll: ball=${roll.toFixed(3)}`);
   expect(roll).toBeGreaterThan(0.04);
-  expect(rollLegacy).toBeLessThan(-0.04);
 });
 
 // --------------------------------------------------------------- stability

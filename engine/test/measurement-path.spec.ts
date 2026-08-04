@@ -20,6 +20,15 @@ async function setup(page: Page) {
   await page.waitForTimeout(300);
 }
 
+// The quick-actions row renders the total as a bare formatted distance next to
+// the measure icon (e.g. " 1.691 m "), with no "Total:" label.
+function totalOf(rowText: string): number {
+  const match = rowText.match(/([\d.]+)\s*(mm|cm|m|km)\b/);
+  expect(match, `quick-actions row shows a distance, got "${rowText}"`).not.toBeNull();
+  const scale = { mm: 0.001, cm: 0.01, m: 1, km: 1000 }[match![2] as 'mm' | 'cm' | 'm' | 'km'];
+  return parseFloat(match![1]) * scale;
+}
+
 async function pathPointCount(page: Page): Promise<number> {
   return page.evaluate(() => {
     const v: any = (window as any).visualizer;
@@ -108,10 +117,14 @@ test('measurement path: pick points, see segments and total, undo, clear', async
 
   // Closing the loop adds the last-to-first segment to both the scene model
   // and the totals, and the same button can open it again.
+  const openTotal = totalOf(await page.locator('#measurement-quick-actions').innerText());
   await page.click('#close-measurement-path');
   await expect(page.locator('#close-measurement-path')).toHaveClass(/active/);
   await expect(page.locator('#measurement-quick-loop')).toHaveClass(/active/);
-  await expect(page.locator('#measurement-quick-actions')).toContainText('Total:');
+  // The quick row shows the running total next to the measure icon (no label).
+  await expect(page.locator('#measurement-quick-actions')).toContainText(/\d+(\.\d+)?\s*m/);
+  const closedTotal = totalOf(await page.locator('#measurement-quick-actions').innerText());
+  expect(closedTotal).toBeGreaterThan(openTotal);
   await expect(info).toContainText('Segment 3:');
   await expect(page.locator('.measurement-loop-label')).toHaveCount(1);
   const pathLineColors = await page.evaluate(() => {

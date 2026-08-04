@@ -52,7 +52,7 @@ suite('Stonex X3A/X3R Parser', () => {
     assert.strictEqual(result.hasIntensity, true);
     assert.strictEqual(result.hasColors, false);
     assert.strictEqual(result.fileName, 'sample.x3a');
-    assert.strictEqual(result.metadata.recommendedPointSize, 0.25);
+    assert.strictEqual(result.metadata.recommendedPointSize, 0.025);
     assert.ok(Math.abs(result.positionsArray[0] - Math.cos((65 * Math.PI) / 180)) < 1e-6);
     assert.ok(Math.abs(result.positionsArray[1]) < 1e-6);
     assert.ok(Math.abs(result.positionsArray[2] - Math.sin((65 * Math.PI) / 180)) < 1e-6);

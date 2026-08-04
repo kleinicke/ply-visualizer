@@ -24,7 +24,8 @@ VS Code integration: commands, custom editor registration, message passing.
 npm run compile          # Build extension (webpack); `watch` for dev
 npm run lint             # ESLint
 npm run format           # Prettier
-npm run test             # Unit tests (Mocha, src/test/suite/)
+npm run test:node        # Pure-logic tests headless (no Electron) — seconds
+npm run test             # Full suite in a real VS Code host (Mocha, src/test/suite/)
 npm run test:ui          # UI tests (VS Code Extension Tester, ui-tests/)
 cd engine && npm test    # Playwright engine tests — fastest feedback loop
 cd engine && npm run dev # Standalone page dev server
@@ -37,6 +38,15 @@ cd engine && npm run bench:backend -- <file>   # WebGL vs WebGPU on one file
   in the repo root.
 - For engine-only changes, iterate in `engine/` with Playwright, but always
   verify in the F5 host before shipping — the extension is the product.
+- `npm test` downloads and launches a real VS Code, and its `pretest` first
+  cleans, builds, type-checks and lints, so it takes minutes and buries the
+  Mocha output — `| tail -40` to see results. Half of `src/test/suite/` is pure
+  logic over engine parsers and needs no VS Code at all; `npm run test:node`
+  runs exactly those headless in seconds. Reach for it first, and fall back to
+  `npm test` for the four files that import `vscode` (`extension`,
+  `extensionAdvanced`, `integration`, `pointCloudEditorProviderAdvanced`). Keep
+  the `--ignore` list in the `test:node` script in sync if a new test file
+  imports `vscode`.
 
 ## Where code goes
 
