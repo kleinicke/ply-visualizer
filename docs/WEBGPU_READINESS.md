@@ -96,10 +96,11 @@ without them:
   work, so treat single-digit-percent differences as noise.
 - **`PointCloudVisualizer.webglRenderer`** — the concrete WebGL renderer, null
   on WebGPU. The two WebGL-bound features test this rather than the interface.
-- Both webpack configs need help resolving `three/webgpu`: the extension build
-  aliases it (its bare `three` alias bypasses the package exports map), and
-  `engine/src/tsconfig.json` maps the types (its `node` module resolution
-  predates exports maps).
+- The extension build needs help resolving `three/webgpu` at runtime: it aliases
+  it, because its bare `three` alias bypasses the package exports map. The types
+  need no help — `engine/src/tsconfig.json` is on `bundler` module resolution,
+  which reads exports maps directly. (It used to be on `node`, which predates
+  exports maps and needed a `paths` entry to map the types.)
 
 ## The blocker
 

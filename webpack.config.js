@@ -3,6 +3,15 @@ const CopyPlugin = require('copy-webpack-plugin');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const svelteConfig = require('./engine/svelte.config.js');
 
+// 7zip-bin is a transitive dependency (via 7zip-min), so it only sits at
+// node_modules/7zip-bin when the package manager happens to hoist it. Resolve
+// it from its parent instead, which holds under pnpm's nested layout too.
+const sevenZipBinDir = path.dirname(
+  require.resolve('7zip-bin/index.js', {
+    paths: [path.dirname(require.resolve('7zip-min'))],
+  })
+);
+
 module.exports = [
   // Extension source
   {
@@ -23,8 +32,12 @@ module.exports = [
       new CopyPlugin({
         patterns: [
           {
-            from: 'node_modules/7zip-bin/**/*',
-            to: '7zip-bin/',
+            from: '**/*',
+            context: sevenZipBinDir,
+            // eth3dProvider resolves the binary at
+            // out/7zip-bin/node_modules/7zip-bin/<platform>/, so keep that
+            // layout even though the source no longer lives at that path.
+            to: '7zip-bin/node_modules/7zip-bin/',
             globOptions: {
               ignore: ['**/package.json', '**/README.md'],
             },

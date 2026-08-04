@@ -93,3 +93,24 @@ there; put code in the modules above.
   post-mortem in docs/BACKLOG.md.)
 - I've got a tiff/image viewing extension as well. Sometimes I add a prompt in
   the wrong window. Tell me.
+
+## Dependency notes
+
+- `@types/vscode` and `@types/node` are pinned deliberately, not stale.
+  `@types/vscode` tracks `engines.vscode` (currently `^1.104.0`, a roughly
+  12-month support window) and `@types/node` tracks the Node that the _minimum_
+  VS Code ships. Raising either alone lets code compile against APIs absent at
+  runtime, so move them together with `engines`.
+- **TypeScript stays on 6.x.** TS 7 (the native compiler rewrite) breaks
+  `ts-loader` with `Cannot read properties of undefined (reading 'fileExists')`,
+  and `svelte-preprocess` declares `typescript: ^5 || ^6`. Retry once both ship
+  TS 7 support.
+- After bumping `@playwright/test`, run `npx playwright install chromium` in
+  `engine/` or every spec fails with "Executable doesn't exist".
+- `7zip-bin` is transitive (via `7zip-min`), so `webpack.config.js` resolves it
+  through its parent rather than assuming `node_modules/7zip-bin` — that path
+  only exists when the package manager hoists it, which pnpm does not.
+- `engine/` is not a pnpm workspace member and its lockfile is gitignored, so
+  its dependency tree is not reproducible — and the extension bundle pulls
+  `@sparkjsdev/spark` and `svelte-preprocess`'s TypeScript out of
+  `engine/node_modules`. Install in both places after a fresh clone.

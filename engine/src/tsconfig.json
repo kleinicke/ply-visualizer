@@ -3,8 +3,11 @@
     "target": "ES2020",
     "lib": ["ES2020", "DOM"],
     "module": "ESNext",
-    "moduleResolution": "node",
-    "ignoreDeprecations": "6.0",
+    // "bundler" resolution reads package `exports` maps, which is the only
+    // place three declares its WebGPU entry point — so `three/webgpu` types
+    // resolve with no `paths` workaround. The old "node" resolution predates
+    // exports maps, and along with `baseUrl` stops functioning in TS 7.
+    "moduleResolution": "bundler",
     "strict": true,
     "strictNullChecks": false,
     "esModuleInterop": true,
@@ -14,14 +17,7 @@
     "resolveJsonModule": true,
     "allowJs": true,
     "checkJs": true,
-    "noEmit": true,
-    "baseUrl": ".",
-    // "node" module resolution predates package `exports` maps, which is the
-    // only place three declares its WebGPU entry point. The webpack alias
-    // handles the runtime side; this handles the types.
-    "paths": {
-      "three/webgpu": ["../node_modules/@types/three/build/three.webgpu.d.ts"]
-    }
+    "noEmit": true
   },
   "include": ["**/*.ts", "**/*.js"]
 }
