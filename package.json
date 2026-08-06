@@ -134,6 +134,12 @@
           },
           {
             "filenamePattern": "*.sog"
+          },
+          {
+            "filenamePattern": "*.nrrd"
+          },
+          {
+            "filenamePattern": "*.nhdr"
           }
         ]
       },

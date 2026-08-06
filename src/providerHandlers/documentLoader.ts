@@ -12,6 +12,8 @@ import { stonexCameraProjector } from '../wasmCameraModels';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
+import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
+import { buildVolumeMesh } from '../../engine/src/visualization/isosurface';
 import { XyzVariantParser } from '../../engine/src/parsers/xyzVariantParser';
 import {
   parseXyzWasm,
@@ -61,6 +63,7 @@ export interface DocumentFileTypeFlags {
   isStonexX3aFile: boolean;
   isOffFile: boolean;
   isGltfFile: boolean;
+  isVolumeFile: boolean;
   isXyzVariant: boolean;
   isJsonFile: boolean;
   isLidarFile: boolean;
@@ -117,6 +120,7 @@ export async function loadDocumentContent(
     isStonexX3aFile,
     isOffFile,
     isGltfFile,
+    isVolumeFile,
     isXyzVariant,
     isJsonFile,
     isLidarFile,
@@ -148,9 +152,7 @@ export async function loadDocumentContent(
       const bytes = await readFileFast(documentUri);
       const readTime = performance.now();
       const extension = path.extname(documentUri.fsPath).slice(1).toLowerCase() as
-        | 'las'
-        | 'laz'
-        | 'e57';
+        'las' | 'laz' | 'e57';
       const decoded = parseLidarWasm(bytes, extension, path.basename(documentUri.fsPath));
       const parsedData = decoded.map((cloud, index) => ({
         vertices: [],
@@ -552,6 +554,62 @@ export async function loadDocumentContent(
       return; // Exit early for PTS files
     }
 
+    if (isVolumeFile) {
+      // NRRD volume: read, isosurface, and hand the resulting mesh over. The
+      // marching-cubes pass runs here rather than in the webview because it is
+      // a seconds-long CPU pass over hundreds of megabytes, and the webview
+      // would be frozen for its duration.
+      webviewPanel.webview.postMessage({
+        type: 'timingUpdate',
+        message: '🚀 Extension: Starting volume processing...',
+        timestamp: loadStartTime,
+      });
+
+      const volumeBytes = await readFileFast(documentUri);
+      const fileReadTime = performance.now();
+
+      const timingCallback = (message: string) => {
+        webviewPanel.webview.postMessage({
+          type: 'timingUpdate',
+          message,
+          timestamp: performance.now(),
+        });
+      };
+
+      // A detached `.nhdr` names its data file relative to the header, so the
+      // resolver reads siblings of the document rather than assuming the bytes
+      // are attached.
+      const directory = vscode.Uri.joinPath(documentUri, '..');
+      const volume = await new NrrdParser().parse(
+        volumeBytes,
+        path.basename(documentUri.fsPath),
+        timingCallback,
+        async relative =>
+          new Uint8Array(
+            await vscode.workspace.fs.readFile(vscode.Uri.joinPath(directory, relative))
+          )
+      );
+
+      const { data: meshData, threshold } = buildVolumeMesh(volume);
+      const parseTime = performance.now();
+      host.logPerf(
+        `⏱️ PERF[volume/ext] read ${(fileReadTime - loadStartTime).toFixed(1)}ms, ` +
+          `isosurface ${(parseTime - fileReadTime).toFixed(1)}ms ` +
+          `(${volume.sizes.join('x')} → ${meshData.faceCount} tris @ ${threshold.toFixed(0)}) ` +
+          `for ${path.basename(documentUri.fsPath)}`
+      );
+
+      webviewPanel.webview.postMessage({
+        type: 'volumeData',
+        fileName: path.basename(documentUri.fsPath),
+        shortPath: host.getShortPath(documentUri.fsPath),
+        fileSizeInBytes: volumeBytes.byteLength,
+        data: meshData,
+      });
+
+      return;
+    }
+
     if (isOffFile) {
       // Handle OFF file
       webviewPanel.webview.postMessage({
@@ -787,6 +845,29 @@ export async function loadDocumentContent(
         });
         return;
       }
+    }
+
+    // Everything below is the PLY path, which doubles as the catch-all. A file
+    // whose extension this build does not know reaches it and fails as
+    // "Invalid PLY/XYZ file: missing PLY header", which sends the reader
+    // looking for a corrupt file instead of a missing format.
+    //
+    // That is exactly what an older build does when handed a format a newer
+    // one added — `vscode.openWith` names this editor explicitly, so the
+    // custom-editor selector never gets to reject the file. Say what actually
+    // happened.
+    if (!fileType) {
+      const extension = path.extname(documentUri.fsPath).toLowerCase().replace(/^\./, '');
+      webviewPanel.webview.postMessage({
+        type: 'loadingError',
+        fileName: path.basename(documentUri.fsPath),
+        fileType: extension.toUpperCase() || 'unknown',
+        error:
+          `This build of the 3D Visualizer does not support .${extension} files. ` +
+          'If another extension opened this file, the two versions are out of step — ' +
+          'update or rebuild the 3D Visualizer.',
+      });
+      return;
     }
 
     // Send timing updates to webview for visibility

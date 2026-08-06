@@ -15,6 +15,142 @@ copy overhead for trivial UI work.
 
 ## Planned
 
+### Volume rendering for image stacks (tiff-visualizer bridge) — bridge shipped
+
+**Status (August 2026): the first slice is implemented and the bridge carries a
+real DICOM series end to end.** What exists:
+
+- `engine/src/parsers/nrrdParser.ts` reads NRRD (raw/gzip/ascii, all sample
+  types, big and little endian, detached `.nhdr`, channel-first 4D), producing a
+  volume with a full voxel-to-world affine, normalised LPS to RAS.
+- `engine/src/visualization/marchingCubes.ts` extracts an isosurface in world
+  space, with slab-wise edge caching so peak memory is a slice rather than the
+  volume, and gradient normals transformed by the inverse-transpose (oblique
+  DICOM shades correctly).
+- `engine/src/visualization/isosurface.ts` picks the iso value — 300 HU for CT,
+  Otsu otherwise — and packages the result as `SpatialData` on the typed-array
+  path via the new `indicesArray`.
+- `.nrrd`/`.nhdr` are registered in `formats/builtinFormats.ts` and the custom
+  editor, so 3D Slicer and ITK volumes also open directly.
+- On the producer side, `tiff-visualizer` reads `PixelSpacing`, `SliceThickness`
+  and modality, derives the affine (slice step measured from consecutive
+  `ImagePositionPatient`, not from thickness), and its **Open DICOM Volume in 3D
+  Viewer** command writes NRRD and hands it over.
+
+**The descriptor question is settled: NRRD is the payload.** It is a documented
+standard that already carries the affine, world units, dtype and endianness, so
+there is no private contract for two repositories to version against each other
+— which was the main risk this slice existed to retire. Intensity semantics,
+which NRRD has no field for, ride as `units:=HU` plus `modality:=CT` key/value
+pairs.
+
+Verified against a real 640x640x44 MR series in
+`tiff-visualizer/test/volume-export-test.js`, which reads the produced file back
+with _this_ repository's parser rather than a local reimplementation.
+
+**Next, in order:** the threshold control (below) is the one obviously missing
+piece — the default iso value is currently take-it-or-leave-it. Then compressed
+DICOM (the host-side decode path only handles uncompressed transfer syntaxes;
+the webview's WASM codecs are not reachable from there), then raycasting.
+
+Original plan follows.
+
+Microscopy and medical stacks are 3D+time+channel data (what Imaris and arivis
+call 4D/5D). The sibling `tiff-visualizer` extension already decodes them —
+multi-page TIFF, OME-TIFF with C/Z/T axes, voxel spacing, per-channel LUTs and
+normalization — but its render path is 2D per slice, and a volume raycaster does
+not belong there. This engine has the opposite half: Three.js, WebGPU, camera
+controls and transforms, but no notion of intensity stacks.
+
+Therefore the stack arrives over a **bridge** rather than being re-parsed here.
+`tiff-visualizer` item 10 covers its side: a command that hands over the decoded
+volume with an explicit descriptor (dimensions, dtype, voxel spacing and units,
+channel table with colors and ranges), versioned so the two repositories evolve
+independently. Do not add image-format parsing for this; the point of the split
+is that neither extension grows the other's half.
+
+What belongs here, roughly in order:
+
+1. **Volume raycasting.** 3D texture upload plus a ray-march shader in
+   `engine/src/visualization/`, WebGPU with a WebGL2 fallback, following the
+   existing backend-selection pattern. MIP and alpha-blended compositing modes.
+2. **Transfer-function editor.** Opacity/color over intensity, the control that
+   makes volume rendering usable at all. Per channel when the descriptor carries
+   several, composited additively.
+
+   **Its cheap precursor is the next thing to build:** an isosurface _threshold_
+   control. Extraction already accepts any iso value and reports the sample
+   range and units, but nothing exposes that — the default (300 HU, or Otsu) is
+   currently take-it-or-leave-it, which for a noisy MR means one fixed and very
+   dense surface. Needs a Svelte control in `engine/src/components/` plus a way
+   to re-extract without re-reading the file, so the extension host has to
+   retain the parsed `VolumeData` for the open document and re-run
+   `buildVolumeMesh` on request. A decimation-step control belongs in the same
+   panel.
+
+3. **Clipping planes and slice planes**, reusing existing camera/transform
+   infrastructure.
+4. **Isosurface extraction (marching cubes).** The heavy pass runs in
+   `tiff-visualizer`'s Rust/WASM crate; what arrives here is an ordinary mesh,
+   which is this engine's core competence — so this may be the cheapest
+   genuinely useful step, ahead of full raycasting.
+5. **Object and track overlays.** Detected objects as a point cloud,
+   trajectories over time as lines. The sequence-playback and trajectory
+   infrastructure from the KITTI work applies almost unchanged.
+
+Memory is the binding constraint: a full float volume is easily gigabytes, so
+the descriptor must support a downsampled resolution level, and the viewer must
+degrade to one rather than failing.
+
+Explicitly out of scope: segmentation, tracking algorithms, deconvolution and
+stitching. That is Imaris/arivis analysis territory and a multi-year effort;
+this is a viewer.
+
+**First slice, to de-risk the bridge before building the raycaster.** The
+descriptor is the part that is expensive to get wrong, because changing it later
+means changing two repositories at once. So validate it on producers that
+already decode and on the cheapest possible consumer:
+
+- Producers: **DICOM and OME-TIFF**, both already implemented in
+  tiff-visualizer. `src/imagePreview/dicomDataset.ts` parses DICOM headers,
+  groups planes by study/series/SOP across multiple files, and orders slices by
+  projecting `ImagePositionPatient` (0020,0032) onto the normal derived from
+  `ImageOrientationPatient` (0020,0037); OME-TIFF is item 2 there, with C/Z/T
+  axes. Series assembly and slice ordering — the expensive parts — are done, so
+  no new format work is needed to feed the bridge.
+- Consumer: **isosurface first** (step 4 above), not raycasting. Marching cubes
+  in the producer's Rust/WASM crate delivers an ordinary mesh, which this engine
+  already renders, transforms, measures and compares. That yields something
+  useful end to end while touching no shader code.
+- Only once a real volume has made the trip should the raycaster start.
+
+**The one real gap on the producer side is voxel geometry, not decoding.**
+`dicomDataset.ts` reads position and orientation solely to compute a sort key
+and does not read `PixelSpacing` (0028,0030) or `SliceThickness` (0018,0050) at
+all, so in-plane millimetres are currently unavailable. Filling the descriptor's
+world transform means: in-plane spacing from `PixelSpacing`, slice spacing from
+the difference between consecutive `ImagePositionPatient` values (more reliable
+than `SliceThickness`, which ignores gaps and overlap), and the rotation from
+the two orientation vectors plus their cross product. That is a handful of tags
+over parsing that already exists.
+
+Two consequences for the descriptor, worth settling before any code:
+
+- Carry a **full 4×4 affine**, not spacing-plus-origin. DICOM series are
+  routinely oblique and NIfTI carries an affine natively; an axis-aligned
+  industrial CT volume degrades to that trivially, while the reverse does not.
+- Carry **modality-dependent intensity semantics**: CT wants Hounsfield units
+  after `RescaleSlope`/`RescaleIntercept` (0028,1053/1052), which makes
+  isosurface thresholds physically meaningful (bone ≈ +300 HU) rather than
+  arbitrary. Microscopy channels have no such scale. The descriptor needs a
+  units field, or thresholds are not portable between the two.
+
+**NIfTI (`.nii`, `.nii.gz`)** stays worthwhile as a later producer — a 348-byte
+header over raw voxels, near-free once the descriptor exists, and it reaches the
+neuroimaging audience. **VGI/VOL** (text header plus raw volume) is the same
+deal for industrial CT and is closest to this repository's metrology users.
+Neither needs to come first now that DICOM and OME-TIFF already decode.
+
 ### KITTI sequence and SemanticKITTI support
 
 Build on the shipped single-file KITTI BIN parser in bounded phases:
@@ -349,6 +485,27 @@ its own `.npy` is a working path right now.
 
 PTX Static FBX 3MF VTK/VTP COPC/EPT FBX
 
+**AmiraMesh (`.am`).** Worth calling out separately because of where it came
+from: surveying what arivis reads (a ~40-format imaging list — DICOM, CZI, ND2,
+LIF, IMS, the whole-slide TIFF variants) turned up exactly one format that
+carries geometry rather than pixels, and this is it. Everything else on that
+list is either 2D — and therefore tiff-visualizer's problem — or a 3D intensity
+stack, which is the volume bridge above, not a parser here.
+
+AmiraMesh is a readable ASCII header (`# AmiraMesh BINARY-LITTLE-ENDIAN 2.1`,
+`define`/`Parameters` blocks, then `@1`-style data sections) over ASCII or
+binary blocks, and one file can hold point sets, line sets, triangle surfaces,
+tetrahedral grids or uniform scalar fields. Scope for a first pass:
+
+1. Points and triangle surfaces only, mapped onto the existing parser contract
+   in `engine/src/parsers/`.
+2. Per-vertex data sections exposed as scalar fields, reusing the colormap
+   infrastructure.
+3. Tetrahedral grids rendered as their boundary surface; uniform scalar fields
+   deferred to the volume bridge rather than handled here.
+
+Modest effort, and it is the one arivis format that belongs in this repository.
+
 ### Analyze EDL
 
 Eye-dome-lightening on colored point clouds is not really nice. It makes them
@@ -381,6 +538,37 @@ Run the compute off the main thread. Per the project's performance rule (below),
 the distance kernel is a candidate for **Rust → WASM** rather than JS in a Web
 Worker. A later extension: point-to-mesh distance against STL/OBJ ground truth
 (same UI, triangle-distance kernel).
+
+### Shared core with tiff-visualizer (and a possible shared desktop app)
+
+The full three-step plan lives in `tiff-visualizer/BACKLOG.md` item 11; this is
+the summary of what concerns this repository.
+
+**The two extensions stay separate.** Two marketplace listings serve two
+audiences, and the render stacks share nothing — a Three.js scene with camera
+controls versus a 2D canvas/WebGPU pipeline with normalization and a layer
+compositor. The only real synergy is 3D volumes, and that is the bridge above,
+not a merge.
+
+**What should be shared is code, not products.** This engine reads TIFF, PNG,
+PFM, NPY, NPZ and EXR as depth images; tiff-visualizer already has mature
+decoders for all six, including a Rust/WASM path. Colormap tables exist in both
+repositories. The plan is an npm workspace for the TypeScript side and a Cargo
+workspace for the crates, with `wasm/pointcloud-parser` and `wasm/tiff-decoder`
+as members instead of islands.
+
+Caveat when the inventory happens: the depth readers here are not
+interchangeable with an image decoder. They care about camera models, units and
+invalid-pixel semantics that an image viewer does not model, while that viewer
+preserves sample depth and metadata a depth reader discards. Only genuinely
+equivalent code moves; `engine/src/depth/` keeps its own interpretation layer on
+top of a shared byte-level decoder.
+
+A shared Tauri desktop app is the possible third step — one application for
+images and 3D, reusing this engine's webview code with a native Rust backend
+rather than a Rust UI toolkit. It is explicitly gated behind the shared core and
+behind tiff-visualizer's host abstraction; this repository is already ahead
+there, since `engine/` proves the code runs outside VS Code.
 
 ## Implemented
 

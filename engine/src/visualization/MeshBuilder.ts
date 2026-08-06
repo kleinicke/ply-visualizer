@@ -112,8 +112,12 @@ export function createGeometryFromSpatialData(
       : 'assigned';
   host.applyColorModeToGeometry(data, geometry, colorMode);
 
-  // Optimized face processing
-  if (data.faces.length > 0) {
+  // Meshes built from typed arrays (isosurfaces) carry their indices directly
+  // and need no triangulation pass.
+  const directIndices = (data as any).indicesArray as Uint32Array | null | undefined;
+  if (directIndices && directIndices.length > 0) {
+    geometry.setIndex(new THREE.BufferAttribute(directIndices, 1));
+  } else if (data.faces.length > 0) {
     // Estimate index count for pre-allocation
     let estimatedIndexCount = 0;
     for (const face of data.faces) {

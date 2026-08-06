@@ -8,6 +8,8 @@ import { StonexX3aParser } from '../parsers/stonexX3aParser';
 import { OffParser } from '../parsers/offParser';
 import { GltfParser } from '../parsers/gltfParser';
 import { NpyParser, isNpyPointCloudData } from '../parsers/npyParser';
+import { NrrdParser } from '../parsers/nrrdParser';
+import { buildVolumeMesh } from '../visualization/isosurface';
 import { initTiffWasm, projectCameraPointsWasmSync } from '../depth/readers/tiffWasm';
 import { FormatRegistry, UnifiedConverter } from './formatRegistry';
 
@@ -167,6 +169,22 @@ export function registerBuiltinFormats(
     async parse({ data, fileName, timingCallback }) {
       const gltfData = await new GltfParser().parse(data, timingCallback);
       return { data: convertToUnifiedFormat(gltfData, fileName), type: 'gltfData' };
+    },
+  });
+
+  registry.register({
+    // Volumes. NRRD is the payload the tiff-visualizer bridge hands over for
+    // DICOM/OME-TIFF stacks, and the format 3D Slicer and ITK write, so the
+    // same path serves both. What reaches the scene is an isosurface — an
+    // ordinary mesh — until a volume raycaster exists.
+    extensions: ['nrrd', 'nhdr'],
+    category: 'mesh',
+    async parse({ data, fileName, timingCallback }) {
+      const volume = await new NrrdParser().parse(data, fileName, timingCallback);
+      const { data: meshData } = buildVolumeMesh(volume, {
+        onProgress: fraction => timingCallback?.(`🧊 Isosurface: ${(fraction * 100).toFixed(0)}%`),
+      });
+      return { data: { ...meshData, fileName }, type: 'spatialData' };
     },
   });
 

@@ -206,6 +206,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const isStonexX3aFile = fileType?.extension === 'x3a' || fileType?.extension === 'x3r';
     const isOffFile = fileType?.extension === 'off';
     const isGltfFile = fileType?.extension === 'gltf' || fileType?.extension === 'glb';
+    const isVolumeFile = fileType?.extension === 'nrrd' || fileType?.extension === 'nhdr';
     const isXyzVariant =
       fileType?.extension === 'xyzn' ||
       fileType?.extension === 'xyzrgb' ||
@@ -379,6 +380,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         isStonexX3aFile,
         isOffFile,
         isGltfFile,
+        isVolumeFile,
         isXyzVariant,
         isJsonFile,
         isLidarFile,
@@ -1385,8 +1387,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           };
 
       const viewConvention = this.context.globalState.get('defaultCameraConvention') as
-        | string
-        | undefined;
+        string | undefined;
 
       // Send settings back to webview
       webviewPanel.webview.postMessage({

@@ -2105,6 +2105,9 @@ class PointCloudVisualizer {
         case 'gltfData':
           await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
           break;
+        case 'volumeData':
+          await this.loadWithPerf('volume', message, () => this.handleVolumeData(message));
+          break;
         case 'colmapModelFiles':
           await this.loadWithPerf('colmap', message, () => this.handleColmapModelFiles(message));
           break;
@@ -3884,6 +3887,10 @@ class PointCloudVisualizer {
 
   private async handleGltfData(message: any): Promise<void> {
     await formatDataHandlers.handleGltfData(this, message);
+  }
+
+  private async handleVolumeData(message: any): Promise<void> {
+    await formatDataHandlers.handleVolumeData(this, message);
   }
 
   private async handleXyzVariantData(message: any): Promise<void> {

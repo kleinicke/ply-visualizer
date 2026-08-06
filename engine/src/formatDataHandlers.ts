@@ -346,6 +346,50 @@ export async function handleOffData(host: FormatDataHandlersHost, message: any):
   }
 }
 
+/**
+ * An isosurface extracted from a volume (NRRD, or a stack handed over by
+ * tiff-visualizer).
+ *
+ * The extension host has already done the marching-cubes pass, so what arrives
+ * is finished `SpatialData` on the typed-array path rather than a
+ * format-specific shape needing conversion — which is exactly the point of
+ * routing volumes through the mesh pipeline instead of building a second
+ * renderer.
+ */
+export async function handleVolumeData(host: FormatDataHandlersHost, message: any): Promise<void> {
+  try {
+    console.log(`Load: recv volume ${message.fileName}`);
+    host.showStatus(`Volume: processing ${message.fileName}`);
+
+    const spatialData: SpatialData = {
+      ...message.data,
+      fileName: message.fileName,
+      shortPath: message.shortPath,
+      fileSizeInBytes: message.fileSizeInBytes,
+    };
+
+    if (message.isAddFile) {
+      host.addNewFiles([spatialData]);
+    } else {
+      await host.displayFiles([spatialData]);
+    }
+
+    const threshold = (spatialData.metadata as any)?.threshold;
+    const units = (spatialData.metadata as any)?.intensityUnits;
+    const at =
+      threshold === undefined ? '' : ` at ${Math.round(threshold)}${units ? ` ${units}` : ''}`;
+    host.showStatus(
+      `Volume: isosurface${at} — ${spatialData.vertexCount.toLocaleString()} vertices, ` +
+        `${spatialData.faceCount.toLocaleString()} triangles from ${message.fileName}`
+    );
+  } catch (error) {
+    console.error('Error handling volume data:', error);
+    host.showError(
+      `Volume processing failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 export async function handleGltfData(host: FormatDataHandlersHost, message: any): Promise<void> {
   try {
     console.log(`Load: recv GLTF/GLB ${message.fileName}`);
