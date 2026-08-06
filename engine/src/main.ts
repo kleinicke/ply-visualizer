@@ -114,12 +114,14 @@ import { FileEntryRegistry } from './state/fileEntries';
 import { insertEntryState, removeEntryState } from './state/fileEntryState';
 import { viewerState } from './state/viewer.svelte';
 import { uiState } from './state/ui.svelte';
+import { acceptVolumeResponse, setVolumeError, updateVolumeProgress } from './state/volume.svelte';
 import { flushSync } from 'svelte';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
 import { alignSourceOrigin } from './utils/sourceOrigin';
+import { SectionPlaneManager } from './visualization/sectionPlanes';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
@@ -150,6 +152,7 @@ class PointCloudVisualizer {
    * whether they can run at all.
    */
   webglRenderer: THREE.WebGLRenderer | null = null;
+  sectionPlanes = new SectionPlaneManager();
   // True between a WebGL context loss and its restoration. While lost, the GPU
   // is gone, so we must not render or touch GL objects — doing so throws and
   // crashes the webview. This is the safety net for the multi-window
@@ -595,6 +598,7 @@ class PointCloudVisualizer {
     this.renderer = selection.renderer;
     this.rendererBackend = selection.backend;
     this.webglRenderer = selection.webglRenderer;
+    this.sectionPlanes.attachRenderer(this.renderer);
     if (selection.fallbackReason) {
       console.warn(`⚠️ Falling back to WebGL. ${selection.fallbackReason}`);
     }
@@ -2106,7 +2110,17 @@ class PointCloudVisualizer {
           await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
           break;
         case 'volumeData':
+          if (!acceptVolumeResponse(message.data?.metadata?.volumeSessionId, message.requestId)) {
+            break;
+          }
+          updateVolumeProgress(message.data?.metadata?.volumeSessionId, message.requestId, 1);
           await this.loadWithPerf('volume', message, () => this.handleVolumeData(message));
+          break;
+        case 'volume:progress':
+          updateVolumeProgress(message.sessionId, message.requestId, message.fraction);
+          break;
+        case 'volume:error':
+          setVolumeError(message.sessionId, message.requestId, message.error);
           break;
         case 'colmapModelFiles':
           await this.loadWithPerf('colmap', message, () => this.handleColmapModelFiles(message));
@@ -2849,9 +2863,11 @@ class PointCloudVisualizer {
       const initialColorMode =
         this.useOriginalColors && data.hasColors
           ? 'original'
-          : this.hasIntensityData(data)
-            ? 'intensity'
-            : 'assigned';
+          : data.metadata?.volumeRenderMode === 'surface' && data.scalarFields?.gradient
+            ? 'scalar:gradient:viridis'
+            : this.hasIntensityData(data)
+              ? 'intensity'
+              : 'assigned';
       this.individualColorModes[data.fileIndex] = initialColorMode;
       filesState.colorModes[data.fileIndex] = initialColorMode;
       console.log(
@@ -3403,6 +3419,7 @@ class PointCloudVisualizer {
     this.splatMode.onFileRemoved(fileIndex);
     this.splatModeActive.splice(fileIndex, 1);
     this.spatialFiles.splice(fileIndex, 1);
+    this.sectionPlanes.onFileRemoved(fileIndex);
     this.meshes.splice(fileIndex, 1);
     this.normalsVisualizers.splice(fileIndex, 1); // Remove normals visualizer for this file
     this.vertexPointsObjects.splice(fileIndex, 1); // Remove vertex points object for this file

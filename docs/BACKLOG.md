@@ -48,10 +48,159 @@ Verified against a real 640x640x44 MR series in
 `tiff-visualizer/test/volume-export-test.js`, which reads the produced file back
 with _this_ repository's parser rather than a local reimplementation.
 
-**Next, in order:** the threshold control (below) is the one obviously missing
-piece — the default iso value is currently take-it-or-leave-it. Then compressed
-DICOM (the host-side decode path only handles uncompressed transfer syntaxes;
-the webview's WASM codecs are not reachable from there), then raycasting.
+### Volume viewer: plan for the next five pieces
+
+Ordered so each one unblocks the next. Steps 0 and 1 are prerequisites for
+everything interactive; 2–4 are independent of each other once 1 lands.
+
+#### Step 0 — anisotropy-aware decimation (do first, it changes the API)
+
+`chooseStep` returns one integer applied to all three axes. On the real MR
+series that is 0.2344 x 0.2344 x 3.3 mm — **14:1 anisotropy** — so decimating
+uniformly throws away 14x more real distance along z than along x. It does not
+bite today only because 640x640x44 is 18M cells, under the 40M budget; a
+512x512x600 CT would hit it immediately.
+
+- `chooseStep` returns `[sx, sy, sz]`. Derive a target world spacing (start at
+  the largest voxel dimension), set
+  `step[a] = clamp(round(target / voxelSize[a]), 1, …)`, then scale all three up
+  together until the cell count fits the budget. Voxel sizes are the column
+  lengths of `ijkToWorld`.
+- `extractIsosurface` takes the triple: touches the `at()` sampler, the
+  `gx/gy/gz` grid sizes, `gradientAt`, and the `vi/vj/vk` rescale before the
+  affine multiply. Contained, but every one of those must use the _same_ axis's
+  step or the surface shifts.
+- Do this before the UI work: both the threshold control and point mode call the
+  extraction API, and changing its signature afterwards means touching them
+  twice.
+- Test: extend "decimation keeps the surface in the same place" with a
+  deliberately anisotropic affine and per-axis steps; the sphere must stay a
+  sphere of the right radius, which is exactly what a mismatched axis breaks.
+
+#### Step 1 — retain the volume and support re-extraction
+
+Everything interactive needs the volume to still be in memory. Today
+`documentLoader` parses, extracts, posts the mesh and drops the volume, so any
+parameter change would re-read and re-decode the file.
+
+- A small session store in `src/providerHandlers/`, keyed by document URI,
+  holding the parsed `VolumeData` plus the last extraction options. Populate it
+  in the `isVolumeFile` branch; clear it on `webviewPanel.onDidDispose`.
+- **Memory is the real constraint.** This series is 72 MB as float32; a CT is
+  300 MB+. Hold at most one volume per panel, and keep the parser's native dtype
+  rather than widening to float (it already does).
+- New webview→extension message `volume:reextract` carrying threshold, step,
+  render mode and slice range. The extension re-runs extraction and posts the
+  result.
+- Replacing what is on screen: there is no update-in-place path, but
+  `removeFileByIndex` (main.ts) plus `addNewFiles` exists, so re-extraction is
+  remove-then-add. Preserve the file's transform and color mode across the swap,
+  or every threshold nudge resets the user's view.
+- Extraction is ~2.3 s for this series, so the request must be debounced and
+  cancellable, and the existing progress callback surfaced.
+
+#### Step 2 — threshold control and point-cloud mode
+
+These ship together because they are the same panel and the same round trip.
+
+- **Panel:** a Svelte component in `engine/src/components/` (say
+  `VolumePanel.svelte`) backed by a `engine/src/state/volume.svelte.js` store,
+  per the project rule that no new HTML-string generators are added.
+- **Make the slider meaningful.** Send a 256-bin histogram plus the sample range
+  in the initial `volumeData` metadata — nearly free during the range pass that
+  already runs — and draw it behind the slider. Choosing an iso value blind is
+  the actual problem; a bare slider only half solves it.
+- **HU awareness:** when `intensityUnits` is `HU`, label the slider in absolute
+  Hounsfield units and offer presets (bone 300, soft tissue ~40, skin -500).
+  This is what the units field in the descriptor was for.
+- **Point-cloud mode** is the more useful half for noisy MR, and is cheap: a new
+  `engine/src/visualization/volumePoints.ts` walks the voxels, keeps those at or
+  above the threshold, and emits world-space positions plus the sample value as
+  a scalar field. No marching cubes. The result flows through the existing point
+  rendering and scalar-field colormaps untouched.
+- **Coloring the isosurface: gradient magnitude, not intensity.** The mesh
+  currently renders flat grey, which is the first thing anyone notices. But
+  "color by intensity" is not the fix: every vertex sits exactly at the
+  threshold by construction, so intensity is constant across the whole surface
+  and would tint it uniformly. That is a property of level sets, not a gap.
+
+  What does vary is the **gradient magnitude** — how sharp the boundary is — and
+  it is already computed: `marchingCubes.ts` derives the world-space gradient
+  for the vertex normal and discards its length after normalising. Capturing
+  that `length` into a `scalarFields.gradient` costs one array write per vertex
+  and immediately gives the existing colormap infrastructure something real to
+  show. Do this first; it is the cheapest visible improvement in the whole plan.
+
+  Position/depth and a co-registered second channel are the other meaningful
+  surface colorings. Intensity color belongs to point mode, where each point
+  genuinely has its own value.
+
+- Point mode needs its own budget and stride: 18M voxels can put millions of
+  points above a low threshold.
+
+#### Step 3 — clipping planes ("look inside")
+
+Note this was **already built once and removed on user decision** — see the
+discarded cross-section-slab entry near the end of this file, which preserves
+the verified recipe. Volume data is a far stronger reason to have it than point
+clouds were.
+
+**Clip along the volume's own slice planes, not world axes.** This is the
+correction that separates this from the discarded version, which mapped
+percentages of the world-space content bounding box. What is actually wanted is
+"show slices 10 to 30" — the same slice numbering the 2D viewer shows — and for
+an oblique series the constant-slice planes are _not_ world-axis-aligned. Tying
+the sliders to world axes would cut at an angle through the stack and the
+numbers would mean nothing.
+
+- `engine/src/visualization/sectionPlanes.ts`, two `THREE.Plane`s per volume
+  axis in **global** `renderer.clippingPlanes` — not per-material, which needs
+  re-apply hooks on every material recreation. EDL is unaffected because
+  ShaderMaterials do not opt into clipping.
+- Derive each plane from the volume's affine, which the mesh already carries in
+  `metadata.ijkToWorld`:
+  - The normal of a constant-k plane is `normalize(cross(colI, colJ))` — the
+    reciprocal basis vector — **not** `normalize(colK)`. The two coincide only
+    when the affine is orthogonal. They do for well-formed DICOM (the test MR
+    agrees to 1.000000), but a sheared volume would cut wrong, and the correct
+    form costs nothing.
+  - World point of slice `s`: `p = origin + s * colK`. To keep `a <= k <= b`,
+    add `Plane(n, -dot(n, p(a)))` and `Plane(-n, dot(n, p(b)))`; Three.js keeps
+    the half-space where `distanceToPoint >= 0`.
+- Sliders are labelled in **slice indices**, matching what tiff-visualizer shows
+  for the same series, so the two extensions agree on what "slice 12" means.
+  Three axis pairs (i, j, k), k being the interesting one.
+- Purely render-time: no re-extraction, so it is instant and independent of Step
+  1's round trip. This is the "dynamically, anytime" property — dragging a slice
+  slider costs a frame, not the ~2.3 s an extraction costs. It is therefore the
+  _right_ answer for exploring, and slice-range cropping before extraction is
+  only worth exposing if someone wants slices permanently gone.
+- Expect a hollow look: cutting a closed surface reveals backfaces. Setting
+  `side: THREE.DoubleSide` on the volume mesh is the cheap fix; true capped
+  cross-sections are a much larger job and not worth it here.
+- Worth building generally rather than volume-only — point clouds want it too.
+  For a file with no affine, fall back to the bounding-box behaviour of the
+  original discarded implementation.
+
+#### Step 4 — hand over every series at once
+
+Today the export picks one series and the rest are unreachable without repeating
+the command. The test dataset has four (44/26/26/36 slices).
+
+- tiff-visualizer: replace the single-choice QuickPick with a multi-select
+  defaulting to the series on screen, write one NRRD per chosen series.
+- ply-visualizer: `openWith` the first, then add the rest. The webview already
+  understands `isAddFile: true`; the cleanest wiring is a command taking a URI
+  list rather than having tiff-visualizer replay the add-file protocol.
+- Beware `plyViewer.openMultipleFiles`, which today opens only the first file
+  and then shows a message claiming it opened all of them. That looks like a
+  pre-existing bug and should be checked before being reused as the mechanism.
+- Memory: four isosurfaces at once is four times the triangles. Multi-select
+  should warn past some total.
+
+**Also still open, unchanged:** compressed DICOM (the host-side decode path
+handles only uncompressed transfer syntaxes; the webview's WASM codecs are not
+reachable from the extension host), then raycasting.
 
 Original plan follows.
 

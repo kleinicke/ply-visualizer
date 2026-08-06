@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { SpatialData, SpatialFace, SpatialVertex } from './interfaces';
+import { filesState } from './state/files.svelte';
 
 export interface FormatDataHandlersHost {
   scene: THREE.Scene;
@@ -10,6 +11,7 @@ export interface FormatDataHandlersHost {
   normalsVisualizers: (THREE.LineSegments | null)[];
   normalsVisible: boolean[];
   transformationMatrices: THREE.Matrix4[];
+  individualColorModes: string[];
   appliedMtlColors: (number | null)[];
   appliedMtlNames: (string | null)[];
   appliedMtlData: (any | null)[];
@@ -20,6 +22,15 @@ export interface FormatDataHandlersHost {
   createNormalsVisualizer(data: SpatialData): THREE.LineSegments;
   setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void;
   updateFileList(): void;
+  updateFileStats(): void;
+  requestRender(): void;
+  createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry;
+  createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material;
+  fileVisibility: boolean[];
+  solidVisible: boolean[];
+  pointsVisible: boolean[];
+  wireframeVisible: boolean[];
+  vertexPointsObjects: (THREE.Points | null)[];
 }
 
 function attachNormalsVisualizer(host: FormatDataHandlersHost, spatialData: SpatialData): void {
@@ -361,14 +372,18 @@ export async function handleVolumeData(host: FormatDataHandlersHost, message: an
     console.log(`Load: recv volume ${message.fileName}`);
     host.showStatus(`Volume: processing ${message.fileName}`);
 
+    const replacing = Number.isInteger(message.replaceFileIndex);
+    const oldData = replacing ? host.spatialFiles[message.replaceFileIndex] : undefined;
     const spatialData: SpatialData = {
       ...message.data,
       fileName: message.fileName,
-      shortPath: message.shortPath,
-      fileSizeInBytes: message.fileSizeInBytes,
+      shortPath: message.shortPath ?? oldData?.shortPath,
+      fileSizeInBytes: message.fileSizeInBytes ?? oldData?.fileSizeInBytes,
     };
 
-    if (message.isAddFile) {
+    if (replacing) {
+      replaceVolumeGeometry(host, message.replaceFileIndex, spatialData);
+    } else if (message.isAddFile) {
       host.addNewFiles([spatialData]);
     } else {
       await host.displayFiles([spatialData]);
@@ -376,11 +391,15 @@ export async function handleVolumeData(host: FormatDataHandlersHost, message: an
 
     const threshold = (spatialData.metadata as any)?.threshold;
     const units = (spatialData.metadata as any)?.intensityUnits;
+    const renderMode = (spatialData.metadata as any)?.volumeRenderMode;
     const at =
       threshold === undefined ? '' : ` at ${Math.round(threshold)}${units ? ` ${units}` : ''}`;
+    const summary =
+      renderMode === 'points'
+        ? `${spatialData.vertexCount.toLocaleString()} points`
+        : `${spatialData.vertexCount.toLocaleString()} vertices, ${spatialData.faceCount.toLocaleString()} triangles`;
     host.showStatus(
-      `Volume: isosurface${at} — ${spatialData.vertexCount.toLocaleString()} vertices, ` +
-        `${spatialData.faceCount.toLocaleString()} triangles from ${message.fileName}`
+      `Volume: ${renderMode === 'points' ? 'point cloud' : 'isosurface'}${at} — ${summary} from ${message.fileName}`
     );
   } catch (error) {
     console.error('Error handling volume data:', error);
@@ -388,6 +407,81 @@ export async function handleVolumeData(host: FormatDataHandlersHost, message: an
       `Volume processing failed: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+}
+
+function replaceVolumeGeometry(
+  host: FormatDataHandlersHost,
+  fileIndex: number,
+  data: SpatialData
+): void {
+  if (fileIndex < 0 || fileIndex >= host.spatialFiles.length) {
+    throw new Error(`Cannot replace missing volume at file index ${fileIndex}`);
+  }
+  const previous = host.meshes[fileIndex];
+  const matrix = host.transformationMatrices[fileIndex].clone();
+  const visible = host.fileVisibility[fileIndex] ?? true;
+  if (previous) {
+    host.scene.remove(previous);
+    previous.geometry.dispose();
+    const materials = Array.isArray(previous.material) ? previous.material : [previous.material];
+    materials.forEach(material => material.dispose());
+  }
+  const vertexPoints = host.vertexPointsObjects[fileIndex];
+  if (vertexPoints) {
+    host.scene.remove(vertexPoints);
+    vertexPoints.geometry.dispose();
+    const materials = Array.isArray(vertexPoints.material)
+      ? vertexPoints.material
+      : [vertexPoints.material];
+    materials.forEach(material => material.dispose());
+    host.vertexPointsObjects[fileIndex] = null;
+  }
+  const normals = host.normalsVisualizers[fileIndex];
+  if (normals) {
+    host.scene.remove(normals);
+    normals.geometry.dispose();
+    const materials = Array.isArray(normals.material) ? normals.material : [normals.material];
+    materials.forEach(material => material.dispose());
+    host.normalsVisualizers[fileIndex] = null;
+  }
+
+  data.fileIndex = fileIndex;
+  host.spatialFiles[fileIndex] = data;
+  const currentColorMode = host.individualColorModes[fileIndex];
+  if (data.metadata?.volumeRenderMode === 'points' && currentColorMode?.includes('gradient')) {
+    host.individualColorModes[fileIndex] = 'intensity-viridis';
+    filesState.colorModes[fileIndex] = 'intensity-viridis';
+  } else if (
+    data.metadata?.volumeRenderMode === 'surface' &&
+    currentColorMode?.startsWith('intensity')
+  ) {
+    host.individualColorModes[fileIndex] = 'scalar:gradient:viridis';
+    filesState.colorModes[fileIndex] = 'scalar:gradient:viridis';
+  }
+  const geometry = host.createGeometryFromSpatialData(data);
+  const material = host.createMaterialForFile(data, fileIndex);
+  const object =
+    data.faceCount > 0
+      ? new THREE.Mesh(geometry, material)
+      : new THREE.Points(geometry, material as THREE.PointsMaterial);
+  object.visible = visible;
+  host.meshes[fileIndex] = object;
+  host.scene.add(object);
+  host.solidVisible[fileIndex] = data.faceCount > 0;
+  host.pointsVisible[fileIndex] = data.faceCount === 0;
+  host.wireframeVisible[fileIndex] = false;
+  if (data.hasNormals && host.normalsVisible[fileIndex]) {
+    const visualizer = host.createNormalsVisualizer(data);
+    visualizer.visible = visible;
+    host.normalsVisualizers[fileIndex] = visualizer;
+    host.scene.add(visualizer);
+  } else if (!data.hasNormals) {
+    host.normalsVisible[fileIndex] = false;
+  }
+  host.setTransformationMatrix(fileIndex, matrix);
+  host.updateFileList();
+  host.updateFileStats();
+  host.requestRender();
 }
 
 export async function handleGltfData(host: FormatDataHandlersHost, message: any): Promise<void> {

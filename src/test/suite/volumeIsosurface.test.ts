@@ -1,7 +1,11 @@
 import * as assert from 'assert';
 import * as zlib from 'zlib';
 import { NrrdParser, type VolumeData } from '../../../engine/src/parsers/nrrdParser';
-import { extractIsosurface, chooseStep } from '../../../engine/src/visualization/marchingCubes';
+import {
+  extractIsosurface,
+  extractIsosurfaceAsync,
+  chooseStep,
+} from '../../../engine/src/visualization/marchingCubes';
 import {
   triTable,
   edgeTable,
@@ -13,6 +17,12 @@ import {
   otsuThreshold,
   sampleRange,
 } from '../../../engine/src/visualization/isosurface';
+import { buildVolumePoints } from '../../../engine/src/visualization/volumePoints';
+import {
+  boundingBoxSectionPlanes,
+  volumeSectionPlanes,
+} from '../../../engine/src/visualization/sectionPlanes';
+import * as THREE from 'three';
 
 /** Assembles an NRRD file in memory from a header block and raw sample bytes. */
 function makeNrrd(headerLines: string[], payload: Uint8Array): Uint8Array {
@@ -426,7 +436,7 @@ suite('Isosurface extraction', () => {
       );
       worst = Math.max(worst, Math.abs(distance - radius));
     }
-    assert.ok(coarse.step === 2);
+    assert.deepStrictEqual(coarse.step, [2, 2, 2]);
     // Coarser sampling, but the vertices must still land on the sphere - a
     // step handled inconsistently between positions and the affine would show
     // up as a systematic scale error here.
@@ -434,8 +444,52 @@ suite('Isosurface extraction', () => {
   });
 
   test('chooseStep decimates only when the volume is large', () => {
-    assert.strictEqual(chooseStep([256, 256, 256]), 1);
-    assert.ok(chooseStep([1024, 1024, 1024]) > 1);
+    assert.deepStrictEqual(chooseStep([256, 256, 256]), [1, 1, 1]);
+    assert.ok(chooseStep([1024, 1024, 1024]).some(value => value > 1));
+  });
+
+  test('chooses per-axis strides from anisotropic voxel spacing', () => {
+    const affine = [0.2344, 0, 0, 0, 0, 0.2344, 0, 0, 0, 0, 3.3, 0, 0, 0, 0, 1];
+    assert.deepStrictEqual(chooseStep([640, 640, 44], affine), [14, 14, 1]);
+  });
+
+  test('anisotropic decimation keeps a physical sphere spherical', () => {
+    const sizes: [number, number, number] = [65, 65, 17];
+    const spacing: [number, number, number] = [0.25, 0.25, 1];
+    const samples = new Float32Array(sizes[0] * sizes[1] * sizes[2]);
+    const centre = [8, 8, 8];
+    const radius = 6;
+    for (let k = 0; k < sizes[2]; k++) {
+      for (let j = 0; j < sizes[1]; j++) {
+        for (let i = 0; i < sizes[0]; i++) {
+          samples[i + j * sizes[0] + k * sizes[0] * sizes[1]] =
+            radius -
+            Math.hypot(i * spacing[0] - centre[0], j * spacing[1] - centre[1], k - centre[2]);
+        }
+      }
+    }
+    const volume: VolumeData = {
+      sizes,
+      samples,
+      ijkToWorld: [0.25, 0, 0, 0, 0, 0.25, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      spaceUnits: 'mm',
+      channels: 1,
+      header: {},
+    };
+    const mesh = extractIsosurface(volume, { threshold: 0, step: [4, 4, 1] });
+    const extents = [0, 1, 2].map(axis => {
+      let min = Infinity;
+      let max = -Infinity;
+      for (let v = axis; v < mesh.positions.length; v += 3) {
+        min = Math.min(min, mesh.positions[v]);
+        max = Math.max(max, mesh.positions[v]);
+      }
+      return max - min;
+    });
+    for (const extent of extents) {
+      assert.ok(Math.abs(extent - radius * 2) < 0.7, `physical extent was ${extent}`);
+    }
+    assert.strictEqual(mesh.gradientMagnitudes.length, mesh.vertexCount);
   });
 
   test('a uniform volume yields no surface', () => {
@@ -445,6 +499,57 @@ suite('Isosurface extraction', () => {
     const mesh = extractIsosurface(volume, { threshold: 5 });
 
     assert.strictEqual(mesh.triangleCount, 0);
+  });
+
+  test('cooperative extraction cancels a superseded request', async () => {
+    let cancelled = false;
+    const result = await extractIsosurfaceAsync(
+      makeBall(32, 10),
+      { threshold: 0, onProgress: () => (cancelled = true) },
+      () => cancelled
+    );
+    assert.strictEqual(result, null);
+  });
+});
+
+suite('Volume points and clipping', () => {
+  test('emits thresholded points in world space with intensity', () => {
+    const volume = makeBall(8, 3);
+    volume.ijkToWorld = [2, 0, 0, 10, 0, 3, 0, 20, 0, 0, 4, 30, 0, 0, 0, 1];
+    const result = buildVolumePoints(volume, {
+      threshold: 2,
+      step: [1, 1, 1],
+      maxPoints: 10_000,
+    });
+    assert.ok(result.data.vertexCount > 0);
+    assert.strictEqual(result.data.intensityArray?.length, result.data.vertexCount);
+    assert.ok(result.data.positionsArray![0] >= 10);
+    assert.ok(result.data.positionsArray![1] >= 20);
+    assert.ok(result.data.positionsArray![2] >= 30);
+  });
+
+  test('uses reciprocal affine normals for sheared slice planes', () => {
+    const affine = [1, 0.3, 0.2, 10, 0, 1, 0.4, 20, 0, 0, 2, 30, 0, 0, 0, 1];
+    const [lower, upper] = volumeSectionPlanes(affine, 2, 3, 7);
+    const pointAt = (i: number, j: number, k: number) =>
+      new THREE.Vector3(
+        affine[0] * i + affine[1] * j + affine[2] * k + affine[3],
+        affine[4] * i + affine[5] * j + affine[6] * k + affine[7],
+        affine[8] * i + affine[9] * j + affine[10] * k + affine[11]
+      );
+    assert.ok(Math.abs(lower.distanceToPoint(pointAt(5, 9, 3))) < 1e-9);
+    assert.ok(Math.abs(upper.distanceToPoint(pointAt(2, 4, 7))) < 1e-9);
+    assert.ok(lower.distanceToPoint(pointAt(1, 1, 5)) > 0);
+    assert.ok(upper.distanceToPoint(pointAt(1, 1, 5)) > 0);
+  });
+
+  test('falls back to percentage ranges for data without an affine', () => {
+    const bounds = new THREE.Box3(new THREE.Vector3(-10, 20, 5), new THREE.Vector3(30, 40, 15));
+    const [lower, upper] = boundingBoxSectionPlanes(bounds, 0, 0.25, 0.75);
+    assert.ok(Math.abs(lower.distanceToPoint(new THREE.Vector3(0, 100, 100))) < 1e-9);
+    assert.ok(Math.abs(upper.distanceToPoint(new THREE.Vector3(20, -100, -100))) < 1e-9);
+    assert.ok(lower.distanceToPoint(new THREE.Vector3(10, 0, 0)) > 0);
+    assert.ok(upper.distanceToPoint(new THREE.Vector3(10, 0, 0)) > 0);
   });
 });
 

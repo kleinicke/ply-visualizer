@@ -28,6 +28,7 @@ import {
 } from './providerHandlers/addFileHandlers';
 import { loadDocumentContent, type DocumentLoaderHost } from './providerHandlers/documentLoader';
 import { createWebviewReadyGate, type WebviewReadyGate } from './providerHandlers/webviewReadyGate';
+import { clearVolume, reextractVolume } from './providerHandlers/volumeSessions';
 
 // Shared file handling functionality
 import { detectFileType, detectFileTypeWithContent, isPlyBinary } from '../engine/src/fileHandler';
@@ -161,6 +162,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       this.activePanels.delete(webviewPanel);
       this.pathToPanel.delete(document.uri.fsPath);
       this.panelToPath.delete(webviewPanel);
+      clearVolume(document.uri.toString());
     });
     webviewPanel.webview.options = {
       enableScripts: true,
@@ -238,6 +240,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'perfLog':
           this.logPerf(message.line);
+          break;
+        case 'volume:reextract':
+          await reextractVolume(document.uri.toString(), webviewPanel, message);
           break;
         case 'plyFetchFailed':
           await this.handlePlyFetchFallback(message);

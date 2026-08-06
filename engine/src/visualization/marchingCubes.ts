@@ -18,11 +18,8 @@ import { cornerOffsets, edgeCorners, edgeTable, triTable } from './marchingCubes
 export interface IsosurfaceOptions {
   /** Iso value, in whatever units the volume's samples carry. */
   threshold: number;
-  /**
-   * Sample every `step`-th voxel along each axis. The dominant memory and time
-   * control: step 2 is 8x fewer cells.
-   */
-  step?: number;
+  /** Sample stride in i, j and k. A scalar is accepted for compatibility. */
+  step?: readonly [number, number, number] | number;
   /**
    * Refuse to build a mesh larger than this many triangles, rather than
    * exhausting memory. The caller is expected to have chosen `step` so this
@@ -40,7 +37,9 @@ export interface IsosurfaceMesh {
   vertexCount: number;
   triangleCount: number;
   /** Grid step actually used, so callers can report what they rendered. */
-  step: number;
+  step: [number, number, number];
+  /** World-space gradient magnitude at every vertex. */
+  gradientMagnitudes: Float32Array;
 }
 
 const DEFAULT_MAX_TRIANGLES = 12_000_000;
@@ -48,22 +47,40 @@ const DEFAULT_MAX_TRIANGLES = 12_000_000;
 /**
  * Picks a decimation step so the extraction stays within a cell budget.
  *
- * A 512x512x600 CT is 157M cells; marching that at full resolution produces
- * tens of millions of triangles that no one wants to look at and the GPU would
- * struggle to hold. Halving each axis is visually near-identical for an
- * isosurface and 8x cheaper, so decimating by default and letting the user opt
- * back up is the honest trade.
+ * The initial stride makes sample spacing roughly isotropic in world space,
+ * then scales all axes together until the cell budget is met. This preserves
+ * thin-slice detail in anisotropic scans instead of discarding the same number
+ * of voxels along physically very different axes.
  */
-export function chooseStep(sizes: readonly number[], cellBudget = 40_000_000): number {
-  let step = 1;
+export function chooseStep(
+  sizes: readonly number[],
+  ijkToWorld: readonly number[] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+  cellBudget = 40_000_000
+): [number, number, number] {
+  const voxelSizes = [
+    Math.hypot(ijkToWorld[0], ijkToWorld[4], ijkToWorld[8]),
+    Math.hypot(ijkToWorld[1], ijkToWorld[5], ijkToWorld[9]),
+    Math.hypot(ijkToWorld[2], ijkToWorld[6], ijkToWorld[10]),
+  ].map(value => (Number.isFinite(value) && value > 0 ? value : 1));
+  const targetWorldSpacing = Math.max(...voxelSizes);
+  const base = voxelSizes.map((size, axis) =>
+    Math.max(1, Math.min(sizes[axis] - 1, Math.round(targetWorldSpacing / size)))
+  ) as [number, number, number];
+
+  let scale = 1;
+  let step: [number, number, number] = [...base];
   while (
-    Math.floor((sizes[0] - 1) / step) *
-      Math.floor((sizes[1] - 1) / step) *
-      Math.floor((sizes[2] - 1) / step) >
-      cellBudget &&
-    step < 16
+    Math.floor((sizes[0] - 1) / step[0]) *
+      Math.floor((sizes[1] - 1) / step[1]) *
+      Math.floor((sizes[2] - 1) / step[2]) >
+    cellBudget
   ) {
-    step++;
+    scale++;
+    step = base.map((value, axis) => Math.max(1, Math.min(sizes[axis] - 1, value * scale))) as [
+      number,
+      number,
+      number,
+    ];
   }
   return step;
 }
@@ -86,6 +103,15 @@ class FloatBuffer {
     this.data[this.length++] = a;
     this.data[this.length++] = b;
     this.data[this.length++] = c;
+  }
+
+  push(value: number): void {
+    if (this.length + 1 > this.data.length) {
+      const grown = new Float32Array(this.data.length * 2);
+      grown.set(this.data);
+      this.data = grown;
+    }
+    this.data[this.length++] = value;
   }
 
   trimmed(): Float32Array {
@@ -116,30 +142,68 @@ class IndexBuffer {
 }
 
 export function extractIsosurface(volume: VolumeData, options: IsosurfaceOptions): IsosurfaceMesh {
+  const steps = extractIsosurfaceSteps(volume, options);
+  let result = steps.next();
+  while (!result.done) {
+    result = steps.next();
+  }
+  return result.value;
+}
+
+/** Cooperative variant used by interactive re-extraction. */
+export async function extractIsosurfaceAsync(
+  volume: VolumeData,
+  options: IsosurfaceOptions,
+  isCancelled: () => boolean
+): Promise<IsosurfaceMesh | null> {
+  const steps = extractIsosurfaceSteps(volume, options);
+  while (true) {
+    const result = steps.next();
+    if (result.done) {
+      return result.value;
+    }
+    if (isCancelled()) {
+      return null;
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+  }
+}
+
+function* extractIsosurfaceSteps(
+  volume: VolumeData,
+  options: IsosurfaceOptions
+): Generator<number, IsosurfaceMesh, void> {
   const { threshold } = options;
   const maxTriangles = options.maxTriangles ?? DEFAULT_MAX_TRIANGLES;
-  const step = Math.max(1, Math.floor(options.step ?? 1));
+  const requestedStep = options.step ?? [1, 1, 1];
+  const step = (
+    typeof requestedStep === 'number'
+      ? [requestedStep, requestedStep, requestedStep]
+      : requestedStep
+  ).map(value => Math.max(1, Math.floor(value))) as [number, number, number];
+  const [sx, sy, sz] = step;
 
   const [nx, ny, nz] = volume.sizes;
   const samples = volume.samples;
 
   // Grid of sampled points after decimation.
-  const gx = Math.floor((nx - 1) / step) + 1;
-  const gy = Math.floor((ny - 1) / step) + 1;
-  const gz = Math.floor((nz - 1) / step) + 1;
+  const gx = Math.floor((nx - 1) / sx) + 1;
+  const gy = Math.floor((ny - 1) / sy) + 1;
+  const gz = Math.floor((nz - 1) / sz) + 1;
   if (gx < 2 || gy < 2 || gz < 2) {
     throw new Error(
-      `Volume is too small to isosurface at step ${step} (${gx}x${gy}x${gz} sample grid)`
+      `Volume is too small to isosurface at step ${step.join('x')} (${gx}x${gy}x${gz} sample grid)`
     );
   }
 
   const strideY = nx;
   const strideZ = nx * ny;
   const at = (a: number, b: number, c: number): number =>
-    samples[a * step + b * step * strideY + c * step * strideZ];
+    samples[a * sx + b * sy * strideY + c * sz * strideZ];
 
   const positions = new FloatBuffer();
   const normals = new FloatBuffer();
+  const gradientMagnitudes = new FloatBuffer();
   const indices = new IndexBuffer();
 
   // Edge-vertex cache. Each sampled grid point owns up to three edges — the
@@ -213,9 +277,9 @@ export function extractIsosurface(volume: VolumeData, options: IsosurfaceOptions
 
             // Grid coordinates are decimated; the affine is in original voxel
             // indices, so scale back before transforming.
-            const vi = ga * step;
-            const vj = gb * step;
-            const vk = gc * step;
+            const vi = ga * sx;
+            const vj = gb * sy;
+            const vk = gc * sz;
             positions.push3(
               m[0] * vi + m[1] * vj + m[2] * vk + m[3],
               m[4] * vi + m[5] * vj + m[6] * vk + m[7],
@@ -234,6 +298,7 @@ export function extractIsosurface(volume: VolumeData, options: IsosurfaceOptions
             let wy = normalMatrix[3] * nxg + normalMatrix[4] * nyg + normalMatrix[5] * nzg;
             let wz = normalMatrix[6] * nxg + normalMatrix[7] * nyg + normalMatrix[8] * nzg;
             const length = Math.hypot(wx, wy, wz);
+            gradientMagnitudes.push(length);
             if (length > 1e-12) {
               wx /= length;
               wy /= length;
@@ -274,6 +339,7 @@ export function extractIsosurface(volume: VolumeData, options: IsosurfaceOptions
     next.fill(-1);
 
     options.onProgress?.((c + 1) / (gz - 1));
+    yield (c + 1) / (gz - 1);
   }
 
   return {
@@ -283,6 +349,7 @@ export function extractIsosurface(volume: VolumeData, options: IsosurfaceOptions
     vertexCount: positions.length / 3,
     triangleCount: indices.length / 3,
     step,
+    gradientMagnitudes: gradientMagnitudes.trimmed(),
   };
 }
 
@@ -301,22 +368,23 @@ function gradientAt(
   a: number,
   b: number,
   c: number,
-  step: number
+  step: readonly [number, number, number]
 ): [number, number, number] {
-  const i = a * step;
-  const j = b * step;
-  const k = c * step;
+  const [sx, sy, sz] = step;
+  const i = a * sx;
+  const j = b * sy;
+  const k = c * sz;
   const strideY = nx;
   const strideZ = nx * ny;
   const sample = (x: number, y: number, z: number): number =>
     samples[x + y * strideY + z * strideZ];
 
-  const xLow = Math.max(0, i - step);
-  const xHigh = Math.min(nx - 1, i + step);
-  const yLow = Math.max(0, j - step);
-  const yHigh = Math.min(ny - 1, j + step);
-  const zLow = Math.max(0, k - step);
-  const zHigh = Math.min(nz - 1, k + step);
+  const xLow = Math.max(0, i - sx);
+  const xHigh = Math.min(nx - 1, i + sx);
+  const yLow = Math.max(0, j - sy);
+  const yHigh = Math.min(ny - 1, j + sy);
+  const zLow = Math.max(0, k - sz);
+  const zHigh = Math.min(nz - 1, k + sz);
 
   return [
     (sample(xHigh, j, k) - sample(xLow, j, k)) / Math.max(1, xHigh - xLow),

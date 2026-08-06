@@ -46,6 +46,7 @@ export interface ViewerRenderer {
   // satisfy the interface.
   outputColorSpace: string;
   sortObjects: boolean;
+  clippingPlanes: THREE.Plane[];
   // Only `enabled` is used (it is switched off at startup), and both renderers
   // expose a shadow-map object carrying it.
   shadowMap: { enabled: boolean };

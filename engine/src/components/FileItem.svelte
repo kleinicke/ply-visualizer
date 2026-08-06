@@ -5,6 +5,8 @@
   import E57CorrectionPanel from './E57CorrectionPanel.svelte';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
   import TransformSection from './TransformSection.svelte';
+  import VolumePanel from './VolumePanel.svelte';
+  import SectionPanel from './SectionPanel.svelte';
   import {
     setStonexColorCorrection,
     setStonexImageDistortion,
@@ -501,7 +503,15 @@
         <DepthSettingsPanel {host} fileIndex={index} {data} />
       {/if}
 
+      {#if data.metadata?.volumeSessionId}
+        <VolumePanel {host} {data} fileIndex={index} />
+      {/if}
+
       <TransformSection {host} fileIndex={index} {matrixText} />
+
+      {#if !data.metadata?.volumeSessionId}
+        <SectionPanel {host} fileIndex={index} />
+      {/if}
 
       <div class="rendering-controls" style="margin-top: 4px; margin-bottom: 6px;">
         <div style="display: grid; grid-template-columns: {renderModeGridColumns}; gap: 3px;">

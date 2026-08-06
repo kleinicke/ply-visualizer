@@ -9,7 +9,12 @@
 
 import type { SpatialData } from '../interfaces';
 import type { VolumeData } from '../parsers/nrrdParser';
-import { chooseStep, extractIsosurface, type IsosurfaceMesh } from './marchingCubes';
+import {
+  chooseStep,
+  extractIsosurface,
+  extractIsosurfaceAsync,
+  type IsosurfaceMesh,
+} from './marchingCubes';
 
 /**
  * Hounsfield units are an absolute scale — air is -1000, water 0, cortical
@@ -22,7 +27,7 @@ export const BONE_HU = 300;
 export interface IsosurfaceRequest {
   /** Omitted on first load, where `defaultThreshold` decides. */
   threshold?: number;
-  step?: number;
+  step?: readonly [number, number, number];
   onProgress?: (fraction: number) => void;
 }
 
@@ -70,6 +75,21 @@ export function sampleRange(volume: VolumeData): { min: number; max: number } {
     return { min: 0, max: 1 };
   }
   return { min, max };
+}
+
+export function volumeHistogram(
+  volume: VolumeData,
+  bins = 256
+): { min: number; max: number; bins: number[] } {
+  const { min, max } = sampleRange(volume);
+  const histogram = new Array<number>(bins).fill(0);
+  const scale = (bins - 1) / (max - min);
+  const stride = volume.samples.length > 40_000_000 ? 7 : 1;
+  for (let i = 0; i < volume.samples.length; i += stride) {
+    const raw = (volume.samples[i] - min) * scale;
+    histogram[raw < 0 ? 0 : raw > bins - 1 ? bins - 1 : raw | 0]++;
+  }
+  return { min, max, bins: histogram };
 }
 
 export function otsuThreshold(volume: VolumeData, bins = 256): number {
@@ -147,7 +167,7 @@ export function buildVolumeMesh(
   request: IsosurfaceRequest = {}
 ): VolumeMeshResult {
   const threshold = request.threshold ?? defaultThreshold(volume);
-  const step = request.step ?? chooseStep(volume.sizes);
+  const step = request.step ?? chooseStep(volume.sizes, volume.ijkToWorld);
 
   const mesh = extractIsosurface(volume, {
     threshold,
@@ -155,11 +175,37 @@ export function buildVolumeMesh(
     onProgress: request.onProgress,
   });
 
+  return packageVolumeMesh(volume, mesh, threshold, step);
+}
+
+export async function buildVolumeMeshAsync(
+  volume: VolumeData,
+  request: IsosurfaceRequest,
+  isCancelled: () => boolean
+): Promise<VolumeMeshResult | null> {
+  const threshold = request.threshold ?? defaultThreshold(volume);
+  const step = request.step ?? chooseStep(volume.sizes, volume.ijkToWorld);
+  const mesh = await extractIsosurfaceAsync(
+    volume,
+    { threshold, step, onProgress: request.onProgress },
+    isCancelled
+  );
+  return mesh ? packageVolumeMesh(volume, mesh, threshold, step) : null;
+}
+
+function packageVolumeMesh(
+  volume: VolumeData,
+  mesh: IsosurfaceMesh,
+  threshold: number,
+  step: readonly [number, number, number]
+): VolumeMeshResult {
   const units = volume.spaceUnits;
   const comments = [
     `Volume ${volume.sizes.join(' x ')} voxels`,
     `Isosurface at ${formatThreshold(threshold, volume)}`,
-    step > 1 ? `Decimated ${step}x per axis for extraction` : 'Full resolution',
+    step.some(value => value > 1)
+      ? `Extraction stride ${step.join(' x ')} voxels (i/j/k)`
+      : 'Full resolution',
     `World units: ${units}`,
   ];
   if (volume.channels > 1) {
@@ -180,6 +226,7 @@ export function buildVolumeMesh(
     positionsArray: mesh.positions,
     normalsArray: mesh.normals,
     indicesArray: mesh.indices,
+    scalarFields: { gradient: mesh.gradientMagnitudes },
     colorsArray: null,
     fileName: volume.fileName,
     metadata: {
@@ -189,6 +236,7 @@ export function buildVolumeMesh(
       intensityUnits: volume.intensityUnits,
       threshold,
       extractionStep: mesh.step,
+      volumeRenderMode: 'surface',
       channels: volume.channels,
     },
   };

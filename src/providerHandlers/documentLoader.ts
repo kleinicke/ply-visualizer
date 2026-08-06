@@ -14,6 +14,7 @@ import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
 import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
 import { buildVolumeMesh } from '../../engine/src/visualization/isosurface';
+import { decorateVolumeData, retainVolume } from './volumeSessions';
 import { XyzVariantParser } from '../../engine/src/parsers/xyzVariantParser';
 import {
   parseXyzWasm,
@@ -590,7 +591,10 @@ export async function loadDocumentContent(
           )
       );
 
-      const { data: meshData, threshold } = buildVolumeMesh(volume);
+      const volumeKey = documentUri.toString();
+      const session = retainVolume(volumeKey, volume);
+      const { data: meshData, threshold } = buildVolumeMesh(volume, session.options);
+      decorateVolumeData(meshData, volumeKey, session);
       const parseTime = performance.now();
       host.logPerf(
         `⏱️ PERF[volume/ext] read ${(fileReadTime - loadStartTime).toFixed(1)}ms, ` +
