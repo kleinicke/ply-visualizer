@@ -38,6 +38,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   private activePanels = new Set<vscode.WebviewPanel>();
   private pathToPanel = new Map<string, vscode.WebviewPanel>();
   private panelToPath = new Map<vscode.WebviewPanel, string>();
+  private panelVolumeSessions = new Map<vscode.WebviewPanel, Set<string>>();
   private datasetManager: DatasetManager;
   private readonly perfChannel: vscode.OutputChannel;
   private perfChannelRevealed = false;
@@ -50,6 +51,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     logPerf: line => this.logPerf(line),
     setLoadStartedAt: ts => {
       this.currentLoadStartedAt = ts;
+    },
+    retainVolumeSession: (webviewPanel, key) => {
+      this.panelVolumeSessions.get(webviewPanel)?.add(key);
     },
     tryAutoLoadMtl: (webviewPanel, objUri, parsedObjData, fileIndex) =>
       this.tryAutoLoadMtl(webviewPanel, objUri, parsedObjData, fileIndex),
@@ -156,13 +160,17 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     this.activePanels.add(webviewPanel);
     this.pathToPanel.set(document.uri.fsPath, webviewPanel);
     this.panelToPath.set(webviewPanel, document.uri.fsPath);
+    this.panelVolumeSessions.set(webviewPanel, new Set([document.uri.toString()]));
     this.prepareWebviewMessaging(webviewPanel, readyGate);
     webviewPanel.onDidDispose(() => {
       readyGate.dispose();
       this.activePanels.delete(webviewPanel);
       this.pathToPanel.delete(document.uri.fsPath);
       this.panelToPath.delete(webviewPanel);
-      clearVolume(document.uri.toString());
+      for (const key of this.panelVolumeSessions.get(webviewPanel) ?? []) {
+        clearVolume(key);
+      }
+      this.panelVolumeSessions.delete(webviewPanel);
     });
     webviewPanel.webview.options = {
       enableScripts: true,
@@ -242,7 +250,17 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           this.logPerf(message.line);
           break;
         case 'volume:reextract':
-          await reextractVolume(document.uri.toString(), webviewPanel, message);
+          if (
+            this.panelVolumeSessions
+              .get(webviewPanel)
+              ?.has((message.sessionId as string | undefined) ?? document.uri.toString())
+          ) {
+            await reextractVolume(
+              (message.sessionId as string | undefined) ?? document.uri.toString(),
+              webviewPanel,
+              message
+            );
+          }
           break;
         case 'plyFetchFailed':
           await this.handlePlyFetchFallback(message);
@@ -568,6 +586,26 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     }
     // Fallback: use last known active panel if mapping not present
     this.startSequence(filePaths, wildcard);
+  }
+
+  /** Opens one editor and adds every remaining URI to that same scene. */
+  public async openFilesTogether(uris: readonly vscode.Uri[]): Promise<void> {
+    if (uris.length === 0) {
+      return;
+    }
+    const first = uris[0];
+    await vscode.commands.executeCommand('vscode.openWith', first, 'plyViewer.plyEditor');
+    let panel = this.pathToPanel.get(first.fsPath);
+    for (let attempt = 0; !panel && attempt < 200; attempt++) {
+      await new Promise<void>(resolve => setTimeout(resolve, 25));
+      panel = this.pathToPanel.get(first.fsPath);
+    }
+    if (!panel) {
+      throw new Error(`The 3D editor did not open for ${path.basename(first.fsPath)}`);
+    }
+    for (const uri of uris.slice(1)) {
+      await handleAddFileFromPath(this.addFileHost, panel, uri.fsPath);
+    }
   }
 
   private getHtmlForWebview(webview: vscode.Webview): string {

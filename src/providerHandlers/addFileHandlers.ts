@@ -12,6 +12,8 @@ import { isColmapModelFile } from '../../engine/src/formats/colmap/colmapFiles';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
+import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
+import { buildVolumeMesh } from '../../engine/src/visualization/isosurface';
 import {
   detectFileTypeWithContent,
   isPlyBinary,
@@ -28,11 +30,13 @@ import {
   SPLAT_CONTAINER_EXTENSIONS,
 } from './binaryTransfer';
 import { parseLidarWasm } from '../wasmPointcloud';
+import { decorateVolumeData, retainVolume } from './volumeSessions';
 
 export interface AddFileHost {
   getShortPath(filePath: string): string;
   logPerf(line: string): void;
   setLoadStartedAt(ts: number): void;
+  retainVolumeSession?(webviewPanel: vscode.WebviewPanel, key: string): void;
   tryAutoLoadMtl(
     webviewPanel: vscode.WebviewPanel,
     objUri: vscode.Uri,
@@ -490,6 +494,34 @@ export async function handleAddFileFromPath(
 
     if (SPLAT_CONTAINER_EXTENSIONS.includes(ext)) {
       sendSplatContainerUri(webviewPanel, fileUri, fileName, shortPath, 'addFiles');
+      return;
+    }
+
+    if (ext === '.nrrd' || ext === '.nhdr') {
+      const bytes = await vscode.workspace.fs.readFile(fileUri);
+      const directory = vscode.Uri.joinPath(fileUri, '..');
+      const volume = await new NrrdParser().parse(
+        bytes,
+        fileName,
+        undefined,
+        async relative =>
+          new Uint8Array(
+            await vscode.workspace.fs.readFile(vscode.Uri.joinPath(directory, relative))
+          )
+      );
+      const key = fileUri.toString();
+      const session = retainVolume(key, volume);
+      host.retainVolumeSession?.(webviewPanel, key);
+      const { data } = buildVolumeMesh(volume, session.options);
+      decorateVolumeData(data, key, session);
+      webviewPanel.webview.postMessage({
+        type: 'volumeData',
+        fileName,
+        shortPath,
+        fileSizeInBytes: bytes.byteLength,
+        data,
+        isAddFile: true,
+      });
       return;
     }
 

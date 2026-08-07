@@ -50,10 +50,19 @@ with _this_ repository's parser rather than a local reimplementation.
 
 ### Volume viewer: plan for the next five pieces
 
+**Status (August 2026): Steps 0–3 are implemented.** Extraction now uses
+anisotropy-aware per-axis strides; open volumes are retained for debounced,
+cancellable re-extraction; the volume panel provides a histogram threshold, HU
+presets, point mode and gradient-magnitude surface coloring; and affine-aware
+i/j/k clipping works in slice indices (with bounding-box clipping for ordinary
+point clouds). Step 4 is implemented as a multi-series handoff: the image viewer
+writes every selected DICOM series and this extension opens the first NRRD then
+adds the rest to the same scene.
+
 Ordered so each one unblocks the next. Steps 0 and 1 are prerequisites for
 everything interactive; 2–4 are independent of each other once 1 lands.
 
-#### Step 0 — anisotropy-aware decimation (do first, it changes the API)
+#### Step 0 — anisotropy-aware decimation — implemented
 
 `chooseStep` returns one integer applied to all three axes. On the real MR
 series that is 0.2344 x 0.2344 x 3.3 mm — **14:1 anisotropy** — so decimating
@@ -77,7 +86,7 @@ bite today only because 640x640x44 is 18M cells, under the 40M budget; a
   deliberately anisotropic affine and per-axis steps; the sphere must stay a
   sphere of the right radius, which is exactly what a mismatched axis breaks.
 
-#### Step 1 — retain the volume and support re-extraction
+#### Step 1 — retain the volume and support re-extraction — implemented
 
 Everything interactive needs the volume to still be in memory. Today
 `documentLoader` parses, extracts, posts the mesh and drops the volume, so any
@@ -99,7 +108,7 @@ parameter change would re-read and re-decode the file.
 - Extraction is ~2.3 s for this series, so the request must be debounced and
   cancellable, and the existing progress callback surfaced.
 
-#### Step 2 — threshold control and point-cloud mode
+#### Step 2 — threshold control and point-cloud mode — implemented
 
 These ship together because they are the same panel and the same round trip.
 
@@ -138,7 +147,7 @@ These ship together because they are the same panel and the same round trip.
 - Point mode needs its own budget and stride: 18M voxels can put millions of
   points above a low threshold.
 
-#### Step 3 — clipping planes ("look inside")
+#### Step 3 — clipping planes ("look inside") — implemented
 
 Note this was **already built once and removed on user decision** — see the
 discarded cross-section-slab entry near the end of this file, which preserves
@@ -182,7 +191,7 @@ numbers would mean nothing.
   For a file with no affine, fall back to the bounding-box behaviour of the
   original discarded implementation.
 
-#### Step 4 — hand over every series at once
+#### Step 4 — hand over every series at once — implemented
 
 Today the export picks one series and the rest are unreachable without repeating
 the command. The test dataset has four (44/26/26/36 slices).

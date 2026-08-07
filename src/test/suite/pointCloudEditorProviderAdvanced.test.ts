@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { handleAddFileFromPath } from '../../providerHandlers/addFileHandlers';
+import { clearVolume } from '../../providerHandlers/volumeSessions';
 
 suite('Point Cloud Editor Provider Advanced Test Suite', () => {
   let extension: vscode.Extension<any> | undefined;
@@ -136,6 +137,63 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
       Array.from(new Float32Array(dataMessage.scalarFieldBuffers.intensity)),
       [0.25, 0.75]
     );
+  });
+
+  test('Should add an NRRD volume with its own retained session', async () => {
+    const fileName = `add-volume-test-${process.pid}-${Date.now()}.nrrd`;
+    const filePath = path.join(os.tmpdir(), fileName);
+    const size = 6;
+    const samples = new Float32Array(size ** 3);
+    for (let k = 0; k < size; k++) {
+      for (let j = 0; j < size; j++) {
+        for (let i = 0; i < size; i++) {
+          samples[i + j * size + k * size * size] = 2 - Math.hypot(i - 2.5, j - 2.5, k - 2.5);
+        }
+      }
+    }
+    const header = Buffer.from(
+      `NRRD0004\ntype: float\ndimension: 3\nsizes: ${size} ${size} ${size}\n` +
+        'encoding: raw\nendian: little\n\n',
+      'ascii'
+    );
+    fs.writeFileSync(
+      filePath,
+      Buffer.concat([header, Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)])
+    );
+
+    const messages: any[] = [];
+    const retained: string[] = [];
+    const host = {
+      getShortPath: (value: string) => path.basename(value),
+      logPerf: () => undefined,
+      setLoadStartedAt: () => undefined,
+      retainVolumeSession: (_panel: vscode.WebviewPanel, key: string) => retained.push(key),
+      tryAutoLoadMtl: async () => undefined,
+    };
+    const webviewPanel = {
+      webview: {
+        postMessage: async (message: any) => {
+          messages.push(message);
+          return true;
+        },
+      },
+    } as unknown as vscode.WebviewPanel;
+
+    try {
+      await handleAddFileFromPath(host, webviewPanel, filePath);
+      const message = messages.find(candidate => candidate.type === 'volumeData');
+      assert.ok(message, 'The added NRRD should be sent as volume data');
+      assert.strictEqual(message.isAddFile, true);
+      assert.ok(message.data.faceCount > 0);
+      assert.strictEqual(
+        message.data.metadata.volumeSessionId,
+        vscode.Uri.file(filePath).toString()
+      );
+      assert.deepStrictEqual(retained, [vscode.Uri.file(filePath).toString()]);
+    } finally {
+      clearVolume(vscode.Uri.file(filePath).toString());
+      fs.unlinkSync(filePath);
+    }
   });
 
   test('Should support webview serialization', () => {

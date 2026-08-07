@@ -79,12 +79,19 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register command for opening multiple files
   context.subscriptions.push(
-    vscode.commands.registerCommand('plyViewer.openMultipleFiles', async () => {
-      // Avoid blocking tests by not awaiting the file picker
-      setImmediate(() => {
-        void handleOpenMultipleFiles();
-      });
-    })
+    vscode.commands.registerCommand(
+      'plyViewer.openMultipleFiles',
+      async (provided?: readonly vscode.Uri[]) => {
+        if (Array.isArray(provided) && provided.length > 0) {
+          await provider.openFilesTogether(provided);
+          return;
+        }
+        // Avoid blocking tests by not awaiting the file picker
+        setImmediate(() => {
+          void handleOpenMultipleFiles(provider);
+        });
+      }
+    )
   );
 
   // Register command for playing a point cloud sequence via wildcard
@@ -244,7 +251,7 @@ async function handleDepthToPointCloudConversion(
   }
 }
 
-async function handleOpenMultipleFiles(): Promise<void> {
+async function handleOpenMultipleFiles(provider: PointCloudEditorProvider): Promise<void> {
   try {
     // Show file picker for multiple files
     const files = await vscode.window.showOpenDialog({
@@ -253,6 +260,7 @@ async function handleOpenMultipleFiles(): Promise<void> {
       canSelectFolders: false,
       filters: {
         'Point Cloud Files': ['ply', 'xyz', 'obj'],
+        'Volume Files': ['nrrd', 'nhdr'],
         'TIFF Files': ['tif', 'tiff'],
         'All Files': ['*'],
       },
@@ -270,15 +278,17 @@ async function handleOpenMultipleFiles(): Promise<void> {
     const tifFiles = files.filter(
       f => f.fsPath.toLowerCase().endsWith('.tif') || f.fsPath.toLowerCase().endsWith('.tiff')
     );
+    const volumeFiles = files.filter(
+      f => f.fsPath.toLowerCase().endsWith('.nrrd') || f.fsPath.toLowerCase().endsWith('.nhdr')
+    );
 
-    // Open the first file to create the main editor, then add others
-    const firstFile = files[0];
-    await vscode.commands.executeCommand('vscode.openWith', firstFile, 'plyViewer.plyEditor');
+    await provider.openFilesTogether(files);
 
     // If there are additional files, add them
     if (files.length > 1) {
       vscode.window.showInformationMessage(
-        `Opening ${files.length} files together: ${spatialFiles.length} PLY, ${xyzFiles.length} XYZ, ${objFiles.length} OBJ, ${tifFiles.length} TIF files`
+        `Opened ${files.length} files together: ${spatialFiles.length} PLY, ${xyzFiles.length} XYZ, ` +
+          `${objFiles.length} OBJ, ${tifFiles.length} TIF, ${volumeFiles.length} volume files`
       );
     }
   } catch (error) {

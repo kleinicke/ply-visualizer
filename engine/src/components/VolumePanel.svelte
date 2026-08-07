@@ -44,6 +44,7 @@
       const requestId = beginVolumeRequest(sessionId);
       host.vscode.postMessage({
         type: 'volume:reextract',
+        sessionId,
         fileIndex,
         threshold,
         step,
