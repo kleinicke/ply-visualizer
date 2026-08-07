@@ -44,7 +44,9 @@ export function buildVolumePoints(
     for (let j = 0; j < ny; j += sy) {
       for (let i = 0; i < nx; i += sx) {
         const value = volume.samples[i + j * nx + k * nx * ny];
-        if (value < request.threshold) {continue;}
+        if (value < request.threshold) {
+          continue;
+        }
         const p = point * 3;
         positions[p] = m[0] * i + m[1] * j + m[2] * k + m[3];
         positions[p + 1] = m[4] * i + m[5] * j + m[6] * k + m[7];
@@ -72,7 +74,9 @@ export async function buildVolumePointsAsync(
   do {
     step = base.map(value => Math.max(1, value * multiplier)) as [number, number, number];
     count = await countPointsAsync(volume, request.threshold, step, maxPoints + 1, isCancelled);
-    if (count === null) {return null;}
+    if (count === null) {
+      return null;
+    }
     multiplier++;
   } while (count > maxPoints);
 
@@ -86,7 +90,9 @@ export async function buildVolumePointsAsync(
     for (let j = 0; j < ny; j += sy) {
       for (let i = 0; i < nx; i += sx) {
         const value = volume.samples[i + j * nx + k * nx * ny];
-        if (value < request.threshold) {continue;}
+        if (value < request.threshold) {
+          continue;
+        }
         const p = point * 3;
         positions[p] = m[0] * i + m[1] * j + m[2] * k + m[3];
         positions[p + 1] = m[4] * i + m[5] * j + m[6] * k + m[7];
@@ -95,7 +101,9 @@ export async function buildVolumePointsAsync(
       }
     }
     request.onProgress?.(Math.min(1, (k + sz) / nz));
-    if (isCancelled()) {return null;}
+    if (isCancelled()) {
+      return null;
+    }
     await new Promise<void>(resolve => setTimeout(resolve, 0));
   }
   return packageVolumePoints(volume, request.threshold, step, positions, intensity);
@@ -109,6 +117,12 @@ function packageVolumePoints(
   intensity: Float32Array
 ): VolumePointsResult {
   const count = intensity.length;
+  const m = volume.ijkToWorld;
+  const effectiveSpacing: [number, number, number] = [
+    Math.hypot(m[0], m[4], m[8]) * step[0],
+    Math.hypot(m[1], m[5], m[9]) * step[1],
+    Math.hypot(m[2], m[6], m[10]) * step[2],
+  ];
   return {
     step,
     data: {
@@ -139,6 +153,9 @@ function packageVolumePoints(
         intensityUnits: volume.intensityUnits,
         threshold,
         extractionStep: step,
+        effectiveSpacing,
+        renderedPointCount: count,
+        sourceVoxelCount: volume.sizes[0] * volume.sizes[1] * volume.sizes[2],
         volumeRenderMode: 'points',
         channels: volume.channels,
       },
@@ -164,7 +181,9 @@ async function countPointsAsync(
         }
       }
     }
-    if (isCancelled()) {return null;}
+    if (isCancelled()) {
+      return null;
+    }
     await new Promise<void>(resolve => setTimeout(resolve, 0));
   }
   return count;

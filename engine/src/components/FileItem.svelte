@@ -175,7 +175,7 @@
     kind === 'pointcloud' && !!data && !!host.splatMode?.canEnable(data)
   );
   const splatActive = $derived.by(() => {
-    filesState.renderTick;
+    filesState.renderModeTick;
     return canRenderSplats && !!host.splatMode?.isActive(index);
   });
 
@@ -184,8 +184,9 @@
   }
 
   function isRenderModeActive(mode: string): boolean {
-    // Re-evaluate parallel-array state after main.ts bumps the render tick.
-    filesState.renderTick;
+    // Re-evaluate parallel-array state without remounting the complete file
+    // list (which would discard its scroll position and local row state).
+    filesState.renderModeTick;
     switch (mode) {
       case 'points':
         return canRenderSplats ? !splatActive : (host.pointsVisible[index] ?? true);

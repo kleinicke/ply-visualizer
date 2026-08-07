@@ -17,8 +17,8 @@ copy overhead for trivial UI work.
 
 ### Volume rendering for image stacks (tiff-visualizer bridge) — bridge shipped
 
-**Status (August 2026): the first slice is implemented and the bridge carries a
-real DICOM series end to end.** What exists:
+**Status (August 2026): the volume workflow is implemented and carries real
+DICOM series end to end.** What exists:
 
 - `engine/src/parsers/nrrdParser.ts` reads NRRD (raw/gzip/ascii, all sample
   types, big and little endian, detached `.nhdr`, channel-first 4D), producing a
@@ -36,6 +36,17 @@ real DICOM series end to end.** What exists:
   and modality, derives the affine (slice step measured from consecutive
   `ImagePositionPatient`, not from thickness), and its **Open DICOM Volume in 3D
   Viewer** command writes NRRD and hands it over.
+- DICOM geometry is normalised from the source millimetres to this viewer's
+  metre-based world space. Window center/width and photometric interpretation
+  survive the NRRD bridge.
+- This extension also has **Open DICOM Folder as Volume**. It detects native,
+  uncompressed grayscale DICOM by content (including extensionless files),
+  groups compatible slices into series, and opens selected series without
+  requiring the image-viewer bridge.
+- The volume panel has a third **Orthogonal slices** mode. It displays the
+  original voxel samples on axial/coronal/sagittal planes with independent
+  window/level and slice-position controls. Segmentation threshold remains
+  exclusive to surface and point modes.
 
 **The descriptor question is settled: NRRD is the payload.** It is a documented
 standard that already carries the affine, world units, dtype and endianness, so
@@ -50,14 +61,17 @@ with _this_ repository's parser rather than a local reimplementation.
 
 ### Volume viewer: plan for the next five pieces
 
-**Status (August 2026): Steps 0–3 are implemented.** Extraction now uses
+**Status (August 2026): Steps 0–4 are implemented.** Extraction now uses
 anisotropy-aware per-axis strides; open volumes are retained for debounced,
 cancellable re-extraction; the volume panel provides a histogram threshold, HU
-presets, point mode and gradient-magnitude surface coloring; and affine-aware
-i/j/k clipping works in slice indices (with bounding-box clipping for ordinary
-point clouds). Step 4 is implemented as a multi-series handoff: the image viewer
-writes every selected DICOM series and this extension opens the first NRRD then
-adds the rest to the same scene.
+presets, point mode and optional gradient-magnitude surface coloring; and
+affine-aware i/j/k clipping works in slice indices (with bounding-box clipping
+for ordinary point clouds). Step 4 is implemented as a multi-series handoff: the
+image viewer writes every selected DICOM series and this extension opens the
+first NRRD then adds the rest to the same scene. A presentation follow-up also
+added metre-scale DICOM geometry, orthogonal source-value slices with
+window/level, greyscale point intensity by default, neutral surfaces by default,
+and visible effective stride/count/spacing metadata.
 
 Ordered so each one unblocks the next. Steps 0 and 1 are prerequisites for
 everything interactive; 2–4 are independent of each other once 1 lands.
@@ -127,11 +141,12 @@ These ship together because they are the same panel and the same round trip.
   above the threshold, and emits world-space positions plus the sample value as
   a scalar field. No marching cubes. The result flows through the existing point
   rendering and scalar-field colormaps untouched.
-- **Coloring the isosurface: gradient magnitude, not intensity.** The mesh
-  currently renders flat grey, which is the first thing anyone notices. But
-  "color by intensity" is not the fix: every vertex sits exactly at the
-  threshold by construction, so intensity is constant across the whole surface
-  and would tint it uniformly. That is a property of level sets, not a gap.
+- **Coloring the isosurface: gradient magnitude, not intensity.** Gradient is
+  available as an optional scalar mode, while the default remains a neutral
+  material that does not imply a medical colormap. But "color by intensity" is
+  not the fix: every vertex sits exactly at the threshold by construction, so
+  intensity is constant across the whole surface and would tint it uniformly.
+  That is a property of level sets, not a gap.
 
   What does vary is the **gradient magnitude** — how sharp the boundary is — and
   it is already computed: `marchingCubes.ts` derives the world-space gradient

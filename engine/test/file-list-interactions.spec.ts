@@ -97,6 +97,41 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await expect(content).toBeVisible();
   });
 
+  test('changing a mesh render mode preserves the file-list position', async ({ page }) => {
+    await page
+      .locator('#hiddenFileInput')
+      .setInputFiles([
+        path.resolve('../testfiles/ply/test_small_mesh.ply'),
+        path.resolve('../testfiles/ply/test_small_mesh_binary.ply'),
+      ]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const secondMeshButton = page.locator('.mesh-btn[data-file-index="1"]');
+    await expect(secondMeshButton).toBeVisible();
+    const scrollTopBefore = await page.locator('#file-list').evaluate(element => {
+      const list = element as HTMLElement;
+      list.style.height = '32px';
+      list.style.overflowY = 'auto';
+      list.scrollTop = list.scrollHeight;
+      return list.scrollTop;
+    });
+    expect(scrollTopBefore).toBeGreaterThan(0);
+
+    // Avoid Playwright scrolling the button into view: any movement after the
+    // event must come from a list remount in the application.
+    await secondMeshButton.dispatchEvent('click');
+    await expect(secondMeshButton).not.toHaveClass(/active/);
+    expect(await page.locator('#file-list').evaluate(element => element.scrollTop)).toBe(
+      scrollTopBefore
+    );
+
+    await secondMeshButton.dispatchEvent('click');
+    await expect(secondMeshButton).toHaveClass(/active/);
+    expect(await page.locator('#file-list').evaluate(element => element.scrollTop)).toBe(
+      scrollTopBefore
+    );
+  });
+
   test('change color mode for a file', async ({ page }) => {
     const plyPath = path.resolve('../testfiles/open3d/sample_mesh.ply');
     await page.locator('#hiddenFileInput').setInputFiles(plyPath);

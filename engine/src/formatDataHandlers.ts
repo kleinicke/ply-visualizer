@@ -393,13 +393,17 @@ export async function handleVolumeData(host: FormatDataHandlersHost, message: an
     const units = (spatialData.metadata as any)?.intensityUnits;
     const renderMode = (spatialData.metadata as any)?.volumeRenderMode;
     const at =
-      threshold === undefined ? '' : ` at ${Math.round(threshold)}${units ? ` ${units}` : ''}`;
+      renderMode === 'slices' || threshold === undefined
+        ? ''
+        : ` at ${Math.round(threshold)}${units ? ` ${units}` : ''}`;
     const summary =
       renderMode === 'points'
         ? `${spatialData.vertexCount.toLocaleString()} points`
-        : `${spatialData.vertexCount.toLocaleString()} vertices, ${spatialData.faceCount.toLocaleString()} triangles`;
+        : renderMode === 'slices'
+          ? `orthogonal slices at ${(spatialData.metadata as any)?.sliceIndices?.join(' / ') || 'centre'}`
+          : `${spatialData.vertexCount.toLocaleString()} vertices, ${spatialData.faceCount.toLocaleString()} triangles`;
     host.showStatus(
-      `Volume: ${renderMode === 'points' ? 'point cloud' : 'isosurface'}${at} — ${summary} from ${message.fileName}`
+      `Volume: ${renderMode === 'points' ? 'point cloud' : renderMode === 'slices' ? 'slices' : 'isosurface'}${at} — ${summary} from ${message.fileName}`
     );
   } catch (error) {
     console.error('Error handling volume data:', error);
@@ -418,6 +422,7 @@ function replaceVolumeGeometry(
     throw new Error(`Cannot replace missing volume at file index ${fileIndex}`);
   }
   const previous = host.meshes[fileIndex];
+  const previousRenderMode = host.spatialFiles[fileIndex]?.metadata?.volumeRenderMode;
   const matrix = host.transformationMatrices[fileIndex].clone();
   const visible = host.fileVisibility[fileIndex] ?? true;
   if (previous) {
@@ -447,16 +452,15 @@ function replaceVolumeGeometry(
 
   data.fileIndex = fileIndex;
   host.spatialFiles[fileIndex] = data;
-  const currentColorMode = host.individualColorModes[fileIndex];
-  if (data.metadata?.volumeRenderMode === 'points' && currentColorMode?.includes('gradient')) {
-    host.individualColorModes[fileIndex] = 'intensity-viridis';
-    filesState.colorModes[fileIndex] = 'intensity-viridis';
-  } else if (
-    data.metadata?.volumeRenderMode === 'surface' &&
-    currentColorMode?.startsWith('intensity')
-  ) {
-    host.individualColorModes[fileIndex] = 'scalar:gradient:viridis';
-    filesState.colorModes[fileIndex] = 'scalar:gradient:viridis';
+  if (data.metadata?.volumeRenderMode === 'points' && previousRenderMode !== 'points') {
+    host.individualColorModes[fileIndex] = 'intensity';
+    filesState.colorModes[fileIndex] = 'intensity';
+  } else if (data.metadata?.volumeRenderMode === 'slices' && previousRenderMode !== 'slices') {
+    host.individualColorModes[fileIndex] = 'original';
+    filesState.colorModes[fileIndex] = 'original';
+  } else if (data.metadata?.volumeRenderMode === 'surface' && previousRenderMode !== 'surface') {
+    host.individualColorModes[fileIndex] = 'assigned';
+    filesState.colorModes[fileIndex] = 'assigned';
   }
   const geometry = host.createGeometryFromSpatialData(data);
   const material = host.createMaterialForFile(data, fileIndex);

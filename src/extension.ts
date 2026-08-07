@@ -3,6 +3,7 @@ import { isColmapModelFile } from '../engine/src/formats/colmap/colmapFiles';
 import { PointCloudEditorProvider } from './pointCloudEditorProvider';
 import { DatasetManager } from './dataset/datasetManager';
 import { glob } from 'glob';
+import { buildDicomSeriesNrrd, scanDicomFolder } from './providerHandlers/dicomFolderLoader';
 
 export function activate(context: vscode.ExtensionContext) {
   // Register the PLY editor provider
@@ -164,6 +165,12 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('plyViewer.openDicomFolder', async () => {
+      await handleOpenDicomFolder(context, provider);
+    })
+  );
+
   // Register command for resetting all extension settings
   context.subscriptions.push(
     vscode.commands.registerCommand('plyViewer.resetSettings', async () => {
@@ -300,6 +307,92 @@ async function handleOpenMultipleFiles(provider: PointCloudEditorProvider): Prom
 
 export function deactivate() {
   console.log('3D Visualizer extension is now deactivated!');
+}
+
+async function handleOpenDicomFolder(
+  context: vscode.ExtensionContext,
+  provider: PointCloudEditorProvider
+): Promise<void> {
+  try {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      title: 'Select a folder containing DICOM images',
+      openLabel: 'Scan DICOM Folder',
+    });
+    if (!picked?.length) {
+      return;
+    }
+
+    const series = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Scanning DICOM folder',
+        cancellable: true,
+      },
+      async (progress, token) =>
+        scanDicomFolder(
+          picked[0],
+          (done, total, name) =>
+            progress.report({
+              message: `${done} / ${total} · ${name}`,
+              increment: total ? 100 / total : undefined,
+            }),
+          () => token.isCancellationRequested
+        )
+    );
+    if (!series.length) {
+      vscode.window.showWarningMessage(
+        'No native, uncompressed grayscale DICOM image series was found in that folder.'
+      );
+      return;
+    }
+
+    let selected = series;
+    if (series.length > 1) {
+      const choices = series.map(item => ({ label: item.label, series: item, picked: true }));
+      const choice = await vscode.window.showQuickPick(choices, {
+        title: 'Select DICOM series to open as volumes',
+        canPickMany: true,
+        placeHolder: 'Each selected series becomes one volume',
+      });
+      if (!choice?.length) {
+        return;
+      }
+      selected = choice.map(item => item.series);
+    }
+
+    const handoffFolder = vscode.Uri.joinPath(
+      context.globalStorageUri,
+      `dicom-volume-${Date.now()}`
+    );
+    await vscode.workspace.fs.createDirectory(handoffFolder);
+    const targets: vscode.Uri[] = [];
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Building DICOM volume',
+        cancellable: false,
+      },
+      async progress => {
+        for (let index = 0; index < selected.length; index++) {
+          progress.report({
+            message: `${index + 1} / ${selected.length} · ${selected[index].label}`,
+          });
+          const bytes = buildDicomSeriesNrrd(selected[index]);
+          const target = vscode.Uri.joinPath(handoffFolder, `series-${index + 1}.nrrd`);
+          await vscode.workspace.fs.writeFile(target, bytes);
+          targets.push(target);
+        }
+      }
+    );
+    await provider.openFilesTogether(targets);
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Could not open the DICOM folder: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 /**

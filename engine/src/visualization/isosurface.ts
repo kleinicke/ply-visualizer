@@ -200,6 +200,12 @@ function packageVolumeMesh(
   step: readonly [number, number, number]
 ): VolumeMeshResult {
   const units = volume.spaceUnits;
+  const m = volume.ijkToWorld;
+  const effectiveSpacing: [number, number, number] = [
+    Math.hypot(m[0], m[4], m[8]) * step[0],
+    Math.hypot(m[1], m[5], m[9]) * step[1],
+    Math.hypot(m[2], m[6], m[10]) * step[2],
+  ];
   const comments = [
     `Volume ${volume.sizes.join(' x ')} voxels`,
     `Isosurface at ${formatThreshold(threshold, volume)}`,
@@ -236,6 +242,9 @@ function packageVolumeMesh(
       intensityUnits: volume.intensityUnits,
       threshold,
       extractionStep: mesh.step,
+      effectiveSpacing,
+      renderedTriangleCount: mesh.triangleCount,
+      sourceVoxelCount: volume.sizes[0] * volume.sizes[1] * volume.sizes[2],
       volumeRenderMode: 'surface',
       channels: volume.channels,
     },

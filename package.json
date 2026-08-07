@@ -171,6 +171,11 @@
         "category": "3D Visualizer"
       },
       {
+        "command": "plyViewer.openDicomFolder",
+        "title": "Open DICOM Folder as Volume",
+        "category": "3D Visualizer"
+      },
+      {
         "command": "plyViewer.playPointCloudSequence",
         "title": "Play Point Cloud Sequence (Wildcard)",
         "category": "3D Visualizer"

@@ -8,13 +8,17 @@ import {
 } from '../../engine/src/visualization/isosurface';
 import { chooseStep } from '../../engine/src/visualization/marchingCubes';
 import { buildVolumePointsAsync } from '../../engine/src/visualization/volumePoints';
+import { buildVolumeSlicesAsync } from '../../engine/src/visualization/volumeSlices';
 
-export type VolumeRenderMode = 'surface' | 'points';
+export type VolumeRenderMode = 'surface' | 'points' | 'slices';
 
 export interface VolumeExtractionOptions {
   threshold: number;
   step: [number, number, number];
   renderMode: VolumeRenderMode;
+  windowCenter: number;
+  windowWidth: number;
+  sliceIndices: [number, number, number];
 }
 
 export interface VolumeSession {
@@ -27,14 +31,29 @@ export interface VolumeSession {
 const sessions = new Map<string, VolumeSession>();
 
 export function retainVolume(key: string, volume: VolumeData): VolumeSession {
+  const histogram = volumeHistogram(volume);
+  const declaredCenter = Number(volume.header['window center']);
+  const declaredWidth = Number(volume.header['window width']);
   const session: VolumeSession = {
     volume,
     options: {
       threshold: defaultThreshold(volume),
       step: chooseStep(volume.sizes, volume.ijkToWorld),
       renderMode: 'surface',
+      windowCenter: Number.isFinite(declaredCenter)
+        ? declaredCenter
+        : (histogram.min + histogram.max) / 2,
+      windowWidth:
+        Number.isFinite(declaredWidth) && declaredWidth > 0
+          ? declaredWidth
+          : Math.max(Number.EPSILON, histogram.max - histogram.min),
+      sliceIndices: volume.sizes.map(size => Math.floor((size - 1) / 2)) as [
+        number,
+        number,
+        number,
+      ],
     },
-    histogram: volumeHistogram(volume),
+    histogram,
     generation: 0,
   };
   sessions.set(key, session);
@@ -60,6 +79,10 @@ export function decorateVolumeData(
     volumeHistogram: session.histogram.bins,
     volumeRange: { min: session.histogram.min, max: session.histogram.max },
     volumeRenderMode: session.options.renderMode,
+    windowCenter: session.options.windowCenter,
+    windowWidth: session.options.windowWidth,
+    sliceIndices: session.options.sliceIndices,
+    photometricInterpretation: session.volume.header['photometric interpretation'],
   };
   return data;
 }
@@ -90,8 +113,35 @@ export async function reextractVolume(
   const step = incomingStep.map((value: unknown, axis: number) =>
     Math.max(1, Math.min(session.volume.sizes[axis] - 1, Math.floor(Number(value) || 1)))
   ) as [number, number, number];
-  const renderMode: VolumeRenderMode = message.renderMode === 'points' ? 'points' : 'surface';
-  session.options = { threshold, step, renderMode };
+  const renderMode: VolumeRenderMode =
+    message.renderMode === 'points'
+      ? 'points'
+      : message.renderMode === 'slices'
+        ? 'slices'
+        : 'surface';
+  const windowCenter = Number.isFinite(Number(message.windowCenter))
+    ? Number(message.windowCenter)
+    : session.options.windowCenter;
+  const windowWidth = Math.max(
+    Number.EPSILON,
+    Number.isFinite(Number(message.windowWidth))
+      ? Number(message.windowWidth)
+      : session.options.windowWidth
+  );
+  const incomingSlices = Array.isArray(message.sliceIndices)
+    ? message.sliceIndices
+    : session.options.sliceIndices;
+  const sliceIndices = incomingSlices.map((value: unknown, axis: number) =>
+    Math.max(0, Math.min(session.volume.sizes[axis] - 1, Math.round(Number(value) || 0)))
+  ) as [number, number, number];
+  session.options = {
+    threshold,
+    step,
+    renderMode,
+    windowCenter,
+    windowWidth,
+    sliceIndices,
+  };
 
   let lastProgress = -1;
   const onProgress = (fraction: number) => {
@@ -115,17 +165,23 @@ export async function reextractVolume(
       return;
     }
     const result =
-      renderMode === 'points'
-        ? await buildVolumePointsAsync(
+      renderMode === 'slices'
+        ? await buildVolumeSlicesAsync(
             session.volume,
-            { threshold, step, onProgress },
+            { windowCenter, windowWidth, slices: sliceIndices, onProgress },
             () => generation !== session.generation
           )
-        : await buildVolumeMeshAsync(
-            session.volume,
-            { threshold, step, onProgress },
-            () => generation !== session.generation
-          );
+        : renderMode === 'points'
+          ? await buildVolumePointsAsync(
+              session.volume,
+              { threshold, step, onProgress },
+              () => generation !== session.generation
+            )
+          : await buildVolumeMeshAsync(
+              session.volume,
+              { threshold, step, onProgress },
+              () => generation !== session.generation
+            );
     if (!result || generation !== session.generation) {
       return;
     }

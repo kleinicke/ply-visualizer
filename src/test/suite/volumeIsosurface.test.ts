@@ -18,6 +18,7 @@ import {
   sampleRange,
 } from '../../../engine/src/visualization/isosurface';
 import { buildVolumePoints } from '../../../engine/src/visualization/volumePoints';
+import { buildVolumeSlicesAsync } from '../../../engine/src/visualization/volumeSlices';
 import {
   boundingBoxSectionPlanes,
   volumeSectionPlanes,
@@ -324,6 +325,60 @@ suite('Marching cubes tables', () => {
   });
 });
 
+suite('Orthogonal volume slices', () => {
+  test('maps original voxel samples through window/level on three physical planes', async () => {
+    const volume: VolumeData = {
+      sizes: [2, 2, 2],
+      samples: new Float32Array([0, 25, 50, 75, 100, 125, 150, 200]),
+      ijkToWorld: [0.001, 0, 0, 1, 0, 0.002, 0, 2, 0, 0, 0.003, 3, 0, 0, 0, 1],
+      spaceUnits: 'm',
+      channels: 1,
+      header: { 'photometric interpretation': 'MONOCHROME2' },
+    };
+
+    const result = await buildVolumeSlicesAsync(
+      volume,
+      { windowCenter: 100, windowWidth: 200, slices: [1, 0, 1] },
+      () => false
+    );
+
+    assert.ok(result);
+    assert.deepStrictEqual(result.slices, [1, 0, 1]);
+    assert.strictEqual(result.data.vertexCount, 12);
+    assert.strictEqual(result.data.faceCount, 6);
+    assert.deepStrictEqual(
+      Array.from(result.data.colorsArray!.slice(0, 6)),
+      [32, 32, 32, 96, 96, 96]
+    );
+    assert.ok(Math.abs(result.data.positionsArray![0] - 1.001) < 1e-6);
+    assert.strictEqual(result.data.positionsArray![1], 2);
+    assert.strictEqual(result.data.positionsArray![2], 3);
+    assert.strictEqual(result.data.metadata?.windowCenter, 100);
+  });
+
+  test('honours MONOCHROME1 presentation without changing stored intensities', async () => {
+    const volume: VolumeData = {
+      sizes: [2, 2, 2],
+      samples: new Uint8Array([0, 100, 0, 100, 0, 100, 0, 100]),
+      ijkToWorld: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      spaceUnits: 'm',
+      channels: 1,
+      header: { 'photometric interpretation': 'MONOCHROME1' },
+    };
+    const result = await buildVolumeSlicesAsync(
+      volume,
+      { windowCenter: 50, windowWidth: 100, slices: [0, 0, 0] },
+      () => false
+    );
+    assert.ok(result);
+    assert.deepStrictEqual(
+      Array.from(result.data.colorsArray!.slice(12, 18)),
+      [255, 255, 255, 0, 0, 0]
+    );
+    assert.strictEqual(volume.samples[0], 0);
+  });
+});
+
 suite('Isosurface extraction', () => {
   test('produces a closed manifold surface', () => {
     const volume = makeBall(32, 10);
@@ -526,6 +581,9 @@ suite('Volume points and clipping', () => {
     assert.ok(result.data.positionsArray![0] >= 10);
     assert.ok(result.data.positionsArray![1] >= 20);
     assert.ok(result.data.positionsArray![2] >= 30);
+    assert.deepStrictEqual(result.data.metadata?.effectiveSpacing, [2, 3, 4]);
+    assert.strictEqual(result.data.metadata?.renderedPointCount, result.data.vertexCount);
+    assert.strictEqual(result.data.metadata?.sourceVoxelCount, 512);
   });
 
   test('uses reciprocal affine normals for sheared slice planes', () => {

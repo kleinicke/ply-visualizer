@@ -505,7 +505,7 @@ class PointCloudVisualizer {
       renderModeToggles.updateUniversalRenderButtonStates(this);
       // FileItem's mode-dependent controls are declarative; wake Svelte after
       // the asynchronous Spark state changes.
-      filesState.renderTick += 1;
+      filesState.renderModeTick += 1;
     };
     this.init();
   }
@@ -2329,9 +2329,10 @@ class PointCloudVisualizer {
 
     if (data.faceCount > 0) {
       // Mesh material
-      const material: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial = this.useUnlitPly
-        ? new THREE.MeshBasicMaterial()
-        : new THREE.MeshLambertMaterial();
+      const material: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial =
+        this.useUnlitPly || data.metadata?.volumeRenderMode === 'slices'
+          ? new THREE.MeshBasicMaterial()
+          : new THREE.MeshLambertMaterial();
       material.side = THREE.DoubleSide; // More robust visibility if face winding varies
       // For files without explicit normals, prefer flat shading to avoid odd gradients
       if (material instanceof THREE.MeshLambertMaterial) {
@@ -2626,7 +2627,7 @@ class PointCloudVisualizer {
    */
   private toggleUniversalRenderMode(fileIndex: number, mode: string): void {
     renderModeToggles.toggleUniversalRenderMode(this, fileIndex, mode);
-    filesState.renderTick += 1;
+    filesState.renderModeTick += 1;
   }
 
   private toggleSolidRendering(fileIndex: number): void {
@@ -2861,10 +2862,10 @@ class PointCloudVisualizer {
       // Initialize color mode before creating material. The slot already exists
       // at entryIndex, so this only assigns.
       const initialColorMode =
-        this.useOriginalColors && data.hasColors
+        data.metadata?.volumeRenderMode === 'slices' && data.hasColors
           ? 'original'
-          : data.metadata?.volumeRenderMode === 'surface' && data.scalarFields?.gradient
-            ? 'scalar:gradient:viridis'
+          : this.useOriginalColors && data.hasColors
+            ? 'original'
             : this.hasIntensityData(data)
               ? 'intensity'
               : 'assigned';

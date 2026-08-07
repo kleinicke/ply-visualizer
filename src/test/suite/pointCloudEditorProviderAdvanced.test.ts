@@ -5,6 +5,65 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { handleAddFileFromPath } from '../../providerHandlers/addFileHandlers';
 import { clearVolume } from '../../providerHandlers/volumeSessions';
+import {
+  buildDicomSeriesNrrd,
+  parseDicomSlice,
+  scanDicomFolder,
+} from '../../providerHandlers/dicomFolderLoader';
+import { NrrdParser } from '../../../engine/src/parsers/nrrdParser';
+
+function dicomElement(group: number, element: number, vr: string, value: Buffer): Buffer {
+  const padded =
+    value.length % 2 ? Buffer.concat([value, Buffer.from(vr === 'UI' ? [0] : [32])]) : value;
+  const long = new Set(['OB', 'OW', 'OF', 'SQ', 'UT', 'UN']).has(vr);
+  const header = Buffer.alloc(long ? 12 : 8);
+  header.writeUInt16LE(group, 0);
+  header.writeUInt16LE(element, 2);
+  header.write(vr, 4, 2, 'ascii');
+  if (long) {
+    header.writeUInt32LE(padded.length, 8);
+  } else {
+    header.writeUInt16LE(padded.length, 6);
+  }
+  return Buffer.concat([header, padded]);
+}
+
+function makeSyntheticDicom(instance: number, zMillimetres: number): Buffer {
+  const text = (value: string) => Buffer.from(value, 'ascii');
+  const ushort = (value: number) => {
+    const buffer = Buffer.alloc(2);
+    buffer.writeUInt16LE(value);
+    return buffer;
+  };
+  const pixels = Buffer.alloc(8);
+  [0, 100, 200, 300].forEach((value, index) => pixels.writeUInt16LE(value, index * 2));
+  return Buffer.concat([
+    Buffer.alloc(128),
+    Buffer.from('DICM'),
+    dicomElement(0x0002, 0x0010, 'UI', text('1.2.840.10008.1.2.1')),
+    dicomElement(0x0008, 0x0060, 'CS', text('CT')),
+    dicomElement(0x0008, 0x0018, 'UI', text(`1.2.3.4.${instance}`)),
+    dicomElement(0x0020, 0x000d, 'UI', text('1.2.3')),
+    dicomElement(0x0020, 0x000e, 'UI', text('1.2.3.4')),
+    dicomElement(0x0020, 0x0011, 'IS', text('7')),
+    dicomElement(0x0020, 0x0013, 'IS', text(String(instance))),
+    dicomElement(0x0020, 0x0032, 'DS', text(`-100\\-50\\${zMillimetres}`)),
+    dicomElement(0x0020, 0x0037, 'DS', text('1\\0\\0\\0\\1\\0')),
+    dicomElement(0x0028, 0x0002, 'US', ushort(1)),
+    dicomElement(0x0028, 0x0004, 'CS', text('MONOCHROME2')),
+    dicomElement(0x0028, 0x0010, 'US', ushort(2)),
+    dicomElement(0x0028, 0x0011, 'US', ushort(2)),
+    dicomElement(0x0028, 0x0030, 'DS', text('0.5\\0.75')),
+    dicomElement(0x0028, 0x0100, 'US', ushort(16)),
+    dicomElement(0x0028, 0x0101, 'US', ushort(12)),
+    dicomElement(0x0028, 0x0103, 'US', ushort(0)),
+    dicomElement(0x0028, 0x1050, 'DS', text('40')),
+    dicomElement(0x0028, 0x1051, 'DS', text('400')),
+    dicomElement(0x0028, 0x1052, 'DS', text('-1000')),
+    dicomElement(0x0028, 0x1053, 'DS', text('1')),
+    dicomElement(0x7fe0, 0x0010, 'OW', pixels),
+  ]);
+}
 
 suite('Point Cloud Editor Provider Advanced Test Suite', () => {
   let extension: vscode.Extension<any> | undefined;
@@ -194,6 +253,69 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
       clearVolume(vscode.Uri.file(filePath).toString());
       fs.unlinkSync(filePath);
     }
+  });
+
+  test('Should discover extensionless DICOM slices and build a metre-scale volume', async () => {
+    const folder = path.join(os.tmpdir(), `dicom-folder-test-${process.pid}-${Date.now()}`);
+    fs.mkdirSync(folder);
+    fs.writeFileSync(path.join(folder, 'slice-one'), makeSyntheticDicom(1, 0));
+    fs.writeFileSync(path.join(folder, 'slice-one-copy'), makeSyntheticDicom(1, 0));
+    fs.writeFileSync(path.join(folder, 'slice-two'), makeSyntheticDicom(2, 2));
+    fs.writeFileSync(path.join(folder, 'notes.txt'), 'not a DICOM file');
+
+    try {
+      const parsed = parseDicomSlice(
+        vscode.Uri.file(path.join(folder, 'slice-one')),
+        fs.readFileSync(path.join(folder, 'slice-one'))
+      );
+      assert.ok(parsed);
+      assert.strictEqual(parsed.windowCenter, 40);
+      assert.strictEqual(parsed.windowWidth, 400);
+
+      const series = await scanDicomFolder(vscode.Uri.file(folder));
+      assert.strictEqual(series.length, 1);
+      assert.strictEqual(series[0].slices.length, 2);
+      const nrrd = buildDicomSeriesNrrd(series[0]);
+      const volume = await new NrrdParser().parse(nrrd, 'direct-dicom.nrrd');
+      assert.deepStrictEqual(volume.sizes, [2, 2, 2]);
+      assert.strictEqual(volume.spaceUnits, 'm');
+      assert.ok(Math.abs(volume.ijkToWorld[0] + 0.00075) < 1e-9);
+      assert.ok(Math.abs(volume.ijkToWorld[5] + 0.0005) < 1e-9);
+      assert.ok(Math.abs(volume.ijkToWorld[10] - 0.002) < 1e-9);
+      assert.strictEqual(volume.ijkToWorld[3], 0.1);
+      assert.strictEqual(volume.ijkToWorld[7], 0.05);
+      assert.strictEqual(volume.samples[0], -1000);
+      assert.strictEqual(volume.samples[3], -700);
+      assert.strictEqual(volume.header['window center'], '40');
+      assert.strictEqual(volume.header['window width'], '400');
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  test('Should scan the real extensionless Siemens DICOM folder', async function () {
+    this.timeout(10_000);
+
+    const folder =
+      '/Users/florian/Projects/cursor/test_data/testfiles/scientific/MRT OSG Februar 2023';
+    if (!fs.existsSync(folder)) {
+      this.skip();
+      return;
+    }
+
+    const series = await scanDicomFolder(vscode.Uri.file(folder));
+    assert.strictEqual(series.length, 4);
+    assert.deepStrictEqual(
+      series.map(item => item.slices.length),
+      [44, 26, 26, 36]
+    );
+    assert.ok(series.every(item => item.slices.every(slice => !path.extname(slice.uri.fsPath))));
+
+    const nrrd = buildDicomSeriesNrrd(series[0]);
+    const volume = await new NrrdParser().parse(nrrd, 'real-siemens-series.nrrd');
+    assert.deepStrictEqual(volume.sizes, [640, 640, 44]);
+    assert.strictEqual(volume.spaceUnits, 'm');
+    assert.ok(Array.from(volume.samples.subarray(0, 1024)).every(Number.isFinite));
   });
 
   test('Should support webview serialization', () => {
