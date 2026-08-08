@@ -8,12 +8,14 @@
   const range = metadata.volumeRange as { min: number; max: number };
   const histogram = (metadata.volumeHistogram as number[]) || [];
   let threshold = $state(Number(metadata.threshold ?? range.min));
-  let renderMode = $state<'points' | 'mesh' | 'slices'>(
+  let renderMode = $state<'points' | 'mesh' | 'slices' | 'voxels'>(
     metadata.volumeRenderMode === 'mesh' || metadata.volumeRenderMode === 'surface'
       ? 'mesh'
       : metadata.volumeRenderMode === 'slices'
         ? 'slices'
-        : 'points'
+        : metadata.volumeRenderMode === 'voxels'
+          ? 'voxels'
+          : 'points'
   );
   let step = $state<[number, number, number]>(
     Array.isArray(metadata.meshExtractionStep)
@@ -38,8 +40,12 @@
   const units = (metadata.intensityUnits as string | undefined) || '';
   const isHU = units.trim().toUpperCase() === 'HU';
   const sizes = metadata.volumeSizes as [number, number, number];
+  // Voxel mode parks the global planes at the full extent, so its own clip has
+  // to be recovered from the extraction metadata rather than from them.
   let clipRanges = $state<Array<[number, number]>>(
-    sizes.map((size, axis) => host.sectionPlanes.getRange(fileIndex, axis, size))
+    Array.isArray(metadata.voxelClip)
+      ? (metadata.voxelClip.map((clip: number[]) => [...clip]) as Array<[number, number]>)
+      : sizes.map((size, axis) => host.sectionPlanes.getRange(fileIndex, axis, size))
   );
   const progress = $derived(volumeState.progress[sessionId]);
   const error = $derived(volumeState.errors[sessionId]);
@@ -68,9 +74,31 @@
         windowCenter,
         windowWidth,
         sliceIndices,
+        clipRanges,
         requestId,
       });
     }, delay);
+  }
+
+  /**
+   * Voxel mode builds only the shell of the retained block, so a clipping
+   * plane through it would show a hollow inside. It clips in the extraction
+   * instead, which means the global planes have to be opened up while it is
+   * active — and restored from the same ranges when another mode takes over.
+   */
+  function applyClipPlanes() {
+    const geometryClips = renderMode === 'voxels';
+    clipRanges.forEach((clip, axis) => {
+      host.sectionPlanes.setVolumeRange(
+        fileIndex,
+        data,
+        axis,
+        geometryClips ? 0 : clip[0],
+        geometryClips ? sizes[axis] - 1 : clip[1],
+        host.transformationMatrices[fileIndex]
+      );
+    });
+    host.requestRender();
   }
 
   function setThreshold(value: number, delay = 300) {
@@ -80,7 +108,15 @@
 
   function onModeChange(event: Event) {
     const value = (event.target as HTMLSelectElement).value;
-    renderMode = value === 'mesh' ? 'mesh' : value === 'slices' ? 'slices' : 'points';
+    renderMode =
+      value === 'mesh'
+        ? 'mesh'
+        : value === 'slices'
+          ? 'slices'
+          : value === 'voxels'
+            ? 'voxels'
+            : 'points';
+    applyClipPlanes();
     requestExtraction(0);
   }
 
@@ -121,15 +157,10 @@
     if (edge === 0) next[axis][0] = Math.min(value, next[axis][1]);
     else next[axis][1] = Math.max(value, next[axis][0]);
     clipRanges = next;
-    host.sectionPlanes.setVolumeRange(
-      fileIndex,
-      data,
-      axis,
-      next[axis][0],
-      next[axis][1],
-      host.transformationMatrices[fileIndex]
-    );
-    host.requestRender();
+    applyClipPlanes();
+    if (renderMode === 'voxels') {
+      requestExtraction();
+    }
   }
 </script>
 
@@ -138,6 +169,7 @@
     <strong style="font-size:11px;">Volume</strong>
     <select aria-label="Volume render mode" value={renderMode} onchange={onModeChange} style="font-size:10px;">
       <option value="points">Point cloud (pixels)</option>
+      <option value="voxels">Voxels (solid cubes)</option>
       <option value="mesh">Mesh (isosurface)</option>
       <option value="slices">Orthogonal slices</option>
     </select>
@@ -199,16 +231,20 @@
     <div style="margin-top:5px;font-size:10px;opacity:0.8;">
       {#if renderMode === 'points'}
         {Number(data.vertexCount).toLocaleString()} points
+      {:else if renderMode === 'voxels'}
+        {Number(data.metadata?.renderedVoxelCount ?? 0).toLocaleString()} voxels · {Number(data.faceCount).toLocaleString()} triangles
       {:else}
         {Number(data.faceCount).toLocaleString()} triangles
       {/if}
       {#if renderMode === 'mesh'}
         · sampling {step.join(' × ')}
+      {:else if renderMode === 'voxels'}
+        · gap-free boxes, hidden faces removed
       {:else}
         · one point per retained voxel
       {/if}
       {#if Array.isArray(metadata.effectiveSpacing)}
-        · spacing {metadata.effectiveSpacing.map((value: number) => formatted(value)).join(' × ')} {metadata.spaceUnits || ''}
+        · {renderMode === 'voxels' ? 'box size' : 'spacing'} {metadata.effectiveSpacing.map((value: number) => formatted(value)).join(' × ')} {metadata.spaceUnits || ''}
       {/if}
     </div>
 

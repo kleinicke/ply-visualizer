@@ -126,6 +126,7 @@ import type { VolumeData } from './parsers/nrrdParser';
 import { buildVolumePointsAsync } from './visualization/volumePoints';
 import { buildVolumeMeshAsync } from './visualization/isosurface';
 import { buildVolumeSlicesAsync } from './visualization/volumeSlices';
+import { buildVolumeVoxelsAsync } from './visualization/volumeVoxels';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
@@ -2340,7 +2341,11 @@ class PointCloudVisualizer {
     if (data.faceCount > 0) {
       // Mesh material
       const material: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial =
-        this.useUnlitPly || data.metadata?.volumeRenderMode === 'slices'
+        // Slice planes and voxel boxes carry their presentation grey directly
+        // in the vertex colours, so scene lighting must not tint them.
+        this.useUnlitPly ||
+        data.metadata?.volumeRenderMode === 'slices' ||
+        data.metadata?.volumeRenderMode === 'voxels'
           ? new THREE.MeshBasicMaterial()
           : new THREE.MeshLambertMaterial();
       material.side = THREE.DoubleSide; // More robust visibility if face winding varies
@@ -2884,7 +2889,8 @@ class PointCloudVisualizer {
       // at entryIndex, so this only assigns.
       const initialColorMode =
         (data.metadata?.volumeRenderMode === 'slices' ||
-          data.metadata?.volumeRenderMode === 'points') &&
+          data.metadata?.volumeRenderMode === 'points' ||
+          data.metadata?.volumeRenderMode === 'voxels') &&
         data.hasColors
           ? 'original'
           : this.useOriginalColors && data.hasColors
@@ -3443,7 +3449,9 @@ class PointCloudVisualizer {
     const volumeSessionId = this.spatialFiles[fileIndex]?.metadata?.volumeSessionId;
     if (typeof volumeSessionId === 'string') {
       const source = this.volumeSources.get(volumeSessionId);
-      if (source) {source.generation++;}
+      if (source) {
+        source.generation++;
+      }
       this.volumeSources.delete(volumeSessionId);
     }
     this.splatMode.onFileRemoved(fileIndex);
@@ -3980,10 +3988,12 @@ class PointCloudVisualizer {
     fileIndex: number;
     threshold: number;
     step: [number, number, number];
-    renderMode: 'points' | 'mesh' | 'slices';
+    renderMode: 'points' | 'mesh' | 'slices' | 'voxels';
     windowCenter: number;
     windowWidth: number;
     sliceIndices: [number, number, number];
+    /** Visible index range per axis; voxel mode clips in geometry, not planes. */
+    clipRanges?: Array<[number, number]>;
     requestId: number;
   }): Promise<void> {
     const source = this.volumeSources.get(request.sessionId);
@@ -4017,17 +4027,30 @@ class PointCloudVisualizer {
                 { threshold: request.threshold, step: request.step, onProgress },
                 cancelled
               )
-            : await buildVolumePointsAsync(
-                source.volume,
-                {
-                  threshold: request.threshold,
-                  step: [1, 1, 1],
-                  windowCenter: request.windowCenter,
-                  windowWidth: request.windowWidth,
-                  onProgress,
-                },
-                cancelled
-              );
+            : request.renderMode === 'voxels'
+              ? await buildVolumeVoxelsAsync(
+                  source.volume,
+                  {
+                    threshold: request.threshold,
+                    step: [1, 1, 1],
+                    clip: request.clipRanges,
+                    windowCenter: request.windowCenter,
+                    windowWidth: request.windowWidth,
+                    onProgress,
+                  },
+                  cancelled
+                )
+              : await buildVolumePointsAsync(
+                  source.volume,
+                  {
+                    threshold: request.threshold,
+                    step: [1, 1, 1],
+                    windowCenter: request.windowCenter,
+                    windowWidth: request.windowWidth,
+                    onProgress,
+                  },
+                  cancelled
+                );
       if (!result || cancelled()) {
         return;
       }

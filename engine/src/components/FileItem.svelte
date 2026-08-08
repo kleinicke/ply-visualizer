@@ -188,6 +188,10 @@
     return canRenderSplats && !!host.splatMode?.isActive(index);
   });
 
+  // Volume voxels are solid boxes sized from the voxel spacing, so there is no
+  // point sprite whose size could be tuned.
+  const hasPointSize = $derived(data?.metadata?.volumeRenderMode !== 'voxels');
+
   function onRenderModeClick(mode: string) {
     host.toggleUniversalRenderMode(index, mode);
   }
@@ -568,7 +572,7 @@
         </div>
       {/if}
 
-      {#if !splatActive}
+      {#if !splatActive && hasPointSize}
         <div class="point-size-control" style="margin-top: 4px;">
           <label for={`size-${index}`} style="font-size: 11px;">Point Size:</label>
           <input

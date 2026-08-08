@@ -19,6 +19,7 @@ import {
 } from '../../../engine/src/visualization/isosurface';
 import { buildVolumePoints } from '../../../engine/src/visualization/volumePoints';
 import { buildVolumeSlicesAsync } from '../../../engine/src/visualization/volumeSlices';
+import { buildVolumeVoxelsAsync } from '../../../engine/src/visualization/volumeVoxels';
 import {
   boundingBoxSectionPlanes,
   volumeSectionPlanes,
@@ -377,6 +378,138 @@ suite('Orthogonal volume slices', () => {
       [255, 255, 255, 0, 0, 0]
     );
     assert.strictEqual(volume.samples[0], 0);
+  });
+});
+
+suite('Volume voxels', () => {
+  /** Distinct coordinate values along one axis, rounded to kill float noise. */
+  function axisValues(positions: Float32Array, axis: number): number[] {
+    const seen = new Set<number>();
+    for (let v = 0; v < positions.length / 3; v++) {
+      seen.add(Number(positions[v * 3 + axis].toFixed(6)));
+    }
+    return [...seen].sort((a, b) => a - b);
+  }
+
+  test('sizes each box to the voxel spacing, including the slice gap', async () => {
+    const volume: VolumeData = {
+      sizes: [1, 1, 1],
+      samples: new Float32Array([200]),
+      // 0.5 mm pixels, 3 mm slice spacing — the anisotropy the mode exists for.
+      ijkToWorld: [0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 3, 0, 0, 0, 0, 1],
+      spaceUnits: 'mm',
+      channels: 1,
+      header: { 'photometric interpretation': 'MONOCHROME2' },
+    };
+
+    const result = await buildVolumeVoxelsAsync(
+      volume,
+      { threshold: 0, windowCenter: 100, windowWidth: 200 },
+      () => false
+    );
+
+    assert.ok(result);
+    assert.deepStrictEqual(result.voxelSize, [0.5, 0.5, 3]);
+    assert.strictEqual(result.data.faceCount, 12, 'six quads for an isolated voxel');
+    assert.strictEqual(result.data.vertexCount, 24);
+    assert.deepStrictEqual(axisValues(result.data.positionsArray!, 0), [-0.25, 0.25]);
+    assert.deepStrictEqual(axisValues(result.data.positionsArray!, 1), [-0.25, 0.25]);
+    assert.deepStrictEqual(axisValues(result.data.positionsArray!, 2), [-1.5, 1.5]);
+    assert.strictEqual(result.data.metadata?.volumeRenderMode, 'voxels');
+    assert.strictEqual(result.data.metadata?.renderedVoxelCount, 1);
+  });
+
+  test('neighbouring boxes touch across the slice gap and drop the shared faces', async () => {
+    const volume: VolumeData = {
+      sizes: [1, 1, 2],
+      samples: new Float32Array([200, 200]),
+      ijkToWorld: [0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 3, 0, 0, 0, 0, 1],
+      spaceUnits: 'mm',
+      channels: 1,
+      header: {},
+    };
+
+    const result = await buildVolumeVoxelsAsync(
+      volume,
+      { threshold: 0, windowCenter: 100, windowWidth: 200 },
+      () => false
+    );
+
+    assert.ok(result);
+    // 12 quads minus the two that face each other across the shared plane.
+    assert.strictEqual(result.data.faceCount, 20);
+    // The only interior coordinate is the single shared plane at z = 1.5: the
+    // boxes meet there exactly, with neither a gap nor an overlap.
+    assert.deepStrictEqual(axisValues(result.data.positionsArray!, 2), [-1.5, 1.5, 4.5]);
+    assert.strictEqual(result.data.metadata?.renderedVoxelCount, 2);
+  });
+
+  test('honours the threshold and the window/level grey mapping', async () => {
+    const volume: VolumeData = {
+      sizes: [2, 1, 1],
+      samples: new Float32Array([0, 200]),
+      ijkToWorld: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      spaceUnits: 'mm',
+      channels: 1,
+      header: { 'photometric interpretation': 'MONOCHROME2' },
+    };
+
+    const result = await buildVolumeVoxelsAsync(
+      volume,
+      { threshold: 100, windowCenter: 100, windowWidth: 200 },
+      () => false
+    );
+
+    assert.ok(result);
+    assert.strictEqual(result.data.metadata?.renderedVoxelCount, 1);
+    assert.strictEqual(result.data.faceCount, 12);
+    // Only the retained voxel is drawn, centred on i = 1.
+    assert.deepStrictEqual(axisValues(result.data.positionsArray!, 0), [0.5, 1.5]);
+    // The sample sits at the top of the window, so its brightest faces are white.
+    assert.strictEqual(Math.max(...Array.from(result.data.colorsArray!)), 255);
+    assert.strictEqual(result.data.intensityArray![0], 200);
+  });
+
+  test('caps the cut with real faces when a slice range clips the block', async () => {
+    // A solid 4x4x4 block: with no clip the shell is 6 * 16 = 96 quads.
+    const volume: VolumeData = {
+      sizes: [4, 4, 4],
+      samples: new Float32Array(64).fill(100),
+      ijkToWorld: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      spaceUnits: 'mm',
+      channels: 1,
+      header: {},
+    };
+
+    const full = await buildVolumeVoxelsAsync(volume, { threshold: 0 }, () => false);
+    assert.ok(full);
+    assert.strictEqual(full.data.faceCount, 96 * 2);
+
+    // Half the block: still a closed shell of 2x(4x4) + 4x(2x4) = 64 quads, so
+    // the exposed cut is capped rather than left hollow.
+    const clipped = await buildVolumeVoxelsAsync(
+      volume,
+      {
+        threshold: 0,
+        clip: [
+          [0, 1],
+          [0, 3],
+          [0, 3],
+        ],
+      },
+      () => false
+    );
+    assert.ok(clipped);
+    assert.strictEqual(clipped.data.metadata?.renderedVoxelCount, 32);
+    assert.strictEqual(clipped.data.faceCount, 64 * 2);
+    const spanX = axisValues(clipped.data.positionsArray!, 0);
+    assert.deepStrictEqual([spanX[0], spanX[spanX.length - 1]], [-0.5, 1.5]);
+  });
+
+  test('cancels between slabs without returning partial geometry', async () => {
+    const volume = makeBall(16, 6);
+    const result = await buildVolumeVoxelsAsync(volume, { threshold: 0 }, () => true);
+    assert.strictEqual(result, null);
   });
 });
 

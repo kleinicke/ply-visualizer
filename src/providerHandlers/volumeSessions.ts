@@ -8,9 +8,10 @@ import {
   buildVolumePointsAsync,
 } from '../../engine/src/visualization/volumePoints';
 import { buildVolumeSlicesAsync } from '../../engine/src/visualization/volumeSlices';
+import { buildVolumeVoxelsAsync } from '../../engine/src/visualization/volumeVoxels';
 import { resolveVolumeWindow } from '../../engine/src/visualization/volumePresentation';
 
-export type VolumeRenderMode = 'points' | 'mesh' | 'slices';
+export type VolumeRenderMode = 'points' | 'mesh' | 'slices' | 'voxels';
 
 export interface VolumeExtractionOptions {
   threshold: number;
@@ -19,6 +20,7 @@ export interface VolumeExtractionOptions {
   windowCenter: number;
   windowWidth: number;
   sliceIndices: [number, number, number];
+  clipRanges: Array<[number, number]>;
 }
 
 export interface VolumeSession {
@@ -48,6 +50,7 @@ export function retainVolume(key: string, volume: VolumeData): VolumeSession {
         number,
         number,
       ],
+      clipRanges: volume.sizes.map(size => [0, Math.max(0, size - 1)]) as Array<[number, number]>,
     },
     histogram,
     generation: 0,
@@ -125,7 +128,9 @@ export async function reextractVolume(
       ? 'mesh'
       : message.renderMode === 'slices'
         ? 'slices'
-        : 'points';
+        : message.renderMode === 'voxels'
+          ? 'voxels'
+          : 'points';
   const windowCenter = Number.isFinite(Number(message.windowCenter))
     ? Number(message.windowCenter)
     : session.options.windowCenter;
@@ -141,6 +146,16 @@ export async function reextractVolume(
   const sliceIndices = incomingSlices.map((value: unknown, axis: number) =>
     Math.max(0, Math.min(session.volume.sizes[axis] - 1, Math.round(Number(value) || 0)))
   ) as [number, number, number];
+  const incomingClip = Array.isArray(message.clipRanges)
+    ? message.clipRanges
+    : session.options.clipRanges;
+  const clipRanges = incomingClip.map((range: unknown, axis: number) => {
+    const max = Math.max(0, session.volume.sizes[axis] - 1);
+    const pair = Array.isArray(range) ? range : [0, max];
+    const lower = Math.max(0, Math.min(max, Math.round(Number(pair[0]) || 0)));
+    const upper = Math.max(0, Math.min(max, Math.round(Number(pair[1]) || 0)));
+    return [Math.min(lower, upper), Math.max(lower, upper)];
+  }) as Array<[number, number]>;
   session.options = {
     threshold,
     step,
@@ -148,6 +163,7 @@ export async function reextractVolume(
     windowCenter,
     windowWidth,
     sliceIndices,
+    clipRanges,
   };
 
   let lastProgress = -1;
@@ -190,11 +206,24 @@ export async function reextractVolume(
               },
               () => generation !== session.generation
             )
-          : await buildVolumeMeshAsync(
-              session.volume,
-              { threshold, step, onProgress },
-              () => generation !== session.generation
-            );
+          : renderMode === 'voxels'
+            ? await buildVolumeVoxelsAsync(
+                session.volume,
+                {
+                  threshold,
+                  step: [1, 1, 1],
+                  clip: clipRanges,
+                  windowCenter,
+                  windowWidth,
+                  onProgress,
+                },
+                () => generation !== session.generation
+              )
+            : await buildVolumeMeshAsync(
+                session.volume,
+                { threshold, step, onProgress },
+                () => generation !== session.generation
+              );
     if (!result || generation !== session.generation) {
       return;
     }
