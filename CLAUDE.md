@@ -58,6 +58,7 @@ cd engine && npm run bench:backend -- <file>   # WebGL vs WebGPU on one file
 | File detection/handling     | `engine/src/fileHandler.ts`                                                                                              |
 | Webview UI                  | Svelte 5 component in `engine/src/components/` reading `engine/src/state/*.svelte.js` — never new HTML-string generators |
 | Rendering helpers           | `engine/src/visualization/`                                                                                              |
+| Scan alignment / solvers    | `engine/src/registration/` (pure math, no DOM); host glue in `engine/src/registrationFeature.ts`                         |
 | Themes                      | `engine/src/themes/`                                                                                                     |
 | Utilities                   | `engine/src/utils/`                                                                                                      |
 | `engine/src/main.ts`        | Last resort — core Three.js scene logic only                                                                             |

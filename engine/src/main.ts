@@ -76,6 +76,7 @@ import * as cameraConvention from './cameraConvention';
 import * as edl from './edl';
 import * as transparency from './transparency';
 import * as plyExport from './plyExport';
+import * as registrationFeature from './registrationFeature';
 import * as rotationCenterFeature from './rotationCenterFeature';
 import {
   applyScannerStartView,
@@ -1407,6 +1408,14 @@ class PointCloudVisualizer {
         console.log(`✨ Selected ${info}`);
       } else {
         console.log(`⚫ Selected point cloud: ${info}`);
+      }
+
+      // Correspondence picking claims the plain double-click while it is armed,
+      // so aiming at a feature does not also move the rotation center.
+      if (!event.shiftKey && registrationFeature.handlePickedPoint(this, selectedPoint)) {
+        console.log(`🎯 Registration correspondence point added (${info})`);
+        this.requestRender();
+        return;
       }
 
       // Shift + double-click is the single measurement gesture. The first
@@ -4559,6 +4568,10 @@ async function initializeVisualizer() {
   if (!visualizer) {
     visualizer = new PointCloudVisualizer();
     (window as any).visualizer = visualizer;
+    // Alongside the visualizer for the same reason: driving an alignment from
+    // the console (or from a spec) needs the module's entry points, and it has
+    // no other handle in the page.
+    (window as any).registrationFeature = registrationFeature;
     console.log('✅ PointCloudVisualizer initialized');
   }
 }

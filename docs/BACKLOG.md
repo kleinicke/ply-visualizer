@@ -753,6 +753,93 @@ the distance kernel is a candidate for **Rust → WASM** rather than JS in a Web
 Worker. A later extension: point-to-mesh distance against STL/OBJ ground truth
 (same UI, triangle-distance kernel).
 
+### Scan-to-scan registration (X3A stations first)
+
+**Implemented (August 2026), all three stages.** `engine/src/registration/`
+holds the math, `engine/src/registrationFeature.ts` the host glue and
+`engine/src/components/RegistrationPanel.svelte` the per-file UI.
+
+**The problem.** An X3A archive is raw field data. Every embedded X3R record is
+expressed relative to _its own_ capture position, and the container carries no
+station pose to recover it from: the `DESC`/`INST` header block is
+byte-identical across stations (instrument constants — 4096, 16128, −17000,
+21500 …), and the only varying fields are timestamps. `ScanArchive.x3a` alone
+holds six-plus full stations. `stonexX3aParser.ts` therefore states the honest
+assumption (`sharedScannerFrameAssumed`, "All members share a scanner station")
+and stacks them all on one origin, which is wrong whenever the tripod actually
+moved. Registration is done downstream in the vendor software, so the viewer has
+to compute it or show garbage.
+
+**Why it is cheap here.** `parseAll` already emits one viewer entry per X3R, and
+every entry already owns an editable 4×4 transform. Registration is not a
+rendering or data-model feature — it computes a matrix and writes it into a slot
+that exists. Everything runs in world space: a fit produces a delta `D` and the
+entry's matrix becomes `D · M`, so it composes with whatever the user did by
+hand.
+
+1. **Manual point pairs → closed-form fit.** Pick 3+ correspondences across two
+   clouds, solve absolute orientation with Horn's quaternion method (largest
+   eigenvector of the 4×4 profile matrix via Jacobi). Deterministic, no
+   dependencies, and the workflow CloudCompare users already know. This is the
+   floor: it always works, and it seeds stage 3 when stage 2 has nothing to bite
+   on.
+2. **4-DoF coarse auto-align.** The lever that makes auto-registration tractable
+   _for this data specifically_: a terrestrial scanner is leveled by its
+   dual-axis compensator, so station-to-station is yaw + XY (plus a little Z),
+   not 6-DoF. Raster both clouds top-down, sweep yaw, and FFT phase-correlate
+   each hypothesis for the XY shift; recover Z from a 1-D correlation of
+   vertical histograms. Sub-second, no features, no RANSAC.
+3. **Point-to-plane ICP refine.** Voxel-downsample both clouds, uniform spatial
+   hash for neighbors, PCA normals on the target, Gauss-Newton on the
+   small-angle parameterization (`[p×n, n]`, 6×6 Cholesky) with a distance gate
+   and trimming. Point-to-plane, not point-to-point — on planar indoor/facade
+   geometry it converges in a fraction of the iterations and does not slide
+   along walls.
+
+Deliberately **not** done: 6-DoF global feature matching (FPFH + RANSAC,
+TEASER++). Given stage 2 it buys almost nothing on leveled terrestrial data, and
+it is a large amount of machinery to maintain.
+
+**What real archives taught the design.** The first version worked on synthetic
+rooms and produced nonsense on `ScanArchive2.x3a`. Three things fixed it, and
+all three are non-obvious enough to be worth recording:
+
+- **Never size anything from the bounding box.** A station scan is a dense core
+  a few metres across with a thin tail of long-range returns: half the points of
+  one real scan sit inside 4.4 m while its box spans 150 m. A raster cell or a
+  voxel derived from that box is an order of magnitude too coarse, and the
+  overlapping structure lands in three cells. `robustExtent` — twice the
+  90th-percentile radius about the median centre — is what both stages size
+  themselves from now.
+- **Raster verticality, not density.** Ground is most of what a scan sees and it
+  looks the same everywhere, so a density raster of an outdoor site correlates
+  almost as well at the wrong yaw as at the right one. Storing each cell's
+  vertical extent lights up walls and edges and leaves flat ground blank.
+- **Let ICP pick the yaw.** Even after both fixes, on genuinely different
+  stations the correct yaw won the correlation by 1.15x — noise. The coarse
+  stage now returns a shortlist of separated peaks, `registerClouds` screens
+  each with a cheap ICP and keeps the best by overlap-weighted residual, and a
+  later candidate must beat an earlier one by 5% to displace it (otherwise a
+  symmetric room hands the win to the 180° flip, which fits every wall).
+
+Measured after those changes, on the archives in `testfiles/lidar/`:
+`Abschnitt_B` (two records of one station) returns identity at 2 cm RMS with a
+0.556-vs-0.067 peak margin — it correctly says "these are already in the same
+frame"; `OHP_FRONT` recovers 70.3° / 6.2 m at 1.9 cm RMS and 34% overlap in 6 s;
+`ScanArchive2` recovers 325.2° / 9.8 m at 6 mm RMS and 23% overlap in 16 s.
+Capping ICP's working set per scale took that last one from 398 s to 16 s
+without changing the pose it converges to.
+
+**Scope honesty.** This gets stations visually together for inspection. It is
+not survey-grade: no targets, no network adjustment, no loop closure. The panel
+says so. Anything beyond that belongs in Reconstructor or CloudCompare.
+
+The neighbor search in stage 3 is the same uniform-grid kernel the
+cloud-to-cloud distance item below needs. It is TypeScript today, downsampled
+hard enough to stay interactive; when that item lands its Rust/WASM kernel,
+`registration/pointIndex.ts` should be the second caller rather than a second
+implementation.
+
 ### Shared core with tiff-visualizer (and a possible shared desktop app)
 
 The full three-step plan lives in `tiff-visualizer/BACKLOG.md` item 11; this is

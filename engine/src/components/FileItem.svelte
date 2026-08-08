@@ -4,6 +4,7 @@
   import CameraFrameList from './CameraFrameList.svelte';
   import E57CorrectionPanel from './E57CorrectionPanel.svelte';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
+  import RegistrationPanel from './RegistrationPanel.svelte';
   import TransformSection from './TransformSection.svelte';
   import VolumePanel from './VolumePanel.svelte';
   import SectionPanel from './SectionPanel.svelte';
@@ -523,6 +524,7 @@
       <TransformSection {host} fileIndex={index} {matrixText} />
 
       {#if !data.metadata?.volumeSessionId}
+        <RegistrationPanel {host} fileIndex={index} />
         <SectionPanel {host} fileIndex={index} />
       {/if}
 
