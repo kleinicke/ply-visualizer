@@ -1,5 +1,6 @@
 import type { SpatialData } from '../interfaces';
 import type { VolumeData } from '../parsers/nrrdParser';
+import { volumeGreyByte } from './volumePresentation';
 
 export interface VolumeSlicesRequest {
   windowCenter: number;
@@ -46,7 +47,6 @@ export async function buildVolumeSlicesAsync(
   const indices = new Uint32Array(triangleCount * 3);
   const m = volume.ijkToWorld;
   const width = Math.max(Number.EPSILON, request.windowWidth);
-  const low = request.windowCenter - width / 2;
   const invert = volume.header['photometric interpretation']?.toUpperCase() === 'MONOCHROME1';
   let vertexOffset = 0;
   let indexOffset = 0;
@@ -69,8 +69,12 @@ export async function buildVolumeSlicesAsync(
         positions[p + 2] = m[8] * i + m[9] * j + m[10] * k + m[11];
         const sample =
           volume.samples[i + j * volume.sizes[0] + k * volume.sizes[0] * volume.sizes[1]];
-        const mapped = Math.max(0, Math.min(1, (sample - low) / width));
-        const grey = Math.round((invert ? 1 - mapped : mapped) * 255);
+        const grey = volumeGreyByte(
+          sample,
+          request.windowCenter,
+          width,
+          invert ? 'MONOCHROME1' : 'MONOCHROME2'
+        );
         colors[p] = grey;
         colors[p + 1] = grey;
         colors[p + 2] = grey;

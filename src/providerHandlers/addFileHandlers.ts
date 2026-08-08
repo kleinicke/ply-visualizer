@@ -13,7 +13,6 @@ import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
 import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
-import { buildVolumeMesh } from '../../engine/src/visualization/isosurface';
 import {
   detectFileTypeWithContent,
   isPlyBinary,
@@ -30,7 +29,7 @@ import {
   SPLAT_CONTAINER_EXTENSIONS,
 } from './binaryTransfer';
 import { parseLidarWasm } from '../wasmPointcloud';
-import { decorateVolumeData, retainVolume } from './volumeSessions';
+import { buildInitialVolumeData, decorateVolumeData, retainVolume } from './volumeSessions';
 
 export interface AddFileHost {
   getShortPath(filePath: string): string;
@@ -509,14 +508,18 @@ export async function handleAddFileFromPath(
             await vscode.workspace.fs.readFile(vscode.Uri.joinPath(directory, relative))
           )
       );
+      const volumeDisplayName = volume.header['dicom series number']
+        ? volume.header['content'] || fileName
+        : fileName;
+      volume.fileName = volumeDisplayName;
       const key = fileUri.toString();
       const session = retainVolume(key, volume);
       host.retainVolumeSession?.(webviewPanel, key);
-      const { data } = buildVolumeMesh(volume, session.options);
+      const data = buildInitialVolumeData(session);
       decorateVolumeData(data, key, session);
       webviewPanel.webview.postMessage({
         type: 'volumeData',
-        fileName,
+        fileName: volumeDisplayName,
         shortPath,
         fileSizeInBytes: bytes.byteLength,
         data,

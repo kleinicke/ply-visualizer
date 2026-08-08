@@ -8,16 +8,16 @@
   const range = metadata.volumeRange as { min: number; max: number };
   const histogram = (metadata.volumeHistogram as number[]) || [];
   let threshold = $state(Number(metadata.threshold ?? range.min));
-  let renderMode = $state<'surface' | 'points' | 'slices'>(
-    metadata.volumeRenderMode === 'points'
-      ? 'points'
+  let renderMode = $state<'points' | 'mesh' | 'slices'>(
+    metadata.volumeRenderMode === 'mesh' || metadata.volumeRenderMode === 'surface'
+      ? 'mesh'
       : metadata.volumeRenderMode === 'slices'
         ? 'slices'
-        : 'surface'
+        : 'points'
   );
   let step = $state<[number, number, number]>(
-    Array.isArray(metadata.extractionStep)
-      ? ([...metadata.extractionStep] as [number, number, number])
+    Array.isArray(metadata.meshExtractionStep)
+      ? ([...metadata.meshExtractionStep] as [number, number, number])
       : [1, 1, 1]
   );
   let timer: number | undefined;
@@ -59,8 +59,7 @@
     window.clearTimeout(timer);
     timer = window.setTimeout(() => {
       const requestId = beginVolumeRequest(sessionId);
-      host.vscode.postMessage({
-        type: 'volume:reextract',
+      void host.reextractVolumeLocally({
         sessionId,
         fileIndex,
         threshold,
@@ -81,7 +80,7 @@
 
   function onModeChange(event: Event) {
     const value = (event.target as HTMLSelectElement).value;
-    renderMode = value === 'points' ? 'points' : value === 'slices' ? 'slices' : 'surface';
+    renderMode = value === 'mesh' ? 'mesh' : value === 'slices' ? 'slices' : 'points';
     requestExtraction(0);
   }
 
@@ -138,13 +137,13 @@
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
     <strong style="font-size:11px;">Volume</strong>
     <select aria-label="Volume render mode" value={renderMode} onchange={onModeChange} style="font-size:10px;">
-      <option value="surface">Isosurface</option>
-      <option value="points">Point cloud</option>
+      <option value="points">Point cloud (pixels)</option>
+      <option value="mesh">Mesh (isosurface)</option>
       <option value="slices">Orthogonal slices</option>
     </select>
   </div>
 
-  {#if renderMode === 'slices'}
+  {#if renderMode !== 'mesh'}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:10px;">
       <label>Window center
         <input aria-label="Window center" type="number" value={windowCenter} onchange={(event) => onWindowChange('center', event)} style="width:100%;box-sizing:border-box;" />
@@ -153,6 +152,9 @@
         <input aria-label="Window width" type="number" min={Number.EPSILON} value={windowWidth} onchange={(event) => onWindowChange('width', event)} style="width:100%;box-sizing:border-box;" />
       </label>
     </div>
+  {/if}
+
+  {#if renderMode === 'slices'}
     <div style="margin-top:6px;font-size:10px;">Displayed slices:</div>
     {#each sliceIndices as slice, axis}
       <label style="display:grid;grid-template-columns:10px 1fr 32px;gap:4px;align-items:center;margin-top:2px;font-size:10px;">
@@ -163,14 +165,19 @@
     {/each}
   {:else}
     <label for={`volume-threshold-${fileIndex}`} style="font-size:10px;">
-      Segmentation threshold: {formatted(threshold)}{units ? ` ${units}` : ''}
+      Hide voxel values below: {formatted(threshold)}{units ? ` ${units}` : ''}
     </label>
     <div style="position:relative;height:30px;margin-top:2px;">
       <svg viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;opacity:0.5;">
         <polyline points={histogramPoints} fill="none" stroke="currentColor" stroke-width="0.8" />
       </svg>
-      <input id={`volume-threshold-${fileIndex}`} aria-label="Volume segmentation threshold" type="range" min={range.min} max={range.max} step={(range.max - range.min) / 1000 || 1} value={threshold} oninput={(event) => setThreshold(Number((event.target as HTMLInputElement).value))} style="position:absolute;inset:0;width:100%;margin:0;background:transparent;" />
+      <input id={`volume-threshold-${fileIndex}`} aria-label="Volume voxel threshold" type="range" min={range.min} max={range.max} step={(range.max - range.min) / 1000 || 1} value={threshold} oninput={(event) => setThreshold(Number((event.target as HTMLInputElement).value))} style="position:absolute;inset:0;width:100%;margin:0;background:transparent;" />
     </div>
+
+    <label style="display:grid;grid-template-columns:auto 1fr;gap:4px;align-items:center;margin-top:4px;font-size:10px;">
+      <span>Threshold value</span>
+      <input aria-label="Volume threshold value" type="number" min={range.min} max={range.max} step="any" value={threshold} onchange={(event) => setThreshold(Number((event.target as HTMLInputElement).value), 0)} style="width:100%;box-sizing:border-box;" />
+    </label>
 
     {#if isHU}
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:3px;margin-top:4px;">
@@ -180,12 +187,14 @@
       </div>
     {/if}
 
-    <div style="display:grid;grid-template-columns:auto repeat(3,1fr);gap:3px;align-items:center;margin-top:5px;font-size:10px;">
-      <span>Stride i/j/k:</span>
-      {#each step as value, axis}
-        <input aria-label={`Volume stride ${'ijk'[axis]}`} type="number" min="1" max={sizes[axis] - 1} value={value} onchange={(event) => onStepChange(axis, event)} style="width:100%;min-width:0;" />
-      {/each}
-    </div>
+    {#if renderMode === 'mesh'}
+      <div style="display:grid;grid-template-columns:auto repeat(3,1fr);gap:3px;align-items:center;margin-top:5px;font-size:10px;">
+        <span>Mesh sampling i/j/k:</span>
+        {#each step as value, axis}
+          <input aria-label={`Volume stride ${'ijk'[axis]}`} type="number" min="1" max={sizes[axis] - 1} value={value} onchange={(event) => onStepChange(axis, event)} style="width:100%;min-width:0;" />
+        {/each}
+      </div>
+    {/if}
 
     <div style="margin-top:5px;font-size:10px;opacity:0.8;">
       {#if renderMode === 'points'}
@@ -193,7 +202,11 @@
       {:else}
         {Number(data.faceCount).toLocaleString()} triangles
       {/if}
-      · stride {step.join(' × ')}
+      {#if renderMode === 'mesh'}
+        · sampling {step.join(' × ')}
+      {:else}
+        · one point per retained voxel
+      {/if}
       {#if Array.isArray(metadata.effectiveSpacing)}
         · spacing {metadata.effectiveSpacing.map((value: number) => formatted(value)).join(' × ')} {metadata.spaceUnits || ''}
       {/if}

@@ -122,6 +122,10 @@ import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
 import { alignSourceOrigin } from './utils/sourceOrigin';
 import { SectionPlaneManager } from './visualization/sectionPlanes';
+import type { VolumeData } from './parsers/nrrdParser';
+import { buildVolumePointsAsync } from './visualization/volumePoints';
+import { buildVolumeMeshAsync } from './visualization/isosurface';
+import { buildVolumeSlicesAsync } from './visualization/volumeSlices';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
@@ -153,6 +157,11 @@ class PointCloudVisualizer {
    */
   webglRenderer: THREE.WebGLRenderer | null = null;
   sectionPlanes = new SectionPlaneManager();
+  /** Original voxel arrays retained for local threshold/mode changes. */
+  private volumeSources = new Map<
+    string,
+    { volume: VolumeData; metadata: any; generation: number }
+  >();
   // True between a WebGL context loss and its restoration. While lost, the GPU
   // is gone, so we must not render or touch GL objects — doing so throws and
   // crashes the webview. This is the safety net for the multi-window
@@ -920,6 +929,7 @@ class PointCloudVisualizer {
       pointSizes: this.pointSizes,
       screenSpaceScaling: this.screenSpaceScaling,
       splatMeshes: this.spatialFiles.map((_, index) => this.splatMode.getMesh(index)),
+      clippingPlanes: this.renderer.clippingPlanes,
     };
   }
 
@@ -2510,11 +2520,22 @@ class PointCloudVisualizer {
     // camera getter methods below) each time renderTick changes - mirroring
     // this method's old "regenerate everything from scratch" model without
     // needing every underlying field to be individually reactive.
+    // A settings update may change row contents, but must never move the
+    // user's place in the list. FileList keeps stable keyed rows; preserving
+    // the container offset here is a second invariant at the one refresh
+    // boundary all current and future settings use.
+    const fileList = document.getElementById('file-list');
+    const scrollTop = fileList?.scrollTop ?? 0;
+    const scrollLeft = fileList?.scrollLeft ?? 0;
     filesState.renderTick++;
     // Force the Svelte re-render to apply synchronously so the button-state
     // sync calls below see the freshly rendered DOM, matching the old
     // synchronous innerHTML-then-listeners-then-button-states ordering.
     flushSync();
+    if (fileList) {
+      fileList.scrollTop = scrollTop;
+      fileList.scrollLeft = scrollLeft;
+    }
     this.updatePointsNormalsButtonStates();
     this.updateUniversalRenderButtonStates();
     this.updateDefaultButtonState();
@@ -2862,7 +2883,9 @@ class PointCloudVisualizer {
       // Initialize color mode before creating material. The slot already exists
       // at entryIndex, so this only assigns.
       const initialColorMode =
-        data.metadata?.volumeRenderMode === 'slices' && data.hasColors
+        (data.metadata?.volumeRenderMode === 'slices' ||
+          data.metadata?.volumeRenderMode === 'points') &&
+        data.hasColors
           ? 'original'
           : this.useOriginalColors && data.hasColors
             ? 'original'
@@ -3417,6 +3440,12 @@ class PointCloudVisualizer {
     }
 
     // Remove from arrays
+    const volumeSessionId = this.spatialFiles[fileIndex]?.metadata?.volumeSessionId;
+    if (typeof volumeSessionId === 'string') {
+      const source = this.volumeSources.get(volumeSessionId);
+      if (source) {source.generation++;}
+      this.volumeSources.delete(volumeSessionId);
+    }
     this.splatMode.onFileRemoved(fileIndex);
     this.splatModeActive.splice(fileIndex, 1);
     this.spatialFiles.splice(fileIndex, 1);
@@ -3908,7 +3937,128 @@ class PointCloudVisualizer {
   }
 
   private async handleVolumeData(message: any): Promise<void> {
+    this.retainVolumeSource(message.data);
     await formatDataHandlers.handleVolumeData(this, message);
+  }
+
+  private retainVolumeSource(data: SpatialData | undefined): void {
+    const metadata = data?.metadata as any;
+    const sessionId = metadata?.volumeSessionId;
+    const sizes = metadata?.volumeSizes;
+    const samples = data?.intensityArray;
+    if (
+      typeof sessionId !== 'string' ||
+      !Array.isArray(sizes) ||
+      sizes.length !== 3 ||
+      !samples ||
+      samples.length !== sizes[0] * sizes[1] * sizes[2]
+    ) {
+      return;
+    }
+
+    this.volumeSources.set(sessionId, {
+      volume: {
+        sizes: [...sizes] as [number, number, number],
+        samples,
+        ijkToWorld: [...metadata.ijkToWorld],
+        spaceUnits: metadata.spaceUnits || 'm',
+        intensityUnits: metadata.intensityUnits,
+        range: metadata.volumeRange,
+        channels: Number(metadata.channels) || 1,
+        header: {
+          'photometric interpretation': metadata.photometricInterpretation || 'MONOCHROME2',
+        },
+        fileName: data.fileName,
+      },
+      metadata: { ...metadata },
+      generation: 0,
+    });
+  }
+
+  async reextractVolumeLocally(request: {
+    sessionId: string;
+    fileIndex: number;
+    threshold: number;
+    step: [number, number, number];
+    renderMode: 'points' | 'mesh' | 'slices';
+    windowCenter: number;
+    windowWidth: number;
+    sliceIndices: [number, number, number];
+    requestId: number;
+  }): Promise<void> {
+    const source = this.volumeSources.get(request.sessionId);
+    if (!source) {
+      // Older/partial volume payloads can still use the extension-host fallback.
+      this.vscode.postMessage({ type: 'volume:reextract', ...request });
+      return;
+    }
+
+    const generation = ++source.generation;
+    const cancelled = () => generation !== source.generation;
+    const onProgress = (fraction: number) =>
+      updateVolumeProgress(request.sessionId, request.requestId, fraction);
+
+    try {
+      const result =
+        request.renderMode === 'slices'
+          ? await buildVolumeSlicesAsync(
+              source.volume,
+              {
+                windowCenter: request.windowCenter,
+                windowWidth: request.windowWidth,
+                slices: request.sliceIndices,
+                onProgress,
+              },
+              cancelled
+            )
+          : request.renderMode === 'mesh'
+            ? await buildVolumeMeshAsync(
+                source.volume,
+                { threshold: request.threshold, step: request.step, onProgress },
+                cancelled
+              )
+            : await buildVolumePointsAsync(
+                source.volume,
+                {
+                  threshold: request.threshold,
+                  step: [1, 1, 1],
+                  windowCenter: request.windowCenter,
+                  windowWidth: request.windowWidth,
+                  onProgress,
+                },
+                cancelled
+              );
+      if (!result || cancelled()) {
+        return;
+      }
+
+      result.data.metadata = {
+        ...source.metadata,
+        ...result.data.metadata,
+        volumeSessionId: request.sessionId,
+        volumeRenderMode: request.renderMode,
+        threshold: request.threshold,
+        windowCenter: request.windowCenter,
+        windowWidth: request.windowWidth,
+        meshExtractionStep: request.step,
+        sliceIndices: request.sliceIndices,
+      };
+      updateVolumeProgress(request.sessionId, request.requestId, 1);
+      await this.handleVolumeData({
+        data: result.data,
+        fileName: source.volume.fileName,
+        replaceFileIndex: request.fileIndex,
+        requestId: request.requestId,
+      });
+    } catch (error) {
+      if (!cancelled()) {
+        setVolumeError(
+          request.sessionId,
+          request.requestId,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
   }
 
   private async handleXyzVariantData(message: any): Promise<void> {

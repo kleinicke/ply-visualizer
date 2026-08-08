@@ -13,8 +13,7 @@ import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
 import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
-import { buildVolumeMesh } from '../../engine/src/visualization/isosurface';
-import { decorateVolumeData, retainVolume } from './volumeSessions';
+import { buildInitialVolumeData, decorateVolumeData, retainVolume } from './volumeSessions';
 import { XyzVariantParser } from '../../engine/src/parsers/xyzVariantParser';
 import {
   parseXyzWasm,
@@ -556,10 +555,10 @@ export async function loadDocumentContent(
     }
 
     if (isVolumeFile) {
-      // NRRD volume: read, isosurface, and hand the resulting mesh over. The
-      // marching-cubes pass runs here rather than in the webview because it is
-      // a seconds-long CPU pass over hundreds of megabytes, and the webview
-      // would be frozen for its duration.
+      // NRRD volume: retain the scalar samples and initially hand over one
+      // windowed-grey point per voxel. Optional threshold-driven mesh
+      // extraction still runs in the extension host so it cannot freeze the
+      // webview.
       webviewPanel.webview.postMessage({
         type: 'timingUpdate',
         message: '🚀 Extension: Starting volume processing...',
@@ -590,25 +589,29 @@ export async function loadDocumentContent(
             await vscode.workspace.fs.readFile(vscode.Uri.joinPath(directory, relative))
           )
       );
+      const volumeDisplayName = volume.header['dicom series number']
+        ? volume.header['content'] || path.basename(documentUri.fsPath)
+        : path.basename(documentUri.fsPath);
+      volume.fileName = volumeDisplayName;
 
       const volumeKey = documentUri.toString();
       const session = retainVolume(volumeKey, volume);
-      const { data: meshData, threshold } = buildVolumeMesh(volume, session.options);
-      decorateVolumeData(meshData, volumeKey, session);
+      const pointData = buildInitialVolumeData(session);
+      decorateVolumeData(pointData, volumeKey, session);
       const parseTime = performance.now();
       host.logPerf(
         `⏱️ PERF[volume/ext] read ${(fileReadTime - loadStartTime).toFixed(1)}ms, ` +
-          `isosurface ${(parseTime - fileReadTime).toFixed(1)}ms ` +
-          `(${volume.sizes.join('x')} → ${meshData.faceCount} tris @ ${threshold.toFixed(0)}) ` +
+          `points ${(parseTime - fileReadTime).toFixed(1)}ms ` +
+          `(${volume.sizes.join('x')} → ${pointData.vertexCount} points @ ${session.options.threshold.toFixed(0)}) ` +
           `for ${path.basename(documentUri.fsPath)}`
       );
 
       webviewPanel.webview.postMessage({
         type: 'volumeData',
-        fileName: path.basename(documentUri.fsPath),
+        fileName: volumeDisplayName,
         shortPath: host.getShortPath(documentUri.fsPath),
         fileSizeInBytes: volumeBytes.byteLength,
-        data: meshData,
+        data: pointData,
       });
 
       return;

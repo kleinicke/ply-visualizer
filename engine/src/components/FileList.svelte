@@ -50,40 +50,38 @@
   });
 </script>
 
-{#key filesState.renderTick}
-  {#if filesState.renderTick === 0}
-    <!-- updateFileList() has never been called yet (no file loaded/removed
-    since page load) - stay empty, matching the pre-Phase-3 behavior where
-    #file-list's innerHTML was never touched until the first real call. -->
-  {:else if isSequenceFrame && sequenceFrameInfo}
-    <div class="file-item">
-      <div class="file-item-main">
-        <input type="checkbox" id="file-0" checked disabled />
-        <span class="color-indicator" style="background-color: #888"></span>
-        <label for="file-0" class="file-name" data-short-path={sequenceFrameInfo.shortPath}
-          >{sequenceFrameInfo.name}</label
-        >
-      </div>
-      <div class="file-info">Frame {host.sequenceIndex + 1} of {host.sequenceFiles.length}</div>
+{#if filesState.renderTick === 0}
+  <!-- updateFileList() has never been called yet (no file loaded/removed
+  since page load) - stay empty, matching the pre-Phase-3 behavior where
+  #file-list's innerHTML was never touched until the first real call. -->
+{:else if isSequenceFrame && sequenceFrameInfo}
+  <div class="file-item">
+    <div class="file-item-main">
+      <input type="checkbox" id="file-0" checked disabled />
+      <span class="color-indicator" style="background-color: #888"></span>
+      <label for="file-0" class="file-name" data-short-path={sequenceFrameInfo.shortPath}
+        >{sequenceFrameInfo.name}</label
+      >
     </div>
-  {:else if totalEntries === 0 && !pendingLoadLabel}
-    <div class="no-files">No objects loaded</div>
-  {:else}
-    {#each entryRows as row (row.id)}
-      <FileItem
-        {host}
-        index={row.index}
-        kind={row.kind === 'spatial' ? 'pointcloud' : row.kind}
-      />
-    {/each}
-    {#if pendingLoadLabel !== null}
-      <div class="file-item file-item-loading">
-        <div class="file-item-main">
-          <span class="spinner spinner-inline"></span>
-          <span class="file-name">Loading {escapeHtml(pendingLoadLabel)}…</span>
-        </div>
-        <div class="file-info" id="pending-load-detail">{escapeHtml(pendingLoadDetail)}</div>
+    <div class="file-info">Frame {host.sequenceIndex + 1} of {host.sequenceFiles.length}</div>
+  </div>
+{:else if totalEntries === 0 && !pendingLoadLabel}
+  <div class="no-files">No objects loaded</div>
+{:else}
+  {#each entryRows as row (row.id)}
+    <FileItem
+      {host}
+      index={row.index}
+      kind={row.kind === 'spatial' ? 'pointcloud' : row.kind}
+    />
+  {/each}
+  {#if pendingLoadLabel !== null}
+    <div class="file-item file-item-loading">
+      <div class="file-item-main">
+        <span class="spinner spinner-inline"></span>
+        <span class="file-name">Loading {escapeHtml(pendingLoadLabel)}…</span>
       </div>
-    {/if}
+      <div class="file-info" id="pending-load-detail">{escapeHtml(pendingLoadDetail)}</div>
+    </div>
   {/if}
-{/key}
+{/if}

@@ -4,9 +4,16 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { handleAddFileFromPath } from '../../providerHandlers/addFileHandlers';
-import { clearVolume } from '../../providerHandlers/volumeSessions';
+import {
+  buildInitialVolumeData,
+  clearVolume,
+  reextractVolume,
+  retainVolume,
+} from '../../providerHandlers/volumeSessions';
 import {
   buildDicomSeriesNrrd,
+  dicomSeriesDisplayName,
+  dicomSeriesFileName,
   parseDicomSlice,
   scanDicomFolder,
 } from '../../providerHandlers/dicomFolderLoader';
@@ -243,12 +250,45 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
       const message = messages.find(candidate => candidate.type === 'volumeData');
       assert.ok(message, 'The added NRRD should be sent as volume data');
       assert.strictEqual(message.isAddFile, true);
-      assert.ok(message.data.faceCount > 0);
+      assert.strictEqual(message.data.faceCount, 0);
+      assert.strictEqual(message.data.vertexCount, size ** 3);
+      assert.strictEqual(message.data.metadata.volumeRenderMode, 'points');
+      assert.deepStrictEqual(message.data.metadata.extractionStep, [1, 1, 1]);
+      assert.ok(message.data.colorsArray instanceof Uint8Array);
       assert.strictEqual(
         message.data.metadata.volumeSessionId,
         vscode.Uri.file(filePath).toString()
       );
       assert.deepStrictEqual(retained, [vscode.Uri.file(filePath).toString()]);
+
+      const key = vscode.Uri.file(filePath).toString();
+      await reextractVolume(key, webviewPanel, {
+        fileIndex: 0,
+        requestId: 'thresholded-points',
+        renderMode: 'points',
+        threshold: 1,
+      });
+      const thresholdedPoints = messages.find(
+        candidate => candidate.type === 'volumeData' && candidate.requestId === 'thresholded-points'
+      );
+      assert.ok(thresholdedPoints.data.vertexCount < size ** 3);
+      assert.ok(
+        Array.from(thresholdedPoints.data.intensityArray as Float32Array).every(value => value >= 1)
+      );
+
+      await reextractVolume(key, webviewPanel, {
+        fileIndex: 0,
+        requestId: 'thresholded-mesh',
+        renderMode: 'mesh',
+        threshold: 1,
+        step: [1, 1, 1],
+      });
+      const thresholdedMesh = messages.find(
+        candidate => candidate.type === 'volumeData' && candidate.requestId === 'thresholded-mesh'
+      );
+      assert.ok(thresholdedMesh.data.faceCount > 0);
+      assert.strictEqual(thresholdedMesh.data.metadata.volumeRenderMode, 'mesh');
+      assert.strictEqual(thresholdedMesh.data.metadata.threshold, 1);
     } finally {
       clearVolume(vscode.Uri.file(filePath).toString());
       fs.unlinkSync(filePath);
@@ -288,13 +328,17 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
       assert.strictEqual(volume.samples[3], -700);
       assert.strictEqual(volume.header['window center'], '40');
       assert.strictEqual(volume.header['window width'], '400');
+      assert.strictEqual(volume.header['dicom series number'], '7');
+      assert.strictEqual(volume.header['content'], 'Series 7 CT');
+      assert.strictEqual(dicomSeriesDisplayName(series[0], 1), 'Series 7 CT');
+      assert.strictEqual(dicomSeriesFileName(series[0], 1), 'series-7-ct.nrrd');
     } finally {
       fs.rmSync(folder, { recursive: true, force: true });
     }
   });
 
   test('Should scan the real extensionless Siemens DICOM folder', async function () {
-    this.timeout(10_000);
+    this.timeout(30_000);
 
     const folder =
       '/Users/florian/Projects/cursor/test_data/testfiles/scientific/MRT OSG Februar 2023';
@@ -309,13 +353,36 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
       series.map(item => item.slices.length),
       [44, 26, 26, 36]
     );
+    assert.deepStrictEqual(
+      series.map((item, index) => dicomSeriesFileName(item, index + 1)),
+      ['series-3-mr.nrrd', 'series-4-mr.nrrd', 'series-5-mr.nrrd', 'series-6-mr.nrrd']
+    );
     assert.ok(series.every(item => item.slices.every(slice => !path.extname(slice.uri.fsPath))));
-
     const nrrd = buildDicomSeriesNrrd(series[0]);
     const volume = await new NrrdParser().parse(nrrd, 'real-siemens-series.nrrd');
     assert.deepStrictEqual(volume.sizes, [640, 640, 44]);
     assert.strictEqual(volume.spaceUnits, 'm');
+    const physicalSpacing = [
+      Math.hypot(volume.ijkToWorld[0], volume.ijkToWorld[4], volume.ijkToWorld[8]),
+      Math.hypot(volume.ijkToWorld[1], volume.ijkToWorld[5], volume.ijkToWorld[9]),
+      Math.hypot(volume.ijkToWorld[2], volume.ijkToWorld[6], volume.ijkToWorld[10]),
+    ];
+    assert.ok(Math.abs(physicalSpacing[0] - 0.000234375) < 1e-9);
+    assert.ok(Math.abs(physicalSpacing[1] - 0.000234375) < 1e-9);
+    assert.ok(Math.abs(physicalSpacing[2] - 0.0033) < 1e-9);
     assert.ok(Array.from(volume.samples.subarray(0, 1024)).every(Number.isFinite));
+
+    const sessionKey = 'test:real-siemens-point-volume';
+    try {
+      const points = buildInitialVolumeData(retainVolume(sessionKey, volume));
+      assert.strictEqual(points.faceCount, 0);
+      assert.strictEqual(points.vertexCount, 640 * 640 * 44);
+      assert.strictEqual(points.intensityArray?.length, points.vertexCount);
+      assert.strictEqual(points.colorsArray?.length, points.vertexCount * 3);
+      assert.deepStrictEqual(points.metadata?.extractionStep, [1, 1, 1]);
+    } finally {
+      clearVolume(sessionKey);
+    }
   });
 
   test('Should support webview serialization', () => {

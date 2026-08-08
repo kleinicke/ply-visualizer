@@ -22,9 +22,8 @@ export interface PointSizeScalingHost {
 }
 
 /**
- * Set a point size and keep the round-point decision in sync with it. Points
- * only get the disc texture once they are wide enough to show one; applyPointShape
- * is a no-op unless that crosses the threshold, so this is safe on hot paths.
+ * Set a point size while preserving the universal round-point material.
+ * applyPointShape is idempotent, so this is safe on hot paths.
  */
 function setPointSize(
   host: PointSizeScalingHost,

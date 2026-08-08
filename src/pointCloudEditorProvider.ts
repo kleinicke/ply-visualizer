@@ -250,17 +250,19 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           this.logPerf(message.line);
           break;
         case 'volume:reextract':
-          if (
-            this.panelVolumeSessions
-              .get(webviewPanel)
-              ?.has((message.sessionId as string | undefined) ?? document.uri.toString())
-          ) {
-            await reextractVolume(
-              (message.sessionId as string | undefined) ?? document.uri.toString(),
-              webviewPanel,
-              message
-            );
+          if (typeof message.sessionId !== 'string' || !message.sessionId) {
+            await webviewPanel.webview.postMessage({
+              type: 'volume:error',
+              sessionId: '',
+              requestId: message.requestId,
+              error: 'The volume control request did not include a retained session ID.',
+            });
+            break;
           }
+          // reextractVolume owns the authoritative retained-session lookup.
+          // A second panel-local allow-list used to drop valid UI requests
+          // silently, leaving the old point geometry on screen.
+          await reextractVolume(message.sessionId, webviewPanel, message);
           break;
         case 'plyFetchFailed':
           await this.handlePlyFetchFallback(message);

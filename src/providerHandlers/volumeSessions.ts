@@ -1,16 +1,16 @@
 import * as vscode from 'vscode';
 import type { SpatialData } from '../../engine/src/interfaces';
 import type { VolumeData } from '../../engine/src/parsers/nrrdParser';
-import {
-  buildVolumeMeshAsync,
-  defaultThreshold,
-  volumeHistogram,
-} from '../../engine/src/visualization/isosurface';
+import { buildVolumeMeshAsync, volumeHistogram } from '../../engine/src/visualization/isosurface';
 import { chooseStep } from '../../engine/src/visualization/marchingCubes';
-import { buildVolumePointsAsync } from '../../engine/src/visualization/volumePoints';
+import {
+  buildVolumePoints,
+  buildVolumePointsAsync,
+} from '../../engine/src/visualization/volumePoints';
 import { buildVolumeSlicesAsync } from '../../engine/src/visualization/volumeSlices';
+import { resolveVolumeWindow } from '../../engine/src/visualization/volumePresentation';
 
-export type VolumeRenderMode = 'surface' | 'points' | 'slices';
+export type VolumeRenderMode = 'points' | 'mesh' | 'slices';
 
 export interface VolumeExtractionOptions {
   threshold: number;
@@ -32,21 +32,17 @@ const sessions = new Map<string, VolumeSession>();
 
 export function retainVolume(key: string, volume: VolumeData): VolumeSession {
   const histogram = volumeHistogram(volume);
-  const declaredCenter = Number(volume.header['window center']);
-  const declaredWidth = Number(volume.header['window width']);
+  const window = resolveVolumeWindow(volume, histogram);
   const session: VolumeSession = {
     volume,
     options: {
-      threshold: defaultThreshold(volume),
+      // Start with every voxel present. Raising this value is the only thing
+      // that removes points from the canonical DICOM point representation.
+      threshold: histogram.min,
       step: chooseStep(volume.sizes, volume.ijkToWorld),
-      renderMode: 'surface',
-      windowCenter: Number.isFinite(declaredCenter)
-        ? declaredCenter
-        : (histogram.min + histogram.max) / 2,
-      windowWidth:
-        Number.isFinite(declaredWidth) && declaredWidth > 0
-          ? declaredWidth
-          : Math.max(Number.EPSILON, histogram.max - histogram.min),
+      renderMode: 'points',
+      windowCenter: window.center,
+      windowWidth: window.width,
       sliceIndices: volume.sizes.map(size => Math.floor((size - 1) / 2)) as [
         number,
         number,
@@ -58,6 +54,16 @@ export function retainVolume(key: string, volume: VolumeData): VolumeSession {
   };
   sessions.set(key, session);
   return session;
+}
+
+/** Build the canonical first view: one windowed-grey point per source voxel. */
+export function buildInitialVolumeData(session: VolumeSession): SpatialData {
+  return buildVolumePoints(session.volume, {
+    threshold: session.options.threshold,
+    step: [1, 1, 1],
+    windowCenter: session.options.windowCenter,
+    windowWidth: session.options.windowWidth,
+  }).data;
 }
 
 export function clearVolume(key: string): void {
@@ -81,6 +87,7 @@ export function decorateVolumeData(
     volumeRenderMode: session.options.renderMode,
     windowCenter: session.options.windowCenter,
     windowWidth: session.options.windowWidth,
+    meshExtractionStep: session.options.step,
     sliceIndices: session.options.sliceIndices,
     photometricInterpretation: session.volume.header['photometric interpretation'],
   };
@@ -114,11 +121,11 @@ export async function reextractVolume(
     Math.max(1, Math.min(session.volume.sizes[axis] - 1, Math.floor(Number(value) || 1)))
   ) as [number, number, number];
   const renderMode: VolumeRenderMode =
-    message.renderMode === 'points'
-      ? 'points'
+    message.renderMode === 'mesh' || message.renderMode === 'surface'
+      ? 'mesh'
       : message.renderMode === 'slices'
         ? 'slices'
-        : 'surface';
+        : 'points';
   const windowCenter = Number.isFinite(Number(message.windowCenter))
     ? Number(message.windowCenter)
     : session.options.windowCenter;
@@ -174,7 +181,13 @@ export async function reextractVolume(
         : renderMode === 'points'
           ? await buildVolumePointsAsync(
               session.volume,
-              { threshold, step, onProgress },
+              {
+                threshold,
+                step: [1, 1, 1],
+                windowCenter,
+                windowWidth,
+                onProgress,
+              },
               () => generation !== session.generation
             )
           : await buildVolumeMeshAsync(
@@ -187,22 +200,29 @@ export async function reextractVolume(
     }
     const data = result.data;
     decorateVolumeData(data, key, session);
-    void webviewPanel.webview.postMessage({
+    const delivered = await webviewPanel.webview.postMessage({
       type: 'volumeData',
       fileName: session.volume.fileName,
       data,
       replaceFileIndex: message.fileIndex,
       requestId: message.requestId,
     });
+    if (!delivered) {
+      throw new Error('The viewer rejected the extracted volume geometry.');
+    }
   } catch (error) {
     if (generation !== session.generation) {
       return;
     }
-    void webviewPanel.webview.postMessage({
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const delivered = await webviewPanel.webview.postMessage({
       type: 'volume:error',
       sessionId: key,
       requestId: message.requestId,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage,
     });
+    if (!delivered) {
+      void vscode.window.showErrorMessage(`Volume update failed: ${errorMessage}`);
+    }
   }
 }

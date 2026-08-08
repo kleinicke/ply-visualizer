@@ -25,22 +25,31 @@
     kind,
   }: { host: any; index: number; kind: 'pointcloud' | 'pose' | 'camera' } = $props();
 
-  const data = $derived(kind === 'pointcloud' ? host.spatialFiles[index] : null);
+  const data = $derived(
+    (filesState.renderTick, kind === 'pointcloud' ? host.spatialFiles[index] : null)
+  );
   // Position within poseGroups/cameraGroups. The per-pose toggle arrays and the
   // camera label arrays are keyed by it; host methods take the unified index.
-  const poseIndex = $derived(host.fileEntries.kindIndexAt(index));
-  const meta = $derived(kind === 'pose' ? host.poseMeta[poseIndex] : null);
-  const cameraIndex = $derived(host.fileEntries.kindIndexAt(index));
-  const cameraGroup = $derived(kind === 'camera' ? host.cameraGroups[cameraIndex] : null);
-  const cameraProfileName = $derived(kind === 'camera' ? host.cameraNames[cameraIndex] : '');
+  const poseIndex = $derived((filesState.renderTick, host.fileEntries.kindIndexAt(index)));
+  const meta = $derived(
+    (filesState.renderTick, kind === 'pose' ? host.poseMeta[poseIndex] : null)
+  );
+  const cameraIndex = $derived((filesState.renderTick, host.fileEntries.kindIndexAt(index)));
+  const cameraGroup = $derived(
+    (filesState.renderTick, kind === 'camera' ? host.cameraGroups[cameraIndex] : null)
+  );
+  const cameraProfileName = $derived(
+    (filesState.renderTick, kind === 'camera' ? host.cameraNames[cameraIndex] : '')
+  );
   // Set by sources that fetch their images after the frames are on screen
   // (COLMAP). Absent for sources whose previews are embedded and already
   // decoded, so nothing extra is shown for those.
-  const cameraImageProgress = $derived(
-    kind === 'camera'
+  const cameraImageProgress = $derived.by(() => {
+    filesState.renderTick;
+    return kind === 'camera'
       ? (cameraGroup?.userData.imageProgress as { done: number; total: number } | undefined) ?? null
-      : null
-  );
+      : null;
+  });
 
   const visible = $derived(filesState.visibility[index] ?? true);
   const collapsed = $derived(filesState.collapsed[index] ?? false);
@@ -437,20 +446,19 @@
     host.requestRender();
   }
 
-  const matrixText = $derived(
-    (() => {
-      const arr = host.getTransformationMatrixAsArray(index);
-      let str = '';
-      for (let r = 0; r < 4; ++r) {
-        str += arr
-          .slice(r * 4, r * 4 + 4)
-          .map((v: number) => v.toFixed(6))
-          .join(' ');
-        str += '\n';
-      }
-      return str;
-    })()
-  );
+  const matrixText = $derived.by(() => {
+    filesState.renderTick;
+    const arr = host.getTransformationMatrixAsArray(index);
+    let str = '';
+    for (let r = 0; r < 4; ++r) {
+      str += arr
+        .slice(r * 4, r * 4 + 4)
+        .map((v: number) => v.toFixed(6))
+        .join(' ');
+      str += '\n';
+    }
+    return str;
+  });
 
   const name = $derived(
     kind === 'pointcloud'
@@ -471,7 +479,7 @@
   );
 </script>
 
-<div class="file-item">
+<div class="file-item" data-render-tick={filesState.renderTick}>
   <div class="file-item-main">
     <button
       class="collapse-toggle"

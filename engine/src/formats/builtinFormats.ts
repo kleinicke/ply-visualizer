@@ -9,7 +9,9 @@ import { OffParser } from '../parsers/offParser';
 import { GltfParser } from '../parsers/gltfParser';
 import { NpyParser, isNpyPointCloudData } from '../parsers/npyParser';
 import { NrrdParser } from '../parsers/nrrdParser';
-import { buildVolumeMesh } from '../visualization/isosurface';
+import { sampleRange } from '../visualization/isosurface';
+import { buildVolumePoints } from '../visualization/volumePoints';
+import { resolveVolumeWindow } from '../visualization/volumePresentation';
 import { initTiffWasm, projectCameraPointsWasmSync } from '../depth/readers/tiffWasm';
 import { FormatRegistry, UnifiedConverter } from './formatRegistry';
 
@@ -175,16 +177,23 @@ export function registerBuiltinFormats(
   registry.register({
     // Volumes. NRRD is the payload the tiff-visualizer bridge hands over for
     // DICOM/OME-TIFF stacks, and the format 3D Slicer and ITK write, so the
-    // same path serves both. What reaches the scene is an isosurface — an
-    // ordinary mesh — until a volume raycaster exists.
+    // same path serves both. The canonical representation is one point per
+    // retained voxel, coloured with the source presentation window.
     extensions: ['nrrd', 'nhdr'],
     category: 'mesh',
     async parse({ data, fileName, timingCallback }) {
       const volume = await new NrrdParser().parse(data, fileName, timingCallback);
-      const { data: meshData } = buildVolumeMesh(volume, {
-        onProgress: fraction => timingCallback?.(`🧊 Isosurface: ${(fraction * 100).toFixed(0)}%`),
+      const range = sampleRange(volume);
+      const window = resolveVolumeWindow(volume, range);
+      const { data: pointData } = buildVolumePoints(volume, {
+        threshold: range.min,
+        step: [1, 1, 1],
+        windowCenter: window.center,
+        windowWidth: window.width,
+        onProgress: fraction =>
+          timingCallback?.(`🧊 Volume points: ${(fraction * 100).toFixed(0)}%`),
       });
-      return { data: { ...meshData, fileName }, type: 'spatialData' };
+      return { data: { ...pointData, fileName }, type: 'spatialData' };
     },
   });
 

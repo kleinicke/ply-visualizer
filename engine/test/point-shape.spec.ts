@@ -1,11 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 
-/**
- * Sub-pixel points skip the round-disc texture. The disc costs a texture fetch
- * plus a `discard` per fragment, and `discard` disables early-Z — so zoomed out,
- * millions of hidden points get shaded anyway. Raising the point size brings the
- * disc back, since then it is actually visible.
- */
+/** All point sizes use the same round-disc sprite. */
 
 function buildSmallPly(pointCount: number): Buffer {
   const header =
@@ -51,7 +46,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction(() => (window as any).visualizer !== undefined, { timeout: 30000 });
 });
 
-test('default-size points render without the round-disc texture', async ({ page }) => {
+test('default-size points use the round-disc texture', async ({ page }) => {
   await loadPly(page, buildSmallPly(1000), 'small.ply');
 
   const shape = await page.evaluate(() => {
@@ -59,8 +54,8 @@ test('default-size points render without the round-disc texture', async ({ page 
     return { hasMap: mesh.material.map !== null, alphaTest: mesh.material.alphaTest };
   });
 
-  expect(shape.hasMap).toBe(false);
-  expect(shape.alphaTest).toBe(0);
+  expect(shape.hasMap).toBe(true);
+  expect(shape.alphaTest).toBe(0.5);
 });
 
 test('enlarging points restores the round-disc texture', async ({ page }) => {

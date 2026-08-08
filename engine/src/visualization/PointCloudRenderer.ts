@@ -61,24 +61,9 @@ export const DEFAULT_POINT_SIZE = 0.001;
 /** Minimum size a point must cover to remain visible, in device pixels. */
 export const MIN_POINT_PIXELS = 1;
 
-/**
- * Point sizes at or below this render as roughly one pixel, where a disc and a
- * square are the same handful of fragments. The small margin above
- * DEFAULT_POINT_SIZE keeps slider values that round to the default on the cheap
- * path.
- */
-const ROUND_POINT_MIN_SIZE = 0.0015;
-
-/**
- * Round points cost real frame time on large clouds: sampling the disc texture
- * and discarding the corners forces the fragment shader to run before the depth
- * test can reject anything (a `discard` disables early-Z). Zoomed out, millions
- * of points pile onto the same pixels and every one of those hidden fragments is
- * shaded anyway. Below one pixel there is no disc to see, so skip the texture
- * entirely and let early-Z do its job.
- */
-export function shouldUseRoundPoints(size: number): boolean {
-  return size > ROUND_POINT_MIN_SIZE;
+/** Every point cloud uses the same round sprite, including the 0.001 m default. */
+export function shouldUseRoundPoints(_size: number): boolean {
+  return true;
 }
 
 /**
@@ -117,7 +102,9 @@ export function applyPointShape(material: THREE.PointsMaterial, allowTransparenc
  * blending pipeline). The white texture only carries the round mask; the
  * per-vertex color is preserved (PointsMaterial multiplies map × color).
  *
- * Sub-pixel points skip the texture — see applyPointShape.
+ * The texture remains active at the default size. When a point rasterizes to
+ * one physical pixel it naturally cannot show a curved edge, but zooming in no
+ * longer exposes the old square sprite.
  */
 export function optimizeForPointCount(
   material: THREE.PointsMaterial,

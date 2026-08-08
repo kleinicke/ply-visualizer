@@ -44,6 +44,22 @@ export interface DicomSeries {
   slices: DicomSlice[];
 }
 
+/** Semantic temporary filename: selection order must never replace DICOM identity. */
+export function dicomSeriesFileName(series: DicomSeries, fallbackNumber: number): string {
+  return `${dicomSeriesDisplayName(series, fallbackNumber)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')}.nrrd`;
+}
+
+export function dicomSeriesDisplayName(series: DicomSeries, fallbackNumber: number): string {
+  const first = series.slices[0];
+  const seriesNumber = Number.isFinite(first?.seriesNumber)
+    ? Math.trunc(first.seriesNumber!)
+    : fallbackNumber;
+  const modality = (first?.modality || 'DICOM').trim().toUpperCase();
+  return `Series ${seriesNumber} ${modality || 'DICOM'}`;
+}
+
 const LONG_VR = new Set(['OB', 'OD', 'OF', 'OL', 'OV', 'OW', 'SQ', 'UC', 'UR', 'UT', 'UN']);
 const NATIVE_SYNTAXES: Record<string, { explicit: boolean; little: boolean }> = {
   '1.2.840.10008.1.2': { explicit: false, little: true },
@@ -435,6 +451,7 @@ export function buildDicomSeriesNrrd(series: DicomSeries): Uint8Array {
   const lines = [
     'NRRD0004',
     '# Built directly from a DICOM folder by ply-visualizer',
+    `content: ${dicomSeriesDisplayName(series, 1)}`,
     'type: float',
     'dimension: 3',
     `sizes: ${first.columns} ${first.rows} ${series.slices.length}`,
@@ -446,6 +463,9 @@ export function buildDicomSeriesNrrd(series: DicomSeries): Uint8Array {
     'encoding: gzip',
     'endian: little',
     `modality:=${first.modality || ''}`,
+    ...(Number.isFinite(first.seriesNumber)
+      ? [`dicom series number:=${Math.trunc(first.seriesNumber!)}`]
+      : []),
     ...(first.modality?.toUpperCase() === 'CT' ? ['units:=HU'] : []),
     ...(Number.isFinite(first.windowCenter) ? [`window center:=${first.windowCenter}`] : []),
     ...(Number.isFinite(first.windowWidth) && first.windowWidth! > 0

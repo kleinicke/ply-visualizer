@@ -1,11 +1,13 @@
 import type { SpatialData } from '../interfaces';
 import type { VolumeData } from '../parsers/nrrdParser';
-import { chooseStep } from './marchingCubes';
+import { volumeGreyByte } from './volumePresentation';
 
 export interface VolumePointsRequest {
   threshold: number;
   step?: readonly [number, number, number];
   maxPoints?: number;
+  windowCenter?: number;
+  windowWidth?: number;
   onProgress?: (fraction: number) => void;
 }
 
@@ -14,15 +16,14 @@ export interface VolumePointsResult {
   step: [number, number, number];
 }
 
-const DEFAULT_MAX_POINTS = 2_000_000;
-
-/** Emits thresholded voxels as ordinary world-space points with intensity. */
+/** Emits one ordinary world-space point for every voxel at/above the threshold. */
 export function buildVolumePoints(
   volume: VolumeData,
   request: VolumePointsRequest
 ): VolumePointsResult {
-  const base = request.step ?? chooseStep(volume.sizes, volume.ijkToWorld);
-  const maxPoints = Math.max(1, request.maxPoints ?? DEFAULT_MAX_POINTS);
+  const base = request.step ?? [1, 1, 1];
+  const maxPoints =
+    request.maxPoints === undefined ? Number.POSITIVE_INFINITY : Math.max(1, request.maxPoints);
   let multiplier = 1;
   let count = 0;
   let step: [number, number, number] = [...base];
@@ -36,6 +37,7 @@ export function buildVolumePoints(
 
   const positions = new Float32Array(count * 3);
   const intensity = new Float32Array(count);
+  const colors = new Uint8Array(count * 3);
   const [nx, ny, nz] = volume.sizes;
   const [sx, sy, sz] = step;
   const m = volume.ijkToWorld;
@@ -51,13 +53,22 @@ export function buildVolumePoints(
         positions[p] = m[0] * i + m[1] * j + m[2] * k + m[3];
         positions[p + 1] = m[4] * i + m[5] * j + m[6] * k + m[7];
         positions[p + 2] = m[8] * i + m[9] * j + m[10] * k + m[11];
+        const grey = volumeGreyByte(
+          value,
+          request.windowCenter ?? 0,
+          request.windowWidth ?? 1,
+          volume.header['photometric interpretation']
+        );
+        colors[p] = grey;
+        colors[p + 1] = grey;
+        colors[p + 2] = grey;
         intensity[point++] = value;
       }
     }
     request.onProgress?.(Math.min(1, (k + sz) / nz));
   }
 
-  return packageVolumePoints(volume, request.threshold, step, positions, intensity);
+  return packageVolumePoints(volume, request, step, positions, intensity, colors);
 }
 
 /** Cooperative point extraction so a newer threshold request can supersede it. */
@@ -66,8 +77,9 @@ export async function buildVolumePointsAsync(
   request: VolumePointsRequest,
   isCancelled: () => boolean
 ): Promise<VolumePointsResult | null> {
-  const base = request.step ?? chooseStep(volume.sizes, volume.ijkToWorld);
-  const maxPoints = Math.max(1, request.maxPoints ?? DEFAULT_MAX_POINTS);
+  const base = request.step ?? [1, 1, 1];
+  const maxPoints =
+    request.maxPoints === undefined ? Number.POSITIVE_INFINITY : Math.max(1, request.maxPoints);
   let multiplier = 1;
   let count: number | null = 0;
   let step: [number, number, number] = [...base];
@@ -82,6 +94,7 @@ export async function buildVolumePointsAsync(
 
   const positions = new Float32Array(count * 3);
   const intensity = new Float32Array(count);
+  const colors = new Uint8Array(count * 3);
   const [nx, ny, nz] = volume.sizes;
   const [sx, sy, sz] = step;
   const m = volume.ijkToWorld;
@@ -97,6 +110,15 @@ export async function buildVolumePointsAsync(
         positions[p] = m[0] * i + m[1] * j + m[2] * k + m[3];
         positions[p + 1] = m[4] * i + m[5] * j + m[6] * k + m[7];
         positions[p + 2] = m[8] * i + m[9] * j + m[10] * k + m[11];
+        const grey = volumeGreyByte(
+          value,
+          request.windowCenter ?? 0,
+          request.windowWidth ?? 1,
+          volume.header['photometric interpretation']
+        );
+        colors[p] = grey;
+        colors[p + 1] = grey;
+        colors[p + 2] = grey;
         intensity[point++] = value;
       }
     }
@@ -106,15 +128,16 @@ export async function buildVolumePointsAsync(
     }
     await new Promise<void>(resolve => setTimeout(resolve, 0));
   }
-  return packageVolumePoints(volume, request.threshold, step, positions, intensity);
+  return packageVolumePoints(volume, request, step, positions, intensity, colors);
 }
 
 function packageVolumePoints(
   volume: VolumeData,
-  threshold: number,
+  request: VolumePointsRequest,
   step: [number, number, number],
   positions: Float32Array,
-  intensity: Float32Array
+  intensity: Float32Array,
+  colors: Uint8Array
 ): VolumePointsResult {
   const count = intensity.length;
   const m = volume.ijkToWorld;
@@ -132,26 +155,29 @@ function packageVolumePoints(
       version: '1.0',
       comments: [
         `Volume ${volume.sizes.join(' x ')} voxels`,
-        `Points at or above ${threshold}`,
+        `One point per voxel at or above ${request.threshold}`,
         `Extraction stride ${step.join(' x ')} voxels (i/j/k)`,
       ],
       vertexCount: count,
       faceCount: 0,
-      hasColors: false,
+      hasColors: true,
       hasNormals: false,
       hasIntensity: true,
       useTypedArrays: true,
       positionsArray: positions,
+      colorsArray: colors,
       intensityArray: intensity,
       scalarFields: { intensity },
-      colorsArray: null,
       fileName: volume.fileName,
       metadata: {
         volumeSizes: volume.sizes,
         ijkToWorld: volume.ijkToWorld,
         spaceUnits: volume.spaceUnits,
         intensityUnits: volume.intensityUnits,
-        threshold,
+        threshold: request.threshold,
+        windowCenter: request.windowCenter,
+        windowWidth: request.windowWidth,
+        photometricInterpretation: volume.header['photometric interpretation'],
         extractionStep: step,
         effectiveSpacing,
         renderedPointCount: count,

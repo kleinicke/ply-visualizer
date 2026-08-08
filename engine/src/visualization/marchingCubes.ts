@@ -7,8 +7,8 @@
  * existing geometry, transform, measurement and comparison paths without a
  * volume renderer existing yet.
  *
- * Output is in the volume's world space (millimetres, for anything derived
- * from DICOM), not in voxel indices, because a mesh whose coordinates are
+ * Output is in the volume's declared world space (metres for DICOM loaded by
+ * this extension), not in voxel indices, because a mesh whose coordinates are
  * array subscripts cannot be measured against anything else in the scene.
  */
 

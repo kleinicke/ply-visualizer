@@ -245,7 +245,7 @@ function packageVolumeMesh(
       effectiveSpacing,
       renderedTriangleCount: mesh.triangleCount,
       sourceVoxelCount: volume.sizes[0] * volume.sizes[1] * volume.sizes[2],
-      volumeRenderMode: 'surface',
+      volumeRenderMode: 'mesh',
       channels: volume.channels,
     },
   };

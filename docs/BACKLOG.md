@@ -43,10 +43,47 @@ DICOM series end to end.** What exists:
   uncompressed grayscale DICOM by content (including extensionless files),
   groups compatible slices into series, and opens selected series without
   requiring the image-viewer bridge.
+- Directly opened series keep their DICOM identity in the viewer (`Series 4 MR`,
+  etc.). Temporary lossless NRRD files use the real DICOM SeriesNumber and
+  modality rather than the selected-list position, and carry both in metadata.
+- The canonical first view is now a **full-resolution point cloud**: every
+  source voxel at or above the threshold becomes exactly one point at affine
+  world coordinates. The initial threshold is the measured minimum, so first
+  load retains every voxel. There is no silent point budget or automatic stride.
+  Each point keeps its original scalar value and receives the same window/level
+  grayscale as the DICOM image (including MONOCHROME1 inversion).
+- Raising **Hide voxel values below** removes those voxels from point geometry.
+  **Mesh (isosurface)** is an explicit optional representation and marching
+  cubes uses that same entered scalar threshold. Mesh sampling is exposed
+  separately and never changes point-cloud fidelity.
+- Volume control messages go directly to the authoritative retained-session
+  lookup; a redundant panel-local gate that could silently discard threshold and
+  mode changes was removed. Geometry delivery is awaited and rejected updates
+  now surface an error instead of leaving stale pixels visible.
+- The webview also retains the scalar array from the canonical full point
+  payload and performs later point filtering, marching-cubes extraction, and
+  orthogonal-slice rebuilding locally. Threshold and render-mode controls now
+  update the displayed geometry directly instead of depending on another
+  extension-host message round trip; the host path remains a compatibility
+  fallback for older partial payloads.
+- The round point sprite is used at every configured point size for DICOM and
+  ordinary PLY/point-cloud files; zooming into the 0.001 default no longer
+  reveals square sprites.
 - The volume panel has a third **Orthogonal slices** mode. It displays the
   original voxel samples on axial/coronal/sagittal planes with independent
   window/level and slice-position controls. Segmentation threshold remains
   exclusive to surface and point modes.
+- Double-click picking applies the active clipping planes before selecting a
+  point or mesh intersection, so a clipped-away voxel can no longer become the
+  rotation centre.
+- Slice clipping planes sit halfway between voxel centres rather than directly
+  through the retained outer layer. This keeps the selected boundary layer a
+  positive distance inside the GPU half-space and prevents camera-motion flicker
+  from floating-point clipping classification.
+- File-list refreshes update stable keyed rows in place instead of remounting
+  the complete list. The shared refresh boundary also restores the container's
+  exact scroll offsets, so threshold, render-mode, color, visibility, and future
+  setting changes cannot jump back to the first file or discard open form state.
 
 **The descriptor question is settled: NRRD is the payload.** It is a documented
 standard that already carries the affine, world units, dtype and endianness, so
@@ -66,12 +103,15 @@ anisotropy-aware per-axis strides; open volumes are retained for debounced,
 cancellable re-extraction; the volume panel provides a histogram threshold, HU
 presets, point mode and optional gradient-magnitude surface coloring; and
 affine-aware i/j/k clipping works in slice indices (with bounding-box clipping
-for ordinary point clouds). Step 4 is implemented as a multi-series handoff: the
-image viewer writes every selected DICOM series and this extension opens the
-first NRRD then adds the rest to the same scene. A presentation follow-up also
-added metre-scale DICOM geometry, orthogonal source-value slices with
-window/level, greyscale point intensity by default, neutral surfaces by default,
-and visible effective stride/count/spacing metadata.
+for ordinary point clouds). Point clouds are now the full-resolution default,
+with one windowed-grey point per retained voxel and threshold-only filtering;
+meshes are optional threshold-driven isosurfaces. Step 4 is implemented as a
+multi-series handoff: the image viewer writes every selected DICOM series and
+this extension opens the first NRRD then adds the rest to the same scene. A
+presentation follow-up also added metre-scale DICOM geometry, orthogonal
+source-value slices with window/level, greyscale point intensity by default,
+neutral surfaces by default, and visible effective stride/count/spacing
+metadata.
 
 Ordered so each one unblocks the next. Steps 0 and 1 are prerequisites for
 everything interactive; 2–4 are independent of each other once 1 lands.
@@ -159,8 +199,9 @@ These ship together because they are the same panel and the same round trip.
   surface colorings. Intensity color belongs to point mode, where each point
   genuinely has its own value.
 
-- Point mode needs its own budget and stride: 18M voxels can put millions of
-  points above a low threshold.
+- Point mode deliberately has no hidden budget or stride: an 18M-voxel series
+  produces 18M points when its threshold includes every value. Any reduction
+  must come from the visible scalar threshold, never invisible sampling.
 
 #### Step 3 — clipping planes ("look inside") — implemented
 

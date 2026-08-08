@@ -24,6 +24,7 @@ import {
   volumeSectionPlanes,
 } from '../../../engine/src/visualization/sectionPlanes';
 import * as THREE from 'three';
+import { SelectionManager } from '../../../engine/src/SelectionManager';
 
 /** Assembles an NRRD file in memory from a header block and raw sample bytes. */
 function makeNrrd(headerLines: string[], payload: Uint8Array): Uint8Array {
@@ -568,6 +569,49 @@ suite('Isosurface extraction', () => {
 });
 
 suite('Volume points and clipping', () => {
+  test('point picking ignores voxels removed by active slice clipping', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 100);
+    camera.position.set(0, 0, 5);
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld(true);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 0]), 3)
+    );
+    const points = new THREE.Points(
+      geometry,
+      new THREE.PointsMaterial({ size: 0.1, sizeAttenuation: true })
+    );
+    points.updateMatrixWorld(true);
+    const manager = new SelectionManager({
+      fileEntries: {} as any,
+      camera,
+      meshes: [points],
+      spatialFiles: [],
+      poseGroups: [],
+      cameraGroups: [],
+      fileVisibility: [true],
+      pointSizes: [0.1],
+      screenSpaceScaling: false,
+      // Keep z <= 0.5, clipping the front point at z=1.
+      clippingPlanes: [new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.5)],
+    });
+
+    const hit = (manager as any).pickPointScreenSpace(
+      50,
+      50,
+      {
+        clientWidth: 100,
+        clientHeight: 100,
+      },
+      [points]
+    );
+    assert.ok(hit);
+    assert.strictEqual(hit.pointIndex, 1);
+  });
+
   test('emits thresholded points in world space with intensity', () => {
     const volume = makeBall(8, 3);
     volume.ijkToWorld = [2, 0, 0, 10, 0, 3, 0, 20, 0, 0, 4, 30, 0, 0, 0, 1];
@@ -586,6 +630,37 @@ suite('Volume points and clipping', () => {
     assert.strictEqual(result.data.metadata?.sourceVoxelCount, 512);
   });
 
+  test('uses every retained voxel at unit stride by default', () => {
+    const volume = makeBall(8, 3);
+    const result = buildVolumePoints(volume, {
+      threshold: -Infinity,
+      windowCenter: 0,
+      windowWidth: 10,
+    });
+
+    assert.deepStrictEqual(result.step, [1, 1, 1]);
+    assert.strictEqual(result.data.vertexCount, 8 * 8 * 8);
+  });
+
+  test('colours points with the fixed DICOM window rather than the retained range', () => {
+    const volume = makeBall(2, 1);
+    volume.samples = new Float32Array([0, 50, 100, 150, 0, 50, 100, 150]);
+    volume.header['photometric interpretation'] = 'MONOCHROME2';
+
+    const result = buildVolumePoints(volume, {
+      threshold: 50,
+      windowCenter: 75,
+      windowWidth: 150,
+    });
+
+    assert.deepStrictEqual(Array.from(result.data.intensityArray!), [50, 100, 150, 50, 100, 150]);
+    assert.deepStrictEqual(
+      Array.from(result.data.colorsArray!.slice(0, 9)),
+      [85, 85, 85, 170, 170, 170, 255, 255, 255]
+    );
+    assert.strictEqual(result.data.hasColors, true);
+  });
+
   test('uses reciprocal affine normals for sheared slice planes', () => {
     const affine = [1, 0.3, 0.2, 10, 0, 1, 0.4, 20, 0, 0, 2, 30, 0, 0, 0, 1];
     const [lower, upper] = volumeSectionPlanes(affine, 2, 3, 7);
@@ -595,8 +670,14 @@ suite('Volume points and clipping', () => {
         affine[4] * i + affine[5] * j + affine[6] * k + affine[7],
         affine[8] * i + affine[9] * j + affine[10] * k + affine[11]
       );
-    assert.ok(Math.abs(lower.distanceToPoint(pointAt(5, 9, 3))) < 1e-9);
-    assert.ok(Math.abs(upper.distanceToPoint(pointAt(2, 4, 7))) < 1e-9);
+    // Selected outer layers lie safely inside; planes sit between voxel
+    // centres so no rendered point is coplanar with a GPU clipping boundary.
+    assert.ok(lower.distanceToPoint(pointAt(5, 9, 3)) > 0);
+    assert.ok(upper.distanceToPoint(pointAt(2, 4, 7)) > 0);
+    assert.ok(Math.abs(lower.distanceToPoint(pointAt(5, 9, 2.5))) < 1e-9);
+    assert.ok(Math.abs(upper.distanceToPoint(pointAt(2, 4, 7.5))) < 1e-9);
+    assert.ok(lower.distanceToPoint(pointAt(1, 1, 2)) < 0);
+    assert.ok(upper.distanceToPoint(pointAt(1, 1, 8)) < 0);
     assert.ok(lower.distanceToPoint(pointAt(1, 1, 5)) > 0);
     assert.ok(upper.distanceToPoint(pointAt(1, 1, 5)) > 0);
   });
@@ -647,6 +728,33 @@ suite('Threshold defaults', () => {
 });
 
 suite('Volume to SpatialData', () => {
+  test('moves the extracted mesh when its scalar threshold changes', () => {
+    const size = 8;
+    const volume = makeBall(size, 1);
+    volume.samples = new Float32Array(size * size * size);
+    for (let k = 0; k < size; k++) {
+      for (let j = 0; j < size; j++) {
+        for (let i = 0; i < size; i++) {
+          volume.samples[i + j * size + k * size * size] = i;
+        }
+      }
+    }
+
+    const low = buildVolumeMesh(volume, { threshold: 2, step: [1, 1, 1] }).data;
+    const high = buildVolumeMesh(volume, { threshold: 5, step: [1, 1, 1] }).data;
+    const meanX = (positions: Float32Array) => {
+      let sum = 0;
+      for (let i = 0; i < positions.length; i += 3) {
+        sum += positions[i];
+      }
+      return sum / (positions.length / 3);
+    };
+
+    assert.ok(meanX(high.positionsArray!) > meanX(low.positionsArray!) + 2);
+    assert.strictEqual(low.metadata?.threshold, 2);
+    assert.strictEqual(high.metadata?.threshold, 5);
+  });
+
   test('delivers a typed-array mesh the geometry builder can consume', () => {
     const volume = makeBall(32, 10);
     volume.intensityUnits = 'HU';

@@ -36,6 +36,8 @@ export interface SelectionContext {
   screenSpaceScaling: boolean;
   /** Active Spark SplatMesh objects, aligned with spatialFiles. */
   splatMeshes?: (THREE.Object3D | null)[];
+  /** Renderer clipping planes; points behind one of these are not visible or pickable. */
+  clippingPlanes?: readonly THREE.Plane[];
 }
 
 /**
@@ -494,9 +496,12 @@ export class SelectionManager {
 
     const intersects = raycaster.intersectObjects(triangleMeshes, false);
 
-    if (intersects.length > 0) {
+    const visibleIntersection = intersects.find(
+      intersection => !this.isClipped(intersection.point)
+    );
+    if (visibleIntersection) {
       // Found mesh surface intersection - use the exact intersection point on the surface
-      const intersectionPoint = intersects[0].point;
+      const intersectionPoint = visibleIntersection.point;
 
       // Check if the point is too close to the camera
       const distance = this.context.camera.position.distanceTo(intersectionPoint);
@@ -642,6 +647,7 @@ export class SelectionManager {
     );
     const mvp = new THREE.Matrix4();
     const sphereCenter = new THREE.Vector3();
+    const worldPoint = new THREE.Vector3();
 
     // computeSelectionPixelRadius clamps to 150px, so no point farther than
     // this from the cursor can ever be selected
@@ -738,6 +744,11 @@ export class SelectionManager {
           continue;
         }
 
+        worldPoint.set(x, y, z).applyMatrix4(mesh.matrixWorld);
+        if (this.isClipped(worldPoint)) {
+          continue;
+        }
+
         const renderedSize = this.computeRenderedPointSize(material, w, canvas);
         const pixelRadius = this.computeSelectionPixelRadius(renderedSize, w);
         if (pixelDistanceSq > pixelRadius * pixelRadius) {
@@ -765,6 +776,10 @@ export class SelectionManager {
       renderedSize: bestRenderedSize,
       pixelRadius: bestPixelRadius,
     };
+  }
+
+  private isClipped(worldPoint: THREE.Vector3): boolean {
+    return (this.context.clippingPlanes ?? []).some(plane => plane.distanceToPoint(worldPoint) < 0);
   }
 
   /**

@@ -3,7 +3,11 @@ import { isColmapModelFile } from '../engine/src/formats/colmap/colmapFiles';
 import { PointCloudEditorProvider } from './pointCloudEditorProvider';
 import { DatasetManager } from './dataset/datasetManager';
 import { glob } from 'glob';
-import { buildDicomSeriesNrrd, scanDicomFolder } from './providerHandlers/dicomFolderLoader';
+import {
+  buildDicomSeriesNrrd,
+  dicomSeriesFileName,
+  scanDicomFolder,
+} from './providerHandlers/dicomFolderLoader';
 
 export function activate(context: vscode.ExtensionContext) {
   // Register the PLY editor provider
@@ -376,12 +380,20 @@ async function handleOpenDicomFolder(
         cancellable: false,
       },
       async progress => {
+        const usedNames = new Set<string>();
         for (let index = 0; index < selected.length; index++) {
           progress.report({
             message: `${index + 1} / ${selected.length} · ${selected[index].label}`,
           });
           const bytes = buildDicomSeriesNrrd(selected[index]);
-          const target = vscode.Uri.joinPath(handoffFolder, `series-${index + 1}.nrrd`);
+          const semanticName = dicomSeriesFileName(selected[index], index + 1);
+          let targetName = semanticName;
+          let duplicate = 2;
+          while (usedNames.has(targetName)) {
+            targetName = semanticName.replace(/\.nrrd$/i, `-${duplicate++}.nrrd`);
+          }
+          usedNames.add(targetName);
+          const target = vscode.Uri.joinPath(handoffFolder, targetName);
           await vscode.workspace.fs.writeFile(target, bytes);
           targets.push(target);
         }

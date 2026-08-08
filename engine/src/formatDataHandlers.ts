@@ -403,7 +403,7 @@ export async function handleVolumeData(host: FormatDataHandlersHost, message: an
           ? `orthogonal slices at ${(spatialData.metadata as any)?.sliceIndices?.join(' / ') || 'centre'}`
           : `${spatialData.vertexCount.toLocaleString()} vertices, ${spatialData.faceCount.toLocaleString()} triangles`;
     host.showStatus(
-      `Volume: ${renderMode === 'points' ? 'point cloud' : renderMode === 'slices' ? 'slices' : 'isosurface'}${at} — ${summary} from ${message.fileName}`
+      `Volume: ${renderMode === 'points' ? 'point cloud' : renderMode === 'slices' ? 'slices' : 'mesh'}${at} — ${summary} from ${message.fileName}`
     );
   } catch (error) {
     console.error('Error handling volume data:', error);
@@ -453,12 +453,12 @@ function replaceVolumeGeometry(
   data.fileIndex = fileIndex;
   host.spatialFiles[fileIndex] = data;
   if (data.metadata?.volumeRenderMode === 'points' && previousRenderMode !== 'points') {
-    host.individualColorModes[fileIndex] = 'intensity';
-    filesState.colorModes[fileIndex] = 'intensity';
+    host.individualColorModes[fileIndex] = 'original';
+    filesState.colorModes[fileIndex] = 'original';
   } else if (data.metadata?.volumeRenderMode === 'slices' && previousRenderMode !== 'slices') {
     host.individualColorModes[fileIndex] = 'original';
     filesState.colorModes[fileIndex] = 'original';
-  } else if (data.metadata?.volumeRenderMode === 'surface' && previousRenderMode !== 'surface') {
+  } else if (data.metadata?.volumeRenderMode === 'mesh' && previousRenderMode !== 'mesh') {
     host.individualColorModes[fileIndex] = 'assigned';
     filesState.colorModes[fileIndex] = 'assigned';
   }

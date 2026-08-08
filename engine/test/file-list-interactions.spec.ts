@@ -132,6 +132,34 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     );
   });
 
+  test('a full file-list refresh preserves scroll and stable row DOM', async ({ page }) => {
+    await page
+      .locator('#hiddenFileInput')
+      .setInputFiles([
+        path.resolve('../testfiles/ply/test_small_mesh.ply'),
+        path.resolve('../testfiles/ply/test_small_mesh_binary.ply'),
+      ]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const before = await page.locator('#file-list').evaluate(element => {
+      const list = element as HTMLElement;
+      list.style.height = '32px';
+      list.style.overflowY = 'auto';
+      list.scrollTop = list.scrollHeight;
+      (list.querySelector('.file-item') as any).__stableRowMarker = 'preserved';
+      return list.scrollTop;
+    });
+    expect(before).toBeGreaterThan(0);
+
+    await page.evaluate(() => (window as any).visualizer.updateFileList());
+
+    const after = await page.locator('#file-list').evaluate(element => ({
+      scrollTop: (element as HTMLElement).scrollTop,
+      marker: ((element.querySelector('.file-item') as any).__stableRowMarker as string) || null,
+    }));
+    expect(after).toEqual({ scrollTop: before, marker: 'preserved' });
+  });
+
   test('change color mode for a file', async ({ page }) => {
     const plyPath = path.resolve('../testfiles/open3d/sample_mesh.ply');
     await page.locator('#hiddenFileInput').setInputFiles(plyPath);
