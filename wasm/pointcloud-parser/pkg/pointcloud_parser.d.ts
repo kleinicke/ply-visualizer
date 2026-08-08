@@ -79,6 +79,17 @@ export class PointCloudResult {
 }
 
 /**
+ * Column-major 4x4 pose plus a JSON stats blob, for every stage.
+ */
+export class RegistrationResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    readonly matrix: Float64Array;
+    readonly stats: string;
+}
+
+/**
  * Incremental parser for streaming/overlapped loading. JS reads the file in
  * chunks and calls `push` on each (while the next chunk's read is in flight),
  * then `finish`. Partial lines are stitched across chunk boundaries via carry.
@@ -103,9 +114,25 @@ export class StreamParser {
 export function alloc(len: number): number;
 
 /**
+ * Coarse stage alone, for callers that want the shortlist without paying for
+ * refinement.
+ */
+export function coarse_align(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
+
+/**
  * Free a buffer previously returned by `alloc`.
  */
 export function dealloc(ptr: number, len: number): void;
+
+/**
+ * Closed-form fit from matched correspondences.
+ */
+export function fit_correspondences(source: Float32Array, target: Float32Array): RegistrationResult | undefined;
+
+/**
+ * ICP refinement alone, from `settings.initial` (identity when absent).
+ */
+export function icp_refine(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
 
 /**
  * Parse an ASCII PLY: read the header to learn the vertex count + property
@@ -157,3 +184,11 @@ export function parse_pts(data: Uint8Array): PointCloudResult;
  * the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
  */
 export function parse_xyz(data: Uint8Array, variant: string, color_mode: string): PointCloudResult;
+
+/**
+ * Coarse sweep and/or ICP refinement, per `settings_json`.
+ *
+ * `source` and `target` are flat xyz triples in world space. Returns
+ * `undefined` when nothing could be registered.
+ */
+export function register_pair(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;

@@ -435,6 +435,55 @@ if (Symbol.dispose) PointCloudResult.prototype[Symbol.dispose] = PointCloudResul
 exports.PointCloudResult = PointCloudResult;
 
 /**
+ * Column-major 4x4 pose plus a JSON stats blob, for every stage.
+ */
+class RegistrationResult {
+  static __wrap(ptr) {
+    const obj = Object.create(RegistrationResult.prototype);
+    obj.__wbg_ptr = ptr;
+    RegistrationResultFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    RegistrationResultFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_registrationresult_free(ptr, 0);
+  }
+  /**
+   * @returns {Float64Array}
+   */
+  get matrix() {
+    const ret = wasm.registrationresult_matrix(this.__wbg_ptr);
+    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v1;
+  }
+  /**
+   * @returns {string}
+   */
+  get stats() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.registrationresult_stats(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+}
+if (Symbol.dispose)
+  RegistrationResult.prototype[Symbol.dispose] = RegistrationResult.prototype.free;
+exports.RegistrationResult = RegistrationResult;
+
+/**
  * Incremental parser for streaming/overlapped loading. JS reads the file in
  * chunks and calls `push` on each (while the next chunk's read is in flight),
  * then `finish`. Partial lines are stitched across chunk boundaries via carry.
@@ -505,6 +554,26 @@ function alloc(len) {
 exports.alloc = alloc;
 
 /**
+ * Coarse stage alone, for callers that want the shortlist without paying for
+ * refinement.
+ * @param {Float32Array} source
+ * @param {Float32Array} target
+ * @param {string} settings_json
+ * @returns {RegistrationResult | undefined}
+ */
+function coarse_align(source, target, settings_json) {
+  const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArrayF32ToWasm0(target, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passStringToWasm0(settings_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.coarse_align(ptr0, len0, ptr1, len1, ptr2, len2);
+  return ret === 0 ? undefined : RegistrationResult.__wrap(ret);
+}
+exports.coarse_align = coarse_align;
+
+/**
  * Free a buffer previously returned by `alloc`.
  * @param {number} ptr
  * @param {number} len
@@ -513,6 +582,41 @@ function dealloc(ptr, len) {
   wasm.dealloc(ptr, len);
 }
 exports.dealloc = dealloc;
+
+/**
+ * Closed-form fit from matched correspondences.
+ * @param {Float32Array} source
+ * @param {Float32Array} target
+ * @returns {RegistrationResult | undefined}
+ */
+function fit_correspondences(source, target) {
+  const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArrayF32ToWasm0(target, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.fit_correspondences(ptr0, len0, ptr1, len1);
+  return ret === 0 ? undefined : RegistrationResult.__wrap(ret);
+}
+exports.fit_correspondences = fit_correspondences;
+
+/**
+ * ICP refinement alone, from `settings.initial` (identity when absent).
+ * @param {Float32Array} source
+ * @param {Float32Array} target
+ * @param {string} settings_json
+ * @returns {RegistrationResult | undefined}
+ */
+function icp_refine(source, target, settings_json) {
+  const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArrayF32ToWasm0(target, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passStringToWasm0(settings_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.icp_refine(ptr0, len0, ptr1, len1, ptr2, len2);
+  return ret === 0 ? undefined : RegistrationResult.__wrap(ret);
+}
+exports.icp_refine = icp_refine;
 
 /**
  * Parse an ASCII PLY: read the header to learn the vertex count + property
@@ -664,6 +768,28 @@ function parse_xyz(data, variant, color_mode) {
   return PointCloudResult.__wrap(ret);
 }
 exports.parse_xyz = parse_xyz;
+
+/**
+ * Coarse sweep and/or ICP refinement, per `settings_json`.
+ *
+ * `source` and `target` are flat xyz triples in world space. Returns
+ * `undefined` when nothing could be registered.
+ * @param {Float32Array} source
+ * @param {Float32Array} target
+ * @param {string} settings_json
+ * @returns {RegistrationResult | undefined}
+ */
+function register_pair(source, target, settings_json) {
+  const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArrayF32ToWasm0(target, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passStringToWasm0(settings_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.register_pair(ptr0, len0, ptr1, len1, ptr2, len2);
+  return ret === 0 ? undefined : RegistrationResult.__wrap(ret);
+}
+exports.register_pair = register_pair;
 function __wbg_get_imports() {
   const import0 = {
     __proto__: null,
@@ -707,6 +833,10 @@ const PointCloudResultFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_pointcloudresult_free(ptr, 1));
+const RegistrationResultFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_registrationresult_free(ptr, 1));
 const StreamParserFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
@@ -758,6 +888,13 @@ function getUint8ArrayMemory0() {
 function passArray8ToWasm0(arg, malloc) {
   const ptr = malloc(arg.length * 1, 1) >>> 0;
   getUint8ArrayMemory0().set(arg, ptr / 1);
+  WASM_VECTOR_LEN = arg.length;
+  return ptr;
+}
+
+function passArrayF32ToWasm0(arg, malloc) {
+  const ptr = malloc(arg.length * 4, 4) >>> 0;
+  getFloat32ArrayMemory0().set(arg, ptr / 4);
   WASM_VECTOR_LEN = arg.length;
   return ptr;
 }

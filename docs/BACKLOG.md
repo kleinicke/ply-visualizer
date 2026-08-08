@@ -755,8 +755,10 @@ Worker. A later extension: point-to-mesh distance against STL/OBJ ground truth
 
 ### Scan-to-scan registration (X3A stations first)
 
-**Implemented (August 2026), all three stages.** `engine/src/registration/`
-holds the math, `engine/src/registrationFeature.ts` the host glue and
+**Implemented (August 2026), all three stages, in Rust.** The solvers are
+`wasm/pointcloud-parser/src/registration/` (tested with `cargo test`);
+`engine/src/registration/` is the marshalling layer and its Web Worker,
+`engine/src/registrationFeature.ts` the host glue, and
 `engine/src/components/RegistrationPanel.svelte` the per-file UI.
 
 **The problem.** An X3A archive is raw field data. Every embedded X3R record is
@@ -834,10 +836,43 @@ without changing the pose it converges to.
 not survey-grade: no targets, no network adjustment, no loop closure. The panel
 says so. Anything beyond that belongs in Reconstructor or CloudCompare.
 
-The neighbor search in stage 3 is the same uniform-grid kernel the
-cloud-to-cloud distance item below needs. It is TypeScript today, downsampled
-hard enough to stay interactive; when that item lands its Rust/WASM kernel,
-`registration/pointIndex.ts` should be the second caller rather than a second
+**Rust, and what made it fast.** The first version was TypeScript on the render
+thread. Porting it moved the work into a worker so a sweep never freezes the
+viewer, but the port alone changed the runtime by nothing at all — the pose came
+back identical to four decimal places and a hair _slower_. Two structural fixes
+did the actual work, and both were invisible until profiled:
+
+- **The spatial index must be sparse.** A dense lattice over the bounding box
+  needs billions of cells at the correspondence gate's resolution, because the
+  box is set by a few long-range returns 150 m out while the structure sits in
+  the first few metres. The cell-count cap then inflated cells to ~1 m, each
+  holding thousands of points, and every nearest-neighbour query became a linear
+  scan: **0.65 s per ICP iteration**. Hashing the occupied cells makes empty
+  space free and the cell size can stay at the gate. One full ICP run went from
+  **58.4 s to 2.3 s**.
+- **Prepare each scale once.** Building a level — voxel downsample, grid, PCA
+  normals over the target — dwarfs the iteration loop that uses it, and the
+  candidate screening runs ICP six times over the same pair. `IcpPyramid` builds
+  the levels once and every attempt borrows them.
+
+One environment constraint the port ran into, worth knowing before putting any
+other worker in the webview: **a VS Code webview cannot construct a Web Worker
+from the extension's bundle.** The document is `vscode-webview://` while the
+script is served from `vscode-cdn.net`, and a worker script has to be
+same-origin. The standalone page is unaffected, which is why every Playwright
+spec passed while the extension's Align button did nothing at all. The solvers
+therefore keep a working in-page fallback
+(`registration/wasmLoader.browser.ts`), and `registration-fallback.spec.ts`
+blocks `Worker` to hold that path honest. Getting the work off the UI thread in
+the extension means running it in the extension host — a genuinely separate
+process — rather than in a webview worker.
+
+End-to-end auto-align on the real archives, unchanged poses throughout:
+`ScanArchive2` **16.0 s → 2.0 s**, `OHP_FRONT` 6.2 s → 1.7 s, `Abschnitt_B` 4.3
+s → 1.3 s.
+
+The neighbour search is the same kernel the cloud-to-cloud distance item below
+needs; `registration::point_index` should be its caller rather than a second
 implementation.
 
 ### Shared core with tiff-visualizer (and a possible shared desktop app)

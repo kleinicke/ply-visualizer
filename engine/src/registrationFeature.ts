@@ -12,7 +12,13 @@
 import * as THREE from 'three';
 import type { SpatialData } from './interfaces';
 import { registrationState } from './state/registration.svelte';
-import { fitRigidTransform, icpPointToPlane, registerClouds, type UpAxis } from './registration';
+import {
+  fitCorrespondences,
+  icpRefine,
+  registerPair,
+  registrationBackend,
+  type UpAxis,
+} from './registration';
 
 export interface RegistrationHost {
   scene: THREE.Scene;
@@ -21,6 +27,20 @@ export interface RegistrationHost {
   setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void;
   updateMatrixTextarea(fileIndex: number): void;
   requestRender(): void;
+}
+
+/**
+ * Turns a thrown solver error into something the panel can show.
+ *
+ * These calls cross a worker (or a wasm module) boundary, so they can fail for
+ * reasons no caller anticipated — a worker that will not start, a module that
+ * will not load. Swallowing that leaves a button that does nothing when
+ * clicked, which is exactly how this surfaced in the VS Code webview.
+ */
+function describeFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error('[registration] failed:', error);
+  return `Alignment failed (${registrationBackend()}): ${message}`;
 }
 
 /** Correspondences are stored in world space, as picked. */
@@ -418,8 +438,8 @@ export function undo(host: RegistrationHost): void {
   host.requestRender();
 }
 
-export function alignFromPairs(host: RegistrationHost): void {
-  if (!session || session.pairs.length < 3) {
+export async function alignFromPairs(host: RegistrationHost): Promise<void> {
+  if (!session || session.pairs.length < 3 || registrationState.busy) {
     registrationState.result = 'Pick at least three correspondences first.';
     return;
   }
@@ -435,14 +455,23 @@ export function alignFromPairs(host: RegistrationHost): void {
     target[i * 3 + 2] = pair.target.z;
   });
 
-  const fit = fitRigidTransform(source, target);
-  if (!fit) {
+  registrationState.busy = true;
+  try {
+    const fit = await fitCorrespondences(source, target);
+    if (!fit) {
+      registrationState.result =
+        'Those correspondences are degenerate - pick points that are not all on one line.';
+      return;
+    }
+    applyDelta(host, fit.matrix);
     registrationState.result =
-      'Those correspondences are degenerate - pick points that are not all on one line.';
-    return;
+      `Fitted ${count} pairs · RMS ${(fit.rmse ?? 0).toFixed(3)} · ` +
+      `worst ${(fit.maxError ?? 0).toFixed(3)}`;
+  } catch (error) {
+    registrationState.result = describeFailure(error);
+  } finally {
+    registrationState.busy = false;
   }
-  applyDelta(host, fit.matrix);
-  registrationState.result = `Fitted ${count} pairs · RMS ${fit.rmse.toFixed(3)} · worst ${fit.maxError.toFixed(3)}`;
 }
 
 /**
@@ -470,11 +499,11 @@ export async function autoAlign(host: RegistrationHost): Promise<void> {
   // Yield once so the status reaches the screen before the sweep blocks.
   await new Promise(resolve => setTimeout(resolve, 0));
   try {
-    const result = registerClouds(source, target, {
+    // The solver runs in a worker, so the sweep and the candidate ICP runs no
+    // longer block the viewer; there is no per-candidate callback to report
+    // across that boundary, and the whole call is a few seconds.
+    const result = await registerPair(source, target, {
       coarse: { upAxis: registrationState.upAxis as UpAxis },
-      onCandidate: ({ index, total, yawDegrees }) => {
-        registrationState.status = `Testing yaw ${yawDegrees.toFixed(0)}° (${index + 1}/${total})...`;
-      },
     });
     if (!result?.coarse) {
       registrationState.result = 'Automatic alignment found nothing to match.';
@@ -493,7 +522,10 @@ export async function autoAlign(host: RegistrationHost): Promise<void> {
         : 'coarse only') +
       (Number.isFinite(margin) && margin < 1.2
         ? ' · the yaw sweep was ambiguous here, so check the result'
-        : '');
+        : '') +
+      ` · ${registrationBackend()}`;
+  } catch (error) {
+    registrationState.result = describeFailure(error);
   } finally {
     registrationState.busy = false;
     registrationState.status = '';
@@ -515,11 +547,8 @@ export async function refineIcp(host: RegistrationHost): Promise<void> {
   registrationState.status = 'Refining...';
   await new Promise(resolve => setTimeout(resolve, 0));
   try {
-    const result = icpPointToPlane(source, target, {
-      onProgress: ({ scale, inlierRmse }) => {
-        registrationState.status = `Refining at ${scale}x · RMS ${inlierRmse.toFixed(4)}`;
-      },
-    });
+    const refined = await icpRefine(source, target);
+    const result = refined?.icp ? { ...refined.icp, matrix: refined.matrix } : null;
     if (!result) {
       registrationState.result =
         'ICP found no correspondences - the clouds are too far apart to refine. Align coarsely first.';
@@ -530,6 +559,8 @@ export async function refineIcp(host: RegistrationHost): Promise<void> {
       `RMS ${result.inlierRmse.toFixed(4)} over ${result.inlierCount.toLocaleString()} points · ` +
       `overlap ${(result.fitness * 100).toFixed(0)}% · ${result.iterations} iterations` +
       (result.converged ? '' : ' (hit the iteration cap)');
+  } catch (error) {
+    registrationState.result = describeFailure(error);
   } finally {
     registrationState.busy = false;
     registrationState.status = '';

@@ -27,6 +27,14 @@ module.exports = {
     alias: {
       // Map webview imports to the actual source files
       '../../src/webview': path.resolve(__dirname, '../src/webview'),
+      // The registration solvers reach the browser through their worker, which
+      // loads the `web` wasm build. The CommonJS loader beside it is for the
+      // extension host and Node only, and bundling it drags a dynamic
+      // require() in that webpack flags as a critical dependency.
+      [path.resolve(__dirname, 'src/registration/wasmLoader.ts')]: path.resolve(
+        __dirname,
+        'src/registration/wasmLoader.browser.ts'
+      ),
     },
   },
   module: {

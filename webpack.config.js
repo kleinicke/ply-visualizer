@@ -94,6 +94,17 @@ module.exports = [
         // so it lands in a separate chunk rather than the main bundle.
         'three/webgpu': path.resolve(__dirname, 'node_modules/three/build/three.webgpu.js'),
         three: path.resolve(__dirname, 'node_modules/three'),
+        // The registration solvers reach a browser through their worker, or
+        // through the wasm loaded in the page. The CommonJS loader beside them
+        // is for the extension host and Node; bundling it here leaves the
+        // webview with a require() it cannot resolve, and therefore with no
+        // way to run registration at all. engine/webpack.config.js carries the
+        // same alias for the standalone page, and
+        // src/test/suite/webviewBundle.test.ts fails the build if either drifts.
+        [path.resolve(__dirname, 'engine/src/registration/wasmLoader.ts')]: path.resolve(
+          __dirname,
+          'engine/src/registration/wasmLoader.browser.ts'
+        ),
       },
     },
     optimization: {
