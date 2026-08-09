@@ -1,6 +1,6 @@
 <script lang="ts">
   import { filesState } from '../state/files.svelte';
-  import { registrationState } from '../state/registration.svelte';
+  import { registrationState, stationPipelineUi } from '../state/registration.svelte';
   import * as registration from '../registrationFeature';
 
   let { host, fileIndex }: { host: any; fileIndex: number } = $props();
@@ -31,6 +31,57 @@
   function onTargetChange(event: Event) {
     const value = Number((event.currentTarget as HTMLSelectElement).value);
     registration.beginSession(host, fileIndex, value);
+  }
+
+  // X3A archives carry several scans from several stations in one file, and
+  // only the scans a panorama was shot from arrive coloured. Everything below
+  // is specific to that, so it stays hidden for every other format.
+  const archiveName = $derived(
+    (filesState.renderTick, host.spatialFiles?.[fileIndex]?.metadata?.containerFileName as string | undefined)
+  );
+  // The pipeline needs a process that still holds the archive, which only the
+  // extension has; the standalone page never sees this control.
+  const canRunPipeline = $derived(
+    (filesState.renderTick, !!archiveName && host.runningInVSCode === true && !!host.vscode)
+  );
+
+  /**
+   * The placement the viewer currently has for every scan of this archive,
+   * keyed by scan stem.
+   *
+   * Colouring needs the scans in one frame, but it does not care how they got
+   * there — "align all", a hand-built matrix, or an archive that was already
+   * consistent all work. Sending what is on screen means the pipeline never
+   * throws away alignment the user has already done or corrected.
+   */
+  function currentTransforms(): Record<string, number[]> {
+    const transforms: Record<string, number[]> = {};
+    for (let index = 0; index < (host.spatialFiles?.length ?? 0); index++) {
+      const metadata = host.spatialFiles[index]?.metadata;
+      if (metadata?.containerFileName !== archiveName || !metadata?.embeddedScanName) {
+        continue;
+      }
+      const stem = String(metadata.embeddedScanName).replace(/\.x3r$/i, '');
+      transforms[stem] = Array.from(host.transformationMatrices[index].elements);
+    }
+    return transforms;
+  }
+
+  function runPipeline(register: boolean) {
+    stationPipelineUi.busy = true;
+    stationPipelineUi.message = register
+      ? 'Registering every scan, then colouring...'
+      : 'Colouring with the current alignment...';
+    host.vscode.postMessage({
+      type: 'stationPipeline',
+      options: {
+        register,
+        transforms: register ? undefined : currentTransforms(),
+        colorUncolored: true,
+        recolorAlreadyColored: stationPipelineUi.recolorAlreadyColored,
+        upAxis: registrationState.upAxis,
+      },
+    });
   }
 
   function togglePicking() {
@@ -141,7 +192,42 @@
         </div>
 
         <div style="margin-bottom:6px;">
-          <span style="font-weight:bold;">3 · Refine further</span>
+          <span style="font-weight:bold;">3 · Every cloud at once</span>
+          <div class="transform-buttons" style="margin-top:3px;">
+            <button
+              class="registration-align-all"
+              onclick={() => registration.alignAllTo(host, fileIndex)}
+              disabled={registrationState.busy}
+            >
+              Align all to this one
+            </button>
+            <button
+              class="registration-undo-all"
+              onclick={() => registration.undoAlignAll(host)}
+              disabled={!registrationState.canUndoAll || registrationState.busy}
+            >
+              Undo all
+            </button>
+          </div>
+          <p class="setting-description" style="margin:3px 0 0;">
+            Registers every other loaded cloud onto this one, which keeps its current transform.
+            Each is matched against this cloud directly, so one bad pair cannot drag the rest out of
+            place - anything that fails is listed instead, and can be fixed by hand above.
+          </p>
+          {#if registrationState.alignAllResults.length > 0}
+            <ul
+              class="registration-align-all-results"
+              style="margin:4px 0 0;padding-left:14px;font-family:monospace;"
+            >
+              {#each registrationState.alignAllResults as line (line)}
+                <li>{line}</li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+
+        <div style="margin-bottom:6px;">
+          <span style="font-weight:bold;">4 · Refine further</span>
           <div class="transform-buttons" style="margin-top:3px;">
             <button
               class="registration-icp"
@@ -159,6 +245,47 @@
             </button>
           </div>
         </div>
+
+        {#if canRunPipeline}
+          <div style="margin-bottom:6px;border-top:1px solid var(--vscode-panel-border);padding-top:6px;">
+            <span style="font-weight:bold;">Archive: {archiveName}</span>
+            <div class="transform-buttons" style="margin-top:3px;">
+              <button
+                class="station-pipeline-run"
+                onclick={() => runPipeline(false)}
+                disabled={stationPipelineUi.busy || registrationState.busy}
+              >
+                {stationPipelineUi.busy ? 'Working...' : 'Colour scans from all stations'}
+              </button>
+              <button
+                class="station-pipeline-register"
+                onclick={() => runPipeline(true)}
+                disabled={stationPipelineUi.busy || registrationState.busy}
+              >
+                Register first, then colour
+              </button>
+            </div>
+            <label style="display:block;margin-top:3px;">
+              <input type="checkbox" bind:checked={stationPipelineUi.recolorAlreadyColored} />
+              Also recolour scans that already have camera colour
+            </label>
+            <p class="setting-description" style="margin:3px 0 0;">
+              Re-reads the archive so it can use the full-resolution photographs, then colours the
+              scans no camera of their own station covered. Points a station could not actually see
+              are left alone rather than painted through the wall in front of them.
+              <br />
+              Colouring uses the alignment currently on screen, so align the scans first — by hand,
+              or with "Align all to this one" above. The second button re-derives the alignment
+              itself instead, which discards whatever is on screen. Either way it takes a minute or
+              two on a large archive; progress appears below.
+            </p>
+            {#if stationPipelineUi.message}
+              <div class="station-pipeline-result" style="margin-top:4px;font-family:monospace;">
+                {stationPipelineUi.message}
+              </div>
+            {/if}
+          </div>
+        {/if}
 
         {#if active && registrationState.status}
           <div class="registration-status" style="margin-top:4px;opacity:0.8;">

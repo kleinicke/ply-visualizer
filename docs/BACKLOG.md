@@ -832,6 +832,71 @@ frame"; `OHP_FRONT` recovers 70.3° / 6.2 m at 1.9 cm RMS and 34% overlap in 6 s
 Capping ICP's working set per scale took that last one from 398 s to 16 s
 without changing the pose it converges to.
 
+**Align all to one cloud.** `alignAllTo` registers every other loaded cloud onto
+one anchor, which keeps its own transform and so defines the common frame. A
+star, not a chain: each cloud is matched against the anchor directly, so one bad
+pair cannot drag everything after it out of place. Pairs that fail are listed
+rather than left silently wherever they landed, and a single undo restores every
+transform it touched. It lives inside the per-file "Align to another cloud"
+panel — the anchor is simply the file whose panel is open, which removes the
+need for an anchor selector, keeps a niche feature out of the main UI, and works
+for any format rather than only X3A.
+
+**Colour resolution: the previews are not enough.** Tempting shortcut, measured
+and rejected. Only a 1/8-scale preview of each camera frame survives parsing,
+and it is _horizontally_ fine — 0.117 deg/px against the scan's 0.162 deg
+azimuth step — so it looked like cross-station colouring could run entirely in
+the webview with no new plumbing. Vertically it is not close: the X3R grid steps
+about 0.009 deg per row, so a preview pixel spans roughly thirteen points and
+would visibly smear vertical detail. Colouring has to reach the full-resolution
+X3I frames, which means the archive bytes: either during the parse, or by
+re-reading just the frames' byte ranges (the member offsets are already known)
+so neither a full re-parse nor holding decoded images in memory is required.
+
+**Station pipeline (colouring).** `StonexX3aParser.parseAll` takes an optional
+`StonexStationPipelineOptions`: register every scan onto the largest
+photographed one, then colour from every station's cameras
+(`parsers/stonexStationColoring.ts`). Order matters — the composition that maps
+another scan's points into a camera,
+`viewerToCamera(frame) · T_station⁻¹ · T_scan`, only means anything once the
+scans share a frame. Two things keep the result honest: each station's own scan
+is an organised sphere of ranges, which gives a free depth buffer in its frame
+so colour cannot be painted through a wall that station could not see past; and
+a point seen by several frames takes the one that saw it nearest the image
+centre, scored on the same scale the parser's first pass uses. Already-coloured
+points are left alone by default and only touched under `recolorAlreadyColored`
+— a camera one station away is not automatically an improvement on the one that
+stood next to the surface.
+
+Measured on `ScanArchive2.x3a` (6 scans, 2 stations, 26M points): all five
+non-anchor scans register at 6-10 mm RMS, the three `linke_ecke` scans
+independently agreeing on the station offset to within 7 cm, and the four
+previously grey scans go from 0% to 85.6-98.6% coloured. The whole pass adds
+about 31 s on top of the 20 s parse.
+
+Two things made the first working version feel hung on a large archive, both
+worth remembering: the parser handed **whole scans** to the registration solver
+where the viewer's own path had always strided to 400k points, so every pair
+paid a robust-extent pass and a voxel downsample over twenty million points; and
+the colouring walked **every scan against every station** even when the scan was
+already fully coloured, which on a three-station archive is three passes over
+forty-five million points that change nothing. With both fixed, `OHP_FRONT.x3a`
+(8 scans, 3 stations, 723 MB) runs end to end in 95 s and recovers three
+distinct station positions — (4.91, 3.87), the anchor, and (-6.98, 8.05) — with
+each station's preview sweeps landing on the same spot as its photographed scan.
+Its five grey scans reach 83.6-93.1% coloured.
+
+Colouring takes the placement the viewer already has rather than re-deriving it,
+because there are many ways to get scans into one frame and the user may have
+corrected one by hand; a second button re-registers first for archives that
+arrive unaligned.
+
+Still to verify in the extension: the result-application path. The pipeline runs
+during a parse because that is the only time the full-resolution X3I frames are
+in hand, so the UI needs to ask the host to re-read the archive with these
+options set, and the loader needs to apply the per-scan
+`metadata.stationTransform` on the way in.
+
 **Scope honesty.** This gets stations visually together for inspection. It is
 not survey-grade: no targets, no network adjustment, no loop closure. The panel
 says so. Anything beyond that belongs in Reconstructor or CloudCompare.

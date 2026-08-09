@@ -26,6 +26,7 @@ import {
   handleDroppedFilesFromWebview,
   type AddFileHost,
 } from './providerHandlers/addFileHandlers';
+import { handleStationPipeline } from './providerHandlers/stationPipeline';
 import { loadDocumentContent, type DocumentLoaderHost } from './providerHandlers/documentLoader';
 import { createWebviewReadyGate, type WebviewReadyGate } from './providerHandlers/webviewReadyGate';
 import { clearVolume, reextractVolume } from './providerHandlers/volumeSessions';
@@ -269,6 +270,14 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'splatContainerFetchFailed':
           await resendSplatContainerBytes(webviewPanel, message);
+          break;
+        case 'stationPipeline':
+          await handleStationPipeline(
+            { logPerf: line => this.logPerf(line) },
+            webviewPanel,
+            this.panelToPath.get(webviewPanel),
+            message.options ?? {}
+          );
           break;
         case 'addFile':
           await handleAddFile(this.addFileHost, webviewPanel, this.panelToPath.get(webviewPanel));

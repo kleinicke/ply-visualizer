@@ -15,6 +15,8 @@
  * colour-array pass rather than a reload.
  */
 
+import { registerPair, type UpAxis } from '../registration';
+import { colorFromAllStations, type StationFrame, type StationScan } from './stonexStationColoring';
 import {
   applyStonexColorCorrectionToPoints,
   buildStonexColorCalibration,
@@ -22,6 +24,7 @@ import {
   DEFAULT_STONEX_COLOR_CORRECTION,
   STONEX_NO_FRAME,
   type StonexBandGains,
+  type StonexColorCalibration,
   type StonexFrameCalibration,
 } from '../visualization/stonexColorCorrection';
 
@@ -130,6 +133,12 @@ interface CameraRgbImage {
 
 export interface StonexCameraFrameMetadata {
   name: string;
+  /**
+   * Stem of the scan this frame was shot from, i.e. which station it belongs
+   * to. The viewer needs it to place panoramas from different stations where
+   * they were actually taken instead of stacking them on one origin.
+   */
+  scanStem?: string;
   type: 'U' | 'D';
   panDegrees: number;
   imageWidth: number;
@@ -534,6 +543,9 @@ function cameraFrameMetadata(data: Uint8Array, frame: CameraFrame): StonexCamera
   const calibration = frame.calibration;
   return {
     name: frame.member.name,
+    // Which station shot this frame. Without it the viewer has no way to place
+    // panoramas from different stations anywhere but on top of each other.
+    scanStem: frame.scanStem,
     type: frame.type,
     panDegrees: frame.panDegrees,
     imageWidth: calibration.width,
@@ -568,6 +580,33 @@ function viewerToCameraTransform(frame: CameraFrame): number[] {
 
 function angularDifference(a: number, b: number): number {
   return Math.abs(((a - b + 540) % 360) - 180);
+}
+
+/**
+ * Turns the whole archive into one registered, fully coloured scene.
+ *
+ * Off by default: it costs a registration per scan and a second colouring pass,
+ * and most archives are a single station where neither buys anything.
+ */
+export interface StonexStationPipelineOptions {
+  /**
+   * Per-scan placement to colour with, keyed by scan stem, column-major.
+   *
+   * Normally this is whatever the viewer already has — from "align all", from
+   * a hand-built matrix, or from an archive that was already in one frame. It
+   * takes precedence over `register`, because re-deriving a placement the user
+   * has already established (and possibly corrected) would throw their work
+   * away.
+   */
+  transforms?: Record<string, number[]>;
+  /** Register every scan onto the largest photographed one first. */
+  register?: boolean;
+  /** Colour scans that no camera of their own station covered. */
+  colorUncolored?: boolean;
+  /** Also replace colour a scan already got from its own station's camera. */
+  recolorAlreadyColored?: boolean;
+  /** Vertical axis for the 4-DoF sweep; terrestrial scans are level about it. */
+  upAxis?: UpAxis;
 }
 
 export class StonexX3aParser {
@@ -859,14 +898,12 @@ export class StonexX3aParser {
     }
 
     const colorCalibration = buildStonexColorCalibration(
-      cameraFrames.map(
-        (frame): StonexFrameCalibration => ({
-          type: frame.type,
-          grayRedGain: frame.grayRedGain,
-          grayBlueGain: frame.grayBlueGain,
-          meanGreen: frame.meanGreen,
-        })
-      ),
+      cameraFrames.map((frame): StonexFrameCalibration => ({
+        type: frame.type,
+        grayRedGain: frame.grayRedGain,
+        grayBlueGain: frame.grayBlueGain,
+        meanGreen: frame.meanGreen,
+      })),
       bandGains
     );
     if (rawColors && colors && frameIndices) {
@@ -913,6 +950,14 @@ export class StonexX3aParser {
         container: isArchive ? 'Stonex X300 RAW Archive (CRAX)' : 'Stonex X300 scan record',
         embeddedScans: scanMembers.map(member => member.name),
         embeddedScanPointRanges: scanPointRanges,
+        // Live decode/projection sources for the optional station pipeline.
+        // Not serializable and not transferable: parseAll consumes them and
+        // strips the key before any result leaves this module.
+        stonexStationSources: {
+          data,
+          frames: cameraFrames,
+          projector: this.cameraProjector,
+        },
         cameraFrames: cameraFrames.map(frame => frame.member.name),
         cameraCalibrations: [...calibrations.keys()],
         stonexCameraFrames: cameraFrames.map(frame => cameraFrameMetadata(data, frame)),
@@ -946,9 +991,12 @@ export class StonexX3aParser {
   async parseAll(
     data: Uint8Array,
     fileName = '',
-    timingCallback?: (message: string) => void
+    timingCallback?: (message: string) => void,
+    pipeline?: StonexStationPipelineOptions
   ): Promise<StonexX3aData[]> {
     const combined = await this.parse(data, fileName, timingCallback);
+    const stationTransforms = await this.runStationPipeline(combined, pipeline, timingCallback);
+    delete (combined.metadata as Record<string, unknown>).stonexStationSources;
     const ranges = combined.metadata.embeddedScanPointRanges as ScanPointRange[] | undefined;
     if (!ranges || ranges.length <= 1) {
       return [combined];
@@ -995,8 +1043,242 @@ export class StonexX3aParser {
           // the camera entry's unified UI index as later clouds arrive.
           stonexCameraFrames: index === ranges.length - 1 ? cameraFrames : [],
           stonexCameraProfileName: fileName,
+          // Applied by the loader so registered scans open in the common frame.
+          stationTransform: stationTransforms?.get(stemOf(range.name)) ?? null,
+          stationColorChanged:
+            (combined.metadata.stationColorChangedScans as Set<string> | undefined)?.has(
+              stemOf(range.name)
+            ) ?? false,
         },
       };
     });
   }
+
+  /**
+   * Registers every scan onto the largest photographed one, then colours from
+   * every station's cameras.
+   *
+   * Registration comes first and colouring second for the obvious reason: the
+   * composition that maps another scan's points into a camera is only
+   * meaningful once the scans share a frame.
+   *
+   * Returns the per-scan transforms, or null when the pipeline was not asked
+   * for or the archive holds nothing to do it with.
+   */
+  private async runStationPipeline(
+    combined: StonexX3aData,
+    options: StonexStationPipelineOptions | undefined,
+    timingCallback?: (message: string) => void
+  ): Promise<Map<string, number[]> | null> {
+    const sources = combined.metadata.stonexStationSources as
+      | { data: Uint8Array; frames: CameraFrame[]; projector?: StonexCameraBatchProjector }
+      | undefined;
+    const ranges = combined.metadata.embeddedScanPointRanges as ScanPointRange[] | undefined;
+    const supplied = options?.transforms;
+    if ((!options?.register && !supplied) || !sources || !ranges || ranges.length < 2) {
+      return null;
+    }
+
+    // Placement the caller already has beats anything derived here.
+    if (supplied) {
+      const transforms = new Map<string, number[]>();
+      for (const range of ranges) {
+        const stem = stemOf(range.name);
+        const matrix = supplied[stem];
+        if (matrix?.length === 16) {
+          transforms.set(stem, matrix);
+        }
+      }
+      if (transforms.size > 0) {
+        timingCallback?.(
+          `Stonex X3A: colouring with the ${transforms.size} placements already in the viewer`
+        );
+        await this.colorAcrossStations(
+          combined,
+          sources,
+          ranges,
+          transforms,
+          options,
+          timingCallback
+        );
+        return transforms;
+      }
+    }
+
+    const photographicStems = new Set(sources.frames.map(frame => frame.scanStem));
+    // Anchor: the biggest scan that has its own photographs, so the common
+    // frame is one that already carries colour and camera geometry.
+    const anchor =
+      ranges
+        .filter(range => photographicStems.has(stemOf(range.name)))
+        .sort((a, b) => b.pointCount - a.pointCount)[0] ??
+      ranges.slice().sort((a, b) => b.pointCount - a.pointCount)[0];
+
+    // Strided, not whole. A station scan is up to twenty million points and the
+    // solver voxel-downsamples everything it is handed anyway, so passing the
+    // full slice buys no accuracy and costs the copy, the robust-extent pass
+    // and the downsample on twenty million points instead of four hundred
+    // thousand — the difference between a couple of seconds per pair and most
+    // of a minute. The viewer's own path has always strided; this one did not,
+    // which is what made the archive pipeline feel hung.
+    const slice = (range: ScanPointRange) => {
+      const step = Math.max(1, Math.ceil(range.pointCount / REGISTRATION_SAMPLE_LIMIT));
+      const kept = Math.ceil(range.pointCount / step);
+      const out = new Float32Array(kept * 3);
+      let write = 0;
+      for (let i = 0; i < range.pointCount; i += step) {
+        const source = (range.pointOffset + i) * 3;
+        out[write++] = combined.positionsArray[source];
+        out[write++] = combined.positionsArray[source + 1];
+        out[write++] = combined.positionsArray[source + 2];
+      }
+      return out.subarray(0, write);
+    };
+    const anchorPoints = slice(anchor);
+
+    const transforms = new Map<string, number[]>();
+    transforms.set(stemOf(anchor.name), identityMatrix());
+    for (const range of ranges) {
+      if (range === anchor || range.pointCount < 100) {
+        continue;
+      }
+      timingCallback?.(`Stonex X3A: registering ${range.name} onto ${anchor.name}...`);
+      const result = await registerPair(slice(range), Float32Array.from(anchorPoints), {
+        coarse: { upAxis: options.upAxis ?? 'z' },
+      });
+      if (result?.icp) {
+        transforms.set(stemOf(range.name), Array.from(result.matrix.elements));
+        timingCallback?.(
+          `Stonex X3A: ${range.name} aligned, RMS ${result.icp.inlierRmse.toFixed(3)} at ` +
+            `${(result.icp.fitness * 100).toFixed(0)}% overlap`
+        );
+      } else {
+        timingCallback?.(`Stonex X3A: ${range.name} could not be registered; left in place`);
+      }
+    }
+
+    if (!options.colorUncolored && !options.recolorAlreadyColored) {
+      return transforms;
+    }
+    await this.colorAcrossStations(combined, sources, ranges, transforms, options, timingCallback);
+    return transforms;
+  }
+
+  /** The colouring half, once every scan has a placement. */
+  private async colorAcrossStations(
+    combined: StonexX3aData,
+    sources: { data: Uint8Array; frames: CameraFrame[]; projector?: StonexCameraBatchProjector },
+    ranges: ScanPointRange[],
+    transforms: Map<string, number[]>,
+    options: StonexStationPipelineOptions,
+    timingCallback?: (message: string) => void
+  ): Promise<void> {
+    if (!options.colorUncolored && !options.recolorAlreadyColored) {
+      return;
+    }
+    const rawColors = combined.metadata.stonexRawColors as Uint8Array | null;
+    const frameIndices = combined.metadata.stonexFrameIndices as Uint16Array | null;
+    if (!rawColors || !frameIndices || !sources.projector) {
+      return;
+    }
+
+    // A point counts as coloured exactly when the first pass gave it a frame.
+    const colored = new Uint8Array(combined.vertexCount);
+    for (let i = 0; i < colored.length; i++) {
+      colored[i] = frameIndices[i] === STONEX_NO_FRAME ? 0 : 1;
+    }
+
+    const scans: StationScan[] = ranges
+      .filter(range => transforms.has(stemOf(range.name)))
+      .map(range => ({
+        scanStem: stemOf(range.name),
+        pointOffset: range.pointOffset,
+        pointCount: range.pointCount,
+        transform: transforms.get(stemOf(range.name))!,
+      }));
+
+    const frames: StationFrame[] = sources.frames.map((frame, frameNumber) => ({
+      frameNumber,
+      scanStem: frame.scanStem,
+      panDegrees: frame.panDegrees,
+      imageWidth: frame.calibration.width,
+      imageHeight: frame.calibration.height,
+      fx: frame.calibration.fx,
+      fy: frame.calibration.fy,
+      cx: frame.calibration.cx,
+      cy: frame.calibration.cy,
+      distortionCoefficients: frame.calibration.distortionCoefficients,
+      viewerToCamera: viewerToCameraTransform(frame),
+      maxNormalizedX: Math.tan((frame.calibration.fovX * Math.PI) / 360),
+      maxNormalizedY: Math.tan((frame.calibration.fovY * Math.PI) / 360),
+      sample: (pixelX, pixelY) => sampleCameraRgb(sources.data, frame, pixelX, pixelY),
+    }));
+
+    const changed = new Uint8Array(combined.vertexCount);
+    const result = colorFromAllStations(
+      combined.positionsArray,
+      rawColors,
+      frameIndices,
+      colored,
+      changed,
+      scans,
+      frames,
+      sources.projector,
+      { recolorAlreadyColored: options.recolorAlreadyColored }
+    );
+    timingCallback?.(
+      `Stonex X3A: coloured ${result.newlyColored.toLocaleString()} previously grey points ` +
+        `(${result.recolored.toLocaleString()} improved, ` +
+        `${result.occludedSamples.toLocaleString()} point-camera pairs rejected as hidden)`
+    );
+
+    // The GPU array is the corrected copy; re-derive it from the new raw values.
+    const colors = combined.colorsArray;
+    const calibration = combined.metadata.stonexColorCalibration as
+      StonexColorCalibration | undefined;
+    if (colors && calibration) {
+      applyStonexColorCorrectionToPoints(
+        rawColors,
+        frameIndices,
+        computeStonexFrameMultipliers(calibration, DEFAULT_STONEX_COLOR_CORRECTION),
+        DEFAULT_STONEX_COLOR_CORRECTION,
+        colors
+      );
+    }
+    let total = 0;
+    const changedScans = new Set<string>();
+    for (const range of ranges) {
+      let count = 0;
+      let touched = false;
+      const end = range.pointOffset + range.pointCount;
+      for (let index = range.pointOffset; index < end; index++) {
+        count += colored[index];
+        touched ||= changed[index] === 1;
+      }
+      range.photographicallyColoredPoints = count;
+      total += count;
+      if (touched) {
+        changedScans.add(stemOf(range.name));
+      }
+    }
+    (combined.metadata as Record<string, unknown>).stationColorChangedScans = changedScans;
+    (combined.metadata as Record<string, unknown>).photographicallyColoredPoints = total;
+    (combined.metadata as Record<string, unknown>).stationColoringResult = {
+      newlyColored: result.newlyColored,
+      recolored: result.recolored,
+      occludedSamples: result.occludedSamples,
+    };
+  }
+}
+
+/** Matches the cap the viewer's own registration path uses. */
+const REGISTRATION_SAMPLE_LIMIT = 400_000;
+
+/** `Stohl_1_A_0004.x3r` -> `Stohl_1_A_0004`, matching the camera frame stems. */
+function stemOf(memberName: string): string {
+  return memberName.replace(/\.x3r$/i, '');
+}
+
+function identityMatrix(): number[] {
+  return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 }

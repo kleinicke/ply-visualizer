@@ -77,6 +77,7 @@ import * as edl from './edl';
 import * as transparency from './transparency';
 import * as plyExport from './plyExport';
 import * as registrationFeature from './registrationFeature';
+import * as stationPipelineFeature from './stationPipelineFeature';
 import * as rotationCenterFeature from './rotationCenterFeature';
 import {
   applyScannerStartView,
@@ -135,6 +136,15 @@ import { buildVolumeVoxelsAsync } from './visualization/volumeVoxels';
  */
 
 class PointCloudVisualizer {
+  /**
+   * Whether a VS Code extension host is on the other end of `vscode`.
+   *
+   * Features that need a process still holding the opened file — the X3A
+   * station pipeline re-reads the archive — key off this rather than sniffing
+   * for `acquireVsCodeApi`, which cannot be faked in a test without flipping
+   * the whole page into webview mode.
+   */
+  readonly runningInVSCode: boolean = isVSCode;
   vscode: any = isVSCode
     ? acquireVsCodeApi()
     : {
@@ -1987,6 +1997,12 @@ class PointCloudVisualizer {
           const fileType = message.fileType || 'point cloud';
           const fileName = message.fileName ? ` (${message.fileName})` : '';
           this.showError(`Failed to load ${fileType} file${fileName}: ${message.error}`);
+          break;
+        case 'stationPipelineProgress':
+          stationPipelineFeature.reportStationPipelineProgress(message.message);
+          break;
+        case 'stationPipelineResult':
+          stationPipelineFeature.handleStationPipelineResult(this, message);
           break;
         case 'spatialData':
         case 'multiSpatialData':

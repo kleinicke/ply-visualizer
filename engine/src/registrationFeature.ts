@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 import type { SpatialData } from './interfaces';
 import { registrationState } from './state/registration.svelte';
+import { updateStonexCameraStations } from './visualization/stonexCameras';
 import {
   fitCorrespondences,
   icpRefine,
@@ -24,6 +25,8 @@ export interface RegistrationHost {
   scene: THREE.Scene;
   spatialFiles: SpatialData[];
   transformationMatrices: THREE.Matrix4[];
+  /** X3A camera profiles, so panoramas follow the scans they were shot from. */
+  cameraGroups?: THREE.Group[];
   setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void;
   updateMatrixTextarea(fileIndex: number): void;
   requestRender(): void;
@@ -411,8 +414,22 @@ function applyDelta(host: RegistrationHost, delta: THREE.Matrix4): void {
     session.pending.point.applyMatrix4(delta);
   }
   refreshMarkers(host);
+  followStations(host);
   syncState();
   host.requestRender();
+}
+
+/**
+ * Moves each X3A panorama onto the station that shot it.
+ *
+ * A camera frame's pose is only meaningful in its own station's frame, so any
+ * change to a scan's transform has to be mirrored onto its cameras or they stay
+ * piled on the origin.
+ */
+function followStations(host: RegistrationHost): void {
+  if (host.cameraGroups?.length) {
+    updateStonexCameraStations(host as never);
+  }
 }
 
 export function undo(host: RegistrationHost): void {
@@ -565,4 +582,121 @@ export async function refineIcp(host: RegistrationHost): Promise<void> {
     registrationState.busy = false;
     registrationState.status = '';
   }
+}
+
+/**
+ * Aligns every other loaded cloud onto one anchor.
+ *
+ * A star, not a chain: each cloud is registered directly against the anchor
+ * rather than against its predecessor, so one bad pair cannot drag everything
+ * after it out of place. The cost is that clouds sharing little overlap with
+ * the anchor may fail where a chain would have walked them in — those are
+ * reported rather than silently left wherever they landed, and the per-file
+ * panel is still there to fix one by hand.
+ *
+ * The anchor keeps its own transform, so whatever frame it is already in
+ * becomes the common frame.
+ */
+export async function alignAllTo(host: RegistrationHost, anchorIndex: number): Promise<void> {
+  if (registrationState.busy) {
+    return;
+  }
+  const targets = registrationCandidates(host, anchorIndex);
+  if (targets.length === 0) {
+    registrationState.result = 'Nothing else is loaded to align.';
+    return;
+  }
+
+  const anchor = worldPoints(host, anchorIndex);
+  if (!anchor) {
+    registrationState.result = 'The anchor cloud has no point data.';
+    return;
+  }
+
+  registrationState.busy = true;
+  registrationState.alignAllResults = [];
+  // Yield once so the panel shows the first status before the solver blocks
+  // (it does, in a webview: see wasmLoader.browser.ts).
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const undoAll = new Map<number, THREE.Matrix4>();
+  let aligned = 0;
+  try {
+    for (let position = 0; position < targets.length; position++) {
+      const fileIndex = targets[position];
+      const name = host.spatialFiles[fileIndex]?.fileName ?? `File ${fileIndex + 1}`;
+      registrationState.status = `Aligning ${name} (${position + 1}/${targets.length})...`;
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      const source = worldPoints(host, fileIndex);
+      if (!source) {
+        registrationState.alignAllResults.push(`${name}: no point data`);
+        continue;
+      }
+
+      try {
+        // A fresh copy of the anchor each time: the worker path transfers the
+        // buffers it is given, so a shared one would be detached after the
+        // first pair.
+        const result = await registerPair(source, anchor.slice(), {
+          coarse: { upAxis: registrationState.upAxis as UpAxis },
+        });
+        if (!result?.icp) {
+          registrationState.alignAllResults.push(`${name}: no match found`);
+          continue;
+        }
+
+        const previous = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone();
+        undoAll.set(fileIndex, previous);
+        host.setTransformationMatrix(fileIndex, result.matrix.clone().multiply(previous));
+        host.updateMatrixTextarea(fileIndex);
+        aligned++;
+
+        const margin =
+          result.coarse && result.coarse.runnerUpScore > 0
+            ? result.coarse.score / result.coarse.runnerUpScore
+            : Infinity;
+        registrationState.alignAllResults.push(
+          `${name}: RMS ${result.icp.inlierRmse.toFixed(3)} · ` +
+            `overlap ${(result.icp.fitness * 100).toFixed(0)}%` +
+            (Number.isFinite(margin) && margin < 1.2 ? ' · ambiguous, check it' : '')
+        );
+      } catch (error) {
+        registrationState.alignAllResults.push(`${name}: ${describeFailure(error)}`);
+      }
+      host.requestRender();
+    }
+
+    followStations(host);
+    if (undoAll.size > 0) {
+      alignAllUndo = undoAll;
+      registrationState.canUndoAll = true;
+    }
+    registrationState.result = `Aligned ${aligned} of ${targets.length} clouds to ${
+      host.spatialFiles[anchorIndex]?.fileName ?? 'the anchor'
+    } · ${registrationBackend()}`;
+  } finally {
+    registrationState.busy = false;
+    registrationState.status = '';
+    host.requestRender();
+  }
+}
+
+/** Transforms replaced by the last `alignAllTo`, for a single-step undo. */
+let alignAllUndo: Map<number, THREE.Matrix4> | null = null;
+
+export function undoAlignAll(host: RegistrationHost): void {
+  if (!alignAllUndo) {
+    return;
+  }
+  for (const [fileIndex, matrix] of alignAllUndo) {
+    host.setTransformationMatrix(fileIndex, matrix.clone());
+    host.updateMatrixTextarea(fileIndex);
+  }
+  followStations(host);
+  alignAllUndo = null;
+  registrationState.canUndoAll = false;
+  registrationState.alignAllResults = [];
+  registrationState.result = 'Reverted every transform that align-all changed.';
+  host.requestRender();
 }
