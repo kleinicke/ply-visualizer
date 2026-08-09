@@ -14,7 +14,8 @@
     "allowJs": true,
     "checkJs": true,
     "paths": {
-      "../../src/webview/*": ["../src/webview/*"]
+      "../../src/webview/*": ["../src/webview/*"],
+      "#registration-wasm-loader": ["./src/registration/wasmLoader.browser.ts"]
     }
   },
   "include": ["src/**/*", "../src/webview/**/*"],

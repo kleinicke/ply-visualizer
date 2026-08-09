@@ -60,6 +60,11 @@ export interface StationColoringOptions {
   /** Recolour points that already have photographic colour, not just the grey. */
   recolorAlreadyColored?: boolean;
   /**
+   * Called once a scan has been through every station's cameras, so a caller
+   * can publish it while the rest are still running.
+   */
+  onScanColored?: (scan: StationScan) => void;
+  /**
    * How far behind a station's own measured range a point may sit and still be
    * treated as visible from it, as a constant plus a fraction of the range.
    */
@@ -137,6 +142,43 @@ class StationDepth {
     const measured = this.ranges[bin];
     return !Number.isFinite(measured) || range <= measured + tolerance + relative * measured;
   }
+}
+
+/**
+ * Row-major transpose of a column-major 4x4, and vice versa.
+ *
+ * The two conventions genuinely meet here and the mix is not obvious from the
+ * types, because both are `number[16]`. Scan placements come from three.js and
+ * are column-major; a frame's `viewerToCamera` is built straight from the CAL
+ * file's `Model2CameraMatrix`, which the XML declares `RowOrder`, and the Rust
+ * projector expects it in that layout. Composing one with the other without
+ * this conversion produces a transform that is correct only when the other
+ * factor is the identity — which is exactly the same-station case, so the bug
+ * hid behind scans that already looked right.
+ */
+function transpose(m: readonly number[]): number[] {
+  const out = new Array<number>(16).fill(0);
+  for (let row = 0; row < 4; row++) {
+    for (let column = 0; column < 4; column++) {
+      out[column * 4 + row] = m[row * 4 + column];
+    }
+  }
+  return out;
+}
+
+/** `a * b` for row-major 4x4s, the layout the camera projector takes. */
+function multiplyRowMajor(a: readonly number[], b: readonly number[]): number[] {
+  const out = new Array<number>(16).fill(0);
+  for (let row = 0; row < 4; row++) {
+    for (let column = 0; column < 4; column++) {
+      let sum = 0;
+      for (let k = 0; k < 4; k++) {
+        sum += a[row * 4 + k] * b[k * 4 + column];
+      }
+      out[row * 4 + column] = sum;
+    }
+  }
+  return out;
 }
 
 /** `a * b` for column-major 4x4s. */
@@ -366,7 +408,11 @@ export function colorFromAllStations(
           cx: frame.cx,
           cy: frame.cy,
           coefficients: frame.distortionCoefficients,
-          transform: multiply(frame.viewerToCamera, scanToStation),
+          // `viewerToCamera` is row-major and `scanToStation` column-major, so
+          // the composition happens in the projector's own layout.
+          // `viewerToCamera` is row-major and `scanToStation` column-major, so
+          // the composition happens in the projector's own layout.
+          transform: multiplyRowMajor(frame.viewerToCamera, transpose(scanToStation)),
           maxNormalizedX: frame.maxNormalizedX,
           maxNormalizedY: frame.maxNormalizedY,
         });
@@ -413,6 +459,7 @@ export function colorFromAllStations(
         }
       }
     }
+    options.onScanColored?.(scan);
   }
 
   return result;

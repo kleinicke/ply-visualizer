@@ -374,12 +374,16 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
 
     const sessionKey = 'test:real-siemens-point-volume';
     try {
-      const points = buildInitialVolumeData(retainVolume(sessionKey, volume));
+      const retained = retainVolume(sessionKey, volume);
+      assert.strictEqual(retained.options.brightnessMode, 'slice-auto');
+      assert.strictEqual(retained.sliceRanges.length, 44);
+      const points = buildInitialVolumeData(retained);
       assert.strictEqual(points.faceCount, 0);
       assert.strictEqual(points.vertexCount, 640 * 640 * 44);
       assert.strictEqual(points.intensityArray?.length, points.vertexCount);
       assert.strictEqual(points.colorsArray?.length, points.vertexCount * 3);
       assert.deepStrictEqual(points.metadata?.extractionStep, [1, 1, 1]);
+      assert.strictEqual(points.metadata?.brightnessMode, 'slice-auto');
     } finally {
       clearVolume(sessionKey);
     }

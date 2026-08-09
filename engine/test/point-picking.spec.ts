@@ -67,7 +67,8 @@ async function loadPly(page: Page, buffer: Buffer, name: string): Promise<void> 
 
 /**
  * Dispatch a synthetic dblclick at canvas-relative coordinates and measure how
- * long the (synchronous) handler blocks the main thread.
+ * long dispatch blocks the main thread. WebGPU completes asynchronously, so
+ * callers wait for its result through the console assertions below.
  */
 async function timedDoubleClick(page: Page, relX: number, relY: number): Promise<number> {
   return page.evaluate(
@@ -105,7 +106,7 @@ test.describe('Double-click point picking', () => {
     // Sanity: pick works at the default (fitted) zoom level
     logs.length = 0;
     const zoomedInMs = await timedDoubleClick(page, 0.5, 0.5);
-    expect(logs.join('\n')).toContain('screen-space pick');
+    await expect.poll(() => logs.join('\n')).toContain('screen-space pick');
     console.log(`Zoomed-in pick handler time: ${zoomedInMs.toFixed(1)}ms`);
 
     // Zoom far out so the whole cloud collapses into a few pixels. This was
@@ -124,7 +125,7 @@ test.describe('Double-click point picking', () => {
     const zoomedOutMs = await timedDoubleClick(page, 0.5, 0.5);
     console.log(`Zoomed-out pick handler time: ${zoomedOutMs.toFixed(1)}ms`);
 
-    expect(logs.join('\n')).toContain('screen-space pick');
+    await expect.poll(() => logs.join('\n')).toContain('screen-space pick');
     // 2M points; the old implementation took seconds here. Generous CI bound.
     expect(zoomedOutMs).toBeLessThan(1000);
   });
@@ -153,6 +154,7 @@ test.describe('Double-click point picking', () => {
     // a recovery gesture)
     logs.length = 0;
     await timedDoubleClick(page, 0.5 + 80 / box!.width, 0.5);
+    await expect.poll(() => logs.join('\n')).toContain('No selectable object found');
     let output = logs.join('\n');
     expect(output).toContain('No selectable object found');
     expect(output).not.toContain('fitting view to all objects');
@@ -160,13 +162,12 @@ test.describe('Double-click point picking', () => {
     // A double-click far from everything is the recovery gesture
     logs.length = 0;
     await timedDoubleClick(page, 0.02, 0.02);
-    expect(logs.join('\n')).toContain('fitting view to all objects');
+    await expect.poll(() => logs.join('\n')).toContain('fitting view to all objects');
     await page.waitForTimeout(500);
 
     // After the refit the cloud fills the view again and picking works
     logs.length = 0;
     await timedDoubleClick(page, 0.5, 0.5);
-    output = logs.join('\n');
-    expect(output).toContain('screen-space pick');
+    await expect.poll(() => logs.join('\n')).toContain('screen-space pick');
   });
 });

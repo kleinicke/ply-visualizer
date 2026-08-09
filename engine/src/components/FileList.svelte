@@ -2,6 +2,7 @@
   import { filesState } from '../state/files.svelte';
   import { addTooltipsToTruncatedFilenames } from '../ui/dialogs';
   import { escapeHtml } from '../ui/dialogs';
+  import AllPointSizes from './AllPointSizes.svelte';
   import FileItem from './FileItem.svelte';
 
   let { host }: { host: any } = $props();
@@ -84,4 +85,5 @@
       <div class="file-info" id="pending-load-detail">{escapeHtml(pendingLoadDetail)}</div>
     </div>
   {/if}
+  <AllPointSizes {host} />
 {/if}

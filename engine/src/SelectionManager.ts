@@ -12,7 +12,7 @@ export interface SelectionResult {
 /**
  * Best candidate found by the screen-space point cloud scan
  */
-interface PointPickHit {
+export interface PointPickHit {
   mesh: THREE.Points;
   pointIndex: number;
   viewDepth: number;
@@ -20,6 +20,8 @@ interface PointPickHit {
   renderedSize: number;
   pixelRadius: number;
 }
+
+export type PointPickingImplementation = 'cpu' | 'webgpu';
 
 /**
  * Context interface providing access to scene state needed for selection
@@ -46,6 +48,9 @@ export interface SelectionContext {
  */
 export class SelectionManager {
   private context: SelectionContext;
+  private webgpuPicker: import('./WebGPUPointPicker').WebGPUPointPicker | null = null;
+  private webgpuUnavailableReason: string | null = 'WebGPU availability has not been checked';
+  private pointPickingImplementation: PointPickingImplementation = 'cpu';
 
   constructor(context: SelectionContext) {
     this.context = context;
@@ -56,6 +61,94 @@ export class SelectionManager {
    */
   updateContext(context: SelectionContext): void {
     this.context = context;
+  }
+
+  async initializeWebGPUPicker(): Promise<void> {
+    const { WebGPUPointPicker } = await import(
+      /* webpackChunkName: "webgpu-point-picker" */ './WebGPUPointPicker'
+    );
+    const result = await WebGPUPointPicker.create();
+    this.webgpuPicker = result.picker;
+    this.webgpuUnavailableReason = result.unavailableReason;
+    this.pointPickingImplementation = result.picker ? 'webgpu' : 'cpu';
+  }
+
+  isWebGPUPickingAvailable(): boolean {
+    return this.webgpuPicker !== null;
+  }
+
+  getWebGPUUnavailableReason(): string | null {
+    return this.webgpuUnavailableReason;
+  }
+
+  getPointPickingImplementation(): PointPickingImplementation {
+    return this.pointPickingImplementation;
+  }
+
+  setPointPickingImplementation(implementation: PointPickingImplementation): void {
+    this.pointPickingImplementation =
+      implementation === 'webgpu' && this.webgpuPicker ? 'webgpu' : 'cpu';
+  }
+
+  async selectPointWithLoggingAsync(
+    mouseScreenX: number,
+    mouseScreenY: number,
+    canvas: HTMLCanvasElement
+  ): Promise<SelectionResult | null> {
+    // Non-point objects keep their established raycasters. Only the expensive
+    // full point-cloud scan is replaced by WebGPU.
+    let selectedPoint = this.selectCameraProfile(mouseScreenX, mouseScreenY, canvas);
+    if (selectedPoint) {
+      const distance = this.context.camera.position.distanceTo(selectedPoint);
+      return { point: selectedPoint, info: `camera profile at distance ${distance.toFixed(4)}m` };
+    }
+    selectedPoint = this.selectPoseKeypoint(mouseScreenX, mouseScreenY, canvas);
+    if (selectedPoint) {
+      const distance = this.context.camera.position.distanceTo(selectedPoint);
+      return { point: selectedPoint, info: `pose keypoint at distance ${distance.toFixed(4)}m` };
+    }
+    selectedPoint = this.selectTriangleMesh(mouseScreenX, mouseScreenY, canvas);
+    if (selectedPoint) {
+      const distance = this.context.camera.position.distanceTo(selectedPoint);
+      return {
+        point: selectedPoint,
+        info: `triangle mesh surface at distance ${distance.toFixed(4)}m`,
+      };
+    }
+    selectedPoint = this.selectGaussianSplat(mouseScreenX, mouseScreenY, canvas);
+    if (selectedPoint) {
+      const distance = this.context.camera.position.distanceTo(selectedPoint);
+      return {
+        point: selectedPoint,
+        info: `gaussian splat surface at distance ${distance.toFixed(4)}m`,
+      };
+    }
+
+    const clouds = this.getVisiblePointClouds();
+    if (clouds.length === 0) {return null;}
+    if (this.pointPickingImplementation === 'webgpu' && this.webgpuPicker) {
+      try {
+        const hit = await this.webgpuPicker.pick(
+          mouseScreenX,
+          mouseScreenY,
+          canvas,
+          clouds,
+          this.context
+        );
+        return hit ? this.resolvePickHit(hit, 'WebGPU') : null;
+      } catch (error) {
+        console.warn(
+          `WebGPU point picking failed; using CPU for this pick: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    const hit = this.pickPointScreenSpace(mouseScreenX, mouseScreenY, canvas, clouds);
+    return hit ? this.resolvePickHit(hit, 'CPU') : null;
+  }
+
+  dispose(): void {
+    this.webgpuPicker?.dispose();
+    this.webgpuPicker = null;
   }
 
   /**
@@ -910,7 +1003,10 @@ export class SelectionManager {
   /**
    * Convert a pick hit into the world-space point plus logging info
    */
-  private resolvePickHit(hit: PointPickHit): SelectionResult {
+  private resolvePickHit(
+    hit: PointPickHit,
+    implementation: 'CPU' | 'WebGPU' = 'CPU'
+  ): SelectionResult {
     const positionAttribute = hit.mesh.geometry.getAttribute('position');
     const worldPoint = new THREE.Vector3()
       .fromBufferAttribute(positionAttribute, hit.pointIndex)
@@ -928,7 +1024,7 @@ export class SelectionManager {
     const fileIndex = this.context.meshes.indexOf(hit.mesh);
     const material = hit.mesh.material as THREE.PointsMaterial;
     const info =
-      `screen-space pick: point #${hit.pointIndex} in mesh ${fileIndex}, depth=${hit.viewDepth.toFixed(4)}m, ` +
+      `${implementation} screen-space pick: point #${hit.pointIndex} in mesh ${fileIndex}, depth=${hit.viewDepth.toFixed(4)}m, ` +
       `pixelDist=${hit.pixelDistance.toFixed(1)}px, pickRadius=${hit.pixelRadius.toFixed(1)}px, ` +
       `materialSize=${material.size.toFixed(1)}px, renderedSize=${hit.renderedSize.toFixed(1)}px, ` +
       `sizeAttenuation=${material.sizeAttenuation}${adjusted}`;

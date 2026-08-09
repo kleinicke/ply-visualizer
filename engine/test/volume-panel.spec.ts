@@ -31,7 +31,12 @@ test('volume controls request filtered points and replace them with a thresholde
         metadata: {
           volumeSessionId: 'synthetic-session',
           volumeRenderMode: 'points',
+          brightnessMode: 'slice-auto',
           volumeRange: { min: 0, max: 3 },
+          volumeSliceRanges: [
+            { min: 0, max: 3 },
+            { min: 0, max: 3 },
+          ],
           volumeHistogram: [2, 2, 2, 2],
           volumeSizes: [2, 2, 2],
           threshold: 0,
@@ -48,6 +53,14 @@ test('volume controls request filtered points and replace them with a thresholde
 
   const threshold = page.getByLabel('Volume threshold value');
   await expect(threshold).toBeVisible();
+  const brightness = page.getByLabel('Volume brightness mapping');
+  await expect(brightness).toHaveValue('slice-auto');
+  await brightness.selectOption('volume-range');
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).visualizer.spatialFiles[0]?.metadata?.brightnessMode)
+    )
+    .toBe('volume-range');
   const scrollTopBefore = await page.locator('#file-list').evaluate(element => {
     const list = element as HTMLElement;
     list.style.height = '48px';

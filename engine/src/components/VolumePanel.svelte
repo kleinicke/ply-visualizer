@@ -27,6 +27,11 @@
   let windowWidth = $state(
     Math.max(Number.EPSILON, Number(metadata.windowWidth ?? range.max - range.min))
   );
+  let brightnessMode = $state<'slice-auto' | 'dicom-window' | 'volume-range'>(
+    metadata.brightnessMode === 'slice-auto' || metadata.brightnessMode === 'volume-range'
+      ? metadata.brightnessMode
+      : 'dicom-window'
+  );
   let sliceIndices = $state<[number, number, number]>(
     Array.isArray(metadata.sliceIndices)
       ? ([...metadata.sliceIndices] as [number, number, number])
@@ -73,6 +78,7 @@
         renderMode,
         windowCenter,
         windowWidth,
+        brightnessMode,
         sliceIndices,
         clipRanges,
         requestId,
@@ -128,6 +134,17 @@
     requestExtraction();
   }
 
+  function onBrightnessModeChange(event: Event) {
+    const value = (event.target as HTMLSelectElement).value;
+    brightnessMode =
+      value === 'slice-auto'
+        ? 'slice-auto'
+        : value === 'volume-range'
+          ? 'volume-range'
+          : 'dicom-window';
+    requestExtraction(0);
+  }
+
   function onSliceChange(axis: number, event: Event) {
     const next = [...sliceIndices] as [number, number, number];
     next[axis] = Math.max(
@@ -176,14 +193,28 @@
   </div>
 
   {#if renderMode !== 'mesh'}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:10px;">
-      <label>Window center
-        <input aria-label="Window center" type="number" value={windowCenter} onchange={(event) => onWindowChange('center', event)} style="width:100%;box-sizing:border-box;" />
-      </label>
-      <label>Window width
-        <input aria-label="Window width" type="number" min={Number.EPSILON} value={windowWidth} onchange={(event) => onWindowChange('width', event)} style="width:100%;box-sizing:border-box;" />
-      </label>
-    </div>
+    <label style="display:grid;grid-template-columns:auto 1fr;gap:4px;align-items:center;font-size:10px;">
+      <span>Brightness</span>
+      <select aria-label="Volume brightness mapping" value={brightnessMode} onchange={onBrightnessModeChange} style="min-width:0;font-size:10px;">
+        <option value="slice-auto">Match 2D images (per layer)</option>
+        <option value="dicom-window">DICOM window (whole series)</option>
+        <option value="volume-range">Volume min/max (whole series)</option>
+      </select>
+    </label>
+    {#if brightnessMode === 'dicom-window'}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:10px;margin-top:4px;">
+        <label>Window center
+          <input aria-label="Window center" type="number" value={windowCenter} onchange={(event) => onWindowChange('center', event)} style="width:100%;box-sizing:border-box;" />
+        </label>
+        <label>Window width
+          <input aria-label="Window width" type="number" min={Number.EPSILON} value={windowWidth} onchange={(event) => onWindowChange('width', event)} style="width:100%;box-sizing:border-box;" />
+        </label>
+      </div>
+    {:else if brightnessMode === 'slice-auto'}
+      <div style="font-size:10px;opacity:0.75;margin-top:3px;">Each point uses its original k-layer min/max, matching the 2D viewer.</div>
+    {:else}
+      <div style="font-size:10px;opacity:0.75;margin-top:3px;">One fixed {formatted(range.min)}–{formatted(range.max)} range for the complete volume.</div>
+    {/if}
   {/if}
 
   {#if renderMode === 'slices'}

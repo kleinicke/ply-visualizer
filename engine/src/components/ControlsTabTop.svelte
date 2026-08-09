@@ -15,6 +15,8 @@
   let gammaEnabled = $state(!host.convertSrgbToLinear);
   // svelte-ignore state_referenced_locally
   let rotationCenterMode = $state(host.rotationCenterManager.getMode());
+  // svelte-ignore state_referenced_locally
+  let pointPickingImplementation = $state(host.pointPickingImplementation);
 
   function onBrightnessInput(e: Event) {
     const val = parseFloat((e.target as HTMLInputElement).value);
@@ -137,6 +139,10 @@
   function onSetRotationOrigin() {
     host.setRotationCenterToOrigin();
     host.updateRotationOriginButtonState();
+  }
+  function setPointPickingImplementation(implementation: 'cpu' | 'webgpu') {
+    host.setPointPickingImplementation(implementation);
+    pointPickingImplementation = host.pointPickingImplementation;
   }
 
   function onUndoPathPoint() {
@@ -262,6 +268,7 @@
     host.updateLightingButtonsState();
     host.showStatus('Using flat lighting');
   }
+
 </script>
 
 <div class="panel-section">
@@ -308,8 +315,7 @@
       >
     </div>
     <p class="setting-description" style="margin-top: 0;">
-      Brightness adjusts the rendered geometry. Background adjusts only the neutral backdrop.
-      Double-click a slider to reset it.
+      Brightness adjusts the rendered geometry. Background adjusts only the neutral backdrop. Double-click a slider to reset it.
     </p>
   </div>
   <div
@@ -580,6 +586,35 @@
     Move Camera: Camera slides on view plane to center clicked point. Keep Camera: Only rotation
     target changes, camera stays in place. Keep Distance: Camera moves to maintain same distance
     from new center.
+  </p>
+</div>
+<div class="panel-section">
+  <h4>Point Picking</h4>
+  <div class="control-buttons">
+    <button
+      id="point-picking-cpu"
+      class="control-button"
+      class:active={pointPickingImplementation === 'cpu'}
+      onclick={() => setPointPickingImplementation('cpu')}
+    >
+      CPU
+    </button>
+    <button
+      id="point-picking-webgpu"
+      class="control-button"
+      class:active={pointPickingImplementation === 'webgpu'}
+      disabled={!host.webgpuPickingAvailable}
+      title={host.webgpuPickingAvailable
+        ? 'Use the GPU compute picker'
+        : `WebGPU unavailable: ${host.webgpuPickingUnavailableReason}`}
+      onclick={() => setPointPickingImplementation('webgpu')}
+    >
+      WebGPU
+    </button>
+  </div>
+  <p class="setting-description">
+    WebGPU scans point clouds in parallel and is selected automatically when available. CPU keeps
+    the original screen-space implementation.
   </p>
 </div>
 <div class="panel-section">

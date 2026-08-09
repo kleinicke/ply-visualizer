@@ -50,8 +50,10 @@ DICOM series end to end.** What exists:
   source voxel at or above the threshold becomes exactly one point at affine
   world coordinates. The initial threshold is the measured minimum, so first
   load retains every voxel. There is no silent point budget or automatic stride.
-  Each point keeps its original scalar value and receives the same window/level
-  grayscale as the DICOM image (including MONOCHROME1 inversion).
+  Each point keeps its original scalar value. Its grayscale presentation is
+  independent from thresholding and offers three mappings: per-layer actual
+  min/max (the DICOM default, matching the 2D image viewer), the declared DICOM
+  window, or whole-volume min/max. All three include MONOCHROME1 inversion.
 - Raising **Hide voxel values below** removes those voxels from point geometry.
   **Mesh (isosurface)** is an explicit optional representation and marching
   cubes uses that same entered scalar threshold. Mesh sampling is exposed
@@ -110,8 +112,8 @@ multi-series handoff: the image viewer writes every selected DICOM series and
 this extension opens the first NRRD then adds the rest to the same scene. A
 presentation follow-up also added metre-scale DICOM geometry, orthogonal
 source-value slices with window/level, greyscale point intensity by default,
-neutral surfaces by default, and visible effective stride/count/spacing
-metadata.
+neutral surfaces by default, selectable per-layer/DICOM-window/whole-volume
+brightness mapping, and visible effective stride/count/spacing metadata.
 
 Ordered so each one unblocks the next. Steps 0 and 1 are prerequisites for
 everything interactive; 2–4 are independent of each other once 1 lands.

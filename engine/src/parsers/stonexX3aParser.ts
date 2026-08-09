@@ -607,6 +607,16 @@ export interface StonexStationPipelineOptions {
   recolorAlreadyColored?: boolean;
   /** Vertical axis for the 4-DoF sweep; terrestrial scans are level about it. */
   upAxis?: UpAxis;
+  /**
+   * Called as each scan finishes colouring, with the slice of the archive's
+   * colour arrays that belongs to it, so a host can publish progress instead of
+   * holding everything back until the end.
+   */
+  onScanColored?: (update: {
+    scanStem: string;
+    rawColors: Uint8Array;
+    frameIndices: Uint16Array;
+  }) => void;
 }
 
 export class StonexX3aParser {
@@ -1224,7 +1234,21 @@ export class StonexX3aParser {
       scans,
       frames,
       sources.projector,
-      { recolorAlreadyColored: options.recolorAlreadyColored }
+      {
+        recolorAlreadyColored: options.recolorAlreadyColored,
+        onScanColored: scan =>
+          options.onScanColored?.({
+            scanStem: scan.scanStem,
+            rawColors: rawColors.subarray(
+              scan.pointOffset * 3,
+              (scan.pointOffset + scan.pointCount) * 3
+            ),
+            frameIndices: frameIndices.subarray(
+              scan.pointOffset,
+              scan.pointOffset + scan.pointCount
+            ),
+          }),
+      }
     );
     timingCallback?.(
       `Stonex X3A: coloured ${result.newlyColored.toLocaleString()} previously grey points ` +

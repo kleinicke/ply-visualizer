@@ -1,8 +1,8 @@
 import type { SpatialData } from '../interfaces';
 import type { VolumeData } from '../parsers/nrrdParser';
-import { volumeGreyByte } from './volumePresentation';
+import { volumeGreyByteForSlice, type VolumeBrightnessRequest } from './volumePresentation';
 
-export interface VolumeSlicesRequest {
+export interface VolumeSlicesRequest extends VolumeBrightnessRequest {
   windowCenter: number;
   windowWidth: number;
   slices: readonly [number, number, number];
@@ -46,7 +46,6 @@ export async function buildVolumeSlicesAsync(
   const colors = new Uint8Array(vertexCount * 3);
   const indices = new Uint32Array(triangleCount * 3);
   const m = volume.ijkToWorld;
-  const width = Math.max(Number.EPSILON, request.windowWidth);
   const invert = volume.header['photometric interpretation']?.toUpperCase() === 'MONOCHROME1';
   let vertexOffset = 0;
   let indexOffset = 0;
@@ -69,10 +68,10 @@ export async function buildVolumeSlicesAsync(
         positions[p + 2] = m[8] * i + m[9] * j + m[10] * k + m[11];
         const sample =
           volume.samples[i + j * volume.sizes[0] + k * volume.sizes[0] * volume.sizes[1]];
-        const grey = volumeGreyByte(
+        const grey = volumeGreyByteForSlice(
           sample,
-          request.windowCenter,
-          width,
+          k,
+          request,
           invert ? 'MONOCHROME1' : 'MONOCHROME2'
         );
         colors[p] = grey;
@@ -134,6 +133,7 @@ export async function buildVolumeSlicesAsync(
         volumeRenderMode: 'slices',
         windowCenter: request.windowCenter,
         windowWidth: request.windowWidth,
+        brightnessMode: request.brightnessMode,
         sliceIndices: slices,
         channels: volume.channels,
       },

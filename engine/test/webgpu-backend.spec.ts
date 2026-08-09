@@ -30,6 +30,38 @@ test('default boot uses the WebGL backend', async ({ page }) => {
   expect(result.canvasWidth).toBeGreaterThan(0);
 });
 
+test('point picker exposes CPU fallback and disables WebGPU when unavailable', async ({ page }) => {
+  await page.goto('/3d-visualizer/');
+  await page.waitForFunction(() => Boolean((window as any).visualizer));
+
+  const state = await page.evaluate(() => {
+    const visualizer = (window as any).visualizer;
+    return {
+      available: visualizer.webgpuPickingAvailable as boolean,
+      implementation: visualizer.pointPickingImplementation as string,
+    };
+  });
+  await page.locator('[data-tab="controls"]').click();
+  const cpu = page.locator('#point-picking-cpu');
+  const webgpu = page.locator('#point-picking-webgpu');
+  await expect(cpu).toBeVisible();
+  await expect(webgpu).toBeVisible();
+
+  if (state.available) {
+    expect(state.implementation).toBe('webgpu');
+    await expect(webgpu).toBeEnabled();
+    await cpu.click();
+    await expect(cpu).toHaveClass(/active/);
+    await webgpu.click();
+    await expect(webgpu).toHaveClass(/active/);
+  } else {
+    expect(state.implementation).toBe('cpu');
+    await expect(cpu).toHaveClass(/active/);
+    await expect(webgpu).toBeDisabled();
+    await expect(webgpu).toHaveAttribute('title', /WebGPU unavailable:/);
+  }
+});
+
 test('?webgpu=1 starts WebGPU, or falls back to a working WebGL viewer', async ({ page }) => {
   const warnings: string[] = [];
   page.on('console', message => {

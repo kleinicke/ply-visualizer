@@ -1,8 +1,8 @@
 import type { SpatialData } from '../interfaces';
 import type { VolumeData } from '../parsers/nrrdParser';
-import { volumeGreyByte } from './volumePresentation';
+import { volumeGreyByteForSlice, type VolumeBrightnessRequest } from './volumePresentation';
 
-export interface VolumeVoxelsRequest {
+export interface VolumeVoxelsRequest extends VolumeBrightnessRequest {
   threshold: number;
   step?: readonly [number, number, number];
   /** Upper bound on emitted quads; the stride grows until the build fits. */
@@ -161,9 +161,6 @@ export async function buildVolumeVoxelsAsync(
   // half a stride past the sample it was taken from.
   const centreShift: [number, number, number] = [(sx - 1) / 2, (sy - 1) / 2, (sz - 1) / 2];
   const photometric = volume.header['photometric interpretation'];
-  const windowCenter = request.windowCenter ?? 0;
-  const windowWidth = request.windowWidth ?? 1;
-
   let vertex = 0;
   let index = 0;
   let voxels = 0;
@@ -181,7 +178,7 @@ export async function buildVolumeVoxelsAsync(
         const cx = m[0] * ci + m[1] * cj + m[2] * ck + m[3];
         const cy = m[4] * ci + m[5] * cj + m[6] * ck + m[7];
         const cz = m[8] * ci + m[9] * cj + m[10] * ck + m[11];
-        const grey = volumeGreyByte(value, windowCenter, windowWidth, photometric);
+        const grey = volumeGreyByteForSlice(value, k, request, photometric);
         for (const face of FACES) {
           const ijk: [number, number, number] = [i, j, k];
           ijk[face.axis] += face.dir * step[face.axis];
@@ -262,6 +259,7 @@ export async function buildVolumeVoxelsAsync(
         threshold: request.threshold,
         windowCenter: request.windowCenter,
         windowWidth: request.windowWidth,
+        brightnessMode: request.brightnessMode,
         photometricInterpretation: photometric,
         extractionStep: step,
         effectiveSpacing: voxelSize,

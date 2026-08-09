@@ -325,6 +325,17 @@ body {
   border-color: var(--vscode-button-border);
 }
 
+.control-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.control-button:disabled:hover {
+  background-color: var(--vscode-button-secondaryBackground);
+  border-color: var(--vscode-button-border);
+}
+
 .setting-description {
   font-size: 10px;
   color: var(--vscode-descriptionForeground);

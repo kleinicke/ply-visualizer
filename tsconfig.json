@@ -10,7 +10,12 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node", "vscode"],
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    // Matches the webpack aliases: tsc compiles the extension host and the node
+    // test suite, both of which want the CommonJS loader.
+    "paths": {
+      "#registration-wasm-loader": ["./engine/src/registration/wasmLoader.ts"]
+    }
   },
   "include": ["src/**/*", "engine/src/parsers/**/*", "engine/src/interfaces.ts"],
   "exclude": [

@@ -9,7 +9,13 @@ import {
 } from '../../engine/src/visualization/volumePoints';
 import { buildVolumeSlicesAsync } from '../../engine/src/visualization/volumeSlices';
 import { buildVolumeVoxelsAsync } from '../../engine/src/visualization/volumeVoxels';
-import { resolveVolumeWindow } from '../../engine/src/visualization/volumePresentation';
+import {
+  defaultVolumeBrightnessMode,
+  resolveVolumeWindow,
+  volumeSliceRanges,
+  type VolumeBrightnessMode,
+  type VolumeValueRange,
+} from '../../engine/src/visualization/volumePresentation';
 
 export type VolumeRenderMode = 'points' | 'mesh' | 'slices' | 'voxels';
 
@@ -19,6 +25,7 @@ export interface VolumeExtractionOptions {
   renderMode: VolumeRenderMode;
   windowCenter: number;
   windowWidth: number;
+  brightnessMode: VolumeBrightnessMode;
   sliceIndices: [number, number, number];
   clipRanges: Array<[number, number]>;
 }
@@ -27,6 +34,7 @@ export interface VolumeSession {
   volume: VolumeData;
   options: VolumeExtractionOptions;
   histogram: { min: number; max: number; bins: number[] };
+  sliceRanges: VolumeValueRange[];
   generation: number;
 }
 
@@ -35,6 +43,7 @@ const sessions = new Map<string, VolumeSession>();
 export function retainVolume(key: string, volume: VolumeData): VolumeSession {
   const histogram = volumeHistogram(volume);
   const window = resolveVolumeWindow(volume, histogram);
+  const sliceRanges = volumeSliceRanges(volume);
   const session: VolumeSession = {
     volume,
     options: {
@@ -45,6 +54,7 @@ export function retainVolume(key: string, volume: VolumeData): VolumeSession {
       renderMode: 'points',
       windowCenter: window.center,
       windowWidth: window.width,
+      brightnessMode: defaultVolumeBrightnessMode(volume),
       sliceIndices: volume.sizes.map(size => Math.floor((size - 1) / 2)) as [
         number,
         number,
@@ -53,6 +63,7 @@ export function retainVolume(key: string, volume: VolumeData): VolumeSession {
       clipRanges: volume.sizes.map(size => [0, Math.max(0, size - 1)]) as Array<[number, number]>,
     },
     histogram,
+    sliceRanges,
     generation: 0,
   };
   sessions.set(key, session);
@@ -66,6 +77,9 @@ export function buildInitialVolumeData(session: VolumeSession): SpatialData {
     step: [1, 1, 1],
     windowCenter: session.options.windowCenter,
     windowWidth: session.options.windowWidth,
+    brightnessMode: session.options.brightnessMode,
+    volumeRange: session.histogram,
+    sliceRanges: session.sliceRanges,
   }).data;
 }
 
@@ -90,6 +104,8 @@ export function decorateVolumeData(
     volumeRenderMode: session.options.renderMode,
     windowCenter: session.options.windowCenter,
     windowWidth: session.options.windowWidth,
+    brightnessMode: session.options.brightnessMode,
+    volumeSliceRanges: session.sliceRanges,
     meshExtractionStep: session.options.step,
     sliceIndices: session.options.sliceIndices,
     photometricInterpretation: session.volume.header['photometric interpretation'],
@@ -140,6 +156,12 @@ export async function reextractVolume(
       ? Number(message.windowWidth)
       : session.options.windowWidth
   );
+  const brightnessMode: VolumeBrightnessMode =
+    message.brightnessMode === 'slice-auto' || message.brightnessMode === 'volume-range'
+      ? message.brightnessMode
+      : message.brightnessMode === 'dicom-window'
+        ? 'dicom-window'
+        : session.options.brightnessMode;
   const incomingSlices = Array.isArray(message.sliceIndices)
     ? message.sliceIndices
     : session.options.sliceIndices;
@@ -162,6 +184,7 @@ export async function reextractVolume(
     renderMode,
     windowCenter,
     windowWidth,
+    brightnessMode,
     sliceIndices,
     clipRanges,
   };
@@ -191,7 +214,15 @@ export async function reextractVolume(
       renderMode === 'slices'
         ? await buildVolumeSlicesAsync(
             session.volume,
-            { windowCenter, windowWidth, slices: sliceIndices, onProgress },
+            {
+              windowCenter,
+              windowWidth,
+              brightnessMode,
+              volumeRange: session.histogram,
+              sliceRanges: session.sliceRanges,
+              slices: sliceIndices,
+              onProgress,
+            },
             () => generation !== session.generation
           )
         : renderMode === 'points'
@@ -202,6 +233,9 @@ export async function reextractVolume(
                 step: [1, 1, 1],
                 windowCenter,
                 windowWidth,
+                brightnessMode,
+                volumeRange: session.histogram,
+                sliceRanges: session.sliceRanges,
                 onProgress,
               },
               () => generation !== session.generation
@@ -215,6 +249,9 @@ export async function reextractVolume(
                   clip: clipRanges,
                   windowCenter,
                   windowWidth,
+                  brightnessMode,
+                  volumeRange: session.histogram,
+                  sliceRanges: session.sliceRanges,
                   onProgress,
                 },
                 () => generation !== session.generation

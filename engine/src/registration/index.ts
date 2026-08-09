@@ -24,7 +24,13 @@
  */
 
 import * as THREE from 'three';
-import { loadRegistrationWasm } from './wasmLoader';
+// Resolved per build target rather than by a relative path: the Node loader
+// belongs in the extension host and in tests, the in-page one in every browser
+// bundle. An absolute-path alias over `./wasmLoader` silently failed to apply
+// in one of the four builds and left the webview with a `require()` it could
+// not resolve; a bare specifier cannot fail that way, because a build with no
+// mapping for it does not resolve at all.
+import { loadRegistrationWasm } from '#registration-wasm-loader';
 import type { RegistrationKind, RegistrationRequest } from './registrationWorker';
 
 export type UpAxis = 'x' | 'y' | 'z';

@@ -52,7 +52,27 @@ export async function handleStationPipeline(
     const startedAt = performance.now();
     const bytes = await readFileFast(vscode.Uri.file(documentPath));
     const parser = new StonexX3aParser(stonexCameraProjector);
-    const parsed = await parser.parseAll(bytes, path.basename(documentPath), notify, options);
+    // Names are stems here; the webview matches on the member file name.
+    const stemToMember = new Map<string, string>();
+    const parsed = await parser.parseAll(bytes, path.basename(documentPath), notify, {
+      ...options,
+      onScanColored: update => {
+        const scanName = stemToMember.get(update.scanStem) ?? `${update.scanStem}.x3r`;
+        void webviewPanel.webview.postMessage({
+          type: 'stationPipelineResult',
+          partial: true,
+          updates: [
+            {
+              scanName,
+              transform: null,
+              partial: true,
+              rawColors: update.rawColors,
+              frameIndices: update.frameIndices,
+            },
+          ],
+        });
+      },
+    });
 
     const updates = parsed.map(scan => {
       const metadata = scan.metadata as Record<string, unknown>;

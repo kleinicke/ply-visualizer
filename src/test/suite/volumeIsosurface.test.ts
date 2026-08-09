@@ -21,6 +21,10 @@ import { buildVolumePoints } from '../../../engine/src/visualization/volumePoint
 import { buildVolumeSlicesAsync } from '../../../engine/src/visualization/volumeSlices';
 import { buildVolumeVoxelsAsync } from '../../../engine/src/visualization/volumeVoxels';
 import {
+  defaultVolumeBrightnessMode,
+  volumeSliceRanges,
+} from '../../../engine/src/visualization/volumePresentation';
+import {
   boundingBoxSectionPlanes,
   volumeSectionPlanes,
 } from '../../../engine/src/visualization/sectionPlanes';
@@ -792,6 +796,50 @@ suite('Volume points and clipping', () => {
       [85, 85, 85, 170, 170, 170, 255, 255, 255]
     );
     assert.strictEqual(result.data.hasColors, true);
+  });
+
+  test('matches the 2D viewer by normalizing each DICOM layer independently', () => {
+    const volume = makeBall(2, 1);
+    volume.samples = new Float32Array([0, 50, 100, 150, 1000, 1050, 1100, 1150]);
+    volume.header['modality'] = 'MR';
+    const originalIntensities = Array.from(volume.samples);
+    const sliceRanges = volumeSliceRanges(volume);
+
+    assert.strictEqual(defaultVolumeBrightnessMode(volume), 'slice-auto');
+    assert.deepStrictEqual(sliceRanges, [
+      { min: 0, max: 150 },
+      { min: 1000, max: 1150 },
+    ]);
+
+    const result = buildVolumePoints(volume, {
+      threshold: -Infinity,
+      brightnessMode: 'slice-auto',
+      sliceRanges,
+      volumeRange: { min: 0, max: 1150 },
+      windowCenter: 75,
+      windowWidth: 150,
+    });
+
+    assert.deepStrictEqual(Array.from(result.data.intensityArray!), originalIntensities);
+    assert.deepStrictEqual(
+      Array.from(result.data.colorsArray!).filter((_, index) => index % 3 === 0),
+      [0, 85, 170, 255, 0, 85, 170, 255]
+    );
+  });
+
+  test('can normalize brightness consistently across the whole volume', () => {
+    const volume = makeBall(2, 1);
+    volume.samples = new Float32Array([0, 50, 100, 150, 1000, 1050, 1100, 1150]);
+    const result = buildVolumePoints(volume, {
+      threshold: -Infinity,
+      brightnessMode: 'volume-range',
+      volumeRange: { min: 0, max: 1150 },
+    });
+
+    assert.deepStrictEqual(
+      Array.from(result.data.colorsArray!).filter((_, index) => index % 3 === 0),
+      [0, 11, 22, 33, 222, 233, 244, 255]
+    );
   });
 
   test('uses reciprocal affine normals for sheared slice planes', () => {

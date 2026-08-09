@@ -17,7 +17,11 @@ import { MeasurementManager } from './MeasurementManager';
 import { FilmManager } from './film/FilmManager';
 import { mountFilmPanel } from './filmPanelMount';
 import { mountMeasurementQuickActions } from './measurementQuickActionsMount';
-import { SelectionManager, SelectionContext } from './SelectionManager';
+import {
+  SelectionManager,
+  SelectionContext,
+  type PointPickingImplementation,
+} from './SelectionManager';
 
 declare const acquireVsCodeApi: () => any;
 
@@ -76,6 +80,7 @@ import * as cameraConvention from './cameraConvention';
 import * as edl from './edl';
 import * as transparency from './transparency';
 import * as plyExport from './plyExport';
+import * as colorModeModule from './colorMode';
 import * as registrationFeature from './registrationFeature';
 import * as stationPipelineFeature from './stationPipelineFeature';
 import * as rotationCenterFeature from './rotationCenterFeature';
@@ -203,6 +208,9 @@ class PointCloudVisualizer {
   rotationCenterManager: RotationCenterManager = new RotationCenterManager();
   private measurementManager: MeasurementManager | null = null;
   private selectionManager: SelectionManager | null = null;
+  webgpuPickingAvailable: boolean = false;
+  webgpuPickingUnavailableReason: string | null = 'WebGPU availability has not been checked';
+  pointPickingImplementation: PointPickingImplementation = 'cpu';
   // Video mode: camera keyframes, playback and recording (film/FilmManager.ts)
   filmManager: FilmManager | null = null;
 
@@ -667,6 +675,15 @@ class PointCloudVisualizer {
 
     // Initialize selection manager
     this.selectionManager = new SelectionManager(this.getSelectionContext());
+    await this.selectionManager.initializeWebGPUPicker();
+    this.webgpuPickingAvailable = this.selectionManager.isWebGPUPickingAvailable();
+    this.webgpuPickingUnavailableReason = this.selectionManager.getWebGPUUnavailableReason();
+    this.pointPickingImplementation = this.selectionManager.getPointPickingImplementation();
+    console.log(
+      this.webgpuPickingAvailable
+        ? '⚡ WebGPU point picking available and enabled'
+        : `ℹ️ WebGPU point picking unavailable; using CPU (${this.webgpuPickingUnavailableReason})`
+    );
 
     // Initialize video mode (camera keyframes / recording)
     this.filmManager = new FilmManager(this);
@@ -956,6 +973,11 @@ class PointCloudVisualizer {
     if (this.measurementManager) {
       this.measurementManager.dispose();
       this.measurementManager = null;
+    }
+
+    if (this.selectionManager) {
+      this.selectionManager.dispose();
+      this.selectionManager = null;
     }
 
     // Clean up video mode
@@ -1385,7 +1407,18 @@ class PointCloudVisualizer {
     rotationCenterFeature.setRotationCenterToOrigin(this);
   }
 
-  private onDoubleClick(event: MouseEvent): void {
+  setPointPickingImplementation(implementation: PointPickingImplementation): void {
+    this.selectionManager?.setPointPickingImplementation(implementation);
+    this.pointPickingImplementation =
+      this.selectionManager?.getPointPickingImplementation() ?? 'cpu';
+    this.showStatus(
+      this.pointPickingImplementation === 'webgpu'
+        ? 'Using WebGPU point picking'
+        : 'Using CPU point picking'
+    );
+  }
+
+  private async onDoubleClick(event: MouseEvent): Promise<void> {
     if (!this.selectionManager) {
       return;
     }
@@ -1402,7 +1435,11 @@ class PointCloudVisualizer {
     this.selectionManager.updateContext(this.getSelectionContext());
 
     // Try to select a point with detailed logging
-    const result = this.selectionManager.selectPointWithLogging(mouseScreenX, mouseScreenY, canvas);
+    const result = await this.selectionManager.selectPointWithLoggingAsync(
+      mouseScreenX,
+      mouseScreenY,
+      canvas
+    );
 
     if (result) {
       const { point: selectedPoint, info } = result;
@@ -2575,7 +2612,8 @@ class PointCloudVisualizer {
     return commentSettings.isDepthDerivedFile(data);
   }
 
-  private onFileColorModeChange(fileIndex: number, value: string): void {
+  /** Also the entry point for code that switches a mode, not just the picker. */
+  onFileColorModeChange(fileIndex: number, value: string): void {
     this.individualColorModes[fileIndex] = value;
     filesState.colorModes[fileIndex] = value;
     const isPose = fileIndex >= this.spatialFiles.length;
@@ -2631,7 +2669,8 @@ class PointCloudVisualizer {
     this.setFileEntryVisibility(fileIndex, desiredVisible);
   }
 
-  private setFileEntryVisibility(fileIndex: number, desiredVisible: boolean): void {
+  /** Used by the capture-place toggles, which move several entries at once. */
+  setFileEntryVisibility(fileIndex: number, desiredVisible: boolean): void {
     this.fileVisibility[fileIndex] = desiredVisible;
     filesState.visibility[fileIndex] = desiredVisible;
 
@@ -3626,7 +3665,8 @@ class PointCloudVisualizer {
     await largeFileChunking.handleLargeFileComplete(this, message);
   }
 
-  private updatePointSize(fileIndex: number, newSize: number): void {
+  /** Called from the file rows and from the all-clouds slider in the controls. */
+  updatePointSize(fileIndex: number, newSize: number): void {
     pointSizeScaling.updatePointSize(this, fileIndex, newSize);
   }
 
@@ -4016,6 +4056,7 @@ class PointCloudVisualizer {
     renderMode: 'points' | 'mesh' | 'slices' | 'voxels';
     windowCenter: number;
     windowWidth: number;
+    brightnessMode: 'slice-auto' | 'dicom-window' | 'volume-range';
     sliceIndices: [number, number, number];
     /** Visible index range per axis; voxel mode clips in geometry, not planes. */
     clipRanges?: Array<[number, number]>;
@@ -4041,6 +4082,9 @@ class PointCloudVisualizer {
               {
                 windowCenter: request.windowCenter,
                 windowWidth: request.windowWidth,
+                brightnessMode: request.brightnessMode,
+                volumeRange: source.metadata.volumeRange,
+                sliceRanges: source.metadata.volumeSliceRanges,
                 slices: request.sliceIndices,
                 onProgress,
               },
@@ -4061,6 +4105,9 @@ class PointCloudVisualizer {
                     clip: request.clipRanges,
                     windowCenter: request.windowCenter,
                     windowWidth: request.windowWidth,
+                    brightnessMode: request.brightnessMode,
+                    volumeRange: source.metadata.volumeRange,
+                    sliceRanges: source.metadata.volumeSliceRanges,
                     onProgress,
                   },
                   cancelled
@@ -4072,6 +4119,9 @@ class PointCloudVisualizer {
                     step: [1, 1, 1],
                     windowCenter: request.windowCenter,
                     windowWidth: request.windowWidth,
+                    brightnessMode: request.brightnessMode,
+                    volumeRange: source.metadata.volumeRange,
+                    sliceRanges: source.metadata.volumeSliceRanges,
                     onProgress,
                   },
                   cancelled
@@ -4088,6 +4138,7 @@ class PointCloudVisualizer {
         threshold: request.threshold,
         windowCenter: request.windowCenter,
         windowWidth: request.windowWidth,
+        brightnessMode: request.brightnessMode,
         meshExtractionStep: request.step,
         sliceIndices: request.sliceIndices,
       };
@@ -4588,6 +4639,13 @@ async function initializeVisualizer() {
     // the console (or from a spec) needs the module's entry points, and it has
     // no other handle in the page.
     (window as any).registrationFeature = registrationFeature;
+    // Same reason: the station pipeline's result handler is only reachable
+    // through the webview's message listener, which the standalone page never
+    // installs, so a spec has no other way to drive it.
+    (window as any).stationPipelineFeature = stationPipelineFeature;
+    // The colour-mode predicates decide how vertex colours are interpreted;
+    // exposing them lets a spec assert the two photographic modes agree.
+    (window as any).__colorMode = colorModeModule;
     console.log('✅ PointCloudVisualizer initialized');
   }
 }

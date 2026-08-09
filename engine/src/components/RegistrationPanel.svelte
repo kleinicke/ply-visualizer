@@ -2,6 +2,11 @@
   import { filesState } from '../state/files.svelte';
   import { registrationState, stationPipelineUi } from '../state/registration.svelte';
   import * as registration from '../registrationFeature';
+  import {
+    beginStationRecolor,
+    capturePlaces,
+    setCapturePlaceVisible,
+  } from '../stationPipelineFeature';
 
   let { host, fileIndex }: { host: any; fileIndex: number } = $props();
 
@@ -72,6 +77,10 @@
     stationPipelineUi.message = register
       ? 'Registering every scan, then colouring...'
       : 'Colouring with the current alignment...';
+    // Blank the archive and switch to the camera view first, so the scans
+    // visibly fill in as the host reports each one instead of the view sitting
+    // unchanged for a minute and then flipping.
+    beginStationRecolor(host, archiveName!);
     host.vscode.postMessage({
       type: 'stationPipeline',
       options: {
@@ -82,6 +91,19 @@
         upAxis: registrationState.upAxis,
       },
     });
+  }
+
+  // Capture places, derived from where the scans actually registered. Before
+  // registration they all sit on the origin and honestly form one group.
+  const places = $derived(
+    (filesState.renderTick, filesState.renderModeTick, capturePlaces(host, archiveName))
+  );
+  const placeVisible = (place: { fileIndices: number[] }) =>
+    place.fileIndices.some(index => filesState.visibility[index] !== false);
+
+  function togglePlace(place: any, event: Event) {
+    setCapturePlaceVisible(host, place, (event.currentTarget as HTMLInputElement).checked);
+    filesState.renderModeTick++;
   }
 
   function togglePicking() {
@@ -279,6 +301,32 @@
               itself instead, which discards whatever is on screen. Either way it takes a minute or
               two on a large archive; progress appears below.
             </p>
+            {#if places.length > 1}
+              <div style="margin-top:6px;">
+                <span style="font-weight:bold;">Capture places</span>
+                {#each places as place (place.name)}
+                  <label style="display:block;margin-top:2px;">
+                    <input
+                      type="checkbox"
+                      class="capture-place-toggle"
+                      data-place={place.name}
+                      checked={placeVisible(place)}
+                      onchange={event => togglePlace(place, event)}
+                    />
+                    {place.name}
+                    <span style="opacity:0.7;">
+                      ({place.fileIndices.length} scan{place.fileIndices.length === 1 ? '' : 's'})
+                    </span>
+                  </label>
+                {/each}
+                <p class="setting-description" style="margin:3px 0 0;">
+                  Hides everything captured from one tripod position at once, its panoramas
+                  included. Grouped by where the scans registered, so they only separate once the
+                  archive has been aligned.
+                </p>
+              </div>
+            {/if}
+
             {#if stationPipelineUi.message}
               <div class="station-pipeline-result" style="margin-top:4px;font-family:monospace;">
                 {stationPipelineUi.message}

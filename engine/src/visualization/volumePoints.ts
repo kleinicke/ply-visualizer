@@ -1,8 +1,8 @@
 import type { SpatialData } from '../interfaces';
 import type { VolumeData } from '../parsers/nrrdParser';
-import { volumeGreyByte } from './volumePresentation';
+import { volumeGreyByteForSlice, type VolumeBrightnessRequest } from './volumePresentation';
 
-export interface VolumePointsRequest {
+export interface VolumePointsRequest extends VolumeBrightnessRequest {
   threshold: number;
   step?: readonly [number, number, number];
   maxPoints?: number;
@@ -53,10 +53,10 @@ export function buildVolumePoints(
         positions[p] = m[0] * i + m[1] * j + m[2] * k + m[3];
         positions[p + 1] = m[4] * i + m[5] * j + m[6] * k + m[7];
         positions[p + 2] = m[8] * i + m[9] * j + m[10] * k + m[11];
-        const grey = volumeGreyByte(
+        const grey = volumeGreyByteForSlice(
           value,
-          request.windowCenter ?? 0,
-          request.windowWidth ?? 1,
+          k,
+          request,
           volume.header['photometric interpretation']
         );
         colors[p] = grey;
@@ -110,10 +110,10 @@ export async function buildVolumePointsAsync(
         positions[p] = m[0] * i + m[1] * j + m[2] * k + m[3];
         positions[p + 1] = m[4] * i + m[5] * j + m[6] * k + m[7];
         positions[p + 2] = m[8] * i + m[9] * j + m[10] * k + m[11];
-        const grey = volumeGreyByte(
+        const grey = volumeGreyByteForSlice(
           value,
-          request.windowCenter ?? 0,
-          request.windowWidth ?? 1,
+          k,
+          request,
           volume.header['photometric interpretation']
         );
         colors[p] = grey;
@@ -177,6 +177,7 @@ function packageVolumePoints(
         threshold: request.threshold,
         windowCenter: request.windowCenter,
         windowWidth: request.windowWidth,
+        brightnessMode: request.brightnessMode,
         photometricInterpretation: volume.header['photometric interpretation'],
         extractionStep: step,
         effectiveSpacing,

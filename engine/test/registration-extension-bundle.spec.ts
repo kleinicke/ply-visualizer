@@ -45,10 +45,23 @@ test.describe('Registration in the extension webview bundle', () => {
         }
       };
     });
-    await page.route('**/bundle.js', async route => {
+    // The extension bundle is split, and it pulls a chunk in during start-up,
+    // so serving only its entry leaves the page dead on a 404. Every script it
+    // asks for has to come from out/webview/, not from the page's own dist.
+    const bundleDirectory = path.dirname(extensionBundle);
+    await page.route('**/*.js', async route => {
+      const requested = path.basename(new URL(route.request().url()).pathname);
+      const candidate = path.join(
+        bundleDirectory,
+        requested === 'bundle.js' ? 'main.js' : requested
+      );
+      if (!fs.existsSync(candidate)) {
+        await route.continue();
+        return;
+      }
       await route.fulfill({
         contentType: 'application/javascript',
-        body: fs.readFileSync(extensionBundle, 'utf8'),
+        body: fs.readFileSync(candidate, 'utf8'),
       });
     });
 

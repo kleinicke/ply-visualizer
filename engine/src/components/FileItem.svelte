@@ -192,6 +192,27 @@
   // Volume voxels are solid boxes sized from the voxel spacing, so there is no
   // point sprite whose size could be tuned.
   const hasPointSize = $derived(data?.metadata?.volumeRenderMode !== 'voxels');
+  // Offered only once the station pipeline has produced an array to show; the
+  // scan's own colour stays under "Original" either way.
+  /**
+   * True when the colour under "Original" was produced by this extension
+   * projecting the file's own photographs, rather than read from the file.
+   *
+   * An X3R sample is a range and a pulse width - there is no colour in it - so
+   * calling that projection "Original" invites exactly the confusion of not
+   * being able to tell it apart from the cross-station result, which is the
+   * same operation over more cameras.
+   */
+  const colorIsProjected = $derived(
+    (filesState.renderTick,
+    !!data?.metadata?.stonexRawColors || !!data?.metadata?.e57PhotographicallyColoredPoints)
+  );
+
+  const hasRecoloredColors = $derived(
+    (filesState.renderTick,
+    filesState.renderModeTick,
+    data?.metadata?.stationRecoloredColors instanceof Uint8Array)
+  );
 
   function onRenderModeClick(mode: string) {
     host.toggleUniversalRenderMode(index, mode);
@@ -626,7 +647,12 @@
           <label for={`color-${index}`}>Color:</label>
           <select id={`color-${index}`} class="color-selector" value={colorMode} onchange={onColorModeChange}>
           {#if data.hasColors}
-            <option value="original">Original</option>
+            <option value="original"
+              >{colorIsProjected ? 'Camera (own station)' : 'Original'}</option
+            >
+          {/if}
+          {#if hasRecoloredColors}
+            <option value="recolored">Camera (all stations)</option>
           {/if}
           {#if host.hasIntensityData(data)}
             <option value="intensity">Intensity</option>

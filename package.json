@@ -59,6 +59,9 @@
     "CloudCompare"
   ],
   "main": "./out/extension.js",
+  "imports": {
+    "#registration-wasm-loader": "./out/engine/src/registration/wasmLoader.js"
+  },
   "contributes": {
     "configuration": {
       "title": "3D Visualizer",

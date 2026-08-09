@@ -232,6 +232,65 @@ suite('Stonex cross-station colouring', () => {
     assert.strictEqual(scene.frameIndices[point], 3);
   });
 
+  test('composes the camera transform in the projector layout', () => {
+    // Regression test for a mix of conventions that no identity-transform case
+    // can catch: `viewerToCamera` is row-major (the CAL file's declared order,
+    // which the Rust projector expects) while scan placements come from
+    // three.js and are column-major. Multiplying them in the wrong layout
+    // yields something correct only when one factor is the identity — which is
+    // the same-station case, so it looked fine on the scans that already had
+    // colour and wrong on exactly the ones this pass exists to fill in.
+    const scene = buildScene([8, 0, 0]);
+    // Station two metres along +x of the common frame, in column-major.
+    const stationTransform = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2, 0, 0, 1];
+    scene.scans[0].transform = stationTransform;
+
+    let seen: readonly number[] | null = null;
+    const capture = ((request: any) => {
+      seen = request.transform;
+      return pinholeProjector()(request);
+    }) as any;
+
+    colorFromAllStations(
+      scene.positions,
+      scene.rawColors,
+      scene.frameIndices,
+      scene.colored,
+      new Uint8Array(scene.positions.length / 3),
+      scene.scans,
+      [makeFrame()],
+      capture
+    );
+
+    assert.ok(seen, 'the projector should have been called');
+    const composed = seen as unknown as number[];
+
+    // The invariant, stated without relying on any particular index: applying
+    // the composed matrix row-major must equal applying the station hop
+    // column-major and then the frame's row-major viewer-to-camera.
+    const point = [8, 0, 0];
+    const rowMajorApply = (m: readonly number[], p: number[]) => [
+      m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
+      m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
+      m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11],
+    ];
+    const columnMajorApply = (m: readonly number[], p: number[]) => [
+      m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12],
+      m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13],
+      m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14],
+    ];
+    // inverse(station) for a pure +2 x translation.
+    const scanToStation = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -2, 0, 0, 1];
+    const expected = rowMajorApply(VIEWER_TO_CAMERA, columnMajorApply(scanToStation, point));
+    const actual = rowMajorApply(composed, point);
+    for (let axis = 0; axis < 3; axis++) {
+      assert.ok(
+        Math.abs(actual[axis] - expected[axis]) < 1e-6,
+        `axis ${axis}: composed gives ${actual[axis]}, expected ${expected[axis]}`
+      );
+    }
+  });
+
   test('does nothing when no frame belongs to a loaded scan', () => {
     const scene = buildScene([8, 0, 0]);
     const result = colorFromAllStations(

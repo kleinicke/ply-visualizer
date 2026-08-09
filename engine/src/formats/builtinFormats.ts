@@ -11,7 +11,11 @@ import { NpyParser, isNpyPointCloudData } from '../parsers/npyParser';
 import { NrrdParser } from '../parsers/nrrdParser';
 import { sampleRange } from '../visualization/isosurface';
 import { buildVolumePoints } from '../visualization/volumePoints';
-import { resolveVolumeWindow } from '../visualization/volumePresentation';
+import {
+  defaultVolumeBrightnessMode,
+  resolveVolumeWindow,
+  volumeSliceRanges,
+} from '../visualization/volumePresentation';
 import { initTiffWasm, projectCameraPointsWasmSync } from '../depth/readers/tiffWasm';
 import { FormatRegistry, UnifiedConverter } from './formatRegistry';
 
@@ -190,6 +194,9 @@ export function registerBuiltinFormats(
         step: [1, 1, 1],
         windowCenter: window.center,
         windowWidth: window.width,
+        brightnessMode: defaultVolumeBrightnessMode(volume),
+        volumeRange: range,
+        sliceRanges: volumeSliceRanges(volume),
         onProgress: fraction =>
           timingCallback?.(`🧊 Volume points: ${(fraction * 100).toFixed(0)}%`),
       });
