@@ -18,7 +18,10 @@ import type { SpatialData } from './interfaces';
 import { RECOLORED_MODE } from './colorMode';
 import { filesState } from './state/files.svelte';
 import { stationPipelineUi } from './state/registration.svelte';
-import { updateStonexCameraStations } from './visualization/stonexCameras';
+import {
+  addStonexCameraVisualization,
+  updateStonexCameraStations,
+} from './visualization/stonexCameras';
 import {
   applyStonexColorCorrectionToPoints,
   computeStonexFrameMultipliers,
@@ -412,6 +415,13 @@ export function setCapturePlaceVisible(
 export interface LoadTimeColorUpdate {
   scanName: string;
   colors: Uint8Array;
+  /** Set when the colour arrives in chunks; absent means the whole scan. */
+  pointOffset?: number;
+  totalPoints?: number;
+  /** True on the closing chunk, which is what makes the colour visible. */
+  final?: boolean;
+  /** Present on the scan that carries the archive's camera profile. */
+  cameraFrames?: unknown[];
   rawColors?: Uint8Array | null;
   frameIndices?: Uint16Array | null;
   colorCalibration?: unknown;
@@ -439,14 +449,52 @@ export function applyLoadTimeColors(
       continue;
     }
     const data = host.spatialFiles[fileIndex];
-    data.colorsArray = update.colors;
-    data.hasColors = true;
     const metadata = (data.metadata ??= {});
-    metadata.stonexRawColors = update.rawColors ?? null;
-    metadata.stonexFrameIndices = update.frameIndices ?? null;
-    metadata.stonexColorCalibration = update.colorCalibration;
+    const chunked = typeof update.pointOffset === 'number';
+
+    if (!chunked) {
+      data.colorsArray = update.colors;
+      metadata.stonexRawColors = update.rawColors ?? null;
+      metadata.stonexFrameIndices = update.frameIndices ?? null;
+    } else {
+      // Grow the destination once, then fill it chunk by chunk. The arrays are
+      // sized from the scan's own point count rather than from what has arrived
+      // so far, so an interrupted transfer leaves a partly coloured scan rather
+      // than a mismatched one.
+      const points = update.totalPoints ?? data.vertexCount;
+      if (!(data.colorsArray instanceof Uint8Array) || data.colorsArray.length !== points * 3) {
+        data.colorsArray = new Uint8Array(points * 3);
+      }
+      data.colorsArray.set(update.colors, update.pointOffset! * 3);
+      if (update.rawColors) {
+        if (!(metadata.stonexRawColors instanceof Uint8Array)) {
+          metadata.stonexRawColors = new Uint8Array(points * 3);
+        }
+        (metadata.stonexRawColors as Uint8Array).set(update.rawColors, update.pointOffset! * 3);
+      }
+      if (update.frameIndices) {
+        if (!(metadata.stonexFrameIndices instanceof Uint16Array)) {
+          metadata.stonexFrameIndices = new Uint16Array(points);
+        }
+        (metadata.stonexFrameIndices as Uint16Array).set(update.frameIndices, update.pointOffset!);
+      }
+      if (!update.final) {
+        continue;
+      }
+    }
+    data.hasColors = true;
+    if (update.colorCalibration !== undefined) {
+      metadata.stonexColorCalibration = update.colorCalibration;
+    }
     if (typeof update.photographicallyColoredPoints === 'number') {
       metadata.photographicallyColoredPoints = update.photographicallyColoredPoints;
+    }
+    // Camera previews are sampled from the decoded photographs, so the geometry
+    // hand-over cannot carry them - they arrive here with the colour, and the
+    // profile is built now rather than at load.
+    if (update.cameraFrames?.length) {
+      metadata.stonexCameraFrames = update.cameraFrames;
+      addStonexCameraVisualization(host as never, data);
     }
     host.onFileColorModeChange?.(fileIndex, 'original');
     filesState.colorModes[fileIndex] = 'original';

@@ -98,6 +98,70 @@ function tagContainer(scans: any[], kind: string, name: string, startedAt: numbe
  * `setImmediate` callback resolveCustomEditor schedules so the webview HTML
  * can paint before any file IO starts.
  */
+interface StonexPhaseReport {
+  totalMs: number;
+  points: number;
+  scans: number;
+  frames: number;
+  archiveBytes: number;
+  phases: Array<{ name: string; ms: number }>;
+  marshalMs?: number;
+  projectMs?: number;
+  sampleMs?: number;
+  candidateTotal?: number;
+  pixelsInFrame?: number;
+  samplesTaken?: number;
+}
+
+/**
+ * Prints the parse breakdown next to the existing PERF lines.
+ *
+ * Deliberately verbose while the colour path is being worked on. Timings alone
+ * proved too easy to misread - a phase can be slow because it did more work
+ * rather than because it is slow per unit of work - so the counts and the
+ * derived rates travel with them, and one run can be compared against another
+ * on a machine that is not perfectly quiet.
+ */
+function logStonexPhases(
+  host: { logPerf(line: string): void },
+  scan: { metadata?: Record<string, unknown> } | undefined,
+  fileName: string
+): void {
+  const report = scan?.metadata?.stonexParsePhases as StonexPhaseReport | undefined;
+  if (!report) {
+    return;
+  }
+  const seconds = (ms: number) => (ms / 1000).toFixed(2);
+  const share = (ms: number) => `${((ms / report.totalMs) * 100).toFixed(0)}%`;
+  host.logPerf(
+    `⏱️ PERF[x3a/phases] ${fileName} · total ${seconds(report.totalMs)}s · ` +
+      `${(report.points / 1e6).toFixed(1)}M pts · ${report.scans} scans · ${report.frames} frames · ` +
+      `${(report.archiveBytes / 1e6).toFixed(0)} MB`
+  );
+  for (const phase of report.phases) {
+    if (phase.ms >= 1) {
+      host.logPerf(
+        `⏱️ PERF[x3a/phase]   ${phase.name}: ${seconds(phase.ms)}s (${share(phase.ms)})`
+      );
+    }
+  }
+  if (report.projectMs !== undefined) {
+    const candidates = report.candidateTotal ?? 0;
+    const perMillion = (ms: number) =>
+      candidates > 0 ? `${((ms * 1e6) / candidates).toFixed(1)}ms/M` : 'n/a';
+    host.logPerf(
+      `⏱️ PERF[x3a/colour]   candidates ${(candidates / 1e6).toFixed(1)}M · ` +
+        `in-frame ${((report.pixelsInFrame ?? 0) / 1e6).toFixed(1)}M · ` +
+        `sampled ${((report.samplesTaken ?? 0) / 1e6).toFixed(1)}M`
+    );
+    host.logPerf(
+      `⏱️ PERF[x3a/colour]   marshal ${seconds(report.marshalMs ?? 0)}s (${perMillion(report.marshalMs ?? 0)}) · ` +
+        `rust-project ${seconds(report.projectMs)}s (${perMillion(report.projectMs)}) · ` +
+        `js-sample ${seconds(report.sampleMs ?? 0)}s (${perMillion(report.sampleMs ?? 0)})`
+    );
+  }
+}
+
 export async function loadDocumentContent(
   host: DocumentLoaderHost,
   documentUri: vscode.Uri,
@@ -209,6 +273,7 @@ export async function loadDocumentContent(
       host.logPerf(
         `⏱️ PERF[x3a/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsed.reduce((sum, scan) => sum + scan.vertexCount, 0)} pts in ${parsed.length} scans) for ${path.basename(documentUri.fsPath)}`
       );
+      logStonexPhases(host, parsed[0], path.basename(documentUri.fsPath));
       tagContainer(parsed, 'x3a', path.basename(documentUri.fsPath), loadStartedAtEpoch);
       await sendSpatialDataToWebview(webviewPanel, parsed, 'multiSpatialData');
       return;

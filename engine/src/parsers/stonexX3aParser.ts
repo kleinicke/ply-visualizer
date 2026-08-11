@@ -351,10 +351,11 @@ function parseCameraFrames(
         ? { redGain: references[0].redGain, blueGain: references[0].blueGain }
         : fallback;
     }
-    for (const frame of frames) {
-      frame.rgbImage = decodeCameraRgb(data, frame);
-    }
   }
+  // Deliberately *not* decoding the frames here. The demosaic is a fifth of a
+  // large archive's load and a half of a small one's, and doing it up front
+  // means the points cannot be shown until every photograph has been unpacked.
+  // `sampleCameraRgb` decodes each frame the first time it is read instead.
   return { frames, bandGains };
 }
 
@@ -472,10 +473,10 @@ function sampleCameraRgb(
   portraitX: number,
   portraitY: number
 ): [number, number, number] {
-  const image = frame.rgbImage;
-  if (!image) {
-    return sampleGrbg(data, frame, portraitX, portraitY);
-  }
+  // Decoded on demand and cached on the frame: the first sample of a frame
+  // pays for its demosaic, which keeps the whole cost after the geometry has
+  // already been handed over.
+  const image = frame.rgbImage ?? (frame.rgbImage = decodeCameraRgb(data, frame));
   const imageX = (portraitX + 0.5) * CAMERA_RGB_SCALE - 0.5;
   const imageY = (portraitY + 0.5) * CAMERA_RGB_SCALE - 0.5;
   const x0 = Math.floor(imageX);
@@ -643,6 +644,11 @@ export class StonexX3aParser {
     // earlier attempt profiled the parser with no camera projector attached,
     // which skips the demosaic entirely, and drew exactly the wrong conclusion.
     const phases: Array<[string, number]> = [];
+    const counters: Record<string, number> = {};
+    // Declared up front and filled at the end: the result builder captures this
+    // reference, and it also runs for the geometry snapshot handed over before
+    // colouring, which is naturally reported as empty.
+    const parsePhases: Record<string, unknown> = {};
     let phaseStart = startedAt;
     const markPhase = (name: string) => {
       const now = performance.now();
@@ -869,6 +875,13 @@ export class StonexX3aParser {
         frames: CameraFrame[];
         projector?: StonexCameraBatchProjector;
       } | null;
+      /**
+       * Camera previews are sampled from the decoded images, so asking for them
+       * forces the demosaic. The geometry hand-over omits them for exactly that
+       * reason; the finished result carries them, by which point the frames are
+       * decoded anyway.
+       */
+      includeCameraFrames: boolean;
     }): StonexX3aData => ({
       vertexCount,
       sourcePointCount,
@@ -906,7 +919,9 @@ export class StonexX3aParser {
         stonexStationSources: colour.stationSources,
         cameraFrames: cameraFrames.map(frame => frame.member.name),
         cameraCalibrations: [...calibrations.keys()],
-        stonexCameraFrames: cameraFrames.map(frame => cameraFrameMetadata(data, frame)),
+        stonexCameraFrames: colour.includeCameraFrames
+          ? cameraFrames.map(frame => cameraFrameMetadata(data, frame))
+          : [],
         scannerPosition: [0, 0, 0],
         scannerCoordinateConvention: 'viewer X=model Y, viewer Y=model X, viewer Z=model Z',
         sharedScannerFrameAssumed: photographicScanStems.size === 1 && scanMembers.length > 1,
@@ -924,6 +939,7 @@ export class StonexX3aParser {
         // range without turning into blobs near the scanner, where the initial
         // view now starts.
         recommendedPointSize: 0.025,
+        stonexParsePhases: parsePhases,
         rangeScaleMetres: RANGE_SCALE_METRES,
         verticalFieldOfViewDegrees: [
           VERTICAL_MIN_DEGREES,
@@ -934,6 +950,7 @@ export class StonexX3aParser {
 
     markPhase('point decode');
     if (onGeometryReady) {
+      counters.geometryReadyMs = performance.now() - startedAt;
       // The same shape the call returns, minus colour: positions, intensity and
       // the scan ranges are all final by now.
       onGeometryReady(
@@ -944,6 +961,7 @@ export class StonexX3aParser {
           colorCalibration: undefined,
           photographicallyColoredPoints: 0,
           stationSources: null,
+          includeCameraFrames: false,
         })
       );
     }
@@ -959,11 +977,18 @@ export class StonexX3aParser {
       let marshalMs = 0;
       let projectMs = 0;
       let sampleMs = 0;
+      // Counts alongside the times: a phase that is slow because it did more
+      // work reads very differently from one that is slow per unit of work, and
+      // only the second is worth porting.
+      let candidateTotal = 0;
+      let pixelsInFrame = 0;
+      let samplesTaken = 0;
       for (let frameNumber = 0; frameNumber < cameraFrames.length; frameNumber++) {
         const frame = cameraFrames[frameNumber];
         const marshalStart = performance.now();
         const candidates = new Uint32Array(candidateIndices.get(frame) ?? []);
         marshalMs += performance.now() - marshalStart;
+        candidateTotal += candidates.length;
         if (candidates.length === 0) {
           continue;
         }
@@ -1002,6 +1027,7 @@ export class StonexX3aParser {
           ) {
             continue;
           }
+          pixelsInFrame++;
           const centerX = (pixelX - calibration.cx) / (calibration.width * 0.5);
           const centerY = (pixelY - calibration.cy) / (calibration.height * 0.5);
           const score = centerX * centerX + centerY * centerY;
@@ -1020,6 +1046,7 @@ export class StonexX3aParser {
             continue;
           }
           bestWeights[pointIndex] = weight;
+          samplesTaken++;
           const color = sampleCameraRgb(data, frame, pixelX, pixelY);
           const offset = pointIndex * 3;
           rawColors[offset] = Math.round(color[0]);
@@ -1031,6 +1058,12 @@ export class StonexX3aParser {
         sampleMs += performance.now() - sampleStart;
       }
 
+      counters.marshalMs = marshalMs;
+      counters.projectMs = projectMs;
+      counters.sampleMs = sampleMs;
+      counters.candidateTotal = candidateTotal;
+      counters.pixelsInFrame = pixelsInFrame;
+      counters.samplesTaken = samplesTaken;
       timingCallback?.(
         `Stonex X3A colour pass: candidate marshalling ${(marshalMs / 1000).toFixed(1)}s · ` +
           `Rust projection ${(projectMs / 1000).toFixed(1)}s · JS scoring+sampling ${(sampleMs / 1000).toFixed(1)}s`
@@ -1070,6 +1103,16 @@ export class StonexX3aParser {
 
     markPhase('colour correction');
     const total = performance.now() - startedAt;
+    Object.assign(parsePhases, {
+      totalMs: total,
+      points: vertexCount,
+      sourcePoints: sourcePointCount,
+      scans: scanMembers.length,
+      frames: cameraFrames.length,
+      archiveBytes: data.byteLength,
+      phases: phases.map(([name, ms]) => ({ name, ms })),
+      ...counters,
+    });
     timingCallback?.(
       `Stonex X3A: parsed ${vertexCount.toLocaleString()} valid returns from ${scanMembers.length} scans in ${total.toFixed(1)} ms`
     );
@@ -1089,6 +1132,7 @@ export class StonexX3aParser {
       colorCalibration,
       photographicallyColoredPoints,
       stationSources: { data, frames: cameraFrames, projector: this.cameraProjector },
+      includeCameraFrames: true,
     });
   }
 
