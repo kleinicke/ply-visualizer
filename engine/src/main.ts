@@ -88,6 +88,7 @@ import {
   applyScannerStartView,
   applyZUpOrientation,
   scannerCapturePointFor,
+  shouldApplySavedViewConvention,
   shouldOrientZUp,
 } from './cameraOrientation';
 import * as axesFeature from './axesFeature';
@@ -1262,7 +1263,9 @@ class PointCloudVisualizer {
 
     if (useVisibilityRenderer && this.webgpuVisibilityRenderer) {
       const visibility = visibilityContext.pointClouds.map(cloud => cloud.visible);
-      for (const cloud of visibilityContext.pointClouds) {cloud.visible = false;}
+      for (const cloud of visibilityContext.pointClouds) {
+        cloud.visible = false;
+      }
       try {
         this.renderer.render(this.scene, this.camera);
       } finally {
@@ -1287,8 +1290,11 @@ class PointCloudVisualizer {
     }
 
     this.webgpuVisibilityRenderer?.setEnabled(false);
-    if (this.edlEnabled && this.effectComposer) {this.effectComposer.render();}
-    else {this.renderer.render(this.scene, this.camera);}
+    if (this.edlEnabled && this.effectComposer) {
+      this.effectComposer.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 
   private getVisibilityRenderContext(): VisibilityRenderContext {
@@ -4425,11 +4431,17 @@ class PointCloudVisualizer {
       };
       console.log('✅ Loaded default depth settings from extension:', this.defaultDepthSettings);
 
-      // Apply saved camera view convention if present
-      if (message.viewConvention === 'opencv') {
-        this.setOpenCVCameraConvention();
-      } else if (message.viewConvention === 'opengl') {
-        this.setOpenGLCameraConvention();
+      // X3A/X3R and E57 define Z as world-up. The settings response is
+      // asynchronous and can arrive after their first camera fit, so applying
+      // a persisted generic OpenCV/OpenGL view here would deterministically
+      // tip the survey onto its side. A response received before geometry is
+      // still safe: the first fit establishes the format-defined up axis.
+      if (shouldApplySavedViewConvention(this.spatialFiles)) {
+        if (message.viewConvention === 'opencv') {
+          this.setOpenCVCameraConvention();
+        } else if (message.viewConvention === 'opengl') {
+          this.setOpenGLCameraConvention();
+        }
       }
 
       // Update any existing depth file forms to use new defaults

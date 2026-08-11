@@ -34,6 +34,19 @@ export function shouldOrientZUp(
   return files.some(isZUpFormat);
 }
 
+/**
+ * A persisted generic camera convention must not replace an axis convention
+ * supplied by the data format. If the settings response arrives before the
+ * first file, applying it is harmless because the first fit will subsequently
+ * establish Z-up; if it arrives afterwards, leave the format-defined view
+ * alone.
+ */
+export function shouldApplySavedViewConvention(
+  files: Array<{ fileName?: string; metadata?: { format?: unknown } }>
+): boolean {
+  return !shouldOrientZUp(files);
+}
+
 export interface SceneUpHost {
   camera: THREE.PerspectiveCamera;
   controls?: { target: THREE.Vector3; worldUp?: THREE.Vector3; update?: () => void } | null;

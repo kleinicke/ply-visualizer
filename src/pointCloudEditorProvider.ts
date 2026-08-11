@@ -383,10 +383,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       isXyzVariant: isXyzVariant,
     });
 
-    // Keep the existing proactive settings message, but let the ready gate
-    // deliver it safely instead of blocking resolveCustomEditor.
-    void this.handleRequestDefaultDepthSettings(webviewPanel);
-
     // A COLMAP sparse model is several files that only mean anything together,
     // and none of them parses as a point cloud on its own. Opening any one of
     // them loads the whole reconstruction from its directory instead.
