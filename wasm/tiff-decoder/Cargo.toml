@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["console_error_panic_hook"]
 
 [dependencies]
+camera-models = { path = "../camera-models" }
 wasm-bindgen = "0.2"
 tiff = { version = "0.11.3", features = ["webp"] }
 exr = { version = "1.74", default-features = false }

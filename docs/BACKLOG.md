@@ -1127,6 +1127,49 @@ could not actually be deleted. A port that leaves a fallback in place has not
 reduced the maintenance surface, it has doubled it — which is precisely the
 state item 0 exists to clean up.
 
+### Rust: X3A parsing and colouring
+
+**Step one done (August 2026): `wasm/camera-models` is its own crate.** The
+projection and unprojection kernels lived inside the TIFF decoder for historical
+reasons only - nothing in them is TIFF-specific - and the point-cloud side needs
+the same maths to colour scans from their photographs. Both WASM crates now
+depend on it by path; it is plain Rust with no wasm-bindgen, so each binds to it
+in its own way.
+
+**Why the rest should follow.** Measured on a real archive (`OHP_FRONT.x3a`,
+42.2M points, 30 frames, on the user's machine):
+
+| Stage                   | Share  | Language      |
+| ----------------------- | ------ | ------------- |
+| archive directory       | ~0%    | TS            |
+| X3I demosaic (now lazy) | 0%     | TS            |
+| scan layout scan        | 1-2%   | TS            |
+| X3R point decode        | 16-21% | TS            |
+| projection + sampling   | 78-80% | split TS/Rust |
+| colour correction       | 2-3%   | TS            |
+
+So ~99% of the parse is byte handling, demosaicing, projection and sampling -
+none of it inherently JavaScript. Three things follow from moving the whole
+parser rather than one pass:
+
+- **The boundary disappears.** Positions currently cross into WASM once per
+  frame; on this archive that is 30 copies of 42M points. If Rust owns the
+  points from the moment they are decoded, nothing crosses but the finished
+  buffers, once.
+- **Most of the work is wasted today.** 157.2M candidate point-frame pairs
+  produce 57.1M in-frame projections and 49.0M samples: 64% are projected and
+  thrown away because the candidate window is a fixed +/-30 degrees rather than
+  the frame's real footprint. Inside Rust that filter can be tightened where the
+  data lives.
+- **It parallelises.** Per-frame colouring is embarrassingly parallel and
+  `rayon` makes that nearly free on the native path, which is where the tests
+  and benchmarks run.
+
+Phase instrumentation is in the parser and reports through the normal timing
+channel (`PERF[x3a/phases]`, `PERF[x3a/colour]`), with counts beside the times -
+added after two wrong conclusions were drawn from single, noisy samples, one of
+them taken on a code path the real load never follows.
+
 ### Shared core with tiff-visualizer (and a possible shared desktop app)
 
 The full three-step plan lives in `tiff-visualizer/BACKLOG.md` item 11; this is

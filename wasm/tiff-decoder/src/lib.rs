@@ -10,7 +10,8 @@ use std::mem;
 use exr::prelude::FlatSamples;
 use tiff::decoder::{Decoder, DecodingResult};
 
-mod camera_models;
+// Camera projection kernels come from the `camera-models` crate, which both
+// WASM crates share. Referenced by path (`camera_models::…`) throughout.
 use camera_models::{CameraModel, Intrinsics};
 
 #[cfg(feature = "console_error_panic_hook")]

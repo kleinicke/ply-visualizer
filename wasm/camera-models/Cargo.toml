@@ -1,0 +1,17 @@
+[package]
+name = "camera-models"
+version = "0.1.0"
+edition = "2021"
+description = "Camera projection and unprojection kernels shared by the WASM crates"
+license = "MIT"
+
+# Plain Rust, no wasm-bindgen: this is the maths, and both wasm crates bind to
+# it in their own way. It lived inside the TIFF decoder for historical reasons
+# only - nothing here is TIFF-specific, and the point-cloud side needs the same
+# projections to colour scans from their photographs.
+
+[lib]
+crate-type = ["rlib"]
+
+[profile.release]
+opt-level = 3

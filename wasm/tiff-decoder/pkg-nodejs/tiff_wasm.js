@@ -152,85 +152,6 @@ function getArrayF64FromWasm0(ptr, len) {
   return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 /**
- * Unproject one pixel to a unit OpenCV-coordinate ray. Returns
- * `[valid, converged, iterations, x, y, z]`.
- * @param {string} camera_model
- * @param {number} fx
- * @param {number} fy
- * @param {number} cx
- * @param {number} cy
- * @param {Float64Array} coefficients
- * @param {number} u
- * @param {number} v
- * @returns {Float64Array}
- */
-exports.camera_unproject = function (camera_model, fx, fy, cx, cy, coefficients, u, v) {
-  const ptr0 = passStringToWasm0(camera_model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.camera_unproject(ptr0, len0, fx, fy, cx, cy, ptr1, len1, u, v);
-  if (ret[3]) {
-    throw takeFromExternrefTable0(ret[2]);
-  }
-  var v3 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-  wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-  return v3;
-};
-
-function passArray8ToWasm0(arg, malloc) {
-  const ptr = malloc(arg.length * 1, 1) >>> 0;
-  getUint8ArrayMemory0().set(arg, ptr / 1);
-  WASM_VECTOR_LEN = arg.length;
-  return ptr;
-}
-/**
- * Decode a TIFF file from an ArrayBuffer
- * Returns TiffResult with image data and metadata
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-exports.decode_tiff = function (data) {
-  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff(ptr0, len0);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return TiffResult.__wrap(ret[0]);
-};
-
-/**
- * Decode an arbitrary zero-based TIFF page and compute min/max statistics.
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {TiffResult}
- */
-exports.decode_tiff_page = function (data, page_index) {
-  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return TiffResult.__wrap(ret[0]);
-};
-
-/**
- * @param {Uint8Array} data
- * @returns {ExrResult}
- */
-exports.decode_exr_fast = function (data) {
-  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_exr_fast(ptr0, len0);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return ExrResult.__wrap(ret[0]);
-};
-
-/**
  * Project one OpenCV-coordinate ray. Returns
  * `[valid, converged, iterations, u, v]`.
  * @param {string} camera_model
@@ -258,157 +179,12 @@ exports.camera_project = function (camera_model, fx, fy, cx, cy, coefficients, x
   return v3;
 };
 
-/**
- * Decode a TIFF file without eagerly computing min/max statistics.
- *
- * The webview render path computes stats lazily when a non-gamma mode needs
- * them. Skipping eager stats saves a full pass over large float TIFFs during
- * the common gamma-mode initial load.
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-exports.decode_tiff_fast = function (data) {
-  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_fast(ptr0, len0);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return TiffResult.__wrap(ret[0]);
-};
-
-/**
- * Return the number of top-level image file directories (pages) in a TIFF.
- * @param {Uint8Array} data
- * @returns {number}
- */
-exports.tiff_page_count = function (data) {
-  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.tiff_page_count(ptr0, len0);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return ret[0] >>> 0;
-};
-
-/**
- * @param {Uint8Array} data
- * @returns {HdrResult}
- */
-exports.decode_hdr_fast = function (data) {
-  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_hdr_fast(ptr0, len0);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return HdrResult.__wrap(ret[0]);
-};
-
-function passArrayF32ToWasm0(arg, malloc) {
-  const ptr = malloc(arg.length * 4, 4) >>> 0;
-  getFloat32ArrayMemory0().set(arg, ptr / 4);
+function passArray8ToWasm0(arg, malloc) {
+  const ptr = malloc(arg.length * 1, 1) >>> 0;
+  getUint8ArrayMemory0().set(arg, ptr / 1);
   WASM_VECTOR_LEN = arg.length;
   return ptr;
 }
-/**
- * @param {Float32Array} data
- * @param {number} width
- * @param {number} height
- * @param {string} kind
- * @param {string} unit
- * @param {number} scale
- * @param {number} depth_scale
- * @param {number} depth_bias
- * @param {number} fx
- * @param {number} baseline
- * @param {number} disparity_offset
- * @param {boolean} has_clamp_min
- * @param {number} clamp_min
- * @param {boolean} has_clamp_max
- * @param {number} clamp_max
- * @returns {NormalizeDepthResult}
- */
-exports.normalize_depth_fast = function (
-  data,
-  width,
-  height,
-  kind,
-  unit,
-  scale,
-  depth_scale,
-  depth_bias,
-  fx,
-  baseline,
-  disparity_offset,
-  has_clamp_min,
-  clamp_min,
-  has_clamp_max,
-  clamp_max
-) {
-  const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ptr2 = passStringToWasm0(unit, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-  const len2 = WASM_VECTOR_LEN;
-  const ret = wasm.normalize_depth_fast(
-    ptr0,
-    len0,
-    width,
-    height,
-    ptr1,
-    len1,
-    ptr2,
-    len2,
-    scale,
-    depth_scale,
-    depth_bias,
-    fx,
-    baseline,
-    disparity_offset,
-    has_clamp_min,
-    clamp_min,
-    has_clamp_max,
-    clamp_max
-  );
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return NormalizeDepthResult.__wrap(ret[0]);
-};
-
-/**
- * Walk a raw Exif-only IFD blob (a JPEG APP1 payload with its "Exif\0\0"
- * prefix already stripped, or a PNG eXIf chunk's raw bytes) and return
- * every tag as JSON, in the same shape as `TiffResult.all_tags_json`.
- *
- * These blobs are TIFF-*structured* (byte order + magic 42 + IFD entries)
- * but are not full TIFF files — they carry no ImageWidth/PhotometricInterpretation/
- * etc., so the `tiff` crate's `Decoder::new()` (which always validates a
- * full image directory) rejects them. `extract_bare_ifd_tags_json` reads
- * the IFD structure directly instead, bypassing `Decoder` entirely; real
- * `.tif`/`.tiff` files keep using the `Decoder`-based `extract_all_tags_json`
- * via `decode_tiff`/`decode_tiff_fast` above.
- * @param {Uint8Array} data
- * @returns {string}
- */
-exports.extract_exif_tags = function (data) {
-  let deferred2_0;
-  let deferred2_1;
-  try {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.extract_exif_tags(ptr0, len0);
-    deferred2_0 = ret[0];
-    deferred2_1 = ret[1];
-    return getStringFromWasm0(ret[0], ret[1]);
-  } finally {
-    wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-  }
-};
-
 /**
  * @param {Uint8Array} data
  * @returns {PngResult}
@@ -421,83 +197,6 @@ exports.decode_png16_fast = function (data) {
     throw takeFromExternrefTable0(ret[1]);
   }
   return PngResult.__wrap(ret[0]);
-};
-
-/**
- * Decode an arbitrary zero-based TIFF page without eagerly computing stats.
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {TiffResult}
- */
-exports.decode_tiff_page_fast = function (data, page_index) {
-  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_page_fast(ptr0, len0, page_index);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return TiffResult.__wrap(ret[0]);
-};
-
-/**
- * @param {Float32Array} data
- * @param {number} width
- * @param {number} height
- * @param {string} kind
- * @param {string} camera_model
- * @param {string} convention
- * @param {number} fx
- * @param {number} fy
- * @param {number} cx
- * @param {number} cy
- * @param {Float64Array} coefficients
- * @returns {DepthProjectResult}
- */
-exports.project_depth_fast = function (
-  data,
-  width,
-  height,
-  kind,
-  camera_model,
-  convention,
-  fx,
-  fy,
-  cx,
-  cy,
-  coefficients
-) {
-  const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ptr2 = passStringToWasm0(camera_model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-  const len2 = WASM_VECTOR_LEN;
-  const ptr3 = passStringToWasm0(convention, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-  const len3 = WASM_VECTOR_LEN;
-  const ptr4 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
-  const len4 = WASM_VECTOR_LEN;
-  const ret = wasm.project_depth_fast(
-    ptr0,
-    len0,
-    width,
-    height,
-    ptr1,
-    len1,
-    ptr2,
-    len2,
-    ptr3,
-    len3,
-    fx,
-    fy,
-    cx,
-    cy,
-    ptr4,
-    len4
-  );
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return DepthProjectResult.__wrap(ret[0]);
 };
 
 /**
@@ -515,6 +214,40 @@ exports.decode_jpeg_fast = function (data) {
   }
   return JpegResult.__wrap(ret[0]);
 };
+
+/**
+ * Unproject one pixel to a unit OpenCV-coordinate ray. Returns
+ * `[valid, converged, iterations, x, y, z]`.
+ * @param {string} camera_model
+ * @param {number} fx
+ * @param {number} fy
+ * @param {number} cx
+ * @param {number} cy
+ * @param {Float64Array} coefficients
+ * @param {number} u
+ * @param {number} v
+ * @returns {Float64Array}
+ */
+exports.camera_unproject = function (camera_model, fx, fy, cx, cy, coefficients, u, v) {
+  const ptr0 = passStringToWasm0(camera_model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.camera_unproject(ptr0, len0, fx, fy, cx, cy, ptr1, len1, u, v);
+  if (ret[3]) {
+    throw takeFromExternrefTable0(ret[2]);
+  }
+  var v3 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+  return v3;
+};
+
+function passArrayF32ToWasm0(arg, malloc) {
+  const ptr = malloc(arg.length * 4, 4) >>> 0;
+  getFloat32ArrayMemory0().set(arg, ptr / 4);
+  WASM_VECTOR_LEN = arg.length;
+  return ptr;
+}
 
 let cachedUint32ArrayMemory0 = null;
 
@@ -598,6 +331,274 @@ exports.camera_project_points_indexed = function (
   var v6 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
   wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
   return v6;
+};
+
+/**
+ * @param {Uint8Array} data
+ * @returns {HdrResult}
+ */
+exports.decode_hdr_fast = function (data) {
+  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_hdr_fast(ptr0, len0);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return HdrResult.__wrap(ret[0]);
+};
+
+/**
+ * @param {Float32Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {string} kind
+ * @param {string} unit
+ * @param {number} scale
+ * @param {number} depth_scale
+ * @param {number} depth_bias
+ * @param {number} fx
+ * @param {number} baseline
+ * @param {number} disparity_offset
+ * @param {boolean} has_clamp_min
+ * @param {number} clamp_min
+ * @param {boolean} has_clamp_max
+ * @param {number} clamp_max
+ * @returns {NormalizeDepthResult}
+ */
+exports.normalize_depth_fast = function (
+  data,
+  width,
+  height,
+  kind,
+  unit,
+  scale,
+  depth_scale,
+  depth_bias,
+  fx,
+  baseline,
+  disparity_offset,
+  has_clamp_min,
+  clamp_min,
+  has_clamp_max,
+  clamp_max
+) {
+  const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passStringToWasm0(unit, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.normalize_depth_fast(
+    ptr0,
+    len0,
+    width,
+    height,
+    ptr1,
+    len1,
+    ptr2,
+    len2,
+    scale,
+    depth_scale,
+    depth_bias,
+    fx,
+    baseline,
+    disparity_offset,
+    has_clamp_min,
+    clamp_min,
+    has_clamp_max,
+    clamp_max
+  );
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return NormalizeDepthResult.__wrap(ret[0]);
+};
+
+/**
+ * Decode a TIFF file without eagerly computing min/max statistics.
+ *
+ * The webview render path computes stats lazily when a non-gamma mode needs
+ * them. Skipping eager stats saves a full pass over large float TIFFs during
+ * the common gamma-mode initial load.
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+exports.decode_tiff_fast = function (data) {
+  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_fast(ptr0, len0);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return TiffResult.__wrap(ret[0]);
+};
+
+/**
+ * @param {Uint8Array} data
+ * @returns {ExrResult}
+ */
+exports.decode_exr_fast = function (data) {
+  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_exr_fast(ptr0, len0);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return ExrResult.__wrap(ret[0]);
+};
+
+/**
+ * Decode an arbitrary zero-based TIFF page and compute min/max statistics.
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {TiffResult}
+ */
+exports.decode_tiff_page = function (data, page_index) {
+  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return TiffResult.__wrap(ret[0]);
+};
+
+/**
+ * Decode a TIFF file from an ArrayBuffer
+ * Returns TiffResult with image data and metadata
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+exports.decode_tiff = function (data) {
+  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff(ptr0, len0);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return TiffResult.__wrap(ret[0]);
+};
+
+/**
+ * Decode an arbitrary zero-based TIFF page without eagerly computing stats.
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {TiffResult}
+ */
+exports.decode_tiff_page_fast = function (data, page_index) {
+  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_page_fast(ptr0, len0, page_index);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return TiffResult.__wrap(ret[0]);
+};
+
+/**
+ * @param {Float32Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {string} kind
+ * @param {string} camera_model
+ * @param {string} convention
+ * @param {number} fx
+ * @param {number} fy
+ * @param {number} cx
+ * @param {number} cy
+ * @param {Float64Array} coefficients
+ * @returns {DepthProjectResult}
+ */
+exports.project_depth_fast = function (
+  data,
+  width,
+  height,
+  kind,
+  camera_model,
+  convention,
+  fx,
+  fy,
+  cx,
+  cy,
+  coefficients
+) {
+  const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passStringToWasm0(camera_model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ptr3 = passStringToWasm0(convention, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len3 = WASM_VECTOR_LEN;
+  const ptr4 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
+  const len4 = WASM_VECTOR_LEN;
+  const ret = wasm.project_depth_fast(
+    ptr0,
+    len0,
+    width,
+    height,
+    ptr1,
+    len1,
+    ptr2,
+    len2,
+    ptr3,
+    len3,
+    fx,
+    fy,
+    cx,
+    cy,
+    ptr4,
+    len4
+  );
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return DepthProjectResult.__wrap(ret[0]);
+};
+
+/**
+ * Return the number of top-level image file directories (pages) in a TIFF.
+ * @param {Uint8Array} data
+ * @returns {number}
+ */
+exports.tiff_page_count = function (data) {
+  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.tiff_page_count(ptr0, len0);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return ret[0] >>> 0;
+};
+
+/**
+ * Walk a raw Exif-only IFD blob (a JPEG APP1 payload with its "Exif\0\0"
+ * prefix already stripped, or a PNG eXIf chunk's raw bytes) and return
+ * every tag as JSON, in the same shape as `TiffResult.all_tags_json`.
+ *
+ * These blobs are TIFF-*structured* (byte order + magic 42 + IFD entries)
+ * but are not full TIFF files — they carry no ImageWidth/PhotometricInterpretation/
+ * etc., so the `tiff` crate's `Decoder::new()` (which always validates a
+ * full image directory) rejects them. `extract_bare_ifd_tags_json` reads
+ * the IFD structure directly instead, bypassing `Decoder` entirely; real
+ * `.tif`/`.tiff` files keep using the `Decoder`-based `extract_all_tags_json`
+ * via `decode_tiff`/`decode_tiff_fast` above.
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+exports.extract_exif_tags = function (data) {
+  let deferred2_0;
+  let deferred2_1;
+  try {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.extract_exif_tags(ptr0, len0);
+    deferred2_0 = ret[0];
+    deferred2_1 = ret[1];
+    return getStringFromWasm0(ret[0], ret[1]);
+  } finally {
+    wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+  }
 };
 
 const DepthProjectResultFinalization =
