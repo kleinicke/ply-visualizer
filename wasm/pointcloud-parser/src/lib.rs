@@ -17,10 +17,12 @@ use wasm_bindgen::prelude::*;
 
 mod lidar;
 mod registration;
+mod stonex;
 pub use lidar::{parse_e57, parse_las, E57ImageResult, LidarCollectionResult, LidarScanResult};
 pub use registration::bindings::{
     coarse_align, fit_correspondences, icp_refine, register_pair, RegistrationResult,
 };
+pub use stonex::{stonex_decode_frame, stonex_decode_scan, StonexRgbImage, StonexScanPoints};
 
 /// Parsed point cloud, returned to JS. Large buffers are moved out with the
 /// `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.

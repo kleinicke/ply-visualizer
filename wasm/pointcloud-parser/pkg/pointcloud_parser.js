@@ -483,6 +483,247 @@ if (Symbol.dispose)
   RegistrationResult.prototype[Symbol.dispose] = RegistrationResult.prototype.free;
 exports.RegistrationResult = RegistrationResult;
 
+class StonexColourResult {
+  static __wrap(ptr) {
+    const obj = Object.create(StonexColourResult.prototype);
+    obj.__wbg_ptr = ptr;
+    StonexColourResultFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    StonexColourResultFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_stonexcolourresult_free(ptr, 0);
+  }
+  /**
+   * @returns {number}
+   */
+  get coloured_points() {
+    const ret = wasm.stonexcolourresult_coloured_points(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {Uint8Array}
+   */
+  take_colours() {
+    const ret = wasm.stonexcolourresult_take_colours(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {Uint16Array}
+   */
+  take_frame_indices() {
+    const ret = wasm.stonexcolourresult_take_frame_indices(this.__wbg_ptr);
+    var v1 = getArrayU16FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 2, 2);
+    return v1;
+  }
+}
+if (Symbol.dispose)
+  StonexColourResult.prototype[Symbol.dispose] = StonexColourResult.prototype.free;
+exports.StonexColourResult = StonexColourResult;
+
+/**
+ * Holds an archive's frames for the length of a parse.
+ *
+ * The pixels and the decoded panoramas live here rather than in each call:
+ * they are shared by every scan, and rebuilding them per scan meant a
+ * six-scan archive demosaicing its ten frames sixty times and copying the
+ * pixel buffer six times over. Created once, coloured scan by scan, dropped at
+ * the end.
+ */
+class StonexColourSession {
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    StonexColourSessionFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_stonexcoloursession_free(ptr, 0);
+  }
+  /**
+   * Colours one scan from the frames named in `active_frames`.
+   *
+   * Returned frame indices address this session's frame list, which is the
+   * archive's own ordering, so no remapping is needed on the way out.
+   * @param {Float32Array} positions
+   * @param {Float64Array} column_azimuths
+   * @param {Uint32Array} points_per_column
+   * @param {Uint32Array} active_frames
+   * @returns {StonexColourResult}
+   */
+  colour_scan(positions, column_azimuths, points_per_column, active_frames) {
+    const ptr0 = passArrayF32ToWasm0(positions, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF64ToWasm0(column_azimuths, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray32ToWasm0(points_per_column, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArray32ToWasm0(active_frames, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.stonexcoloursession_colour_scan(
+      this.__wbg_ptr,
+      ptr0,
+      len0,
+      ptr1,
+      len1,
+      ptr2,
+      len2,
+      ptr3,
+      len3
+    );
+    return StonexColourResult.__wrap(ret);
+  }
+  /**
+   * `pixels` holds every frame's raw plane; each descriptor points into it.
+   * Takes `pixels` by value: a `&[u8]` is copied into wasm memory for the
+   * call and then copied again to retain it, which is 300 MB of duplication
+   * on a large archive. Owning it costs one copy instead of two, and the
+   * caller can drop its own reference immediately afterwards.
+   * @param {Uint8Array} pixels
+   * @param {string} frames_json
+   */
+  constructor(pixels, frames_json) {
+    const ptr0 = passArray8ToWasm0(pixels, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(frames_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.stonexcoloursession_new(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+      throw takeFromExternrefTable0(ret[1]);
+    }
+    this.__wbg_ptr = ret[0];
+    StonexColourSessionFinalization.register(this, this.__wbg_ptr, this);
+    return this;
+  }
+}
+if (Symbol.dispose)
+  StonexColourSession.prototype[Symbol.dispose] = StonexColourSession.prototype.free;
+exports.StonexColourSession = StonexColourSession;
+
+/**
+ * Decoded frame for JS: interleaved RGB at `CAMERA_RGB_SCALE`.
+ */
+class StonexRgbImage {
+  static __wrap(ptr) {
+    const obj = Object.create(StonexRgbImage.prototype);
+    obj.__wbg_ptr = ptr;
+    StonexRgbImageFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    StonexRgbImageFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_stonexrgbimage_free(ptr, 0);
+  }
+  /**
+   * @returns {number}
+   */
+  get height() {
+    const ret = wasm.stonexrgbimage_height(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {Uint8Array}
+   */
+  take_data() {
+    const ret = wasm.stonexrgbimage_take_data(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {number}
+   */
+  get width() {
+    const ret = wasm.stonexrgbimage_width(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+}
+if (Symbol.dispose) StonexRgbImage.prototype[Symbol.dispose] = StonexRgbImage.prototype.free;
+exports.StonexRgbImage = StonexRgbImage;
+
+/**
+ * One decoded X3R record, for comparison against the TypeScript decoder.
+ */
+class StonexScanPoints {
+  static __wrap(ptr) {
+    const obj = Object.create(StonexScanPoints.prototype);
+    obj.__wbg_ptr = ptr;
+    StonexScanPointsFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    StonexScanPointsFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_stonexscanpoints_free(ptr, 0);
+  }
+  /**
+   * @returns {number}
+   */
+  get point_count() {
+    const ret = wasm.stonexscanpoints_point_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {Float64Array}
+   */
+  take_column_azimuths() {
+    const ret = wasm.stonexscanpoints_take_column_azimuths(this.__wbg_ptr);
+    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v1;
+  }
+  /**
+   * @returns {Float32Array}
+   */
+  take_intensity() {
+    const ret = wasm.stonexscanpoints_take_intensity(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Uint32Array}
+   */
+  take_points_per_column() {
+    const ret = wasm.stonexscanpoints_take_points_per_column(this.__wbg_ptr);
+    var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Float32Array}
+   */
+  take_positions() {
+    const ret = wasm.stonexscanpoints_take_positions(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+}
+if (Symbol.dispose) StonexScanPoints.prototype[Symbol.dispose] = StonexScanPoints.prototype.free;
+exports.StonexScanPoints = StonexScanPoints;
+
 /**
  * Incremental parser for streaming/overlapped loading. JS reads the file in
  * chunks and calls `push` on each (while the next chunk's read is in flight),
@@ -790,6 +1031,55 @@ function register_pair(source, target, settings_json) {
   return ret === 0 ? undefined : RegistrationResult.__wrap(ret);
 }
 exports.register_pair = register_pair;
+
+/**
+ * Demosaics one X3I frame.
+ *
+ * `pixels` is the raw GRBG plane for this frame alone. Exposed while the port
+ * is in progress so the TypeScript decode can be compared against this one on
+ * real frames; the colour pass will call it internally rather than handing
+ * images back across the boundary.
+ * @param {Uint8Array} pixels
+ * @param {number} raw_width
+ * @param {number} raw_height
+ * @param {number} image_width
+ * @param {number} image_height
+ * @returns {StonexRgbImage}
+ */
+function stonex_decode_frame(pixels, raw_width, raw_height, image_width, image_height) {
+  const ptr0 = passArray8ToWasm0(pixels, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.stonex_decode_frame(
+    ptr0,
+    len0,
+    raw_width,
+    raw_height,
+    image_width,
+    image_height
+  );
+  return StonexRgbImage.__wrap(ret);
+}
+exports.stonex_decode_frame = stonex_decode_frame;
+
+/**
+ * Decodes one X3R record's points.
+ *
+ * `record` is the member's bytes on their own. Exposed while the port is in
+ * progress so the TypeScript decoder can be checked against this one on the
+ * real archives.
+ * @param {Uint8Array} record
+ * @returns {StonexScanPoints}
+ */
+function stonex_decode_scan(record) {
+  const ptr0 = passArray8ToWasm0(record, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.stonex_decode_scan(ptr0, len0);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return StonexScanPoints.__wrap(ret[0]);
+}
+exports.stonex_decode_scan = stonex_decode_scan;
 function __wbg_get_imports() {
   const import0 = {
     __proto__: null,
@@ -837,6 +1127,22 @@ const RegistrationResultFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_registrationresult_free(ptr, 1));
+const StonexColourResultFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_stonexcolourresult_free(ptr, 1));
+const StonexColourSessionFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_stonexcoloursession_free(ptr, 1));
+const StonexRgbImageFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_stonexrgbimage_free(ptr, 1));
+const StonexScanPointsFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_stonexscanpoints_free(ptr, 1));
 const StreamParserFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
@@ -850,6 +1156,16 @@ function getArrayF32FromWasm0(ptr, len) {
 function getArrayF64FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+}
+
+function getArrayU16FromWasm0(ptr, len) {
+  ptr = ptr >>> 0;
+  return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
+}
+
+function getArrayU32FromWasm0(ptr, len) {
+  ptr = ptr >>> 0;
+  return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 
 function getArrayU8FromWasm0(ptr, len) {
@@ -877,12 +1193,35 @@ function getStringFromWasm0(ptr, len) {
   return decodeText(ptr >>> 0, len);
 }
 
+let cachedUint16ArrayMemory0 = null;
+function getUint16ArrayMemory0() {
+  if (cachedUint16ArrayMemory0 === null || cachedUint16ArrayMemory0.byteLength === 0) {
+    cachedUint16ArrayMemory0 = new Uint16Array(wasm.memory.buffer);
+  }
+  return cachedUint16ArrayMemory0;
+}
+
+let cachedUint32ArrayMemory0 = null;
+function getUint32ArrayMemory0() {
+  if (cachedUint32ArrayMemory0 === null || cachedUint32ArrayMemory0.byteLength === 0) {
+    cachedUint32ArrayMemory0 = new Uint32Array(wasm.memory.buffer);
+  }
+  return cachedUint32ArrayMemory0;
+}
+
 let cachedUint8ArrayMemory0 = null;
 function getUint8ArrayMemory0() {
   if (cachedUint8ArrayMemory0 === null || cachedUint8ArrayMemory0.byteLength === 0) {
     cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
   }
   return cachedUint8ArrayMemory0;
+}
+
+function passArray32ToWasm0(arg, malloc) {
+  const ptr = malloc(arg.length * 4, 4) >>> 0;
+  getUint32ArrayMemory0().set(arg, ptr / 4);
+  WASM_VECTOR_LEN = arg.length;
+  return ptr;
 }
 
 function passArray8ToWasm0(arg, malloc) {
@@ -895,6 +1234,13 @@ function passArray8ToWasm0(arg, malloc) {
 function passArrayF32ToWasm0(arg, malloc) {
   const ptr = malloc(arg.length * 4, 4) >>> 0;
   getFloat32ArrayMemory0().set(arg, ptr / 4);
+  WASM_VECTOR_LEN = arg.length;
+  return ptr;
+}
+
+function passArrayF64ToWasm0(arg, malloc) {
+  const ptr = malloc(arg.length * 8, 8) >>> 0;
+  getFloat64ArrayMemory0().set(arg, ptr / 8);
   WASM_VECTOR_LEN = arg.length;
   return ptr;
 }

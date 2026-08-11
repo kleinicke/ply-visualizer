@@ -16,6 +16,7 @@
  */
 
 import { registerPair, type UpAxis } from '../registration';
+import { loadStonexWasm } from './stonexWasm';
 import { colorFromAllStations, type StationFrame, type StationScan } from './stonexStationColoring';
 import {
   applyStonexColorCorrectionToPoints,
@@ -449,6 +450,58 @@ function sampleGrbgInterpolated(
   return [Math.min(255, red), Math.min(255, green), Math.min(255, blue)];
 }
 
+/**
+ * Frame description in the shape the Rust colour pass takes. Exported for the
+ * port's differential test, which has to drive both implementations from the
+ * same calibration rather than restating it.
+ */
+export function stonexFrameDescriptorForComparison(
+  frame: CameraFrame,
+  pixelOffset: number
+): Record<string, unknown> {
+  return stonexFrameDescriptor(frame, pixelOffset);
+}
+
+/** Frame description in the shape the Rust colour pass takes. */
+function stonexFrameDescriptor(frame: CameraFrame, pixelOffset: number): Record<string, unknown> {
+  const calibration = frame.calibration;
+  return {
+    pixelOffset,
+    rawWidth: frame.rawWidth,
+    rawHeight: frame.rawHeight,
+    imageWidth: calibration.width,
+    imageHeight: calibration.height,
+    panDegrees: frame.panDegrees,
+    fx: calibration.fx,
+    fy: calibration.fy,
+    cx: calibration.cx,
+    cy: calibration.cy,
+    distortion: [...calibration.distortionCoefficients],
+    viewerToCamera: viewerToCameraTransform(frame),
+    maxNormalizedX: Math.tan((calibration.fovX * Math.PI) / 360),
+    maxNormalizedY: Math.tan((calibration.fovY * Math.PI) / 360),
+  };
+}
+
+/**
+ * Exported for the Rust port's differential test: the Rust demosaic has to be
+ * byte-identical to this before it replaces it.
+ */
+export function decodeCameraRgbForComparison(
+  pixels: Uint8Array,
+  rawWidth: number,
+  rawHeight: number,
+  imageWidth: number,
+  imageHeight: number
+): CameraRgbImage {
+  return decodeCameraRgb(pixels, {
+    pixelsOffset: 0,
+    rawWidth,
+    rawHeight,
+    calibration: { width: imageWidth, height: imageHeight },
+  } as unknown as CameraFrame);
+}
+
 function decodeCameraRgb(data: Uint8Array, frame: CameraFrame): CameraRgbImage {
   const width = Math.ceil(frame.calibration.width * CAMERA_RGB_SCALE);
   const height = Math.ceil(frame.calibration.height * CAMERA_RGB_SCALE);
@@ -784,12 +837,60 @@ export class StonexX3aParser {
       }
     }
     const photographicScanStems = new Set(cameraFrames.map(frame => frame.scanStem));
+    // Per scan, one azimuth and one point count per column. The Rust colour
+    // pass selects candidates by column rather than by point, so this is all it
+    // needs to know which points face which frame - and the loop below reads
+    // both values anyway.
+    const scanColumns: Array<{
+      frames: CameraFrame[];
+      azimuths: Float64Array;
+      counts: Uint32Array;
+      pointOffset: number;
+    }> = [];
     let outputIndex = 0;
     let photographicallyColoredPoints = 0;
     const scanPointRanges: ScanPointRange[] = [];
 
+    // Points in Rust when it is available: same byte-for-byte output, checked
+    // against this loop on a real archive in src/test/suite/stonexScan.test.ts.
+    const scanWasm = await loadStonexWasm();
+
     for (const layout of layouts) {
       const pointOffset = outputIndex;
+      if (scanWasm) {
+        const scanStemRust = layout.name.replace(/\.x3r$/i, '');
+        const exactRust = cameraFrames.filter(frame => frame.scanStem === scanStemRust);
+        const framesRust =
+          exactRust.length > 0 ? exactRust : photographicScanStems.size === 1 ? cameraFrames : [];
+        const decoded = scanWasm.stonex_decode_scan(
+          data.subarray(layout.offset, layout.offset + layout.size)
+        );
+        const decodedPositions = decoded.take_positions();
+        const decodedIntensity = decoded.take_intensity();
+        const azimuths = decoded.take_column_azimuths();
+        const counts = decoded.take_points_per_column();
+        decoded.free?.();
+
+        positions.set(decodedPositions, pointOffset * 3);
+        intensity.set(decodedIntensity, pointOffset);
+        outputIndex += decodedIntensity.length;
+
+        scanColumns.push({
+          frames: framesRust,
+          azimuths,
+          counts,
+          pointOffset,
+        });
+        scanPointRanges.push({
+          name: layout.name,
+          memberSize: layout.size,
+          sourcePointCount: layout.columns * layout.rows,
+          pointOffset,
+          pointCount: outputIndex - pointOffset,
+          photographicallyColoredPoints: 0,
+        });
+        continue;
+      }
       const scanStem = layout.name.replace(/\.x3r$/i, '');
       const exactFrames = cameraFrames.filter(frame => frame.scanStem === scanStem);
       // Abschnitt_A contains several scan passes in one scanner coordinate
@@ -798,6 +899,8 @@ export class StonexX3aParser {
       // panorama for its other co-located X3R grids.
       const layoutFrames =
         exactFrames.length > 0 ? exactFrames : photographicScanStems.size === 1 ? cameraFrames : [];
+      const columnAzimuths = new Float64Array(layout.columns);
+      const columnCounts = new Uint32Array(layout.columns);
       const verticalStep = VERTICAL_SPAN_DEGREES / layout.rows;
       const verticalSin = new Float64Array(layout.rows);
       const verticalCos = new Float64Array(layout.rows);
@@ -812,6 +915,8 @@ export class StonexX3aParser {
       for (let column = 0; column < layout.columns; column++) {
         const blockOffset = layout.columnOffset + column * layout.columnStride;
         const azimuthDegrees = view.getInt32(blockOffset + 20, true) * 1e-6;
+        columnAzimuths[column] = azimuthDegrees;
+        const columnStart = outputIndex;
         const azimuth = azimuthDegrees * (Math.PI / 180);
         const sinAzimuth = Math.sin(azimuth);
         const cosAzimuth = Math.cos(azimuth);
@@ -849,7 +954,14 @@ export class StonexX3aParser {
           }
           outputIndex++;
         }
+        columnCounts[column] = outputIndex - columnStart;
       }
+      scanColumns.push({
+        frames: layoutFrames,
+        azimuths: columnAzimuths,
+        counts: columnCounts,
+        pointOffset,
+      });
       scanPointRanges.push({
         name: layout.name,
         memberSize: layout.size,
@@ -966,7 +1078,67 @@ export class StonexX3aParser {
       );
     }
 
-    if (rawColors && colors && frameIndices && this.cameraProjector) {
+    // Rust colour pass. Points, raw planes and frame descriptions cross once;
+    // candidate selection, projection, scoring and sampling all happen on the
+    // far side. The previous arrangement carried the whole point cloud into
+    // WASM once per frame - thirty times on a large archive - and scored and
+    // sampled the results back in JavaScript, which together was ~80% of a
+    // parse.
+    const stonexWasm = rawColors && frameIndices ? await loadStonexWasm() : null;
+    if (rawColors && colors && frameIndices && stonexWasm) {
+      const framePixelOffsets = new Map<CameraFrame, number>();
+      let pixelBytes = 0;
+      for (const frame of cameraFrames) {
+        framePixelOffsets.set(frame, pixelBytes);
+        pixelBytes += frame.rawWidth * frame.rawHeight;
+      }
+      // One buffer of every frame's raw plane, built once and reused for each
+      // scan rather than re-sliced per call.
+      let framePixels = new Uint8Array(pixelBytes);
+      for (const frame of cameraFrames) {
+        framePixels.set(
+          data.subarray(frame.pixelsOffset, frame.pixelsOffset + frame.rawWidth * frame.rawHeight),
+          framePixelOffsets.get(frame)!
+        );
+      }
+
+      // One session for the archive: the pixels cross once and each panorama
+      // is demosaiced once, however many scans draw on it.
+      const descriptors = cameraFrames.map(frame =>
+        stonexFrameDescriptor(frame, framePixelOffsets.get(frame)!)
+      );
+      const session = new stonexWasm.StonexColourSession(framePixels, JSON.stringify(descriptors));
+
+      for (const scan of scanColumns) {
+        if (scan.frames.length === 0) {
+          continue;
+        }
+        const range = scanPointRanges.find(entry => entry.pointOffset === scan.pointOffset);
+        const pointCount = range?.pointCount ?? 0;
+        if (pointCount === 0) {
+          continue;
+        }
+        const result = session.colour_scan(
+          positions.subarray(scan.pointOffset * 3, (scan.pointOffset + pointCount) * 3),
+          scan.azimuths,
+          scan.counts,
+          Uint32Array.from(scan.frames.map(frame => cameraFrames.indexOf(frame)))
+        );
+        const scanColours = result.take_colours() as Uint8Array;
+        const scanFrames = result.take_frame_indices() as Uint16Array;
+        const coloured = result.coloured_points as number;
+        result.free?.();
+
+        rawColors.set(scanColours, scan.pointOffset * 3);
+        // Indices already address the archive's frame list.
+        frameIndices.set(scanFrames, scan.pointOffset);
+        if (range) {
+          range.photographicallyColoredPoints = coloured;
+        }
+        photographicallyColoredPoints += coloured;
+      }
+      session.free?.();
+    } else if (rawColors && colors && frameIndices && this.cameraProjector) {
       const bestWeights = new Float64Array(vertexCount);
       const colored = new Uint8Array(vertexCount);
       // Sub-phases of the colour pass, because "projection + sampling" is three

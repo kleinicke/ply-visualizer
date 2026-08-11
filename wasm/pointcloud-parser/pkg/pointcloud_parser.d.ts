@@ -89,6 +89,70 @@ export class RegistrationResult {
     readonly stats: string;
 }
 
+export class StonexColourResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_colours(): Uint8Array;
+    take_frame_indices(): Uint16Array;
+    readonly coloured_points: number;
+}
+
+/**
+ * Holds an archive's frames for the length of a parse.
+ *
+ * The pixels and the decoded panoramas live here rather than in each call:
+ * they are shared by every scan, and rebuilding them per scan meant a
+ * six-scan archive demosaicing its ten frames sixty times and copying the
+ * pixel buffer six times over. Created once, coloured scan by scan, dropped at
+ * the end.
+ */
+export class StonexColourSession {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Colours one scan from the frames named in `active_frames`.
+     *
+     * Returned frame indices address this session's frame list, which is the
+     * archive's own ordering, so no remapping is needed on the way out.
+     */
+    colour_scan(positions: Float32Array, column_azimuths: Float64Array, points_per_column: Uint32Array, active_frames: Uint32Array): StonexColourResult;
+    /**
+     * `pixels` holds every frame's raw plane; each descriptor points into it.
+     * Takes `pixels` by value: a `&[u8]` is copied into wasm memory for the
+     * call and then copied again to retain it, which is 300 MB of duplication
+     * on a large archive. Owning it costs one copy instead of two, and the
+     * caller can drop its own reference immediately afterwards.
+     */
+    constructor(pixels: Uint8Array, frames_json: string);
+}
+
+/**
+ * Decoded frame for JS: interleaved RGB at `CAMERA_RGB_SCALE`.
+ */
+export class StonexRgbImage {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_data(): Uint8Array;
+    readonly height: number;
+    readonly width: number;
+}
+
+/**
+ * One decoded X3R record, for comparison against the TypeScript decoder.
+ */
+export class StonexScanPoints {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_column_azimuths(): Float64Array;
+    take_intensity(): Float32Array;
+    take_points_per_column(): Uint32Array;
+    take_positions(): Float32Array;
+    readonly point_count: number;
+}
+
 /**
  * Incremental parser for streaming/overlapped loading. JS reads the file in
  * chunks and calls `push` on each (while the next chunk's read is in flight),
@@ -192,3 +256,22 @@ export function parse_xyz(data: Uint8Array, variant: string, color_mode: string)
  * `undefined` when nothing could be registered.
  */
 export function register_pair(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
+
+/**
+ * Demosaics one X3I frame.
+ *
+ * `pixels` is the raw GRBG plane for this frame alone. Exposed while the port
+ * is in progress so the TypeScript decode can be compared against this one on
+ * real frames; the colour pass will call it internally rather than handing
+ * images back across the boundary.
+ */
+export function stonex_decode_frame(pixels: Uint8Array, raw_width: number, raw_height: number, image_width: number, image_height: number): StonexRgbImage;
+
+/**
+ * Decodes one X3R record's points.
+ *
+ * `record` is the member's bytes on their own. Exposed while the port is in
+ * progress so the TypeScript decoder can be checked against this one on the
+ * real archives.
+ */
+export function stonex_decode_scan(record: Uint8Array): StonexScanPoints;
