@@ -117,6 +117,11 @@ import { filesState } from './state/files.svelte';
 import { GpuTimer, NULL_GPU_TIMER, createGpuTimer } from './rendering/gpuTimer';
 import type { ViewerRenderer } from './rendering/viewerRenderer';
 import { RendererBackend, WEBGPU_CAVEATS, createViewerRenderer } from './rendering/rendererBackend';
+import {
+  WebGPUVisibilityRenderer,
+  type PointRenderingImplementation,
+  type VisibilityRenderContext,
+} from './rendering/WebGPUVisibilityRenderer';
 import { FileEntryRegistry } from './state/fileEntries';
 import { insertEntryState, removeEntryState } from './state/fileEntryState';
 import { viewerState } from './state/viewer.svelte';
@@ -211,6 +216,10 @@ class PointCloudVisualizer {
   webgpuPickingAvailable: boolean = false;
   webgpuPickingUnavailableReason: string | null = 'WebGPU availability has not been checked';
   pointPickingImplementation: PointPickingImplementation = 'cpu';
+  webgpuPointRenderingAvailable: boolean = false;
+  webgpuPointRenderingUnavailableReason: string | null = 'WebGPU availability has not been checked';
+  pointRenderingImplementation: PointRenderingImplementation = 'current';
+  private webgpuVisibilityRenderer: WebGPUVisibilityRenderer | null = null;
   // Video mode: camera keyframes, playback and recording (film/FilmManager.ts)
   filmManager: FilmManager | null = null;
 
@@ -685,6 +694,11 @@ class PointCloudVisualizer {
         : `ℹ️ WebGPU point picking unavailable; using CPU (${this.webgpuPickingUnavailableReason})`
     );
 
+    const visibilitySelection = await WebGPUVisibilityRenderer.create(container);
+    this.webgpuVisibilityRenderer = visibilitySelection.renderer;
+    this.webgpuPointRenderingAvailable = visibilitySelection.renderer !== null;
+    this.webgpuPointRenderingUnavailableReason = visibilitySelection.unavailableReason;
+
     // Initialize video mode (camera keyframes / recording)
     this.filmManager = new FilmManager(this);
 
@@ -980,6 +994,9 @@ class PointCloudVisualizer {
       this.selectionManager = null;
     }
 
+    this.webgpuVisibilityRenderer?.dispose();
+    this.webgpuVisibilityRenderer = null;
+
     // Clean up video mode
     if (this.filmManager) {
       this.filmManager.dispose();
@@ -1235,11 +1252,64 @@ class PointCloudVisualizer {
     if (this.contextLost) {
       return;
     }
-    if (this.edlEnabled && this.effectComposer) {
-      this.effectComposer.render();
-    } else {
-      this.renderer.render(this.scene, this.camera);
+    const visibilityContext = this.getVisibilityRenderContext();
+    const useVisibilityRenderer =
+      this.pointRenderingImplementation === 'webgpu-visibility' &&
+      !this.edlEnabled &&
+      !this.allowTransparency &&
+      !!this.webgpuVisibilityRenderer &&
+      this.webgpuVisibilityRenderer.canRender(visibilityContext);
+
+    if (useVisibilityRenderer && this.webgpuVisibilityRenderer) {
+      const visibility = visibilityContext.pointClouds.map(cloud => cloud.visible);
+      for (const cloud of visibilityContext.pointClouds) {cloud.visible = false;}
+      try {
+        this.renderer.render(this.scene, this.camera);
+      } finally {
+        visibilityContext.pointClouds.forEach(
+          (cloud, index) => (cloud.visible = visibility[index])
+        );
+      }
+      try {
+        this.webgpuVisibilityRenderer.setEnabled(true);
+        if (!this.webgpuVisibilityRenderer.render(visibilityContext)) {
+          this.webgpuVisibilityRenderer.setEnabled(false);
+          this.renderer.render(this.scene, this.camera);
+        }
+      } catch (error) {
+        console.warn(
+          `WebGPU visibility rendering failed; using current renderer: ${error instanceof Error ? error.message : String(error)}`
+        );
+        this.webgpuVisibilityRenderer.setEnabled(false);
+        this.renderer.render(this.scene, this.camera);
+      }
+      return;
     }
+
+    this.webgpuVisibilityRenderer?.setEnabled(false);
+    if (this.edlEnabled && this.effectComposer) {this.effectComposer.render();}
+    else {this.renderer.render(this.scene, this.camera);}
+  }
+
+  private getVisibilityRenderContext(): VisibilityRenderContext {
+    const pointClouds = this.meshes.filter(
+      (mesh, index): mesh is THREE.Points =>
+        !!mesh &&
+        this.fileVisibility[index] &&
+        mesh.visible &&
+        mesh instanceof THREE.Points &&
+        mesh.material instanceof THREE.PointsMaterial
+    );
+    return {
+      camera: this.camera,
+      pointClouds,
+      clippingPlanes: this.renderer.clippingPlanes,
+      brightnessStops: this.brightnessStops,
+      hasDepthConflicts: this.meshes.some(
+        (mesh, index) =>
+          !!mesh && this.fileVisibility[index] && mesh.visible && !(mesh instanceof THREE.Points)
+      ),
+    };
   }
 
   /**
@@ -1416,6 +1486,22 @@ class PointCloudVisualizer {
         ? 'Using WebGPU point picking'
         : 'Using CPU point picking'
     );
+  }
+
+  setPointRenderingImplementation(implementation: PointRenderingImplementation): void {
+    this.pointRenderingImplementation =
+      implementation === 'webgpu-visibility' && this.webgpuVisibilityRenderer
+        ? 'webgpu-visibility'
+        : 'current';
+    this.webgpuVisibilityRenderer?.setEnabled(
+      this.pointRenderingImplementation === 'webgpu-visibility'
+    );
+    this.showStatus(
+      this.pointRenderingImplementation === 'webgpu-visibility'
+        ? 'Using WebGPU one-pixel visibility rendering where compatible'
+        : 'Using current point rendering'
+    );
+    this.requestRender();
   }
 
   private async onDoubleClick(event: MouseEvent): Promise<void> {
@@ -2034,6 +2120,9 @@ class PointCloudVisualizer {
           const fileType = message.fileType || 'point cloud';
           const fileName = message.fileName ? ` (${message.fileName})` : '';
           this.showError(`Failed to load ${fileType} file${fileName}: ${message.error}`);
+          break;
+        case 'stonexColorReady':
+          stationPipelineFeature.applyLoadTimeColors(this, message.updates ?? []);
           break;
         case 'stationPipelineProgress':
           stationPipelineFeature.reportStationPipelineProgress(message.message);

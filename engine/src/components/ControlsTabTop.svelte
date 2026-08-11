@@ -17,6 +17,8 @@
   let rotationCenterMode = $state(host.rotationCenterManager.getMode());
   // svelte-ignore state_referenced_locally
   let pointPickingImplementation = $state(host.pointPickingImplementation);
+  // svelte-ignore state_referenced_locally
+  let pointRenderingImplementation = $state(host.pointRenderingImplementation);
 
   function onBrightnessInput(e: Event) {
     const val = parseFloat((e.target as HTMLInputElement).value);
@@ -143,6 +145,10 @@
   function setPointPickingImplementation(implementation: 'cpu' | 'webgpu') {
     host.setPointPickingImplementation(implementation);
     pointPickingImplementation = host.pointPickingImplementation;
+  }
+  function setPointRenderingImplementation(implementation: 'current' | 'webgpu-visibility') {
+    host.setPointRenderingImplementation(implementation);
+    pointRenderingImplementation = host.pointRenderingImplementation;
   }
 
   function onUndoPathPoint() {
@@ -615,6 +621,35 @@
   <p class="setting-description">
     WebGPU scans point clouds in parallel and is selected automatically when available. CPU keeps
     the original screen-space implementation.
+  </p>
+</div>
+<div class="panel-section">
+  <h4>Point Rendering</h4>
+  <div class="control-buttons">
+    <button
+      id="point-rendering-current"
+      class="control-button"
+      class:active={pointRenderingImplementation === 'current'}
+      onclick={() => setPointRenderingImplementation('current')}
+    >
+      Current
+    </button>
+    <button
+      id="point-rendering-webgpu"
+      class="control-button"
+      class:active={pointRenderingImplementation === 'webgpu-visibility'}
+      disabled={!host.webgpuPointRenderingAvailable}
+      title={host.webgpuPointRenderingAvailable
+        ? 'Resolve opaque one-pixel point visibility with WebGPU compute'
+        : `WebGPU unavailable: ${host.webgpuPointRenderingUnavailableReason}`}
+      onclick={() => setPointRenderingImplementation('webgpu-visibility')}
+    >
+      WebGPU Visibility
+    </button>
+  </div>
+  <p class="setting-description">
+    Keeps every point and resolves the front-most opaque one-pixel point per screen pixel. Enlarged
+    points, transparency, EDL and incompatible scenes automatically use Current.
   </p>
 </div>
 <div class="panel-section">

@@ -408,3 +408,53 @@ export function setCapturePlaceVisible(
   }
   host.requestRender();
 }
+
+export interface LoadTimeColorUpdate {
+  scanName: string;
+  colors: Uint8Array;
+  rawColors?: Uint8Array | null;
+  frameIndices?: Uint16Array | null;
+  colorCalibration?: unknown;
+  photographicallyColoredPoints?: number;
+}
+
+/**
+ * Attaches the photographic colour to scans that were put on screen without it.
+ *
+ * The load hands geometry over first because colour is most of the work; this
+ * is the other half arriving. Switching the mode is what makes it visible - the
+ * clouds went up with no colour attribute at all, so they are showing their
+ * assigned flat colour until now.
+ */
+export function applyLoadTimeColors(
+  host: StationPipelineHost,
+  updates: readonly LoadTimeColorUpdate[]
+): number {
+  let applied = 0;
+  for (const update of updates) {
+    const fileIndex = host.spatialFiles.findIndex(
+      data => data?.metadata?.embeddedScanName === update.scanName
+    );
+    if (fileIndex < 0 || !update.colors) {
+      continue;
+    }
+    const data = host.spatialFiles[fileIndex];
+    data.colorsArray = update.colors;
+    data.hasColors = true;
+    const metadata = (data.metadata ??= {});
+    metadata.stonexRawColors = update.rawColors ?? null;
+    metadata.stonexFrameIndices = update.frameIndices ?? null;
+    metadata.stonexColorCalibration = update.colorCalibration;
+    if (typeof update.photographicallyColoredPoints === 'number') {
+      metadata.photographicallyColoredPoints = update.photographicallyColoredPoints;
+    }
+    host.onFileColorModeChange?.(fileIndex, 'original');
+    filesState.colorModes[fileIndex] = 'original';
+    applied++;
+  }
+  if (applied > 0) {
+    host.updateFileList?.();
+    host.requestRender();
+  }
+  return applied;
+}

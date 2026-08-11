@@ -942,6 +942,191 @@ The neighbour search is the same kernel the cloud-to-cloud distance item below
 needs; `registration::point_index` should be its caller rather than a second
 implementation.
 
+### Timeline: generalize sequence playback into a real time axis
+
+Prompted by a comparison with [Rerun](https://rerun.io), whose single biggest
+capability this viewer lacks is a timeline. Rerun logs every entity against one
+or more timelines and lets you scrub them; here, time exists only as
+`sequenceMode` — an index-based player over a file list
+(`engine/src/sequencePlayback.ts`, `state/ui.svelte.js`,
+`components/SequenceControls.svelte`), where exactly one file is visible at a
+time and "time" is its position in the array.
+
+That is the right primitive but too narrow. What is missing:
+
+1. **Timestamps, not indices.** A frame should carry a time value, parsed from
+   the source where one exists (KITTI `timestamps.txt`, TUM/RealSense pose
+   files, X3A capture metadata, file mtime as the fallback) and be scrubbed on a
+   continuous axis. Files at irregular intervals then play back at their real
+   spacing instead of uniformly.
+2. **More than one thing on the axis.** Today the timeline owns visibility of
+   the whole scene. It should be per-file: a static reference cloud stays
+   visible while a moving lidar frame advances, and two sequences with different
+   frame rates resolve independently (each file holds the sample nearest the
+   current time, or nothing if it has not started yet).
+3. **Time-varying transforms.** A trajectory file is a sequence of poses, not a
+   sequence of geometries. Being able to bind a per-file 4x4 to the time axis
+   makes camera-pose JSON and the dataset workflows in
+   `depth/datasetWorkflow.ts` animate for free, and is a prerequisite for
+   anything resembling Rerun's transform tree.
+
+Scope for a first pass: keep `sequencePlayback.ts` as the frame cache and
+prefetch layer, move the axis itself into a `state/timeline.svelte.js`, extend
+`SequenceControls.svelte` into a scrubber showing per-file frame extents, and
+drive visibility through the existing `fileVisibility` path rather than a second
+mechanism. The eviction/cache logic already there is the hard part and is
+already solved — this is mostly a data-model change.
+
+Deliberately out of scope: an entity-component store and a logging/streaming API
+in the Rerun sense. Those pay off when data arrives incrementally from an
+instrumented program, which is not this viewer's entry point.
+
+### Linked 2D/3D views for depth and projected data
+
+The other feature worth taking from Rerun, and cheap here because the math
+already exists. When a cloud came from a depth image, `engine/src/depth/`
+already knows the intrinsics, the camera model and the pixel grid that produced
+every point — but once `applyDepthResultTypedArrays` has run, the point cloud is
+a flat vertex array with no way back to the pixel it came from.
+
+The feature: show the source depth (and color) image in a panel next to the 3D
+view, and link the two directions.
+
+1. **Point → pixel.** Keep the `(u, v)` of each generated point alongside the
+   positions in the depth result, so the existing picker
+   (`point-picking.spec.ts`, `WebGPUPointPicker.ts`) can report an image
+   coordinate, and hovering a point highlights it in the 2D panel. For a dense
+   grid this is an index computation rather than stored data; for sparse or
+   filtered results it needs an explicit index array.
+2. **Pixel → point.** Hovering the image highlights the corresponding 3D point
+   and shows its depth value — the useful direction for spotting bad pixels,
+   invalid-depth regions and distortion-model mistakes.
+3. **Reprojection overlay.** With a camera pose available, project any visible
+   cloud into a selected camera's image plane and draw it over the color image.
+   This is the actual diagnostic: it shows immediately whether the intrinsics,
+   the distortion model and the OpenGL/OpenCV convention are right, which today
+   can only be judged by eyeballing the 3D result.
+
+The 2D panel should be a Svelte component over a plain canvas, reusing
+`depth/colorImageForDepth.ts` for the image data — no second Three.js scene.
+Step 3 shares the projection code with `DepthProjector` and must use the same
+camera model, not a reimplementation.
+
+### Moving more TypeScript to Rust
+
+Inventory taken August 2026. Current split: **48,154** lines of TS/Svelte in
+`engine/src/`, **7,605** in `src/` (excluding tests), against **10,281** lines
+of Rust (`wasm/pointcloud-parser` 5,369, `wasm/tiff-decoder` 4,912) — Rust is
+about 15% of the codebase. Effort is explicitly not the limiting factor here;
+the limiting factor is that a second implementation is a liability, so the
+ordering below is by "removes a duplicate or a real CPU cost", not by line
+count.
+
+**The rule this list follows: replace, don't shadow.** Every item is done when
+the TypeScript version is _deleted_, not when a Rust version exists beside it.
+See the drift already paid for below.
+
+#### 0. Route the engine through the Rust parsers that already exist
+
+Not new Rust — wiring, and the highest-value item on the list.
+`src/wasmPointcloud.ts` exposes `parse_xyz`, `parse_pts`, `parse_ascii_ply`,
+`parse_pcd_ascii`, `parse_pcd_binary` and `StreamParser`, but it is
+**extension-host only**, and every call site falls back to the JS parser on any
+failure. The engine loads `pkg-web` for exactly three things — `lidarParser.ts`
+(LAS/LAZ/E57), `registration/`, and the `tiff-decoder` kernels behind
+`depth/readers/tiffWasm.ts`. Consequence: in the standalone page and in the
+webview, the TypeScript parsers in `engine/src/parsers/` are _the only_
+implementation, and the Rust ones never run.
+
+That is where the known drift comes from: the Rust ASCII path skips the extra
+scalar fields the TS parsers expose. Two implementations, one of which is
+exercised only in Node, is the worst configuration.
+
+Work: make the engine load `pointcloud_parser` from `pkg-web` for these formats
+the same way `lidarParser.ts` already does, bring the Rust ASCII path up to
+parity on extra scalar fields, then delete the corresponding TS paths. After
+this, `wasmPointcloud.ts` is a Node-side convenience over the same crate rather
+than a separate universe.
+
+Caveat from the registration work: a webview Web Worker is _not_ a separate
+process, and `registration/wasmLoader.browser.ts` plus a `Worker`-blocking spec
+exist because of it. Whatever loads the parser in the browser needs the same
+honesty test, or plan to keep the load off the UI thread in the extension host.
+
+#### 1. Binary PLY
+
+The single biggest CPU item still in TypeScript.
+`engine/src/parsers/plyParser.ts` is 1,247 lines, of which
+`parseBinaryDataOptimized` (≈ lines 703–871) plus `readBinaryValue` /
+`readBinaryValueFast` are a hand-rolled `DataView` loop. The Rust crate has
+`parse_ascii_ply` only — `StreamParser` explicitly rejects binary and mesh PLY.
+Binary PLY is the format the large perf-test files in the repo root use, so this
+is where a Rust port actually shows up on the clock.
+
+Three things must come along or the port is a regression:
+
+1. `isGaussianSplatLayout` / `isSplatConsumedProperty` — the 3DGS detection that
+   drives DC coloring and the Spark splat toggle.
+2. `isExtraScalarProperty` / `collectExtraScalarTargets` /
+   `assembleScalarFields` — the scalar-field surface the colormap UI reads.
+3. Face elements, since PLY is also a mesh format here.
+
+Big enough to be worth doing properly: a real property/element table in Rust
+rather than the per-value type switch the TS version needs.
+
+#### 2. NPY / NPZ
+
+One Rust reader collapses three TS paths: `parsers/npyParser.ts` (274),
+`depth/readers/NpyReader.ts` (447), and the NPZ handling threaded through
+`fileHandler.ts`, `depth/depthConversionPipeline.ts` and
+`formats/builtinFormats.ts`. NPY is a trivial format (magic, version, an ASCII
+dict header, then raw data); NPZ is a zip container, which is the only real
+dependency (`zip` + `flate2`). Low risk, good ratio, and it removes the split
+between "NPY as points" and "NPY as depth" reading the same header twice.
+
+#### 3. Volume and isosurface kernels
+
+`visualization/marchingCubes.ts` (429) + `marchingCubesTables.ts` (326) +
+`isosurface.ts` (260) + `volumeVoxels.ts` (362) ≈ 1,400 lines of pure array math
+with no DOM and no Three.js object handling until the very end, where a
+`Float32Array` of triangles becomes a `BufferGeometry`. Textbook fit for the
+Rust/WASM preference at the top of this file, and unlike the parsers there is no
+existing duplicate to reconcile. Also the piece most likely to be shared with
+tiff-visualizer's volume work, so it argues for the Cargo workspace in the item
+below.
+
+#### 4. NRRD
+
+`parsers/nrrdParser.ts`, 504 lines: text header plus raw/gzip-encoded payload.
+Straightforward in Rust, shares `flate2` with item 2, and belongs next to the
+volume kernels it feeds.
+
+#### 5. Stonex X3A — partially
+
+`parsers/stonexX3aParser.ts` is the largest single TS parser at 1,376 lines, but
+most of it is container walking, `DESC`/`INST` header interpretation and station
+bookkeeping — logic, not throughput. Port the per-record point/pixel decode;
+leave the container and metadata layer in TypeScript, where it is easier to
+change as new archives turn up. Note it already delegates camera projection to
+the shared Rust OpenCV pinhole batch projector, so the boundary exists.
+
+#### Explicitly not worth porting
+
+- **Mesh loaders** — `objParser` (319), `stlParser` (355), `offParser` (250),
+  `gltfParser` (423), `mtlParser` (153), `kittiBinParser` (106). Small, not hot,
+  and glTF leans on the Three.js loader. Porting these buys nothing but a second
+  place for bugs to live.
+- **Everything DOM- or scene-bound** — `components/` (4,922 Svelte), most of
+  `visualization/`, `rendering/`, `postprocessing/`, `controls.ts`, `state/`,
+  `main.ts`. Roughly 35k lines that Rust cannot improve.
+
+#### Ordering and stopping rule
+
+0 → 1 → 2 → 3 → 4 → 5, and stop after any step whose TypeScript counterpart
+could not actually be deleted. A port that leaves a fallback in place has not
+reduced the maintenance surface, it has doubled it — which is precisely the
+state item 0 exists to clean up.
+
 ### Shared core with tiff-visualizer (and a possible shared desktop app)
 
 The full three-step plan lives in `tiff-visualizer/BACKLOG.md` item 11; this is
