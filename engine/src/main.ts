@@ -82,6 +82,10 @@ import * as transparency from './transparency';
 import * as plyExport from './plyExport';
 import * as colorModeModule from './colorMode';
 import * as registrationFeature from './registrationFeature';
+import {
+  configureRegistrationExtensionHost,
+  handleRegistrationExtensionResult,
+} from './registration';
 import * as stationPipelineFeature from './stationPipelineFeature';
 import * as rotationCenterFeature from './rotationCenterFeature';
 import {
@@ -577,6 +581,7 @@ class PointCloudVisualizer {
 
       if (isVSCode) {
         // VSCode extension environment
+        configureRegistrationExtensionHost(message => this.vscode.postMessage(message));
         this.setupMessageHandler();
         // The extension may already be parsing a restored document, but it
         // queues all outbound messages until this listener is installed.
@@ -2107,6 +2112,9 @@ class PointCloudVisualizer {
       const message = event.data;
 
       switch (message.type) {
+        case 'registrationResult':
+          handleRegistrationExtensionResult(message);
+          break;
         case 'timing':
           this.handleTimingMessage(message);
           break;

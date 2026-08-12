@@ -27,6 +27,7 @@ import {
   type AddFileHost,
 } from './providerHandlers/addFileHandlers';
 import { handleStationPipeline } from './providerHandlers/stationPipeline';
+import { handleRegistrationRequest } from './providerHandlers/registration';
 import { loadDocumentContent, type DocumentLoaderHost } from './providerHandlers/documentLoader';
 import { createWebviewReadyGate, type WebviewReadyGate } from './providerHandlers/webviewReadyGate';
 import { clearVolume, reextractVolume } from './providerHandlers/volumeSessions';
@@ -249,6 +250,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'perfLog':
           this.logPerf(message.line);
+          break;
+        case 'registrationRequest':
+          await handleRegistrationRequest(webviewPanel, message);
           break;
         case 'volume:reextract':
           if (typeof message.sessionId !== 'string' || !message.sessionId) {

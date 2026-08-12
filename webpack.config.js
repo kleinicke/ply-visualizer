@@ -45,20 +45,8 @@ module.exports = [
     ],
     resolve: {
       extensions: ['.ts', '.js'],
-      // `#registration-wasm-loader` is a build-target alias. If webpack also
-      // applies package.json's `imports` map here, it tries to resolve the
-      // post-tsc `out/` path while building and quietly emits a
-      // webpackMissingModule stub. Disable package-import resolution for the
-      // bundled extension so the explicit Node-target alias below is
-      // authoritative. Node's unbundled test output still uses `imports`.
-      importsFields: [],
       alias: {
         '@engine': path.resolve(__dirname, 'engine/src'),
-        // Extension host: Node, so the CommonJS loader is the right one.
-        '#registration-wasm-loader': path.resolve(
-          __dirname,
-          'engine/src/registration/wasmLoader.ts'
-        ),
       },
     },
     module: {
@@ -108,7 +96,8 @@ module.exports = [
         three: path.resolve(__dirname, 'node_modules/three'),
         // Webview: no Node `require`, so registration loads its wasm in the
         // page (or, where it can, in a worker).
-        '#registration-wasm-loader': path.resolve(
+        './wasmLoader$': path.resolve(__dirname, 'engine/src/registration/wasmLoader.browser.ts'),
+        '../registration/wasmLoader$': path.resolve(
           __dirname,
           'engine/src/registration/wasmLoader.browser.ts'
         ),

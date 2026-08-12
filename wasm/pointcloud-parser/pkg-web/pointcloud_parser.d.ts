@@ -95,7 +95,9 @@ export class StonexColourResult {
     [Symbol.dispose](): void;
     take_colours(): Uint8Array;
     take_frame_indices(): Uint16Array;
+    readonly candidate_total: number;
     readonly coloured_points: number;
+    readonly pixels_in_frame: number;
 }
 
 /**
@@ -364,7 +366,9 @@ export interface InitOutput {
     readonly stonex_decode_frame: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly stonex_decode_scan: (a: number, b: number) => [number, number, number];
     readonly stonex_decode_scan_known_layout: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
+    readonly stonexcolourresult_candidate_total: (a: number) => number;
     readonly stonexcolourresult_coloured_points: (a: number) => number;
+    readonly stonexcolourresult_pixels_in_frame: (a: number) => number;
     readonly stonexcolourresult_take_colours: (a: number) => [number, number];
     readonly stonexcolourresult_take_frame_indices: (a: number) => [number, number];
     readonly stonexcoloursession_colour_scan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;

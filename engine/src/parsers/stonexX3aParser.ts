@@ -1094,9 +1094,12 @@ export class StonexX3aParser {
     // WASM once per frame - thirty times on a large archive - and scored and
     // sampled the results back in JavaScript, which together was ~80% of a
     // parse.
+    const projectionStarted = performance.now();
     const stonexWasm = rawColors && frameIndices ? await loadStonexWasm() : null;
     let colourSession: StonexColourSession | null = null;
+    let usedRustColour = false;
     if (rawColors && colors && frameIndices && stonexWasm) {
+      usedRustColour = true;
       const framePixelOffsets = new Map<CameraFrame, number>();
       let pixelBytes = 0;
       for (const frame of cameraFrames) {
@@ -1139,6 +1142,10 @@ export class StonexX3aParser {
         const scanColours = result.take_colours() as Uint8Array;
         const scanFrames = result.take_frame_indices() as Uint16Array;
         const coloured = result.coloured_points as number;
+        counters.candidateTotal =
+          (counters.candidateTotal ?? 0) + (result.candidate_total as number);
+        counters.pixelsInFrame = (counters.pixelsInFrame ?? 0) + (result.pixels_in_frame as number);
+        counters.samplesTaken = (counters.samplesTaken ?? 0) + coloured;
         result.free?.();
 
         rawColors.set(scanColours, scan.pointOffset * 3);
@@ -1261,6 +1268,12 @@ export class StonexX3aParser {
         range.photographicallyColoredPoints = rangeColored;
         photographicallyColoredPoints += rangeColored;
       }
+    }
+
+    if (usedRustColour) {
+      counters.projectMs = performance.now() - projectionStarted;
+      counters.marshalMs = 0;
+      counters.sampleMs = 0;
     }
 
     markPhase('projection + sampling');

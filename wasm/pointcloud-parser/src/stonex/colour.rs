@@ -32,6 +32,14 @@ use super::scan::ScanLayout;
 /// never be recovered.
 const FRAME_AZIMUTH_WINDOW_DEGREES: f64 = 30.0;
 
+/// Extra room around the calibrated horizontal footprint. The X3I lens is a
+/// few centimetres away from the scanner origin, so a nearby return can move a
+/// little farther in camera azimuth than its organised scan column suggests.
+/// Keeping this margin avoids shaving visible pixels off that near field while
+/// still rejecting the large part of the old +/-30 degree window that cannot
+/// enter the image at all.
+const FRAME_FOOTPRINT_MARGIN_DEGREES: f64 = 3.0;
+
 /// Beyond this fraction of the frame's short side from an edge, a sample is
 /// trusted fully; inside it, the weight falls off smoothly to zero.
 const EDGE_MARGIN_FRACTION: f64 = 0.08;
@@ -63,6 +71,8 @@ pub struct ColourResult {
     /// Which frame coloured each point, or `NO_FRAME`.
     pub frame_indices: Vec<u16>,
     pub coloured_points: usize,
+    pub candidate_total: usize,
+    pub pixels_in_frame: usize,
 }
 
 fn angular_difference(a: f64, b: f64) -> f64 {
@@ -119,12 +129,15 @@ pub fn colour_scan(
     let mut colours = vec![255u8; point_count * 3];
     let mut frame_indices = vec![NO_FRAME; point_count];
     let mut coloured_points = 0usize;
+    let mut candidate_total = 0usize;
+    let mut pixels_in_frame = 0usize;
 
     struct PreparedFrame<'a> {
         index: usize,
         frame: &'a ColourFrame<'a>,
         intrinsics: Intrinsics,
         distortion: OpenCvPinhole,
+        azimuth_window_degrees: f64,
     }
     let prepared: Vec<_> = active
         .iter()
@@ -140,6 +153,9 @@ pub fn colour_scan(
                     cy: frame.cy,
                 },
                 distortion: OpenCvPinhole::new(&frame.distortion),
+                azimuth_window_degrees: (frame.max_normalized_x.atan().to_degrees().abs()
+                    + FRAME_FOOTPRINT_MARGIN_DEGREES)
+                    .min(FRAME_AZIMUTH_WINDOW_DEGREES),
             })
         })
         .collect();
@@ -154,9 +170,10 @@ pub fn colour_scan(
             .iter()
             .filter(|candidate| {
                 angular_difference(candidate.frame.pan_degrees, column_azimuths[column])
-                    <= FRAME_AZIMUTH_WINDOW_DEGREES
+                    <= candidate.azimuth_window_degrees
             })
             .collect();
+        candidate_total += candidates.len() * in_column;
 
         for _ in 0..in_column {
             let offset = point_index * 3;
@@ -205,6 +222,7 @@ pub fn colour_scan(
                 {
                     continue;
                 }
+                pixels_in_frame += 1;
 
                 let weight = view_score(frame, pixel_x, pixel_y);
                 if weight <= best_weight {
@@ -242,6 +260,8 @@ pub fn colour_scan(
         colours,
         frame_indices,
         coloured_points,
+        candidate_total,
+        pixels_in_frame,
     }
 }
 

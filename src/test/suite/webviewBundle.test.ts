@@ -29,6 +29,18 @@ function readIfPresent(relativePath: string): string | null {
 }
 
 suite('Web bundles', () => {
+  test('runtime sources never use the unresolved package-import loader', () => {
+    for (const file of ['engine/src/registration/index.ts', 'engine/src/parsers/stonexWasm.ts']) {
+      const source = readIfPresent(file);
+      assert.ok(source, `${file} should exist`);
+      assert.ok(
+        !source!.includes("'#registration-wasm-loader'"),
+        `${file} must import a real relative module; webpack can emit #registration-wasm-loader ` +
+          'as an activation-time missing-module stub without failing the build'
+      );
+    }
+  });
+
   test('both webpack configs alias the registration wasm loader for the browser', () => {
     for (const config of ['webpack.config.js', 'engine/webpack.config.js']) {
       const source = readIfPresent(config);

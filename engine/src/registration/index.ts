@@ -24,13 +24,11 @@
  */
 
 import * as THREE from 'three';
-// Resolved per build target rather than by a relative path: the Node loader
-// belongs in the extension host and in tests, the in-page one in every browser
-// bundle. An absolute-path alias over `./wasmLoader` silently failed to apply
-// in one of the four builds and left the webview with a `require()` it could
-// not resolve; a bare specifier cannot fail that way, because a build with no
-// mapping for it does not resolve at all.
-import { loadRegistrationWasm } from '#registration-wasm-loader';
+// Browser builds replace this exact request with wasmLoader.browser.ts. Keeping
+// a real relative Node target is important: webpack may legally leave an
+// unresolved package-import (`#...`) as a runtime missing-module stub, which
+// makes the extension fail during activation rather than during registration.
+import { loadRegistrationWasm } from './wasmLoader';
 import type { RegistrationKind, RegistrationRequest } from './registrationWorker';
 
 export type UpAxis = 'x' | 'y' | 'z';
@@ -129,6 +127,58 @@ const pending = new Map<
 >();
 
 let workerReady: Promise<Worker | null> | null = null;
+
+type ExtensionPostMessage = (message: {
+  type: 'registrationRequest';
+  id: string;
+  kind: RegistrationKind;
+  source: Float32Array;
+  target: Float32Array;
+  settingsJson: string;
+}) => void;
+
+let extensionPostMessage: ExtensionPostMessage | null = null;
+let nextExtensionRequestId = 1;
+const extensionPending = new Map<
+  string,
+  { resolve: (value: RegistrationResult | null) => void; reject: (error: Error) => void }
+>();
+
+/**
+ * Routes registration through the VS Code extension host.
+ *
+ * A webview cannot construct the same-origin worker used by the standalone
+ * viewer. Running several seconds of ICP inline made the button look broken
+ * because rendering and status updates froze until it returned. The extension
+ * host is already a separate process, so it is the natural worker there.
+ */
+export function configureRegistrationExtensionHost(postMessage: ExtensionPostMessage | null): void {
+  extensionPostMessage = postMessage;
+}
+
+/** Resolves a request previously sent by `configureRegistrationExtensionHost`. */
+export function handleRegistrationExtensionResult(message: {
+  id?: unknown;
+  matrix?: Float64Array | number[] | null;
+  stats?: string | null;
+  error?: string;
+}): boolean {
+  if (typeof message.id !== 'string') {
+    return false;
+  }
+  const request = extensionPending.get(message.id);
+  if (!request) {
+    return false;
+  }
+  extensionPending.delete(message.id);
+  if (message.error) {
+    request.reject(new Error(message.error));
+  } else {
+    const matrix = message.matrix ? Float64Array.from(message.matrix) : null;
+    request.resolve(decode(matrix, message.stats ?? null));
+  }
+  return true;
+}
 
 /**
  * Resolves to a worker that has already loaded its wasm, or null when this
@@ -253,6 +303,20 @@ async function dispatch(
   settings: unknown
 ): Promise<RegistrationResult | null> {
   const settingsJson = JSON.stringify(settings ?? {});
+  if (extensionPostMessage) {
+    const id = `registration-${nextExtensionRequestId++}`;
+    return new Promise<RegistrationResult | null>((resolve, reject) => {
+      extensionPending.set(id, { resolve, reject });
+      extensionPostMessage!({
+        type: 'registrationRequest',
+        id,
+        kind,
+        source,
+        target,
+        settingsJson,
+      });
+    });
+  }
   const host = await ensureWorker();
   if (!host) {
     const wasm = await loadRegistrationWasm();
@@ -300,7 +364,10 @@ function icpSettings(options: IcpOptions): Record<string, unknown> {
  * blocks the viewer while it runs — and when registration breaks, knowing which
  * one was in play is the difference between a diagnosis and a guess.
  */
-export function registrationBackend(): 'worker' | 'in page' | 'not started' {
+export function registrationBackend(): 'extension host' | 'worker' | 'in page' | 'not started' {
+  if (extensionPostMessage) {
+    return 'extension host';
+  }
   if (worker) {
     return 'worker';
   }

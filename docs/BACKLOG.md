@@ -13,6 +13,9 @@ tiny per-click calculations stay in TypeScript unless they can join a larger
 batched Rust geometry API. This keeps Rust useful without paying WASM call and
 copy overhead for trivial UI work.
 
+The full candidate inventory, with what each port wins and where the ceiling is,
+lives under "Moving more TypeScript to Rust" below.
+
 ## Planned
 
 ### Volume rendering for image stacks (tiff-visualizer bridge) — bridge shipped
@@ -1014,17 +1017,35 @@ camera model, not a reimplementation.
 
 ### Moving more TypeScript to Rust
 
-Inventory taken August 2026. Current split: **48,154** lines of TS/Svelte in
-`engine/src/`, **7,605** in `src/` (excluding tests), against **10,281** lines
-of Rust (`wasm/pointcloud-parser` 5,369, `wasm/tiff-decoder` 4,912) — Rust is
-about 15% of the codebase. Effort is explicitly not the limiting factor here;
-the limiting factor is that a second implementation is a liability, so the
-ordering below is by "removes a duplicate or a real CPU cost", not by line
-count.
+Inventory re-taken August 2026 (second pass, after the `camera-models`
+extraction and the X3A work). Current split: **48,775** lines of TS/JS/Svelte in
+`engine/src/`, **7,846** in `src/` (both excluding tests), against **11,638**
+lines of Rust (`wasm/pointcloud-parser` 6,725, `wasm/tiff-decoder` 3,865,
+`wasm/camera-models` 1,048) — Rust is about 17% of the codebase. Effort is
+explicitly not the limiting factor here; the limiting factor is that a second
+implementation is a liability, so the ordering below is by "removes a duplicate
+or a real CPU cost", not by line count.
 
 **The rule this list follows: replace, don't shadow.** Every item is done when
 the TypeScript version is _deleted_, not when a Rust version exists beside it.
 See the drift already paid for below.
+
+**How far this can go.** Everything portable on this list is roughly 11-13k
+lines, which would take Rust to about a third of the codebase. It cannot go
+further: the VS Code host (`src/`, the `vscode` API is JS-only), the Three.js
+scene graph and render loop, the Svelte UI, and the `postMessage` glue are
+permanently TypeScript — see "Explicitly not worth porting" below. "Rust by
+default" therefore means _Rust by default for compute_; it is not a plan to
+retire TypeScript.
+
+**And porting is not automatically a win.** The first X3A port (`e9fecea`, "port
+x3a loading to rust, but issues doesnt make it faster") landed without a speedup
+and needed a follow-up (`b05ece8`) to actually move the clock. Parsing is
+frequently memcpy- and IO-bound, and WASM cannot read a JS buffer in place, so a
+naive port pays a whole extra copy of the file (the same constraint recorded
+under "Load-pipeline IO"). Each item below should therefore state what it wins —
+CPU, a deleted duplicate, or a boundary crossing removed — and be measured
+against that claim, not merely completed.
 
 #### 0. Route the engine through the Rust parsers that already exist
 
@@ -1110,22 +1131,167 @@ leave the container and metadata layer in TypeScript, where it is easier to
 change as new archives turn up. Note it already delegates camera projection to
 the shared Rust OpenCV pinhole batch projector, so the boundary exists.
 
+#### 6. Depth image decoding and projection
+
+`engine/src/depth/` is 6,755 lines, and the compute half of it belongs in Rust
+next to `camera-models`, which already owns the projection kernels.
+
+Port:
+
+- **The pixel readers** — `readers/PngReader.ts` (408), `readers/PfmReader.ts`
+  (65), `readers/ExrReader.ts` (71), `readers/Rgb24Reader.ts` (137). PNG needs
+  `png`/`flate2` (shared with items 2 and 4); PFM is a text header over raw
+  floats and is nearly free; EXR needs `exr`, the only real new dependency.
+  `readers/TifReader.ts` (117) and `readers/tiffWasm.ts` (471) already front the
+  `tiff-decoder` crate — that pair is the template the others should copy, and
+  once they do, `DepthRegistry` dispatches to one Rust surface instead of five
+  hand-rolled TS decoders.
+- **`DepthProjector.ts` (350) + `DepthConverter.ts` (255) +
+  `depthConversionPipeline.ts` (423)** — per-pixel disparity/depth conversion
+  and unprojection to XYZ. This is the batch kernel `camera-models` was
+  extracted for, so the boundary already exists; the win here is that the whole
+  W×H buffer stops crossing it twice (in as depth, out as points).
+- **`colorImageForDepth.ts` (241)** and the colormap tables it uses, which are
+  duplicated in `tiff-visualizer` — see the shared-core item below.
+
+Do _not_ port the calibration side: `YamlCalibrationParser` (355),
+`ColmapParser` (249), `CalibTxtParser` (244), `ZedParser` (215), `TumParser`
+(136), `RealSenseParser` (184), `calibrationForm.ts`, `panelState.ts`,
+`defaultSettings.ts`, `commentSettings.ts`. That is ~2,300 lines of small text
+formats and UI state which change every time a new dataset turns up; TypeScript
+is the right place for churn, and none of it is on the clock.
+
+`depthWorker.ts` / `DepthWorkerClient.ts` stay as the thread boundary, with the
+caveat from item 0: a webview Web Worker is not a separate process.
+
+#### 7. Point-cloud math kernels
+
+Small, pure, and each one removes a JS hot loop over millions of points:
+
+- **`utils/intensity.ts` (127) and `utils/scalarFields.ts` (109)** — min/max
+  sweeps, percentile clipping and normalization over full-length arrays, run
+  again on every colormap change.
+- **`visualization/robustBounds.ts` (89)** — percentile-based bounds, a full
+  pass per file load.
+- **Cloud-to-cloud distance** — already flagged as a Rust/WASM candidate in its
+  own item above; the KD-tree in
+  `wasm/pointcloud-parser/src/registration/ point_index.rs` is the index it
+  should reuse rather than build a second one.
+
+These are worth doing as one batch under a single `wasm-bindgen` entry point
+rather than five crossings; individually each is too small to justify the
+boundary.
+
+#### 8. Stonex colour correction and station colouring
+
+`visualization/stonexColorCorrection.ts` (224) and
+`parsers/stonexStationColoring.ts` (466) are per-pixel and per-point loops that
+sit on the far side of the boundary from the X3A decode being ported in item 5,
+and colour correction is measured at 2-3% of the archive parse. Porting them is
+only worth it _with_ item 5 — the point is that colour never leaves Rust, not
+the 3% by itself. See "Rust: X3A parsing and colouring" below for the full
+measurement.
+
+#### Parallelism and GPU: what Rust does and does not unlock
+
+Two follow-on questions, with opposite answers. Neither changes the ordering
+above, but both change how the ported kernels should be _written_.
+
+**Multi-core: Rust is neutral-to-better, never worse.** Three options, in
+increasing order of cost:
+
+1. **N workers, each with its own single-threaded wasm instance.** Available
+   today, no build changes, no `SharedArrayBuffer`. This is already the shape
+   used three times over — `parsers/lidarParser.ts`,
+   `depth/DepthWorkerClient.ts` and `registration/workerHost.ts` each spawn a
+   worker and transfer `ArrayBuffer`s. Chunk the input, transfer results back.
+   The parallelism is identical to what TypeScript gets; Rust's contribution is
+   only that each core is several times faster. **This is the default answer for
+   items 6 and 7.**
+2. **`rayon` inside one wasm module.** Real shared-memory parallelism, and what
+   the "per-frame colouring is embarrassingly parallel" claim in the X3A item
+   below actually depends on. The cost is not the code, it is the
+   infrastructure: `wasm-bindgen-rayon`, a nightly toolchain with `-Z build-std`
+   and `-C target-feature=+atomics,+bulk-memory,+mutable-globals`, a separate
+   `pkg` output, an explicit thread-pool init before first use — **and
+   `SharedArrayBuffer`, which requires cross-origin isolation.** There is no
+   COOP/COEP anywhere in this repo today. For the standalone page that is two
+   response headers in `engine/deploy.sh`. **For the VS Code webview it is an
+   open question, and it decides whether this option exists in the product at
+   all.** Settle it before planning any `rayon` work: log `crossOriginIsolated`
+   and `typeof SharedArrayBuffer` from the webview. One line, and it is a
+   prerequisite, not a detail.
+3. **`rayon` on the native and extension-host paths — already free.**
+   `cargo test`, `cargo bench` and `examples/convert_ply_lidar.rs` are ordinary
+   native Rust with real threads. The extension host counts too:
+   `wasmPointcloud .ts` runs in Node, where `SharedArrayBuffer` exists
+   unconditionally, so wasm threads work there with no isolation requirement.
+   That is an argument for parsing in the host and transferring, which
+   `providerHandlers/binaryTransfer .ts` already does.
+
+**WebGPU: Rust is irrelevant, and `wgpu` would actively hurt.** The compute
+shader is WGSL either way — it is a separate string compiled by the browser, not
+Rust and not TypeScript — so porting CPU-side code to Rust buys nothing towards
+a GPU port. The trap is `wgpu`: compiled to wasm it targets WebGPU correctly,
+but it wants to own its own `GPUAdapter`/`GPUDevice`, and this engine already
+has one in `rendering/rendererBackend.ts` (Three.js `WebGPURenderer`). Two
+devices cannot share buffers, so every result would round-trip through CPU
+memory to reach a `BufferGeometry` — which defeats the purpose. **Dispatch WGSL
+from TypeScript against the renderer's existing device.** Rust's role in a GPU
+kernel is authoring and validating it on the CPU side, nothing more.
+
+One genuine friction point Rust adds: data living in wasm linear memory reaches
+a GPU buffer through a `Uint8Array` view over `memory.buffer` handed to
+`queue.writeBuffer` — no extra copy, but **the view is invalidated whenever wasm
+memory grows**, so it must be re-created per call and never cached. TypeScript
+has no equivalent footgun.
+
+**The consequence for the items above.** Items 6 and 7 are per-pixel and
+per-point loops with no cross-element dependencies — exactly the ones that would
+later want option 1, or the GPU. Write them so the kernel is a plain function
+over a slice, with chunking, threading and dispatch kept outside it. That costs
+nothing now and keeps both doors open. Do not build for `rayon` or for WebGPU
+speculatively; the isolation question above is unanswered, and the WebGPU
+backend is still measured as ~2x slower than WebGL.
+
 #### Explicitly not worth porting
 
 - **Mesh loaders** — `objParser` (319), `stlParser` (355), `offParser` (250),
   `gltfParser` (423), `mtlParser` (153), `kittiBinParser` (106). Small, not hot,
   and glTF leans on the Three.js loader. Porting these buys nothing but a second
   place for bugs to live.
+- **The VS Code host** — all of `src/` (7,846). The `vscode` API has no Rust
+  binding: custom editors, commands, workspace config and `postMessage` are
+  JS-only by construction. This layer can get thinner, never native.
 - **Everything DOM- or scene-bound** — `components/` (4,922 Svelte), most of
-  `visualization/`, `rendering/`, `postprocessing/`, `controls.ts`, `state/`,
-  `main.ts`. Roughly 35k lines that Rust cannot improve.
+  `visualization/`, `rendering/` (1,265), `postprocessing/` (288),
+  `controls.ts`, `state/`, `main.ts` (4,796). Roughly 35k lines. Going native
+  here means dropping Three.js for `wgpu`, which also throws away the
+  glTF/OBJ/STL addon loaders, the Spark splat renderer and every tuned
+  camera-control behaviour. That is a rewrite of the product, not a port.
+- **Calibration and dataset text parsers** — see the exclusion list in item 6.
+- **The Spark/splat path** — `visualization/splatMode.ts` (589) is orchestration
+  of a JS library; there is nothing to compute.
+
+#### What a port actually costs
+
+Worth stating once, because it undercuts naive line-count reasoning: a ported
+module does not delete all of its TypeScript. It needs a `wasm-bindgen` binding
+plus a TS wrapper for loading, typing and error fallback, so a 1,000-line parser
+becomes roughly 800 lines of Rust and 150 of TS, not zero TS. Budget the
+remaining wrapper, and count the item as done only when the _second
+implementation_ is gone (the rule above), not when the file count drops.
 
 #### Ordering and stopping rule
 
-0 → 1 → 2 → 3 → 4 → 5, and stop after any step whose TypeScript counterpart
-could not actually be deleted. A port that leaves a fallback in place has not
-reduced the maintenance surface, it has doubled it — which is precisely the
-state item 0 exists to clean up.
+0 → 1 → 2 → 6 → 3 → 4 → 5 → 8, with 7 folded in wherever a crossing is already
+being added. Item 6 moves ahead of the volume work because it deletes five
+hand-rolled decoders and removes a live boundary crossing, where 3 and 4 add new
+Rust beside no existing duplicate.
+
+Stop after any step whose TypeScript counterpart could not actually be deleted.
+A port that leaves a fallback in place has not reduced the maintenance surface,
+it has doubled it — which is precisely the state item 0 exists to clean up.
 
 ### Rust: X3A parsing and colouring
 

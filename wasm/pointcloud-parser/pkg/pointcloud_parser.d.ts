@@ -95,7 +95,9 @@ export class StonexColourResult {
     [Symbol.dispose](): void;
     take_colours(): Uint8Array;
     take_frame_indices(): Uint16Array;
+    readonly candidate_total: number;
     readonly coloured_points: number;
+    readonly pixels_in_frame: number;
 }
 
 /**

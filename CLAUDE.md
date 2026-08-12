@@ -17,6 +17,9 @@ One shared visualization engine with two thin hosts:
 **Core rule:** all shared functionality (parsers, rendering, controls, depth
 processing, webview UI) lives in `engine/src/`. `src/` stays thin and only does
 VS Code integration: commands, custom editor registration, message passing.
+Currently the extension uses ts whenever possible, but it should use rust by
+default for compute and decode and ts (or js) only if necessary. Whenever you
+see the option to transition code to rust do it.
 
 ## Commands
 

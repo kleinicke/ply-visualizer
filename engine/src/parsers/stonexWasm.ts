@@ -7,11 +7,10 @@
  * failed to apply in one of them and left the webview unable to load anything.
  */
 
-// Through the alias, never the relative path: the relative one resolves to the
-// CommonJS loader in every build, including the webview, where `require` cannot
-// work. The bundle guard in src/test/suite/webviewBundle.test.ts caught exactly
-// that here.
-import { loadRegistrationWasm } from '#registration-wasm-loader';
+// Browser builds replace this exact request with the browser loader. The
+// relative request itself always resolves to a real module, so a missed build
+// mapping cannot turn into an activation-time missing-module stub.
+import { loadRegistrationWasm } from '../registration/wasmLoader';
 
 export interface StonexColourSession {
   colour_scan(
@@ -21,6 +20,8 @@ export interface StonexColourSession {
     activeFrames: Uint32Array
   ): {
     coloured_points: number;
+    candidate_total: number;
+    pixels_in_frame: number;
     take_colours(): Uint8Array;
     take_frame_indices(): Uint16Array;
     free?(): void;

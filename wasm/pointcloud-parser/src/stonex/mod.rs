@@ -178,6 +178,8 @@ pub struct StonexColourResult {
     colours: Vec<u8>,
     frame_indices: Vec<u16>,
     coloured_points: u32,
+    candidate_total: u32,
+    pixels_in_frame: u32,
 }
 
 #[wasm_bindgen]
@@ -207,6 +209,14 @@ impl StonexColourResult {
     #[wasm_bindgen(getter)]
     pub fn coloured_points(&self) -> u32 {
         self.coloured_points
+    }
+    #[wasm_bindgen(getter)]
+    pub fn candidate_total(&self) -> u32 {
+        self.candidate_total
+    }
+    #[wasm_bindgen(getter)]
+    pub fn pixels_in_frame(&self) -> u32 {
+        self.pixels_in_frame
     }
     pub fn take_colours(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.colours)
@@ -319,6 +329,8 @@ impl StonexColourSession {
             colours: result.colours,
             frame_indices: result.frame_indices,
             coloured_points: result.coloured_points as u32,
+            candidate_total: result.candidate_total as u32,
+            pixels_in_frame: result.pixels_in_frame as u32,
         }
     }
 

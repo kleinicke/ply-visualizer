@@ -1,13 +1,16 @@
 # 3D Point Cloud and Mesh Visualizer for VS Code
 
 View, compare and inspect point clouds, meshes, gaussian splats, depth maps and
-disparity images directly inside VS Code.
+disparity images directly inside VS Code — with Rust and WebAssembly doing the
+heavy decoding, so files with millions of points open in seconds.
 
 ![Depth image converted to a point cloud](https://github.com/kleinicke/ply-visualizer/releases/download/v1.0.0/disp2pc.gif)
 
 ## Highlights
 
 - Open large point clouds quickly, including files with millions of points
+- Decode the demanding formats in Rust/WebAssembly — LAS, LAZ, E57 and TIFF —
+  alongside Rust geometry kernels for camera models and scan registration
 - Compare multiple point clouds in one view and toggle them independently
 - Convert depth and disparity images into point clouds
 - Render gaussian splat reconstructions as sorted splats or center point clouds

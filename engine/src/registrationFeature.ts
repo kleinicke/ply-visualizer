@@ -561,8 +561,9 @@ export async function refineIcp(host: RegistrationHost): Promise<void> {
   }
 
   registrationState.busy = true;
-  registrationState.status = 'Refining...';
+  registrationState.status = `Refining with ICP (${registrationBackend()})...`;
   await new Promise(resolve => setTimeout(resolve, 0));
+  const startedAt = performance.now();
   try {
     const refined = await icpRefine(source, target);
     const result = refined?.icp ? { ...refined.icp, matrix: refined.matrix } : null;
@@ -571,11 +572,24 @@ export async function refineIcp(host: RegistrationHost): Promise<void> {
         'ICP found no correspondences - the clouds are too far apart to refine. Align coarsely first.';
       return;
     }
+    // A mathematical least-squares answer is not necessarily an alignment.
+    // With almost no overlap ICP can fit one accidental patch and return a
+    // perfectly finite transform; applying it is what made the button appear
+    // to move clouds arbitrarily. Keep the current transform and explain what
+    // happened instead.
+    if (result.fitness < 0.03 || result.inlierCount < 30) {
+      registrationState.result =
+        `ICP found only ${(result.fitness * 100).toFixed(1)}% overlap ` +
+        `(${result.inlierCount.toLocaleString()} points). Align coarsely or pick pairs first.`;
+      return;
+    }
     applyDelta(host, result.matrix);
+    const elapsed = (performance.now() - startedAt) / 1000;
     registrationState.result =
       `RMS ${result.inlierRmse.toFixed(4)} over ${result.inlierCount.toLocaleString()} points · ` +
       `overlap ${(result.fitness * 100).toFixed(0)}% · ${result.iterations} iterations` +
-      (result.converged ? '' : ' (hit the iteration cap)');
+      (result.converged ? '' : ' (hit the iteration cap)') +
+      ` · ${elapsed.toFixed(1)}s · ${registrationBackend()}`;
   } catch (error) {
     registrationState.result = describeFailure(error);
   } finally {

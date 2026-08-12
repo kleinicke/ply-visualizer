@@ -28,7 +28,8 @@ module.exports = {
       // Map webview imports to the actual source files
       '../../src/webview': path.resolve(__dirname, '../src/webview'),
       // Standalone page: same as the webview, the in-page loader.
-      '#registration-wasm-loader': path.resolve(
+      './wasmLoader$': path.resolve(__dirname, 'src/registration/wasmLoader.browser.ts'),
+      '../registration/wasmLoader$': path.resolve(
         __dirname,
         'src/registration/wasmLoader.browser.ts'
       ),

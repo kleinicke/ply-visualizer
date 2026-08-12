@@ -503,8 +503,22 @@ class StonexColourResult {
   /**
    * @returns {number}
    */
+  get candidate_total() {
+    const ret = wasm.stonexcolourresult_candidate_total(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
   get coloured_points() {
     const ret = wasm.stonexcolourresult_coloured_points(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
+  get pixels_in_frame() {
+    const ret = wasm.stonexcolourresult_pixels_in_frame(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
