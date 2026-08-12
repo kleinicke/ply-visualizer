@@ -162,6 +162,65 @@ function logStonexPhases(
   }
 }
 
+function decorateStonexScans(
+  host: DocumentLoaderHost,
+  scans: any[],
+  documentUri: vscode.Uri,
+  archiveBytes: number
+): void {
+  for (const scan of scans) {
+    scan.shortPath = host.getShortPath(documentUri.fsPath);
+    scan.fileSizeInBytes = (scan.metadata.embeddedMemberSize as number | undefined) ?? archiveBytes;
+  }
+}
+
+/** Sends colour separately after geometry is visible, bounded so Electron does
+ * not silently drop a single hundreds-of-megabytes structured clone. */
+async function sendStonexColors(
+  webviewPanel: vscode.WebviewPanel,
+  scans: any[],
+  container: Record<string, unknown>
+): Promise<void> {
+  const pointsPerChunk = 250_000;
+  for (const scan of scans) {
+    const rawColors = scan.metadata.stonexRawColors as Uint8Array | null;
+    const frameIndices = scan.metadata.stonexFrameIndices as Uint16Array | null;
+    if (!rawColors) {
+      continue;
+    }
+    for (let pointOffset = 0; pointOffset < scan.vertexCount; pointOffset += pointsPerChunk) {
+      const pointEnd = Math.min(scan.vertexCount, pointOffset + pointsPerChunk);
+      const final = pointEnd === scan.vertexCount;
+      const delivered = await webviewPanel.webview.postMessage({
+        type: 'stonexColorReady',
+        updates: [
+          {
+            scanName: scan.metadata.embeddedScanName,
+            pointOffset,
+            totalPoints: scan.vertexCount,
+            final,
+            // Raw RGB is enough: the webview already owns the correction
+            // kernel and derives its display array on the closing chunk. This
+            // avoids shipping two three-byte colour arrays per point.
+            colors: rawColors.slice(pointOffset * 3, pointEnd * 3),
+            colorsAreRaw: true,
+            frameIndices: frameIndices?.slice(pointOffset, pointEnd) ?? null,
+            colorCalibration: final ? scan.metadata.stonexColorCalibration : undefined,
+            photographicallyColoredPoints: final
+              ? scan.metadata.photographicallyColoredPoints
+              : undefined,
+            cameraFrames: final ? scan.metadata.stonexCameraFrames : undefined,
+            container: final ? container : undefined,
+          },
+        ],
+      });
+      if (!delivered) {
+        throw new Error(`The webview rejected colour for ${scan.fileName}`);
+      }
+    }
+  }
+}
+
 export async function loadDocumentContent(
   host: DocumentLoaderHost,
   documentUri: vscode.Uri,
@@ -255,27 +314,46 @@ export async function loadDocumentContent(
       const bytes = await readFileFast(documentUri);
       const readTime = performance.now();
       const parser = new StonexX3aParser(stonexCameraProjector);
+      let geometrySent = false;
+      const archiveName = path.basename(documentUri.fsPath);
+      const colorContainer = {
+        id: `${loadStartedAtEpoch}-${archiveName}-colour`,
+        kind: 'x3a',
+        name: archiveName,
+        scanCount: 0,
+        startedAt: loadStartedAtEpoch,
+      };
       const parsed = await parser.parseAll(
         bytes,
-        path.basename(documentUri.fsPath),
+        archiveName,
         message =>
           void webviewPanel.webview.postMessage({
             type: 'timingUpdate',
             message,
             timestamp: performance.now(),
-          })
+          }),
+        undefined,
+        async geometry => {
+          decorateStonexScans(host, geometry, documentUri, bytes.byteLength);
+          tagContainer(geometry, 'x3a/geometry', archiveName, loadStartedAtEpoch);
+          colorContainer.scanCount = geometry.filter(scan => scan.hasColors === false).length;
+          geometrySent = true;
+          await sendSpatialDataToWebview(webviewPanel, geometry, 'multiSpatialData');
+        }
       );
-      for (const scan of parsed) {
-        (scan as any).shortPath = host.getShortPath(documentUri.fsPath);
-        (scan as any).fileSizeInBytes =
-          (scan.metadata.embeddedMemberSize as number | undefined) ?? bytes.byteLength;
-      }
+      decorateStonexScans(host, parsed, documentUri, bytes.byteLength);
       host.logPerf(
         `⏱️ PERF[x3a/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsed.reduce((sum, scan) => sum + scan.vertexCount, 0)} pts in ${parsed.length} scans) for ${path.basename(documentUri.fsPath)}`
       );
       logStonexPhases(host, parsed[0], path.basename(documentUri.fsPath));
-      tagContainer(parsed, 'x3a', path.basename(documentUri.fsPath), loadStartedAtEpoch);
-      await sendSpatialDataToWebview(webviewPanel, parsed, 'multiSpatialData');
+      if (geometrySent) {
+        // Every parsed scan with photographic colour sends one closing update.
+        colorContainer.scanCount = parsed.filter(scan => scan.colorsArray).length;
+        await sendStonexColors(webviewPanel, parsed, colorContainer);
+      } else {
+        tagContainer(parsed, 'x3a', path.basename(documentUri.fsPath), loadStartedAtEpoch);
+        await sendSpatialDataToWebview(webviewPanel, parsed, 'multiSpatialData');
+      }
       return;
     }
 

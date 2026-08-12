@@ -584,6 +584,18 @@ class StonexColourSession {
     return StonexColourResult.__wrap(ret);
   }
   /**
+   * Builds the camera-panel thumbnail from the same decoded image used for
+   * point colouring. Keeping this here avoids demosaicing every frame again
+   * in JavaScript after the colour-pass timer has stopped.
+   * @param {number} frame_index
+   * @param {number} preview_scale
+   * @returns {StonexPreview}
+   */
+  frame_preview(frame_index, preview_scale) {
+    const ret = wasm.stonexcoloursession_frame_preview(this.__wbg_ptr, frame_index, preview_scale);
+    return StonexPreview.__wrap(ret);
+  }
+  /**
    * `pixels` holds every frame's raw plane; each descriptor points into it.
    * Takes `pixels` by value: a `&[u8]` is copied into wasm memory for the
    * call and then copied again to retain it, which is 300 MB of duplication
@@ -609,6 +621,50 @@ class StonexColourSession {
 if (Symbol.dispose)
   StonexColourSession.prototype[Symbol.dispose] = StonexColourSession.prototype.free;
 exports.StonexColourSession = StonexColourSession;
+
+class StonexPreview {
+  static __wrap(ptr) {
+    const obj = Object.create(StonexPreview.prototype);
+    obj.__wbg_ptr = ptr;
+    StonexPreviewFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    StonexPreviewFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_stonexpreview_free(ptr, 0);
+  }
+  /**
+   * @returns {number}
+   */
+  get height() {
+    const ret = wasm.stonexpreview_height(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {Uint8Array}
+   */
+  take_rgba() {
+    const ret = wasm.stonexpreview_take_rgba(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {number}
+   */
+  get width() {
+    const ret = wasm.stonexpreview_width(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+}
+if (Symbol.dispose) StonexPreview.prototype[Symbol.dispose] = StonexPreview.prototype.free;
+exports.StonexPreview = StonexPreview;
 
 /**
  * Decoded frame for JS: interleaved RGB at `CAMERA_RGB_SCALE`.
@@ -1135,6 +1191,10 @@ const StonexColourSessionFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_stonexcoloursession_free(ptr, 1));
+const StonexPreviewFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_stonexpreview_free(ptr, 1));
 const StonexRgbImageFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }

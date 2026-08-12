@@ -113,3 +113,84 @@ test('colour that arrives in chunks is reassembled', async ({ page }) => {
   expect(result.firstChunk).toBe(11);
   expect(result.secondChunk).toBe(22);
 });
+
+test('raw colour crosses once and is corrected in the webview', async ({ page }) => {
+  await page.goto('/3d-visualizer/');
+  await page.waitForSelector('#three-canvas');
+  await page.waitForTimeout(500);
+  await page
+    .locator('#hiddenFileInput')
+    .setInputFiles(path.resolve('../testfiles/ply/test_small_mesh.ply'));
+  await expect(page.locator('#file-list .file-item')).toHaveCount(1);
+
+  const result = await page.evaluate(() => {
+    const visualizer = (window as any).visualizer;
+    const data = visualizer.spatialFiles[0];
+    data.colorsArray = null;
+    data.hasColors = false;
+    data.metadata = { ...(data.metadata ?? {}), embeddedScanName: 'Site_raw.x3r' };
+    const raw = new Uint8Array(data.vertexCount * 3);
+    for (let point = 0; point < data.vertexCount; point++) {
+      raw.set([10, 20, 30], point * 3);
+    }
+    const applied = (window as any).stationPipelineFeature.applyLoadTimeColors(visualizer, [
+      {
+        scanName: 'Site_raw.x3r',
+        colors: raw,
+        colorsAreRaw: true,
+        frameIndices: new Uint16Array(data.vertexCount),
+        colorCalibration: {
+          frames: [{ type: 'U', grayRedGain: 2, grayBlueGain: 3, meanGreen: 20 }],
+          bandGains: { U: { redGain: 2, blueGain: 3 } },
+          targetGreen: 20,
+        },
+      },
+    ]);
+    return {
+      applied,
+      scanName: data.metadata.embeddedScanName,
+      raw: data.metadata.stonexRawColors
+        ? Array.from(data.metadata.stonexRawColors.slice(0, 3))
+        : null,
+      corrected: data.colorsArray ? Array.from(data.colorsArray.slice(0, 3)) : null,
+    };
+  });
+
+  expect(result).toMatchObject({ applied: 1, scanName: 'Site_raw.x3r' });
+  expect(result.raw).toEqual([10, 20, 30]);
+  expect(result.corrected).toEqual([20, 20, 90]);
+});
+
+test('colour arriving before its geometry is queued and flushed', async ({ page }) => {
+  await page.goto('/3d-visualizer/');
+  await page.waitForSelector('#three-canvas');
+  await page.waitForTimeout(500);
+  await page
+    .locator('#hiddenFileInput')
+    .setInputFiles(path.resolve('../testfiles/ply/test_small_mesh.ply'));
+  await expect(page.locator('#file-list .file-item')).toHaveCount(1);
+
+  const result = await page.evaluate(() => {
+    const visualizer = (window as any).visualizer;
+    const feature = (window as any).stationPipelineFeature;
+    const data = visualizer.spatialFiles[0];
+    data.colorsArray = null;
+    data.hasColors = false;
+    const before = feature.applyLoadTimeColors(visualizer, [
+      {
+        scanName: 'Late_geometry.x3r',
+        colors: new Uint8Array(data.vertexCount * 3).fill(44),
+        frameIndices: new Uint16Array(data.vertexCount),
+      },
+    ]);
+    data.metadata = { ...(data.metadata ?? {}), embeddedScanName: 'Late_geometry.x3r' };
+    const after = feature.flushPendingLoadTimeColors(visualizer);
+    return {
+      before,
+      after,
+      first: Array.from(data.colorsArray.slice(0, 3)),
+    };
+  });
+
+  expect(result).toEqual({ before: 0, after: 1, first: [44, 44, 44] });
+});

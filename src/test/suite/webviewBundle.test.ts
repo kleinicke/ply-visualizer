@@ -41,6 +41,22 @@ suite('Web bundles', () => {
     }
   });
 
+  test('built extension resolves the Node wasm loader', function () {
+    const source = readIfPresent('out/extension.js');
+    if (!source) {
+      this.skip();
+      return;
+    }
+    assert.ok(
+      !source.includes("Cannot find module '#registration-wasm-loader'"),
+      'out/extension.js contains a missing-module stub and will fail during activation'
+    );
+    assert.ok(
+      source.includes(NODE_LOADER_MARKER),
+      'out/extension.js is missing the Node registration wasm loader'
+    );
+  });
+
   test('built web bundles carry the browser loader, not the Node one', function () {
     const bundles = [
       ['out/webview/main.js', readIfPresent('out/webview/main.js')] as const,

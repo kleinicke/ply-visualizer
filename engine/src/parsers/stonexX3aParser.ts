@@ -16,7 +16,7 @@
  */
 
 import { registerPair, type UpAxis } from '../registration';
-import { loadStonexWasm } from './stonexWasm';
+import { loadStonexWasm, type StonexColourSession } from './stonexWasm';
 import { colorFromAllStations, type StationFrame, type StationScan } from './stonexStationColoring';
 import {
   applyStonexColorCorrectionToPoints,
@@ -123,6 +123,7 @@ interface CameraFrame {
   grayBlueGain: number;
   meanGreen: number;
   rgbImage?: CameraRgbImage;
+  preview?: { width: number; height: number; rgba: Uint8Array };
   calibration: CameraCalibration;
 }
 
@@ -573,25 +574,27 @@ function sampleGrbg(
 
 function cameraFrameMetadata(data: Uint8Array, frame: CameraFrame): StonexCameraFrameMetadata {
   const previewScale = 8;
-  const previewWidth = Math.ceil(frame.calibration.width / previewScale);
-  const previewHeight = Math.ceil(frame.calibration.height / previewScale);
-  const previewRgba = new Uint8Array(previewWidth * previewHeight * 4);
-  for (let y = 0; y < previewHeight; y++) {
-    const portraitY = Math.min(
-      frame.calibration.height - 1,
-      ((y + 0.5) * frame.calibration.height) / previewHeight
-    );
-    for (let x = 0; x < previewWidth; x++) {
-      const portraitX = Math.min(
-        frame.calibration.width - 1,
-        ((x + 0.5) * frame.calibration.width) / previewWidth
+  const previewWidth = frame.preview?.width ?? Math.ceil(frame.calibration.width / previewScale);
+  const previewHeight = frame.preview?.height ?? Math.ceil(frame.calibration.height / previewScale);
+  const previewRgba = frame.preview?.rgba ?? new Uint8Array(previewWidth * previewHeight * 4);
+  if (!frame.preview) {
+    for (let y = 0; y < previewHeight; y++) {
+      const portraitY = Math.min(
+        frame.calibration.height - 1,
+        ((y + 0.5) * frame.calibration.height) / previewHeight
       );
-      const color = sampleCameraRgb(data, frame, portraitX, portraitY);
-      const offset = (y * previewWidth + x) * 4;
-      previewRgba[offset] = Math.round(color[0]);
-      previewRgba[offset + 1] = Math.round(color[1]);
-      previewRgba[offset + 2] = Math.round(color[2]);
-      previewRgba[offset + 3] = 255;
+      for (let x = 0; x < previewWidth; x++) {
+        const portraitX = Math.min(
+          frame.calibration.width - 1,
+          ((x + 0.5) * frame.calibration.width) / previewWidth
+        );
+        const color = sampleCameraRgb(data, frame, portraitX, portraitY);
+        const offset = (y * previewWidth + x) * 4;
+        previewRgba[offset] = Math.round(color[0]);
+        previewRgba[offset + 1] = Math.round(color[1]);
+        previewRgba[offset + 2] = Math.round(color[2]);
+        previewRgba[offset + 3] = 255;
+      }
     }
   }
   const calibration = frame.calibration;
@@ -688,7 +691,7 @@ export class StonexX3aParser {
      * 31.4 s - so handing the geometry over at this point puts the scene on
      * screen roughly five times sooner, with colour arriving behind it.
      */
-    onGeometryReady?: (geometry: StonexX3aData) => void
+    onGeometryReady?: (geometry: StonexX3aData) => void | Promise<void>
   ): Promise<StonexX3aData> {
     const startedAt = performance.now();
     // Phase timings, reported at the end. Added because a load that "feels
@@ -768,9 +771,7 @@ export class StonexX3aParser {
       calibrations
     );
 
-    // Includes the Bayer demosaic of every panorama, which runs here rather
-    // than at first use.
-    markPhase(`camera frames (${cameraFrames.length} decoded)`);
+    markPhase(`camera frame discovery (${cameraFrames.length} found)`);
     timingCallback?.(`Stonex X3A: inspecting ${scanMembers.length} embedded scan records...`);
     let sourcePointCount = 0;
     let vertexCount = 0;
@@ -987,13 +988,8 @@ export class StonexX3aParser {
         frames: CameraFrame[];
         projector?: StonexCameraBatchProjector;
       } | null;
-      /**
-       * Camera previews are sampled from the decoded images, so asking for them
-       * forces the demosaic. The geometry hand-over omits them for exactly that
-       * reason; the finished result carries them, by which point the frames are
-       * decoded anyway.
-       */
-      includeCameraFrames: boolean;
+      /** Camera metadata is absent from the early geometry snapshot. */
+      cameraFrames: StonexCameraFrameMetadata[];
     }): StonexX3aData => ({
       vertexCount,
       sourcePointCount,
@@ -1031,9 +1027,7 @@ export class StonexX3aParser {
         stonexStationSources: colour.stationSources,
         cameraFrames: cameraFrames.map(frame => frame.member.name),
         cameraCalibrations: [...calibrations.keys()],
-        stonexCameraFrames: colour.includeCameraFrames
-          ? cameraFrames.map(frame => cameraFrameMetadata(data, frame))
-          : [],
+        stonexCameraFrames: colour.cameraFrames,
         scannerPosition: [0, 0, 0],
         scannerCoordinateConvention: 'viewer X=model Y, viewer Y=model X, viewer Z=model Z',
         sharedScannerFrameAssumed: photographicScanStems.size === 1 && scanMembers.length > 1,
@@ -1065,7 +1059,7 @@ export class StonexX3aParser {
       counters.geometryReadyMs = performance.now() - startedAt;
       // The same shape the call returns, minus colour: positions, intensity and
       // the scan ranges are all final by now.
-      onGeometryReady(
+      await onGeometryReady(
         buildResult({
           colors: null,
           rawColors: null,
@@ -1073,9 +1067,10 @@ export class StonexX3aParser {
           colorCalibration: undefined,
           photographicallyColoredPoints: 0,
           stationSources: null,
-          includeCameraFrames: false,
+          cameraFrames: [],
         })
       );
+      markPhase('geometry delivery');
     }
 
     // Rust colour pass. Points, raw planes and frame descriptions cross once;
@@ -1085,6 +1080,7 @@ export class StonexX3aParser {
     // sampled the results back in JavaScript, which together was ~80% of a
     // parse.
     const stonexWasm = rawColors && frameIndices ? await loadStonexWasm() : null;
+    let colourSession: StonexColourSession | null = null;
     if (rawColors && colors && frameIndices && stonexWasm) {
       const framePixelOffsets = new Map<CameraFrame, number>();
       let pixelBytes = 0;
@@ -1108,6 +1104,7 @@ export class StonexX3aParser {
         stonexFrameDescriptor(frame, framePixelOffsets.get(frame)!)
       );
       const session = new stonexWasm.StonexColourSession(framePixels, JSON.stringify(descriptors));
+      colourSession = session;
 
       for (const scan of scanColumns) {
         if (scan.frames.length === 0) {
@@ -1137,7 +1134,6 @@ export class StonexX3aParser {
         }
         photographicallyColoredPoints += coloured;
       }
-      session.free?.();
     } else if (rawColors && colors && frameIndices && this.cameraProjector) {
       const bestWeights = new Float64Array(vertexCount);
       const colored = new Uint8Array(vertexCount);
@@ -1274,6 +1270,31 @@ export class StonexX3aParser {
     }
 
     markPhase('colour correction');
+    if (colourSession) {
+      for (let index = 0; index < cameraFrames.length; index++) {
+        const preview = colourSession.frame_preview(index, 8);
+        cameraFrames[index].preview = {
+          width: preview.width,
+          height: preview.height,
+          rgba: preview.take_rgba(),
+        };
+        preview.free?.();
+      }
+      colourSession.free?.();
+    }
+    const cameraMetadata = cameraFrames.map(frame => cameraFrameMetadata(data, frame));
+    markPhase(`camera previews (${cameraFrames.length})`);
+
+    const result = buildResult({
+      colors,
+      rawColors,
+      frameIndices,
+      colorCalibration,
+      photographicallyColoredPoints,
+      stationSources: { data, frames: cameraFrames, projector: this.cameraProjector },
+      cameraFrames: cameraMetadata,
+    });
+    markPhase('result construction');
     const total = performance.now() - startedAt;
     Object.assign(parsePhases, {
       totalMs: total,
@@ -1297,15 +1318,7 @@ export class StonexX3aParser {
         .join(' · ')}`
     );
 
-    return buildResult({
-      colors,
-      rawColors,
-      frameIndices,
-      colorCalibration,
-      photographicallyColoredPoints,
-      stationSources: { data, frames: cameraFrames, projector: this.cameraProjector },
-      includeCameraFrames: true,
-    });
+    return result;
   }
 
   /** Decode an archive into one viewer object per embedded X3R member. */
@@ -1315,10 +1328,10 @@ export class StonexX3aParser {
     timingCallback?: (message: string) => void,
     pipeline?: StonexStationPipelineOptions,
     /** Per-scan geometry, handed over before any photograph is decoded. */
-    onGeometryReady?: (scans: StonexX3aData[]) => void
+    onGeometryReady?: (scans: StonexX3aData[]) => void | Promise<void>
   ): Promise<StonexX3aData[]> {
     const combined = await this.parse(data, fileName, timingCallback, geometry =>
-      onGeometryReady?.(splitByScan(geometry, null))
+      onGeometryReady?.(splitByScan(geometry, null, true))
     );
     const stationTransforms = await this.runStationPipeline(combined, pipeline, timingCallback);
     delete (combined.metadata as Record<string, unknown>).stonexStationSources;
@@ -1327,7 +1340,20 @@ export class StonexX3aParser {
       return [combined];
     }
 
-    return splitByScan(combined, stationTransforms);
+    const splitStartedAt = performance.now();
+    // When geometry was already handed to the host, these final objects only
+    // feed colour updates. Views avoid copying every positions/intensity/color
+    // array a second time; the update sender slices only its bounded chunks.
+    const scans = splitByScan(combined, stationTransforms, !onGeometryReady);
+    const splitMs = performance.now() - splitStartedAt;
+    const report = combined.metadata.stonexParsePhases as
+      { totalMs?: number; phases?: Array<{ name: string; ms: number }> } | undefined;
+    if (report) {
+      report.phases ??= [];
+      report.phases.push({ name: 'scan split', ms: splitMs });
+      report.totalMs = (report.totalMs ?? 0) + splitMs;
+    }
+    return scans;
   }
 
   /**
@@ -1572,7 +1598,8 @@ const REGISTRATION_SAMPLE_LIMIT = 400_000;
  */
 function splitByScan(
   combined: StonexX3aData,
-  stationTransforms: Map<string, number[]> | null
+  stationTransforms: Map<string, number[]> | null,
+  copyArrays = true
 ): StonexX3aData[] {
   const fileName = combined.fileName ?? '';
   const ranges = combined.metadata.embeddedScanPointRanges as ScanPointRange[] | undefined;
@@ -1586,7 +1613,12 @@ function splitByScan(
     const pointEnd = range.pointOffset + range.pointCount;
     const componentStart = range.pointOffset * 3;
     const componentEnd = pointEnd * 3;
-    const intensityArray = combined.intensityArray.slice(range.pointOffset, pointEnd);
+    const segment = <T extends Float32Array | Uint8Array | Uint16Array>(
+      values: T,
+      start: number,
+      end: number
+    ): T => (copyArrays ? values.slice(start, end) : values.subarray(start, end)) as T;
+    const intensityArray = segment(combined.intensityArray, range.pointOffset, pointEnd);
     return {
       ...combined,
       vertexCount: range.pointCount,
@@ -1599,8 +1631,10 @@ function splitByScan(
           ? `Photographic color: ${range.photographicallyColoredPoints.toLocaleString()} points`
           : 'No usable X3I camera frames and calibration were found',
       ],
-      positionsArray: combined.positionsArray.slice(componentStart, componentEnd),
-      colorsArray: combined.colorsArray?.slice(componentStart, componentEnd) ?? null,
+      positionsArray: segment(combined.positionsArray, componentStart, componentEnd),
+      colorsArray: combined.colorsArray
+        ? segment(combined.colorsArray, componentStart, componentEnd)
+        : null,
       intensityArray,
       scalarFields: { intensity: intensityArray },
       metadata: {
@@ -1613,8 +1647,10 @@ function splitByScan(
         photographicallyColoredPoints: range.photographicallyColoredPoints,
         // Colour correction runs per scan, so these must be sliced alongside
         // colorsArray rather than inherited whole from the combined result.
-        stonexRawColors: rawColors?.slice(componentStart, componentEnd) ?? null,
-        stonexFrameIndices: frameIndices?.slice(range.pointOffset, pointEnd) ?? null,
+        stonexRawColors: rawColors ? segment(rawColors, componentStart, componentEnd) : null,
+        stonexFrameIndices: frameIndices
+          ? segment(frameIndices, range.pointOffset, pointEnd)
+          : null,
         // All members share a scanner station. Register its camera rig once,
         // after the final cloud so sequential extension transfers cannot shift
         // the camera entry's unified UI index as later clouds arrive.

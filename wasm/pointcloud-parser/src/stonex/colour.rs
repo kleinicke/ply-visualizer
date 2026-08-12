@@ -228,7 +228,7 @@ pub fn colour_scan(
 }
 
 /// Bilinear read of the decoded frame at a calibrated pixel.
-fn sample_image(
+pub(crate) fn sample_image(
     image: &super::bayer::RgbImage,
     frame: &ColourFrame,
     pixel_x: f64,

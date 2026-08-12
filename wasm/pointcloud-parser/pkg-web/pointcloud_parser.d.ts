@@ -118,6 +118,12 @@ export class StonexColourSession {
      */
     colour_scan(positions: Float32Array, column_azimuths: Float64Array, points_per_column: Uint32Array, active_frames: Uint32Array): StonexColourResult;
     /**
+     * Builds the camera-panel thumbnail from the same decoded image used for
+     * point colouring. Keeping this here avoids demosaicing every frame again
+     * in JavaScript after the colour-pass timer has stopped.
+     */
+    frame_preview(frame_index: number, preview_scale: number): StonexPreview;
+    /**
      * `pixels` holds every frame's raw plane; each descriptor points into it.
      * Takes `pixels` by value: a `&[u8]` is copied into wasm memory for the
      * call and then copied again to retain it, which is 300 MB of duplication
@@ -125,6 +131,15 @@ export class StonexColourSession {
      * caller can drop its own reference immediately afterwards.
      */
     constructor(pixels: Uint8Array, frames_json: string);
+}
+
+export class StonexPreview {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_rgba(): Uint8Array;
+    readonly height: number;
+    readonly width: number;
 }
 
 /**
@@ -287,7 +302,7 @@ export interface InitOutput {
     readonly __wbg_registrationresult_free: (a: number, b: number) => void;
     readonly __wbg_stonexcolourresult_free: (a: number, b: number) => void;
     readonly __wbg_stonexcoloursession_free: (a: number, b: number) => void;
-    readonly __wbg_stonexrgbimage_free: (a: number, b: number) => void;
+    readonly __wbg_stonexpreview_free: (a: number, b: number) => void;
     readonly __wbg_stonexscanpoints_free: (a: number, b: number) => void;
     readonly __wbg_streamparser_free: (a: number, b: number) => void;
     readonly coarse_align: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
@@ -345,9 +360,10 @@ export interface InitOutput {
     readonly stonexcolourresult_take_colours: (a: number) => [number, number];
     readonly stonexcolourresult_take_frame_indices: (a: number) => [number, number];
     readonly stonexcoloursession_colour_scan: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
+    readonly stonexcoloursession_frame_preview: (a: number, b: number, c: number) => number;
     readonly stonexcoloursession_new: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly stonexrgbimage_height: (a: number) => number;
-    readonly stonexrgbimage_width: (a: number) => number;
+    readonly stonexpreview_height: (a: number) => number;
+    readonly stonexpreview_width: (a: number) => number;
     readonly stonexscanpoints_point_count: (a: number) => number;
     readonly stonexscanpoints_take_column_azimuths: (a: number) => [number, number];
     readonly stonexscanpoints_take_intensity: (a: number) => [number, number];
@@ -356,8 +372,12 @@ export interface InitOutput {
     readonly streamparser_new: (a: number, b: number, c: number, d: number) => number;
     readonly streamparser_push: (a: number, b: number, c: number) => void;
     readonly pointcloudresult_take_colors: (a: number) => [number, number];
+    readonly stonexpreview_take_rgba: (a: number) => [number, number];
     readonly stonexrgbimage_take_data: (a: number) => [number, number];
     readonly alloc: (a: number) => number;
+    readonly stonexrgbimage_height: (a: number) => number;
+    readonly stonexrgbimage_width: (a: number) => number;
+    readonly __wbg_stonexrgbimage_free: (a: number, b: number) => void;
     readonly stonexscanpoints_take_points_per_column: (a: number) => [number, number];
     readonly stonexscanpoints_take_positions: (a: number) => [number, number];
     readonly dealloc: (a: number, b: number) => void;

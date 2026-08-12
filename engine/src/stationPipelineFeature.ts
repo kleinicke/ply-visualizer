@@ -18,6 +18,7 @@ import type { SpatialData } from './interfaces';
 import { RECOLORED_MODE } from './colorMode';
 import { filesState } from './state/files.svelte';
 import { stationPipelineUi } from './state/registration.svelte';
+import { noteContainerScanLoaded } from './utils/containerPerf';
 import {
   addStonexCameraVisualization,
   updateStonexCameraStations,
@@ -415,6 +416,8 @@ export function setCapturePlaceVisible(
 export interface LoadTimeColorUpdate {
   scanName: string;
   colors: Uint8Array;
+  /** The payload is raw camera RGB; derive corrected display RGB on completion. */
+  colorsAreRaw?: boolean;
   /** Set when the colour arrives in chunks; absent means the whole scan. */
   pointOffset?: number;
   totalPoints?: number;
@@ -426,7 +429,13 @@ export interface LoadTimeColorUpdate {
   frameIndices?: Uint16Array | null;
   colorCalibration?: unknown;
   photographicallyColoredPoints?: number;
+  container?: unknown;
 }
+
+// Extension messages can overtake an async geometry build in the webview. Keep
+// bounded colour chunks until their scan exists instead of silently dropping
+// them; the binary and large-file completion paths flush this map.
+const pendingLoadTimeColors = new Map<string, LoadTimeColorUpdate[]>();
 
 /**
  * Attaches the photographic colour to scans that were put on screen without it.
@@ -446,6 +455,11 @@ export function applyLoadTimeColors(
       data => data?.metadata?.embeddedScanName === update.scanName
     );
     if (fileIndex < 0 || !update.colors) {
+      if (fileIndex < 0 && update.scanName && update.colors) {
+        const queued = pendingLoadTimeColors.get(update.scanName) ?? [];
+        queued.push(update);
+        pendingLoadTimeColors.set(update.scanName, queued);
+      }
       continue;
     }
     const data = host.spatialFiles[fileIndex];
@@ -454,7 +468,9 @@ export function applyLoadTimeColors(
 
     if (!chunked) {
       data.colorsArray = update.colors;
-      metadata.stonexRawColors = update.rawColors ?? null;
+      metadata.stonexRawColors = update.colorsAreRaw
+        ? update.colors.slice()
+        : (update.rawColors ?? null);
       metadata.stonexFrameIndices = update.frameIndices ?? null;
     } else {
       // Grow the destination once, then fill it chunk by chunk. The arrays are
@@ -489,6 +505,20 @@ export function applyLoadTimeColors(
     if (typeof update.photographicallyColoredPoints === 'number') {
       metadata.photographicallyColoredPoints = update.photographicallyColoredPoints;
     }
+    if (update.colorsAreRaw && data.colorsArray && metadata.stonexFrameIndices) {
+      const raw = data.colorsArray.slice();
+      metadata.stonexRawColors = raw;
+      const calibration = metadata.stonexColorCalibration as StonexColorCalibration | undefined;
+      if (calibration) {
+        applyStonexColorCorrectionToPoints(
+          raw,
+          metadata.stonexFrameIndices as Uint16Array,
+          computeStonexFrameMultipliers(calibration, DEFAULT_STONEX_COLOR_CORRECTION),
+          DEFAULT_STONEX_COLOR_CORRECTION,
+          data.colorsArray
+        );
+      }
+    }
     // Camera previews are sampled from the decoded photographs, so the geometry
     // hand-over cannot carry them - they arrive here with the colour, and the
     // profile is built now rather than at load.
@@ -498,11 +528,27 @@ export function applyLoadTimeColors(
     }
     host.onFileColorModeChange?.(fileIndex, 'original');
     filesState.colorModes[fileIndex] = 'original';
+    if (!chunked || update.final) {
+      noteContainerScanLoaded(update.container, data.vertexCount);
+    }
     applied++;
   }
   if (applied > 0) {
     host.updateFileList?.();
     host.requestRender();
+  }
+  return applied;
+}
+
+/** Applies colour chunks that arrived while their geometry was still building. */
+export function flushPendingLoadTimeColors(host: StationPipelineHost): number {
+  let applied = 0;
+  for (const [scanName, updates] of [...pendingLoadTimeColors]) {
+    if (!host.spatialFiles.some(data => data?.metadata?.embeddedScanName === scanName)) {
+      continue;
+    }
+    pendingLoadTimeColors.delete(scanName);
+    applied += applyLoadTimeColors(host, updates);
   }
   return applied;
 }

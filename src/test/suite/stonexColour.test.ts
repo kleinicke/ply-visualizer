@@ -78,5 +78,22 @@ suite('Stonex colour pass: Rust matches JavaScript', () => {
         }
       }
     }
+
+    const legacyFrames = legacy.flatMap(
+      scan => (scan.metadata.stonexCameraFrames as Array<any> | undefined) ?? []
+    );
+    const portedFrames = ported.flatMap(
+      scan => (scan.metadata.stonexCameraFrames as Array<any> | undefined) ?? []
+    );
+    assert.strictEqual(portedFrames.length, legacyFrames.length, 'camera preview count');
+    for (let frame = 0; frame < legacyFrames.length; frame++) {
+      assert.strictEqual(portedFrames[frame].previewWidth, legacyFrames[frame].previewWidth);
+      assert.strictEqual(portedFrames[frame].previewHeight, legacyFrames[frame].previewHeight);
+      assert.deepStrictEqual(
+        portedFrames[frame].previewRgba,
+        legacyFrames[frame].previewRgba,
+        `${portedFrames[frame].name}: Rust preview reuses the same decoded image`
+      );
+    }
   });
 });

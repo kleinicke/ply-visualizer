@@ -144,6 +144,28 @@ pub struct StonexColourResult {
 }
 
 #[wasm_bindgen]
+pub struct StonexPreview {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl StonexPreview {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+    pub fn take_rgba(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.rgba)
+    }
+}
+
+#[wasm_bindgen]
 impl StonexColourResult {
     #[wasm_bindgen(getter)]
     pub fn coloured_points(&self) -> u32 {
@@ -260,6 +282,70 @@ impl StonexColourSession {
             colours: result.colours,
             frame_indices: result.frame_indices,
             coloured_points: result.coloured_points as u32,
+        }
+    }
+
+    /// Builds the camera-panel thumbnail from the same decoded image used for
+    /// point colouring. Keeping this here avoids demosaicing every frame again
+    /// in JavaScript after the colour-pass timer has stopped.
+    pub fn frame_preview(&mut self, frame_index: u32, preview_scale: u32) -> StonexPreview {
+        let index = frame_index as usize;
+        let Some(descriptor) = self.descriptors.get(index) else {
+            return StonexPreview { width: 0, height: 0, rgba: Vec::new() };
+        };
+        let scale = preview_scale.max(1) as usize;
+        let width = descriptor.image_width.div_ceil(scale);
+        let height = descriptor.image_height.div_ceil(scale);
+        let end = descriptor.pixel_offset + descriptor.raw_width * descriptor.raw_height;
+        let pixels = &self.pixels[descriptor.pixel_offset..end];
+        let image = self.decoded[index].get_or_insert_with(|| {
+            bayer::decode_rgb(&bayer::BayerFrame {
+                pixels,
+                raw_width: descriptor.raw_width,
+                raw_height: descriptor.raw_height,
+                image_width: descriptor.image_width,
+                image_height: descriptor.image_height,
+            })
+        });
+        let mut transform = [0.0f64; 16];
+        transform.copy_from_slice(&descriptor.viewer_to_camera);
+        let frame = colour::ColourFrame {
+            pixels,
+            raw_width: descriptor.raw_width,
+            raw_height: descriptor.raw_height,
+            image_width: descriptor.image_width,
+            image_height: descriptor.image_height,
+            pan_degrees: descriptor.pan_degrees,
+            fx: descriptor.fx,
+            fy: descriptor.fy,
+            cx: descriptor.cx,
+            cy: descriptor.cy,
+            distortion: descriptor.distortion.clone(),
+            viewer_to_camera: transform,
+            max_normalized_x: descriptor.max_normalized_x,
+            max_normalized_y: descriptor.max_normalized_y,
+        };
+        let mut rgba = vec![0u8; width * height * 4];
+        for y in 0..height {
+            let portrait_y = ((y as f64 + 0.5) * descriptor.image_height as f64
+                / height as f64)
+                .min(descriptor.image_height.saturating_sub(1) as f64);
+            for x in 0..width {
+                let portrait_x = ((x as f64 + 0.5) * descriptor.image_width as f64
+                    / width as f64)
+                    .min(descriptor.image_width.saturating_sub(1) as f64);
+                let rgb = colour::sample_image(image, &frame, portrait_x, portrait_y);
+                let offset = (y * width + x) * 4;
+                rgba[offset] = rgb[0].round().clamp(0.0, 255.0) as u8;
+                rgba[offset + 1] = rgb[1].round().clamp(0.0, 255.0) as u8;
+                rgba[offset + 2] = rgb[2].round().clamp(0.0, 255.0) as u8;
+                rgba[offset + 3] = 255;
+            }
+        }
+        StonexPreview {
+            width: width as u32,
+            height: height as u32,
+            rgba,
         }
     }
 }

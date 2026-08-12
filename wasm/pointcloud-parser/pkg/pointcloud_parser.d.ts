@@ -118,6 +118,12 @@ export class StonexColourSession {
      */
     colour_scan(positions: Float32Array, column_azimuths: Float64Array, points_per_column: Uint32Array, active_frames: Uint32Array): StonexColourResult;
     /**
+     * Builds the camera-panel thumbnail from the same decoded image used for
+     * point colouring. Keeping this here avoids demosaicing every frame again
+     * in JavaScript after the colour-pass timer has stopped.
+     */
+    frame_preview(frame_index: number, preview_scale: number): StonexPreview;
+    /**
      * `pixels` holds every frame's raw plane; each descriptor points into it.
      * Takes `pixels` by value: a `&[u8]` is copied into wasm memory for the
      * call and then copied again to retain it, which is 300 MB of duplication
@@ -125,6 +131,15 @@ export class StonexColourSession {
      * caller can drop its own reference immediately afterwards.
      */
     constructor(pixels: Uint8Array, frames_json: string);
+}
+
+export class StonexPreview {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_rgba(): Uint8Array;
+    readonly height: number;
+    readonly width: number;
 }
 
 /**

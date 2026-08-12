@@ -25,6 +25,15 @@ export interface StonexColourSession {
     take_frame_indices(): Uint16Array;
     free?(): void;
   };
+  frame_preview(
+    frameIndex: number,
+    previewScale: number
+  ): {
+    width: number;
+    height: number;
+    take_rgba(): Uint8Array;
+    free?(): void;
+  };
   free?(): void;
 }
 

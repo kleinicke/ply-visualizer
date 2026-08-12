@@ -2181,6 +2181,7 @@ class PointCloudVisualizer {
         case 'binarySpatialData':
           try {
             await this.loadWithPerf('ply', message, () => this.handleBinarySpatialData(message));
+            stationPipelineFeature.flushPendingLoadTimeColors(this);
           } catch (error) {
             console.error('Error handling binary PLY data:', error);
             this.showError(
@@ -3758,6 +3759,7 @@ class PointCloudVisualizer {
 
   private async handleLargeFileComplete(message: any): Promise<void> {
     await largeFileChunking.handleLargeFileComplete(this, message);
+    stationPipelineFeature.flushPendingLoadTimeColors(this);
   }
 
   /** Called from the file rows and from the all-clouds slider in the controls. */
