@@ -4,8 +4,6 @@ import * as fs from 'fs';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
 import { ObjParser } from '../../engine/src/parsers/objParser';
 import { StlParser } from '../../engine/src/parsers/stlParser';
-import { PcdParser } from '../../engine/src/parsers/pcdParser';
-import { PtsParser } from '../../engine/src/parsers/ptsParser';
 import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
@@ -14,17 +12,19 @@ import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
 import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
 import { buildInitialVolumeData, decorateVolumeData, retainVolume } from './volumeSessions';
-import { XyzVariantParser } from '../../engine/src/parsers/xyzVariantParser';
 import {
   parseXyzWasm,
   parseAsciiPlyWasm,
-  parsePcdAsciiWasm,
-  parsePcdBinaryWasm,
-  parsePtsWasm,
   streamParseFile,
   detectXyzColorMode,
   parseLidarWasm,
 } from '../wasmPointcloud';
+import {
+  parsePcdWasm,
+  parsePtsWasm,
+  toPcdPayload,
+  toPointCloudPayload,
+} from '../../engine/src/parsers/pointcloudWasm';
 import { isPlyBinary } from '../../engine/src/fileHandler';
 import {
   readFileFast,
@@ -545,8 +545,9 @@ export async function loadDocumentContent(
       // Streaming overlap for ASCII PCD (same cold-cache win as XYZ: the next
       // chunk's disk read overlaps the current chunk's parse). Gate on the
       // HEADER only so we don't read the whole file first: require ASCII data
-      // and an identity VIEWPOINT (the WASM stream parser carries no viewpoint
-      // transform). Anything else falls through to the whole-file path below.
+      // and an identity VIEWPOINT — unlike `parse_pcd`, the streaming parser
+      // reads rows without the header, so it carries no viewpoint transform.
+      // Anything else falls through to the whole-file path below.
       if (documentUri.scheme === 'file') {
         try {
           const head = await readFileHead(documentUri, 65536);
@@ -589,43 +590,11 @@ export async function loadDocumentContent(
         timestamp: fileReadTime,
       });
 
-      // Fast path: Rust/WASM for ASCII PCD point clouds with an identity
-      // viewpoint. parse_pcd_ascii returns null for binary PCD; the
-      // viewpoint guard keeps clouds that need the VIEWPOINT transform on
-      // the JS path. Anything else falls through to the JS parser below.
-      if (pcdViewpointIsIdentity(pcdData)) {
-        // ASCII via WASM, then binary via WASM (binary PCD otherwise falls to
-        // the slow JS parser — ~11x slower). Both gated on identity viewpoint
-        // since the WASM parsers don't carry the VIEWPOINT transform.
-        const pcdWasm = parsePcdAsciiWasm(pcdData) || parsePcdBinaryWasm(pcdData);
-        if (pcdWasm) {
-          host.logPerf(
-            `⏱️ PERF[pcd/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${pcdWasm.vertexCount} pts, wasm) for ${path.basename(documentUri.fsPath)}`
-          );
-          webviewPanel.webview.postMessage({
-            type: 'xyzVariantData',
-            fileName: path.basename(documentUri.fsPath),
-            shortPath: host.getShortPath(documentUri.fsPath),
-            fileSizeInBytes: pcdData.byteLength,
-            data: pcdWasm,
-            variant: 'pcd',
-            parseMode: 'wasm',
-          });
-          return;
-        }
-      }
-
-      const pcdParser = new PcdParser();
-      const timingCallback = (message: string) => {
-        webviewPanel.webview.postMessage({
-          type: 'timingUpdate',
-          message: message,
-          timestamp: performance.now(),
-        });
-      };
-
-      const parsedData = await pcdParser.parse(pcdData, timingCallback);
+      const parsedData = toPcdPayload(await parsePcdWasm(pcdData));
       const parseTime = performance.now();
+      host.logPerf(
+        `⏱️ PERF[pcd/ext] parse ${(parseTime - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
+      );
       webviewPanel.webview.postMessage({
         type: 'timingUpdate',
         message: `🎯 Extension: PCD parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
@@ -660,31 +629,9 @@ export async function loadDocumentContent(
         timestamp: fileReadTime,
       });
 
-      // Try the Rust/WASM parser (~2.5-3x faster); fall back to JS.
-      let parsedData: any;
-      let ptsMode = 'js';
-      const ptsWasm = parsePtsWasm(ptsData);
-      if (ptsWasm) {
-        parsedData = {
-          vertexCount: ptsWasm.vertexCount,
-          positionsArray: ptsWasm.positionsArray,
-          colorsArray: ptsWasm.colorsArray,
-          normalsArray: ptsWasm.normalsArray,
-          intensityArray: ptsWasm.intensityArray,
-          hasColors: ptsWasm.hasColors,
-          hasNormals: ptsWasm.hasNormals,
-          hasIntensity: ptsWasm.hasIntensity,
-          scalarFields: ptsWasm.intensityArray ? { intensity: ptsWasm.intensityArray } : {},
-          detectedFormat: `x y z${ptsWasm.hasIntensity ? ' intensity' : ''}${ptsWasm.hasColors ? ' r g b' : ''}`,
-          comments: [],
-        };
-        ptsMode = 'wasm';
-      } else {
-        const ptsParser = new PtsParser();
-        parsedData = await ptsParser.parse(ptsData);
-      }
+      const parsedData = toPointCloudPayload(await parsePtsWasm(ptsData), 'pts');
       host.logPerf(
-        `⏱️ PERF[pts/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts, ${ptsMode}) for ${path.basename(documentUri.fsPath)}`
+        `⏱️ PERF[pts/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
       );
 
       // Send parsed PTS data to webview
@@ -694,7 +641,6 @@ export async function loadDocumentContent(
         shortPath: host.getShortPath(documentUri.fsPath),
         fileSizeInBytes: ptsData.byteLength,
         data: parsedData,
-        parseMode: ptsMode,
       });
 
       return; // Exit early for PTS files
@@ -943,8 +889,11 @@ export async function loadDocumentContent(
         const xyzData = await readFileFast(documentUri);
         xyzBytes = xyzData.byteLength;
         const wasmParsed = parseXyzWasm(xyzData, xyzVariant, xyzColorMode);
-        xyzParsed = wasmParsed ?? new XyzVariantParser().parse(xyzData, xyzVariant);
-        xyzMode = wasmParsed ? 'wasm' : 'js';
+        if (!wasmParsed) {
+          throw new Error('XYZ parse failed: the Rust point-cloud parser is unavailable');
+        }
+        xyzParsed = wasmParsed;
+        xyzMode = 'wasm';
       }
       host.logPerf(
         `⏱️ PERF[xyz/ext] load ${(performance.now() - loadStart).toFixed(1)}ms (${xyzParsed.vertexCount} pts, ${xyzMode}) for ${path.basename(documentUri.fsPath)}`
@@ -1154,15 +1103,6 @@ export async function loadDocumentContent(
         timestamp: performance.now(),
       });
 
-      // Send raw binary data + header info
-      // Extra logging to aid debugging face offsets/types
-      // Log face types once for debugging
-      // concise header info for debugging (once)
-      webviewPanel.webview.postMessage({
-        type: 'timingUpdate',
-        message: `Header face types: count=${headerResult.faceCountType || 'n/a'}, index=${headerResult.faceIndexType || 'n/a'}`,
-        timestamp: performance.now(),
-      });
       // Transfer-via-fetch: send only header metadata + a webview URI for
       // the file. The webview fetches the bytes directly, avoiding the
       // multi-hundred-ms structured-clone of the full vertex buffer. On a
@@ -1175,7 +1115,6 @@ export async function loadDocumentContent(
         loadStartedAt: host.getCurrentLoadStartedAt(),
         fileUri: webviewPanel.webview.asWebviewUri(documentUri).toString(),
         docUri: documentUri.toString(),
-        binaryDataStart: headerResult.binaryDataStart,
         fileName: parsedData.fileName,
         shortPath: parsedData.shortPath,
         fileSizeInBytes: fullBytes
@@ -1188,11 +1127,7 @@ export async function loadDocumentContent(
         hasIntensity: parsedData.hasIntensity,
         format: parsedData.format,
         comments: parsedData.comments,
-        vertexStride: headerResult.vertexStride,
-        propertyOffsets: Array.from(headerResult.propertyOffsets.entries()),
         littleEndian: headerResult.headerInfo.format === 'binary_little_endian',
-        faceCountType: headerResult.faceCountType,
-        faceIndexType: headerResult.faceIndexType,
       });
     } else {
       // ASCII PLY. Try the Rust/WASM parser first — it handles point clouds

@@ -3,8 +3,12 @@ import * as path from 'path';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
 import { ObjParser } from '../../engine/src/parsers/objParser';
 import { StlParser } from '../../engine/src/parsers/stlParser';
-import { PcdParser } from '../../engine/src/parsers/pcdParser';
-import { PtsParser } from '../../engine/src/parsers/ptsParser';
+import {
+  parsePcdWasm,
+  parsePtsWasm,
+  toPcdPayload,
+  toPointCloudPayload,
+} from '../../engine/src/parsers/pointcloudWasm';
 import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
@@ -229,7 +233,6 @@ export async function handleAddFile(
             await sendUltimateRawBinary(
               webviewPanel,
               headerResult.headerInfo,
-              headerResult,
               spatialData,
               'addFiles',
               host.logPerf.bind(host)
@@ -349,8 +352,7 @@ export async function handleAddFile(
         // Handle PCD files
         if (fileExtension === '.pcd') {
           const pcdData = await vscode.workspace.fs.readFile(files[i]);
-          const pcdParser = new PcdParser();
-          const parsedData = await pcdParser.parse(pcdData);
+          const parsedData = toPcdPayload(await parsePcdWasm(pcdData));
 
           webviewPanel.webview.postMessage({
             type: 'pcdData',
@@ -367,8 +369,7 @@ export async function handleAddFile(
         // Handle PTS files
         if (fileExtension === '.pts') {
           const ptsData = await vscode.workspace.fs.readFile(files[i]);
-          const ptsParser = new PtsParser();
-          const parsedData = await ptsParser.parse(ptsData);
+          const parsedData = toPointCloudPayload(await parsePtsWasm(ptsData), 'pts');
 
           webviewPanel.webview.postMessage({
             type: 'ptsData',
@@ -561,7 +562,6 @@ export async function handleAddFileFromPath(
         await sendUltimateRawBinary(
           webviewPanel,
           headerResult.headerInfo,
-          headerResult,
           spatialData,
           'addFiles',
           host.logPerf.bind(host)
@@ -617,8 +617,7 @@ export async function handleAddFileFromPath(
     }
     if (ext === '.pcd') {
       const pcdData = await vscode.workspace.fs.readFile(fileUri);
-      const pcdParser = new PcdParser();
-      const parsedData = await pcdParser.parse(pcdData);
+      const parsedData = toPcdPayload(await parsePcdWasm(pcdData));
       webviewPanel.webview.postMessage({
         type: 'pcdData',
         fileName,
@@ -630,8 +629,7 @@ export async function handleAddFileFromPath(
     }
     if (ext === '.pts') {
       const ptsData = await vscode.workspace.fs.readFile(fileUri);
-      const ptsParser = new PtsParser();
-      const parsedData = await ptsParser.parse(ptsData);
+      const parsedData = toPointCloudPayload(await parsePtsWasm(ptsData), 'pts');
       webviewPanel.webview.postMessage({
         type: 'ptsData',
         fileName,
@@ -805,7 +803,6 @@ export async function handleDroppedFilesFromWebview(
           await sendUltimateRawBinary(
             webviewPanel,
             headerResult.headerInfo,
-            headerResult,
             fileData,
             'addFiles',
             host.logPerf.bind(host)
@@ -860,8 +857,7 @@ export async function handleDroppedFilesFromWebview(
       }
 
       if (ext === '.pcd') {
-        const pcdParser = new PcdParser();
-        const parsedData = await pcdParser.parse(fileData);
+        const parsedData = toPcdPayload(await parsePcdWasm(fileData));
         webviewPanel.webview.postMessage({
           type: 'pcdData',
           fileName,
@@ -873,8 +869,7 @@ export async function handleDroppedFilesFromWebview(
       }
 
       if (ext === '.pts') {
-        const ptsParser = new PtsParser();
-        const parsedData = await ptsParser.parse(fileData);
+        const parsedData = toPointCloudPayload(await parsePtsWasm(fileData), 'pts');
         webviewPanel.webview.postMessage({
           type: 'ptsData',
           fileName,

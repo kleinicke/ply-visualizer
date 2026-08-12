@@ -79,8 +79,10 @@ suite('Gaussian Splat PLY Support', () => {
 
     assert.strictEqual(header.headerInfo.isGaussianSplat, true);
     assert.strictEqual(header.headerInfo.hasColors, true);
-    assert.strictEqual(header.vertexStride, 14 * 4);
-    assert.ok(header.propertyOffsets.has('f_dc_0'));
+    // The header reader no longer produces a property/offset table: the
+    // webview parses the file it is sent, rather than being told where each
+    // property sits inside it.
+    assert.ok(header.binaryDataStart > 0);
   });
 
   test('a PLY without f_dc properties is not flagged as a splat', async () => {

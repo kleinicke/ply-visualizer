@@ -57,6 +57,43 @@ export class LidarScanResult {
 }
 
 /**
+ * Parsed PLY, handed to JS. Large buffers move out with the `take_*` methods.
+ */
+export class PlyResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * [min_x, min_y, min_z, max_x, max_y, max_z]
+     */
+    bbox(): Float32Array;
+    take_colors(): Uint8Array;
+    take_face_indices(): Uint32Array;
+    /**
+     * Vertices per face, parallel to the runs in `take_face_indices`.
+     */
+    take_face_sizes(): Uint32Array;
+    take_intensity(): Float32Array;
+    take_normals(): Float32Array;
+    take_positions(): Float32Array;
+    take_scalar_at(index: number): Float32Array;
+    readonly face_count: number;
+    readonly has_colors: boolean;
+    readonly has_intensity: boolean;
+    readonly has_normals: boolean;
+    readonly is_gaussian_splat: boolean;
+    /**
+     * Header facts as JSON: format, version and comments.
+     */
+    readonly metadata_json: string;
+    /**
+     * Scalar-field names, in the order `take_scalar_at` expects.
+     */
+    readonly scalar_field_names: string[];
+    readonly vertex_count: number;
+}
+
+/**
  * Parsed point cloud, returned to JS. Large buffers are moved out with the
  * `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.
  */
@@ -75,6 +112,7 @@ export class PointCloudResult {
     readonly has_colors: boolean;
     readonly has_intensity: boolean;
     readonly has_normals: boolean;
+    readonly metadata_json: string;
     readonly vertex_count: number;
 }
 
@@ -232,31 +270,29 @@ export function parse_e57(data: Uint8Array, file_name: string): LidarCollectionR
 export function parse_las(data: Uint8Array, file_name: string): LidarCollectionResult;
 
 /**
- * Parse an ASCII PCD point cloud. Reads the FIELDS/COUNT header to build a
- * column layout (including PCD's packed-float `rgb`), then parses the rows.
- * Returns an error (→ JS fallback) for binary PCD or anything unsupported.
+ * Parse a PCD point cloud in any of its three encodings.
+ *
+ * One entry point rather than one per encoding: the caller cannot know which
+ * it has without reading the header, and the header is read here.
  */
-export function parse_pcd_ascii(data: Uint8Array): PointCloudResult;
+export function parse_pcd(data: Uint8Array): PointCloudResult;
 
 /**
- * Parse a binary PCD point cloud (`DATA binary`; not `binary_compressed`). Reads
- * the FIELDS/SIZE/TYPE/COUNT header to map each field to a byte offset + reader,
- * then walks fixed-size records straight into the packed output arrays — no
- * text parsing, so it's orders of magnitude faster than the JS binary path.
- * Returns Err (→ JS fallback) for ascii/compressed PCD, missing x/y/z, or a
- * header whose SIZE/TYPE don't line up with FIELDS.
+ * Parse a PLY file in either encoding, with faces, scalar fields and 3DGS
+ * colour synthesis.
  */
-export function parse_pcd_binary(data: Uint8Array): PointCloudResult;
+export function parse_ply(data: Uint8Array): PlyResult;
 
 /**
  * Parse a PTS point cloud. PTS has an optional leading count line + comments
  * (both have < 3 numeric columns, so `parse_rows` skips them automatically),
  * then rows auto-detected from the first data row:
  *   3 → x y z · 4 → x y z intensity · 6 → x y z r g b ·
- *   7 → x y z intensity r g b (Open3D default).
- * Colors are 0-255 integers (the shared 0-1-vs-int heuristic in `Builder`
- * handles the common case; a rare all-channels-≤1 row could be misread — see
- * PERFORMANCE_PLAN raw-int colors note).
+ *   7 → x y z intensity r g b (Open3D default) ·
+ *   9 → x y z r g b nx ny nz.
+ * PTS colors are always 0-255 integers, so `ColorMode::Byte` is forced rather
+ * than left to the value heuristic — otherwise a dark row like `1 1 1` would
+ * be read as 0..1 floats and turn white.
  */
 export function parse_pts(data: Uint8Array): PointCloudResult;
 

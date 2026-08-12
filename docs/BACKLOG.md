@@ -1074,6 +1074,51 @@ process, and `registration/wasmLoader.browser.ts` plus a `Worker`-blocking spec
 exist because of it. Whatever loads the parser in the browser needs the same
 honesty test, or plan to keep the load off the UI thread in the extension host.
 
+**Partly done (August 2026): XYZ variants and PTS.**
+`engine/src/parsers/ pointcloudWasm.ts` is the shared wrapper — it loads the
+crate through the registration loader, which already resolves the package in all
+four builds, and marshals into the packed typed arrays the format registry
+expects. `parsers/ptsParser.ts` and `parsers/xyzVariantParser.ts` are
+**deleted**, and with them every JS fallback at the PTS and XYZ call sites in
+`src/`: a failure to load the crate is now an error the user sees, not a silent
+second implementation. `ascii-rust-parsers.spec.ts` loads all four layouts in a
+real page, so "the browser actually reaches the crate" is a test rather than a
+claim.
+
+Two things surfaced doing it, both worth knowing before the next item:
+
+- **The browser loader was returning a hand-picked subset** of the module (the
+  four registration functions), so `parsers/stonexWasm.ts` — which casts the
+  loader's result to its own view of the crate — got `null` in the webview and
+  the standalone page while working in the extension host. It now resolves the
+  whole namespace. Anything that loads the crate in the browser should go
+  through it rather than importing `pkg-web` a second time.
+- **Parity is not only about scalar fields.** Rust `parse_pts` was missing the
+  9-column (x y z r g b nx ny nz) layout and used the 0-1-vs-int colour
+  heuristic, which turns a legitimately dark `1 1 1` row white. Both are fixed
+  and covered by `cargo test`. Check each remaining format the same way — the
+  Rust side is not automatically the superset.
+
+**Then PCD, in the same pass.** `parsers/pcdParser.ts` is **deleted**, and with
+it the last JS fallback at every PCD call site. Closing the gaps was most of the
+work, and each one was a real difference, not a tidy-up:
+
+- **`binary_compressed` did not exist in Rust at all.** It is now an LZF
+  decompressor plus a column-major reader, both tested.
+- **NaN points were kept.** PCL marks an invalid range pixel with NaN
+  coordinates rather than omitting it; the TypeScript parser dropped those rows
+  and the Rust one did not, so the same file produced different point counts
+  depending on which parser ran.
+- **The header never crossed the boundary**, which is why
+  `pcdViewpointIsIdentity` existed: a cloud with a real VIEWPOINT had to avoid
+  the fast parser entirely. `parse_pcd` now returns the header as JSON, and the
+  viewpoint gate is gone from the whole-file path. It remains on the _streaming_
+  path, which reads rows without a header and genuinely cannot carry it.
+- Intensity aliases (`reflectivity`/`reflectance`/`remission`) and
+  case-insensitive field names, both of which the TypeScript parser had.
+
+Item 0 is therefore done for XYZ, PTS and PCD; ASCII PLY came with item 1.
+
 #### 1. Binary PLY
 
 The single biggest CPU item still in TypeScript.
@@ -1094,6 +1139,44 @@ Three things must come along or the port is a regression:
 
 Big enough to be worth doing properly: a real property/element table in Rust
 rather than the per-value type switch the TS version needs.
+
+**Done (August 2026), and it turned out there were three decoders, not two.**
+`wasm/pointcloud-parser/src/ply.rs` is the whole format in one place — header,
+ASCII and binary bodies (both byte orders), faces, scalar fields and 3DGS DC
+colour — built as the property/element table this item asked for. All three
+carry-alongs above came with it, and each has a `cargo test`.
+
+What was deleted:
+
+- **`plyParser.ts` went from 1,247 lines to 288**: the ASCII parser, the binary
+  parser, the two `readBinaryValue` variants and the headerless-XYZ fallback are
+  gone. What remains is the type definitions and `parseHeaderOnly`, which reads
+  a header and never touches a point.
+- **The webview's second binary decoder** —
+  `binaryDataHandlers.handleUltimateRawBinaryData`, ~250 lines of `DataView`
+  loop driven by a property/offset table the extension host computed. This was
+  the one that mattered: it was a whole separate implementation of splat colour
+  and scalar fields, sitting a message boundary away from the first, and it is
+  the path the biggest files take.
+
+The transfer path changed shape to allow that, and the change is worth knowing
+about: **the extension host now sends the whole PLY file rather than slicing out
+the vertex region**, because the parser reads the header itself. That removed
+`vertexStride`, `propertyOffsets`, `faceCountType`, `faceIndexType` and
+`splatHeaderData` from the message (a Gaussian file no longer needs its header
+re-attached for Spark), and `parseHeaderOnly` now returns only `headerInfo` and
+`binaryDataStart`. The fetch path already downloaded the whole file, so it pays
+nothing; the postMessage path sends the header bytes it previously stripped.
+
+**Not yet measured on a large file.** The claim this item makes is CPU, and the
+honest position is that the correctness is tested (203 browser specs, 50 Rust
+tests) while the speed is not: it needs a run against the multi-million-point
+binary PLYs in the repo root, in the F5 host, comparing against the previous
+`PERF[ply/…]` lines. Note the known constraint from "Load-pipeline IO": WASM
+cannot read a JS buffer in place, so the webview pays one copy of the file into
+wasm memory that the `DataView` loop did not. The `alloc`/`parse_at` zero-copy
+entry points exist for exactly this and are the first thing to try if that copy
+shows up on the clock.
 
 #### 2. NPY / NPZ
 

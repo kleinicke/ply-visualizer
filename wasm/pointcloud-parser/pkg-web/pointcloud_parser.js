@@ -333,6 +333,172 @@ export class LidarScanResult {
 if (Symbol.dispose) LidarScanResult.prototype[Symbol.dispose] = LidarScanResult.prototype.free;
 
 /**
+ * Parsed PLY, handed to JS. Large buffers move out with the `take_*` methods.
+ */
+export class PlyResult {
+  static __wrap(ptr) {
+    const obj = Object.create(PlyResult.prototype);
+    obj.__wbg_ptr = ptr;
+    PlyResultFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    PlyResultFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_plyresult_free(ptr, 0);
+  }
+  /**
+   * [min_x, min_y, min_z, max_x, max_y, max_z]
+   * @returns {Float32Array}
+   */
+  bbox() {
+    const ret = wasm.plyresult_bbox(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {number}
+   */
+  get face_count() {
+    const ret = wasm.plyresult_face_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {boolean}
+   */
+  get has_colors() {
+    const ret = wasm.plyresult_has_colors(this.__wbg_ptr);
+    return ret !== 0;
+  }
+  /**
+   * @returns {boolean}
+   */
+  get has_intensity() {
+    const ret = wasm.plyresult_has_intensity(this.__wbg_ptr);
+    return ret !== 0;
+  }
+  /**
+   * @returns {boolean}
+   */
+  get has_normals() {
+    const ret = wasm.plyresult_has_normals(this.__wbg_ptr);
+    return ret !== 0;
+  }
+  /**
+   * @returns {boolean}
+   */
+  get is_gaussian_splat() {
+    const ret = wasm.plyresult_is_gaussian_splat(this.__wbg_ptr);
+    return ret !== 0;
+  }
+  /**
+   * Header facts as JSON: format, version and comments.
+   * @returns {string}
+   */
+  get metadata_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.plyresult_metadata_json(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
+   * Scalar-field names, in the order `take_scalar_at` expects.
+   * @returns {string[]}
+   */
+  get scalar_field_names() {
+    const ret = wasm.plyresult_scalar_field_names(this.__wbg_ptr);
+    var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Uint8Array}
+   */
+  take_colors() {
+    const ret = wasm.plyresult_take_colors(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {Uint32Array}
+   */
+  take_face_indices() {
+    const ret = wasm.plyresult_take_face_indices(this.__wbg_ptr);
+    var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * Vertices per face, parallel to the runs in `take_face_indices`.
+   * @returns {Uint32Array}
+   */
+  take_face_sizes() {
+    const ret = wasm.plyresult_take_face_sizes(this.__wbg_ptr);
+    var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Float32Array}
+   */
+  take_intensity() {
+    const ret = wasm.plyresult_take_intensity(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Float32Array}
+   */
+  take_normals() {
+    const ret = wasm.plyresult_take_normals(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Float32Array}
+   */
+  take_positions() {
+    const ret = wasm.plyresult_take_positions(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @param {number} index
+   * @returns {Float32Array}
+   */
+  take_scalar_at(index) {
+    const ret = wasm.plyresult_take_scalar_at(this.__wbg_ptr, index);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {number}
+   */
+  get vertex_count() {
+    const ret = wasm.plyresult_vertex_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+}
+if (Symbol.dispose) PlyResult.prototype[Symbol.dispose] = PlyResult.prototype.free;
+
+/**
  * Parsed point cloud, returned to JS. Large buffers are moved out with the
  * `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.
  */
@@ -383,6 +549,21 @@ export class PointCloudResult {
   get has_normals() {
     const ret = wasm.pointcloudresult_has_normals(this.__wbg_ptr);
     return ret !== 0;
+  }
+  /**
+   * @returns {string}
+   */
+  get metadata_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.pointcloudresult_metadata_json(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
   }
   /**
    * @returns {Uint8Array}
@@ -982,16 +1163,17 @@ export function parse_las(data, file_name) {
 }
 
 /**
- * Parse an ASCII PCD point cloud. Reads the FIELDS/COUNT header to build a
- * column layout (including PCD's packed-float `rgb`), then parses the rows.
- * Returns an error (→ JS fallback) for binary PCD or anything unsupported.
+ * Parse a PCD point cloud in any of its three encodings.
+ *
+ * One entry point rather than one per encoding: the caller cannot know which
+ * it has without reading the header, and the header is read here.
  * @param {Uint8Array} data
  * @returns {PointCloudResult}
  */
-export function parse_pcd_ascii(data) {
+export function parse_pcd(data) {
   const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.parse_pcd_ascii(ptr0, len0);
+  const ret = wasm.parse_pcd(ptr0, len0);
   if (ret[2]) {
     throw takeFromExternrefTable0(ret[1]);
   }
@@ -999,23 +1181,19 @@ export function parse_pcd_ascii(data) {
 }
 
 /**
- * Parse a binary PCD point cloud (`DATA binary`; not `binary_compressed`). Reads
- * the FIELDS/SIZE/TYPE/COUNT header to map each field to a byte offset + reader,
- * then walks fixed-size records straight into the packed output arrays — no
- * text parsing, so it's orders of magnitude faster than the JS binary path.
- * Returns Err (→ JS fallback) for ascii/compressed PCD, missing x/y/z, or a
- * header whose SIZE/TYPE don't line up with FIELDS.
+ * Parse a PLY file in either encoding, with faces, scalar fields and 3DGS
+ * colour synthesis.
  * @param {Uint8Array} data
- * @returns {PointCloudResult}
+ * @returns {PlyResult}
  */
-export function parse_pcd_binary(data) {
+export function parse_ply(data) {
   const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.parse_pcd_binary(ptr0, len0);
+  const ret = wasm.parse_ply(ptr0, len0);
   if (ret[2]) {
     throw takeFromExternrefTable0(ret[1]);
   }
-  return PointCloudResult.__wrap(ret[0]);
+  return PlyResult.__wrap(ret[0]);
 }
 
 /**
@@ -1023,10 +1201,11 @@ export function parse_pcd_binary(data) {
  * (both have < 3 numeric columns, so `parse_rows` skips them automatically),
  * then rows auto-detected from the first data row:
  *   3 → x y z · 4 → x y z intensity · 6 → x y z r g b ·
- *   7 → x y z intensity r g b (Open3D default).
- * Colors are 0-255 integers (the shared 0-1-vs-int heuristic in `Builder`
- * handles the common case; a rare all-channels-≤1 row could be misread — see
- * PERFORMANCE_PLAN raw-int colors note).
+ *   7 → x y z intensity r g b (Open3D default) ·
+ *   9 → x y z r g b nx ny nz.
+ * PTS colors are always 0-255 integers, so `ColorMode::Byte` is forced rather
+ * than left to the value heuristic — otherwise a dark row like `1 1 1` would
+ * be read as 0..1 floats and turn white.
  * @param {Uint8Array} data
  * @returns {PointCloudResult}
  */
@@ -1199,6 +1378,10 @@ const LidarScanResultFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_lidarscanresult_free(ptr, 1));
+const PlyResultFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_plyresult_free(ptr, 1));
 const PointCloudResultFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
@@ -1242,6 +1425,17 @@ function getArrayF64FromWasm0(ptr, len) {
   return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 
+function getArrayJsValueFromWasm0(ptr, len) {
+  ptr = ptr >>> 0;
+  const mem = getDataViewMemory0();
+  const result = [];
+  for (let i = ptr; i < ptr + 4 * len; i += 4) {
+    result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+  }
+  wasm.__externref_drop_slice(ptr, len);
+  return result;
+}
+
 function getArrayU16FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
@@ -1255,6 +1449,19 @@ function getArrayU32FromWasm0(ptr, len) {
 function getArrayU8FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
+let cachedDataViewMemory0 = null;
+function getDataViewMemory0() {
+  if (
+    cachedDataViewMemory0 === null ||
+    cachedDataViewMemory0.buffer.detached === true ||
+    (cachedDataViewMemory0.buffer.detached === undefined &&
+      cachedDataViewMemory0.buffer !== wasm.memory.buffer)
+  ) {
+    cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
+  }
+  return cachedDataViewMemory0;
 }
 
 let cachedFloat32ArrayMemory0 = null;
@@ -1408,6 +1615,7 @@ function __wbg_finalize_init(instance, module) {
   wasmInstance = instance;
   wasm = instance.exports;
   wasmModule = module;
+  cachedDataViewMemory0 = null;
   cachedFloat32ArrayMemory0 = null;
   cachedFloat64ArrayMemory0 = null;
   cachedUint16ArrayMemory0 = null;

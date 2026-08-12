@@ -72,37 +72,28 @@ export function pcdViewpointIsIdentity(bytes: Uint8Array): boolean {
 export async function sendUltimateRawBinary(
   webviewPanel: vscode.WebviewPanel,
   parsedData: any,
-  headerResult: any,
   rawFileData: Uint8Array,
   messageType: string,
   logPerf: (line: string) => void
 ): Promise<void> {
   console.log(`🚀 ULTIMATE: Sending raw binary data for ${parsedData.fileName}`);
 
-  // Extract exactly the binary vertex bytes into a standalone ArrayBuffer.
-  // NOTE: vscode.workspace.fs.readFile returns a Node Buffer, whose .slice()
-  // is a *view* over the whole file's ArrayBuffer — so we must slice .buffer
-  // by byteOffset/byteLength to copy out just the vertex region. Sending the
-  // raw .buffer instead would ship the whole file from offset 0 (header bytes
-  // read as float32 → garbage geometry).
+  // The whole file goes across, header included: the webview parses it with
+  // the same Rust parser the extension host would have used, so it needs no
+  // property/offset table - and a Gaussian file no longer needs its header
+  // sent separately for Spark to reconstruct the source.
+  //
+  // NOTE: vscode.workspace.fs.readFile returns a Node Buffer, whose .buffer is
+  // the whole pooled allocation, so the copy is taken by byteOffset/byteLength
+  // rather than by handing over .buffer.
   const copyStart = performance.now();
-  const binaryVertexData = rawFileData.subarray(headerResult.binaryDataStart);
-  const slicedBuffer = binaryVertexData.buffer.slice(
-    binaryVertexData.byteOffset,
-    binaryVertexData.byteOffset + binaryVertexData.byteLength
+  const fileBuffer = rawFileData.buffer.slice(
+    rawFileData.byteOffset,
+    rawFileData.byteOffset + rawFileData.byteLength
   );
-  // Spark needs the original PLY header as well as the complete binary body.
-  // The body is already being sent as slicedBuffer, so Gaussian files only
-  // need this small prefix to reconstruct the source in the webview.
-  const splatHeaderData = parsedData.isGaussianSplat
-    ? rawFileData.buffer.slice(
-        rawFileData.byteOffset,
-        rawFileData.byteOffset + headerResult.binaryDataStart
-      )
-    : undefined;
   const copyMs = performance.now() - copyStart;
   logPerf(
-    `⏱️ PERF[ply/ext] copy ${copyMs.toFixed(1)}ms (${(binaryVertexData.byteLength / 1048576).toFixed(1)}MB) for ${parsedData.fileName}`
+    `⏱️ PERF[ply/ext] copy ${copyMs.toFixed(1)}ms (${(rawFileData.byteLength / 1048576).toFixed(1)}MB) for ${parsedData.fileName}`
   );
 
   // Send raw binary data + parsing metadata
@@ -123,14 +114,8 @@ export async function sendUltimateRawBinary(
     format: parsedData.format,
     comments: parsedData.comments,
 
-    // Raw binary data + parsing info
-    rawBinaryData: slicedBuffer,
-    splatHeaderData,
-    vertexStride: headerResult.vertexStride,
-    propertyOffsets: Array.from(headerResult.propertyOffsets.entries()),
-    littleEndian: headerResult.headerInfo.format === 'binary_little_endian',
-    faceCountType: headerResult.faceCountType,
-    faceIndexType: headerResult.faceIndexType,
+    // The file itself; everything above is display metadata for the file list.
+    rawBinaryData: fileBuffer,
   });
 }
 

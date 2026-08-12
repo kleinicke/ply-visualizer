@@ -1,7 +1,7 @@
 import * as assert from 'assert';
-import { PcdParser } from '../../../engine/src/parsers/pcdParser';
+import { parsePcdWasm } from '../../../engine/src/parsers/pointcloudWasm';
 import { PlyParser } from '../../../engine/src/parsers/plyParser';
-import { PtsParser } from '../../../engine/src/parsers/ptsParser';
+import { parsePtsWasm } from '../../../engine/src/parsers/pointcloudWasm';
 
 suite('Intensity Parser Support', () => {
   test('PCD ASCII intensity is preserved as a scalar array', async () => {
@@ -20,7 +20,7 @@ DATA ascii
 1 0 0 0.5
 2 0 0 1`;
 
-    const result = await new PcdParser().parse(new TextEncoder().encode(pcdContent));
+    const result = await parsePcdWasm(new TextEncoder().encode(pcdContent));
 
     assert.strictEqual(result.vertexCount, 3);
     assert.strictEqual(result.hasColors, false);
@@ -51,7 +51,7 @@ DATA binary
     data.set(headerBytes);
     data.set(payload, headerBytes.length);
 
-    const result = await new PcdParser().parse(data);
+    const result = await parsePcdWasm(data);
 
     assert.strictEqual(result.vertexCount, 2);
     assert.strictEqual(result.hasIntensity, true);
@@ -66,7 +66,7 @@ DATA binary
     const ptsContent = `0 0 0 0.25
 1 0 0 0.75`;
 
-    const result = await new PtsParser().parse(new TextEncoder().encode(ptsContent));
+    const result = await parsePtsWasm(new TextEncoder().encode(ptsContent));
 
     assert.strictEqual(result.vertexCount, 2);
     assert.strictEqual(result.hasIntensity, true);

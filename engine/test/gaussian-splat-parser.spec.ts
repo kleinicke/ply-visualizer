@@ -71,7 +71,7 @@ test('detects the minimal deg-0 layout without f_rest or normals', async () => {
   expectAnchors(result);
 });
 
-test('ultimate binary path (parseHeaderOnly + webview reader) synthesizes DC colors', async () => {
+test('ultimate binary path (whole file to the webview) synthesizes DC colors', async () => {
   const bytes = readSplatFile('3dgs_small_binary.ply');
   const parser = new PlyParser();
   const header = await parser.parseHeaderOnly(bytes, () => {});
@@ -87,23 +87,13 @@ test('ultimate binary path (parseHeaderOnly + webview reader) synthesizes DC col
     displayFiles: async () => {},
     handleUltimateRawBinaryData: async () => {},
   };
-  const vertexBytes = bytes.slice(header.binaryDataStart);
+  // The extension host now sends the file as it is: the webview parses it,
+  // so there is no offset table and no separate splat header to reassemble.
   await handleUltimateRawBinaryData(host, {
     messageType: 'addFiles',
     fileName: '3dgs_small_binary.ply',
     fileSizeInBytes: bytes.byteLength,
-    rawBinaryData: vertexBytes.buffer,
-    vertexCount: header.headerInfo.vertexCount,
-    faceCount: header.headerInfo.faceCount,
-    hasColors: header.headerInfo.hasColors,
-    hasNormals: header.headerInfo.hasNormals,
-    hasIntensity: header.headerInfo.hasIntensity,
-    format: header.headerInfo.format,
-    comments: header.headerInfo.comments,
-    vertexStride: header.vertexStride,
-    propertyOffsets: Array.from(header.propertyOffsets.entries()),
-    littleEndian: true,
-    splatHeaderData: bytes.slice(0, header.binaryDataStart).buffer,
+    rawBinaryData: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
   });
 
   expect(captured).toHaveLength(1);

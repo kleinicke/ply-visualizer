@@ -1,7 +1,7 @@
 import { SpatialData, SpatialVertex } from './interfaces';
 import { PerfTimer } from './utils/perfLog';
 import { noteContainerScanLoaded } from './utils/containerPerf';
-import { isExtraScalarProperty, isGaussianSplatLayout, shDcToU8 } from './utils/scalarFields';
+import { parsePlyWasm } from './parsers/pointcloudWasm';
 
 export interface BinaryDataHandlersHost {
   vscode: { postMessage(message: any): void };
@@ -62,8 +62,8 @@ export async function handleUltimateRawBinaryUri(
     }
     const full = await response.arrayBuffer();
     const fetchMs = performance.now() - fetchStart;
-    // Extract the vertex region, matching what the extension would have sliced.
-    message.rawBinaryData = full.slice(message.binaryDataStart);
+    // The parser reads the header itself, so the whole file goes through.
+    message.rawBinaryData = full;
     message.fetchMs = fetchMs;
     await host.handleUltimateRawBinaryData(message);
   } catch (error) {
@@ -88,291 +88,31 @@ export async function handleUltimateRawBinaryData(
     perf.add('fetch', message.fetchMs);
   }
 
-  // Parse raw binary data directly in webview
+  // The whole PLY file arrives here — from a fetch of the document URI, or
+  // over postMessage when that is not available — and the Rust parser reads
+  // it. This used to be a hand-rolled DataView loop over the vertex region
+  // only, driven by a property/offset table the extension host computed: a
+  // second binary PLY decoder, with its own idea of splat colour and scalar
+  // fields, sitting a message boundary away from the first.
   const rawData = new Uint8Array(message.rawBinaryData);
-  const dataView = new DataView(rawData.buffer, rawData.byteOffset, rawData.byteLength);
-  const propertyOffsets = new Map(message.propertyOffsets);
-  const vertexStride = message.vertexStride;
-  const vertexCount = message.vertexCount;
-  const littleEndian = message.littleEndian;
-  // Derived here (not trusted from the message) so every sender of the
-  // ultimate path — initial load, add-files, fetch fallback, sequence
-  // playback — gets 3DGS handling without carrying an extra flag.
-  const isSplat = isGaussianSplatLayout([...propertyOffsets.keys()].map(k => String(k)));
-  const faceCountType = message.faceCountType as string | undefined;
-  const faceIndexType = message.faceIndexType as string | undefined;
-
-  // concise timing printed after
-
-  // Pre-allocate TypedArrays for maximum performance
-  const positions = new Float32Array(vertexCount * 3);
-  const colors = message.hasColors ? new Uint8Array(vertexCount * 3) : null;
-  const normals = message.hasNormals ? new Float32Array(vertexCount * 3) : null;
-  const intensity = message.hasIntensity ? new Float32Array(vertexCount) : null;
-
-  // Get property offsets
-  const xOffset = propertyOffsets.get('x');
-  const yOffset = propertyOffsets.get('y');
-  const zOffset = propertyOffsets.get('z');
-  const redOffset = propertyOffsets.get('red');
-  const greenOffset = propertyOffsets.get('green');
-  const blueOffset = propertyOffsets.get('blue');
-  const nxOffset = propertyOffsets.get('nx');
-  const nyOffset = propertyOffsets.get('ny');
-  const nzOffset = propertyOffsets.get('nz');
-  const getPropertyOffset = (names: string[]) => {
-    for (const name of names) {
-      const direct = propertyOffsets.get(name);
-      if (direct) {
-        return direct;
-      }
-    }
-    for (const [field, offset] of propertyOffsets.entries()) {
-      if (names.includes(String(field).toLowerCase())) {
-        return offset;
-      }
-    }
-    return undefined;
-  };
-  const intensityOffset = getPropertyOffset([
-    'intensity',
-    'reflectivity',
-    'reflectance',
-    'remission',
-  ]);
-
-  // Helper function to read binary value based on type
-  const readBinaryValue = (offset: number, type: string): number => {
-    switch (type) {
-      case 'char':
-      case 'int8':
-        return dataView.getInt8(offset);
-      case 'uchar':
-      case 'uint8':
-        return dataView.getUint8(offset);
-      case 'short':
-      case 'int16':
-        return dataView.getInt16(offset, littleEndian);
-      case 'ushort':
-      case 'uint16':
-        return dataView.getUint16(offset, littleEndian);
-      case 'int':
-      case 'int32':
-        return dataView.getInt32(offset, littleEndian);
-      case 'uint':
-      case 'uint32':
-        return dataView.getUint32(offset, littleEndian);
-      case 'float':
-      case 'float32':
-        return dataView.getFloat32(offset, littleEndian);
-      case 'double':
-      case 'float64':
-        return dataView.getFloat64(offset, littleEndian);
-      default:
-        throw new Error(`Unsupported data type: ${type}`);
-    }
-  };
-
-  // Fast path: the overwhelmingly common PLY layouts are float32 (or float64)
-  // x/y/z, uint8 r/g/b, float32 normals, float32 intensity. When every present
-  // property matches that, we read directly from the DataView in a tight loop
-  // with no per-property function call and no string-`switch` (the previous
-  // version did ~6 calls × N vertices, which dominated parse time). Open3D
-  // commonly writes double (float64) positions, so both widths are supported.
-  const isF32 = (t?: string) => t === 'float' || t === 'float32';
-  const isF64 = (t?: string) => t === 'double' || t === 'float64';
-  const isU8 = (t?: string) => t === 'uchar' || t === 'uint8';
-  const hasC = !!(colors && redOffset && greenOffset && blueOffset);
-  const hasN = !!(normals && nxOffset && nyOffset && nzOffset);
-  const hasI = !!(intensity && intensityOffset);
-  const posF32 =
-    isF32((xOffset as any)?.type) && isF32((yOffset as any)?.type) && isF32((zOffset as any)?.type);
-  const posF64 =
-    isF64((xOffset as any)?.type) && isF64((yOffset as any)?.type) && isF64((zOffset as any)?.type);
-  const fastEligible =
-    !!xOffset &&
-    !!yOffset &&
-    !!zOffset &&
-    (posF32 || posF64) &&
-    (!hasC ||
-      (isU8((redOffset as any).type) &&
-        isU8((greenOffset as any).type) &&
-        isU8((blueOffset as any).type))) &&
-    (!hasN ||
-      (isF32((nxOffset as any).type) &&
-        isF32((nyOffset as any).type) &&
-        isF32((nzOffset as any).type))) &&
-    (!hasI || isF32((intensityOffset as any).type));
-
-  if (fastEligible) {
-    const le = littleEndian;
-    const xo = (xOffset as any).offset;
-    const yo = (yOffset as any).offset;
-    const zo = (zOffset as any).offset;
-    const ro = hasC ? (redOffset as any).offset : 0;
-    const go = hasC ? (greenOffset as any).offset : 0;
-    const bo = hasC ? (blueOffset as any).offset : 0;
-    const nxo = hasN ? (nxOffset as any).offset : 0;
-    const nyo = hasN ? (nyOffset as any).offset : 0;
-    const nzo = hasN ? (nzOffset as any).offset : 0;
-    const io = hasI ? (intensityOffset as any).offset : 0;
-
-    for (let i = 0; i < vertexCount; i++) {
-      const vo = i * vertexStride;
-      const i3 = i * 3;
-      if (posF64) {
-        positions[i3] = dataView.getFloat64(vo + xo, le);
-        positions[i3 + 1] = dataView.getFloat64(vo + yo, le);
-        positions[i3 + 2] = dataView.getFloat64(vo + zo, le);
-      } else {
-        positions[i3] = dataView.getFloat32(vo + xo, le);
-        positions[i3 + 1] = dataView.getFloat32(vo + yo, le);
-        positions[i3 + 2] = dataView.getFloat32(vo + zo, le);
-      }
-      if (hasC) {
-        colors![i3] = dataView.getUint8(vo + ro);
-        colors![i3 + 1] = dataView.getUint8(vo + go);
-        colors![i3 + 2] = dataView.getUint8(vo + bo);
-      }
-      if (hasN) {
-        normals![i3] = dataView.getFloat32(vo + nxo, le);
-        normals![i3 + 1] = dataView.getFloat32(vo + nyo, le);
-        normals![i3 + 2] = dataView.getFloat32(vo + nzo, le);
-      }
-      if (hasI) {
-        intensity![i] = dataView.getFloat32(vo + io, le);
-      }
-    }
-  } else {
-    // Generic fallback for mixed/exotic property types.
-    for (let i = 0; i < vertexCount; i++) {
-      const vertexOffset = i * vertexStride;
-      const i3 = i * 3;
-
-      if (xOffset) {
-        positions[i3] = readBinaryValue(
-          vertexOffset + (xOffset as any).offset,
-          (xOffset as any).type
-        );
-      }
-      if (yOffset) {
-        positions[i3 + 1] = readBinaryValue(
-          vertexOffset + (yOffset as any).offset,
-          (yOffset as any).type
-        );
-      }
-      if (zOffset) {
-        positions[i3 + 2] = readBinaryValue(
-          vertexOffset + (zOffset as any).offset,
-          (zOffset as any).type
-        );
-      }
-
-      if (colors && redOffset) {
-        colors[i3] = readBinaryValue(
-          vertexOffset + (redOffset as any).offset,
-          (redOffset as any).type
-        );
-      }
-      if (colors && greenOffset) {
-        colors[i3 + 1] = readBinaryValue(
-          vertexOffset + (greenOffset as any).offset,
-          (greenOffset as any).type
-        );
-      }
-      if (colors && blueOffset) {
-        colors[i3 + 2] = readBinaryValue(
-          vertexOffset + (blueOffset as any).offset,
-          (blueOffset as any).type
-        );
-      }
-
-      if (normals && nxOffset) {
-        normals[i3] = readBinaryValue(
-          vertexOffset + (nxOffset as any).offset,
-          (nxOffset as any).type
-        );
-      }
-      if (normals && nyOffset) {
-        normals[i3 + 1] = readBinaryValue(
-          vertexOffset + (nyOffset as any).offset,
-          (nyOffset as any).type
-        );
-      }
-      if (normals && nzOffset) {
-        normals[i3 + 2] = readBinaryValue(
-          vertexOffset + (nzOffset as any).offset,
-          (nzOffset as any).type
-        );
-      }
-
-      if (intensity && intensityOffset) {
-        intensity[i] = readBinaryValue(
-          vertexOffset + (intensityOffset as any).offset,
-          (intensityOffset as any).type
-        );
-      }
-    }
-  }
-
-  // 3DGS: the color lives in the f_dc_0..2 SH DC coefficients (float32).
-  // Synthesized in a second pass, like the extra scalar fields below, so the
-  // hand-tuned main loop stays untouched. Normal files skip this entirely.
-  if (colors && isSplat) {
-    const dc0 = propertyOffsets.get('f_dc_0') as { offset: number } | undefined;
-    const dc1 = propertyOffsets.get('f_dc_1') as { offset: number } | undefined;
-    const dc2 = propertyOffsets.get('f_dc_2') as { offset: number } | undefined;
-    if (dc0 && dc1 && dc2) {
-      for (let i = 0; i < vertexCount; i++) {
-        const vo = i * vertexStride;
-        const i3 = i * 3;
-        colors[i3] = shDcToU8(dataView.getFloat32(vo + dc0.offset, littleEndian));
-        colors[i3 + 1] = shDcToU8(dataView.getFloat32(vo + dc1.offset, littleEndian));
-        colors[i3 + 2] = shDcToU8(dataView.getFloat32(vo + dc2.offset, littleEndian));
-      }
-    }
-  }
-
-  // Extra scalar fields (confidence, error, label, …) in a per-field second
-  // pass, so the hand-tuned main loop above stays untouched. Files without
-  // extra properties skip this entirely.
-  const extraScalarFields: Record<string, Float32Array> = {};
-  for (const [rawName, rawInfo] of propertyOffsets.entries()) {
-    const name = String(rawName);
-    const info = rawInfo as { offset: number; type: string };
-    if (!isExtraScalarProperty(name, info.type, isSplat)) {
-      continue;
-    }
-    const arr = new Float32Array(vertexCount);
-    if (info.type === 'float' || info.type === 'float32') {
-      for (let i = 0; i < vertexCount; i++) {
-        arr[i] = dataView.getFloat32(i * vertexStride + info.offset, littleEndian);
-      }
-    } else {
-      for (let i = 0; i < vertexCount; i++) {
-        arr[i] = readBinaryValue(i * vertexStride + info.offset, info.type);
-      }
-    }
-    extraScalarFields[name] = arr;
-  }
+  const parsed = await parsePlyWasm(rawData);
+  const isSplat = parsed.isGaussianSplat;
 
   const parseTime = performance.now();
   perf.mark('parse');
-  perf.note('fast', fastEligible ? 1 : 0);
   console.log(`Load: parse ${message.fileName} ${(parseTime - startTime).toFixed(1)}ms`);
 
-  // Create PLY data object with TypedArrays
   const spatialData: SpatialData = {
-    vertices: [], // Empty - not used
-    faces: [],
-    format: message.format,
-    version: '1.0',
-    comments: message.comments || [],
-    vertexCount: message.vertexCount,
-    faceCount: message.faceCount,
-    hasColors: message.hasColors,
-    hasNormals: message.hasNormals,
-    hasIntensity: message.hasIntensity,
+    vertices: [],
+    faces: parsed.faces,
+    format: parsed.format,
+    version: parsed.version,
+    comments: parsed.comments,
+    vertexCount: parsed.vertexCount,
+    faceCount: parsed.faceCount,
+    hasColors: parsed.hasColors,
+    hasNormals: parsed.hasNormals,
+    hasIntensity: parsed.hasIntensity,
     isGaussianSplat: isSplat,
     fileName: message.fileName,
     shortPath: message.shortPath,
@@ -380,112 +120,24 @@ export async function handleUltimateRawBinaryData(
   };
   if (isSplat && message.fileUri) {
     // Splat mode re-fetches the full PLY from this webview URI on demand, so
-    // no bytes are retained here. Absent on the postMessage fallback path
-    // (where fetch already failed) — splat mode is unavailable there.
+    // no bytes are retained here.
     spatialData.splatSource = { url: message.fileUri };
-  } else if (isSplat && message.splatHeaderData) {
-    // Add-file/drop routes already transferred the complete binary body for
-    // point parsing. Prefix the small original header and retain that same
-    // body for Spark instead of sending the large file a second time.
-    const header = new Uint8Array(message.splatHeaderData);
-    const source = new Uint8Array(header.byteLength + rawData.byteLength);
-    source.set(header, 0);
-    source.set(rawData, header.byteLength);
-    spatialData.splatSource = { bytes: source };
+  } else if (isSplat) {
+    // The postMessage route already carries the complete file, so Spark can
+    // reuse those bytes rather than have them sent a second time.
+    spatialData.splatSource = { bytes: rawData };
   }
 
-  // Attach TypedArrays
   (spatialData as any).useTypedArrays = true;
-  (spatialData as any).positionsArray = positions;
-  (spatialData as any).colorsArray = colors;
-  (spatialData as any).normalsArray = normals;
-  (spatialData as any).intensityArray = intensity;
-  (spatialData as any).scalarFields = intensity
-    ? { intensity, ...extraScalarFields }
-    : extraScalarFields;
-
-  // Faces: if face info was provided in header, read faces after vertex block
-  // Note: rawBinaryData starts at vertex buffer; if faces follow, they are after vertexStride * vertexCount bytes
-  if (message.faceCount && faceCountType && faceIndexType) {
-    const faceStart = vertexStride * vertexCount;
-    // debug faces summary
-    if (faceStart < rawData.byteLength) {
-      let offs = 0; // Offset within the face DataView (already anchored at faceStart)
-      const dv = new DataView(
-        rawData.buffer,
-        rawData.byteOffset + faceStart,
-        rawData.byteLength - faceStart
-      );
-      const readVal = (off: number, type: string): { val: number; next: number } => {
-        switch (type) {
-          case 'char':
-          case 'int8':
-            return { val: dv.getInt8(off), next: off + 1 };
-          case 'uchar':
-          case 'uint8':
-            return { val: dv.getUint8(off), next: off + 1 };
-          case 'short':
-          case 'int16':
-            return { val: dv.getInt16(off, littleEndian), next: off + 2 };
-          case 'ushort':
-          case 'uint16':
-            return { val: dv.getUint16(off, littleEndian), next: off + 2 };
-          case 'int':
-          case 'int32':
-            return { val: dv.getInt32(off, littleEndian), next: off + 4 };
-          case 'uint':
-          case 'uint32':
-            return { val: dv.getUint32(off, littleEndian), next: off + 4 };
-          case 'float':
-          case 'float32':
-            return { val: dv.getFloat32(off, littleEndian), next: off + 4 };
-          case 'double':
-          case 'float64':
-            return { val: dv.getFloat64(off, littleEndian), next: off + 8 };
-          default:
-            throw new Error(`Unsupported face type: ${type}`);
-        }
-      };
-      // Sample first few faces for sanity logging
-      const sampleCount = Math.min(5, message.faceCount);
-      const sampleSummary: Array<{ count: number; firstIdxs: number[] }> = [];
-      let sampleOffs = 0;
-      for (let sf = 0; sf < sampleCount && sampleOffs < dv.byteLength; sf++) {
-        let r = readVal(sampleOffs, faceCountType);
-        const cnt = r.val >>> 0;
-        sampleOffs = r.next;
-        const firstIdxs: number[] = [];
-        for (let j = 0; j < Math.min(cnt, 4) && sampleOffs < dv.byteLength; j++) {
-          r = readVal(sampleOffs, faceIndexType);
-          firstIdxs.push(r.val >>> 0);
-          sampleOffs = r.next;
-        }
-        // Skip rest of indices for sampling
-        for (let j = Math.min(cnt, 4); j < cnt && sampleOffs < dv.byteLength; j++) {
-          r = readVal(sampleOffs, faceIndexType);
-          sampleOffs = r.next;
-        }
-        sampleSummary.push({ count: cnt, firstIdxs });
-      }
-      // debug sample
-      for (let f = 0; f < message.faceCount; f++) {
-        let res = readVal(offs, faceCountType);
-        const cnt = res.val >>> 0; // count is non-negative
-        offs = res.next;
-        const indices: number[] = new Array(cnt);
-        for (let j = 0; j < cnt; j++) {
-          res = readVal(offs, faceIndexType);
-          indices[j] = res.val >>> 0;
-          offs = res.next;
-        }
-        spatialData.faces.push({ indices });
-      }
-    }
-  }
+  (spatialData as any).positionsArray = parsed.positionsArray;
+  (spatialData as any).colorsArray = parsed.colorsArray;
+  (spatialData as any).normalsArray = parsed.normalsArray;
+  (spatialData as any).intensityArray = parsed.intensityArray;
+  (spatialData as any).scalarFields = parsed.scalarFields;
 
   console.log(`Load: total ${(performance.now() - startTime).toFixed(1)}ms`);
 
-  if (message.faceCount) {
+  if (parsed.faceCount) {
     perf.mark('faces');
   }
 
@@ -523,7 +175,7 @@ export async function handleUltimateRawBinaryData(
   }
 
   // Calculate performance metrics
-  const totalVertices = message.vertexCount;
+  const totalVertices = parsed.vertexCount;
   const verticesPerSecond = Math.round(totalVertices / (absoluteCompleteTime / 1000));
   const modeLabel = message.messageType === 'addFiles' ? 'ADD FILE' : 'ULTIMATE';
   // concise metrics printed above
@@ -532,7 +184,9 @@ export async function handleUltimateRawBinaryData(
   // the message — consistent for first and added files, no clock juggling.
   perf.note('verts', totalVertices.toLocaleString());
   perf.note('MB', (message.fileSizeInBytes / 1048576).toFixed(1));
-  perf.note('mode', message.fast ? 'binary' : 'binary-js');
+  // One decoder now, so the mode is a constant rather than which of two
+  // JavaScript loops the file happened to qualify for.
+  perf.note('mode', 'binary-rust');
   perf.summary();
 }
 

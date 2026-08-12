@@ -8,8 +8,12 @@ import { PlyParser } from '../engine/src/parsers/plyParser';
 import { ObjParser } from '../engine/src/parsers/objParser';
 import { MtlParser } from '../engine/src/parsers/mtlParser';
 import { StlParser } from '../engine/src/parsers/stlParser';
-import { PcdParser } from '../engine/src/parsers/pcdParser';
-import { PtsParser } from '../engine/src/parsers/ptsParser';
+import {
+  parsePcdWasm,
+  parsePtsWasm,
+  toPcdPayload,
+  toPointCloudPayload,
+} from '../engine/src/parsers/pointcloudWasm';
 import { OffParser } from '../engine/src/parsers/offParser';
 import { GltfParser } from '../engine/src/parsers/gltfParser';
 import {
@@ -731,32 +735,19 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         const parser = new PlyParser();
         const isBinary = isPlyBinary(bytes);
         if (isBinary) {
-          const header = await parser.parseHeaderOnly(bytes);
-          header.headerInfo.fileName = fileName;
-          // Mirror original transfer semantics to avoid DataView bounds issues
-          const binaryVertexData = bytes.slice(header.binaryDataStart);
-          const rawBinaryData = binaryVertexData.buffer.slice(
-            binaryVertexData.byteOffset,
-            binaryVertexData.byteOffset + binaryVertexData.byteLength
+          // The webview parses the file itself, so the whole buffer goes
+          // across - header included - and no offset table travels with it.
+          const rawBinaryData = bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength
           );
           webviewPanel.webview.postMessage({
             type: 'sequence:file:ultimate',
             index: message.index,
             requestId: message.requestId,
-            fileName: fileName,
+            fileName,
             rawBinaryData,
-            vertexCount: header.headerInfo.vertexCount,
-            faceCount: header.headerInfo.faceCount,
-            hasColors: header.headerInfo.hasColors,
-            hasNormals: header.headerInfo.hasNormals,
-            hasIntensity: header.headerInfo.hasIntensity,
-            format: header.headerInfo.format,
-            comments: header.headerInfo.comments,
-            vertexStride: header.vertexStride,
-            propertyOffsets: Array.from(header.propertyOffsets.entries()),
-            littleEndian: header.headerInfo.format === 'binary_little_endian',
-            faceCountType: header.faceCountType,
-            faceIndexType: header.faceIndexType,
+            fileSizeInBytes: bytes.byteLength,
           });
         } else {
           const parsed = await parser.parse(bytes);
@@ -809,8 +800,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       }
       if (ext === '.pcd') {
         const pcdBytes = await vscode.workspace.fs.readFile(fileUri);
-        const pcdParser = new PcdParser();
-        const parsed = await pcdParser.parse(pcdBytes);
+        const parsed = toPcdPayload(await parsePcdWasm(pcdBytes));
         webviewPanel.webview.postMessage({
           type: 'sequence:file:pcd',
           index: message.index,
@@ -822,8 +812,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       }
       if (ext === '.pts') {
         const ptsBytes = await vscode.workspace.fs.readFile(fileUri);
-        const ptsParser = new PtsParser();
-        const parsed = await ptsParser.parse(ptsBytes);
+        const parsed = toPointCloudPayload(await parsePtsWasm(ptsBytes), 'pts');
         webviewPanel.webview.postMessage({
           type: 'sequence:file:pts',
           index: message.index,
@@ -939,7 +928,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       await sendUltimateRawBinary(
         panel,
         parsedData,
-        headerResult,
         bytes,
         message.messageType || 'multiSpatialData',
         this.logPerf.bind(this)

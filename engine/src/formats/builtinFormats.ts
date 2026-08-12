@@ -1,8 +1,14 @@
 import { PlyParser } from '../parsers/plyParser';
 import { ObjParser } from '../parsers/objParser';
 import { StlParser } from '../parsers/stlParser';
-import { PcdParser } from '../parsers/pcdParser';
-import { PtsParser } from '../parsers/ptsParser';
+import {
+  describeLayout,
+  parsePcdWasm,
+  parsePtsWasm,
+  parseXyzWasm,
+  toPcdPayload,
+  toPointCloudPayload,
+} from '../parsers/pointcloudWasm';
 import { KittiBinParser } from '../parsers/kittiBinParser';
 import { StonexX3aParser } from '../parsers/stonexX3aParser';
 import { OffParser } from '../parsers/offParser';
@@ -83,12 +89,20 @@ export function registerBuiltinFormats(
   });
 
   registry.register({
-    // XYZ variants are ASCII point lists the PLY parser already handles.
     extensions: ['xyz', 'xyzn', 'xyzrgb'],
     category: 'pointCloud',
     async parse({ data, fileName, timingCallback }) {
-      const xyzData = await new PlyParser().parse(data, timingCallback);
-      return { data: { ...xyzData, fileName }, type: 'xyzData' };
+      // The variant decides the column layout, and only the file name carries
+      // it - `.xyzn` is normals, `.xyzrgb` colours, plain `.xyz` auto-detects.
+      const variant = fileName.split('.').pop()?.toLowerCase() ?? 'xyz';
+      timingCallback?.(`🔍 XYZ: parsing ${variant} in Rust...`);
+      const parsed = await parseXyzWasm(data, variant);
+      timingCallback?.(`✅ XYZ: parsed ${parsed.vertexCount.toLocaleString()} points`);
+      const payload = toPointCloudPayload(parsed, 'ascii', [
+        `Converted from ${variant.toUpperCase()}: ${fileName}`,
+        `Format variant: ${variant}`,
+      ]);
+      return { data: convertToUnifiedFormat(payload, fileName), type: 'xyzData' };
     },
   });
 
@@ -96,8 +110,13 @@ export function registerBuiltinFormats(
     extensions: ['pcd'],
     category: 'pointCloud',
     async parse({ data, fileName, timingCallback }) {
-      const pcdData = await new PcdParser().parse(data, timingCallback);
-      return { data: convertToUnifiedFormat(pcdData, fileName), type: 'pcdData' };
+      timingCallback?.('🔍 PCD: parsing in Rust...');
+      const parsed = await parsePcdWasm(data);
+      timingCallback?.(
+        `✅ PCD: parsed ${parsed.vertexCount.toLocaleString()} points (${parsed.header.format}, ` +
+          `fields: ${parsed.header.fields.join(' ')})`
+      );
+      return { data: convertToUnifiedFormat(toPcdPayload(parsed), fileName), type: 'pcdData' };
     },
   });
 
@@ -105,8 +124,15 @@ export function registerBuiltinFormats(
     extensions: ['pts'],
     category: 'pointCloud',
     async parse({ data, fileName, timingCallback }) {
-      const ptsData = await new PtsParser().parse(data, timingCallback);
-      return { data: convertToUnifiedFormat(ptsData, fileName), type: 'ptsData' };
+      timingCallback?.('🔍 PTS: parsing in Rust...');
+      const parsed = await parsePtsWasm(data);
+      timingCallback?.(
+        `✅ PTS: parsed ${parsed.vertexCount.toLocaleString()} points (${describeLayout(parsed)})`
+      );
+      return {
+        data: convertToUnifiedFormat(toPointCloudPayload(parsed, 'pts'), fileName),
+        type: 'ptsData',
+      };
     },
   });
 

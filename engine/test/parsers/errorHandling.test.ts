@@ -2,7 +2,6 @@ import * as assert from 'assert';
 import { PlyParser } from '../../src/parsers/plyParser';
 import { ObjParser } from '../../src/parsers/objParser';
 import { StlParser } from '../../src/parsers/stlParser';
-import { PcdParser } from '../../src/parsers/pcdParser';
 
 suite('Parser Error Handling Test Suite', () => {
   test('PLY Parser should handle corrupted headers gracefully', async () => {
@@ -107,31 +106,6 @@ f 1 2 999`;
           error.message.includes('STL')
       );
     }
-  });
-
-  test('PCD Parser should handle unknown field types', async () => {
-    const pcdParser = new PcdParser();
-
-    const unknownFieldPcd = `# Point Cloud Data file format
-VERSION 0.7
-FIELDS x y z unknown_field
-SIZE 4 4 4 4
-TYPE F F F X
-COUNT 1 1 1 1
-WIDTH 2
-HEIGHT 1
-VIEWPOINT 0 0 0 1 0 0 0
-POINTS 2
-DATA ascii
-0.0 0.0 0.0 999
-1.0 0.0 0.0 888`;
-
-    const data = new TextEncoder().encode(unknownFieldPcd);
-    const result = await pcdParser.parse(data);
-
-    // Should handle unknown fields by ignoring them
-    assert.ok(result.vertexCount >= 0);
-    assert.ok(result.vertices.length >= 0);
   });
 
   test('All parsers should handle extremely large files gracefully', async function () {

@@ -18,25 +18,24 @@
  * genuinely separate process) is the way to get it off the UI thread there.
  */
 
-import initWasm, {
-  coarse_align,
-  fit_correspondences,
-  icp_refine,
-  register_pair,
-} from '../../../wasm/pointcloud-parser/pkg-web/pointcloud_parser';
+import * as wasm from '../../../wasm/pointcloud-parser/pkg-web/pointcloud_parser';
 import type { RegistrationWasm } from './wasmLoader';
 
 let ready: Promise<RegistrationWasm | null> | null = null;
 
+/**
+ * Resolves to the whole module namespace, not just the four registration
+ * entries, because the Node loader this stands in for hands back the entire
+ * CommonJS module and callers rely on that: `parsers/stonexWasm.ts` and
+ * `parsers/pointcloudWasm.ts` both cast the result to their own view of the
+ * crate. Exporting a hand-picked subset here silently left those two with
+ * `null` in the browser while they worked in the extension host.
+ */
 export function loadRegistrationWasm(): Promise<RegistrationWasm | null> {
   if (!ready) {
-    ready = initWasm()
-      .then(() => ({
-        register_pair,
-        coarse_align,
-        icp_refine,
-        fit_correspondences,
-      }))
+    ready = wasm
+      .default()
+      .then(() => wasm as unknown as RegistrationWasm)
       .catch((error: unknown): RegistrationWasm | null => {
         console.warn('[registration] in-page wasm failed to initialize:', error);
         return null;
