@@ -181,7 +181,10 @@ async function sendStonexColors(
   scans: any[],
   container: Record<string, unknown>
 ): Promise<void> {
-  const pointsPerChunk = 250_000;
+  // Raw RGB + u16 frame id is 5 MB per million points. Staying comfortably
+  // below Electron's unreliable huge-message range while avoiding hundreds of
+  // tiny sequential colour messages on large archives.
+  const pointsPerChunk = 1_000_000;
   for (const scan of scans) {
     const rawColors = scan.metadata.stonexRawColors as Uint8Array | null;
     const frameIndices = scan.metadata.stonexFrameIndices as Uint16Array | null;

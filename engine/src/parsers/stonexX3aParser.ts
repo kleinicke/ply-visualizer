@@ -823,11 +823,20 @@ export class StonexX3aParser {
     const positions = new Float32Array(vertexCount * 3);
     const intensity = new Float32Array(vertexCount);
     const photographicColor = cameraFrames.length > 0 && this.cameraProjector;
+    const deferColorCorrection = photographicColor && !!onGeometryReady;
     // Raw (un-white-balanced) samples plus the frame each point came from. Both
     // are kept so colour correction stays switchable; `colors` is the corrected
     // array the GPU attribute shares.
     const rawColors = photographicColor ? new Uint8Array(vertexCount * 3).fill(255) : null;
-    const colors = photographicColor ? new Uint8Array(vertexCount * 3).fill(255) : null;
+    // Geometry-first hosts send raw RGB once and correct it in the webview.
+    // Aliasing avoids a second 3-byte-per-point array that would never cross
+    // the process boundary; traditional parse callers still receive the
+    // corrected array they expect.
+    const colors = photographicColor
+      ? deferColorCorrection
+        ? rawColors
+        : new Uint8Array(vertexCount * 3).fill(255)
+      : null;
     const frameIndices = photographicColor
       ? new Uint16Array(vertexCount).fill(STONEX_NO_FRAME)
       : null;
@@ -863,8 +872,14 @@ export class StonexX3aParser {
         const exactRust = cameraFrames.filter(frame => frame.scanStem === scanStemRust);
         const framesRust =
           exactRust.length > 0 ? exactRust : photographicScanStems.size === 1 ? cameraFrames : [];
-        const decoded = scanWasm.stonex_decode_scan(
-          data.subarray(layout.offset, layout.offset + layout.size)
+        const record = data.subarray(layout.offset, layout.offset + layout.size);
+        const decoded = scanWasm.stonex_decode_scan_known_layout(
+          record,
+          layout.columns,
+          layout.rows,
+          layout.columnOffset - layout.offset,
+          layout.columnStride,
+          layout.validPoints
         );
         const decodedPositions = decoded.take_positions();
         const decodedIntensity = decoded.take_intensity();
@@ -1258,7 +1273,7 @@ export class StonexX3aParser {
       })),
       bandGains
     );
-    if (rawColors && colors && frameIndices) {
+    if (rawColors && colors && frameIndices && !deferColorCorrection) {
       // Seed the shipped default so a freshly opened file looks unchanged.
       applyStonexColorCorrectionToPoints(
         rawColors,
@@ -1269,7 +1284,7 @@ export class StonexX3aParser {
       );
     }
 
-    markPhase('colour correction');
+    markPhase(deferColorCorrection ? 'colour correction deferred' : 'colour correction');
     if (colourSession) {
       for (let index = 0; index < cameraFrames.length; index++) {
         const preview = colourSession.frame_preview(index, 8);

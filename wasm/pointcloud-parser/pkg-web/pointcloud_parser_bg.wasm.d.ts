@@ -62,6 +62,7 @@ export const registrationresult_matrix: (a: number) => [number, number];
 export const registrationresult_stats: (a: number) => [number, number];
 export const stonex_decode_frame: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
 export const stonex_decode_scan: (a: number, b: number) => [number, number, number];
+export const stonex_decode_scan_known_layout: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
 export const stonexcolourresult_coloured_points: (a: number) => number;
 export const stonexcolourresult_take_colours: (a: number) => [number, number];
 export const stonexcolourresult_take_frame_indices: (a: number) => [number, number];

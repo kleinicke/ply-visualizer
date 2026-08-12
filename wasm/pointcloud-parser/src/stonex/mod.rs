@@ -51,13 +51,50 @@ impl StonexScanPoints {
 #[wasm_bindgen]
 pub fn stonex_decode_scan(record: &[u8]) -> Result<StonexScanPoints, JsValue> {
     let layout = scan::read_layout(record).map_err(|error| JsValue::from_str(&error))?;
+    Ok(decode_scan_with_layout(record, &layout))
+}
+
+fn decode_scan_with_layout(record: &[u8], layout: &scan::ScanLayout) -> StonexScanPoints {
     let points = scan::decode_points(record, &layout);
-    Ok(StonexScanPoints {
+    StonexScanPoints {
         positions: points.positions,
         intensity: points.intensity,
         column_azimuths: points.column_azimuths,
         points_per_column: points.points_per_column,
-    })
+    }
+}
+
+/// Decodes a scan whose layout was already validated and counted by the archive
+/// parser. Avoids scanning every range a second time merely to rediscover the
+/// same valid-point count before decoding it.
+#[wasm_bindgen]
+pub fn stonex_decode_scan_known_layout(
+    record: &[u8],
+    columns: u32,
+    rows: u32,
+    column_offset: u32,
+    column_stride: u32,
+    valid_points: u32,
+) -> Result<StonexScanPoints, JsValue> {
+    let layout = scan::ScanLayout {
+        columns: columns as usize,
+        rows: rows as usize,
+        column_offset: column_offset as usize,
+        column_stride: column_stride as usize,
+        valid_points: valid_points as usize,
+    };
+    let required = layout
+        .column_offset
+        .checked_add(layout.columns.saturating_mul(layout.column_stride))
+        .ok_or_else(|| JsValue::from_str("X3R layout overflow"))?;
+    if layout.columns == 0
+        || layout.rows == 0
+        || layout.valid_points > layout.columns.saturating_mul(layout.rows)
+        || required > record.len()
+    {
+        return Err(JsValue::from_str("invalid prevalidated X3R layout"));
+    }
+    Ok(decode_scan_with_layout(record, &layout))
 }
 
 /// Decoded frame for JS: interleaved RGB at `CAMERA_RGB_SCALE`.
@@ -291,7 +328,11 @@ impl StonexColourSession {
     pub fn frame_preview(&mut self, frame_index: u32, preview_scale: u32) -> StonexPreview {
         let index = frame_index as usize;
         let Some(descriptor) = self.descriptors.get(index) else {
-            return StonexPreview { width: 0, height: 0, rgba: Vec::new() };
+            return StonexPreview {
+                width: 0,
+                height: 0,
+                rgba: Vec::new(),
+            };
         };
         let scale = preview_scale.max(1) as usize;
         let width = descriptor.image_width.div_ceil(scale);
@@ -327,12 +368,10 @@ impl StonexColourSession {
         };
         let mut rgba = vec![0u8; width * height * 4];
         for y in 0..height {
-            let portrait_y = ((y as f64 + 0.5) * descriptor.image_height as f64
-                / height as f64)
+            let portrait_y = ((y as f64 + 0.5) * descriptor.image_height as f64 / height as f64)
                 .min(descriptor.image_height.saturating_sub(1) as f64);
             for x in 0..width {
-                let portrait_x = ((x as f64 + 0.5) * descriptor.image_width as f64
-                    / width as f64)
+                let portrait_x = ((x as f64 + 0.5) * descriptor.image_width as f64 / width as f64)
                     .min(descriptor.image_width.saturating_sub(1) as f64);
                 let rgb = colour::sample_image(image, &frame, portrait_x, portrait_y);
                 let offset = (y * width + x) * 4;

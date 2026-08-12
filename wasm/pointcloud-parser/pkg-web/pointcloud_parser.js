@@ -1109,6 +1109,43 @@ export function stonex_decode_scan(record) {
   }
   return StonexScanPoints.__wrap(ret[0]);
 }
+
+/**
+ * Decodes a scan whose layout was already validated and counted by the archive
+ * parser. Avoids scanning every range a second time merely to rediscover the
+ * same valid-point count before decoding it.
+ * @param {Uint8Array} record
+ * @param {number} columns
+ * @param {number} rows
+ * @param {number} column_offset
+ * @param {number} column_stride
+ * @param {number} valid_points
+ * @returns {StonexScanPoints}
+ */
+export function stonex_decode_scan_known_layout(
+  record,
+  columns,
+  rows,
+  column_offset,
+  column_stride,
+  valid_points
+) {
+  const ptr0 = passArray8ToWasm0(record, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.stonex_decode_scan_known_layout(
+    ptr0,
+    len0,
+    columns,
+    rows,
+    column_offset,
+    column_stride,
+    valid_points
+  );
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return StonexScanPoints.__wrap(ret[0]);
+}
 function __wbg_get_imports() {
   const import0 = {
     __proto__: null,

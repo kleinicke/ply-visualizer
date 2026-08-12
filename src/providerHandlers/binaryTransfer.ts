@@ -374,10 +374,14 @@ export async function sendLargeFileInChunksOptimized(
   spatialData: any,
   messageType: string
 ): Promise<void> {
-  // ULTRA-AGGRESSIVE chunking for maximum transfer speed
-  const CHUNK_SIZE = 250000;
   const totalVertices = spatialData.vertexCount;
   const typed = !!spatialData.useTypedArrays && spatialData.positionsArray instanceof Float32Array;
+  // Packed typed arrays are cheap to clone at this size: xyz + one scalar is
+  // about 16 MB per million points. The old 250k size made a 42M-point X3A
+  // issue ~169 sequential postMessages and repeat the same amount of event-loop
+  // bookkeeping in the webview. Object vertices remain smaller because their
+  // structured-clone overhead is much higher and less predictable.
+  const CHUNK_SIZE = typed ? 1_000_000 : 250_000;
   const vertices = spatialData.vertices;
   const colors = spatialData.colors;
   const normals = spatialData.normals;

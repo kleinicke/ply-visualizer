@@ -49,6 +49,14 @@ export interface StonexWasm {
     take_points_per_column(): Uint32Array;
     free?(): void;
   };
+  stonex_decode_scan_known_layout(
+    record: Uint8Array,
+    columns: number,
+    rows: number,
+    columnOffset: number,
+    columnStride: number,
+    validPoints: number
+  ): ReturnType<StonexWasm['stonex_decode_scan']>;
 }
 
 /**

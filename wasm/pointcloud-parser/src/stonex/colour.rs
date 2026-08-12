@@ -22,7 +22,7 @@
 //!   centre and furthest from an edge, so seams fall where the geometry is
 //!   least reliable rather than wherever the frame order happened to put them.
 
-use camera_models::{project, CameraModel, Intrinsics};
+use camera_models::{project_opencv_pinhole, Intrinsics, OpenCvPinhole};
 
 use super::bayer::{sample_grbg, BayerFrame};
 use super::scan::ScanLayout;
@@ -118,42 +118,59 @@ pub fn colour_scan(
     let point_count = positions.len() / 3;
     let mut colours = vec![255u8; point_count * 3];
     let mut frame_indices = vec![NO_FRAME; point_count];
-    let mut best_weights = vec![0.0f64; point_count];
     let mut coloured_points = 0usize;
 
-    for &frame_index in active {
-        let Some(frame) = frames.get(frame_index) else {
-            continue;
-        };
-        let model = CameraModel::PinholeOpenCv;
-        let intrinsics = Intrinsics {
-            fx: frame.fx,
-            fy: frame.fy,
-            cx: frame.cx,
-            cy: frame.cy,
-        };
+    struct PreparedFrame<'a> {
+        index: usize,
+        frame: &'a ColourFrame<'a>,
+        intrinsics: Intrinsics,
+        distortion: OpenCvPinhole,
+    }
+    let prepared: Vec<_> = active
+        .iter()
+        .filter_map(|&index| {
+            let frame = frames.get(index)?;
+            Some(PreparedFrame {
+                index,
+                frame,
+                intrinsics: Intrinsics {
+                    fx: frame.fx,
+                    fy: frame.fy,
+                    cx: frame.cx,
+                    cy: frame.cy,
+                },
+                distortion: OpenCvPinhole::new(&frame.distortion),
+            })
+        })
+        .collect();
 
-        let mut point_index = 0usize;
-        for column in 0..layout.columns.min(column_azimuths.len()) {
-            let in_column = points_per_column.get(column).copied().unwrap_or(0);
-            if angular_difference(frame.pan_degrees, column_azimuths[column])
-                > FRAME_AZIMUTH_WINDOW_DEGREES
-            {
-                point_index += in_column;
-                continue;
-            }
+    let mut point_index = 0usize;
+    for column in 0..layout.columns.min(column_azimuths.len()) {
+        let in_column = points_per_column.get(column).copied().unwrap_or(0);
+        // Candidate choice is constant for the organised column. Doing this
+        // outside the point loop retains the azimuth shortcut while point-first
+        // traversal lets each point sample only its final winning frame.
+        let candidates: Vec<_> = prepared
+            .iter()
+            .filter(|candidate| {
+                angular_difference(candidate.frame.pan_degrees, column_azimuths[column])
+                    <= FRAME_AZIMUTH_WINDOW_DEGREES
+            })
+            .collect();
 
-            for _ in 0..in_column {
-                let offset = point_index * 3;
-                point_index += 1;
-                let camera = transform(
-                    &frame.viewer_to_camera,
-                    [
-                        positions[offset] as f64,
-                        positions[offset + 1] as f64,
-                        positions[offset + 2] as f64,
-                    ],
-                );
+        for _ in 0..in_column {
+            let offset = point_index * 3;
+            let point = [
+                positions[offset] as f64,
+                positions[offset + 1] as f64,
+                positions[offset + 2] as f64,
+            ];
+            let mut best: Option<(usize, f64, f64)> = None;
+            let mut best_weight = 0.0f64;
+
+            for candidate in &candidates {
+                let frame = candidate.frame;
+                let camera = transform(&frame.viewer_to_camera, point);
 
                 // The calibration's field of view bounds the domain before the
                 // distortion polynomial runs, so a strong polynomial cannot
@@ -173,7 +190,8 @@ pub fn colour_scan(
                 // iterative inverse could not settle on is not a pixel, and
                 // taking its last iterate would paint a point from whatever the
                 // solver happened to be looking at when it gave up.
-                let projected = project(model, intrinsics, &frame.distortion, camera);
+                let projected =
+                    project_opencv_pinhole(candidate.intrinsics, &candidate.distortion, camera);
                 if !projected.converged {
                     continue;
                 }
@@ -188,14 +206,18 @@ pub fn colour_scan(
                     continue;
                 }
 
-                let index = point_index - 1;
                 let weight = view_score(frame, pixel_x, pixel_y);
-                if weight <= best_weights[index] {
+                if weight <= best_weight {
                     continue;
                 }
+                best_weight = weight;
+                best = Some((candidate.index, pixel_x, pixel_y));
+            }
 
-                // Decoded lazily and kept across scans: a frame no column
-                // faces is never unpacked at all.
+            if let Some((frame_index, pixel_x, pixel_y)) = best {
+                let frame = &frames[frame_index];
+                // Decoded lazily and kept across scans: a frame no point uses
+                // is never unpacked at all.
                 let image = decoded[frame_index].get_or_insert_with(|| {
                     super::bayer::decode_rgb(&BayerFrame {
                         pixels: frame.pixels,
@@ -206,17 +228,13 @@ pub fn colour_scan(
                     })
                 });
                 let colour = sample_image(image, frame, pixel_x, pixel_y);
-
-                if frame_indices[index] == NO_FRAME {
-                    coloured_points += 1;
-                }
-                best_weights[index] = weight;
-                frame_indices[index] = frame_index as u16;
-                let out = index * 3;
-                colours[out] = colour[0].round().clamp(0.0, 255.0) as u8;
-                colours[out + 1] = colour[1].round().clamp(0.0, 255.0) as u8;
-                colours[out + 2] = colour[2].round().clamp(0.0, 255.0) as u8;
+                coloured_points += 1;
+                frame_indices[point_index] = frame_index as u16;
+                colours[offset] = colour[0].round().clamp(0.0, 255.0) as u8;
+                colours[offset + 1] = colour[1].round().clamp(0.0, 255.0) as u8;
+                colours[offset + 2] = colour[2].round().clamp(0.0, 255.0) as u8;
             }
+            point_index += 1;
         }
     }
 

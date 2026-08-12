@@ -291,6 +291,13 @@ export function stonex_decode_frame(pixels: Uint8Array, raw_width: number, raw_h
  */
 export function stonex_decode_scan(record: Uint8Array): StonexScanPoints;
 
+/**
+ * Decodes a scan whose layout was already validated and counted by the archive
+ * parser. Avoids scanning every range a second time merely to rediscover the
+ * same valid-point count before decoding it.
+ */
+export function stonex_decode_scan_known_layout(record: Uint8Array, columns: number, rows: number, column_offset: number, column_stride: number, valid_points: number): StonexScanPoints;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -356,6 +363,7 @@ export interface InitOutput {
     readonly registrationresult_stats: (a: number) => [number, number];
     readonly stonex_decode_frame: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly stonex_decode_scan: (a: number, b: number) => [number, number, number];
+    readonly stonex_decode_scan_known_layout: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly stonexcolourresult_coloured_points: (a: number) => number;
     readonly stonexcolourresult_take_colours: (a: number) => [number, number];
     readonly stonexcolourresult_take_frame_indices: (a: number) => [number, number];
