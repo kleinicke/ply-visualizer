@@ -407,6 +407,16 @@ function applyDelta(host: RegistrationHost, delta: THREE.Matrix4): void {
   host.setTransformationMatrix(session.sourceIndex, delta.clone().multiply(previous));
   host.updateMatrixTextarea(session.sourceIndex);
 
+  // If this pair belongs to the latest anchor-wide workflow, a successful
+  // manual/automatic correction makes the previously failed cloud trustworthy
+  // for best-camera colouring too.
+  if (
+    registrationState.alignmentAnchorIndex === session.targetIndex &&
+    !registrationState.alignedIndices.includes(session.sourceIndex)
+  ) {
+    registrationState.alignedIndices = [...registrationState.alignedIndices, session.sourceIndex];
+  }
+
   for (const pair of session.pairs) {
     pair.source.applyMatrix4(delta);
   }
@@ -449,6 +459,12 @@ export function undo(host: RegistrationHost): void {
     session.pending.point.applyMatrix4(delta);
   }
   session.undoMatrix = null;
+  if (registrationState.alignmentAnchorIndex === session.targetIndex) {
+    const sourceIndex = session.sourceIndex;
+    registrationState.alignedIndices = registrationState.alignedIndices.filter(
+      index => index !== sourceIndex
+    );
+  }
   registrationState.result = 'Reverted to the transform from before the last alignment.';
   refreshMarkers(host);
   syncState();
@@ -629,6 +645,8 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
 
   registrationState.busy = true;
   registrationState.alignAllResults = [];
+  registrationState.alignmentAnchorIndex = anchorIndex;
+  registrationState.alignedIndices = [anchorIndex];
   // Yield once so the panel shows the first status before the solver blocks
   // (it does, in a webview: see wasmLoader.browser.ts).
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -659,12 +677,19 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
           registrationState.alignAllResults.push(`${name}: no match found`);
           continue;
         }
+        if (result.icp.fitness < 0.03 || result.icp.inlierCount < 30) {
+          registrationState.alignAllResults.push(
+            `${name}: only ${(result.icp.fitness * 100).toFixed(1)}% overlap; excluded`
+          );
+          continue;
+        }
 
         const previous = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone();
         undoAll.set(fileIndex, previous);
         host.setTransformationMatrix(fileIndex, result.matrix.clone().multiply(previous));
         host.updateMatrixTextarea(fileIndex);
         aligned++;
+        registrationState.alignedIndices = [...registrationState.alignedIndices, fileIndex];
 
         const margin =
           result.coarse && result.coarse.runnerUpScore > 0
@@ -711,6 +736,8 @@ export function undoAlignAll(host: RegistrationHost): void {
   alignAllUndo = null;
   registrationState.canUndoAll = false;
   registrationState.alignAllResults = [];
+  registrationState.alignmentAnchorIndex = null;
+  registrationState.alignedIndices = [];
   registrationState.result = 'Reverted every transform that align-all changed.';
   host.requestRender();
 }

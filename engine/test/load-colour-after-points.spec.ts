@@ -54,6 +54,8 @@ test('a scan shown without colour takes it when it arrives', async ({ page }) =>
   expect(after.first).toEqual([88, 88, 88]);
   // The picker has to offer the mode it was just switched to.
   await expect(page.locator('#color-0 option[value="original"]')).toHaveCount(1);
+  await expect(page.locator('#color-0')).toHaveValue('original');
+  await expect(page.locator('#color-0 option:checked')).toHaveText('Camera colour (projected)');
 });
 
 test('colour that arrives in chunks is reassembled', async ({ page }) => {

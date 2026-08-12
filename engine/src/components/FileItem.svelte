@@ -646,9 +646,9 @@
         <div class="color-control">
           <label for={`color-${index}`}>Color:</label>
           <select id={`color-${index}`} class="color-selector" value={colorMode} onchange={onColorModeChange}>
-          {#if data.hasColors}
+          {#if data.hasColors || colorMode === 'original'}
             <option value="original"
-              >{colorIsProjected ? 'Camera (own station)' : 'Original'}</option
+              >{colorIsProjected ? 'Camera colour (projected)' : 'Original'}</option
             >
           {/if}
           {#if hasRecoloredColors}

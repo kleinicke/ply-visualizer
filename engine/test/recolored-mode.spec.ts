@@ -114,7 +114,7 @@ test.describe('Recolored colour mode', () => {
       visualizer.updateFileList();
     });
     await expect(page.locator('#color-0 option[value="original"]')).toHaveText(
-      'Camera (own station)'
+      'Camera colour (projected)'
     );
   });
 
@@ -148,7 +148,9 @@ test.describe('Recolored colour mode', () => {
       });
       visualizer.updateFileList();
 
-      feature.beginStationRecolor(visualizer, 'Site.x3a');
+      // Recolour-existing mode deliberately blanks everything before replacing
+      // it; the normal fill-grey-only mode preserves existing camera colour.
+      feature.beginStationRecolor(visualizer, 'Site.x3a', false);
       const whiteAfterStart = [0, 1].map(index =>
         Array.from(
           (visualizer.spatialFiles[index].metadata.stationRecoloredColors as Uint8Array).slice(0, 3)
@@ -192,6 +194,34 @@ test.describe('Recolored colour mode', () => {
     // ...then the reported scan is painted while the other waits its turn.
     expect(state.afterFirstScan[0]).not.toEqual([255, 255, 255]);
     expect(state.afterFirstScan[1]).toEqual([255, 255, 255]);
+  });
+
+  test('preserves existing camera colour when recolouring it was not requested', async ({
+    page,
+  }) => {
+    await page.goto('/3d-visualizer/');
+    await page.waitForSelector('#three-canvas');
+    await page.waitForTimeout(500);
+    await page
+      .locator('#hiddenFileInput')
+      .setInputFiles(path.resolve('../testfiles/ply/test_small_mesh.ply'));
+    await expect(page.locator('#file-list .file-item')).toHaveCount(1);
+
+    const first = await page.evaluate(() => {
+      const visualizer = (window as any).visualizer;
+      const data = visualizer.spatialFiles[0];
+      data.colorsArray = new Uint8Array(data.vertexCount * 3).fill(37);
+      data.hasColors = true;
+      data.metadata = {
+        ...(data.metadata ?? {}),
+        containerFileName: 'Site.x3a',
+        embeddedScanName: 'Site_0001.x3r',
+      };
+      (window as any).stationPipelineFeature.beginStationRecolor(visualizer, 'Site.x3a', true);
+      return Array.from(data.metadata.stationRecoloredColors.slice(0, 3));
+    });
+
+    expect(first).toEqual([37, 37, 37]);
   });
 
   test('gives every scan the view, even one nothing could improve', async ({ page }) => {

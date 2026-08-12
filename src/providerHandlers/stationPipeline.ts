@@ -50,15 +50,14 @@ export async function handleStationPipeline(
 
   try {
     const startedAt = performance.now();
+    const progressivelyPublishedScans = new Set<string>();
     const bytes = await readFileFast(vscode.Uri.file(documentPath));
     const parser = new StonexX3aParser(stonexCameraProjector);
-    // Names are stems here; the webview matches on the member file name.
-    const stemToMember = new Map<string, string>();
     const parsed = await parser.parseAll(bytes, path.basename(documentPath), notify, {
       ...options,
-      onScanColored: update => {
-        const scanName = stemToMember.get(update.scanStem) ?? `${update.scanStem}.x3r`;
-        void webviewPanel.webview.postMessage({
+      onScanColored: async update => {
+        const scanName = `${update.scanStem}.x3r`;
+        const delivered = await webviewPanel.webview.postMessage({
           type: 'stationPipelineResult',
           partial: true,
           updates: [
@@ -71,18 +70,27 @@ export async function handleStationPipeline(
             },
           ],
         });
+        if (delivered) {
+          progressivelyPublishedScans.add(scanName);
+        }
       },
     });
 
     const updates = parsed.map(scan => {
       const metadata = scan.metadata as Record<string, unknown>;
       const changed = metadata.stationColorChanged === true;
+      const scanName = metadata.embeddedScanName as string;
+      const needsFinalColorDelivery = changed && !progressivelyPublishedScans.has(scanName);
       return {
-        scanName: metadata.embeddedScanName as string,
+        scanName,
         transform: (metadata.stationTransform as number[] | null) ?? null,
-        // Colour only rides along for scans the pipeline actually repainted.
-        rawColors: changed ? (metadata.stonexRawColors as Uint8Array | null) : null,
-        frameIndices: changed ? (metadata.stonexFrameIndices as Uint16Array | null) : null,
+        // Do not transfer a full colour buffer twice after a progressive update
+        // has already reached the webview. Keep the final result as a fallback
+        // if VS Code rejected that earlier message.
+        rawColors: needsFinalColorDelivery ? (metadata.stonexRawColors as Uint8Array | null) : null,
+        frameIndices: needsFinalColorDelivery
+          ? (metadata.stonexFrameIndices as Uint16Array | null)
+          : null,
         photographicallyColoredPoints: metadata.photographicallyColoredPoints as number | undefined,
       };
     });

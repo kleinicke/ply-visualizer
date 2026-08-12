@@ -70,7 +70,9 @@ test.describe('Station pipeline trigger', () => {
     const panel = page.locator('.file-item').nth(0);
     await panel.locator('.registration-toggle').click();
     await expect(panel.locator('.station-pipeline-run')).toBeVisible();
-    await expect(panel.locator('.station-pipeline-run')).toContainText('Colour scans');
+    await expect(panel.locator('.station-pipeline-run')).toContainText(
+      'Colour using best aligned cameras'
+    );
     await expect(panel.locator('.station-pipeline-register')).toBeVisible();
 
     // Default: fill in the grey scans, leave existing colour alone.
@@ -86,6 +88,7 @@ test.describe('Station pipeline trigger', () => {
       recolorAlreadyColored: false,
     });
     expect(sent[0].options.transforms['Stohl_1_B_0001']).toHaveLength(16);
+    expect(sent[0].options.scopeScanStems).toEqual(['Stohl_1_B_0001']);
 
     // The button disables itself until the host answers, so a second run
     // cannot be started on top of the first.

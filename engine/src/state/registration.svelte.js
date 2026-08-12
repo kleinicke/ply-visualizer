@@ -18,6 +18,8 @@ export const registrationState = $state(
    *   canUndo: boolean;
    *   canUndoAll: boolean;
    *   alignAllResults: string[];
+   *   alignmentAnchorIndex: number | null;
+   *   alignedIndices: number[];
    *   upAxis: 'x' | 'y' | 'z';
    * }} */ ({
     // Unified file index of the cloud being moved, or null when idle.
@@ -37,6 +39,11 @@ export const registrationState = $state(
     // report are separate from the single-pair session's.
     canUndoAll: false,
     alignAllResults: [],
+    // Successful members of the latest anchor-wide registration. Colouring
+    // uses this allow-list so a failed/unaligned station's photos cannot
+    // compete merely because its identity transform is still on screen.
+    alignmentAnchorIndex: null,
+    alignedIndices: [],
     upAxis: 'z',
   })
 );
@@ -44,9 +51,10 @@ export const registrationState = $state(
 // Archive-wide pipeline (X3A only). Separate from the pair/align-all state
 // because it runs in the extension host across a fresh parse, not in here.
 export const stationPipelineUi = $state(
-  /** @type {{ busy: boolean; message: string; recolorAlreadyColored: boolean }} */ ({
+  /** @type {{ busy: boolean; message: string; recolorAlreadyColored: boolean; projectionDiagnostic: import('../parsers/stonexX3aParser').StonexProjectionDiagnostic }} */ ({
     busy: false,
     message: '',
     recolorAlreadyColored: false,
+    projectionDiagnostic: 'normal',
   })
 );

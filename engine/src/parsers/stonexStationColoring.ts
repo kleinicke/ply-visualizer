@@ -59,11 +59,13 @@ export interface StationScan {
 export interface StationColoringOptions {
   /** Recolour points that already have photographic colour, not just the grey. */
   recolorAlreadyColored?: boolean;
+  /** Diagnostic: do not let photographs from another registered station compete. */
+  ownStationOnly?: boolean;
   /**
    * Called once a scan has been through every station's cameras, so a caller
    * can publish it while the rest are still running.
    */
-  onScanColored?: (scan: StationScan) => void;
+  onScanColored?: (scan: StationScan) => void | Promise<void>;
   /**
    * How far behind a station's own measured range a point may sit and still be
    * treated as visible from it, as a constant plus a fraction of the range.
@@ -265,7 +267,7 @@ export interface StationColoringResult {
  * arrays; the caller re-runs `stonexColorCorrection` afterwards so the modes
  * stay switchable.
  */
-export function colorFromAllStations(
+export async function colorFromAllStations(
   positions: Float32Array,
   rawColors: Uint8Array,
   frameIndices: Uint16Array,
@@ -277,7 +279,7 @@ export function colorFromAllStations(
   frames: readonly StationFrame[],
   project: StonexCameraBatchProjector,
   options: StationColoringOptions = {}
-): StationColoringResult {
+): Promise<StationColoringResult> {
   const tolerance = options.occlusionTolerance ?? 0.08;
   const relative = options.occlusionRelativeTolerance ?? 0.02;
   const result: StationColoringResult = {
@@ -337,6 +339,9 @@ export function colorFromAllStations(
     }
 
     for (const [stationStem, stationFrames] of framesByStation) {
+      if (options.ownStationOnly && stationStem !== scan.scanStem) {
+        continue;
+      }
       const frameStation = scanByStem.get(stationStem)!;
       // Points from this scan into the photographing station's own frame.
       const scanToStation = multiply(invertRigid(frameStation.transform), scan.transform);
@@ -459,7 +464,12 @@ export function colorFromAllStations(
         }
       }
     }
-    options.onScanColored?.(scan);
+    // Publish each completed scan before starting the next one. In the VS Code
+    // host a long synchronous archive pass otherwise queues every postMessage
+    // until all stations are done, which looks exactly like no progressive
+    // colouring exists even though callbacks are issued per scan.
+    await options.onScanColored?.(scan);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
   }
 
   return result;

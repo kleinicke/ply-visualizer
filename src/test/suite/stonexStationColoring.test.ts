@@ -126,12 +126,12 @@ suite('Stonex cross-station colouring', () => {
     };
   }
 
-  test('colours a grey scan from another station camera', () => {
+  test('colours a grey scan from another station camera', async () => {
     // A point in front of the wall, in view: it should take the frame's colour.
     const scene = buildScene([8, 0, 0]);
     const visible = scene.scans[1].pointOffset;
 
-    const result = colorFromAllStations(
+    const result = await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,
@@ -151,11 +151,32 @@ suite('Stonex cross-station colouring', () => {
     assert.strictEqual(scene.frameIndices[visible], 0, 'the frame it came from is recorded');
   });
 
-  test('refuses to paint through the wall the station measured', () => {
+  test('own-station diagnostic excludes cross-station photographs', async () => {
+    const scene = buildScene([8, 0, 0]);
+    const visible = scene.scans[1].pointOffset;
+
+    const result = await colorFromAllStations(
+      scene.positions,
+      scene.rawColors,
+      scene.frameIndices,
+      scene.colored,
+      new Uint8Array(scene.positions.length / 3),
+      scene.scans,
+      [makeFrame()],
+      pinholeProjector() as any,
+      { ownStationOnly: true }
+    );
+
+    assert.strictEqual(result.newlyColored, 0);
+    assert.strictEqual(scene.colored[visible], 0);
+    assert.strictEqual(scene.frameIndices[visible], 65535);
+  });
+
+  test('refuses to paint through the wall the station measured', async () => {
     // Same direction, but behind the station's own wall at x = 10.
     const scene = buildScene([14, 0, 0]);
 
-    const result = colorFromAllStations(
+    const result = await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,
@@ -171,7 +192,7 @@ suite('Stonex cross-station colouring', () => {
     assert.strictEqual(scene.colored[scene.scans[1].pointOffset], 0);
   });
 
-  test('leaves colour a scan already has alone by default', () => {
+  test('leaves colour a scan already has alone by default', async () => {
     const scene = buildScene([8, 0, 0]);
     const point = scene.scans[1].pointOffset;
     // This grey scan's point already carries colour from somewhere.
@@ -179,7 +200,7 @@ suite('Stonex cross-station colouring', () => {
     scene.rawColors.set([1, 2, 3], point * 3);
     scene.frameIndices[point] = 7;
 
-    const result = colorFromAllStations(
+    const result = await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,
@@ -195,7 +216,7 @@ suite('Stonex cross-station colouring', () => {
     assert.strictEqual(scene.frameIndices[point], 7);
   });
 
-  test('when recolouring, the most central view wins', () => {
+  test('when recolouring, the most central view wins', async () => {
     // Offset from the axis, so the projector's scale actually moves the pixel:
     // a point dead ahead lands at the image centre whatever the focal length.
     const scene = buildScene([8, 0.9, 0]);
@@ -206,7 +227,7 @@ suite('Stonex cross-station colouring', () => {
     // Both frames see it in one pass: one near the edge, one dead centre. The
     // comparison only means anything inside a single call, which is how the
     // parser uses it.
-    const result = colorFromAllStations(
+    const result = await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,
@@ -232,7 +253,7 @@ suite('Stonex cross-station colouring', () => {
     assert.strictEqual(scene.frameIndices[point], 3);
   });
 
-  test('composes the camera transform in the projector layout', () => {
+  test('composes the camera transform in the projector layout', async () => {
     // Regression test for a mix of conventions that no identity-transform case
     // can catch: `viewerToCamera` is row-major (the CAL file's declared order,
     // which the Rust projector expects) while scan placements come from
@@ -251,7 +272,7 @@ suite('Stonex cross-station colouring', () => {
       return pinholeProjector()(request);
     }) as any;
 
-    colorFromAllStations(
+    await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,
@@ -291,9 +312,9 @@ suite('Stonex cross-station colouring', () => {
     }
   });
 
-  test('does nothing when no frame belongs to a loaded scan', () => {
+  test('does nothing when no frame belongs to a loaded scan', async () => {
     const scene = buildScene([8, 0, 0]);
-    const result = colorFromAllStations(
+    const result = await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,

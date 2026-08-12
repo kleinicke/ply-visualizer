@@ -163,6 +163,36 @@ test.describe('Scan-to-scan registration', () => {
     await expect(page.locator('.registration-toggle')).toHaveCount(2);
   });
 
+  test('projection diagnostics are sent as replacement-colour runs', async ({ page }) => {
+    await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+    await page.evaluate(() => {
+      const visualizer = (window as any).visualizer;
+      visualizer.runningInVSCode = true;
+      visualizer.vscode = {
+        postMessage: (message: unknown) => ((window as any).__stationMessage = message),
+      };
+      visualizer.spatialFiles.forEach((data: any, index: number) => {
+        data.metadata = {
+          ...(data.metadata ?? {}),
+          containerFileName: 'Diagnostic.x3a',
+          embeddedScanName: `scan_${index}.x3r`,
+        };
+      });
+      visualizer.updateFileList();
+    });
+
+    const panel = page.locator('.file-item').first();
+    await panel.locator('.registration-toggle').click();
+    await panel.locator('.station-projection-diagnostic').selectOption('reverse-pan');
+    await panel.locator('.station-pipeline-run').click();
+
+    const message = await page.evaluate(() => (window as any).__stationMessage);
+    expect(message.type).toBe('stationPipeline');
+    expect(message.options.projectionDiagnostic).toBe('reverse-pan');
+    expect(message.options.recolorAlreadyColored).toBe(true);
+  });
+
   test('auto-align then refine recovers the station offset, and undo reverts it', async ({
     page,
   }) => {
@@ -170,8 +200,9 @@ test.describe('Scan-to-scan registration', () => {
     await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
-    // File 1 is the moved station; align it onto file 0, which stays put.
-    const panel = page.locator('.file-item').nth(1);
+    // Open the fixed station's anchor-centric panel. File 1 is selected by
+    // default as the cloud that moves onto it.
+    const panel = page.locator('.file-item').nth(0);
     await panel.locator('.registration-toggle').click();
     await expect(panel.locator('.registration-coarse')).toBeVisible();
 
@@ -195,7 +226,11 @@ test.describe('Scan-to-scan registration', () => {
 
     // The matrix textarea is the user-visible home of the result; it must agree
     // with what the solver put on the file.
-    const matrixText = await panel.locator('textarea[id^="matrix-"]').inputValue();
+    const matrixText = await page
+      .locator('.file-item')
+      .nth(1)
+      .locator('textarea[id^="matrix-"]')
+      .inputValue();
     const values = matrixText.trim().split(/\s+/).map(Number);
     expect(values).toHaveLength(16);
     expect(values[3]).toBeCloseTo(after[12], 3);
@@ -213,7 +248,7 @@ test.describe('Scan-to-scan registration', () => {
     await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
-    const panel = page.locator('.file-item').nth(1);
+    const panel = page.locator('.file-item').nth(0);
     await panel.locator('.registration-toggle').click();
     await panel.locator('.registration-pick').click();
     await expect(panel.locator('.registration-fit')).toBeDisabled();

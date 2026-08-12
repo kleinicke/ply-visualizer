@@ -224,16 +224,33 @@ export interface StationPipelineMessage {
  */
 const pendingRecolor = new Map<number, { previousMode: string; filled: boolean }>();
 
-export function beginStationRecolor(host: StationPipelineHost, archiveName: string): number {
+export function beginStationRecolor(
+  host: StationPipelineHost,
+  archiveName: string,
+  preserveExistingColor = true,
+  scopeScanStems?: readonly string[]
+): number {
   pendingRecolor.clear();
+  const scope = scopeScanStems?.length ? new Set(scopeScanStems) : null;
   let prepared = 0;
   for (let index = 0; index < host.spatialFiles.length; index++) {
     const data = host.spatialFiles[index];
     if (data?.metadata?.containerFileName !== archiveName || !data.metadata?.embeddedScanName) {
       continue;
     }
+    const stem = String(data.metadata.embeddedScanName).replace(/\.x3r$/i, '');
+    if (scope && !scope.has(stem)) {
+      continue;
+    }
     const recolored = ensureRecoloredArray(data);
-    recolored.fill(255);
+    if (preserveExistingColor && data.colorsArray) {
+      // “Do not recolour existing points” should be visible immediately too:
+      // seed the synthetic view with their exact current display colours rather
+      // than blanking them white until the host sends the same pixels back.
+      recolored.set(data.colorsArray.subarray(0, recolored.length));
+    } else {
+      recolored.fill(255);
+    }
     pendingRecolor.set(index, {
       previousMode: host.individualColorModes?.[index] ?? 'original',
       filled: false,

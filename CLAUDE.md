@@ -72,6 +72,16 @@ there; put code in the modules above.
 
 ## Conventions and gotchas
 
+- Visibility checkboxes use one consistent gesture everywhere: ordinary click
+  toggles one item; Shift-click isolates that item; Shift-clicking the already
+  isolated item restores the whole sibling group. This applies to files,
+  individual camera images, and any future grouped visibility list. Put the
+  behavior in the shared component/helper and add a browser regression test.
+- Every `input[type="range"]` must reset to its documented default on
+  double-click. The delegated handler in `main.ts` covers sliders whose initial
+  `value` is their default; controls with a computed or semantic default must
+  provide an explicit `ondblclick` handler. Give the slider a reset tooltip and
+  test the interaction when adding a new slider family.
 - `engine/index.html` is the single source of truth for the UI shell.
   `src/pointCloudEditorProvider.ts` reads and rewrites it at runtime — never
   duplicate HTML between the two hosts.

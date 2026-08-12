@@ -87,6 +87,20 @@ suite('Stonex X3A/X3R Parser', () => {
     assert.strictEqual(results[0].metadata.containerFileName, 'container.x3a');
   });
 
+  test('limits a pipeline rerun before decoding unselected scan members', async () => {
+    const results = await new StonexX3aParser().parseAll(
+      makeArchive(['first.x3r', 'second.x3r']),
+      'container.x3a',
+      undefined,
+      { scopeScanStems: ['second'] }
+    );
+
+    assert.strictEqual(results.length, 1);
+    assert.strictEqual(results[0].fileName, 'second.x3r');
+    assert.strictEqual(results[0].metadata.embeddedScanName, 'second.x3r');
+    assert.strictEqual(results[0].vertexCount, 1);
+  });
+
   test('rejects files without a CRAX or X3R signature', async () => {
     await assert.rejects(
       () => new StonexX3aParser().parse(new Uint8Array(100)),

@@ -18,8 +18,9 @@
   const candidates = $derived(
     filesState.renderTick >= 0 ? registration.registrationCandidates(host, fileIndex) : []
   );
-  const active = $derived(registrationState.sourceIndex === fileIndex);
-  const targetIndex = $derived(active ? registrationState.targetIndex : null);
+  // This panel's cloud is the anchor. The selected *other* cloud moves onto it.
+  const active = $derived(registrationState.targetIndex === fileIndex);
+  const movingIndex = $derived(active ? registrationState.sourceIndex : null);
 
   function fileLabel(index: number): string {
     const data = host.spatialFiles?.[index];
@@ -29,13 +30,13 @@
   function toggle() {
     open = !open;
     if (open && candidates.length > 0 && !active) {
-      registration.beginSession(host, fileIndex, candidates[0]);
+      registration.beginSession(host, candidates[0], fileIndex);
     }
   }
 
   function onTargetChange(event: Event) {
     const value = Number((event.currentTarget as HTMLSelectElement).value);
-    registration.beginSession(host, fileIndex, value);
+    registration.beginSession(host, value, fileIndex);
   }
 
   // X3A archives carry several scans from several stations in one file, and
@@ -59,35 +60,78 @@
    * consistent all work. Sending what is on screen means the pipeline never
    * throws away alignment the user has already done or corrected.
    */
-  function currentTransforms(): Record<string, number[]> {
+  function currentTransforms(scope: ReadonlySet<string>): Record<string, number[]> {
     const transforms: Record<string, number[]> = {};
+    const alignedOnly =
+      registrationState.alignmentAnchorIndex === fileIndex &&
+      registrationState.alignedIndices.length > 0
+        ? new Set(registrationState.alignedIndices)
+        : null;
     for (let index = 0; index < (host.spatialFiles?.length ?? 0); index++) {
       const metadata = host.spatialFiles[index]?.metadata;
       if (metadata?.containerFileName !== archiveName || !metadata?.embeddedScanName) {
         continue;
       }
+      if (alignedOnly && !alignedOnly.has(index)) {
+        continue;
+      }
       const stem = String(metadata.embeddedScanName).replace(/\.x3r$/i, '');
+      if (!scope.has(stem)) {
+        continue;
+      }
       transforms[stem] = Array.from(host.transformationMatrices[index].elements);
     }
     return transforms;
   }
 
+  /** Checked capture places are also the archive-processing scope. */
+  function visibleArchiveStems(): string[] {
+    const stems: string[] = [];
+    for (let index = 0; index < (host.spatialFiles?.length ?? 0); index++) {
+      const metadata = host.spatialFiles[index]?.metadata;
+      if (
+        metadata?.containerFileName !== archiveName ||
+        !metadata?.embeddedScanName ||
+        filesState.visibility[index] === false
+      ) {
+        continue;
+      }
+      stems.push(String(metadata.embeddedScanName).replace(/\.x3r$/i, ''));
+    }
+    // The action lives in this cloud's panel; never allow a stale visibility
+    // signal to produce an empty, expensive no-op request.
+    if (stems.length === 0) {
+      const own = host.spatialFiles?.[fileIndex]?.metadata?.embeddedScanName;
+      if (own) stems.push(String(own).replace(/\.x3r$/i, ''));
+    }
+    return stems;
+  }
+
   function runPipeline(register: boolean) {
+    const scopeScanStems = visibleArchiveStems();
+    const scope = new Set(scopeScanStems);
+    const diagnostic = stationPipelineUi.projectionDiagnostic;
+    const diagnosticRun = diagnostic !== 'normal';
+    const recolorExisting = stationPipelineUi.recolorAlreadyColored || diagnosticRun;
     stationPipelineUi.busy = true;
     stationPipelineUi.message = register
       ? 'Registering every scan, then colouring...'
-      : 'Colouring with the current alignment...';
+      : diagnosticRun
+        ? `Testing projection variant: ${diagnostic}...`
+        : 'Colouring with the current alignment...';
     // Blank the archive and switch to the camera view first, so the scans
     // visibly fill in as the host reports each one instead of the view sitting
     // unchanged for a minute and then flipping.
-    beginStationRecolor(host, archiveName!);
+    beginStationRecolor(host, archiveName!, !recolorExisting, scopeScanStems);
     host.vscode.postMessage({
       type: 'stationPipeline',
       options: {
         register,
-        transforms: register ? undefined : currentTransforms(),
+        transforms: register ? undefined : currentTransforms(scope),
         colorUncolored: true,
-        recolorAlreadyColored: stationPipelineUi.recolorAlreadyColored,
+        recolorAlreadyColored: recolorExisting,
+        projectionDiagnostic: diagnostic,
+        scopeScanStems,
         upAxis: registrationState.upAxis,
       },
     });
@@ -122,7 +166,7 @@
       style="background:none;border:none;color:var(--vscode-foreground);cursor:pointer;display:flex;align-items:center;gap:4px;padding:2px;font-size:10px;"
       onclick={toggle}
     >
-      <span class="toggle-icon">{open ? '▼' : '▶'}</span> Align to another cloud
+      <span class="toggle-icon">{open ? '▼' : '▶'}</span> Align clouds to this one
     </button>
 
     {#if open}
@@ -131,17 +175,22 @@
         style="background:var(--vscode-editor-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:8px;margin-top:4px;font-size:10px;"
       >
         <div style="margin-bottom:6px;">
-          <label for={`registration-target-${fileIndex}`} style="font-weight:bold;">Keep fixed:</label>
+          <div style="font-weight:bold;">Keep fixed: {fileLabel(fileIndex)}</div>
+          <label for={`registration-target-${fileIndex}`} style="display:block;margin-top:4px;">Move onto it:</label>
           <select
             id={`registration-target-${fileIndex}`}
             style="width:100%;margin-top:2px;font-size:10px;"
-            value={targetIndex ?? candidates[0]}
+            value={movingIndex ?? candidates[0]}
             onchange={onTargetChange}
           >
             {#each candidates as candidate (candidate)}
               <option value={candidate}>{fileLabel(candidate)}</option>
             {/each}
           </select>
+          <p class="setting-description" style="margin:3px 0 0;">
+            This selector is for one-cloud corrections. To select every other cloud, use “Align &
+            refine all to this cloud” below; it runs both auto-align and ICP.
+          </p>
         </div>
 
         <div style="margin-bottom:6px;">
@@ -179,8 +228,9 @@
           </div>
           {#if active && registrationState.picking}
             <p class="setting-description" style="margin:3px 0 0;">
-              Double-click a feature on this cloud, then the same feature on the fixed one. Three
-              pairs are the minimum; four or more spread around the overlap are better.
+              Double-click a feature on the selected moving cloud, then the same feature on this
+              fixed cloud. Three pairs are the minimum; four or more spread around the overlap are
+              better.
             </p>
           {/if}
         </div>
@@ -221,7 +271,7 @@
               onclick={() => registration.alignAllTo(host, fileIndex)}
               disabled={registrationState.busy}
             >
-              Align all to this one
+              Align & refine all to this cloud
             </button>
             <button
               class="registration-undo-all"
@@ -232,9 +282,9 @@
             </button>
           </div>
           <p class="setting-description" style="margin:3px 0 0;">
-            Registers every other loaded cloud onto this one, which keeps its current transform.
-            Each is matched against this cloud directly, so one bad pair cannot drag the rest out of
-            place - anything that fails is listed instead, and can be fixed by hand above.
+            Registers every other loaded cloud onto this fixed anchor. Each pair runs automatic
+            coarse alignment followed by ICP refinement. One bad pair cannot drag the rest out of
+            place; failures are listed and excluded from best-camera colouring.
           </p>
           {#if registrationState.alignAllResults.length > 0}
             <ul
@@ -249,14 +299,14 @@
         </div>
 
         <div style="margin-bottom:6px;">
-          <span style="font-weight:bold;">4 · Refine further</span>
+          <span style="font-weight:bold;">4 · Refine selected pair</span>
           <div class="transform-buttons" style="margin-top:3px;">
             <button
               class="registration-icp"
               onclick={() => registration.refineIcp(host)}
               disabled={!active || registrationState.busy}
             >
-              Refine (ICP)
+              Refine selected (ICP)
             </button>
             <button
               class="registration-undo"
@@ -266,6 +316,11 @@
               Undo align
             </button>
           </div>
+          <p class="setting-description" style="margin:3px 0 0;">
+            Refines only “{movingIndex === null ? 'the selected cloud' : fileLabel(movingIndex)}”
+            against this fixed cloud. “Align & refine all” above has already run ICP for every
+            successful cloud.
+          </p>
         </div>
 
         {#if canRunPipeline}
@@ -277,7 +332,7 @@
                 onclick={() => runPipeline(false)}
                 disabled={stationPipelineUi.busy || registrationState.busy}
               >
-                {stationPipelineUi.busy ? 'Working...' : 'Colour scans from all stations'}
+                {stationPipelineUi.busy ? 'Working...' : 'Colour using best aligned cameras'}
               </button>
               <button
                 class="station-pipeline-register"
@@ -291,15 +346,40 @@
               <input type="checkbox" bind:checked={stationPipelineUi.recolorAlreadyColored} />
               Also recolour scans that already have camera colour
             </label>
+            <label style="display:block;margin-top:5px;">
+              Projection diagnostic
+              <select
+                class="station-projection-diagnostic"
+                style="display:block;width:100%;margin-top:2px;font-size:10px;"
+                bind:value={stationPipelineUi.projectionDiagnostic}
+                disabled={stationPipelineUi.busy || registrationState.busy}
+              >
+                <option value="normal">Normal calibrated projection</option>
+                <option value="own-station-only">Own station cameras only</option>
+                <option value="u-only">Upward camera (U) only</option>
+                <option value="d-only">Downward camera (D) only</option>
+                <option value="ideal-pinhole">Ignore lens distortion</option>
+                <option value="reverse-pan">Reverse panorama rotation</option>
+                <option value="invert-extrinsic">Invert camera extrinsic</option>
+              </select>
+            </label>
+            {#if stationPipelineUi.projectionDiagnostic !== 'normal'}
+              <p class="setting-description" style="margin:3px 0 0;">
+                Diagnostic runs replace existing camera colour so the selected model can be
+                compared on the same nearby edges. Return this to “Normal” after testing.
+              </p>
+            {/if}
             <p class="setting-description" style="margin:3px 0 0;">
               Re-reads the archive so it can use the full-resolution photographs, then colours the
-              scans no camera of their own station covered. Points a station could not actually see
-              are left alone rather than painted through the wall in front of them.
+              scans no camera of their own station covered. For every point, exactly one valid
+              camera wins: the best-centred view clear of frame edges. Occluded cameras are rejected.
               <br />
-              Colouring uses the alignment currently on screen, so align the scans first — by hand,
-              or with "Align all to this one" above. The second button re-derives the alignment
-              itself instead, which discards whatever is on screen. Either way it takes a minute or
-              two on a large archive; progress appears below.
+              After “Align & refine all”, only the anchor and successfully aligned scans are eligible;
+              photographs from failed scans are excluded. Without a preceding align-all run, all
+              current transforms are accepted so manually aligned archives still work. The second
+              button re-derives alignment itself and discards what is on screen.
+              Only scans in checked/visible capture places are parsed, used as cameras, and
+              recoloured; hiding the other places therefore makes a focused run faster.
             </p>
             {#if places.length > 1}
               <div style="margin-top:6px;">
@@ -348,7 +428,7 @@
 
         <p class="setting-description" style="margin:6px 0 0;">
           Viewing aid, not a survey adjustment: pairs are aligned one at a time with no network
-          balancing or loop closure. The result lands in this file's transform matrix above.
+          balancing or loop closure. Pairwise results land in the selected moving file's transform.
         </p>
       </div>
     {/if}

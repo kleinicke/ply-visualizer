@@ -106,7 +106,18 @@ export type StonexCameraBatchProjector = (
   request: StonexCameraProjectionRequest
 ) => Float32Array | null;
 
+export type StonexProjectionDiagnostic =
+  | 'normal'
+  | 'own-station-only'
+  | 'u-only'
+  | 'd-only'
+  | 'ideal-pinhole'
+  | 'reverse-pan'
+  | 'invert-extrinsic';
+
 interface CameraFrame {
+  /** Stable position in the archive's complete X3I list, even in a scoped run. */
+  archiveFrameIndex: number;
   member: ArchiveMember;
   scanStem: string;
   type: 'U' | 'D';
@@ -322,6 +333,7 @@ function parseCameraFrames(
     const pixelsOffset = member.offset + X3I_HEADER_BYTES;
     const gains = bayerWhiteBalance(data, pixelsOffset, rawWidth, rawHeight);
     frames.push({
+      archiveFrameIndex: frames.length,
       member,
       scanStem: match[1],
       type,
@@ -619,11 +631,40 @@ function cameraFrameMetadata(data: Uint8Array, frame: CameraFrame): StonexCamera
   };
 }
 
-function viewerToCameraTransform(frame: CameraFrame): number[] {
-  const pan = frame.panDegrees * (Math.PI / 180);
+function invertRigidRowMajor(matrix: readonly number[]): number[] {
+  const tx = matrix[3];
+  const ty = matrix[7];
+  const tz = matrix[11];
+  return [
+    matrix[0],
+    matrix[4],
+    matrix[8],
+    -(matrix[0] * tx + matrix[4] * ty + matrix[8] * tz),
+    matrix[1],
+    matrix[5],
+    matrix[9],
+    -(matrix[1] * tx + matrix[5] * ty + matrix[9] * tz),
+    matrix[2],
+    matrix[6],
+    matrix[10],
+    -(matrix[2] * tx + matrix[6] * ty + matrix[10] * tz),
+    0,
+    0,
+    0,
+    1,
+  ];
+}
+
+function viewerToCameraTransform(
+  frame: CameraFrame,
+  diagnostic: StonexProjectionDiagnostic = 'normal'
+): number[] {
+  const panSign = diagnostic === 'reverse-pan' ? -1 : 1;
+  const pan = panSign * frame.panDegrees * (Math.PI / 180);
   const cosPan = Math.cos(pan);
   const sinPan = Math.sin(pan);
-  const m = frame.calibration.modelToCamera;
+  const calibrated = frame.calibration.modelToCamera;
+  const m = diagnostic === 'invert-extrinsic' ? invertRigidRowMajor(calibrated) : calibrated;
   const result = new Array<number>(16).fill(0);
   for (let row = 0; row < 4; row++) {
     const offset = row * 4;
@@ -664,6 +705,13 @@ export interface StonexStationPipelineOptions {
   recolorAlreadyColored?: boolean;
   /** Vertical axis for the 4-DoF sweep; terrestrial scans are level about it. */
   upAxis?: UpAxis;
+  /** Controlled camera-model variant used to diagnose projection misalignment. */
+  projectionDiagnostic?: StonexProjectionDiagnostic;
+  /**
+   * Restrict a reprocessing run to these X3R stems and their photographs.
+   * Unselected archive members are skipped before geometry decode/demosaic.
+   */
+  scopeScanStems?: string[];
   /**
    * Called as each scan finishes colouring, with the slice of the archive's
    * colour arrays that belongs to it, so a host can publish progress instead of
@@ -673,7 +721,7 @@ export interface StonexStationPipelineOptions {
     scanStem: string;
     rawColors: Uint8Array;
     frameIndices: Uint16Array;
-  }) => void;
+  }) => void | Promise<void>;
 }
 
 export class StonexX3aParser {
@@ -691,7 +739,9 @@ export class StonexX3aParser {
      * 31.4 s - so handing the geometry over at this point puts the scene on
      * screen roughly five times sooner, with colour arriving behind it.
      */
-    onGeometryReady?: (geometry: StonexX3aData) => void | Promise<void>
+    onGeometryReady?: (geometry: StonexX3aData) => void | Promise<void>,
+    /** Internal member scope supplied by `parseAll` for a pipeline rerun. */
+    scopeScanStems?: readonly string[]
   ): Promise<StonexX3aData> {
     const startedAt = performance.now();
     // Phase timings, reported at the end. Added because a load that "feels
@@ -749,11 +799,19 @@ export class StonexX3aParser {
       throw new Error('Invalid Stonex X3A/X3R file: missing CRAX or 003X signature.');
     }
 
-    const scanMembers = members.filter(
-      member => member.name.toLowerCase().endsWith('.x3r') && member.size >= 64
-    );
+    const scope = scopeScanStems?.length ? new Set(scopeScanStems) : null;
+    const scanMembers = members.filter(member => {
+      if (!member.name.toLowerCase().endsWith('.x3r') || member.size < 64) {
+        return false;
+      }
+      return !scope || scope.has(stemOf(member.name));
+    });
     if (scanMembers.length === 0) {
-      throw new Error('Invalid Stonex X3A file: archive contains no X3R scan records.');
+      throw new Error(
+        scope
+          ? 'Stonex X3A: none of the selected scans exist in the archive.'
+          : 'Invalid Stonex X3A file: archive contains no X3R scan records.'
+      );
     }
 
     const calibrations = new Map<'U' | 'D', CameraCalibration>();
@@ -764,12 +822,11 @@ export class StonexX3aParser {
       }
     }
     markPhase('archive directory');
-    const { frames: cameraFrames, bandGains } = parseCameraFrames(
-      data,
-      view,
-      members,
-      calibrations
-    );
+    const parsedCameras = parseCameraFrames(data, view, members, calibrations);
+    const cameraFrames = scope
+      ? parsedCameras.frames.filter(frame => scope.has(frame.scanStem))
+      : parsedCameras.frames;
+    const bandGains = parsedCameras.bandGains;
 
     markPhase(`camera frame discovery (${cameraFrames.length} found)`);
     timingCallback?.(`Stonex X3A: inspecting ${scanMembers.length} embedded scan records...`);
@@ -1141,6 +1198,16 @@ export class StonexX3aParser {
         );
         const scanColours = result.take_colours() as Uint8Array;
         const scanFrames = result.take_frame_indices() as Uint16Array;
+        // The Rust session sees only scoped frames and returns its compact
+        // indices. Point-colour updates are applied to an already-loaded
+        // archive whose calibration keeps the complete X3I order, so preserve
+        // those stable archive IDs across the boundary.
+        for (let index = 0; index < scanFrames.length; index++) {
+          const localFrame = scanFrames[index];
+          if (localFrame !== STONEX_NO_FRAME) {
+            scanFrames[index] = cameraFrames[localFrame]?.archiveFrameIndex ?? STONEX_NO_FRAME;
+          }
+        }
         const coloured = result.coloured_points as number;
         counters.candidateTotal =
           (counters.candidateTotal ?? 0) + (result.candidate_total as number);
@@ -1242,7 +1309,7 @@ export class StonexX3aParser {
           rawColors[offset] = Math.round(color[0]);
           rawColors[offset + 1] = Math.round(color[1]);
           rawColors[offset + 2] = Math.round(color[2]);
-          frameIndices[pointIndex] = frameNumber;
+          frameIndices[pointIndex] = frame.archiveFrameIndex;
           colored[pointIndex] = 1;
         }
         sampleMs += performance.now() - sampleStart;
@@ -1278,7 +1345,10 @@ export class StonexX3aParser {
 
     markPhase('projection + sampling');
     const colorCalibration = buildStonexColorCalibration(
-      cameraFrames.map((frame): StonexFrameCalibration => ({
+      // Keep the full archive calibration in scoped runs. Besides retaining
+      // stable frame IDs, this keeps optional exposure matching referenced to
+      // the same captured set rather than changing when visibility changes.
+      parsedCameras.frames.map((frame): StonexFrameCalibration => ({
         type: frame.type,
         grayRedGain: frame.grayRedGain,
         grayBlueGain: frame.grayBlueGain,
@@ -1358,13 +1428,17 @@ export class StonexX3aParser {
     /** Per-scan geometry, handed over before any photograph is decoded. */
     onGeometryReady?: (scans: StonexX3aData[]) => void | Promise<void>
   ): Promise<StonexX3aData[]> {
-    const combined = await this.parse(data, fileName, timingCallback, geometry =>
-      onGeometryReady?.(splitByScan(geometry, null, true))
+    const combined = await this.parse(
+      data,
+      fileName,
+      timingCallback,
+      geometry => onGeometryReady?.(splitByScan(geometry, null, true)),
+      pipeline?.scopeScanStems
     );
     const stationTransforms = await this.runStationPipeline(combined, pipeline, timingCallback);
     delete (combined.metadata as Record<string, unknown>).stonexStationSources;
     const ranges = combined.metadata.embeddedScanPointRanges as ScanPointRange[] | undefined;
-    if (!ranges || ranges.length <= 1) {
+    if (!ranges || (ranges.length <= 1 && !pipeline?.scopeScanStems?.length)) {
       return [combined];
     }
 
@@ -1372,7 +1446,12 @@ export class StonexX3aParser {
     // When geometry was already handed to the host, these final objects only
     // feed colour updates. Views avoid copying every positions/intensity/color
     // array a second time; the update sender slices only its bounded chunks.
-    const scans = splitByScan(combined, stationTransforms, !onGeometryReady);
+    const scans = splitByScan(
+      combined,
+      stationTransforms,
+      !onGeometryReady,
+      !!pipeline?.scopeScanStems?.length
+    );
     const splitMs = performance.now() - splitStartedAt;
     const report = combined.metadata.stonexParsePhases as
       { totalMs?: number; phases?: Array<{ name: string; ms: number }> } | undefined;
@@ -1405,7 +1484,7 @@ export class StonexX3aParser {
       | undefined;
     const ranges = combined.metadata.embeddedScanPointRanges as ScanPointRange[] | undefined;
     const supplied = options?.transforms;
-    if ((!options?.register && !supplied) || !sources || !ranges || ranges.length < 2) {
+    if ((!options?.register && !supplied) || !sources || !ranges || ranges.length === 0) {
       return null;
     }
 
@@ -1512,6 +1591,15 @@ export class StonexX3aParser {
       return;
     }
 
+    const diagnostic = options.projectionDiagnostic ?? 'normal';
+    if (diagnostic !== 'normal') {
+      // A controlled comparison must not inherit pixels or winning-frame IDs
+      // from the normal first pass. Any point the selected variant cannot see
+      // stays white, which makes its actual coverage and errors unambiguous.
+      rawColors.fill(255);
+      frameIndices.fill(STONEX_NO_FRAME);
+    }
+
     // A point counts as coloured exactly when the first pass gave it a frame.
     const colored = new Uint8Array(combined.vertexCount);
     for (let i = 0; i < colored.length; i++) {
@@ -1527,8 +1615,15 @@ export class StonexX3aParser {
         transform: transforms.get(stemOf(range.name))!,
       }));
 
-    const frames: StationFrame[] = sources.frames.map((frame, frameNumber) => ({
-      frameNumber,
+    const selectedFrames = sources.frames.filter(
+      frame =>
+        (diagnostic !== 'u-only' || frame.type === 'U') &&
+        (diagnostic !== 'd-only' || frame.type === 'D')
+    );
+    const frames: StationFrame[] = selectedFrames.map(frame => ({
+      // Keep the original archive index: colour correction and the camera list
+      // address that complete list even when a diagnostic temporarily filters it.
+      frameNumber: frame.archiveFrameIndex,
       scanStem: frame.scanStem,
       panDegrees: frame.panDegrees,
       imageWidth: frame.calibration.width,
@@ -1537,15 +1632,18 @@ export class StonexX3aParser {
       fy: frame.calibration.fy,
       cx: frame.calibration.cx,
       cy: frame.calibration.cy,
-      distortionCoefficients: frame.calibration.distortionCoefficients,
-      viewerToCamera: viewerToCameraTransform(frame),
+      distortionCoefficients:
+        diagnostic === 'ideal-pinhole'
+          ? frame.calibration.distortionCoefficients.map(() => 0)
+          : frame.calibration.distortionCoefficients,
+      viewerToCamera: viewerToCameraTransform(frame, diagnostic),
       maxNormalizedX: Math.tan((frame.calibration.fovX * Math.PI) / 360),
       maxNormalizedY: Math.tan((frame.calibration.fovY * Math.PI) / 360),
       sample: (pixelX, pixelY) => sampleCameraRgb(sources.data, frame, pixelX, pixelY),
     }));
 
     const changed = new Uint8Array(combined.vertexCount);
-    const result = colorFromAllStations(
+    const result = await colorFromAllStations(
       combined.positionsArray,
       rawColors,
       frameIndices,
@@ -1556,6 +1654,7 @@ export class StonexX3aParser {
       sources.projector,
       {
         recolorAlreadyColored: options.recolorAlreadyColored,
+        ownStationOnly: diagnostic === 'own-station-only',
         onScanColored: scan =>
           options.onScanColored?.({
             scanStem: scan.scanStem,
@@ -1627,11 +1726,12 @@ const REGISTRATION_SAMPLE_LIMIT = 400_000;
 function splitByScan(
   combined: StonexX3aData,
   stationTransforms: Map<string, number[]> | null,
-  copyArrays = true
+  copyArrays = true,
+  forceSingle = false
 ): StonexX3aData[] {
   const fileName = combined.fileName ?? '';
   const ranges = combined.metadata.embeddedScanPointRanges as ScanPointRange[] | undefined;
-  if (!ranges || ranges.length <= 1) {
+  if (!ranges || (ranges.length <= 1 && !forceSingle)) {
     return [combined];
   }
   const cameraFrames = combined.metadata.stonexCameraFrames;
