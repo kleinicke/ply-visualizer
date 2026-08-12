@@ -65,6 +65,12 @@ interface PointcloudWasm {
   parse_pts(data: Uint8Array): RawResult;
   parse_pcd(data: Uint8Array): RawResult;
   parse_ply(data: Uint8Array): RawPlyResult;
+  /** Parses a file already written into wasm memory - see `parsePlyFromResponse`. */
+  parse_ply_at(ptr: number, len: number): RawPlyResult;
+  alloc(len: number): number;
+  dealloc(ptr: number, len: number): void;
+  /** Present only in the browser build, where the loader attaches it. */
+  memory?: WebAssembly.Memory;
 }
 
 /** The PCD header, as the Rust parser reports it. */
@@ -202,7 +208,59 @@ export async function parsePlyWasm(data: Uint8Array): Promise<PlyParseResult> {
   if (!wasm) {
     throw new Error('point-cloud wasm unavailable');
   }
-  const raw = wasm.parse_ply(data);
+  return marshalPly(wasm.parse_ply(data));
+}
+
+/**
+ * Parse a PLY straight from a fetch response, without the file ever existing as
+ * a JavaScript buffer.
+ *
+ * `parsePlyWasm` takes a `Uint8Array`, which means wasm-bindgen copies the
+ * whole file into wasm memory before parsing - on a 200 MB point cloud that
+ * copy, plus the `ArrayBuffer` the fetch allocated to hold the bytes in the
+ * first place, cost more than the parse itself. Here the response body is
+ * streamed directly into a buffer inside wasm memory and parsed where it lies.
+ *
+ * Falls back to the copying path when the response has no length to size the
+ * buffer with, or no readable stream.
+ */
+export async function parsePlyFromResponse(response: Response): Promise<PlyParseResult> {
+  const wasm = await loadPointcloudWasm();
+  if (!wasm) {
+    throw new Error('point-cloud wasm unavailable');
+  }
+  const declared = Number(response.headers.get('content-length'));
+  if (!wasm.memory || !response.body || !Number.isFinite(declared) || declared <= 0) {
+    return marshalPly(wasm.parse_ply(new Uint8Array(await response.arrayBuffer())));
+  }
+
+  const ptr = wasm.alloc(declared);
+  try {
+    const reader = response.body.getReader();
+    let written = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (written + value.byteLength > declared) {
+        throw new Error(`PLY body is longer than its content-length (${declared})`);
+      }
+      // The view is rebuilt per chunk: any wasm allocation can grow the memory
+      // and detach every view over the old buffer.
+      new Uint8Array(wasm.memory.buffer, ptr, declared).set(value, written);
+      written += value.byteLength;
+    }
+    if (written !== declared) {
+      throw new Error(`PLY body ended early: ${written} of ${declared} bytes`);
+    }
+    return marshalPly(wasm.parse_ply_at(ptr, declared));
+  } finally {
+    wasm.dealloc(ptr, declared);
+  }
+}
+
+function marshalPly(raw: RawPlyResult): PlyParseResult {
   const header = JSON.parse(raw.metadata_json) as {
     format: PlyParseResult['format'];
     version: string;

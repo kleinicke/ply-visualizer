@@ -1168,15 +1168,47 @@ re-attached for Spark), and `parseHeaderOnly` now returns only `headerInfo` and
 `binaryDataStart`. The fetch path already downloaded the whole file, so it pays
 nothing; the postMessage path sends the header bytes it previously stripped.
 
-**Not yet measured on a large file.** The claim this item makes is CPU, and the
-honest position is that the correctness is tested (203 browser specs, 50 Rust
-tests) while the speed is not: it needs a run against the multi-million-point
-binary PLYs in the repo root, in the F5 host, comparing against the previous
-`PERF[ply/…]` lines. Note the known constraint from "Load-pipeline IO": WASM
-cannot read a JS buffer in place, so the webview pays one copy of the file into
-wasm memory that the `DataView` loop did not. The `alloc`/`parse_at` zero-copy
-entry points exist for exactly this and are the first thing to try if that copy
-shows up on the clock.
+**Measured, and the first version was a regression.** On `test_pc6_binary.ply`
+(7.9M points, 203 MB, `double` x/y/z + `uchar` rgb) in the F5 host, the parse
+phase went from **65-101ms** on the JavaScript reader to **562-764ms** in Rust —
+about 50% on total load. Two separate causes, found by timing the parser
+natively (`examples/bench_ply.rs`, which exists for this) at **250ms**, i.e.
+already 3x the JavaScript loop before any boundary was involved:
+
+1. **The loop.** It staged every property into a `Vec<f64>` per vertex and then
+   re-dispatched through a `match`, pushing into growing vectors: roughly three
+   bounds and capacity checks per value, where the JavaScript did one intrinsic
+   load into a pre-sized array. The deleted TypeScript had a `fastEligible`
+   specialization for exactly the common layout, and nothing replaced it.
+2. **The boundary.** 203 MB copied in, ~119 MB copied back out, plus the wasm
+   memory growth that entails.
+
+Both are addressed:
+
+- `read_vertices_fast` is the specialization: float/double x/y/z, `uchar` r/g/b,
+  optional float normals and intensity, offsets fixed before the loop, output
+  buffers pre-sized and written by index. Properties with no target are dropped
+  from the walk entirely, which matters most on 3DGS files (62 declared, ~7
+  read). Native **250ms → 50-120ms**; in-page parse **~650ms → ~130ms warm**.
+- `parse_ply_at` plus `alloc`/`dealloc` let the webview stream a fetch response
+  straight into wasm memory and parse it where it lies, so the file never
+  becomes a JavaScript `ArrayBuffer` at all (`parsePlyFromResponse`). Measured
+  in a browser on the same file: streamed fetch+parse **224-324ms** against
+  arrayBuffer+parse **264-304ms**.
+
+Two things learned that generalize to the remaining items:
+
+- **A generic property walk is not free.** The obvious Rust port — read every
+  declared property into a buffer, then dispatch — is several times slower than
+  a JavaScript loop that reads only what it needs. Specialize the common layout
+  and skip untargeted properties.
+- **The first parse in a fresh webview is the expensive one**, because wasm
+  memory has to grow to hold the file plus its output. Warm re-parses in the
+  same page are 2x faster and will flatter any benchmark that loops.
+
+Still worth re-measuring in the F5 host against the `PERF[ply/…]` lines above,
+since the browser numbers here come from a localhost dev server rather than the
+webview's asset protocol.
 
 #### 2. NPY / NPZ
 

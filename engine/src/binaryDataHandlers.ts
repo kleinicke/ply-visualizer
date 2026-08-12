@@ -1,14 +1,14 @@
 import { SpatialData, SpatialVertex } from './interfaces';
 import { PerfTimer } from './utils/perfLog';
 import { noteContainerScanLoaded } from './utils/containerPerf';
-import { parsePlyWasm } from './parsers/pointcloudWasm';
+import { parsePlyFromResponse, parsePlyWasm, type PlyParseResult } from './parsers/pointcloudWasm';
 
 export interface BinaryDataHandlersHost {
   vscode: { postMessage(message: any): void };
   lastAbsoluteMs: number;
   addNewFiles(newFiles: SpatialData[]): void;
   displayFiles(dataArray: SpatialData[]): Promise<void>;
-  handleUltimateRawBinaryData(message: any): Promise<void>;
+  handleUltimateRawBinaryData(message: any, preparsed?: PlyParseResult): Promise<void>;
 }
 
 export async function loadWithPerf(
@@ -60,12 +60,12 @@ export async function handleUltimateRawBinaryUri(
     if (!response.ok) {
       throw new Error(`fetch failed: ${response.status}`);
     }
-    const full = await response.arrayBuffer();
-    const fetchMs = performance.now() - fetchStart;
-    // The parser reads the header itself, so the whole file goes through.
-    message.rawBinaryData = full;
-    message.fetchMs = fetchMs;
-    await host.handleUltimateRawBinaryData(message);
+    // Streamed straight into wasm memory and parsed there, so the file never
+    // exists as a JavaScript buffer. `fetch` and `parse` are one phase here
+    // because they overlap by construction - the timer records the pair.
+    const parsed = await parsePlyFromResponse(response);
+    message.fetchMs = performance.now() - fetchStart;
+    await host.handleUltimateRawBinaryData(message, parsed);
   } catch (error) {
     console.warn('[PLY] fetch path failed, requesting postMessage fallback:', error);
     host.vscode.postMessage({
@@ -79,7 +79,9 @@ export async function handleUltimateRawBinaryUri(
 
 export async function handleUltimateRawBinaryData(
   host: BinaryDataHandlersHost,
-  message: any
+  message: any,
+  /** Supplied by the fetch route, which parses out of wasm memory directly. */
+  preparsed?: PlyParseResult
 ): Promise<void> {
   const startTime = performance.now();
   const perf = new PerfTimer('ply', message.loadStartedAt, message.postedAt, message.uriReceivedAt);
@@ -94,8 +96,8 @@ export async function handleUltimateRawBinaryData(
   // only, driven by a property/offset table the extension host computed: a
   // second binary PLY decoder, with its own idea of splat colour and scalar
   // fields, sitting a message boundary away from the first.
-  const rawData = new Uint8Array(message.rawBinaryData);
-  const parsed = await parsePlyWasm(rawData);
+  const rawData = message.rawBinaryData ? new Uint8Array(message.rawBinaryData) : null;
+  const parsed = preparsed ?? (await parsePlyWasm(rawData!));
   const isSplat = parsed.isGaussianSplat;
 
   const parseTime = performance.now();
@@ -122,7 +124,7 @@ export async function handleUltimateRawBinaryData(
     // Splat mode re-fetches the full PLY from this webview URI on demand, so
     // no bytes are retained here.
     spatialData.splatSource = { url: message.fileUri };
-  } else if (isSplat) {
+  } else if (isSplat && rawData) {
     // The postMessage route already carries the complete file, so Spark can
     // reuse those bytes rather than have them sent a second time.
     spatialData.splatSource = { bytes: rawData };

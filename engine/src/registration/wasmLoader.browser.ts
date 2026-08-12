@@ -30,12 +30,19 @@ let ready: Promise<RegistrationWasm | null> | null = null;
  * `parsers/pointcloudWasm.ts` both cast the result to their own view of the
  * crate. Exporting a hand-picked subset here silently left those two with
  * `null` in the browser while they worked in the extension host.
+ *
+ * `memory` is attached to the namespace because it is not one of its exports -
+ * it belongs to the object `init()` resolves to - and the parsers need it to
+ * write a file into wasm memory instead of handing it across the boundary.
  */
 export function loadRegistrationWasm(): Promise<RegistrationWasm | null> {
   if (!ready) {
     ready = wasm
       .default()
-      .then(() => wasm as unknown as RegistrationWasm)
+      .then(instance => {
+        const module = wasm as unknown as Record<string, unknown>;
+        return { ...module, memory: instance.memory } as unknown as RegistrationWasm;
+      })
       .catch((error: unknown): RegistrationWasm | null => {
         console.warn('[registration] in-page wasm failed to initialize:', error);
         return null;

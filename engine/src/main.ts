@@ -140,6 +140,7 @@ import { DepthWorkerClient } from './depth/DepthWorkerClient';
 import { alignSourceOrigin } from './utils/sourceOrigin';
 import { SectionPlaneManager } from './visualization/sectionPlanes';
 import type { VolumeData } from './parsers/nrrdParser';
+import { parsePlyFromResponse, parsePlyWasm, type PlyParseResult } from './parsers/pointcloudWasm';
 import { buildVolumePointsAsync } from './visualization/volumePoints';
 import { buildVolumeMeshAsync } from './visualization/isosurface';
 import { buildVolumeSlicesAsync } from './visualization/volumeSlices';
@@ -3745,8 +3746,8 @@ class PointCloudVisualizer {
     await binaryDataHandlers.handleUltimateRawBinaryUri(this, message);
   }
 
-  async handleUltimateRawBinaryData(message: any): Promise<void> {
-    await binaryDataHandlers.handleUltimateRawBinaryData(this, message);
+  async handleUltimateRawBinaryData(message: any, preparsed?: PlyParseResult): Promise<void> {
+    await binaryDataHandlers.handleUltimateRawBinaryData(this, message, preparsed);
   }
 
   private async handleDirectTypedArrayData(message: any): Promise<void> {
@@ -4724,6 +4725,10 @@ class PointCloudVisualizer {
 // Test hook: container totals only arise from multi-scan E57/X3A loads driven by
 // the extension host, so specs exercise the accumulator directly.
 (window as any).__plyContainerPerf = containerPerf;
+// Test hook, same reason as __plyContainerPerf: the zero-copy PLY route runs
+// only when the extension host hands the webview a URI to fetch, so a browser
+// spec has no other way to reach it.
+(window as any).__plyParsePly = { parsePlyFromResponse, parsePlyWasm };
 // Test handle for the file-list state, following __plyContainerPerf above.
 // Lets a browser test drive the background-work row without needing the
 // extension host to stream real images.

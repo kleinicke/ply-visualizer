@@ -1220,6 +1220,29 @@ function parse_ply(data) {
 exports.parse_ply = parse_ply;
 
 /**
+ * Parse a PLY already sitting in wasm memory at `ptr`/`len`.
+ *
+ * The `&[u8]` entry point above makes wasm-bindgen copy the whole file across
+ * the boundary first, which on a 200 MB point cloud costs more than the parse.
+ * The caller can instead `alloc` a buffer, stream the file straight into it,
+ * and parse it where it lies.
+ *
+ * # Safety
+ * `ptr`/`len` must describe a buffer returned by `alloc` and still live.
+ * @param {number} ptr
+ * @param {number} len
+ * @returns {PlyResult}
+ */
+function parse_ply_at(ptr, len) {
+  const ret = wasm.parse_ply_at(ptr, len);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return PlyResult.__wrap(ret[0]);
+}
+exports.parse_ply_at = parse_ply_at;
+
+/**
  * Parse a PTS point cloud. PTS has an optional leading count line + comments
  * (both have < 3 numeric columns, so `parse_rows` skips them automatically),
  * then rows auto-detected from the first data row:

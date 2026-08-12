@@ -286,6 +286,19 @@ fn is_extra_scalar(property: &Property, splat: bool) -> bool {
     }
 }
 
+/// One place that turns a raw colour value into a byte: splat DC term, 0..1
+/// float, or an already-0..255 channel.
+#[inline(always)]
+fn encode_color(v: f64, is_splat: bool, unit_colors: bool) -> u8 {
+    if is_splat {
+        sh_dc_to_u8(v)
+    } else if unit_colors {
+        (v * 255.0).clamp(0.0, 255.0).round() as u8
+    } else {
+        v.clamp(0.0, 255.0).round() as u8
+    }
+}
+
 fn sh_dc_to_u8(v: f64) -> u8 {
     let c = (0.5 + SH_C0 * v) * 255.0;
     c.clamp(0.0, 255.0).round() as u8
@@ -401,8 +414,15 @@ fn plan_vertex(element: &Element) -> Result<VertexPlan, String> {
     }
     if is_splat {
         // 3DGS exporters write nx/ny/nz as zeros, which would only produce a
-        // useless normals array and a no-op Normals button.
+        // useless normals array and a no-op Normals button. The targets go with
+        // the array: a target whose output does not exist is a write into an
+        // empty buffer, which is how this first showed up.
         has_normals = false;
+        for target in &mut targets {
+            if matches!(target, Target::Nx | Target::Ny | Target::Nz) {
+                *target = Target::Ignore;
+            }
+        }
     }
 
     Ok(VertexPlan {
@@ -555,7 +575,28 @@ impl VertexSink {
         }
     }
 
-    /// `values[i]` is the value of property `i` for one vertex.
+    /// Grows every output buffer to hold `n` vertices, so the binary loops can
+    /// write by index instead of pushing - a bounds check and a capacity check
+    /// per value is most of the cost when there are eight million of them.
+    fn reserve_exact(&mut self, n: usize) {
+        self.positions.resize(n * 3, 0.0);
+        if self.plan.has_colors {
+            self.colors.resize(n * 3, 0);
+        }
+        if self.plan.has_normals {
+            self.normals.resize(n * 3, 0.0);
+        }
+        if self.plan.has_intensity {
+            self.intensity.resize(n, 0.0);
+        }
+        for scalar in &mut self.scalars {
+            scalar.resize(n, 0.0);
+        }
+    }
+
+    /// `values[i]` is the value of property `i` for one vertex. Used by the
+    /// ASCII body and by variable-length binary records, which cannot be
+    /// addressed by offset.
     fn push(&mut self, values: &[f64]) {
         let mut xyz = [0f32; 3];
         let mut rgb = [0u8; 3];
@@ -576,13 +617,7 @@ impl VertexSink {
                         Target::Green => 1,
                         _ => 2,
                     };
-                    rgb[channel] = if self.plan.is_splat {
-                        sh_dc_to_u8(v)
-                    } else if self.plan.unit_colors {
-                        (v * 255.0).clamp(0.0, 255.0).round() as u8
-                    } else {
-                        v.clamp(0.0, 255.0).round() as u8
-                    };
+                    rgb[channel] = encode_color(v, self.plan.is_splat, self.plan.unit_colors);
                 }
                 Target::Nx => normal[0] = v as f32,
                 Target::Ny => normal[1] = v as f32,
@@ -614,6 +649,27 @@ impl VertexSink {
 #[wasm_bindgen]
 pub fn parse_ply(data: &[u8]) -> Result<PlyResult, JsValue> {
     parse_ply_inner(data).map_err(|e| JsValue::from_str(&e))
+}
+
+/// Parse a PLY already sitting in wasm memory at `ptr`/`len`.
+///
+/// The `&[u8]` entry point above makes wasm-bindgen copy the whole file across
+/// the boundary first, which on a 200 MB point cloud costs more than the parse.
+/// The caller can instead `alloc` a buffer, stream the file straight into it,
+/// and parse it where it lies.
+///
+/// # Safety
+/// `ptr`/`len` must describe a buffer returned by `alloc` and still live.
+#[wasm_bindgen]
+pub fn parse_ply_at(ptr: usize, len: usize) -> Result<PlyResult, JsValue> {
+    let data = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
+    parse_ply_inner(data).map_err(|e| JsValue::from_str(&e))
+}
+
+/// Parse-loop cost with no wasm boundary in the way, for `examples/bench_ply`.
+/// Returns (vertices, faces) so the work cannot be optimized away.
+pub fn parse_ply_native(data: &[u8]) -> Result<(u32, u32), String> {
+    parse_ply_inner(data).map(|r| (r.vertex_count, r.face_count))
 }
 
 fn parse_ply_inner(data: &[u8]) -> Result<PlyResult, String> {
@@ -765,6 +821,128 @@ fn read_ascii_line(data: &[u8], pos: &mut usize, out: &mut Vec<f64>) {
     }
 }
 
+/// Only the properties that go somewhere, with their offset and type. A file
+/// may declare dozens (3DGS declares 62) of which a handful are read; walking
+/// this instead of every property is most of the difference on a large file.
+struct BinaryField {
+    target: Target,
+    offset: usize,
+    ty: ScalarType,
+}
+
+/// The layout the overwhelming majority of binary PLYs use: float (or double)
+/// x/y/z, uint8 r/g/b, float normals, float intensity, nothing else read.
+///
+/// It gets its own loop for the same reason the TypeScript reader this replaces
+/// had one: the generic path pays a match and a bounds-checked read per
+/// property per vertex, and on eight million vertices that is the whole cost.
+/// Here the offsets and widths are constants by the time the loop runs.
+struct FastLayout {
+    xyz: [usize; 3],
+    xyz_f64: bool,
+    rgb: Option<[usize; 3]>,
+    normals: Option<[usize; 3]>,
+    intensity: Option<usize>,
+}
+
+fn fast_layout(fields: &[BinaryField], plan: &VertexPlan) -> Option<FastLayout> {
+    if plan.is_splat || plan.unit_colors || !plan.scalar_names.is_empty() {
+        return None;
+    }
+    let mut xyz = [usize::MAX; 3];
+    let mut xyz_ty = None;
+    let mut rgb = [usize::MAX; 3];
+    let mut normals = [usize::MAX; 3];
+    let mut intensity = None;
+    for field in fields {
+        let slot = match field.target {
+            Target::X => 0,
+            Target::Y => 1,
+            Target::Z => 2,
+            Target::Red | Target::Green | Target::Blue => {
+                if field.ty != ScalarType::U8 {
+                    return None;
+                }
+                let i = match field.target {
+                    Target::Red => 0,
+                    Target::Green => 1,
+                    _ => 2,
+                };
+                rgb[i] = field.offset;
+                continue;
+            }
+            Target::Nx | Target::Ny | Target::Nz => {
+                if field.ty != ScalarType::F32 {
+                    return None;
+                }
+                let i = match field.target {
+                    Target::Nx => 0,
+                    Target::Ny => 1,
+                    _ => 2,
+                };
+                normals[i] = field.offset;
+                continue;
+            }
+            Target::Intensity => {
+                if field.ty != ScalarType::F32 {
+                    return None;
+                }
+                intensity = Some(field.offset);
+                continue;
+            }
+            // A scalar field or an ignored property has no place here.
+            _ => return None,
+        };
+        if !matches!(field.ty, ScalarType::F32 | ScalarType::F64) {
+            return None;
+        }
+        if *xyz_ty.get_or_insert(field.ty) != field.ty {
+            return None; // mixed-width positions: rare, not worth a variant
+        }
+        xyz[slot] = field.offset;
+    }
+    if xyz.contains(&usize::MAX) {
+        return None;
+    }
+    Some(FastLayout {
+        xyz,
+        xyz_f64: xyz_ty == Some(ScalarType::F64),
+        rgb: if rgb.contains(&usize::MAX) {
+            None
+        } else {
+            Some(rgb)
+        },
+        normals: if normals.contains(&usize::MAX) {
+            None
+        } else {
+            Some(normals)
+        },
+        intensity,
+    })
+}
+
+#[inline(always)]
+fn read_f32_at(data: &[u8], off: usize, little: bool) -> f32 {
+    let mut b = [0u8; 4];
+    b.copy_from_slice(&data[off..off + 4]);
+    if little {
+        f32::from_le_bytes(b)
+    } else {
+        f32::from_be_bytes(b)
+    }
+}
+
+#[inline(always)]
+fn read_f64_at(data: &[u8], off: usize, little: bool) -> f64 {
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&data[off..off + 8]);
+    if little {
+        f64::from_le_bytes(b)
+    } else {
+        f64::from_be_bytes(b)
+    }
+}
+
 fn read_binary_body(
     data: &[u8],
     header: &PlyHeader,
@@ -778,28 +956,37 @@ fn read_binary_body(
 
     for element in &header.elements {
         if element.name == "vertex" {
-            let stride = sink.plan.stride;
-            for _ in 0..element.count {
-                match stride {
-                    Some(stride) => {
-                        if pos + stride > data.len() {
-                            return Ok(()); // truncated: keep what was read
+            match sink.plan.stride {
+                Some(stride) if stride > 0 => {
+                    // Only whole records that are actually present are read, so
+                    // the loops below need no per-value bounds test.
+                    let available = data.len().saturating_sub(pos) / stride;
+                    let n = element.count.min(available);
+                    let fields: Vec<BinaryField> = sink
+                        .plan
+                        .targets
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, t)| **t != Target::Ignore)
+                        .map(|(i, t)| BinaryField {
+                            target: *t,
+                            offset: sink.plan.offsets[i],
+                            ty: sink.plan.types[i],
+                        })
+                        .collect();
+
+                    match fast_layout(&fields, &sink.plan) {
+                        Some(layout) => {
+                            read_vertices_fast(data, pos, stride, n, little, &layout, sink)
                         }
-                        values.clear();
-                        for i in 0..sink.plan.types.len() {
-                            values.push(read_scalar(
-                                data,
-                                pos + sink.plan.offsets[i],
-                                sink.plan.types[i],
-                                little,
-                            ));
-                        }
-                        sink.push(&values);
-                        pos += stride;
+                        None => read_vertices_generic(data, pos, stride, n, little, &fields, sink),
                     }
-                    // A list property inside the vertex element makes the
-                    // record variable-length, so it is walked instead.
-                    None => {
+                    pos += n * stride;
+                }
+                // A list property inside the vertex element makes the record
+                // variable-length, so it is walked instead.
+                _ => {
+                    for _ in 0..element.count {
                         values.clear();
                         if !read_record_sequential(data, &mut pos, element, little, &mut values) {
                             return Ok(());
@@ -826,6 +1013,124 @@ fn read_binary_body(
         }
     }
     Ok(())
+}
+
+#[allow(clippy::needless_range_loop)] // the index addresses several buffers at once
+fn read_vertices_fast(
+    data: &[u8],
+    start: usize,
+    stride: usize,
+    n: usize,
+    little: bool,
+    layout: &FastLayout,
+    sink: &mut VertexSink,
+) {
+    sink.reserve_exact(n);
+    let positions = &mut sink.positions;
+    let colors = &mut sink.colors;
+    let normals = &mut sink.normals;
+    let intensity = &mut sink.intensity;
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+
+    for i in 0..n {
+        let base = start + i * stride;
+        let (x, y, z) = if layout.xyz_f64 {
+            (
+                read_f64_at(data, base + layout.xyz[0], little) as f32,
+                read_f64_at(data, base + layout.xyz[1], little) as f32,
+                read_f64_at(data, base + layout.xyz[2], little) as f32,
+            )
+        } else {
+            (
+                read_f32_at(data, base + layout.xyz[0], little),
+                read_f32_at(data, base + layout.xyz[1], little),
+                read_f32_at(data, base + layout.xyz[2], little),
+            )
+        };
+        let i3 = i * 3;
+        positions[i3] = x;
+        positions[i3 + 1] = y;
+        positions[i3 + 2] = z;
+        min[0] = min[0].min(x);
+        min[1] = min[1].min(y);
+        min[2] = min[2].min(z);
+        max[0] = max[0].max(x);
+        max[1] = max[1].max(y);
+        max[2] = max[2].max(z);
+
+        if let Some(rgb) = layout.rgb {
+            colors[i3] = data[base + rgb[0]];
+            colors[i3 + 1] = data[base + rgb[1]];
+            colors[i3 + 2] = data[base + rgb[2]];
+        }
+        if let Some(offsets) = layout.normals {
+            normals[i3] = read_f32_at(data, base + offsets[0], little);
+            normals[i3 + 1] = read_f32_at(data, base + offsets[1], little);
+            normals[i3 + 2] = read_f32_at(data, base + offsets[2], little);
+        }
+        if let Some(offset) = layout.intensity {
+            intensity[i] = read_f32_at(data, base + offset, little);
+        }
+    }
+    sink.min = min;
+    sink.max = max;
+}
+
+/// Everything the fast layout does not cover: unusual widths, float colours,
+/// splat DC terms, extra scalar fields.
+fn read_vertices_generic(
+    data: &[u8],
+    start: usize,
+    stride: usize,
+    n: usize,
+    little: bool,
+    fields: &[BinaryField],
+    sink: &mut VertexSink,
+) {
+    sink.reserve_exact(n);
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    let is_splat = sink.plan.is_splat;
+    let unit_colors = sink.plan.unit_colors;
+
+    for i in 0..n {
+        let base = start + i * stride;
+        let i3 = i * 3;
+        for field in fields {
+            let v = read_scalar(data, base + field.offset, field.ty, little);
+            match field.target {
+                Target::X => sink.positions[i3] = v as f32,
+                Target::Y => sink.positions[i3 + 1] = v as f32,
+                Target::Z => sink.positions[i3 + 2] = v as f32,
+                Target::Red | Target::Green | Target::Blue => {
+                    let channel = match field.target {
+                        Target::Red => 0,
+                        Target::Green => 1,
+                        _ => 2,
+                    };
+                    sink.colors[i3 + channel] = encode_color(v, is_splat, unit_colors);
+                }
+                Target::Nx => sink.normals[i3] = v as f32,
+                Target::Ny => sink.normals[i3 + 1] = v as f32,
+                Target::Nz => sink.normals[i3 + 2] = v as f32,
+                Target::Intensity => sink.intensity[i] = v as f32,
+                Target::Scalar(index) => sink.scalars[index][i] = v as f32,
+                Target::Ignore => {}
+            }
+        }
+        let x = sink.positions[i3];
+        let y = sink.positions[i3 + 1];
+        let z = sink.positions[i3 + 2];
+        min[0] = min[0].min(x);
+        min[1] = min[1].min(y);
+        min[2] = min[2].min(z);
+        max[0] = max[0].max(x);
+        max[1] = max[1].max(y);
+        max[2] = max[2].max(z);
+    }
+    sink.min = min;
+    sink.max = max;
 }
 
 /// Walks one record property by property. Returns false when the buffer ends.
@@ -1045,5 +1350,75 @@ mod tests {
         let result = parse_ply_inner(&data).unwrap();
         assert_eq!(result.vertex_count, 2);
         assert_eq!(result.positions, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    /// The binary splat path, which takes the indexed writer rather than the
+    /// per-row one. A 3DGS export declares nx/ny/nz and the splat layout
+    /// suppresses the normals array, so the two have to agree about it: they
+    /// did not, and this wrote past the end of an empty buffer.
+    #[test]
+    fn binary_gaussian_splat_with_declared_normals() {
+        let mut data = b"ply\nformat binary_little_endian 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nproperty float nx\nproperty float ny\nproperty float nz\nproperty float f_dc_0\nproperty float f_dc_1\nproperty float f_dc_2\nproperty float opacity\nend_header\n".to_vec();
+        for vertex in [
+            [
+                0.0f32,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                1.772_453_9,
+                -1.772_453_9,
+                -2.5,
+            ],
+            [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5],
+        ] {
+            for v in vertex {
+                data.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+
+        let mut result = parse_ply_inner(&data).unwrap();
+        assert!(result.is_gaussian_splat);
+        assert!(!result.has_normals);
+        assert!(result.normals.is_empty());
+        assert_eq!(result.vertex_count, 2);
+        assert_eq!(result.positions, vec![0.0, 0.0, 0.0, 1.0, 2.0, 3.0]);
+        assert_eq!(result.colors, vec![128, 255, 0, 128, 128, 128]);
+        assert_eq!(result.scalar_names, vec!["opacity".to_string()]);
+        assert_eq!(result.take_scalar_at(0), vec![-2.5, 0.5]);
+    }
+
+    /// The indexed binary writer and the per-row one must agree; the fast
+    /// layout covers ordinary point clouds, the generic path everything else.
+    #[test]
+    fn the_fast_and_generic_binary_paths_agree() {
+        // float xyz + uchar rgb takes the fast layout; adding a scalar field
+        // forces the same file down the generic one.
+        let header_fast = b"ply\nformat binary_little_endian 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n".to_vec();
+        let header_generic = b"ply\nformat binary_little_endian 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty float quality\nend_header\n".to_vec();
+
+        let mut fast = header_fast;
+        let mut generic = header_generic;
+        for (xyz, rgb, quality) in [
+            ([0.0f32, 1.0, 2.0], [10u8, 20, 30], 0.5f32),
+            ([-3.0, 4.0, 5.5], [40, 50, 60], 1.5),
+        ] {
+            for v in xyz {
+                fast.extend_from_slice(&v.to_le_bytes());
+                generic.extend_from_slice(&v.to_le_bytes());
+            }
+            fast.extend_from_slice(&rgb);
+            generic.extend_from_slice(&rgb);
+            generic.extend_from_slice(&quality.to_le_bytes());
+        }
+
+        let from_fast = parse_ply_inner(&fast).unwrap();
+        let mut from_generic = parse_ply_inner(&generic).unwrap();
+        assert_eq!(from_fast.positions, from_generic.positions);
+        assert_eq!(from_fast.colors, from_generic.colors);
+        assert_eq!(from_fast.bbox(), from_generic.bbox());
+        assert_eq!(from_generic.take_scalar_at(0), vec![0.5, 1.5]);
     }
 }

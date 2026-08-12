@@ -284,6 +284,19 @@ export function parse_pcd(data: Uint8Array): PointCloudResult;
 export function parse_ply(data: Uint8Array): PlyResult;
 
 /**
+ * Parse a PLY already sitting in wasm memory at `ptr`/`len`.
+ *
+ * The `&[u8]` entry point above makes wasm-bindgen copy the whole file across
+ * the boundary first, which on a 200 MB point cloud costs more than the parse.
+ * The caller can instead `alloc` a buffer, stream the file straight into it,
+ * and parse it where it lies.
+ *
+ * # Safety
+ * `ptr`/`len` must describe a buffer returned by `alloc` and still live.
+ */
+export function parse_ply_at(ptr: number, len: number): PlyResult;
+
+/**
  * Parse a PTS point cloud. PTS has an optional leading count line + comments
  * (both have < 3 numeric columns, so `parse_rows` skips them automatically),
  * then rows auto-detected from the first data row:
@@ -387,6 +400,7 @@ export interface InitOutput {
     readonly parse_las: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly parse_pcd: (a: number, b: number) => [number, number, number];
     readonly parse_ply: (a: number, b: number) => [number, number, number];
+    readonly parse_ply_at: (a: number, b: number) => [number, number, number];
     readonly parse_pts: (a: number, b: number) => number;
     readonly parse_xyz: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly plyresult_bbox: (a: number) => [number, number];

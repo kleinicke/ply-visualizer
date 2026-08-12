@@ -20,7 +20,7 @@ mod ply;
 mod registration;
 mod stonex;
 pub use lidar::{parse_e57, parse_las, E57ImageResult, LidarCollectionResult, LidarScanResult};
-pub use ply::{parse_ply, PlyResult};
+pub use ply::{parse_ply, parse_ply_at, parse_ply_native, PlyResult};
 pub use registration::bindings::{
     coarse_align, fit_correspondences, icp_refine, register_pair, RegistrationResult,
 };
