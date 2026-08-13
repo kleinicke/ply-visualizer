@@ -723,7 +723,7 @@ export async function handleDroppedFilesFromWebview(
       const fileData = toUint8Array(droppedFile.data);
       const shortPath = fileName;
       const ext = path.extname(fileName).toLowerCase();
-      const fileType = detectFileTypeWithContent(fileName, fileData);
+      const fileType = await detectFileTypeWithContent(fileName, fileData);
 
       if (!fileType) {
         webviewPanel.webview.postMessage({

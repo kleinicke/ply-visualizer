@@ -187,6 +187,11 @@
         "category": "3D Visualizer"
       },
       {
+        "command": "plyViewer.showTimingOutput",
+        "title": "Show Timing Output",
+        "category": "3D Visualizer"
+      },
+      {
         "command": "plyViewer.convertTifToPointCloud",
         "title": "Convert TIFF to Point Cloud",
         "category": "3D Visualizer"

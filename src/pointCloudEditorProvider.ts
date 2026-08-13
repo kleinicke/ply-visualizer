@@ -47,7 +47,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   private panelVolumeSessions = new Map<vscode.WebviewPanel, Set<string>>();
   private datasetManager: DatasetManager;
   private readonly perfChannel: vscode.OutputChannel;
-  private perfChannelRevealed = false;
   // Wall-clock epoch (Date.now) when the current file's load began. Stamped onto
   // every outgoing *Data message so the webview can report one consistent
   // end-to-end timing line (read+parse / transfer / build / total).
@@ -77,6 +76,19 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     this.datasetManager = new DatasetManager(context);
     this.perfChannel = vscode.window.createOutputChannel('3D Visualizer');
     context.subscriptions.push(this.perfChannel);
+    PointCloudEditorProvider.timingChannel = this.perfChannel;
+  }
+
+  /**
+   * The timing channel, for the command that shows it. Static because the
+   * command is registered at activation, before any editor exists, and the
+   * channel is per-window rather than per-editor.
+   */
+  private static timingChannel: vscode.OutputChannel | undefined;
+
+  /** Brings the timing output forward, which nothing else does on its own. */
+  public static showTimingOutput(): void {
+    PointCloudEditorProvider.timingChannel?.show();
   }
 
   /**
@@ -131,12 +143,12 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       .toString()
       .padStart(3, '0')}`;
     this.perfChannel.appendLine(`[${ts}] ${line}`);
-    // Reveal the panel once per session (without stealing editor focus) so the
-    // timing output is discoverable; afterwards it stays where the user put it.
-    if (!this.perfChannelRevealed) {
-      this.perfChannelRevealed = true;
-      this.perfChannel.show(true);
-    }
+    // Deliberately never revealed. `show(true)` preserves keyboard focus but
+    // still pulls the Output view forward and switches it to this channel, so
+    // opening a file interrupted whatever the user was reading there - another
+    // extension's output, the terminal, the problems list. The channel is
+    // reachable from the Output dropdown, and from the "Show Timing Output"
+    // command for anyone who wants it in front of them.
   }
 
   /**
@@ -198,7 +210,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     if (fileType?.extension === 'npy') {
       try {
         const fileData = await vscode.workspace.fs.readFile(document.uri);
-        fileType = detectFileTypeWithContent(fileName, fileData);
+        fileType = await detectFileTypeWithContent(fileName, fileData);
         console.log(
           `VS Code NPY analysis: ${fileName} -> category: ${fileType?.category}, isDepthFile: ${fileType?.isDepthFile}`
         );

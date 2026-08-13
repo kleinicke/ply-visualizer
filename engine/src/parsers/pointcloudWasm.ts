@@ -60,6 +60,14 @@ interface RawPlyResult extends RawResult {
   take_face_sizes(): Uint32Array;
 }
 
+interface RawNpyResult {
+  name: string;
+  shape: Uint32Array;
+  dtype: string;
+  take_values(): Float32Array;
+  free?(): void;
+}
+
 interface PointcloudWasm {
   parse_xyz(data: Uint8Array, variant: string, colorMode: string): RawResult;
   parse_pts(data: Uint8Array): RawResult;
@@ -69,6 +77,8 @@ interface PointcloudWasm {
   parse_ply_at(ptr: number, len: number): RawPlyResult;
   alloc(len: number): number;
   dealloc(ptr: number, len: number): void;
+  npy_inspect(data: Uint8Array): string;
+  npy_read(data: Uint8Array, name: string): RawNpyResult;
   /** Present only in the browser build, where the loader attaches it. */
   memory?: WebAssembly.Memory;
 }
@@ -386,4 +396,67 @@ export function describeLayout(result: WasmPointCloudResult): string {
     (result.hasColors ? ' r g b' : '') +
     (result.hasNormals ? ' nx ny nz' : '')
   );
+}
+
+/** One array inside a `.npy` file or `.npz` archive, before it is decoded. */
+export interface NpyArrayInfo {
+  /** Empty for a plain `.npy`; the archive key for a member of an `.npz`. */
+  name: string;
+  shape: number[];
+  /** The NumPy descr string, e.g. `<f4`. */
+  dtype: string;
+}
+
+/** A decoded array. Every dtype arrives as f32 - both callers want floats. */
+export interface NpyArray extends NpyArrayInfo {
+  values: Float32Array;
+}
+
+/**
+ * What a `.npy` or `.npz` holds, without decoding any of it.
+ *
+ * Cheap enough to call during file-type detection: it reads headers, and for an
+ * archive only its directory. Returns an empty list rather than throwing when
+ * the file is not readable at all, because the callers use it to *decide*
+ * whether they can handle the file.
+ */
+export async function inspectNpyWasm(data: Uint8Array): Promise<NpyArrayInfo[]> {
+  const wasm = await loadPointcloudWasm();
+  if (!wasm) {
+    throw new Error('point-cloud wasm unavailable');
+  }
+  try {
+    return JSON.parse(wasm.npy_inspect(data)) as NpyArrayInfo[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Decode one array. `name` selects a member of an `.npz`; it is ignored for a
+ * plain `.npy`, and an empty name takes the archive's first array.
+ */
+export async function readNpyWasm(data: Uint8Array, name = ''): Promise<NpyArray> {
+  const wasm = await loadPointcloudWasm();
+  if (!wasm) {
+    throw new Error('point-cloud wasm unavailable');
+  }
+  const raw = wasm.npy_read(data, name);
+  const array: NpyArray = {
+    name: raw.name,
+    shape: Array.from(raw.shape),
+    dtype: raw.dtype,
+    values: raw.take_values(),
+  };
+  raw.free?.();
+  return array;
+}
+
+/**
+ * True when the array is a point list rather than an image: NumPy carries no
+ * hint of its own, so the shape ending in 3 (`(N,3)`, `(H,W,3)`, and so on) is
+ * the whole test - the same one the TypeScript parser used.
+ */
+export function isNpyPointCloudShape(shape: number[]): boolean {
+  return shape.length >= 1 && shape[shape.length - 1] === 3;
 }

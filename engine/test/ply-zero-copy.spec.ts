@@ -59,9 +59,9 @@ test.beforeAll(() => {
   fs.writeFileSync(served, Buffer.concat([Buffer.from(header, 'latin1'), body]));
 });
 
-test.afterAll(() => {
-  fs.rmSync(served, { force: true });
-});
+// Left in place on purpose, like the NumPy spec: with the suite running fully
+// parallel, a worker finishing early would delete the file another worker is
+// still fetching. `dist` is build output and the next build clears it.
 
 test('streaming into wasm memory parses identically to handing over the bytes', async ({
   page,

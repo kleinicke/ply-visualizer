@@ -386,8 +386,8 @@ export async function handleBrowserFiles(
     const depthFiles: typeof fileData = [];
     const regularFiles: typeof fileData = [];
 
-    fileData.forEach(file => {
-      const fileType = detectFileTypeWithContent(file.name, file.data);
+    for (const file of fileData) {
+      const fileType = await detectFileTypeWithContent(file.name, file.data);
       if (fileType?.isDepthFile) {
         depthFiles.push(file);
       } else if (fileType?.category === 'poseData') {
@@ -396,7 +396,7 @@ export async function handleBrowserFiles(
       } else {
         regularFiles.push(file);
       }
-    });
+    }
 
     const spatialDataArray: SpatialData[] = [];
     // Remember starting index to map newly added files
@@ -532,10 +532,13 @@ export async function handleBrowserFiles(
     }
 
     // Handle JSON files - check if they're camera profiles or pose data
-    const jsonFiles = fileData.filter(file => {
-      const fileType = detectFileTypeWithContent(file.name, file.data);
-      return fileType?.category === 'poseData';
-    });
+    const jsonFiles: typeof fileData = [];
+    for (const file of fileData) {
+      const fileType = await detectFileTypeWithContent(file.name, file.data);
+      if (fileType?.category === 'poseData') {
+        jsonFiles.push(file);
+      }
+    }
 
     for (const file of jsonFiles) {
       console.log(`📍 JSON file detected: ${file.name}`);

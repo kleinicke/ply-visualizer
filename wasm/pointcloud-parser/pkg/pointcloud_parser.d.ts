@@ -57,6 +57,25 @@ export class LidarScanResult {
 }
 
 /**
+ * One array, decoded to f32.
+ */
+export class NpyArrayResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_values(): Float32Array;
+    /**
+     * The NumPy descr string, e.g. `<f4`.
+     */
+    readonly dtype: string;
+    /**
+     * Empty for a plain `.npy`; the archive key for a member of an `.npz`.
+     */
+    readonly name: string;
+    readonly shape: Uint32Array;
+}
+
+/**
  * Parsed PLY, handed to JS. Large buffers move out with the `take_*` methods.
  */
 export class PlyResult {
@@ -252,6 +271,19 @@ export function fit_correspondences(source: Float32Array, target: Float32Array):
  * ICP refinement alone, from `settings.initial` (identity when absent).
  */
 export function icp_refine(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
+
+/**
+ * What a `.npy` or `.npz` holds, without decoding any of it: a JSON array of
+ * `{name, shape, dtype}`. Callers use it to decide whether a file is a point
+ * cloud or a depth image, and which member of an archive to ask for.
+ */
+export function npy_inspect(data: Uint8Array): string;
+
+/**
+ * Decode one array to f32. `name` selects an archive member; it is ignored for
+ * a plain `.npy`, and an empty name takes the archive's first array.
+ */
+export function npy_read(data: Uint8Array, name: string): NpyArrayResult;
 
 /**
  * Parse an ASCII PLY: read the header to learn the vertex count + property

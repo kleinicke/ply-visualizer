@@ -140,7 +140,14 @@ import { DepthWorkerClient } from './depth/DepthWorkerClient';
 import { alignSourceOrigin } from './utils/sourceOrigin';
 import { SectionPlaneManager } from './visualization/sectionPlanes';
 import type { VolumeData } from './parsers/nrrdParser';
-import { parsePlyFromResponse, parsePlyWasm, type PlyParseResult } from './parsers/pointcloudWasm';
+import {
+  inspectNpyWasm,
+  isNpyPointCloudShape,
+  parsePlyFromResponse,
+  parsePlyWasm,
+  readNpyWasm,
+  type PlyParseResult,
+} from './parsers/pointcloudWasm';
 import { buildVolumePointsAsync } from './visualization/volumePoints';
 import { buildVolumeMeshAsync } from './visualization/isosurface';
 import { buildVolumeSlicesAsync } from './visualization/volumeSlices';
@@ -4729,6 +4736,9 @@ class PointCloudVisualizer {
 // only when the extension host hands the webview a URI to fetch, so a browser
 // spec has no other way to reach it.
 (window as any).__plyParsePly = { parsePlyFromResponse, parsePlyWasm };
+// Same reason: the NumPy reader's dtype and shape handling is worth testing
+// directly, not only through a depth panel that shows one pixel of the result.
+(window as any).__plyNpy = { inspectNpyWasm, isNpyPointCloudShape, readNpyWasm };
 // Test handle for the file-list state, following __plyContainerPerf above.
 // Lets a browser test drive the background-work row without needing the
 // extension host to stream real images.

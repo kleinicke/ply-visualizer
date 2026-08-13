@@ -16,10 +16,12 @@ use std::mem;
 use wasm_bindgen::prelude::*;
 
 mod lidar;
+mod npy;
 mod ply;
 mod registration;
 mod stonex;
 pub use lidar::{parse_e57, parse_las, E57ImageResult, LidarCollectionResult, LidarScanResult};
+pub use npy::{npy_inspect, npy_read, NpyArrayResult};
 pub use ply::{parse_ply, parse_ply_at, parse_ply_native, PlyResult};
 pub use registration::bindings::{
     coarse_align, fit_correspondences, icp_refine, register_pair, RegistrationResult,
@@ -909,6 +911,9 @@ fn pcd_read_num(d: &[u8], o: usize, size: usize, ty: u8) -> f64 {
 /// One field's location and encoding inside a record.
 struct PcdFieldDesc {
     col: Col,
+    /// Position in the header's FIELDS list, which is also the column order in
+    /// the `binary_compressed` layout.
+    index: usize,
     off: usize,
     size: usize,
     ty: u8,
@@ -923,12 +928,19 @@ fn pcd_field_descs(header: &PcdHeader) -> Result<(Vec<PcdFieldDesc>, usize), Str
     let mut descs = Vec::with_capacity(nf);
     let mut stride = 0usize;
     for i in 0..nf {
-        descs.push(PcdFieldDesc {
-            col: header.col_at(i),
-            off: stride,
-            size: header.sizes[i],
-            ty: header.types[i],
-        });
+        let col = header.col_at(i);
+        // Fields the viewer has no use for are dropped here rather than tested
+        // per point: a scan file can declare a dozen, and the read loop runs
+        // once per point per field.
+        if col != Col::Skip {
+            descs.push(PcdFieldDesc {
+                col,
+                index: i,
+                off: stride,
+                size: header.sizes[i],
+                ty: header.types[i],
+            });
+        }
         stride += header.sizes[i] * header.count_at(i);
     }
     if stride == 0 {
@@ -988,15 +1000,20 @@ impl PcdPointSink {
         }
     }
 
-    /// `at` gives the byte offset of field `index` for the point being read;
-    /// that is the only thing the record and column layouts disagree about.
-    fn push_point(&mut self, data: &[u8], descs: &[PcdFieldDesc], at: impl Fn(usize) -> usize) {
+    /// `at` gives the byte offset of a field for the point being read; that is
+    /// the only thing the record and column layouts disagree about.
+    fn push_point(
+        &mut self,
+        data: &[u8],
+        descs: &[PcdFieldDesc],
+        at: impl Fn(&PcdFieldDesc) -> usize,
+    ) {
         let (mut x, mut y, mut z) = (0f32, 0f32, 0f32);
         let (mut nx, mut ny, mut nz) = (0f32, 0f32, 0f32);
         let mut inten = 0f32;
         let (mut cr, mut cg, mut cb) = (0u8, 0u8, 0u8);
-        for (index, d) in descs.iter().enumerate() {
-            let o = at(index);
+        for d in descs {
+            let o = at(d);
             if o + d.size > data.len() {
                 continue;
             }
@@ -1107,7 +1124,7 @@ fn parse_pcd_binary_records(data: &[u8], header: &PcdHeader) -> Result<PointClou
     let mut sink = PcdPointSink::new(&descs, n);
     for i in 0..n {
         let base = start + i * stride;
-        sink.push_point(data, &descs, |index| base + descs[index].off);
+        sink.push_point(data, &descs, |d| base + d.off);
     }
     Ok(sink.finish())
 }
@@ -1141,9 +1158,11 @@ fn parse_pcd_binary_compressed(
 
     let n = header.vertex_count();
     // Column-major: every value of field 0, then every value of field 1, …
-    let mut column_start = Vec::with_capacity(descs.len());
+    // One entry per declared field, not per read field: the block holds every
+    // column, including the ones nothing reads.
+    let mut column_start = Vec::with_capacity(header.fields.len());
     let mut offset = 0usize;
-    for i in 0..descs.len() {
+    for i in 0..header.fields.len() {
         column_start.push(offset);
         offset += header.sizes[i] * header.count_at(i) * n;
     }
@@ -1153,9 +1172,7 @@ fn parse_pcd_binary_compressed(
 
     let mut sink = PcdPointSink::new(&descs, n);
     for i in 0..n {
-        sink.push_point(&block, &descs, |index| {
-            column_start[index] + i * descs[index].size
-        });
+        sink.push_point(&block, &descs, |d| column_start[d.index] + i * d.size);
     }
     Ok(sink.finish())
 }
@@ -1706,6 +1723,40 @@ mod tests {
 
         let result = parse_pcd(&src).unwrap();
         assert_eq!(result.vertex_count, 2);
+        assert_eq!(result.positions, vec![0.0, 10.0, 20.0, 1.0, 11.0, 21.0]);
+    }
+
+    /// A field nothing reads still occupies a column in the compressed block,
+    /// so dropping it from the read list must not shift the ones that follow.
+    #[test]
+    fn pcd_binary_compressed_skips_an_unused_column() {
+        let n = 2usize;
+        let mut columns: Vec<u8> = Vec::new();
+        for v in [0.0f32, 1.0] {
+            columns.extend_from_slice(&v.to_le_bytes()); // x
+        }
+        for v in [7.0f32, 7.0] {
+            columns.extend_from_slice(&v.to_le_bytes()); // padding, unread
+        }
+        for v in [10.0f32, 11.0] {
+            columns.extend_from_slice(&v.to_le_bytes()); // y
+        }
+        for v in [20.0f32, 21.0] {
+            columns.extend_from_slice(&v.to_le_bytes()); // z
+        }
+        let mut compressed: Vec<u8> = Vec::new();
+        for chunk in columns.chunks(32) {
+            compressed.push((chunk.len() - 1) as u8);
+            compressed.extend_from_slice(chunk);
+        }
+
+        let mut src = b"FIELDS x padding y z\nSIZE 4 4 4 4\nTYPE F F F F\nCOUNT 1 1 1 1\nWIDTH 2\nHEIGHT 1\nPOINTS 2\nDATA binary_compressed\n".to_vec();
+        src.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+        src.extend_from_slice(&(columns.len() as u32).to_le_bytes());
+        src.extend_from_slice(&compressed);
+
+        let result = parse_pcd(&src).unwrap();
+        assert_eq!(result.vertex_count, n as u32);
         assert_eq!(result.positions, vec![0.0, 10.0, 20.0, 1.0, 11.0, 21.0]);
     }
 }

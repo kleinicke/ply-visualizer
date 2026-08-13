@@ -99,6 +99,15 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
+  // The timing channel is never revealed on its own (that would pull the
+  // Output view away from whatever the user was reading); this is how it is
+  // brought forward deliberately.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('plyViewer.showTimingOutput', () => {
+      PointCloudEditorProvider.showTimingOutput();
+    })
+  );
+
   // Register command for playing a point cloud sequence via wildcard
   context.subscriptions.push(
     vscode.commands.registerCommand('plyViewer.playPointCloudSequence', async () => {

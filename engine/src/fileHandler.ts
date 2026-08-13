@@ -117,15 +117,15 @@ export function detectFileType(fileName: string): FileTypeInfo | null {
  * Detects file type with content-based analysis for NPY files
  * NPY files can contain either depth images or XYZ point cloud data
  */
-export function detectFileTypeWithContent(
+export async function detectFileTypeWithContent(
   fileName: string,
   fileData?: Uint8Array
-): FileTypeInfo | null {
+): Promise<FileTypeInfo | null> {
   const basicType = detectFileType(fileName);
   if (!basicType || !fileData) {
     return basicType;
   }
-  const refined = formats.find(basicType.extension)?.refineCategory?.(fileData);
+  const refined = await formats.find(basicType.extension)?.refineCategory?.(fileData);
   if (!refined) {
     return basicType;
   }

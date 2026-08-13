@@ -13,7 +13,8 @@ import { KittiBinParser } from '../parsers/kittiBinParser';
 import { StonexX3aParser } from '../parsers/stonexX3aParser';
 import { OffParser } from '../parsers/offParser';
 import { GltfParser } from '../parsers/gltfParser';
-import { NpyParser, isNpyPointCloudData } from '../parsers/npyParser';
+import { NpyParser } from '../parsers/npyParser';
+import { inspectNpyWasm, isNpyPointCloudShape } from '../parsers/pointcloudWasm';
 import { NrrdParser } from '../parsers/nrrdParser';
 import { sampleRange } from '../visualization/isosurface';
 import { buildVolumePoints } from '../visualization/volumePoints';
@@ -241,13 +242,10 @@ export function registerBuiltinFormats(
     // shape tells them apart, hence refineCategory.
     extensions: ['npy'],
     category: 'depthImage',
-    refineCategory(data) {
+    async refineCategory(data) {
       try {
-        const buffer = data.buffer.slice(
-          data.byteOffset,
-          data.byteOffset + data.byteLength
-        ) as ArrayBuffer;
-        return isNpyPointCloudData(buffer) ? 'pointCloud' : null;
+        const [array] = await inspectNpyWasm(data);
+        return array && isNpyPointCloudShape(array.shape) ? 'pointCloud' : null;
       } catch (error) {
         // Unreadable header: keep the depth-image assumption, as before.
         console.warn('Failed to analyze NPY content, treating as depth image:', error);

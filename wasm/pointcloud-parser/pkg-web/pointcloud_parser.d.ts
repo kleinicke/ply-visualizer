@@ -57,6 +57,25 @@ export class LidarScanResult {
 }
 
 /**
+ * One array, decoded to f32.
+ */
+export class NpyArrayResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_values(): Float32Array;
+    /**
+     * The NumPy descr string, e.g. `<f4`.
+     */
+    readonly dtype: string;
+    /**
+     * Empty for a plain `.npy`; the archive key for a member of an `.npz`.
+     */
+    readonly name: string;
+    readonly shape: Uint32Array;
+}
+
+/**
  * Parsed PLY, handed to JS. Large buffers move out with the `take_*` methods.
  */
 export class PlyResult {
@@ -254,6 +273,19 @@ export function fit_correspondences(source: Float32Array, target: Float32Array):
 export function icp_refine(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
 
 /**
+ * What a `.npy` or `.npz` holds, without decoding any of it: a JSON array of
+ * `{name, shape, dtype}`. Callers use it to decide whether a file is a point
+ * cloud or a depth image, and which member of an archive to ask for.
+ */
+export function npy_inspect(data: Uint8Array): string;
+
+/**
+ * Decode one array to f32. `name` selects an archive member; it is ignored for
+ * a plain `.npy`, and an empty name takes the archive's first array.
+ */
+export function npy_read(data: Uint8Array, name: string): NpyArrayResult;
+
+/**
  * Parse an ASCII PLY: read the header to learn the vertex count + property
  * order, then parse the vertex rows. Falls back to an error string the JS side
  * can catch (and use its own parser) on anything unexpected.
@@ -356,6 +388,7 @@ export interface InitOutput {
     readonly __wbg_e57imageresult_free: (a: number, b: number) => void;
     readonly __wbg_lidarcollectionresult_free: (a: number, b: number) => void;
     readonly __wbg_lidarscanresult_free: (a: number, b: number) => void;
+    readonly __wbg_npyarrayresult_free: (a: number, b: number) => void;
     readonly __wbg_plyresult_free: (a: number, b: number) => void;
     readonly __wbg_pointcloudresult_free: (a: number, b: number) => void;
     readonly __wbg_registrationresult_free: (a: number, b: number) => void;
@@ -394,6 +427,12 @@ export interface InitOutput {
     readonly lidarscanresult_take_scan_angle: (a: number) => [number, number];
     readonly lidarscanresult_take_user_data: (a: number) => [number, number];
     readonly lidarscanresult_vertex_count: (a: number) => number;
+    readonly npy_inspect: (a: number, b: number) => [number, number, number, number];
+    readonly npy_read: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly npyarrayresult_dtype: (a: number) => [number, number];
+    readonly npyarrayresult_name: (a: number) => [number, number];
+    readonly npyarrayresult_shape: (a: number) => [number, number];
+    readonly npyarrayresult_take_values: (a: number) => [number, number];
     readonly parse_ascii_ply: (a: number, b: number) => [number, number, number];
     readonly parse_at: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly parse_e57: (a: number, b: number, c: number, d: number) => [number, number, number];
@@ -412,7 +451,6 @@ export interface InitOutput {
     readonly plyresult_metadata_json: (a: number) => [number, number];
     readonly plyresult_scalar_field_names: (a: number) => [number, number];
     readonly plyresult_take_face_sizes: (a: number) => [number, number];
-    readonly plyresult_take_intensity: (a: number) => [number, number];
     readonly plyresult_take_normals: (a: number) => [number, number];
     readonly plyresult_take_positions: (a: number) => [number, number];
     readonly plyresult_take_scalar_at: (a: number, b: number) => [number, number];
@@ -455,6 +493,7 @@ export interface InitOutput {
     readonly stonexrgbimage_width: (a: number) => number;
     readonly __wbg_stonexrgbimage_free: (a: number, b: number) => void;
     readonly plyresult_take_face_indices: (a: number) => [number, number];
+    readonly plyresult_take_intensity: (a: number) => [number, number];
     readonly pointcloudresult_take_intensity: (a: number) => [number, number];
     readonly pointcloudresult_take_normals: (a: number) => [number, number];
     readonly pointcloudresult_take_positions: (a: number) => [number, number];

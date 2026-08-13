@@ -333,6 +333,79 @@ export class LidarScanResult {
 if (Symbol.dispose) LidarScanResult.prototype[Symbol.dispose] = LidarScanResult.prototype.free;
 
 /**
+ * One array, decoded to f32.
+ */
+export class NpyArrayResult {
+  static __wrap(ptr) {
+    const obj = Object.create(NpyArrayResult.prototype);
+    obj.__wbg_ptr = ptr;
+    NpyArrayResultFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    NpyArrayResultFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_npyarrayresult_free(ptr, 0);
+  }
+  /**
+   * The NumPy descr string, e.g. `<f4`.
+   * @returns {string}
+   */
+  get dtype() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.npyarrayresult_dtype(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
+   * Empty for a plain `.npy`; the archive key for a member of an `.npz`.
+   * @returns {string}
+   */
+  get name() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.npyarrayresult_name(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
+   * @returns {Uint32Array}
+   */
+  get shape() {
+    const ret = wasm.npyarrayresult_shape(this.__wbg_ptr);
+    var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Float32Array}
+   */
+  take_values() {
+    const ret = wasm.npyarrayresult_take_values(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+}
+if (Symbol.dispose) NpyArrayResult.prototype[Symbol.dispose] = NpyArrayResult.prototype.free;
+
+/**
  * Parsed PLY, handed to JS. Large buffers move out with the `take_*` methods.
  */
 export class PlyResult {
@@ -1095,6 +1168,54 @@ export function icp_refine(source, target, settings_json) {
 }
 
 /**
+ * What a `.npy` or `.npz` holds, without decoding any of it: a JSON array of
+ * `{name, shape, dtype}`. Callers use it to decide whether a file is a point
+ * cloud or a depth image, and which member of an archive to ask for.
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+export function npy_inspect(data) {
+  let deferred3_0;
+  let deferred3_1;
+  try {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.npy_inspect(ptr0, len0);
+    var ptr2 = ret[0];
+    var len2 = ret[1];
+    if (ret[3]) {
+      ptr2 = 0;
+      len2 = 0;
+      throw takeFromExternrefTable0(ret[2]);
+    }
+    deferred3_0 = ptr2;
+    deferred3_1 = len2;
+    return getStringFromWasm0(ptr2, len2);
+  } finally {
+    wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+  }
+}
+
+/**
+ * Decode one array to f32. `name` selects an archive member; it is ignored for
+ * a plain `.npy`, and an empty name takes the archive's first array.
+ * @param {Uint8Array} data
+ * @param {string} name
+ * @returns {NpyArrayResult}
+ */
+export function npy_read(data, name) {
+  const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.npy_read(ptr0, len0, ptr1, len1);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return NpyArrayResult.__wrap(ret[0]);
+}
+
+/**
  * Parse an ASCII PLY: read the header to learn the vertex count + property
  * order, then parse the vertex rows. Falls back to an error string the JS side
  * can catch (and use its own parser) on anything unexpected.
@@ -1400,6 +1521,10 @@ const LidarScanResultFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_lidarscanresult_free(ptr, 1));
+const NpyArrayResultFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_npyarrayresult_free(ptr, 1));
 const PlyResultFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }

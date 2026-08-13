@@ -1220,6 +1220,38 @@ dict header, then raw data); NPZ is a zip container, which is the only real
 dependency (`zip` + `flate2`). Low risk, good ratio, and it removes the split
 between "NPY as points" and "NPY as depth" reading the same header twice.
 
+**Done (August 2026).** `wasm/pointcloud-parser/src/npy.rs` reads both, and the
+two TypeScript readers are down to **721 → 205 lines** of interpretation with no
+parsing left in them: `npyParser.ts` decides what a point-cloud shape is,
+`NpyReader.ts` decides which array of an archive to show and whether its name
+means depth, disparity or inverse depth. The Rust side exposes `npy_inspect`
+(headers only, cheap enough for file-type detection) and `npy_read(data, name)`.
+
+It was not only deduplication — the duplicated readers were each wrong in ways
+the other was not:
+
+- **`numpy.savez_compressed` output was silently skipped.** The hand-rolled zip
+  walker read only _stored_ entries and `console.warn`ed past deflated ones, so
+  a compressed archive produced "contains no readable arrays". `zip` + `flate2`
+  reads both.
+- **A one-dimensional shape threw.** numpy writes `(100,)`, whose trailing comma
+  produced an empty token that `parseInt` turned into `NaN`, which the header
+  parser treated as fatal.
+- **Fortran-ordered arrays were read as row-major**, i.e. transposed, silently.
+  They are now refused with a message that says so, which is the honest
+  behaviour until someone needs them transposed properly.
+- The point-cloud path built **a JavaScript object per point**; it now returns
+  the flat XYZ buffer the geometry wants.
+
+One thing this exposed and did _not_ change: `refineCategory` had to become
+async (reading a shape means loading the wasm module), and with it
+`detectFileTypeWithContent`. That detection is only reached from drag-and-drop
+and the extension host — `parseMultipleFiles` still keys on the extension alone,
+so an `(H,W,3)` NPY picked through the file dialog in the standalone page is
+still treated as a depth image. That inconsistency predates this work; fixing it
+is a one-line change in `parseMultipleFiles` and belongs with whoever wants that
+behaviour.
+
 #### 3. Volume and isosurface kernels
 
 `visualization/marchingCubes.ts` (429) + `marchingCubesTables.ts` (326) +
@@ -1251,16 +1283,25 @@ the shared Rust OpenCV pinhole batch projector, so the boundary exists.
 `engine/src/depth/` is 6,755 lines, and the compute half of it belongs in Rust
 next to `camera-models`, which already owns the projection kernels.
 
+**Split in two, and the first half is on hold (August 2026).** The pixel readers
+should not be written here at all: `tiff-visualizer` already has Rust decoders
+for every one of them, and the plan is to share that code rather than port it a
+second time — see "Shared core with tiff-visualizer" below for the mechanism and
+the order. The projection and conversion kernels below are this repository's own
+code, are not shared with an image viewer, and can go ahead independently.
+
 Port:
 
-- **The pixel readers** — `readers/PngReader.ts` (408), `readers/PfmReader.ts`
-  (65), `readers/ExrReader.ts` (71), `readers/Rgb24Reader.ts` (137). PNG needs
-  `png`/`flate2` (shared with items 2 and 4); PFM is a text header over raw
-  floats and is nearly free; EXR needs `exr`, the only real new dependency.
+- **The pixel readers** — _waiting on the shared crate; do not start here._
+  `readers/PngReader.ts` (408), `readers/PfmReader.ts` (65),
+  `readers/ExrReader.ts` (71), `readers/Rgb24Reader.ts` (137).
   `readers/TifReader.ts` (117) and `readers/tiffWasm.ts` (471) already front the
-  `tiff-decoder` crate — that pair is the template the others should copy, and
-  once they do, `DepthRegistry` dispatches to one Rust surface instead of five
-  hand-rolled TS decoders.
+  `tiff-decoder` crate, and `ExrReader` already delegates to it, so the shape is
+  settled; what is actually missing is PFM and full-bit-depth PNG, and both
+  exist in `tiff-visualizer` today. `Rgb24Reader` is packing-mode interpretation
+  rather than decoding and stays in TypeScript either way. Once the shared crate
+  lands, `DepthRegistry` dispatches to one Rust surface instead of five
+  hand-rolled decoders.
 - **`DepthProjector.ts` (350) + `DepthConverter.ts` (255) +
   `depthConversionPipeline.ts` (423)** — per-pixel disparity/depth conversion
   and unprojection to XYZ. This is the batch kernel `camera-models` was
@@ -1404,6 +1445,11 @@ being added. Item 6 moves ahead of the volume work because it deletes five
 hand-rolled decoders and removes a live boundary crossing, where 3 and 4 add new
 Rust beside no existing duplicate.
 
+**Where this stands (August 2026):** 0, 1 and 2 are done. Item 6 is split — its
+pixel readers wait for the shared crate (see above), its projection and
+conversion kernels do not and are the next thing to pick up. After that the
+order is unchanged: 3 → 4 → 5 → 8.
+
 Stop after any step whose TypeScript counterpart could not actually be deleted.
 A port that leaves a fallback in place has not reduced the maintenance surface,
 it has doubled it — which is precisely the state item 0 exists to clean up.
@@ -1465,9 +1511,53 @@ not a merge.
 **What should be shared is code, not products.** This engine reads TIFF, PNG,
 PFM, NPY, NPZ and EXR as depth images; tiff-visualizer already has mature
 decoders for all six, including a Rust/WASM path. Colormap tables exist in both
-repositories. The plan is an npm workspace for the TypeScript side and a Cargo
-workspace for the crates, with `wasm/pointcloud-parser` and `wasm/tiff-decoder`
-as members instead of islands.
+repositories.
+
+**Status (August 2026): agreed, and item 6's decoder half waits for it.** The
+Rust work happens in tiff-visualizer first; when it settles, the decoders move
+to a third repository both extensions depend on. Nothing here should port a
+pixel decoder in the meantime — that would be a third copy.
+
+What the inventory found, which decides how hard the extraction is:
+
+- **`wasm/tiff-decoder` here is a fork of an older snapshot of theirs.** Same
+  crate name (`tiff-wasm`), same dependency list; 3,865 lines in one file
+  against their 8,773 across a `formats/` tree. The local additions are the
+  `camera-models` projection kernels, which theirs does not have.
+- **Their decoders are already plain Rust.** `formats/*.rs` touch wasm-bindgen
+  only as an error type (`Result<_, JsValue>`, `JsValue::from_str`). Extraction
+  is swapping that for a `DecodeError`, not a redesign.
+
+The shape to aim for:
+
+1. **A separate repository, consumed as a cargo git dependency pinned by
+   `rev`.** Less friction than a submodule (nothing to init or update, CI needs
+   no special checkout) and no publishing ceremony per change; crates.io stays
+   available later. The pin means neither extension moves until it is bumped.
+2. **Plain Rust, no `wasm-bindgen`/`js-sys`/`web-sys`** — the precedent is
+   `camera-models`, which both crates already bind to in their own way. Each
+   application keeps its own thin binding layer, and the shared crate stays
+   testable with plain `cargo test`.
+3. **One Cargo feature per format**, `default = []`. This answers the obvious
+   objection that the image viewer decodes far more formats than this engine
+   needs: DICOM, FITS and netCDF simply are not compiled into this wasm binary.
+4. **Byte-level decode only** — bytes in,
+   `{width, height, channels, samples, metadata}` out. Depth semantics, units,
+   invalid-pixel handling and camera models stay here; normalization, layers and
+   the compositor stay there. That is the caveat below, made structural.
+
+Order: tiff-visualizer finishes its Rust work → extract `formats/` (plus
+`pipeline/stats`, `demosaic`) with native tests → tiff-visualizer consumes it
+and its suite proves the move → this repository's `wasm/tiff-decoder` becomes a
+thin wrapper over the shared crate plus `camera-models` → finally collapse the
+NPY duplication, which now exists in three places: `formats/npy.rs` there,
+`pointcloud-parser/src/npy.rs` here (item 2, deliberately, since it shipped
+before this plan), and nothing else. Until step one lands, **new decoder work
+belongs in tiff-visualizer only** — the fork here is already ~5k lines behind
+and re-syncing two of them is the failure mode this section exists to avoid.
+
+The TypeScript side (the duplicated colormap tables, an npm workspace) is a
+separate, later migration. Coupling the two doubles the risk for no gain.
 
 Caveat when the inventory happens: the depth readers here are not
 interchangeable with an image decoder. They care about camera models, units and

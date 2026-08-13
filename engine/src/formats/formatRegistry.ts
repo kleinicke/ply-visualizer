@@ -44,8 +44,11 @@ export interface FormatDefinition {
    * Content sniffing that can move a file to a different category than its
    * extension implies. NPY is the only user: it holds either a depth image or
    * an XYZ point cloud, distinguishable only by array shape.
+   *
+   * Asynchronous because reading that shape means the Rust reader, and loading
+   * the wasm module is a promise. It only ever reads a header.
    */
-  refineCategory?(data: Uint8Array): FileCategory | null;
+  refineCategory?(data: Uint8Array): Promise<FileCategory | null>;
   /**
    * Absent when something other than `parseFileData` decodes the format:
    * splat containers go through Spark (visualization/splatMode.ts) and depth
