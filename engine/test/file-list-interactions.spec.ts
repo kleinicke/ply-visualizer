@@ -200,12 +200,30 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await fxInput.fill('700');
     await expect(fxInput).toHaveValue('700');
 
+    // A model is always selected: the picker offers two general models, and a
+    // setting naming a retired one is mapped onto them rather than leaving the
+    // select blank.
+    await expect(page.locator('#camera-model-0')).not.toHaveValue('');
+
     await page.locator('#camera-model-0').selectOption('pinhole-opencv');
     await page.locator('[data-section="distortion-content-0"]').click();
-    await expect(page.locator('label[for="camera-coefficients-0"]')).toContainText(
-      'k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY'
+    // One box per family of terms, not one per term and not one long ordered
+    // run: the radial k's together, the tangential p's together.
+    await expect(page.locator('label[for="coefficient-group-0-0"]')).toContainText(
+      'Radial (k1, k2, k3, k4, k5, k6)'
     );
-    await expect(page.locator('#camera-coefficients-0')).toHaveValue('0,0,0,0,0,0,0,0,0,0,0,0,0,0');
+    await expect(page.locator('label[for="coefficient-group-0-1"]')).toContainText(
+      'Tangential (p1, p2)'
+    );
+    await expect(page.locator('label[for="coefficient-group-0-3"]')).toContainText(
+      'Tilted sensor (tauX, tauY)'
+    );
+    await expect(page.locator('#camera-coefficient-params-0 input')).toHaveCount(4);
+
+    // Two numbers in the radial box is a complete, valid calibration: the rest
+    // of that family is zero, and so is every other family.
+    await page.locator('#coefficient-group-0-0').fill('-0.28,0.07');
+    await expect(page.locator('#coefficient-group-0-0')).toHaveValue('-0.28,0.07');
 
     // Live update starts on — changing a number and watching the cloud move is
     // how the panel is meant to be used — and turning it off has to stick.

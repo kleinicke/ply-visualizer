@@ -1,5 +1,10 @@
 <script lang="ts">
   import { isPngDerivedFile } from '../depth/commentSettings';
+  import {
+    CAMERA_MODEL_COEFFICIENT_GROUPS,
+    normalizeToOfferedCameraModel,
+  } from '../depth/cameraModels';
+  import type { CameraModel } from '../depth/types';
   import { depthSettingsState } from '../state/depthSettings.svelte';
   import CalibrationSection from './CalibrationSection.svelte';
 
@@ -17,7 +22,13 @@
   // Intentional: seed local UI state from the host once at mount; the change
   // handlers keep it in sync afterwards
   // svelte-ignore state_referenced_locally
-  let cameraModel = $state(host.getDepthSetting(data, 'camera'));
+  // Normalized on the way in: the setting can come from a `Camera:` comment
+  // saved before the picker was consolidated, and assigning the select a value
+  // it does not carry renders it blank — which is what "it starts up with an
+  // empty camera model" was.
+  let cameraModel = $state(
+    normalizeToOfferedCameraModel(host.getDepthSetting(data, 'camera') as CameraModel).model
+  );
   // svelte-ignore state_referenced_locally
   let depthType = $state(host.getDepthSetting(data, 'depth'));
 
@@ -47,10 +58,12 @@
         : ''
   );
   const coefficientDefaults = $derived(coefficientLayout.split(',').map(() => '0').join(','));
-  // One box per coefficient, named as the model names it. A blank box is zero,
-  // so a calibration with only a first radial term needs one number typed and
-  // nothing else.
-  const coefficientNames = $derived(coefficientLayout.split(','));
+  // One box per family of terms — all the radial k's together, the tangential
+  // p's together — rather than one ordered run to count positions in. Missing
+  // values are zero, so a calibration giving two radial terms is two numbers.
+  const coefficientGroups = $derived(
+    CAMERA_MODEL_COEFFICIENT_GROUPS[cameraModel as CameraModel] ?? []
+  );
 
   const liveUpdateEnabled = $derived(depthSettingsState.liveUpdateFileIndices.includes(fileIndex));
 
@@ -81,7 +94,7 @@
   }
 
   function onCameraModelChange(e: Event) {
-    cameraModel = (e.target as HTMLSelectElement).value;
+    cameraModel = (e.target as HTMLSelectElement).value as CameraModel;
     host.updateSingleDefaultButtonState(fileIndex);
   }
 
@@ -220,12 +233,13 @@
              terms unused. Unused terms are free - `resolveCameraModel` reduces
              a configuration to the cheapest exactly-equivalent model before it
              reaches the kernel - so the short list costs nothing. -->
-        <option value="pinhole-opencv">Pinhole (zeros = ideal pinhole)</option>
-        <option value="fisheye624">Fisheye (zeros = equidistant)</option>
+        <option value="pinhole-opencv">Pinhole</option>
+        <option value="fisheye624">Fisheye</option>
       </select>
       <div style="margin-top: 4px; font-size: 9px; color: var(--vscode-descriptionForeground);">
-        Distortion is applied only where a coefficient is non-zero; an all-zero
-        set is an undistorted image and projects with the closed-form model.
+        Distortion applies only where a coefficient is non-zero. Leave them all
+        at zero for an ideal pinhole or an equidistant fisheye — that is the
+        same model, and it takes the faster closed-form path.
       </div>
     </div>
     <div class="depth-group" style="margin-bottom: 8px;">
@@ -348,34 +362,29 @@
         style="display: {distortionOpen ? 'block' : 'none'}; margin-top: 4px;"
       >
         <div id={`camera-coefficient-params-${fileIndex}`}>
-          <div
-            style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 6px;"
-          >
-            {#each coefficientNames as name, index (name)}
-              <label
-                for={`coefficient-${fileIndex}-${index}`}
-                style="display: block; font-size: 9px; color: var(--vscode-descriptionForeground);"
-              >
-                {name}
-                <input
-                  type="number"
-                  step="any"
-                  id={`coefficient-${fileIndex}-${index}`}
-                  placeholder="0"
-                  style="width: 100%; padding: 2px; font-size: 11px;"
-                  oninput={onFieldInput}
-                  onwheel={blurOnWheel}
-                />
-              </label>
-            {/each}
-          </div>
+          {#each coefficientGroups as group, index (group.label)}
+            <label
+              for={`coefficient-group-${fileIndex}-${index}`}
+              style="display: block; font-size: 9px; margin-bottom: 4px; color: var(--vscode-descriptionForeground);"
+            >
+              {group.label} ({group.terms.join(', ')}):
+              <input
+                type="text"
+                id={`coefficient-group-${fileIndex}-${index}`}
+                placeholder={group.terms.map(() => '0').join(',')}
+                style="width: 100%; padding: 2px; font-size: 11px;"
+                oninput={onFieldInput}
+              />
+            </label>
+          {/each}
           {#if coefficientNote}
             <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 4px;">
               {coefficientNote}
             </div>
           {/if}
           <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 2px;">
-            Empty is zero — fill in only the terms the calibration gives.
+            Comma-separated within each box; empty is zero, so only the terms
+            the calibration gives need typing.
             {isPinholeOpencv
               ? ' OpenCV layouts: radial/tangential (4/5), rational (8), thin prism (12), tilted sensor (14); trailing zero groups take the fast path.'
               : ''}

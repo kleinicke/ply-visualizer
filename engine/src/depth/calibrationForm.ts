@@ -1,22 +1,27 @@
 import type { CameraModel } from './types';
-import { normalizeToOfferedCameraModel } from './cameraModels';
+import { groupsFromCoefficients, normalizeToOfferedCameraModel } from './cameraModels';
 import { parseCalibrationFile } from './calibrationFileParser';
 
 /**
- * Fills the per-coefficient inputs the panel renders, one per term of the
- * selected model. Values past the last box belong to a model with fewer terms
- * and are dropped rather than silently landing in the wrong slot.
+ * Fills the panel's grouped coefficient boxes from an ordered array.
+ *
+ * The grouping is not the array order — OpenCV's pinhole splits its radial
+ * terms around the tangential pair — so the mapping comes from
+ * `groupsFromCoefficients` rather than from counting.
  */
-function writeCoefficients(fileIndex: number, coefficients: readonly number[]): void {
-  for (let index = 0; index < coefficients.length; index++) {
+function writeCoefficients(
+  fileIndex: number,
+  model: CameraModel,
+  coefficients: readonly number[]
+): void {
+  groupsFromCoefficients(model, coefficients).forEach((value, index) => {
     const input = document.getElementById(
-      `coefficient-${fileIndex}-${index}`
+      `coefficient-group-${fileIndex}-${index}`
     ) as HTMLInputElement | null;
-    if (!input) {
-      break;
+    if (input) {
+      input.value = value;
     }
-    input.value = String(coefficients[index]);
-  }
+  });
 }
 
 export interface CalibrationFormHost {
@@ -292,11 +297,12 @@ export function populateFormFromCalibration(
         cameraModelSelect.dispatchEvent(new Event('change'));
       }
       if (Array.isArray(cameraData.coefficients)) {
-        writeCoefficients(fileIndex, offered.coefficients);
+        writeCoefficients(fileIndex, offered.model, offered.coefficients);
       }
     }
   } else if (Array.isArray(cameraData.coefficients)) {
-    writeCoefficients(fileIndex, cameraData.coefficients);
+    const selected = (cameraModelSelect?.value ?? '') as CameraModel;
+    writeCoefficients(fileIndex, selected, cameraData.coefficients);
   }
 
   // Populate distortion coefficients if available

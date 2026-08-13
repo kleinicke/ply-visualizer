@@ -1,7 +1,10 @@
 import * as assert from 'assert';
 import {
   cameraCoefficientsFromParameters,
+  coefficientsFromGroups,
   fitCoefficientsToModel,
+  groupsFromCoefficients,
+  normalizeToOfferedCameraModel,
   resolveCameraModel,
 } from '../../../engine/src/depth/cameraModels';
 
@@ -212,6 +215,154 @@ suite('Camera coefficient fitting', () => {
     assert.strictEqual(
       resolveCameraModel({ cameraModel: 'fisheye624', fx: 500, coefficients: withPrism }).model,
       'fisheye624'
+    );
+  });
+});
+
+/**
+ * The panel groups coefficients by family — all the radial terms in one box,
+ * the tangential pair in another. That grouping is not the order the kernel
+ * takes them in: OpenCV's pinhole layout is k1,k2,p1,p2,k3,k4,k5,k6,…, so the
+ * radial terms are split around the tangential pair. Getting that mapping wrong
+ * silently files a radial term as a tangential one, which is a plausible-looking
+ * wrong image rather than an error.
+ */
+suite('Coefficient grouping', () => {
+  test('OpenCV pinhole radial terms skip the tangential slots', () => {
+    const ordered = coefficientsFromGroups('pinhole-opencv', [
+      '0.1,0.2,0.3,0.4,0.5,0.6', // k1,k2,k3,k4,k5,k6
+      '0.7,0.8', // p1,p2
+      '0.9,1.0,1.1,1.2', // s1..s4
+      '1.3,1.4', // tauX,tauY
+    ]);
+    // k1,k2 then p1,p2 then k3..k6 then s1..s4 then tau — the OpenCV order.
+    assert.deepStrictEqual(
+      ordered,
+      [0.1, 0.2, 0.7, 0.8, 0.3, 0.4, 0.5, 0.6, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4]
+    );
+  });
+
+  test('the fisheye groups are contiguous', () => {
+    const ordered = coefficientsFromGroups('fisheye624', ['1,2,3,4,5,6', '7,8', '9,10,11,12']);
+    assert.deepStrictEqual(ordered, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  });
+
+  test('a partly filled box leaves the rest of its family at zero', () => {
+    // The whole point: a calibration giving two radial terms is two numbers.
+    assert.deepStrictEqual(
+      coefficientsFromGroups('fisheye624', ['-0.05,0.01', '', '']),
+      [-0.05, 0.01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    assert.deepStrictEqual(
+      coefficientsFromGroups('pinhole-opencv', ['-0.28', '', '', '']),
+      [-0.28, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+  });
+
+  test('groups and ordered arrays round-trip', () => {
+    for (const model of ['pinhole-opencv', 'fisheye624'] as const) {
+      const groups =
+        model === 'pinhole-opencv'
+          ? ['0.1,0.2,0.3,0.4,0.5,0.6', '0.7,0.8', '0.9,1,1.1,1.2', '1.3,1.4']
+          : ['1,2,3,4,5,6', '7,8', '9,10,11,12'];
+      const ordered = coefficientsFromGroups(model, groups);
+      assert.deepStrictEqual(
+        coefficientsFromGroups(model, groupsFromCoefficients(model, ordered)),
+        ordered,
+        `${model} must survive the trip through its boxes`
+      );
+    }
+  });
+
+  test('trailing zeros are not shown back to the user', () => {
+    // A box reading "-0.05" says as much as "-0.05,0,0,0,0,0" and is readable.
+    assert.deepStrictEqual(
+      groupsFromCoefficients('fisheye624', [-0.05, 0.01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+      ['-0.05,0.01', '', '']
+    );
+  });
+});
+
+/**
+ * The picker offers two general models, but calibration files name specific
+ * ones — COLMAP, ZED, RealSense, TUM and the YAML parsers all emit
+ * `pinhole-ideal`, `pinhole-opencv` or `fisheye-opencv`, and settings saved
+ * before the consolidation carry those names too. Each has to land on an
+ * offered model with its coefficients in the slots that model expects; a name
+ * the picker does not carry leaves the select blank instead.
+ */
+suite('Compatibility with calibration files and saved settings', () => {
+  test('every model a calibration parser emits maps onto an offered one', () => {
+    const offered = ['pinhole-opencv', 'fisheye624'];
+    for (const model of [
+      'pinhole-ideal',
+      'pinhole-opencv',
+      'fisheye-ideal' as any,
+      'fisheye-equidistant',
+      'fisheye-opencv',
+      'fisheye-kb3',
+      'fisheye624',
+    ] as const) {
+      if (model === ('fisheye-ideal' as any)) {
+        continue; // not a model this codebase has
+      }
+      const mapped = normalizeToOfferedCameraModel(model as any, []);
+      assert.ok(
+        offered.includes(mapped.model),
+        `${model} mapped to ${mapped.model}, which the picker does not offer`
+      );
+    }
+  });
+
+  test('an OpenCV fisheye calibration keeps its four k values in the first four slots', () => {
+    const mapped = normalizeToOfferedCameraModel(
+      'fisheye-opencv',
+      [-0.02, 0.001, -0.0004, 0.00001]
+    );
+    assert.strictEqual(mapped.model, 'fisheye624');
+    assert.strictEqual(mapped.coefficients.length, 12);
+    assert.deepStrictEqual(mapped.coefficients.slice(0, 4), [-0.02, 0.001, -0.0004, 0.00001]);
+    assert.deepStrictEqual(mapped.coefficients.slice(4), new Array(8).fill(0));
+
+    // And the mapped configuration still resolves to the cheap model, because
+    // only the first four radial terms are set.
+    assert.strictEqual(
+      resolveCameraModel({ cameraModel: mapped.model, fx: 500, coefficients: mapped.coefficients })
+        .model,
+      'fisheye-kb3'
+    );
+  });
+
+  test('an OpenCV pinhole calibration keeps its layout', () => {
+    const five = [-0.28, 0.07, 0.001, 0.002, -0.01];
+    const mapped = normalizeToOfferedCameraModel('pinhole-opencv', five);
+    assert.strictEqual(mapped.model, 'pinhole-opencv');
+    assert.strictEqual(mapped.coefficients.length, 14);
+    assert.deepStrictEqual(mapped.coefficients.slice(0, 5), five);
+  });
+
+  test('a mapped calibration survives the trip through the panel boxes', () => {
+    // What the user sees after loading a calibration must be what the kernel
+    // then gets: file -> offered model -> grouped boxes -> ordered array.
+    const mapped = normalizeToOfferedCameraModel('fisheye-opencv', [-0.02, 0.001, 0, 0]);
+    const boxes = groupsFromCoefficients(mapped.model, mapped.coefficients);
+    assert.deepStrictEqual(boxes, ['-0.02,0.001', '', '']);
+    assert.deepStrictEqual(
+      coefficientsFromGroups(mapped.model, boxes),
+      mapped.coefficients,
+      'the boxes must reassemble exactly what the calibration gave'
+    );
+  });
+
+  test('an ideal pinhole from a calibration becomes a zero-distortion pinhole', () => {
+    const mapped = normalizeToOfferedCameraModel('pinhole-ideal', []);
+    assert.strictEqual(mapped.model, 'pinhole-opencv');
+    assert.deepStrictEqual(mapped.coefficients, new Array(14).fill(0));
+    // ...which resolves straight back to the ideal pinhole for the kernel.
+    assert.strictEqual(
+      resolveCameraModel({ cameraModel: mapped.model, fx: 500, coefficients: mapped.coefficients })
+        .model,
+      'pinhole-ideal'
     );
   });
 });

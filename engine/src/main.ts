@@ -468,7 +468,7 @@ class PointCloudVisualizer {
     fy: undefined, // Optional, defaults to fx if not provided
     cx: undefined, // Will be auto-calculated per image based on dimensions
     cy: undefined, // Will be auto-calculated per image based on dimensions
-    cameraModel: 'pinhole-ideal',
+    cameraModel: 'pinhole-opencv',
     depthType: 'euclidean',
     convention: 'opengl',
     pngScaleFactor: 1000, // Default for PNG files
@@ -4441,7 +4441,7 @@ class PointCloudVisualizer {
         fy: message.settings.fy,
         cx: this.defaultDepthSettings.cx, // Keep existing cx, don't load from storage
         cy: this.defaultDepthSettings.cy, // Keep existing cy, don't load from storage
-        cameraModel: message.settings.cameraModel || 'pinhole-ideal',
+        cameraModel: message.settings.cameraModel || 'pinhole-opencv',
         depthType: message.settings.depthType || 'euclidean',
         baseline: message.settings.baseline,
         convention: message.settings.convention || 'opengl',

@@ -365,7 +365,10 @@ export function generateDepthRequestId(): string {
 export const DEFAULT_DEPTH_SETTINGS = {
   fx: 1000,
   fy: 1000,
-  cameraModel: 'pinhole-ideal',
+  // The panel offers the general models; an ideal pinhole is this one with
+  // zero distortion, and naming a model the picker does not carry would leave
+  // it showing nothing.
+  cameraModel: 'pinhole-opencv',
   depthType: 'euclidean',
   convention: 'opengl',
   baseline: 50,
@@ -444,7 +447,7 @@ export async function handleVSCodeCameraParams(
       ? {
           fx: savedSettings.fx || 1000,
           fy: savedSettings.fy,
-          cameraModel: savedSettings.cameraModel || 'pinhole-ideal',
+          cameraModel: savedSettings.cameraModel || 'pinhole-opencv',
           depthType: savedSettings.depthType || 'euclidean',
           convention: savedSettings.convention || 'opengl',
           baseline: savedSettings.baseline || 50,

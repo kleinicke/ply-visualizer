@@ -310,3 +310,108 @@ export function unprojectCameraPixel(
   }
   return result;
 }
+
+/**
+ * How a model's coefficients group into the boxes the panel shows.
+ *
+ * The point of grouping is that the terms of one family are entered and read
+ * together — all the radial k's in one box, the tangential p's in another —
+ * rather than as a single ordered run the user has to count positions in.
+ *
+ * `positions` is where each group's values sit in the ordered array the kernel
+ * takes, and for OpenCV's pinhole that order is *not* the order of the groups:
+ * the layout is k1,k2,p1,p2,k3,k4,k5,k6,s1..s4,tauX,tauY, so the radial terms
+ * are split around the tangential pair. Keeping the mapping here, once, is what
+ * stops a value entered as "k3" from landing in the p1 slot.
+ */
+export interface CoefficientGroup {
+  /** Shown as the box's label. */
+  label: string;
+  /** The individual terms, in the order they go in the box. */
+  terms: readonly string[];
+  /** Where each term sits in the model's ordered coefficient array. */
+  positions: readonly number[];
+}
+
+export const CAMERA_MODEL_COEFFICIENT_GROUPS: Readonly<
+  Partial<Record<CameraModel, readonly CoefficientGroup[]>>
+> = {
+  'pinhole-opencv': [
+    {
+      label: 'Radial',
+      terms: ['k1', 'k2', 'k3', 'k4', 'k5', 'k6'],
+      positions: [0, 1, 4, 5, 6, 7],
+    },
+    { label: 'Tangential', terms: ['p1', 'p2'], positions: [2, 3] },
+    { label: 'Thin prism', terms: ['s1', 's2', 's3', 's4'], positions: [8, 9, 10, 11] },
+    { label: 'Tilted sensor', terms: ['tauX', 'tauY'], positions: [12, 13] },
+  ],
+  fisheye624: [
+    {
+      label: 'Radial',
+      terms: ['k0', 'k1', 'k2', 'k3', 'k4', 'k5'],
+      positions: [0, 1, 2, 3, 4, 5],
+    },
+    { label: 'Tangential', terms: ['p0', 'p1'], positions: [6, 7] },
+    { label: 'Thin prism', terms: ['s0', 's1', 's2', 's3'], positions: [8, 9, 10, 11] },
+  ],
+  'fisheye-opencv': [{ label: 'Radial', terms: ['k1', 'k2', 'k3', 'k4'], positions: [0, 1, 2, 3] }],
+  'fisheye-kb3': [{ label: 'Radial', terms: ['k0', 'k1', 'k2', 'k3'], positions: [0, 1, 2, 3] }],
+};
+
+/** Total ordered length of a model's coefficient array, from its groups. */
+function orderedLength(groups: readonly CoefficientGroup[]): number {
+  return groups.reduce(
+    (highest, group) => Math.max(highest, ...group.positions.map(position => position + 1)),
+    0
+  );
+}
+
+/**
+ * Assembles the ordered coefficient array from what each group's box holds.
+ *
+ * A box may hold fewer numbers than its group has terms, or be empty: missing
+ * values are zero, which is what lets a calibration that gives two radial terms
+ * be typed as two numbers.
+ */
+export function coefficientsFromGroups(
+  model: CameraModel,
+  groupValues: readonly string[]
+): number[] {
+  const groups = CAMERA_MODEL_COEFFICIENT_GROUPS[model];
+  if (!groups) {
+    return [];
+  }
+  const ordered = new Array<number>(orderedLength(groups)).fill(0);
+  groups.forEach((group, groupIndex) => {
+    const entered = (groupValues[groupIndex] ?? '')
+      .split(',')
+      .map(value => value.trim())
+      .filter(value => value !== '');
+    group.positions.forEach((position, termIndex) => {
+      const value = Number(entered[termIndex]);
+      ordered[position] = Number.isFinite(value) ? value : 0;
+    });
+  });
+  return ordered;
+}
+
+/** The inverse: what each group's box should show for an ordered array. */
+export function groupsFromCoefficients(
+  model: CameraModel,
+  coefficients: readonly number[]
+): string[] {
+  const groups = CAMERA_MODEL_COEFFICIENT_GROUPS[model];
+  if (!groups) {
+    return [];
+  }
+  return groups.map(group => {
+    const values = group.positions.map(position => coefficients[position] ?? 0);
+    // Trailing zeros are dropped: a box showing "-0.05" says as much as one
+    // showing "-0.05,0,0,0,0,0" and is far easier to read and edit.
+    while (values.length > 0 && values[values.length - 1] === 0) {
+      values.pop();
+    }
+    return values.join(',');
+  });
+}
