@@ -1,14 +1,14 @@
 //! Fast TIFF decoder for WebAssembly
-//! 
+//!
 //! This library provides high-performance TIFF decoding for use in browser environments
 //! through WebAssembly. It's designed to be a drop-in replacement for slow parts of
 //! geotiff.js while maintaining compatibility with existing JavaScript code.
 
-use wasm_bindgen::prelude::*;
+use exr::prelude::FlatSamples;
 use std::io::Cursor;
 use std::mem;
-use exr::prelude::FlatSamples;
 use tiff::decoder::{Decoder, DecodingResult};
+use wasm_bindgen::prelude::*;
 
 // Camera projection kernels come from the `camera-models` crate, which both
 // WASM crates share. Referenced by path (`camera_models::…`) throughout.
@@ -113,13 +113,19 @@ pub struct JpegResult {
 #[wasm_bindgen]
 impl JpegResult {
     #[wasm_bindgen(getter)]
-    pub fn width(&self) -> u32 { self.width }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn height(&self) -> u32 { self.height }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn channels(&self) -> u32 { self.channels }
+    pub fn channels(&self) -> u32 {
+        self.channels
+    }
 
     #[wasm_bindgen]
     pub fn take_data_as_u8(&mut self) -> Vec<u8> {
@@ -134,9 +140,11 @@ pub fn decode_jpeg_fast(data: &[u8]) -> Result<JpegResult, JsValue> {
     use zune_jpeg::JpegDecoder;
 
     let mut decoder = JpegDecoder::new(Cursor::new(data));
-    let pixels = decoder.decode()
+    let pixels = decoder
+        .decode()
         .map_err(|e| JsValue::from_str(&format!("JPEG decode failed: {:?}", e)))?;
-    let info = decoder.info()
+    let info = decoder
+        .info()
         .ok_or_else(|| JsValue::from_str("JPEG: missing image info"))?;
     let pixel_count = (info.width as usize).saturating_mul(info.height as usize);
     if pixel_count == 0 || pixels.len() % pixel_count != 0 {
@@ -175,31 +183,49 @@ impl HdrResult {
 #[wasm_bindgen]
 impl PngResult {
     #[wasm_bindgen(getter)]
-    pub fn width(&self) -> u32 { self.width }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn height(&self) -> u32 { self.height }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn channels(&self) -> u32 { self.channels }
+    pub fn channels(&self) -> u32 {
+        self.channels
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn bit_depth(&self) -> u32 { self.bit_depth }
+    pub fn bit_depth(&self) -> u32 {
+        self.bit_depth
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn color_type(&self) -> u32 { self.color_type }
+    pub fn color_type(&self) -> u32 {
+        self.color_type
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn timing_read_info_ms(&self) -> f64 { self.timing_read_info_ms }
+    pub fn timing_read_info_ms(&self) -> f64 {
+        self.timing_read_info_ms
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn timing_decode_ms(&self) -> f64 { self.timing_decode_ms }
+    pub fn timing_decode_ms(&self) -> f64 {
+        self.timing_decode_ms
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn timing_convert_ms(&self) -> f64 { self.timing_convert_ms }
+    pub fn timing_convert_ms(&self) -> f64 {
+        self.timing_convert_ms
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn timing_total_ms(&self) -> f64 { self.timing_total_ms }
+    pub fn timing_total_ms(&self) -> f64 {
+        self.timing_total_ms
+    }
 
     #[wasm_bindgen]
     pub fn take_data_as_u16(&mut self) -> Vec<u16> {
@@ -438,13 +464,17 @@ impl TiffResult {
                     // (try_decode_subbit_strips): those samples are still
                     // packed as 2 bytes each (via convert_u16_to_bytes_simd),
                     // just with a smaller reported bits_per_sample.
-                    9..=16 => self.data
+                    9..=16 => self
+                        .data
                         .chunks_exact(2)
                         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) as f32)
                         .collect(),
-                    32 => self.data
+                    32 => self
+                        .data
                         .chunks_exact(4)
-                        .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32)
+                        .map(|bytes| {
+                            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32
+                        })
                         .collect(),
                     _ => vec![],
                 }
@@ -478,7 +508,8 @@ pub fn tiff_page_count(data: &[u8]) -> Result<u32, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("Failed to create decoder: {}", e)))?;
     let mut count = 1u32;
     while decoder.more_images() {
-        decoder.next_image()
+        decoder
+            .next_image()
             .map_err(|e| JsValue::from_str(&format!("Failed to enumerate TIFF pages: {}", e)))?;
         count = count.saturating_add(1);
     }
@@ -545,26 +576,34 @@ fn decode_png16_impl(data: &[u8]) -> Result<PngResult, JsValue> {
     let mut limits = png::Limits::default();
     limits.bytes = 512 * 1024 * 1024;
     let decoder = png::Decoder::new_with_limits(cursor, limits);
-    let mut reader = decoder.read_info()
+    let mut reader = decoder
+        .read_info()
         .map_err(|e| JsValue::from_str(&format!("Failed to read PNG info: {}", e)))?;
     let read_info_time = js_sys::Date::now() - start_time;
 
     let decode_start = js_sys::Date::now();
     let mut raw = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut raw)
+    let info = reader
+        .next_frame(&mut raw)
         .map_err(|e| JsValue::from_str(&format!("Failed to decode PNG frame: {}", e)))?;
     raw.truncate(info.buffer_size());
     let decode_time = js_sys::Date::now() - decode_start;
 
     if info.bit_depth != png::BitDepth::Sixteen {
-        return Err(JsValue::from_str("Rust PNG fast path only supports 16-bit PNG output"));
+        return Err(JsValue::from_str(
+            "Rust PNG fast path only supports 16-bit PNG output",
+        ));
     }
     let channels = match info.color_type {
         png::ColorType::Grayscale => 1,
         png::ColorType::Rgb => 3,
         png::ColorType::GrayscaleAlpha => 2,
         png::ColorType::Rgba => 4,
-        png::ColorType::Indexed => return Err(JsValue::from_str("Rust PNG fast path does not support indexed 16-bit PNG")),
+        png::ColorType::Indexed => {
+            return Err(JsValue::from_str(
+                "Rust PNG fast path does not support indexed 16-bit PNG",
+            ))
+        }
     };
 
     let expected_values = (info.width as usize)
@@ -572,7 +611,9 @@ fn decode_png16_impl(data: &[u8]) -> Result<PngResult, JsValue> {
         .and_then(|v| v.checked_mul(channels as usize))
         .ok_or_else(|| JsValue::from_str("PNG dimensions overflow"))?;
     if raw.len() < expected_values * 2 {
-        return Err(JsValue::from_str("PNG decoded byte count is smaller than expected"));
+        return Err(JsValue::from_str(
+            "PNG decoded byte count is smaller than expected",
+        ));
     }
 
     let convert_start = js_sys::Date::now();
@@ -680,14 +721,16 @@ fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
         } else if line.starts_with("-Y ") && line.contains(" +X ") {
             let mut parts = line.split_whitespace();
             if parts.next() == Some("-Y") {
-                height = parts.next()
+                height = parts
+                    .next()
                     .ok_or_else(|| JsValue::from_str("Missing HDR height"))?
                     .parse::<usize>()
                     .map_err(|_| JsValue::from_str("Invalid HDR height"))?;
                 if parts.next() != Some("+X") {
                     return Err(JsValue::from_str("Unsupported HDR orientation"));
                 }
-                width = parts.next()
+                width = parts
+                    .next()
                     .ok_or_else(|| JsValue::from_str("Missing HDR width"))?
                     .parse::<usize>()
                     .map_err(|_| JsValue::from_str("Invalid HDR width"))?;
@@ -701,13 +744,16 @@ fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
         return Err(JsValue::from_str("HDR resolution line not found"));
     }
     if !rle {
-        return Err(JsValue::from_str("Only FORMAT=32-bit_rle_rgbe HDR files are supported"));
+        return Err(JsValue::from_str(
+            "Only FORMAT=32-bit_rle_rgbe HDR files are supported",
+        ));
     }
     if width > 0x7fff {
         return Err(JsValue::from_str("HDR scanline is too wide for RLE"));
     }
 
-    let pixel_count = width.checked_mul(height)
+    let pixel_count = width
+        .checked_mul(height)
         .ok_or_else(|| JsValue::from_str("HDR dimensions overflow"))?;
     let mut scanline = vec![0u8; width * 4];
     let mut output = vec![0f32; pixel_count * 4];
@@ -764,7 +810,8 @@ fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
                         if offset + remaining > data.len() {
                             return Err(JsValue::from_str("Unexpected EOF in HDR literal"));
                         }
-                        scanline[ptr..ptr + remaining].copy_from_slice(&data[offset..offset + remaining]);
+                        scanline[ptr..ptr + remaining]
+                            .copy_from_slice(&data[offset..offset + remaining]);
                         ptr += remaining;
                         offset += remaining;
                     }
@@ -813,7 +860,9 @@ fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
 fn push_generic_attr_row(out: &mut Vec<String>, group: &str, name: &str, value_debug: String) {
     out.push(format!(
         "{{\"tag\":null,\"name\":\"{}\",\"group\":\"{}\",\"value\":\"{}\"}}",
-        json_escape(name), json_escape(group), json_escape(&value_debug)
+        json_escape(name),
+        json_escape(group),
+        json_escape(&value_debug)
     ));
 }
 
@@ -836,8 +885,18 @@ fn extract_exr_tags_json(
         };
     }
 
-    push_generic_attr_row(&mut out, GROUP, "displayWindow", format!("{:?}", image_attrs.display_window));
-    push_generic_attr_row(&mut out, GROUP, "pixelAspect", format!("{}", image_attrs.pixel_aspect));
+    push_generic_attr_row(
+        &mut out,
+        GROUP,
+        "displayWindow",
+        format!("{:?}", image_attrs.display_window),
+    );
+    push_generic_attr_row(
+        &mut out,
+        GROUP,
+        "pixelAspect",
+        format!("{}", image_attrs.pixel_aspect),
+    );
     opt_field!(image_attrs.chromaticities, "chromaticities");
     opt_field!(image_attrs.time_code, "timeCode");
     for (key, value) in image_attrs.other.iter() {
@@ -845,13 +904,34 @@ fn extract_exr_tags_json(
     }
 
     opt_field!(layer_attrs.layer_name, "layerName");
-    push_generic_attr_row(&mut out, GROUP, "layerPosition", format!("{:?}", layer_attrs.layer_position));
-    push_generic_attr_row(&mut out, GROUP, "screenWindowCenter", format!("{:?}", layer_attrs.screen_window_center));
-    push_generic_attr_row(&mut out, GROUP, "screenWindowWidth", format!("{}", layer_attrs.screen_window_width));
+    push_generic_attr_row(
+        &mut out,
+        GROUP,
+        "layerPosition",
+        format!("{:?}", layer_attrs.layer_position),
+    );
+    push_generic_attr_row(
+        &mut out,
+        GROUP,
+        "screenWindowCenter",
+        format!("{:?}", layer_attrs.screen_window_center),
+    );
+    push_generic_attr_row(
+        &mut out,
+        GROUP,
+        "screenWindowWidth",
+        format!("{}", layer_attrs.screen_window_width),
+    );
     opt_field!(layer_attrs.white_luminance, "whiteLuminance");
     opt_field!(layer_attrs.adopted_neutral, "adoptedNeutral");
-    opt_field!(layer_attrs.rendering_transform_name, "renderingTransformName");
-    opt_field!(layer_attrs.look_modification_transform_name, "lookModificationTransformName");
+    opt_field!(
+        layer_attrs.rendering_transform_name,
+        "renderingTransformName"
+    );
+    opt_field!(
+        layer_attrs.look_modification_transform_name,
+        "lookModificationTransformName"
+    );
     opt_field!(layer_attrs.horizontal_density, "horizontalDensity");
     opt_field!(layer_attrs.owner, "owner");
     opt_field!(layer_attrs.comments, "comments");
@@ -870,14 +950,20 @@ fn extract_exr_tags_json(
     opt_field!(layer_attrs.frames_per_second, "framesPerSecond");
     opt_field!(layer_attrs.multi_view_names, "multiViewNames");
     opt_field!(layer_attrs.world_to_camera, "worldToCamera");
-    opt_field!(layer_attrs.world_to_normalized_device, "worldToNormalizedDevice");
+    opt_field!(
+        layer_attrs.world_to_normalized_device,
+        "worldToNormalizedDevice"
+    );
     opt_field!(layer_attrs.deep_image_state, "deepImageState");
     opt_field!(layer_attrs.original_data_window, "originalDataWindow");
     opt_field!(layer_attrs.view_name, "viewName");
     opt_field!(layer_attrs.software_name, "softwareName");
     opt_field!(layer_attrs.near_clip_plane, "nearClipPlane");
     opt_field!(layer_attrs.far_clip_plane, "farClipPlane");
-    opt_field!(layer_attrs.horizontal_field_of_view, "horizontalFieldOfView");
+    opt_field!(
+        layer_attrs.horizontal_field_of_view,
+        "horizontalFieldOfView"
+    );
     opt_field!(layer_attrs.vertical_field_of_view, "verticalFieldOfView");
     for (key, value) in layer_attrs.other.iter() {
         push_generic_attr_row(&mut out, GROUP, &key.to_string(), format!("{:?}", value));
@@ -917,7 +1003,10 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
     let pixel_count = width
         .checked_mul(height)
         .ok_or_else(|| JsValue::from_str("EXR dimensions overflow"))?;
-    let channel_names: Vec<String> = channels.iter().map(|channel| channel.name.to_string()).collect();
+    let channel_names: Vec<String> = channels
+        .iter()
+        .map(|channel| channel.name.to_string())
+        .collect();
     let selection = select_exr_display_channels(&channel_names);
     if selection.source_indices.is_empty() {
         return Err(JsValue::from_str("EXR has no displayable channels"));
@@ -926,18 +1015,26 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
     for &index in selection.source_indices.iter().flatten() {
         let channel = &channels[index];
         if channel.sampling.0 != 1 || channel.sampling.1 != 1 {
-            return Err(JsValue::from_str("Subsampled EXR channels are not supported by the Rust fast path"));
+            return Err(JsValue::from_str(
+                "Subsampled EXR channels are not supported by the Rust fast path",
+            ));
         }
         if channel.sample_data.len() < pixel_count {
-            return Err(JsValue::from_str("EXR channel sample count is smaller than the image dimensions"));
+            return Err(JsValue::from_str(
+                "EXR channel sample count is smaller than the image dimensions",
+            ));
         }
     }
 
     let output_channels = selection.source_indices.len();
     let interleaved = if output_channels == 1 {
-        let source_index = selection.source_indices[0]
-            .ok_or_else(|| JsValue::from_str("EXR grayscale selection unexpectedly has no source channel"))?;
-        let samples = mem::replace(&mut channels[source_index].sample_data, FlatSamples::F32(Vec::new()));
+        let source_index = selection.source_indices[0].ok_or_else(|| {
+            JsValue::from_str("EXR grayscale selection unexpectedly has no source channel")
+        })?;
+        let samples = mem::replace(
+            &mut channels[source_index].sample_data,
+            FlatSamples::F32(Vec::new()),
+        );
         exr_samples_into_f32_vec(samples, pixel_count)
     } else {
         let mut interleaved = vec![0.0f32; pixel_count * output_channels];
@@ -951,7 +1048,13 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
                     pixel_count,
                 );
             } else {
-                fill_exr_interleaved_channel(&mut interleaved, out_channel, output_channels, pixel_count, 1.0);
+                fill_exr_interleaved_channel(
+                    &mut interleaved,
+                    out_channel,
+                    output_channels,
+                    pixel_count,
+                    1.0,
+                );
             }
         }
         interleaved
@@ -1017,7 +1120,10 @@ fn select_exr_display_channels(channel_names: &[String]) -> ExrChannelSelection 
         } else {
             source_indices.push(None);
         }
-        return ExrChannelSelection { source_indices, displayed_names };
+        return ExrChannelSelection {
+            source_indices,
+            displayed_names,
+        };
     }
 
     if let Some(index) = y {
@@ -1037,7 +1143,10 @@ fn select_exr_display_channels(channel_names: &[String]) -> ExrChannelSelection 
         }
     }
 
-    ExrChannelSelection { source_indices: Vec::new(), displayed_names: Vec::new() }
+    ExrChannelSelection {
+        source_indices: Vec::new(),
+        displayed_names: Vec::new(),
+    }
 }
 
 fn exr_base_channel_name(name: &str) -> &str {
@@ -1176,7 +1285,11 @@ fn append_ifd_tags(
                         .tag_iter()
                         .filter_map(|r| r.ok())
                         .collect();
-                    let sub_group = if matches!(tag, Tag::ExifDirectory) { "Exif" } else { "GPS" };
+                    let sub_group = if matches!(tag, Tag::ExifDirectory) {
+                        "Exif"
+                    } else {
+                        "GPS"
+                    };
                     append_ifd_tags(decoder, sub_entries, sub_group, out);
                     continue;
                 }
@@ -1210,8 +1323,8 @@ fn extract_ome_xml(data: &[u8]) -> String {
         .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
         .unwrap_or_default();
     let trimmed = description.trim_start_matches('\u{feff}').trim_start();
-	// The recommended OME-TIFF header includes a warning XML comment before
-	// the OME root, so detection must not require OME to be the first token.
+    // The recommended OME-TIFF header includes a warning XML comment before
+    // the OME root, so detection must not require OME to be the first token.
     if trimmed.contains("<OME") || trimmed.contains(":OME") {
         description
     } else {
@@ -1242,10 +1355,10 @@ fn extract_page_tags_json(data: &[u8], page_index: u32) -> String {
 /// TIFF/Exif field type sizes in bytes, per the TIFF6/Exif spec (type IDs 1-12).
 fn ifd_type_size(type_id: u16) -> usize {
     match type_id {
-        1 | 2 | 6 | 7 => 1,  // BYTE, ASCII, SBYTE, UNDEFINED
-        3 | 8 => 2,          // SHORT, SSHORT
-        4 | 9 | 11 => 4,     // LONG, SLONG, FLOAT
-        5 | 10 | 12 => 8,    // RATIONAL, SRATIONAL, DOUBLE
+        1 | 2 | 6 | 7 => 1, // BYTE, ASCII, SBYTE, UNDEFINED
+        3 | 8 => 2,         // SHORT, SSHORT
+        4 | 9 | 11 => 4,    // LONG, SLONG, FLOAT
+        5 | 10 | 12 => 8,   // RATIONAL, SRATIONAL, DOUBLE
         _ => 0,
     }
 }
@@ -1253,7 +1366,13 @@ fn ifd_type_size(type_id: u16) -> usize {
 /// Render one IFD entry's value bytes as a human-readable string, generically
 /// across all twelve standard TIFF/Exif field types. Caps very long arrays at
 /// 16 shown elements, mirroring `value_to_display_string`'s `List` handling.
-fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[u8], big_endian: bool) -> String {
+fn format_bare_ifd_value(
+    data: &[u8],
+    type_id: u16,
+    count: u32,
+    inline_bytes: &[u8],
+    big_endian: bool,
+) -> String {
     let elem_size = ifd_type_size(type_id);
     if elem_size == 0 {
         return format!("<unsupported field type {}>", type_id);
@@ -1263,9 +1382,19 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
         &inline_bytes[..total_size.min(inline_bytes.len())]
     } else {
         let offset = if big_endian {
-            u32::from_be_bytes([inline_bytes[0], inline_bytes[1], inline_bytes[2], inline_bytes[3]])
+            u32::from_be_bytes([
+                inline_bytes[0],
+                inline_bytes[1],
+                inline_bytes[2],
+                inline_bytes[3],
+            ])
         } else {
-            u32::from_le_bytes([inline_bytes[0], inline_bytes[1], inline_bytes[2], inline_bytes[3]])
+            u32::from_le_bytes([
+                inline_bytes[0],
+                inline_bytes[1],
+                inline_bytes[2],
+                inline_bytes[3],
+            ])
         } as usize;
         match data.get(offset..offset.saturating_add(total_size)) {
             Some(b) => b,
@@ -1273,12 +1402,55 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
         }
     };
 
-    let u16_at = |i: usize| -> u16 { let b = &bytes[i * 2..i * 2 + 2]; if big_endian { u16::from_be_bytes([b[0], b[1]]) } else { u16::from_le_bytes([b[0], b[1]]) } };
-    let i16_at = |i: usize| -> i16 { let b = &bytes[i * 2..i * 2 + 2]; if big_endian { i16::from_be_bytes([b[0], b[1]]) } else { i16::from_le_bytes([b[0], b[1]]) } };
-    let u32_at = |i: usize| -> u32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
-    let i32_at = |i: usize| -> i32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { i32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { i32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
-    let f32_at = |i: usize| -> f32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { f32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { f32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
-    let f64_at = |i: usize| -> f64 { let b = &bytes[i * 8..i * 8 + 8]; let a = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]; if big_endian { f64::from_be_bytes(a) } else { f64::from_le_bytes(a) } };
+    let u16_at = |i: usize| -> u16 {
+        let b = &bytes[i * 2..i * 2 + 2];
+        if big_endian {
+            u16::from_be_bytes([b[0], b[1]])
+        } else {
+            u16::from_le_bytes([b[0], b[1]])
+        }
+    };
+    let i16_at = |i: usize| -> i16 {
+        let b = &bytes[i * 2..i * 2 + 2];
+        if big_endian {
+            i16::from_be_bytes([b[0], b[1]])
+        } else {
+            i16::from_le_bytes([b[0], b[1]])
+        }
+    };
+    let u32_at = |i: usize| -> u32 {
+        let b = &bytes[i * 4..i * 4 + 4];
+        if big_endian {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let i32_at = |i: usize| -> i32 {
+        let b = &bytes[i * 4..i * 4 + 4];
+        if big_endian {
+            i32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            i32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let f32_at = |i: usize| -> f32 {
+        let b = &bytes[i * 4..i * 4 + 4];
+        if big_endian {
+            f32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            f32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let f64_at = |i: usize| -> f64 {
+        let b = &bytes[i * 8..i * 8 + 8];
+        let a = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]];
+        if big_endian {
+            f64::from_be_bytes(a)
+        } else {
+            f64::from_le_bytes(a)
+        }
+    };
 
     let join_all = |n: usize, render: &dyn Fn(usize) -> String| -> String {
         (0..n).map(render).collect::<Vec<_>>().join(", ")
@@ -1286,7 +1458,8 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
 
     let n = count as usize;
     match type_id {
-        2 => { // ASCII: NUL-terminated string
+        2 => {
+            // ASCII: NUL-terminated string
             let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
             String::from_utf8_lossy(&bytes[..end]).to_string()
         }
@@ -1298,13 +1471,23 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
         9 => join_all(n, &|i| i32_at(i).to_string()),
         11 => join_all(n, &|i| f32_at(i).to_string()),
         12 => join_all(n, &|i| f64_at(i).to_string()),
-        5 => join_all(n, &|i| { // RATIONAL: pairs of u32
+        5 => join_all(n, &|i| {
+            // RATIONAL: pairs of u32
             let (num, den) = (u32_at(i * 2), u32_at(i * 2 + 1));
-            if den != 0 { format!("{}/{} ({:.6})", num, den, num as f64 / den as f64) } else { format!("{}/{}", num, den) }
+            if den != 0 {
+                format!("{}/{} ({:.6})", num, den, num as f64 / den as f64)
+            } else {
+                format!("{}/{}", num, den)
+            }
         }),
-        10 => join_all(n, &|i| { // SRATIONAL: pairs of i32
+        10 => join_all(n, &|i| {
+            // SRATIONAL: pairs of i32
             let (num, den) = (i32_at(i * 2), i32_at(i * 2 + 1));
-            if den != 0 { format!("{}/{} ({:.6})", num, den, num as f64 / den as f64) } else { format!("{}/{}", num, den) }
+            if den != 0 {
+                format!("{}/{} ({:.6})", num, den, num as f64 / den as f64)
+            } else {
+                format!("{}/{}", num, den)
+            }
         }),
         _ => "<unsupported field type>".to_string(),
     }
@@ -1313,25 +1496,47 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
 /// Recursively walk a raw IFD's entries (byte-level, no `tiff` crate
 /// `Decoder`) starting at `ifd_offset`, pushing each as a JSON tag row and
 /// following the Exif (0x8769) / GPS (0x8825) sub-IFD pointer tags.
-fn walk_bare_ifd(data: &[u8], ifd_offset: usize, big_endian: bool, group: &str, out: &mut Vec<String>, depth: u32) {
-    if depth > 4 { return; } // guard against absurd/cyclic offsets in malformed input
+fn walk_bare_ifd(
+    data: &[u8],
+    ifd_offset: usize,
+    big_endian: bool,
+    group: &str,
+    out: &mut Vec<String>,
+    depth: u32,
+) {
+    if depth > 4 {
+        return;
+    } // guard against absurd/cyclic offsets in malformed input
     let read_u16 = |offset: usize| -> Option<u16> {
         let b = data.get(offset..offset + 2)?;
-        Some(if big_endian { u16::from_be_bytes([b[0], b[1]]) } else { u16::from_le_bytes([b[0], b[1]]) })
+        Some(if big_endian {
+            u16::from_be_bytes([b[0], b[1]])
+        } else {
+            u16::from_le_bytes([b[0], b[1]])
+        })
     };
     let read_u32 = |offset: usize| -> Option<u32> {
         let b = data.get(offset..offset + 4)?;
-        Some(if big_endian { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) })
+        Some(if big_endian {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        })
     };
 
-    let entry_count = match read_u16(ifd_offset) { Some(c) => c as usize, None => return };
+    let entry_count = match read_u16(ifd_offset) {
+        Some(c) => c as usize,
+        None => return,
+    };
     for i in 0..entry_count {
         let entry_offset = ifd_offset + 2 + i * 12;
         let (Some(tag_id), Some(type_id), Some(count)) = (
             read_u16(entry_offset),
             read_u16(entry_offset + 2),
             read_u32(entry_offset + 4),
-        ) else { continue };
+        ) else {
+            continue;
+        };
         let value_bytes = match data.get(entry_offset + 8..entry_offset + 12) {
             Some(b) => b,
             None => continue,
@@ -1341,7 +1546,14 @@ fn walk_bare_ifd(data: &[u8], ifd_offset: usize, big_endian: bool, group: &str, 
         if (tag_id == 0x8769 || tag_id == 0x8825) && type_id == 4 && count == 1 {
             if let Some(sub_offset) = read_u32(entry_offset + 8) {
                 let sub_group = if tag_id == 0x8769 { "Exif" } else { "GPS" };
-                walk_bare_ifd(data, sub_offset as usize, big_endian, sub_group, out, depth + 1);
+                walk_bare_ifd(
+                    data,
+                    sub_offset as usize,
+                    big_endian,
+                    sub_group,
+                    out,
+                    depth + 1,
+                );
                 continue;
             }
         }
@@ -1365,11 +1577,19 @@ fn extract_bare_ifd_tags_json(data: &[u8]) -> String {
     };
     let read_u16 = |offset: usize| -> u16 {
         let b = &data[offset..offset + 2];
-        if big_endian { u16::from_be_bytes([b[0], b[1]]) } else { u16::from_le_bytes([b[0], b[1]]) }
+        if big_endian {
+            u16::from_be_bytes([b[0], b[1]])
+        } else {
+            u16::from_le_bytes([b[0], b[1]])
+        }
     };
     let read_u32 = |offset: usize| -> u32 {
         let b = &data[offset..offset + 4];
-        if big_endian { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) }
+        if big_endian {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        }
     };
     if read_u16(2) != 42 {
         return "[]".to_string();
@@ -1436,7 +1656,8 @@ fn convert_cmyk_to_rgb(result: DecodingResult, channels: u32) -> (DecodingResult
             let pixel_count = $data.len() / stride;
             let mut out = Vec::with_capacity(pixel_count * out_channels as usize);
             for px in $data.chunks_exact(stride) {
-                let (r, g, b) = cmyk_to_rgb_f64(px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64, max);
+                let (r, g, b) =
+                    cmyk_to_rgb_f64(px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64, max);
                 out.push(r.round().clamp(0.0, max) as _);
                 out.push(g.round().clamp(0.0, max) as _);
                 out.push(b.round().clamp(0.0, max) as _);
@@ -1449,14 +1670,24 @@ fn convert_cmyk_to_rgb(result: DecodingResult, channels: u32) -> (DecodingResult
     }
 
     match result {
-        DecodingResult::U8(data) => (DecodingResult::U8(convert_int!(data, u8::MAX)), out_channels),
-        DecodingResult::U16(data) => (DecodingResult::U16(convert_int!(data, u16::MAX)), out_channels),
-        DecodingResult::U32(data) => (DecodingResult::U32(convert_int!(data, u32::MAX)), out_channels),
+        DecodingResult::U8(data) => (
+            DecodingResult::U8(convert_int!(data, u8::MAX)),
+            out_channels,
+        ),
+        DecodingResult::U16(data) => (
+            DecodingResult::U16(convert_int!(data, u16::MAX)),
+            out_channels,
+        ),
+        DecodingResult::U32(data) => (
+            DecodingResult::U32(convert_int!(data, u32::MAX)),
+            out_channels,
+        ),
         DecodingResult::F32(data) => {
             let pixel_count = data.len() / stride;
             let mut out = Vec::with_capacity(pixel_count * out_channels as usize);
             for px in data.chunks_exact(stride) {
-                let (r, g, b) = cmyk_to_rgb_f64(px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64, 1.0);
+                let (r, g, b) =
+                    cmyk_to_rgb_f64(px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64, 1.0);
                 out.push(r as f32);
                 out.push(g as f32);
                 out.push(b as f32);
@@ -1507,7 +1738,10 @@ impl TiffOrientation {
     fn transposes(self) -> bool {
         matches!(
             self,
-            TiffOrientation::LeftTop | TiffOrientation::RightTop | TiffOrientation::RightBottom | TiffOrientation::LeftBottom
+            TiffOrientation::LeftTop
+                | TiffOrientation::RightTop
+                | TiffOrientation::RightBottom
+                | TiffOrientation::LeftBottom
         )
     }
 }
@@ -1526,7 +1760,11 @@ fn apply_orientation<T: Copy>(
     orientation: TiffOrientation,
 ) -> (Vec<T>, u32, u32) {
     let (w, h, c) = (width as usize, height as usize, channels as usize);
-    let (out_w, out_h) = if orientation.transposes() { (h, w) } else { (w, h) };
+    let (out_w, out_h) = if orientation.transposes() {
+        (h, w)
+    } else {
+        (w, h)
+    };
     let mut out = Vec::with_capacity(w * h * c);
     // SAFETY-free: just push in the destination's row-major order, reading
     // whichever source pixel maps to that destination position.
@@ -1589,15 +1827,24 @@ fn finalize_decode_bytes(
         return (data, width, height, channels);
     }
     let pixel_count = (width as usize) * (height as usize);
-    let bytes_per_pixel = if pixel_count > 0 { data.len() / pixel_count } else { 0 };
+    let bytes_per_pixel = if pixel_count > 0 {
+        data.len() / pixel_count
+    } else {
+        0
+    };
     if bytes_per_pixel == 0 {
         return (data, width, height, channels);
     }
-    let (oriented, w, h) = apply_orientation(&data, width, height, bytes_per_pixel as u32, orientation);
+    let (oriented, w, h) =
+        apply_orientation(&data, width, height, bytes_per_pixel as u32, orientation);
     (oriented, w, h, channels)
 }
 
-fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result<TiffResult, JsValue> {
+fn decode_tiff_impl(
+    data: &[u8],
+    compute_stats: bool,
+    page_index: u32,
+) -> Result<TiffResult, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
@@ -1615,23 +1862,28 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
                 current + 1
             )));
         }
-        decoder.next_image()
-            .map_err(|e| JsValue::from_str(&format!("Failed to select TIFF page {}: {}", page_index, e)))?;
+        decoder.next_image().map_err(|e| {
+            JsValue::from_str(&format!("Failed to select TIFF page {}: {}", page_index, e))
+        })?;
     }
 
-    let (width, height) = decoder.dimensions()
+    let (width, height) = decoder
+        .dimensions()
         .map_err(|e| JsValue::from_str(&format!("Failed to get dimensions: {}", e)))?;
 
     // Palette (RGBPalette, PhotometricInterpretation 3) images are rejected by
     // the tiff crate's colortype()/read_image(), so handle them via a dedicated
     // index + ColorMap path before those calls error out.
-    let photometric_early = decoder.get_tag_u32(tiff::tags::Tag::PhotometricInterpretation).unwrap_or(1);
+    let photometric_early = decoder
+        .get_tag_u32(tiff::tags::Tag::PhotometricInterpretation)
+        .unwrap_or(1);
     if photometric_early == 3 {
         return decode_palette(data, width, height, page_index);
     }
 
     // Get color type and bits per sample
-    let color_type = decoder.colortype()
+    let color_type = decoder
+        .colortype()
         .map_err(|e| JsValue::from_str(&format!("Failed to get color type: {}", e)))?;
 
     // `channels` MUST equal the actual per-pixel stride of the buffer we hand
@@ -1643,7 +1895,9 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
     // unspecified bands - SamplesPerPixel=7 but ColorType::RGB(_).num_samples()
     // is 3). Falling back to color_type.num_samples() only covers the rare
     // case where the tag itself is missing (default is 1 per the TIFF spec).
-    let samples_per_pixel_tag = decoder.get_tag_u32(tiff::tags::Tag::SamplesPerPixel).unwrap_or(0);
+    let samples_per_pixel_tag = decoder
+        .get_tag_u32(tiff::tags::Tag::SamplesPerPixel)
+        .unwrap_or(0);
     let mut channels = if samples_per_pixel_tag > 0 {
         samples_per_pixel_tag
     } else {
@@ -1663,19 +1917,21 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
 
     // Extract metadata from decoder
     // Get compression method (default to 1 = None if not found)
-    let compression = decoder.get_tag_u32(tiff::tags::Tag::Compression)
+    let compression = decoder
+        .get_tag_u32(tiff::tags::Tag::Compression)
         .unwrap_or(1);
-    
+
     // Get predictor (default to 1 = None if not found)
-    let predictor = decoder.get_tag_u32(tiff::tags::Tag::Predictor)
-        .unwrap_or(1);
-    
+    let predictor = decoder.get_tag_u32(tiff::tags::Tag::Predictor).unwrap_or(1);
+
     // Get photometric interpretation (default to 1 = BlackIsZero if not found)
-    let photometric_interpretation = decoder.get_tag_u32(tiff::tags::Tag::PhotometricInterpretation)
+    let photometric_interpretation = decoder
+        .get_tag_u32(tiff::tags::Tag::PhotometricInterpretation)
         .unwrap_or(1);
-    
+
     // Get planar configuration (default to 1 = Chunky if not found)
-    let planar_configuration = decoder.get_tag_u32(tiff::tags::Tag::PlanarConfiguration)
+    let planar_configuration = decoder
+        .get_tag_u32(tiff::tags::Tag::PlanarConfiguration)
         .unwrap_or(1);
 
     // Orientation tag (274, default 1 = top-left / no transform). Applied as a
@@ -1686,17 +1942,26 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
     // value is preserved here for `extract_all_tags_json` to report in the
     // Metadata panel.
     let orientation = TiffOrientation::from_tag(
-        decoder.get_tag_u32(tiff::tags::Tag::Orientation).unwrap_or(1)
+        decoder
+            .get_tag_u32(tiff::tags::Tag::Orientation)
+            .unwrap_or(1),
     );
 
-    let rows_per_strip = decoder.get_tag_u32(tiff::tags::Tag::RowsPerStrip).unwrap_or(height);
-    let strip_byte_counts = decoder.get_tag_u64_vec(tiff::tags::Tag::StripByteCounts).unwrap_or_default();
+    let rows_per_strip = decoder
+        .get_tag_u32(tiff::tags::Tag::RowsPerStrip)
+        .unwrap_or(height);
+    let strip_byte_counts = decoder
+        .get_tag_u64_vec(tiff::tags::Tag::StripByteCounts)
+        .unwrap_or_default();
     let strip_count = strip_byte_counts.len() as u32;
     let strip_byte_count_total = strip_byte_counts.iter().copied().sum::<u64>();
     let strip_byte_count_max = strip_byte_counts.iter().copied().max().unwrap_or(0);
     let tile_width = decoder.get_tag_u32(tiff::tags::Tag::TileWidth).unwrap_or(0);
-    let tile_length = decoder.get_tag_u32(tiff::tags::Tag::TileLength).unwrap_or(0);
-    let tile_count = decoder.get_tag_u64_vec(tiff::tags::Tag::TileByteCounts)
+    let tile_length = decoder
+        .get_tag_u32(tiff::tags::Tag::TileLength)
+        .unwrap_or(0);
+    let tile_count = decoder
+        .get_tag_u64_vec(tiff::tags::Tag::TileByteCounts)
         .map(|counts| counts.len() as u32)
         .unwrap_or(0);
 
@@ -1704,19 +1969,35 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
     // 4 (Group 4 / T.6). The tiff crate only decodes Group 4, so route all of
     // them through hayro-ccitt, which understands the TIFF encoding options.
     if compression == 2 || compression == 3 || compression == 4 {
-        let offsets = decoder.get_tag_u64_vec(tiff::tags::Tag::StripOffsets)
+        let offsets = decoder
+            .get_tag_u64_vec(tiff::tags::Tag::StripOffsets)
             .map_err(|e| JsValue::from_str(&format!("CCITT: missing StripOffsets: {}", e)))?;
-        let counts = decoder.get_tag_u64_vec(tiff::tags::Tag::StripByteCounts)
+        let counts = decoder
+            .get_tag_u64_vec(tiff::tags::Tag::StripByteCounts)
             .map_err(|e| JsValue::from_str(&format!("CCITT: missing StripByteCounts: {}", e)))?;
         // FillOrder defaults to 1 (MSB first); T4Options (tag 292) defaults to 0.
         let fill_order = decoder.get_tag_u32(tiff::tags::Tag::FillOrder).unwrap_or(1);
-        let t4_options = decoder.get_tag_u32(tiff::tags::Tag::Unknown(292)).unwrap_or(0);
+        let t4_options = decoder
+            .get_tag_u32(tiff::tags::Tag::Unknown(292))
+            .unwrap_or(0);
         // Each strip is an independent CCITT stream; default to a single strip.
-        let rows_per_strip = decoder.get_tag_u32(tiff::tags::Tag::RowsPerStrip).unwrap_or(height);
+        let rows_per_strip = decoder
+            .get_tag_u32(tiff::tags::Tag::RowsPerStrip)
+            .unwrap_or(height);
         let mut result = decode_ccitt(
-            data, width, height, compression, predictor,
-            photometric_interpretation, planar_configuration,
-            &offsets, &counts, fill_order, t4_options, rows_per_strip, orientation,
+            data,
+            width,
+            height,
+            compression,
+            predictor,
+            photometric_interpretation,
+            planar_configuration,
+            &offsets,
+            &counts,
+            fill_order,
+            t4_options,
+            rows_per_strip,
+            orientation,
         )?;
         result.all_tags_json = extract_page_tags_json(data, page_index);
         return Ok(result);
@@ -1784,7 +2065,8 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
         direct_decode = true;
         result
     } else {
-        decoder.read_image()
+        decoder
+            .read_image()
             .map_err(|e| JsValue::from_str(&format!("Failed to decode image: {}", e)))?
     };
 
@@ -1888,9 +2170,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
                 (f64::NAN, f64::NAN)
             };
             let pack_start = js_sys::Date::now();
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
+            let bytes: Vec<u8> = data.iter().flat_map(|&v| v.to_le_bytes()).collect();
             pack_time += js_sys::Date::now() - pack_start;
             (bytes, Vec::new(), 1u32, min, max)
         }
@@ -1904,9 +2184,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
                 (f64::NAN, f64::NAN)
             };
             let pack_start = js_sys::Date::now();
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
+            let bytes: Vec<u8> = data.iter().flat_map(|&v| v.to_le_bytes()).collect();
             pack_time += js_sys::Date::now() - pack_start;
             (bytes, Vec::new(), 1u32, min, max)
         }
@@ -1934,9 +2212,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
                 (f64::NAN, f64::NAN)
             };
             let pack_start = js_sys::Date::now();
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
+            let bytes: Vec<u8> = data.iter().flat_map(|&v| v.to_le_bytes()).collect();
             pack_time += js_sys::Date::now() - pack_start;
             (bytes, Vec::new(), 2u32, min, max)
         }
@@ -1950,9 +2226,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
                 (f64::NAN, f64::NAN)
             };
             let pack_start = js_sys::Date::now();
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
+            let bytes: Vec<u8> = data.iter().flat_map(|&v| v.to_le_bytes()).collect();
             pack_time += js_sys::Date::now() - pack_start;
             (bytes, Vec::new(), 2u32, min, max)
         }
@@ -1966,9 +2240,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
                 (f64::NAN, f64::NAN)
             };
             let pack_start = js_sys::Date::now();
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
+            let bytes: Vec<u8> = data.iter().flat_map(|&v| v.to_le_bytes()).collect();
             pack_time += js_sys::Date::now() - pack_start;
             (bytes, Vec::new(), 2u32, min, max)
         }
@@ -2010,8 +2282,12 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
             if compute_stats {
                 for &val in &data {
                     let f32_val = val.to_f32();
-                    if f32_val < min_val { min_val = f32_val; }
-                    if f32_val > max_val { max_val = f32_val; }
+                    if f32_val < min_val {
+                        min_val = f32_val;
+                    }
+                    if f32_val > max_val {
+                        max_val = f32_val;
+                    }
                     values.push(f32_val);
                 }
             } else {
@@ -2020,8 +2296,16 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
                 }
             }
             pack_time += js_sys::Date::now() - pack_start;
-            let min = if compute_stats { min_val as f64 } else { f64::NAN };
-            let max = if compute_stats { max_val as f64 } else { f64::NAN };
+            let min = if compute_stats {
+                min_val as f64
+            } else {
+                f64::NAN
+            };
+            let max = if compute_stats {
+                max_val as f64
+            } else {
+                f64::NAN
+            };
             (Vec::new(), values, 3u32, min, max)
         }
     };
@@ -2038,9 +2322,19 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
         (width, height)
     } else if !data_bytes.is_empty() {
         let pixel_count = (width as usize) * (height as usize);
-        let bytes_per_pixel = if pixel_count > 0 { data_bytes.len() / pixel_count } else { 0 };
+        let bytes_per_pixel = if pixel_count > 0 {
+            data_bytes.len() / pixel_count
+        } else {
+            0
+        };
         if bytes_per_pixel > 0 {
-            let (oriented, w, h) = apply_orientation(&data_bytes, width, height, bytes_per_pixel as u32, orientation);
+            let (oriented, w, h) = apply_orientation(
+                &data_bytes,
+                width,
+                height,
+                bytes_per_pixel as u32,
+                orientation,
+            );
             data_bytes = oriented;
             (w, h)
         } else {
@@ -2139,7 +2433,8 @@ fn try_decode_uncompressed_strips(
         _ => return Ok(None),
     };
 
-    let sample_format = decoder.get_tag_u64_vec(Tag::SampleFormat)
+    let sample_format = decoder
+        .get_tag_u64_vec(Tag::SampleFormat)
         .ok()
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
@@ -2152,9 +2447,10 @@ fn try_decode_uncompressed_strips(
         .checked_mul(bytes_per_sample)
         .ok_or_else(|| JsValue::from_str("Direct TIFF decode: raster byte count overflow"))?;
 
-    let total_available = counts.iter().try_fold(0usize, |acc, &count| {
-        acc.checked_add(count as usize)
-    }).ok_or_else(|| JsValue::from_str("Direct TIFF decode: strip byte count overflow"))?;
+    let total_available = counts
+        .iter()
+        .try_fold(0usize, |acc, &count| acc.checked_add(count as usize))
+        .ok_or_else(|| JsValue::from_str("Direct TIFF decode: strip byte count overflow"))?;
     if total_available < expected_bytes {
         return Ok(None);
     }
@@ -2184,7 +2480,8 @@ fn try_decode_uncompressed_strips(
     let result = match (sample_format, bits_per_sample) {
         (1, 8) => DecodingResult::U8(raster),
         (1, 16) => {
-            let values = raster.chunks_exact(2)
+            let values = raster
+                .chunks_exact(2)
                 .map(|b| {
                     if little_endian {
                         u16::from_le_bytes([b[0], b[1]])
@@ -2196,7 +2493,8 @@ fn try_decode_uncompressed_strips(
             DecodingResult::U16(values)
         }
         (1, 32) => {
-            let values = raster.chunks_exact(4)
+            let values = raster
+                .chunks_exact(4)
                 .map(|b| {
                     if little_endian {
                         u32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -2209,7 +2507,8 @@ fn try_decode_uncompressed_strips(
         }
         (2, 8) => DecodingResult::I8(raster.into_iter().map(|v| v as i8).collect()),
         (2, 16) => {
-            let values = raster.chunks_exact(2)
+            let values = raster
+                .chunks_exact(2)
                 .map(|b| {
                     if little_endian {
                         i16::from_le_bytes([b[0], b[1]])
@@ -2221,7 +2520,8 @@ fn try_decode_uncompressed_strips(
             DecodingResult::I16(values)
         }
         (2, 32) => {
-            let values = raster.chunks_exact(4)
+            let values = raster
+                .chunks_exact(4)
                 .map(|b| {
                     if little_endian {
                         i32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -2233,7 +2533,8 @@ fn try_decode_uncompressed_strips(
             DecodingResult::I32(values)
         }
         (3, 32) => {
-            let values = raster.chunks_exact(4)
+            let values = raster
+                .chunks_exact(4)
                 .map(|b| {
                     if little_endian {
                         f32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -2245,7 +2546,8 @@ fn try_decode_uncompressed_strips(
             DecodingResult::F32(values)
         }
         (3, 64) => {
-            let values = raster.chunks_exact(8)
+            let values = raster
+                .chunks_exact(8)
                 .map(|b| {
                     if little_endian {
                         f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
@@ -2275,7 +2577,12 @@ fn try_decode_uncompressed_strips(
 /// this, and so does this path, since we already know the exact decompressed
 /// size from the image/tile geometry and don't need the stream to tell us
 /// when to stop.
-fn decompress_strip_or_tile(block: &[u8], compression: u32, expected_len: usize, context: &str) -> Result<Vec<u8>, JsValue> {
+fn decompress_strip_or_tile(
+    block: &[u8],
+    compression: u32,
+    expected_len: usize,
+    context: &str,
+) -> Result<Vec<u8>, JsValue> {
     use std::io::Read;
 
     match compression {
@@ -2300,14 +2607,23 @@ fn decompress_strip_or_tile(block: &[u8], compression: u32, expected_len: usize,
                             // the expected length below.
                             break;
                         }
-                        return Err(JsValue::from_str(&format!("{}: LZW decode stalled before end of input", context)));
+                        return Err(JsValue::from_str(&format!(
+                            "{}: LZW decode stalled before end of input",
+                            context
+                        )));
                     }
-                    Err(e) => return Err(JsValue::from_str(&format!("{}: LZW decode failed: {}", context, e))),
+                    Err(e) => {
+                        return Err(JsValue::from_str(&format!(
+                            "{}: LZW decode failed: {}",
+                            context, e
+                        )))
+                    }
                 }
             }
             if out_pos < expected_len {
                 return Err(JsValue::from_str(&format!(
-                    "{}: LZW stream produced {} bytes, expected {}", context, out_pos, expected_len
+                    "{}: LZW stream produced {} bytes, expected {}",
+                    context, out_pos, expected_len
                 )));
             }
             Ok(out)
@@ -2315,11 +2631,15 @@ fn decompress_strip_or_tile(block: &[u8], compression: u32, expected_len: usize,
         8 | 32946 => {
             let mut zd = flate2::read::ZlibDecoder::new(block);
             let mut buf = Vec::new();
-            zd.read_to_end(&mut buf)
-                .map_err(|e| JsValue::from_str(&format!("{}: Deflate decode failed: {}", context, e)))?;
+            zd.read_to_end(&mut buf).map_err(|e| {
+                JsValue::from_str(&format!("{}: Deflate decode failed: {}", context, e))
+            })?;
             Ok(buf)
         }
-        _ => Err(JsValue::from_str(&format!("{}: compression {} is not supported", context, compression))),
+        _ => Err(JsValue::from_str(&format!(
+            "{}: compression {} is not supported",
+            context, compression
+        ))),
     }
 }
 
@@ -2353,7 +2673,12 @@ fn unpack_msb_packed_row(row: &[u8], samples_per_row: usize, bits_per_sample: u3
 /// decoded row of `row_width` pixels x `channels` samples, wrapping modulo
 /// 2^bits_per_sample (via `max_value`). Shared by `try_decode_subbit_strips`
 /// and `try_decode_general_strips_tiles`.
-fn apply_horizontal_predictor2(row_values: &mut [u16], row_width: usize, channels: usize, max_value: u32) {
+fn apply_horizontal_predictor2(
+    row_values: &mut [u16],
+    row_width: usize,
+    channels: usize,
+    max_value: u32,
+) {
     for x in 1..row_width {
         for c in 0..channels {
             let idx = x * channels + c;
@@ -2413,7 +2738,8 @@ fn try_decode_subbit_strips(
     }
     if predictor != 1 && predictor != 2 {
         return Err(JsValue::from_str(&format!(
-            "Sub-16-bit TIFF: predictor {} is not supported", predictor
+            "Sub-16-bit TIFF: predictor {} is not supported",
+            predictor
         )));
     }
     let fill_order = decoder.get_tag_u32(Tag::FillOrder).unwrap_or(1);
@@ -2422,13 +2748,15 @@ fn try_decode_subbit_strips(
             "Sub-16-bit TIFF: FillOrder 2 (LSB-first) is not supported",
         ));
     }
-    let sample_format = decoder.get_tag_u64_vec(Tag::SampleFormat)
+    let sample_format = decoder
+        .get_tag_u64_vec(Tag::SampleFormat)
         .ok()
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
     if sample_format != 1 {
         return Err(JsValue::from_str(&format!(
-            "Sub-16-bit TIFF: sample format {} is not supported (only unsigned integer)", sample_format
+            "Sub-16-bit TIFF: sample format {} is not supported (only unsigned integer)",
+            sample_format
         )));
     }
 
@@ -2440,7 +2768,10 @@ fn try_decode_subbit_strips(
         Ok(value) if value.len() == offsets.len() => value,
         _ => return Ok(None),
     };
-    let rows_per_strip = decoder.get_tag_u32(Tag::RowsPerStrip).unwrap_or(height).max(1);
+    let rows_per_strip = decoder
+        .get_tag_u32(Tag::RowsPerStrip)
+        .unwrap_or(height)
+        .max(1);
 
     let samples_per_row = (width as usize).saturating_mul(channels as usize);
     let row_bytes = (samples_per_row * bits_per_sample as usize + 7) / 8;
@@ -2456,17 +2787,21 @@ fn try_decode_subbit_strips(
         let start = offset as usize;
         let end = start.saturating_add(count as usize);
         if end > data.len() {
-            return Err(JsValue::from_str("Sub-16-bit TIFF: strip byte range out of bounds"));
+            return Err(JsValue::from_str(
+                "Sub-16-bit TIFF: strip byte range out of bounds",
+            ));
         }
         let strip = &data[start..end];
 
         let rows_in_strip = rows_per_strip.min(height - rows_decoded) as usize;
         let expected_bytes = row_bytes.saturating_mul(rows_in_strip);
-        let decompressed = decompress_strip_or_tile(strip, compression, expected_bytes, "Sub-16-bit TIFF")?;
+        let decompressed =
+            decompress_strip_or_tile(strip, compression, expected_bytes, "Sub-16-bit TIFF")?;
         if decompressed.len() < expected_bytes {
             return Err(JsValue::from_str(&format!(
                 "Sub-16-bit TIFF: strip decompressed to {} bytes, expected at least {}",
-                decompressed.len(), expected_bytes
+                decompressed.len(),
+                expected_bytes
             )));
         }
 
@@ -2475,7 +2810,12 @@ fn try_decode_subbit_strips(
             let mut row_values = unpack_msb_packed_row(row, samples_per_row, bits_per_sample);
 
             if predictor == 2 {
-                apply_horizontal_predictor2(&mut row_values, width as usize, channels as usize, max_value);
+                apply_horizontal_predictor2(
+                    &mut row_values,
+                    width as usize,
+                    channels as usize,
+                    max_value,
+                );
             }
 
             out.extend_from_slice(&row_values);
@@ -2485,7 +2825,8 @@ fn try_decode_subbit_strips(
 
     if rows_decoded != height {
         return Err(JsValue::from_str(&format!(
-            "Sub-16-bit TIFF: decoded {} of {} rows", rows_decoded, height
+            "Sub-16-bit TIFF: decoded {} of {} rows",
+            rows_decoded, height
         )));
     }
 
@@ -2552,31 +2893,51 @@ fn try_decode_general_strips_tiles(
 
     if bits_per_sample != 8 && !(9..=16).contains(&bits_per_sample) {
         return Err(JsValue::from_str(&format!(
-            "{}: {}-bit samples are not supported", CTX, bits_per_sample
+            "{}: {}-bit samples are not supported",
+            CTX, bits_per_sample
         )));
     }
     if compression != 1 && compression != 5 && compression != 8 && compression != 32946 {
-        return Err(JsValue::from_str(&format!("{}: compression {} is not supported", CTX, compression)));
+        return Err(JsValue::from_str(&format!(
+            "{}: compression {} is not supported",
+            CTX, compression
+        )));
     }
     if predictor != 1 && predictor != 2 {
-        return Err(JsValue::from_str(&format!("{}: predictor {} is not supported", CTX, predictor)));
+        return Err(JsValue::from_str(&format!(
+            "{}: predictor {} is not supported",
+            CTX, predictor
+        )));
     }
     let fill_order = decoder.get_tag_u32(Tag::FillOrder).unwrap_or(1);
     if fill_order != 1 {
-        return Err(JsValue::from_str(&format!("{}: FillOrder 2 (LSB-first) is not supported", CTX)));
+        return Err(JsValue::from_str(&format!(
+            "{}: FillOrder 2 (LSB-first) is not supported",
+            CTX
+        )));
     }
-    let sample_format = decoder.get_tag_u64_vec(Tag::SampleFormat)
+    let sample_format = decoder
+        .get_tag_u64_vec(Tag::SampleFormat)
         .ok()
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
     if sample_format != 1 {
         return Err(JsValue::from_str(&format!(
-            "{}: sample format {} is not supported (only unsigned integer)", CTX, sample_format
+            "{}: sample format {} is not supported (only unsigned integer)",
+            CTX, sample_format
         )));
     }
 
-    let planes = if planar_configuration == 2 { channels } else { 1 };
-    let channels_per_block = if planar_configuration == 2 { 1 } else { channels };
+    let planes = if planar_configuration == 2 {
+        channels
+    } else {
+        1
+    };
+    let channels_per_block = if planar_configuration == 2 {
+        1
+    } else {
+        channels
+    };
 
     // Block geometry. Strips span the full image width and are never padded
     // (the last strip may simply have fewer rows than `rows_per_strip`).
@@ -2589,7 +2950,10 @@ fn try_decode_general_strips_tiles(
         let down = ((height as u64) + tile_length as u64 - 1) / tile_length as u64;
         (tile_width, tile_length, across as u32, down as u32, 0u32)
     } else {
-        let rps = decoder.get_tag_u32(Tag::RowsPerStrip).unwrap_or(height).max(1);
+        let rps = decoder
+            .get_tag_u32(Tag::RowsPerStrip)
+            .unwrap_or(height)
+            .max(1);
         let down = ((height as u64) + rps as u64 - 1) / rps as u64;
         (width, rps, 1u32, down as u32, rps)
     };
@@ -2599,18 +2963,24 @@ fn try_decode_general_strips_tiles(
         decoder.get_tag_u64_vec(Tag::TileOffsets)
     } else {
         decoder.get_tag_u64_vec(Tag::StripOffsets)
-    }).map_err(|e| JsValue::from_str(&format!("{}: missing offsets: {}", CTX, e)))?;
+    })
+    .map_err(|e| JsValue::from_str(&format!("{}: missing offsets: {}", CTX, e)))?;
     let counts = (if is_tiled {
         decoder.get_tag_u64_vec(Tag::TileByteCounts)
     } else {
         decoder.get_tag_u64_vec(Tag::StripByteCounts)
-    }).map_err(|e| JsValue::from_str(&format!("{}: missing byte counts: {}", CTX, e)))?;
+    })
+    .map_err(|e| JsValue::from_str(&format!("{}: missing byte counts: {}", CTX, e)))?;
 
-    let expected_blocks = blocks_per_plane.checked_mul(planes as u64)
+    let expected_blocks = blocks_per_plane
+        .checked_mul(planes as u64)
         .ok_or_else(|| JsValue::from_str(&format!("{}: block count overflow", CTX)))?;
     if offsets.len() as u64 != expected_blocks || counts.len() as u64 != expected_blocks {
         return Err(JsValue::from_str(&format!(
-            "{}: expected {} strip/tile offsets, found {}", CTX, expected_blocks, offsets.len()
+            "{}: expected {} strip/tile offsets, found {}",
+            CTX,
+            expected_blocks,
+            offsets.len()
         )));
     }
 
@@ -2630,21 +3000,31 @@ fn try_decode_general_strips_tiles(
                 let start = offset as usize;
                 let end = start.saturating_add(count as usize);
                 if end > data.len() {
-                    return Err(JsValue::from_str(&format!("{}: strip/tile byte range out of bounds", CTX)));
+                    return Err(JsValue::from_str(&format!(
+                        "{}: strip/tile byte range out of bounds",
+                        CTX
+                    )));
                 }
                 let block_bytes = &data[start..end];
 
-                let image_row_start = if is_tiled { tile_row * tile_length } else { tile_row * rows_per_strip };
+                let image_row_start = if is_tiled {
+                    tile_row * tile_length
+                } else {
+                    tile_row * rows_per_strip
+                };
                 let image_col_start = tile_col * block_width;
                 let valid_rows = block_height.min(height.saturating_sub(image_row_start));
                 let valid_cols = block_width.min(width.saturating_sub(image_col_start));
 
                 let expected_bytes = row_bytes.saturating_mul(block_height as usize);
-                let decompressed = decompress_strip_or_tile(block_bytes, compression, expected_bytes, CTX)?;
+                let decompressed =
+                    decompress_strip_or_tile(block_bytes, compression, expected_bytes, CTX)?;
                 if decompressed.len() < expected_bytes {
                     return Err(JsValue::from_str(&format!(
                         "{}: block decompressed to {} bytes, expected at least {}",
-                        CTX, decompressed.len(), expected_bytes
+                        CTX,
+                        decompressed.len(),
+                        expected_bytes
                     )));
                 }
 
@@ -2653,10 +3033,16 @@ fn try_decode_general_strips_tiles(
                         continue;
                     }
                     let row = &decompressed[row_idx * row_bytes..(row_idx + 1) * row_bytes];
-                    let mut row_values = unpack_msb_packed_row(row, samples_per_row, bits_per_sample);
+                    let mut row_values =
+                        unpack_msb_packed_row(row, samples_per_row, bits_per_sample);
 
                     if predictor == 2 {
-                        apply_horizontal_predictor2(&mut row_values, block_width as usize, channels_per_block as usize, max_value);
+                        apply_horizontal_predictor2(
+                            &mut row_values,
+                            block_width as usize,
+                            channels_per_block as usize,
+                            max_value,
+                        );
                     }
 
                     let out_row = (image_row_start as usize) + row_idx;
@@ -2665,7 +3051,11 @@ fn try_decode_general_strips_tiles(
                     for col in 0..(valid_cols as usize) {
                         let out_col = (image_col_start as usize) + col;
                         for c in 0..(channels_per_block as usize) {
-                            let dest_channel = if planar_configuration == 2 { plane as usize } else { c };
+                            let dest_channel = if planar_configuration == 2 {
+                                plane as usize
+                            } else {
+                                c
+                            };
                             out[out_row_base + out_col * (channels as usize) + dest_channel] =
                                 row_values[col * (channels_per_block as usize) + c];
                         }
@@ -2676,7 +3066,9 @@ fn try_decode_general_strips_tiles(
     }
 
     if bits_per_sample == 8 {
-        Ok(Some(DecodingResult::U8(out.into_iter().map(|v| v as u8).collect())))
+        Ok(Some(DecodingResult::U8(
+            out.into_iter().map(|v| v as u8).collect(),
+        )))
     } else {
         Ok(Some(DecodingResult::U16(out)))
     }
@@ -2697,26 +3089,37 @@ fn decode_zstd(
     use tiff::tags::Tag;
 
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
-        return Err(JsValue::from_str("ZSTD: tiled TIFFs are not supported by the pure-Rust path"));
+        return Err(JsValue::from_str(
+            "ZSTD: tiled TIFFs are not supported by the pure-Rust path",
+        ));
     }
     let planar = decoder.get_tag_u32(Tag::PlanarConfiguration).unwrap_or(1);
     if planar != 1 {
-        return Err(JsValue::from_str("ZSTD: planar configuration 2 is not supported"));
+        return Err(JsValue::from_str(
+            "ZSTD: planar configuration 2 is not supported",
+        ));
     }
 
-    let (width, height) = decoder.dimensions()
+    let (width, height) = decoder
+        .dimensions()
         .map_err(|e| JsValue::from_str(&format!("ZSTD: dimensions: {}", e)))?;
-    let offsets = decoder.get_tag_u64_vec(Tag::StripOffsets)
+    let offsets = decoder
+        .get_tag_u64_vec(Tag::StripOffsets)
         .map_err(|e| JsValue::from_str(&format!("ZSTD: StripOffsets: {}", e)))?;
-    let counts = decoder.get_tag_u64_vec(Tag::StripByteCounts)
+    let counts = decoder
+        .get_tag_u64_vec(Tag::StripByteCounts)
         .map_err(|e| JsValue::from_str(&format!("ZSTD: StripByteCounts: {}", e)))?;
     let spp = decoder.get_tag_u32(Tag::SamplesPerPixel).unwrap_or(1);
     let predictor = decoder.get_tag_u32(Tag::Predictor).unwrap_or(1);
-    let photometric = decoder.get_tag_u32(Tag::PhotometricInterpretation).unwrap_or(1);
-    let bits: Vec<u32> = decoder.get_tag_u64_vec(Tag::BitsPerSample)
+    let photometric = decoder
+        .get_tag_u32(Tag::PhotometricInterpretation)
+        .unwrap_or(1);
+    let bits: Vec<u32> = decoder
+        .get_tag_u64_vec(Tag::BitsPerSample)
         .map(|v| v.into_iter().map(|b| b as u32).collect())
         .unwrap_or_else(|_| vec![8; spp as usize]);
-    let sample_format: Vec<u32> = decoder.get_tag_u64_vec(Tag::SampleFormat)
+    let sample_format: Vec<u32> = decoder
+        .get_tag_u64_vec(Tag::SampleFormat)
         .map(|v| v.into_iter().map(|s| s as u32).collect())
         .unwrap_or_else(|_| vec![1; spp as usize]);
 
@@ -2738,7 +3141,15 @@ fn decode_zstd(
     // are interpreted correctly.
     let little_endian = original.get(0..2) != Some(b"MM");
     let rebuilt = build_uncompressed_tiff(
-        little_endian, width, height, spp, &bits, &sample_format, photometric, predictor, &raster,
+        little_endian,
+        width,
+        height,
+        spp,
+        &bits,
+        &sample_format,
+        photometric,
+        predictor,
+        &raster,
     );
     let mut d = Decoder::new(Cursor::new(rebuilt.as_slice()))
         .map_err(|e| JsValue::from_str(&format!("ZSTD: rebuilt decoder: {}", e)))?;
@@ -2765,7 +3176,10 @@ fn build_uncompressed_tiff(
     let u32b = |v: u32| if le { v.to_le_bytes() } else { v.to_be_bytes() };
     // SHORT (type 3) and LONG (type 4) tag values. Single SHORT values are
     // left-justified in the 4-byte value field; arrays are stored externally.
-    let short_val = |v: u32| { let b = u16b(v as u16); [b[0], b[1], 0, 0] };
+    let short_val = |v: u32| {
+        let b = u16b(v as u16);
+        [b[0], b[1], 0, 0]
+    };
     let long_val = |v: u32| u32b(v);
 
     const N_TAGS: u16 = 12;
@@ -2790,14 +3204,18 @@ fn build_uncompressed_tiff(
         pack_inline(bits)
     } else {
         let off = after_ifd + ext.len() as u32;
-        for &b in bits { ext.extend_from_slice(&u16b(b as u16)); }
+        for &b in bits {
+            ext.extend_from_slice(&u16b(b as u16));
+        }
         u32b(off)
     };
     let sf_field = if spp <= 2 {
         pack_inline(sample_format)
     } else {
         let off = after_ifd + ext.len() as u32;
-        for &s in sample_format { ext.extend_from_slice(&u16b(s as u16)); }
+        for &s in sample_format {
+            ext.extend_from_slice(&u16b(s as u16));
+        }
         u32b(off)
     };
     let data_off = after_ifd + ext.len() as u32;
@@ -2816,18 +3234,18 @@ fn build_uncompressed_tiff(
     };
 
     // Tags must be in ascending order.
-    put(&mut buf, 256, 4, 1, long_val(width));               // ImageWidth
-    put(&mut buf, 257, 4, 1, long_val(height));              // ImageLength
-    put(&mut buf, 258, 3, spp, bits_field);                  // BitsPerSample
-    put(&mut buf, 259, 3, 1, short_val(1));                  // Compression = none
-    put(&mut buf, 262, 3, 1, short_val(photometric));        // PhotometricInterpretation
-    put(&mut buf, 273, 4, 1, long_val(data_off));            // StripOffsets
-    put(&mut buf, 277, 3, 1, short_val(spp));                // SamplesPerPixel
-    put(&mut buf, 278, 4, 1, long_val(height));              // RowsPerStrip
+    put(&mut buf, 256, 4, 1, long_val(width)); // ImageWidth
+    put(&mut buf, 257, 4, 1, long_val(height)); // ImageLength
+    put(&mut buf, 258, 3, spp, bits_field); // BitsPerSample
+    put(&mut buf, 259, 3, 1, short_val(1)); // Compression = none
+    put(&mut buf, 262, 3, 1, short_val(photometric)); // PhotometricInterpretation
+    put(&mut buf, 273, 4, 1, long_val(data_off)); // StripOffsets
+    put(&mut buf, 277, 3, 1, short_val(spp)); // SamplesPerPixel
+    put(&mut buf, 278, 4, 1, long_val(height)); // RowsPerStrip
     put(&mut buf, 279, 4, 1, long_val(raster.len() as u32)); // StripByteCounts
-    put(&mut buf, 284, 3, 1, short_val(1));                  // PlanarConfiguration = chunky
-    put(&mut buf, 317, 3, 1, short_val(predictor));          // Predictor
-    put(&mut buf, 339, 3, spp, sf_field);                    // SampleFormat
+    put(&mut buf, 284, 3, 1, short_val(1)); // PlanarConfiguration = chunky
+    put(&mut buf, 317, 3, 1, short_val(predictor)); // Predictor
+    put(&mut buf, 339, 3, spp, sf_field); // SampleFormat
 
     buf.extend_from_slice(&u32b(0)); // next IFD offset
     buf.extend_from_slice(&ext);
@@ -2841,8 +3259,16 @@ fn build_uncompressed_tiff(
 fn build_jpeg(tables: Option<&[u8]>, strip: &[u8]) -> Vec<u8> {
     match tables {
         Some(t) => {
-            let t = if t.ends_with(&[0xFF, 0xD9]) { &t[..t.len() - 2] } else { t };
-            let s = if strip.starts_with(&[0xFF, 0xD8]) { &strip[2..] } else { strip };
+            let t = if t.ends_with(&[0xFF, 0xD9]) {
+                &t[..t.len() - 2]
+            } else {
+                t
+            };
+            let s = if strip.starts_with(&[0xFF, 0xD8]) {
+                &strip[2..]
+            } else {
+                strip
+            };
             let mut out = Vec::with_capacity(t.len() + s.len());
             out.extend_from_slice(t);
             out.extend_from_slice(s);
@@ -2868,11 +3294,15 @@ fn decode_jpeg_ycbcr(
     use zune_jpeg::JpegDecoder;
 
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
-        return Err(JsValue::from_str("JPEG: tiled YCbCr JPEG is not supported by the direct path"));
+        return Err(JsValue::from_str(
+            "JPEG: tiled YCbCr JPEG is not supported by the direct path",
+        ));
     }
-    let offsets = decoder.get_tag_u64_vec(Tag::StripOffsets)
+    let offsets = decoder
+        .get_tag_u64_vec(Tag::StripOffsets)
         .map_err(|e| JsValue::from_str(&format!("JPEG: StripOffsets: {}", e)))?;
-    let counts = decoder.get_tag_u64_vec(Tag::StripByteCounts)
+    let counts = decoder
+        .get_tag_u64_vec(Tag::StripByteCounts)
         .map_err(|e| JsValue::from_str(&format!("JPEG: StripByteCounts: {}", e)))?;
     // JPEGTables (tag 347): optional abbreviated table stream shared by strips.
     let tables: Option<Vec<u8>> = decoder.get_tag_u8_vec(Tag::Unknown(347)).ok();
@@ -2887,9 +3317,11 @@ fn decode_jpeg_ycbcr(
         }
         let jpeg = build_jpeg(tables.as_deref(), &data[start..end]);
         let mut jd = JpegDecoder::new(Cursor::new(jpeg));
-        let px = jd.decode()
+        let px = jd
+            .decode()
             .map_err(|e| JsValue::from_str(&format!("JPEG decode failed: {:?}", e)))?;
-        let info = jd.info()
+        let info = jd
+            .info()
             .ok_or_else(|| JsValue::from_str("JPEG: missing image info"))?;
         let pixels = (info.width as usize).saturating_mul(info.height as usize);
         if pixels == 0 {
@@ -2906,8 +3338,14 @@ fn decode_jpeg_ycbcr(
     // `finalize_decode_bytes`'s CMYK step is a no-op here and only the
     // Orientation transform actually does anything.
     let photometric_interpretation = if channels == 3 { 2 } else { 1 };
-    let (rgb, width, height, channels) =
-        finalize_decode_bytes(rgb, width, height, channels, photometric_interpretation, orientation);
+    let (rgb, width, height, channels) = finalize_decode_bytes(
+        rgb,
+        width,
+        height,
+        channels,
+        photometric_interpretation,
+        orientation,
+    );
 
     let (min, max) = compute_stats_u8(&rgb);
     Ok(TiffResult {
@@ -2978,11 +3416,19 @@ fn patch_photometric_to_grayscale(buf: &mut [u8], page_index: u32) -> bool {
         b"MM" => false,
         _ => return false,
     };
-    let rd16 = |b: &[u8]| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) };
-    let rd32 = |b: &[u8]| if le {
-        u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-    } else {
-        u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+    let rd16 = |b: &[u8]| {
+        if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        }
+    };
+    let rd32 = |b: &[u8]| {
+        if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        }
     };
     // Only classic TIFF (magic 42) is handled; BigTIFF (43) is left to fall back.
     if rd16(&buf[2..4]) != 42 {
@@ -3025,7 +3471,12 @@ fn patch_photometric_to_grayscale(buf: &mut [u8], page_index: u32) -> bool {
 
 /// Decode a palette (RGBPalette) TIFF by reading the raw indices and expanding
 /// them through the ColorMap tag into interleaved 8-bit RGB.
-fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u32) -> Result<TiffResult, JsValue> {
+fn decode_palette(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    page_index: u32,
+) -> Result<TiffResult, JsValue> {
     use tiff::tags::Tag;
 
     // ColorMap (tag 320): 3 * 2^bits 16-bit entries, laid out as all reds, then
@@ -3034,7 +3485,8 @@ fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u32) -> Resu
         let mut d = Decoder::new(Cursor::new(data))
             .map_err(|e| JsValue::from_str(&format!("Palette: decoder init: {}", e)))?;
         for _ in 0..page_index {
-            d.next_image().map_err(|e| JsValue::from_str(&format!("Palette: page select: {}", e)))?;
+            d.next_image()
+                .map_err(|e| JsValue::from_str(&format!("Palette: page select: {}", e)))?;
         }
         d.get_tag_u16_vec(Tag::Unknown(320))
             .map_err(|e| JsValue::from_str(&format!("Palette: missing ColorMap: {}", e)))?
@@ -3048,13 +3500,16 @@ fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u32) -> Resu
     // reusing all of its compression / predictor / strip handling.
     let mut patched = data.to_vec();
     if !patch_photometric_to_grayscale(&mut patched, page_index) {
-        return Err(JsValue::from_str("Palette: could not patch photometric tag"));
+        return Err(JsValue::from_str(
+            "Palette: could not patch photometric tag",
+        ));
     }
 
     let mut d = Decoder::new(Cursor::new(patched.as_slice()))
         .map_err(|e| JsValue::from_str(&format!("Palette: patched decoder init: {}", e)))?;
     for _ in 0..page_index {
-        d.next_image().map_err(|e| JsValue::from_str(&format!("Palette: patched page select: {}", e)))?;
+        d.next_image()
+            .map_err(|e| JsValue::from_str(&format!("Palette: patched page select: {}", e)))?;
     }
     let compression = d.get_tag_u32(Tag::Compression).unwrap_or(1);
     let predictor = d.get_tag_u32(Tag::Predictor).unwrap_or(1);
@@ -3063,7 +3518,8 @@ fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u32) -> Resu
     let strip_byte_counts = d.get_tag_u64_vec(Tag::StripByteCounts).unwrap_or_default();
     let tile_width = d.get_tag_u32(Tag::TileWidth).unwrap_or(0);
     let tile_length = d.get_tag_u32(Tag::TileLength).unwrap_or(0);
-    let tile_count = d.get_tag_u64_vec(Tag::TileByteCounts)
+    let tile_count = d
+        .get_tag_u64_vec(Tag::TileByteCounts)
         .map(|counts| counts.len() as u32)
         .unwrap_or(0);
     // Orientation tag (274): the early-return palette path bypasses
@@ -3072,7 +3528,8 @@ fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u32) -> Resu
     // through `finalize_decode_bytes` below like every other path.
     let orientation = TiffOrientation::from_tag(d.get_tag_u32(Tag::Orientation).unwrap_or(1));
 
-    let indices: Vec<usize> = match d.read_image()
+    let indices: Vec<usize> = match d
+        .read_image()
         .map_err(|e| JsValue::from_str(&format!("Palette: index decode failed: {}", e)))?
     {
         DecodingResult::U8(v) => v.iter().map(|&x| x as usize).collect(),
@@ -3095,7 +3552,8 @@ fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u32) -> Resu
     // Palette output is already expanded RGB (photometric_interpretation 2,
     // never 5/CMYK), so `finalize_decode_bytes`'s CMYK step is a no-op here
     // and only the Orientation transform actually does anything.
-    let (rgb, width, height, channels) = finalize_decode_bytes(rgb, width, height, 3, 2, orientation);
+    let (rgb, width, height, channels) =
+        finalize_decode_bytes(rgb, width, height, 3, 2, orientation);
 
     let (min, max) = compute_stats_u8(&rgb);
     Ok(TiffResult {
@@ -3151,12 +3609,14 @@ fn decode_ccitt(
     rows_per_strip: u32,
     orientation: TiffOrientation,
 ) -> Result<TiffResult, JsValue> {
-    use hayro_ccitt::{decode, DecodeSettings, DecoderContext, EncodingMode, Decoder as CcittDecoder};
+    use hayro_ccitt::{
+        decode, DecodeSettings, Decoder as CcittDecoder, DecoderContext, EncodingMode,
+    };
 
     // Map the TIFF compression + T4Options to a hayro encoding mode.
     let two_dimensional = (t4_options & 0b1) != 0; // bit 0: 2D coding
-    // Compression 2 (Modified Huffman) byte-aligns every row; for Group 3 this
-    // is controlled by T4Options bit 2 (EncodedByteAlign).
+                                                   // Compression 2 (Modified Huffman) byte-aligns every row; for Group 3 this
+                                                   // is controlled by T4Options bit 2 (EncodedByteAlign).
     let byte_aligned = compression == 2 || (t4_options & 0b100) != 0;
     let encoding = match compression {
         4 => EncodingMode::Group4,
@@ -3170,7 +3630,11 @@ fn decode_ccitt(
     // convention). Map that to a display value through PhotometricInterpretation
     // exactly like unpack_bilevel does, so a CCITT image renders identically to
     // the same image stored uncompressed. (0 = WhiteIsZero, 1 = BlackIsZero.)
-    let white_pel_value: u8 = if photometric_interpretation == 0 { 255 } else { 0 };
+    let white_pel_value: u8 = if photometric_interpretation == 0 {
+        255
+    } else {
+        0
+    };
     let black_pel_value: u8 = 255 - white_pel_value;
 
     // hayro-ccitt streams decoded pixels through this collector.
@@ -3184,7 +3648,11 @@ fn decode_ccitt(
     impl CcittDecoder for Collector {
         fn push_pixel(&mut self, white: bool) {
             if self.cur_x < self.width {
-                self.pixels.push(if white { self.white_value } else { self.black_value });
+                self.pixels.push(if white {
+                    self.white_value
+                } else {
+                    self.black_value
+                });
                 self.cur_x += 1;
             }
         }
@@ -3216,7 +3684,11 @@ fn decode_ccitt(
     // Each strip is an independent CCITT stream covering up to rows_per_strip
     // rows. Decode them one at a time (resetting the decoder per strip) and
     // accumulate the pixel rows, rather than concatenating the bitstreams.
-    let rps = if rows_per_strip == 0 { height } else { rows_per_strip };
+    let rps = if rows_per_strip == 0 {
+        height
+    } else {
+        rows_per_strip
+    };
     for (i, (off, cnt)) in offsets.iter().zip(counts.iter()).enumerate() {
         let start = *off as usize;
         let end = start.saturating_add(*cnt as usize);
@@ -3255,8 +3727,14 @@ fn decode_ccitt(
     // CCITT data is always bilevel grayscale (photometric_interpretation is 0
     // or 1 here, never 5), so `finalize_decode_bytes`'s CMYK step is a no-op
     // and only the Orientation transform actually does anything.
-    let (pixels, width, height, channels) =
-        finalize_decode_bytes(pixels, width, height, 1, photometric_interpretation, orientation);
+    let (pixels, width, height, channels) = finalize_decode_bytes(
+        pixels,
+        width,
+        height,
+        1,
+        photometric_interpretation,
+        orientation,
+    );
 
     let (min, max) = compute_stats_u8(&pixels);
 
@@ -3298,30 +3776,29 @@ fn decode_ccitt(
 #[inline]
 fn convert_u16_to_bytes_simd(data: &[u16]) -> Vec<u8> {
     use wide::*;
-    
+
     let mut bytes = Vec::with_capacity(data.len() * 2);
-    
+
     // Process 8 u16s at a time (128-bit SIMD)
     let chunks = data.chunks_exact(8);
     let remainder = chunks.remainder();
-    
+
     for chunk in chunks {
         let simd = u16x8::new([
-            chunk[0], chunk[1], chunk[2], chunk[3],
-            chunk[4], chunk[5], chunk[6], chunk[7]
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
         ]);
-        
+
         let arr = simd.to_array();
         for val in arr {
             bytes.extend_from_slice(&val.to_le_bytes());
         }
     }
-    
+
     // Handle remainder
     for &val in remainder {
         bytes.extend_from_slice(&val.to_le_bytes());
     }
-    
+
     bytes
 }
 
@@ -3461,16 +3938,24 @@ pub struct NormalizeDepthResult {
 #[wasm_bindgen]
 impl NormalizeDepthResult {
     #[wasm_bindgen(getter)]
-    pub fn width(&self) -> u32 { self.width }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn height(&self) -> u32 { self.height }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn kind(&self) -> String { self.kind.clone() }
+    pub fn kind(&self) -> String {
+        self.kind.clone()
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn unit(&self) -> String { self.unit.clone() }
+    pub fn unit(&self) -> String {
+        self.unit.clone()
+    }
 
     #[wasm_bindgen]
     pub fn take_data(&mut self) -> Vec<f32> {
@@ -3481,22 +3966,34 @@ impl NormalizeDepthResult {
 #[wasm_bindgen]
 impl DepthProjectResult {
     #[wasm_bindgen(getter)]
-    pub fn point_count(&self) -> u32 { self.point_count }
+    pub fn point_count(&self) -> u32 {
+        self.point_count
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn width(&self) -> u32 { self.width }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn height(&self) -> u32 { self.height }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn has_pixel_coords(&self) -> bool { self.has_pixel_coords }
+    pub fn has_pixel_coords(&self) -> bool {
+        self.has_pixel_coords
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn rejected_count(&self) -> u32 { self.rejected_count }
+    pub fn rejected_count(&self) -> u32 {
+        self.rejected_count
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn non_converged_count(&self) -> u32 { self.non_converged_count }
+    pub fn non_converged_count(&self) -> u32 {
+        self.non_converged_count
+    }
 
     #[wasm_bindgen]
     pub fn take_positions(&mut self) -> Vec<f32> {
@@ -3543,7 +4040,11 @@ pub fn normalize_depth_fast(
     out.extend_from_slice(&data[..expected]);
 
     let unit_scale = if kind == "depth" || kind == "z" {
-        if unit == "millimeter" { 0.001 * scale } else { scale }
+        if unit == "millimeter" {
+            0.001 * scale
+        } else {
+            scale
+        }
     } else {
         1.0
     };
@@ -3569,12 +4070,20 @@ pub fn normalize_depth_fast(
         let eps = 1e-8f32;
         for v in &mut out {
             let d = *v + disparity_offset;
-            *v = if d > eps { (fx * baseline) / d } else { f32::NAN };
+            *v = if d > eps {
+                (fx * baseline) / d
+            } else {
+                f32::NAN
+            };
         }
         normalized_kind = "depth".to_string();
         normalized_unit = "meter".to_string();
     } else if kind == "inverse_depth" {
-        let inverse_scale = if unit == "millimeter" { 0.001 * scale } else { scale };
+        let inverse_scale = if unit == "millimeter" {
+            0.001 * scale
+        } else {
+            scale
+        };
         for v in &mut out {
             let id = *v * inverse_scale;
             *v = if id > 0.0 { 1.0 / id } else { f32::NAN };
@@ -3634,6 +4143,11 @@ pub fn project_depth_fast(
         .map_err(|error| JsValue::from_str(&error))?;
     let opencv = (model == CameraModel::PinholeOpenCv)
         .then(|| camera_models::OpenCvPinhole::new(coefficients));
+    // The radial inversion's valid-domain scan depends on the calibration, not
+    // on the pixel, so it is built once for the whole image instead of once per
+    // pixel: 512 polynomial evaluations that used to repeat 26 million times on
+    // a single 5120x5120 frame. Measured 20x on the kernel, results identical.
+    let radial_domain = camera_models::RadialDomain::new(model, coefficients);
 
     let mut valid_count = 0usize;
     let mut min_depth = f32::INFINITY;
@@ -3641,15 +4155,29 @@ pub fn project_depth_fast(
     for &v in data.iter().take(expected) {
         if v.is_finite() && v > 0.0 {
             valid_count += 1;
-            if v < min_depth { min_depth = v; }
-            if v > max_depth { max_depth = v; }
+            if v < min_depth {
+                min_depth = v;
+            }
+            if v > max_depth {
+                max_depth = v;
+            }
         }
     }
 
     let mut positions = Vec::with_capacity(valid_count * 3);
     let mut colors = Vec::with_capacity(valid_count * 3);
-    let needs_pixel_coords = matches!(model, CameraModel::PinholeOpenCv | CameraModel::FisheyeOpenCv | CameraModel::FisheyeKb3 | CameraModel::Fisheye624);
-    let mut pixel_coords = if needs_pixel_coords { Vec::with_capacity(valid_count * 2) } else { Vec::new() };
+    let needs_pixel_coords = matches!(
+        model,
+        CameraModel::PinholeOpenCv
+            | CameraModel::FisheyeOpenCv
+            | CameraModel::FisheyeKb3
+            | CameraModel::Fisheye624
+    );
+    let mut pixel_coords = if needs_pixel_coords {
+        Vec::with_capacity(valid_count * 2)
+    } else {
+        Vec::new()
+    };
 
     let is_z_depth = kind == "z";
     let convention_sign = if convention == "opengl" { -1.0 } else { 1.0 };
@@ -3669,16 +4197,22 @@ pub fn project_depth_fast(
             }
             let pixel = [u as f64, v as f64];
             let ray = match &opencv {
-                Some(distortion) => camera_models::unproject_opencv_pinhole(
+                Some(distortion) => {
+                    camera_models::unproject_opencv_pinhole(intrinsics, distortion, pixel)
+                }
+                None => camera_models::unproject_with_domain(
+                    model,
                     intrinsics,
-                    distortion,
+                    coefficients,
+                    &radial_domain,
                     pixel,
                 ),
-                None => camera_models::unproject(model, intrinsics, coefficients, pixel),
             };
             if !ray.converged || ray.value.iter().any(|value| !value.is_finite()) {
                 rejected_count += 1;
-                if ray.iterations > 0 { non_converged_count += 1; }
+                if ray.iterations > 0 {
+                    non_converged_count += 1;
+                }
                 continue;
             }
             let scale = if is_z_depth {
@@ -3694,7 +4228,11 @@ pub fn project_depth_fast(
             positions.push((ray.value[1] * scale * convention_sign as f64) as f32);
             positions.push((ray.value[2] * scale * convention_sign as f64) as f32);
 
-            let s = if denom > 0.0 { (depth_value.ln() - log_min) * inv_denom } else { 1.0 };
+            let s = if denom > 0.0 {
+                (depth_value.ln() - log_min) * inv_denom
+            } else {
+                1.0
+            };
             let gray = (51.5 + 204.0 * s) as u8;
             colors.extend_from_slice(&[gray, gray, gray]);
             if needs_pixel_coords {
@@ -3738,7 +4276,11 @@ pub fn camera_project(
         .map_err(|error| JsValue::from_str(&error))?;
     let result = camera_models::project(model, intrinsics, coefficients, [x, y, z]);
     Ok(vec![
-        if result.converged && result.value.iter().all(|value| value.is_finite()) { 1.0 } else { 0.0 },
+        if result.converged && result.value.iter().all(|value| value.is_finite()) {
+            1.0
+        } else {
+            0.0
+        },
         if result.converged { 1.0 } else { 0.0 },
         result.iterations as f64,
         result.value[0],
@@ -3771,13 +4313,19 @@ pub fn camera_project_points_indexed(
     camera_models::validate(model, intrinsics, coefficients)
         .map_err(|error| JsValue::from_str(&error))?;
     if positions.len() % 3 != 0 {
-        return Err(JsValue::from_str("positions must contain interleaved xyz values"));
+        return Err(JsValue::from_str(
+            "positions must contain interleaved xyz values",
+        ));
     }
     if transform.len() != 16 || transform.iter().any(|value| !value.is_finite()) {
-        return Err(JsValue::from_str("transform must contain 16 finite row-major values"));
+        return Err(JsValue::from_str(
+            "transform must contain 16 finite row-major values",
+        ));
     }
     if max_normalized_x <= 0.0 || max_normalized_y <= 0.0 {
-        return Err(JsValue::from_str("normalized projection limits must be positive"));
+        return Err(JsValue::from_str(
+            "normalized projection limits must be positive",
+        ));
     }
 
     let opencv = (model == CameraModel::PinholeOpenCv)
@@ -3813,11 +4361,9 @@ pub fn camera_project_points_indexed(
         };
         let projected = if normalized_valid {
             match &opencv {
-                Some(distortion) => camera_models::project_opencv_pinhole(
-                    intrinsics,
-                    distortion,
-                    camera_ray,
-                ),
+                Some(distortion) => {
+                    camera_models::project_opencv_pinhole(intrinsics, distortion, camera_ray)
+                }
                 None => camera_models::project(model, intrinsics, coefficients, camera_ray),
             }
         } else {
@@ -3855,7 +4401,11 @@ pub fn camera_unproject(
         .map_err(|error| JsValue::from_str(&error))?;
     let result = camera_models::unproject(model, intrinsics, coefficients, [u, v]);
     Ok(vec![
-        if result.converged && result.value.iter().all(|value| value.is_finite()) { 1.0 } else { 0.0 },
+        if result.converged && result.value.iter().all(|value| value.is_finite()) {
+            1.0
+        } else {
+            0.0
+        },
         if result.converged { 1.0 } else { 0.0 },
         result.iterations as f64,
         result.value[0],

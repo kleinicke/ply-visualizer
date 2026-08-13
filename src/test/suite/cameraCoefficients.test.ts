@@ -145,13 +145,27 @@ suite('Camera coefficient fitting', () => {
     });
   });
 
-  test('one non-zero coefficient keeps the distorted model', () => {
-    const coefficients = new Array(12).fill(0);
-    coefficients[3] = 1e-4;
-    const resolved = resolveCameraModel({ cameraModel: 'fisheye624', fx: 2000, coefficients });
+  test('one non-zero coefficient keeps a distorted model', () => {
+    // Index 3 is inside the first four radial terms, which is Kannala-Brandt's
+    // territory — so the honest answer is kb3, not fisheye624.
+    const radial = new Array(12).fill(0);
+    radial[3] = 1e-4;
+    assert.deepStrictEqual(
+      resolveCameraModel({ cameraModel: 'fisheye624', fx: 2000, coefficients: radial }),
+      { model: 'fisheye-kb3', coefficients: [0, 0, 0, 1e-4] }
+    );
+
+    // A term only fisheye624 has keeps fisheye624.
+    const prism = new Array(12).fill(0);
+    prism[8] = 1e-4;
+    const resolved = resolveCameraModel({
+      cameraModel: 'fisheye624',
+      fx: 2000,
+      coefficients: prism,
+    });
     assert.strictEqual(resolved.model, 'fisheye624');
     assert.strictEqual(resolved.coefficients.length, 12);
-    assert.strictEqual(resolved.coefficients[3], 1e-4);
+    assert.strictEqual(resolved.coefficients[8], 1e-4);
   });
 
   test('a single non-zero k on an OpenCV pinhole is still distorted', () => {
@@ -162,5 +176,42 @@ suite('Camera coefficient fitting', () => {
     } as any);
     assert.strictEqual(resolved.model, 'pinhole-opencv');
     assert.deepStrictEqual(resolved.coefficients, [-0.05, 0, 0, 0, 0]);
+  });
+
+  test('fisheye624 with only its radial terms is Kannala-Brandt, and says so', () => {
+    // The radial polynomial is the same one KB3 uses with two further terms,
+    // and the other six coefficients are the tangential and thin-prism parts.
+    // Naming the cheaper model matters: the radial inversion is a bisection of
+    // up to 512 steps, each evaluating the polynomial, so six terms instead of
+    // four costs a third of the total time for identical output (1.71s vs
+    // 1.39s on a 1024x1024 depth image, measured).
+    const radial = [-0.05, 0.01, 0.001, 0.0001];
+    assert.deepStrictEqual(
+      resolveCameraModel({
+        cameraModel: 'fisheye624',
+        fx: 500,
+        coefficients: [...radial, 0, 0, 0, 0, 0, 0, 0, 0],
+      }),
+      { model: 'fisheye-kb3', coefficients: radial }
+    );
+  });
+
+  test('a real fifth or sixth radial term keeps fisheye624', () => {
+    const withK5 = [-0.05, 0.01, 0.001, 0.0001, 0, 1e-6, 0, 0, 0, 0, 0, 0];
+    const resolved = resolveCameraModel({
+      cameraModel: 'fisheye624',
+      fx: 500,
+      coefficients: withK5,
+    });
+    assert.strictEqual(resolved.model, 'fisheye624');
+    assert.strictEqual(resolved.coefficients.length, 12);
+  });
+
+  test('a tangential or prism term keeps fisheye624 even with four radial terms', () => {
+    const withPrism = [-0.05, 0.01, 0.001, 0.0001, 0, 0, 1e-4, 0, 0, 0, 0, 0];
+    assert.strictEqual(
+      resolveCameraModel({ cameraModel: 'fisheye624', fx: 500, coefficients: withPrism }).model,
+      'fisheye624'
+    );
   });
 });

@@ -1,4 +1,23 @@
+import type { CameraModel } from './types';
+import { normalizeToOfferedCameraModel } from './cameraModels';
 import { parseCalibrationFile } from './calibrationFileParser';
+
+/**
+ * Fills the per-coefficient inputs the panel renders, one per term of the
+ * selected model. Values past the last box belong to a model with fewer terms
+ * and are dropped rather than silently landing in the wrong slot.
+ */
+function writeCoefficients(fileIndex: number, coefficients: readonly number[]): void {
+  for (let index = 0; index < coefficients.length; index++) {
+    const input = document.getElementById(
+      `coefficient-${fileIndex}-${index}`
+    ) as HTMLInputElement | null;
+    if (!input) {
+      break;
+    }
+    input.value = String(coefficients[index]);
+  }
+}
 
 export interface CalibrationFormHost {
   calibrationData?: Map<number, any>;
@@ -258,23 +277,26 @@ export function populateFormFromCalibration(
     const modelName =
       modelMapping[cameraData.camera_model.toLowerCase()] || cameraData.camera_model;
     if (modelName) {
-      // Check if this model exists in our select options
-      const option = Array.from(cameraModelSelect.options).find(opt => opt.value === modelName);
+      // The panel offers two general models; a calibration naming a specific
+      // one is moved onto whichever covers it, with its coefficients placed in
+      // the slots that model expects. Without this a name the select does not
+      // carry would silently leave the previous model selected.
+      const offered = normalizeToOfferedCameraModel(
+        modelName as CameraModel,
+        Array.isArray(cameraData.coefficients) ? cameraData.coefficients : []
+      );
+      const option = Array.from(cameraModelSelect.options).find(opt => opt.value === offered.model);
       if (option) {
-        cameraModelSelect.value = modelName;
+        cameraModelSelect.value = offered.model;
         // CRITICAL FIX: Trigger change event to show/hide distortion parameter fields
         cameraModelSelect.dispatchEvent(new Event('change'));
       }
+      if (Array.isArray(cameraData.coefficients)) {
+        writeCoefficients(fileIndex, offered.coefficients);
+      }
     }
-  }
-
-  if (Array.isArray(cameraData.coefficients)) {
-    const coefficientsInput = document.getElementById(
-      `camera-coefficients-${fileIndex}`
-    ) as HTMLInputElement | null;
-    if (coefficientsInput) {
-      coefficientsInput.value = cameraData.coefficients.join(',');
-    }
+  } else if (Array.isArray(cameraData.coefficients)) {
+    writeCoefficients(fileIndex, cameraData.coefficients);
   }
 
   // Populate distortion coefficients if available

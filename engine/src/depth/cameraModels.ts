@@ -143,11 +143,80 @@ export function resolveCameraModel(params: CameraModelParameters & Record<string
       return { model: undistorted, coefficients: [] };
     }
   }
+  // Fisheye624 carrying only its first four radial terms *is* Kannala-Brandt:
+  // the radial polynomial is the same one with two further terms, and the
+  // tangential and thin-prism parts are what the extra six coefficients are
+  // for. Saying so costs a third of the time, because the radial inversion is
+  // a bisection over up to 512 steps and each one evaluates the polynomial —
+  // six terms instead of four, per step, per pixel.
+  if (declared === 'fisheye624' && coefficients.slice(4).every(value => value === 0)) {
+    return { model: 'fisheye-kb3', coefficients: coefficients.slice(0, 4) };
+  }
   return { model: declared, coefficients };
 }
 
 export function effectiveCameraModel(params: CameraModelParameters): CameraModel {
   return resolveCameraModel(params).model;
+}
+
+/**
+ * The camera models the depth panel offers, and the coefficient count each one
+ * shows. Every other model is a special case of one of these two: an ideal
+ * pinhole is an OpenCV pinhole with zero distortion, and the equidistant,
+ * OpenCV and Kannala-Brandt fisheyes are all the general fisheye with terms
+ * left at zero (see `radial`, where OpenCV fisheye and KB3 share one code path
+ * and Fisheye624 is that same polynomial with two further terms).
+ *
+ * The list is short because unused coefficients now cost nothing:
+ * `resolveCameraModel` reduces a configuration to the cheapest model that is
+ * exactly equivalent before it reaches the kernel.
+ */
+export const OFFERED_CAMERA_MODELS: Readonly<Record<'pinhole' | 'fisheye', CameraModel>> = {
+  pinhole: 'pinhole-opencv',
+  fisheye: 'fisheye624',
+};
+
+/**
+ * Maps any camera model onto one the panel offers, moving the coefficients to
+ * the slots the general model expects.
+ *
+ * Calibration files and saved settings still name the specific models -
+ * COLMAP, ZED, RealSense and the YAML parsers all do - and a `<select>` with no
+ * matching option silently falls back to its first entry, which would change
+ * the model behind the user's back. Nothing is lost in the mapping: the values
+ * land in the same polynomial positions they had.
+ */
+export function normalizeToOfferedCameraModel(
+  model: CameraModel,
+  coefficients: readonly number[] = []
+): { model: CameraModel; coefficients: number[] } {
+  const pad = (values: readonly number[], length: number): number[] => {
+    const out = values.slice(0, length).map(value => (Number.isFinite(value) ? value : 0));
+    while (out.length < length) {
+      out.push(0);
+    }
+    return out;
+  };
+
+  switch (model) {
+    case 'pinhole-ideal':
+      return { model: OFFERED_CAMERA_MODELS.pinhole, coefficients: pad([], 14) };
+    case 'pinhole-opencv':
+      return { model: OFFERED_CAMERA_MODELS.pinhole, coefficients: pad(coefficients, 14) };
+    case 'fisheye-equidistant':
+      return { model: OFFERED_CAMERA_MODELS.fisheye, coefficients: pad([], 12) };
+    // The four radial terms occupy the same first four slots either way; only
+    // the labels differ (OpenCV counts from k1, KB3 and the general model from
+    // k0).
+    case 'fisheye-opencv':
+    case 'fisheye-kb3':
+      return { model: OFFERED_CAMERA_MODELS.fisheye, coefficients: pad(coefficients, 12) };
+    case 'fisheye624':
+      return { model: OFFERED_CAMERA_MODELS.fisheye, coefficients: pad(coefficients, 12) };
+    // The E57 panoramas belong to a file format rather than to this panel.
+    default:
+      return { model, coefficients: [...coefficients] };
+  }
 }
 
 /** The coefficient list for a model, before the all-zero reduction. */

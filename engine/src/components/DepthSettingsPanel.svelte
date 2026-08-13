@@ -36,7 +36,21 @@
           ? 'k0,k1,k2,k3'
           : 'k1,k2,k3,k4'
   );
+  // OpenCV's fisheye k1..k4 and Kannala-Brandt's k0..k3 are the same four
+  // numbers in the same four positions — only the counting differs — so a
+  // calibration from either goes into the first four slots unchanged.
+  const coefficientNote = $derived(
+    isFisheye624
+      ? 'OpenCV fisheye k1..k4 and Kannala-Brandt k0..k3 are these first four; leave the rest at 0.'
+      : isPinholeOpencv
+        ? 'All zero is an ideal pinhole. OpenCV calibrations paste in directly.'
+        : ''
+  );
   const coefficientDefaults = $derived(coefficientLayout.split(',').map(() => '0').join(','));
+  // One box per coefficient, named as the model names it. A blank box is zero,
+  // so a calibration with only a first radial term needs one number typed and
+  // nothing else.
+  const coefficientNames = $derived(coefficientLayout.split(','));
 
   const liveUpdateEnabled = $derived(depthSettingsState.liveUpdateFileIndices.includes(fileIndex));
 
@@ -199,12 +213,15 @@
         value={cameraModel}
         onchange={onCameraModelChange}
       >
-        <option value="pinhole-ideal">Pinhole Ideal</option>
-        <option value="pinhole-opencv">Pinhole + OpenCV Distortion</option>
-        <option value="fisheye-equidistant">Fisheye Equidistant</option>
-        <option value="fisheye-opencv">OpenCV Fisheye</option>
-        <option value="fisheye-kb3">Kannala-Brandt KB3</option>
-        <option value="fisheye624">Project Aria Fisheye624</option>
+        <!-- Two general models, because every other one is a special case of
+             these with coefficients left at zero: an ideal pinhole is an
+             OpenCV pinhole with no distortion, and the equidistant, OpenCV and
+             Kannala-Brandt fisheyes are the general fisheye with its later
+             terms unused. Unused terms are free - `resolveCameraModel` reduces
+             a configuration to the cheapest exactly-equivalent model before it
+             reaches the kernel - so the short list costs nothing. -->
+        <option value="pinhole-opencv">Pinhole (zeros = ideal pinhole)</option>
+        <option value="fisheye624">Fisheye (zeros = equidistant)</option>
       </select>
       <div style="margin-top: 4px; font-size: 9px; color: var(--vscode-descriptionForeground);">
         Distortion is applied only where a coefficient is non-zero; an all-zero
@@ -331,20 +348,37 @@
         style="display: {distortionOpen ? 'block' : 'none'}; margin-top: 4px;"
       >
         <div id={`camera-coefficient-params-${fileIndex}`}>
-          <label for={`camera-coefficients-${fileIndex}`} style="display: block; font-size: 9px; margin-bottom: 2px; color: var(--vscode-descriptionForeground);">
-            {coefficientLayout}:
-          </label>
-          <input
-            type="text"
-            id={`camera-coefficients-${fileIndex}`}
-            value={coefficientDefaults}
-            style="width: 100%; padding: 2px; font-size: 11px;"
-            oninput={onFieldInput}
-          />
+          <div
+            style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 6px;"
+          >
+            {#each coefficientNames as name, index (name)}
+              <label
+                for={`coefficient-${fileIndex}-${index}`}
+                style="display: block; font-size: 9px; color: var(--vscode-descriptionForeground);"
+              >
+                {name}
+                <input
+                  type="number"
+                  step="any"
+                  id={`coefficient-${fileIndex}-${index}`}
+                  placeholder="0"
+                  style="width: 100%; padding: 2px; font-size: 11px;"
+                  oninput={onFieldInput}
+                  onwheel={blurOnWheel}
+                />
+              </label>
+            {/each}
+          </div>
+          {#if coefficientNote}
+            <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 4px;">
+              {coefficientNote}
+            </div>
+          {/if}
           <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 2px;">
+            Empty is zero — fill in only the terms the calibration gives.
             {isPinholeOpencv
-              ? 'OpenCV layouts: radial/tangential (4/5), rational (8), thin prism (12), tilted sensor (14). Trailing zero groups use the fast basic path.'
-              : 'Exact ordered coefficient layout; coefficient count is validated.'}
+              ? ' OpenCV layouts: radial/tangential (4/5), rational (8), thin prism (12), tilted sensor (14); trailing zero groups take the fast path.'
+              : ''}
           </div>
         </div>
       </div>

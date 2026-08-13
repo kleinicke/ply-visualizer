@@ -1349,12 +1349,94 @@ Port:
   consequence — a calibration that declares itself rectified _and_ carries
   non-zero coefficients will now have them applied.
 
-  **Still slow, and the obvious next optimization:** a genuinely distorted
-  fisheye is 7s at 2048x2048, because unprojection is a per-pixel Newton solve.
-  For every fisheye model the distortion is a function of radius alone, so the
-  inverse could be tabulated once in 1D and interpolated, turning the solve into
-  a lookup. That is a real change to `camera-models` rather than a plumbing fix,
-  so it is written down rather than done.
+  **Unused coefficients are now free, which is what makes consolidating the
+  model list possible.** Measured on a 1024x1024 depth image:
+
+  | configuration                                           | before        | after       |
+  | ------------------------------------------------------- | ------------- | ----------- |
+  | OpenCV pinhole, 5 coefficients vs the same padded to 14 | 165ms / 165ms | unchanged   |
+  | fisheye624 with only its 4 radial terms                 | 1707ms        | **1394ms**  |
+  | Kannala-Brandt KB3, same 4 values                       | 1384ms        | 1393ms      |
+  | fisheye624 with a real k5 or prism term                 | 1775ms        | 1737-1799ms |
+
+  Two mechanisms, and the first turned out not to be the expensive one:
+
+  1. `camera-models` now skips the 2D Newton inversion when Fisheye624's six
+     tangential and thin-prism coefficients are all zero, the same way
+     `OpenCvPinhole` already skips on `has_rational`/`has_prism`/`has_tilt`.
+     Correct, but worth only a little.
+  2. The cost is `invert_radial`, a **bisection of up to 512 steps** that
+     evaluates the radial polynomial at each one — so six terms instead of four
+     is a third more work per pixel. `resolveCameraModel` therefore reduces
+     Fisheye624 carrying only its first four radial terms to `fisheye-kb3`,
+     which is the same polynomial and the same output to the last digit.
+
+  The ideal-pinhole entry is gone from both model pickers: an OpenCV pinhole
+  with zero coefficients _is_ it, and now resolves to it automatically. The
+  fisheye entries could collapse the same way — kb3 and OpenCV fisheye are the
+  identical polynomial over the identical four slots, differing only in whether
+  the labels start at k0 or k1 — but the list is left as it is for now.
+
+  **Done, and it was not the bisection — it was a loop-invariant scan.** The
+  suspicion above was wrong in an instructive way. `invert_radial`'s solve is a
+  Newton iteration with a bisection fallback and converges in a handful of
+  steps. The cost was the code _before_ it: a 512-step scan of the derivative to
+  find where the polynomial stops being monotonic, which depends on the
+  calibration and **not on the pixel**, and which therefore recomputed the same
+  number 26 million times on a 5120x5120 frame.
+
+  `RadialDomain` now holds that result, built once per image and passed to
+  `unproject_with_domain`; `unproject` keeps its old signature by building one
+  on the spot. The arithmetic is untouched, so the answers are identical bit for
+  bit — which is what the tests assert.
+
+  |                                                  | before | after               |
+  | ------------------------------------------------ | ------ | ------------------- |
+  | native, 1M unprojections, kb3                    | 1052ms | **52.7ms** (20.0x)  |
+  | native, fisheye624 with 8 zeros                  | 1416ms | **63.7ms** (22.2x)  |
+  | native, fisheye624 with prism terms              | 1549ms | **148.1ms** (10.5x) |
+  | in-browser, full 1024x1024 depth projection, kb3 | 1538ms | **102ms**           |
+  | in-browser, fisheye624 with prism terms          | 1910ms | **176ms**           |
+
+  How it is held to being correct, since "roughly right" is not good enough for
+  a camera model:
+
+  - **A reference implementation** of the pre-hoist `invert_radial`, scan
+    inline, kept in the test module. Over 200 targets per calibration the two
+    must agree on `to_bits()`, not merely to a tolerance.
+  - **An independent brute-force inverse**: sample the forward polynomial at
+    200,000 points and take the closest. The solver must land within one sample
+    spacing of it.
+  - **Backward then forward**: a grid of pixels unprojected to rays and
+    projected back must return to the same pixel within 1e-6.
+  - **Forward then backward**: a fan of rays projected and unprojected must come
+    back pointing the same way (dot product > 1 - 1e-9).
+
+  The round-trip angles are capped per family, and that cap is a property of the
+  models rather than a convenience: a pinhole with real barrel distortion stops
+  being monotonic well before the horizon, so beyond that the forward map folds
+  over, two rays share a pixel, and the inverse legitimately returns the other
+  one. Measured on the k1 = -0.28 calibration in the tests, a ray 63 degrees
+  off-axis comes back 45 degrees off-axis, converged and wrong. Pinholes are
+  therefore exercised to 40 degrees and fisheyes to 69.
+
+  **A process note worth keeping.** The first attempt appeared to produce no
+  speedup at all in the browser, which nearly buried the change. The edit to
+  `tiff-decoder` had never been applied — an interrupted tool call whose build
+  half was re-run while its edit half was not — so the caller still used the
+  per-pixel path while the kernel had the fast one. Browser timings under load
+  varied by 10% run to run and hid it; the native benchmark
+  (`camera-models/examples/bench_unproject.rs`) showed 20x immediately and made
+  the discrepancy obvious. **Measure the kernel natively before concluding an
+  optimization does not work.**
+
+  **What is left in this area:** `unproject_opencv_pinhole` is now the slowest
+  path (714ms per megapixel against the fisheye's 102ms), and it has its own
+  per-pixel 2D Newton solve with no loop-invariant part left to hoist. Trimming
+  the radial polynomial to its non-zero degree is also available — the
+  infrastructure to carry it now exists in `RadialDomain` — but after the hoist
+  it is worth perhaps a fifth of a much smaller number, so it needs measuring
+  before it is worth writing.
 
   Still open, and a UI decision rather than a kernel one: switching between two
   models that accept the same count keeps the numbers and silently reinterprets

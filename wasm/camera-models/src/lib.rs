@@ -259,6 +259,26 @@ pub fn unproject(
     coefficients: &[f64],
     pixel: [f64; 2],
 ) -> SolveResult<[f64; 3]> {
+    unproject_with_domain(
+        model,
+        intrinsics,
+        coefficients,
+        &RadialDomain::new(model, coefficients),
+        pixel,
+    )
+}
+
+/// `unproject` with the calibration-dependent part of the radial inversion
+/// prepared in advance. A loop over an image builds the domain once and calls
+/// this; the result is identical to `unproject`, which is that call with the
+/// domain built on the spot.
+pub fn unproject_with_domain(
+    model: CameraModel,
+    intrinsics: Intrinsics,
+    coefficients: &[f64],
+    domain: &RadialDomain,
+    pixel: [f64; 2],
+) -> SolveResult<[f64; 3]> {
     if pixel.iter().any(|v| !v.is_finite()) {
         return invalid3();
     }
@@ -308,9 +328,11 @@ pub fn unproject(
         CameraModel::PinholeOpenCv => {
             return unproject_opencv_pinhole(intrinsics, &OpenCvPinhole::new(coefficients), pixel)
         }
-        CameraModel::Fisheye624 => invert_2d(observed, |point| {
-            Some(distortion_with_jacobian_fisheye624(point, coefficients))
-        }),
+        CameraModel::Fisheye624 if has_tangential_prism(coefficients) => {
+            invert_2d(observed, |point| {
+                Some(distortion_with_jacobian_fisheye624(point, coefficients))
+            })
+        }
         _ => SolveResult {
             value: observed,
             converged: true,
@@ -348,7 +370,7 @@ pub fn unproject(
                     iterations: 0,
                 },
                 CameraModel::FisheyeOpenCv | CameraModel::FisheyeKb3 | CameraModel::Fisheye624 => {
-                    invert_radial(observed_radius, coefficients, model)
+                    invert_radial_in(observed_radius, coefficients, model, domain)
                 }
                 _ => unreachable!(),
             };
@@ -424,7 +446,64 @@ fn radial_derivative(theta: f64, coefficients: &[f64], model: CameraModel) -> f6
     derivative
 }
 
+/// The part of the radial inversion that depends on the calibration rather than
+/// on the pixel: where the polynomial stops being invertible, and how far it
+/// reaches.
+///
+/// Finding it is a 512-step scan of the derivative, and it used to run inside
+/// every solve — so a depth image paid it once per pixel, 26 million times for
+/// one 5120x5120 frame, to compute the same number every time. Built once and
+/// handed to the solver, the scan disappears from the per-pixel cost; the
+/// arithmetic is unchanged, so the results are identical bit for bit.
+#[derive(Clone, Copy, Debug)]
+pub struct RadialDomain {
+    /// Upper end of the first monotonic lobe.
+    high: f64,
+    /// `radial(high)`, the largest image radius the model can produce.
+    max_radius: f64,
+    /// False when the polynomial is not invertible at all.
+    usable: bool,
+}
+
+impl RadialDomain {
+    pub fn new(model: CameraModel, coefficients: &[f64]) -> Self {
+        // Only the first monotonic lobe is a valid inverse domain. Distorted
+        // polynomials commonly turn over before pi even though the calibrated
+        // image lies comfortably inside that limit.
+        let mut high = MAX_THETA;
+        let mut previous = 0.0;
+        for step in 1..=512 {
+            let theta = MAX_THETA * step as f64 / 512.0;
+            if radial_derivative(theta, coefficients, model) <= EPS {
+                high = previous;
+                break;
+            }
+            previous = theta;
+        }
+        let usable = high > EPS && radial_derivative(0.0, coefficients, model) > 0.0;
+        RadialDomain {
+            high,
+            max_radius: radial(high, coefficients, model),
+            usable,
+        }
+    }
+}
+
 fn invert_radial(target: f64, coefficients: &[f64], model: CameraModel) -> SolveResult<f64> {
+    invert_radial_in(
+        target,
+        coefficients,
+        model,
+        &RadialDomain::new(model, coefficients),
+    )
+}
+
+fn invert_radial_in(
+    target: f64,
+    coefficients: &[f64],
+    model: CameraModel,
+    domain: &RadialDomain,
+) -> SolveResult<f64> {
     if target <= EPS {
         return SolveResult {
             value: 0.0,
@@ -433,23 +512,8 @@ fn invert_radial(target: f64, coefficients: &[f64], model: CameraModel) -> Solve
         };
     }
     let mut low = 0.0;
-    // Only the first monotonic lobe is a valid inverse domain. Distorted
-    // polynomials commonly turn over before pi even though the calibrated
-    // image lies comfortably inside that limit.
-    let mut high = MAX_THETA;
-    let mut previous = 0.0;
-    for step in 1..=512 {
-        let theta = MAX_THETA * step as f64 / 512.0;
-        if radial_derivative(theta, coefficients, model) <= EPS {
-            high = previous;
-            break;
-        }
-        previous = theta;
-    }
-    if high <= EPS
-        || radial(high, coefficients, model) < target
-        || radial_derivative(low, coefficients, model) <= 0.0
-    {
+    let mut high = domain.high;
+    if !domain.usable || domain.max_radius < target {
         return SolveResult {
             value: f64::NAN,
             converged: false,
@@ -755,7 +819,23 @@ fn project_homogeneous(matrix: [[f64; 3]; 3], point: [f64; 2]) -> Option<[f64; 2
 }
 
 fn distort_fisheye624(point: [f64; 2], coefficients: &[f64]) -> [f64; 2] {
+    if !has_tangential_prism(coefficients) {
+        return point;
+    }
     distortion_with_jacobian_fisheye624(point, coefficients).0
+}
+
+/// True when Fisheye624 carries any tangential or thin-prism term.
+///
+/// With all six at zero the model is its radial polynomial alone — the same
+/// shape as Kannala-Brandt with two extra terms — and the 2D Newton inversion
+/// below has nothing to solve. Checking is worth it because that inversion runs
+/// per pixel: on a 1024x1024 depth image it was the difference between 1.38s
+/// (kb3) and 1.72s (fisheye624 carrying six zeros) for identical output. The
+/// same trick is what `OpenCvPinhole` does with `has_rational`/`has_prism`.
+#[inline]
+fn has_tangential_prism(coefficients: &[f64]) -> bool {
+    coefficients.len() >= 12 && coefficients[6..12].iter().any(|value| *value != 0.0)
 }
 
 fn distortion_with_jacobian_fisheye624(point: [f64; 2], c: &[f64]) -> ([f64; 2], [[f64; 2]; 2]) {
@@ -1044,5 +1124,385 @@ mod tests {
             [1000.0, 900.0],
         );
         assert!(!result.converged);
+    }
+}
+
+#[cfg(test)]
+mod fisheye624_tests {
+    use super::*;
+
+    fn intrinsics() -> Intrinsics {
+        Intrinsics {
+            fx: 500.0,
+            fy: 500.0,
+            cx: 511.5,
+            cy: 511.5,
+        }
+    }
+
+    /// Fisheye624 without tangential or thin-prism terms is its radial
+    /// polynomial alone, which for the first four coefficients is exactly
+    /// Kannala-Brandt. Skipping the 2D inversion in that case must not move a
+    /// single pixel.
+    #[test]
+    fn radial_only_fisheye624_matches_kannala_brandt() {
+        let radial = [-0.05, 0.01, 0.001, 0.0001];
+        let kb3 = radial.to_vec();
+        let mut wide = radial.to_vec();
+        wide.extend_from_slice(&[0.0; 8]); // k4, k5 and the six tangential/prism
+
+        for pixel in [[0.0, 0.0], [100.0, 200.0], [511.5, 511.5], [900.0, 30.0]] {
+            let a = unproject(CameraModel::FisheyeKb3, intrinsics(), &kb3, pixel);
+            let b = unproject(CameraModel::Fisheye624, intrinsics(), &wide, pixel);
+            assert_eq!(a.converged, b.converged, "convergence at {pixel:?}");
+            if a.converged {
+                for axis in 0..3 {
+                    assert!(
+                        (a.value[axis] - b.value[axis]).abs() < 1e-12,
+                        "axis {axis} at {pixel:?}: {} vs {}",
+                        a.value[axis],
+                        b.value[axis]
+                    );
+                }
+            }
+        }
+    }
+
+    /// The skip is conditional on the values, so a model that really does carry
+    /// prism terms must still take the iterative path and land somewhere else.
+    #[test]
+    fn tangential_terms_still_take_the_iterative_path() {
+        let mut with_prism = vec![-0.05, 0.01, 0.001, 0.0001, 0.0, 0.0];
+        with_prism.extend_from_slice(&[1e-3, 1e-3, 1e-4, 1e-4, 1e-4, 1e-4]);
+        let mut without = with_prism.clone();
+        for value in without[6..12].iter_mut() {
+            *value = 0.0;
+        }
+
+        let pixel = [200.0, 300.0];
+        let a = unproject(CameraModel::Fisheye624, intrinsics(), &with_prism, pixel);
+        let b = unproject(CameraModel::Fisheye624, intrinsics(), &without, pixel);
+        assert!(a.converged && b.converged);
+
+        // `iterations` counts the radial inversion too, which runs either way,
+        // so the proof that the 2D solve was skipped is that the zero-prism
+        // case costs exactly what the radial-only model costs.
+        let radial_only = unproject(CameraModel::FisheyeKb3, intrinsics(), &without[..4], pixel);
+        assert_eq!(
+            b.iterations, radial_only.iterations,
+            "six zeros must add no iterations over the radial-only model"
+        );
+        assert!(
+            a.iterations > b.iterations,
+            "prism terms must cost more than none: {} vs {}",
+            a.iterations,
+            b.iterations
+        );
+
+        let moved = (0..3)
+            .map(|i| (a.value[i] - b.value[i]).abs())
+            .fold(0.0, f64::max);
+        assert!(
+            moved > 1e-9,
+            "prism terms must change the ray, moved by {moved}"
+        );
+    }
+
+    /// Projection takes the same shortcut, and must agree with unprojection.
+    #[test]
+    fn projection_round_trips_without_prism_terms() {
+        let mut coefficients = vec![-0.05, 0.01, 0.001, 0.0001];
+        coefficients.extend_from_slice(&[0.0; 8]);
+        let pixel = [321.0, 654.0];
+        let ray = unproject(CameraModel::Fisheye624, intrinsics(), &coefficients, pixel);
+        assert!(ray.converged);
+        let back = project(
+            CameraModel::Fisheye624,
+            intrinsics(),
+            &coefficients,
+            ray.value,
+        );
+        assert!(back.converged);
+        assert!((back.value[0] - pixel[0]).abs() < 1e-6, "{:?}", back.value);
+        assert!((back.value[1] - pixel[1]).abs() < 1e-6, "{:?}", back.value);
+    }
+}
+
+#[cfg(test)]
+mod inversion_tests {
+    use super::*;
+
+    fn intrinsics() -> Intrinsics {
+        Intrinsics {
+            fx: 500.0,
+            fy: 505.0,
+            cx: 511.5,
+            cy: 383.5,
+        }
+    }
+
+    /// Calibrations to check every claim against: undistorted, mild, strong,
+    /// and one with the terms only the general fisheye has.
+    fn fisheye_cases() -> Vec<(CameraModel, Vec<f64>)> {
+        vec![
+            (CameraModel::FisheyeEquidistant, vec![]),
+            (CameraModel::FisheyeKb3, vec![-0.05, 0.01, 0.001, 0.0001]),
+            (CameraModel::FisheyeOpenCv, vec![-0.2, 0.03, -0.004, 0.0005]),
+            (
+                CameraModel::Fisheye624,
+                vec![
+                    -0.05, 0.01, 0.001, 0.0001, 1e-5, 1e-6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                ],
+            ),
+            (
+                CameraModel::Fisheye624,
+                vec![
+                    -0.05, 0.01, 0.001, 0.0001, 0.0, 0.0, 1e-3, 1e-3, 1e-4, 1e-4, 1e-4, 1e-4,
+                ],
+            ),
+        ]
+    }
+
+    fn pinhole_cases() -> Vec<(CameraModel, Vec<f64>)> {
+        vec![
+            (CameraModel::PinholeIdeal, vec![]),
+            (
+                CameraModel::PinholeOpenCv,
+                vec![-0.28, 0.07, 0.0, 0.0, -0.01],
+            ),
+            (
+                CameraModel::PinholeOpenCv,
+                vec![
+                    -0.28, 0.07, 1e-4, 1e-4, -0.01, 0.001, 1e-4, 1e-5, 1e-5, 1e-5, 1e-5, 1e-5, 0.0,
+                    0.0,
+                ],
+            ),
+        ]
+    }
+
+    /// The radial inversion as it was written before the calibration-dependent
+    /// scan was hoisted out of the per-pixel path: the scan inline, every call.
+    /// Kept here so the optimization can be held to producing the same number.
+    fn reference_invert_radial(
+        target: f64,
+        coefficients: &[f64],
+        model: CameraModel,
+    ) -> SolveResult<f64> {
+        if target <= EPS {
+            return SolveResult {
+                value: 0.0,
+                converged: true,
+                iterations: 0,
+            };
+        }
+        let mut low = 0.0;
+        let mut high = MAX_THETA;
+        let mut previous = 0.0;
+        for step in 1..=512 {
+            let theta = MAX_THETA * step as f64 / 512.0;
+            if radial_derivative(theta, coefficients, model) <= EPS {
+                high = previous;
+                break;
+            }
+            previous = theta;
+        }
+        if high <= EPS
+            || radial(high, coefficients, model) < target
+            || radial_derivative(low, coefficients, model) <= 0.0
+        {
+            return SolveResult {
+                value: f64::NAN,
+                converged: false,
+                iterations: 0,
+            };
+        }
+        let mut theta = target.min(high * 0.5);
+        for iteration in 1..=MAX_ITERATIONS {
+            let residual = radial(theta, coefficients, model) - target;
+            if residual.abs() <= RESIDUAL_TOLERANCE * (1.0 + target) {
+                return SolveResult {
+                    value: theta,
+                    converged: true,
+                    iterations: iteration,
+                };
+            }
+            if residual > 0.0 {
+                high = theta;
+            } else {
+                low = theta;
+            }
+            let derivative = radial_derivative(theta, coefficients, model);
+            let candidate = theta - residual / derivative;
+            theta =
+                if derivative > EPS && candidate > low && candidate < high && candidate.is_finite()
+                {
+                    candidate
+                } else {
+                    0.5 * (low + high)
+                };
+        }
+        SolveResult {
+            value: theta,
+            converged: false,
+            iterations: MAX_ITERATIONS,
+        }
+    }
+
+    /// Hoisting the scan must not change a single bit of the answer.
+    #[test]
+    fn hoisting_the_domain_scan_is_bit_identical() {
+        for (model, coefficients) in fisheye_cases() {
+            if model == CameraModel::FisheyeEquidistant {
+                continue; // closed form, no inversion involved
+            }
+            let domain = RadialDomain::new(model, &coefficients);
+            for step in 0..=200 {
+                let target = step as f64 * 0.01;
+                let reference = reference_invert_radial(target, &coefficients, model);
+                let hoisted = invert_radial_in(target, &coefficients, model, &domain);
+                assert_eq!(
+                    reference.converged, hoisted.converged,
+                    "{model:?} target {target}: convergence"
+                );
+                if reference.converged {
+                    assert_eq!(
+                        reference.value.to_bits(),
+                        hoisted.value.to_bits(),
+                        "{model:?} target {target}: {} vs {}",
+                        reference.value,
+                        hoisted.value
+                    );
+                    assert_eq!(
+                        reference.iterations, hoisted.iterations,
+                        "{model:?} iterations"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The inverse checked against a search that knows nothing about the
+    /// solver: sample the forward polynomial densely and take the closest.
+    #[test]
+    fn the_radial_inverse_agrees_with_a_brute_force_search() {
+        for (model, coefficients) in fisheye_cases() {
+            if model == CameraModel::FisheyeEquidistant {
+                continue;
+            }
+            let domain = RadialDomain::new(model, &coefficients);
+            for step in 1..=40 {
+                let theta_true = step as f64 * (MAX_THETA / 45.0);
+                let radius = radial(theta_true, &coefficients, model);
+                if radius <= 0.0 || !radius.is_finite() {
+                    continue;
+                }
+                let solved = invert_radial_in(radius, &coefficients, model, &domain);
+                if !solved.converged {
+                    continue;
+                }
+                // Brute force: the theta whose radius is closest to the target.
+                let samples = 200_000;
+                let mut best = (f64::INFINITY, 0.0);
+                for i in 0..=samples {
+                    let theta = MAX_THETA * i as f64 / samples as f64;
+                    let error = (radial(theta, &coefficients, model) - radius).abs();
+                    if error < best.0 {
+                        best = (error, theta);
+                    }
+                }
+                assert!(
+                    (solved.value - best.1).abs() < 2.0 * MAX_THETA / samples as f64,
+                    "{model:?}: solver said {}, dense search said {}",
+                    solved.value,
+                    best.1
+                );
+            }
+        }
+    }
+
+    /// Backward then forward: a pixel unprojected to a ray and projected again
+    /// must land where it started.
+    #[test]
+    fn pixel_to_ray_to_pixel_round_trips() {
+        let intr = intrinsics();
+        for (model, coefficients) in fisheye_cases().into_iter().chain(pinhole_cases()) {
+            let mut checked = 0;
+            for v in (0..768).step_by(64) {
+                for u in (0..1024).step_by(64) {
+                    let pixel = [u as f64, v as f64];
+                    let ray = unproject(model, intr, &coefficients, pixel);
+                    if !ray.converged || ray.value.iter().any(|value| !value.is_finite()) {
+                        continue;
+                    }
+                    let back = project(model, intr, &coefficients, ray.value);
+                    if !back.converged {
+                        continue;
+                    }
+                    assert!(
+                        (back.value[0] - pixel[0]).abs() < 1e-6
+                            && (back.value[1] - pixel[1]).abs() < 1e-6,
+                        "{model:?}: {pixel:?} came back as {:?}",
+                        back.value
+                    );
+                    checked += 1;
+                }
+            }
+            assert!(
+                checked > 50,
+                "{model:?}: only {checked} pixels round-tripped"
+            );
+        }
+    }
+
+    /// Forward then backward: a ray projected to a pixel and unprojected again
+    /// must point the same way.
+    ///
+    /// The angles are capped per family, and that cap is a property of the
+    /// models rather than a convenience. A pinhole with real barrel distortion
+    /// stops being monotonic well before the horizon — beyond that the forward
+    /// map folds over, two rays share a pixel, and the inverse legitimately
+    /// returns the other one. (Measured on the k1 = -0.28 calibration here: a
+    /// ray 63 degrees off-axis comes back 45 degrees off-axis, converged and
+    /// wrong.) A ray that far off-axis is not something a pinhole camera sees;
+    /// fisheyes are built for it, so they are exercised much wider.
+    #[test]
+    fn ray_to_pixel_to_ray_round_trips() {
+        let intr = intrinsics();
+        for (model, coefficients) in fisheye_cases().into_iter().chain(pinhole_cases()) {
+            let is_pinhole = matches!(
+                model,
+                CameraModel::PinholeIdeal | CameraModel::PinholeOpenCv
+            );
+            let max_theta = if is_pinhole { 0.7 } else { 1.2 };
+            let mut checked = 0;
+            for elevation in 0..8 {
+                for azimuth in 0..8 {
+                    let theta = 0.05 + elevation as f64 * (max_theta / 8.0);
+                    let phi = azimuth as f64 * std::f64::consts::FRAC_PI_4;
+                    let ray = [
+                        theta.sin() * phi.cos(),
+                        theta.sin() * phi.sin(),
+                        theta.cos(),
+                    ];
+                    let pixel = project(model, intr, &coefficients, ray);
+                    if !pixel.converged {
+                        continue;
+                    }
+                    let back = unproject(model, intr, &coefficients, pixel.value);
+                    if !back.converged {
+                        continue;
+                    }
+                    // Unit rays, so agreement is the angle between them.
+                    let dot: f64 = (0..3).map(|i| ray[i] * back.value[i]).sum();
+                    assert!(
+                        dot > 1.0 - 1e-9,
+                        "{model:?}: ray {ray:?} came back as {:?} (dot {dot})",
+                        back.value
+                    );
+                    checked += 1;
+                }
+            }
+            assert!(checked > 20, "{model:?}: only {checked} rays round-tripped");
+        }
     }
 }
