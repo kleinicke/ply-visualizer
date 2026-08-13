@@ -140,6 +140,8 @@ import { DepthWorkerClient } from './depth/DepthWorkerClient';
 import { alignSourceOrigin } from './utils/sourceOrigin';
 import { SectionPlaneManager } from './visualization/sectionPlanes';
 import type { VolumeData } from './parsers/nrrdParser';
+import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
+import { initTiffWasm } from './depth/readers/tiffWasm';
 import {
   inspectNpyWasm,
   isNpyPointCloudShape,
@@ -4739,6 +4741,10 @@ class PointCloudVisualizer {
 // Same reason: the NumPy reader's dtype and shape handling is worth testing
 // directly, not only through a depth panel that shows one pixel of the result.
 (window as any).__plyNpy = { inspectNpyWasm, isNpyPointCloudShape, readNpyWasm };
+// Same reason again: the depth kernels are reached through a camera-parameters
+// dialog and a worker, neither of which a spec can use to check the arithmetic
+// of a single pixel.
+(window as any).__plyDepth = { initTiffWasm, normalizeDepth, projectToPointCloud };
 // Test handle for the file-list state, following __plyContainerPerf above.
 // Lets a browser test drive the background-work row without needing the
 // extension host to stream real images.

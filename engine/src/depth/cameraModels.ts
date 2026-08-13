@@ -40,22 +40,56 @@ export interface CameraModelParameters {
   imageRectified?: boolean;
 }
 
+/**
+ * Coefficient-list lengths the kernel accepts, per model. OpenCV's pinhole is
+ * the only one with a choice: its 4, 5, 8, 12 and 14 coefficient layouts are
+ * all valid, and a shorter list means the higher terms are zero.
+ */
+const ACCEPTED_COEFFICIENT_COUNTS: Readonly<Record<CameraModel, readonly number[]>> = {
+  'pinhole-ideal': [0],
+  'pinhole-opencv': [4, 5, 8, 12, 14],
+  'fisheye-equidistant': [0],
+  'fisheye-opencv': [4],
+  'fisheye-kb3': [4],
+  fisheye624: [12],
+  'e57-pinhole': [0],
+  'e57-spherical': [0],
+  'e57-cylindrical': [0],
+};
+
+/**
+ * Makes a coefficient list one the model actually accepts.
+ *
+ * The UI keeps distortion values across a change of camera model — switching
+ * from OpenCV fisheye to ideal pinhole leaves four k's behind — and the kernel
+ * refuses a list whose length does not match the model. That used to be
+ * invisible: the projection failed and a JavaScript fallback silently produced
+ * an undistorted result instead. With no fallback left it is an error, so the
+ * list is fitted here, where the model is known, rather than passed on and
+ * rejected: a model that takes no coefficients gets none, and a short or long
+ * list is padded with zeros or truncated to the nearest accepted length.
+ */
+export function fitCoefficientsToModel(
+  model: CameraModel,
+  coefficients: readonly number[]
+): number[] {
+  const accepted = ACCEPTED_COEFFICIENT_COUNTS[model] ?? [0];
+  if (accepted.includes(coefficients.length)) {
+    return [...coefficients];
+  }
+  const target =
+    accepted.find(count => count >= coefficients.length) ?? accepted[accepted.length - 1];
+  const fitted = coefficients.slice(0, target).map(value => (Number.isFinite(value) ? value : 0));
+  while (fitted.length < target) {
+    fitted.push(0);
+  }
+  return fitted;
+}
+
 export function cameraCoefficientsFromParameters(
   params: CameraModelParameters & Record<string, any>
 ): number[] {
-  if (params.imageRectified) {
-    return [];
-  }
-  if (params.coefficients) {
-    return [...params.coefficients];
-  }
-  if (params.cameraModel === 'pinhole-opencv') {
-    return [params.k1 ?? 0, params.k2 ?? 0, params.p1 ?? 0, params.p2 ?? 0, params.k3 ?? 0];
-  }
-  if (params.cameraModel === 'fisheye-opencv') {
-    return [params.k1 ?? 0, params.k2 ?? 0, params.k3 ?? 0, params.k4 ?? 0];
-  }
-  return [];
+  return resolveCameraModel(params).coefficients;
 }
 
 export interface CameraSolveResult<T extends readonly number[]> {
@@ -65,8 +99,72 @@ export interface CameraSolveResult<T extends readonly number[]> {
   iterations: number;
 }
 
+/**
+ * The undistorted model each distorted one collapses to when every coefficient
+ * is zero. Exact, not an approximation: with zero coefficients the OpenCV
+ * pinhole distortion is the identity, and the fisheye radial polynomial reduces
+ * to `radius = theta`, which is the equidistant model by definition.
+ */
+const UNDISTORTED_EQUIVALENT: Readonly<Partial<Record<CameraModel, CameraModel>>> = {
+  'pinhole-opencv': 'pinhole-ideal',
+  'fisheye-opencv': 'fisheye-equidistant',
+  'fisheye-kb3': 'fisheye-equidistant',
+  fisheye624: 'fisheye-equidistant',
+};
+
+/**
+ * The model and coefficients the kernel should actually be given.
+ *
+ * Two reductions happen here, and both matter for speed as much as for
+ * correctness:
+ *
+ * 1. A rectified image has had its distortion removed already, so it is an
+ *    ideal pinhole whatever the file says.
+ * 2. **All-zero coefficients mean no distortion**, so the distorted model is
+ *    replaced by its undistorted equivalent. This is not a nicety: the
+ *    distorted models have no closed-form unprojection, so every pixel runs a
+ *    Newton solve, and a 5120x5120 depth image at `fisheye624` with twelve
+ *    zeros spent about twenty seconds iterating — much of it on pixels outside
+ *    the model domain, which only fail after exhausting their iterations — to
+ *    produce exactly what the equidistant closed form gives immediately.
+ */
+export function resolveCameraModel(params: CameraModelParameters & Record<string, any>): {
+  model: CameraModel;
+  coefficients: number[];
+} {
+  if (params.imageRectified) {
+    return { model: 'pinhole-ideal', coefficients: [] };
+  }
+  const declared = params.cameraModel;
+  const coefficients = coefficientsForModel(declared, params);
+  if (coefficients.every(value => value === 0)) {
+    const undistorted = UNDISTORTED_EQUIVALENT[declared];
+    if (undistorted) {
+      return { model: undistorted, coefficients: [] };
+    }
+  }
+  return { model: declared, coefficients };
+}
+
 export function effectiveCameraModel(params: CameraModelParameters): CameraModel {
-  return params.imageRectified ? 'pinhole-ideal' : params.cameraModel;
+  return resolveCameraModel(params).model;
+}
+
+/** The coefficient list for a model, before the all-zero reduction. */
+function coefficientsForModel(
+  model: CameraModel,
+  params: CameraModelParameters & Record<string, any>
+): number[] {
+  if (params.coefficients) {
+    return fitCoefficientsToModel(model, params.coefficients);
+  }
+  if (model === 'pinhole-opencv') {
+    return [params.k1 ?? 0, params.k2 ?? 0, params.p1 ?? 0, params.p2 ?? 0, params.k3 ?? 0];
+  }
+  if (model === 'fisheye-opencv' || model === 'fisheye-kb3') {
+    return [params.k1 ?? 0, params.k2 ?? 0, params.k3 ?? 0, params.k4 ?? 0];
+  }
+  return fitCoefficientsToModel(model, []);
 }
 
 export function validateCameraModelParameters(params: CameraModelParameters): string[] {

@@ -1307,6 +1307,70 @@ Port:
   and unprojection to XYZ. This is the batch kernel `camera-models` was
   extracted for, so the boundary already exists; the win here is that the whole
   W×H buffer stops crossing it twice (in as depth, out as points).
+
+  **Done (August 2026), and it was item 0's shape again: the Rust already
+  existed.** `normalizeDepth` and `projectToPointCloud` both called the kernel
+  first and kept a full JavaScript implementation behind it — a projection loop
+  for `pinhole-ideal` and `fisheye-equidistant`, and a complete normalization
+  path. So the same file could project differently depending on whether the wasm
+  had loaded, and only for those two models. Both fallbacks are gone;
+  `DepthProjector.ts` is **350 → 105 lines**, and callers
+  (`DepthConverter.processDepthToPointCloud`, `convertDepthToUnified`,
+  `DepthWorkerClient.processOnMainThread`) now ensure the module is up rather
+  than degrading silently. `depthWorker.ts` already did.
+
+  **What the fallback was hiding, found immediately after removing it.**
+  `cameraCoefficientsFromParameters` returned the caller's `coefficients` array
+  verbatim, without looking at the camera model. The depth panel keeps its
+  comma-separated coefficients field across a change of model, so switching from
+  an OpenCV fisheye to an ideal pinhole handed the kernel four coefficients for
+  a model that takes none. The kernel refused the call — and the JavaScript
+  fallback then projected the image as an undistorted ideal pinhole and said
+  nothing. So this was not merely a hidden error: **a file could be displayed
+  undistorted while a distorted model was selected**, which looks plausible and
+  is wrong. Coefficients are now fitted to the effective model
+  (`fitCoefficientsToModel`), covered by `cameraCoefficients.test.ts` and by two
+  cases in the browser spec.
+
+  **An all-zero distortion set now drops to the closed-form model**, which was a
+  27x speed-up on the case that surfaced it. The distorted models have no
+  closed-form unprojection, so every pixel runs a Newton solve; a 5120x5120
+  depth image at `fisheye624` with twelve zeros spent about twenty seconds
+  iterating — most of it on pixels outside the model domain, which only fail
+  after exhausting their iterations — to produce exactly what the equidistant
+  closed form gives immediately. The reduction is exact, not an approximation:
+  with zero coefficients the OpenCV pinhole distortion is the identity and the
+  fisheye radial polynomial is `radius = theta`. Measured at 2048x2048: **7.0s →
+  0.26s, bit-identical output**. `resolveCameraModel` returns the model and its
+  coefficients together so the two cannot disagree.
+
+  This also retired the "input image is already rectified" checkbox: zeroing the
+  coefficients says the same thing, and now does the same thing. Note the
+  consequence — a calibration that declares itself rectified _and_ carries
+  non-zero coefficients will now have them applied.
+
+  **Still slow, and the obvious next optimization:** a genuinely distorted
+  fisheye is 7s at 2048x2048, because unprojection is a per-pixel Newton solve.
+  For every fisheye model the distortion is a function of radius alone, so the
+  inverse could be tabulated once in 1D and interpolated, turning the solve into
+  a lookup. That is a real change to `camera-models` rather than a plumbing fix,
+  so it is written down rather than done.
+
+  Still open, and a UI decision rather than a kernel one: switching between two
+  models that accept the same count keeps the numbers and silently reinterprets
+  them — four fisheye k's become `[k1, k2, p1, p2]` under OpenCV pinhole. The
+  panel could clear or remap the field on a model change.
+
+  `depth-projection-kernel.spec.ts` covers it: ten cases written from the camera
+  model by hand — ray geometry, the OpenGL/OpenCV flip, euclidean depth as a
+  distance, the fisheye radius-to-angle map, invalid-pixel rejection, disparity
+  and inverse-depth conversion, millimetres, clamping, and the grey ramp.
+  Writing them found the trap in this area: **the wasm loads lazily**, so a spec
+  that simply calls the kernels gets the JavaScript path and passes while
+  proving nothing. It now calls `initTiffWasm()` first. The same ten
+  expectations passed before and after the deletion, which is what says the two
+  implementations agreed.
+
 - **`colorImageForDepth.ts` (241)** and the colormap tables it uses, which are
   duplicated in `tiff-visualizer` — see the shared-core item below.
 

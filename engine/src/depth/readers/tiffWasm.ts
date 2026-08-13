@@ -135,8 +135,7 @@ export function ensureTiffWasmGlueLoaded(glueUrl?: string): boolean {
   }
 
   const importScriptsFn = (globalThis as any).importScripts as
-    | ((...urls: string[]) => void)
-    | undefined;
+    ((...urls: string[]) => void) | undefined;
   const url = glueUrl || (globalThis as any).__TIFF_WASM_GLUE_URL__;
   if (!url || typeof importScriptsFn !== 'function') {
     return false;

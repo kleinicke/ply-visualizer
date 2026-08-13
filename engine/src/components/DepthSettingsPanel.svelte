@@ -40,6 +40,20 @@
 
   const liveUpdateEnabled = $derived(depthSettingsState.liveUpdateFileIndices.includes(fileIndex));
 
+  // Live update is how the panel is meant to be used - change a number, see the
+  // cloud move - so it starts on. `defaultedLiveUpdate` makes that a one-time
+  // decision per file: turning it off stays off, rather than being re-enabled
+  // every time the panel re-renders.
+  let defaultedLiveUpdate = false;
+  $effect(() => {
+    if (!defaultedLiveUpdate) {
+      defaultedLiveUpdate = true;
+      if (!depthSettingsState.liveUpdateFileIndices.includes(fileIndex)) {
+        host.setLiveDepthUpdateEnabled(fileIndex, true);
+      }
+    }
+  });
+
   function toggle() {
     open = !open;
   }
@@ -192,10 +206,10 @@
         <option value="fisheye-kb3">Kannala-Brandt KB3</option>
         <option value="fisheye624">Project Aria Fisheye624</option>
       </select>
-      <label style="display: flex; align-items: center; gap: 5px; margin-top: 4px; font-size: 9px; color: var(--vscode-descriptionForeground);">
-        <input id={`image-rectified-${fileIndex}`} type="checkbox" onchange={onFieldInput} />
-        Input image is already rectified (ignore distortion coefficients)
-      </label>
+      <div style="margin-top: 4px; font-size: 9px; color: var(--vscode-descriptionForeground);">
+        Distortion is applied only where a coefficient is non-zero; an all-zero
+        set is an undistorted image and projects with the closed-form model.
+      </div>
     </div>
     <div class="depth-group" style="margin-bottom: 8px;">
       <label for={`depth-type-${fileIndex}`} style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;"

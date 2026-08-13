@@ -207,9 +207,11 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     );
     await expect(page.locator('#camera-coefficients-0')).toHaveValue('0,0,0,0,0,0,0,0,0,0,0,0,0,0');
 
+    // Live update starts on — changing a number and watching the cloud move is
+    // how the panel is meant to be used — and turning it off has to stick.
     const liveUpdateCheckbox = page.locator('.live-depth-update[data-file-index="0"]');
-    await expect(liveUpdateCheckbox).not.toBeChecked();
-    await liveUpdateCheckbox.click();
     await expect(liveUpdateCheckbox).toBeChecked();
+    await liveUpdateCheckbox.click();
+    await expect(liveUpdateCheckbox).not.toBeChecked();
   });
 });

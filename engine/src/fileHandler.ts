@@ -713,6 +713,13 @@ export async function convertDepthToUnified(
     await import('./depth/DepthRegistry');
   const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
   const { PngReader } = await import('./depth/readers/PngReader');
+  const { initTiffWasm } = await import('./depth/readers/tiffWasm');
+
+  // Normalization and projection are Rust-only; there is no JavaScript path
+  // left to fall back to, so the module is loaded before either is called.
+  if (!(await initTiffWasm())) {
+    throw new Error('Depth conversion requires the Rust/WASM kernel, which failed to load');
+  }
 
   registerDefaultReaders();
 
