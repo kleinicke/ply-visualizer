@@ -329,6 +329,7 @@ dependencies = [
  "camera-models",
  "e57",
  "fast-float",
+ "flate2",
  "las",
  "serde",
  "serde_json",

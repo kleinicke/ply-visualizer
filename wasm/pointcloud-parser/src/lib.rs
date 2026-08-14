@@ -20,6 +20,7 @@ mod npy;
 mod ply;
 mod registration;
 mod stonex;
+mod volume;
 pub use lidar::{parse_e57, parse_las, E57ImageResult, LidarCollectionResult, LidarScanResult};
 pub use npy::{npy_inspect, npy_read, NpyArrayResult};
 pub use ply::{parse_ply, parse_ply_at, parse_ply_native, PlyResult};
@@ -27,6 +28,7 @@ pub use registration::bindings::{
     coarse_align, fit_correspondences, icp_refine, register_pair, RegistrationResult,
 };
 pub use stonex::{stonex_decode_frame, stonex_decode_scan, StonexRgbImage, StonexScanPoints};
+pub use volume::{extract_isosurface, parse_nrrd, IsosurfaceMesh, NrrdVolume};
 
 /// Parsed point cloud, returned to JS. Large buffers are moved out with the
 /// `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.

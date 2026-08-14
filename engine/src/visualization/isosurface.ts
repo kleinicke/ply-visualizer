@@ -162,14 +162,14 @@ export interface VolumeMeshResult {
  * a real CT is millions of triangles, and materialising an object per vertex
  * costs more memory than the entire source volume.
  */
-export function buildVolumeMesh(
+export async function buildVolumeMesh(
   volume: VolumeData,
   request: IsosurfaceRequest = {}
-): VolumeMeshResult {
+): Promise<VolumeMeshResult> {
   const threshold = request.threshold ?? defaultThreshold(volume);
   const step = request.step ?? chooseStep(volume.sizes, volume.ijkToWorld);
 
-  const mesh = extractIsosurface(volume, {
+  const mesh = await extractIsosurface(volume, {
     threshold,
     step,
     onProgress: request.onProgress,

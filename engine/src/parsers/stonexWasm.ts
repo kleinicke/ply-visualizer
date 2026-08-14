@@ -60,20 +60,7 @@ export interface StonexWasm {
   ): ReturnType<StonexWasm['stonex_decode_scan']>;
 }
 
-/**
- * Forces the JavaScript colour path, for the differential test that proves the
- * Rust one produces the same image. Not a user-facing switch: the two are meant
- * to be interchangeable, and this exists to demonstrate that they are.
- */
-let disabled = false;
-export function setStonexWasmDisabledForTests(value: boolean): void {
-  disabled = value;
-}
-
 export async function loadStonexWasm(): Promise<StonexWasm | null> {
-  if (disabled) {
-    return null;
-  }
   const wasm = (await loadRegistrationWasm()) as unknown as StonexWasm | null;
   return wasm && typeof (wasm as any).StonexColourSession === 'function' ? wasm : null;
 }

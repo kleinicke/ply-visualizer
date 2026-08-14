@@ -16,6 +16,25 @@ export class E57ImageResult {
     readonly metadata_json: string;
 }
 
+/**
+ * A triangle mesh, ready for a `BufferGeometry`.
+ */
+export class IsosurfaceMesh {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_gradient_magnitudes(): Float32Array;
+    take_indices(): Uint32Array;
+    take_normals(): Float32Array;
+    take_positions(): Float32Array;
+    /**
+     * The decimation actually used, so callers can report what they rendered.
+     */
+    readonly step: Uint32Array;
+    readonly triangle_count: number;
+    readonly vertex_count: number;
+}
+
 export class LidarCollectionResult {
     private constructor();
     free(): void;
@@ -73,6 +92,24 @@ export class NpyArrayResult {
      */
     readonly name: string;
     readonly shape: Uint32Array;
+}
+
+/**
+ * A decoded volume, handed to JS as f32 samples plus its header facts.
+ */
+export class NrrdVolume {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_samples(): Float32Array;
+    readonly channels: number;
+    readonly ijk_to_world: Float64Array;
+    /**
+     * Header facts as JSON: every field, plus the units and range the viewer
+     * reads back out of them.
+     */
+    readonly metadata_json: string;
+    readonly sizes: Uint32Array;
 }
 
 /**
@@ -263,6 +300,14 @@ export function coarse_align(source: Float32Array, target: Float32Array, setting
 export function dealloc(ptr: number, len: number): void;
 
 /**
+ * Extract an isosurface at `threshold`.
+ *
+ * `sizes` is the volume's (nx, ny, nz); `ijk_to_world` is its row-major 4x4;
+ * `step` is the per-axis decimation, which the caller has already chosen.
+ */
+export function extract_isosurface(samples: Float32Array, sizes: Uint32Array, ijk_to_world: Float64Array, threshold: number, step: Uint32Array, max_triangles: number): IsosurfaceMesh;
+
+/**
  * Closed-form fit from matched correspondences.
  */
 export function fit_correspondences(source: Float32Array, target: Float32Array): RegistrationResult | undefined;
@@ -300,6 +345,12 @@ export function parse_at(ptr: number, len: number, format: string): PointCloudRe
 export function parse_e57(data: Uint8Array, file_name: string): LidarCollectionResult;
 
 export function parse_las(data: Uint8Array, file_name: string): LidarCollectionResult;
+
+/**
+ * Parse a NRRD volume. `payload` supplies a detached data file when the header
+ * names one; pass an empty slice otherwise.
+ */
+export function parse_nrrd(data: Uint8Array, detached: Uint8Array): NrrdVolume;
 
 /**
  * Parse a PCD point cloud in any of its three encodings.

@@ -7,11 +7,6 @@ import {
   chooseStep,
 } from '../../../engine/src/visualization/marchingCubes';
 import {
-  triTable,
-  edgeTable,
-  edgeCorners,
-} from '../../../engine/src/visualization/marchingCubesTables';
-import {
   buildVolumeMesh,
   defaultThreshold,
   otsuThreshold,
@@ -235,102 +230,6 @@ suite('NRRD parsing', () => {
   });
 });
 
-suite('Marching cubes tables', () => {
-  test('every case has complete triangles and valid edge indices', () => {
-    assert.strictEqual(triTable.length, 256);
-    for (let cube = 0; cube < 256; cube++) {
-      const row = triTable[cube];
-      const edges = row.filter(value => value !== -1);
-      assert.strictEqual(
-        edges.length % 3,
-        0,
-        `case ${cube} has ${edges.length} edge references, not a multiple of 3`
-      );
-      for (const edge of edges) {
-        assert.ok(edge >= 0 && edge < 12, `case ${cube} references edge ${edge}`);
-      }
-      // No triangle may reuse an edge; that would be a degenerate face.
-      for (let t = 0; t < edges.length; t += 3) {
-        const [a, b, c] = [edges[t], edges[t + 1], edges[t + 2]];
-        assert.ok(a !== b && b !== c && a !== c, `case ${cube} has a degenerate triangle`);
-      }
-    }
-  });
-
-  test('a case is empty exactly when all corners agree', () => {
-    for (let cube = 0; cube < 256; cube++) {
-      const empty = edgeTable[cube] === 0;
-      assert.strictEqual(
-        empty,
-        cube === 0 || cube === 255,
-        `case ${cube} emptiness disagrees with its corner mask`
-      );
-    }
-  });
-
-  test('each case cuts exactly the edges its corner signs demand', () => {
-    // An edge is crossed if and only if its two corners disagree. A row copied
-    // into the wrong slot almost always violates this, which the per-row shape
-    // checks above cannot see.
-    //
-    // (Note what is deliberately *not* asserted: that complementary cases have
-    // equal triangle counts. They do not. Lorensen's table resolves ambiguous
-    // faces asymmetrically — case 5 cuts two corners off with 2 triangles
-    // while case 250 joins them with 4 — and that asymmetry is the classic
-    // source of cracks between neighbouring cells, not a transcription error.)
-    for (let cube = 0; cube < 256; cube++) {
-      const used = new Set(triTable[cube].filter(value => value !== -1));
-      for (let edge = 0; edge < 12; edge++) {
-        const [a, b] = edgeCorners[edge];
-        const crossed = ((cube >> a) & 1) !== ((cube >> b) & 1);
-        assert.strictEqual(
-          used.has(edge),
-          crossed,
-          `case ${cube}: edge ${edge} is ${used.has(edge) ? 'used' : 'unused'} but ${
-            crossed ? 'is' : 'is not'
-          } crossed`
-        );
-      }
-    }
-  });
-
-  test('each case is a closed patch across the cube boundary', () => {
-    // Segments used by one triangle are the patch's boundary, and they lie on
-    // the cube's faces. For the patch to close up against its neighbours,
-    // every crossed edge must be visited by exactly two boundary segments.
-    for (let cube = 0; cube < 256; cube++) {
-      const flat = triTable[cube].filter(value => value !== -1);
-      const segmentUse = new Map<string, number>();
-      for (let t = 0; t < flat.length; t += 3) {
-        const tri = [flat[t], flat[t + 1], flat[t + 2]];
-        for (let i = 0; i < 3; i++) {
-          const a = tri[i];
-          const b = tri[(i + 1) % 3];
-          const key = a < b ? `${a}:${b}` : `${b}:${a}`;
-          segmentUse.set(key, (segmentUse.get(key) || 0) + 1);
-        }
-      }
-
-      const degree = new Map<number, number>();
-      for (const [key, count] of segmentUse) {
-        if (count === 1) {
-          for (const endpoint of key.split(':').map(Number)) {
-            degree.set(endpoint, (degree.get(endpoint) || 0) + 1);
-          }
-        }
-      }
-
-      for (const edge of new Set(flat)) {
-        assert.strictEqual(
-          degree.get(edge) || 0,
-          2,
-          `case ${cube}: edge ${edge} has boundary degree ${degree.get(edge) || 0}, not 2`
-        );
-      }
-    }
-  });
-});
-
 suite('Orthogonal volume slices', () => {
   test('maps original voxel samples through window/level on three physical planes', async () => {
     const volume: VolumeData = {
@@ -518,9 +417,9 @@ suite('Volume voxels', () => {
 });
 
 suite('Isosurface extraction', () => {
-  test('produces a closed manifold surface', () => {
+  test('produces a closed manifold surface', async () => {
     const volume = makeBall(32, 10);
-    const mesh = extractIsosurface(volume, { threshold: 0 });
+    const mesh = await extractIsosurface(volume, { threshold: 0 });
 
     assert.ok(mesh.triangleCount > 500, `expected a substantial mesh, got ${mesh.triangleCount}`);
 
@@ -546,11 +445,11 @@ suite('Isosurface extraction', () => {
     );
   });
 
-  test('places vertices on the analytic sphere', () => {
+  test('places vertices on the analytic sphere', async () => {
     const size = 32;
     const radius = 10;
     const volume = makeBall(size, radius);
-    const mesh = extractIsosurface(volume, { threshold: 0 });
+    const mesh = await extractIsosurface(volume, { threshold: 0 });
 
     const centre = (size - 1) / 2;
     let worst = 0;
@@ -568,10 +467,10 @@ suite('Isosurface extraction', () => {
     assert.ok(worst < 0.2, `worst radial error was ${worst.toFixed(3)} voxels`);
   });
 
-  test('orients normals outward', () => {
+  test('orients normals outward', async () => {
     const size = 32;
     const volume = makeBall(size, 10);
-    const mesh = extractIsosurface(volume, { threshold: 0 });
+    const mesh = await extractIsosurface(volume, { threshold: 0 });
 
     const centre = (size - 1) / 2;
     let inward = 0;
@@ -587,12 +486,12 @@ suite('Isosurface extraction', () => {
     assert.strictEqual(inward, 0, `${inward} normals point into the surface`);
   });
 
-  test('applies the volume affine to vertex positions', () => {
+  test('applies the volume affine to vertex positions', async () => {
     const volume = makeBall(32, 10);
     // 2 mm in x, 3 mm in z, with an origin offset.
     volume.ijkToWorld = [2, 0, 0, 100, 0, 1, 0, 0, 0, 0, 3, -50, 0, 0, 0, 1];
 
-    const mesh = extractIsosurface(volume, { threshold: 0 });
+    const mesh = await extractIsosurface(volume, { threshold: 0 });
 
     const centre = (32 - 1) / 2;
     let minX = Infinity;
@@ -613,12 +512,12 @@ suite('Isosurface extraction', () => {
     assert.ok(Math.abs((minX + maxX) / 2 - (2 * centre + 100)) < 1);
   });
 
-  test('decimation keeps the surface in the same place', () => {
+  test('decimation keeps the surface in the same place', async () => {
     const size = 48;
     const radius = 16;
     const volume = makeBall(size, radius);
 
-    const coarse = extractIsosurface(volume, { threshold: 0, step: 2 });
+    const coarse = await extractIsosurface(volume, { threshold: 0, step: 2 });
     const centre = (size - 1) / 2;
     let worst = 0;
     for (let v = 0; v < coarse.vertexCount; v++) {
@@ -646,7 +545,7 @@ suite('Isosurface extraction', () => {
     assert.deepStrictEqual(chooseStep([640, 640, 44], affine), [14, 14, 1]);
   });
 
-  test('anisotropic decimation keeps a physical sphere spherical', () => {
+  test('anisotropic decimation keeps a physical sphere spherical', async () => {
     const sizes: [number, number, number] = [65, 65, 17];
     const spacing: [number, number, number] = [0.25, 0.25, 1];
     const samples = new Float32Array(sizes[0] * sizes[1] * sizes[2]);
@@ -669,7 +568,7 @@ suite('Isosurface extraction', () => {
       channels: 1,
       header: {},
     };
-    const mesh = extractIsosurface(volume, { threshold: 0, step: [4, 4, 1] });
+    const mesh = await extractIsosurface(volume, { threshold: 0, step: [4, 4, 1] });
     const extents = [0, 1, 2].map(axis => {
       let min = Infinity;
       let max = -Infinity;
@@ -685,11 +584,11 @@ suite('Isosurface extraction', () => {
     assert.strictEqual(mesh.gradientMagnitudes.length, mesh.vertexCount);
   });
 
-  test('a uniform volume yields no surface', () => {
+  test('a uniform volume yields no surface', async () => {
     const volume = makeBall(16, 10);
     volume.samples = new Float32Array(16 * 16 * 16).fill(5);
 
-    const mesh = extractIsosurface(volume, { threshold: 5 });
+    const mesh = await extractIsosurface(volume, { threshold: 5 });
 
     assert.strictEqual(mesh.triangleCount, 0);
   });
@@ -909,7 +808,7 @@ suite('Threshold defaults', () => {
 });
 
 suite('Volume to SpatialData', () => {
-  test('moves the extracted mesh when its scalar threshold changes', () => {
+  test('moves the extracted mesh when its scalar threshold changes', async () => {
     const size = 8;
     const volume = makeBall(size, 1);
     volume.samples = new Float32Array(size * size * size);
@@ -921,8 +820,8 @@ suite('Volume to SpatialData', () => {
       }
     }
 
-    const low = buildVolumeMesh(volume, { threshold: 2, step: [1, 1, 1] }).data;
-    const high = buildVolumeMesh(volume, { threshold: 5, step: [1, 1, 1] }).data;
+    const low = (await buildVolumeMesh(volume, { threshold: 2, step: [1, 1, 1] })).data;
+    const high = (await buildVolumeMesh(volume, { threshold: 5, step: [1, 1, 1] })).data;
     const meanX = (positions: Float32Array) => {
       let sum = 0;
       for (let i = 0; i < positions.length; i += 3) {
@@ -936,11 +835,11 @@ suite('Volume to SpatialData', () => {
     assert.strictEqual(high.metadata?.threshold, 5);
   });
 
-  test('delivers a typed-array mesh the geometry builder can consume', () => {
+  test('delivers a typed-array mesh the geometry builder can consume', async () => {
     const volume = makeBall(32, 10);
     volume.intensityUnits = 'HU';
 
-    const { data, threshold } = buildVolumeMesh(volume, { threshold: 0 });
+    const { data, threshold } = await buildVolumeMesh(volume, { threshold: 0 });
 
     assert.strictEqual(threshold, 0);
     assert.strictEqual(data.useTypedArrays, true);
@@ -955,9 +854,9 @@ suite('Volume to SpatialData', () => {
     assert.ok(data.comments.some(line => line.includes('HU')));
   });
 
-  test('every index addresses a real vertex', () => {
+  test('every index addresses a real vertex', async () => {
     const volume = makeBall(24, 8);
-    const { data } = buildVolumeMesh(volume, { threshold: 0 });
+    const { data } = await buildVolumeMesh(volume, { threshold: 0 });
 
     let maxIndex = 0;
     for (const index of data.indicesArray!) {

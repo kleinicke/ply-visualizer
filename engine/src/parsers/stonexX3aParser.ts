@@ -1223,118 +1223,17 @@ export class StonexX3aParser {
         }
         photographicallyColoredPoints += coloured;
       }
-    } else if (rawColors && colors && frameIndices && this.cameraProjector) {
-      const bestWeights = new Float64Array(vertexCount);
-      const colored = new Uint8Array(vertexCount);
-      // Sub-phases of the colour pass, because "projection + sampling" is three
-      // different jobs sharing a loop: marshalling candidate indices, the Rust
-      // batch projection, and the per-pixel scoring plus image sampling that
-      // still runs in JS. Knowing which one costs is the difference between
-      // porting the right thing and porting something adjacent to it.
-      let marshalMs = 0;
-      let projectMs = 0;
-      let sampleMs = 0;
-      // Counts alongside the times: a phase that is slow because it did more
-      // work reads very differently from one that is slow per unit of work, and
-      // only the second is worth porting.
-      let candidateTotal = 0;
-      let pixelsInFrame = 0;
-      let samplesTaken = 0;
-      for (let frameNumber = 0; frameNumber < cameraFrames.length; frameNumber++) {
-        const frame = cameraFrames[frameNumber];
-        const marshalStart = performance.now();
-        const candidates = new Uint32Array(candidateIndices.get(frame) ?? []);
-        marshalMs += performance.now() - marshalStart;
-        candidateTotal += candidates.length;
-        if (candidates.length === 0) {
-          continue;
-        }
-        const calibration = frame.calibration;
-        const idealDiagnostic = CAMERA_COLOR_DIAGNOSTIC_IDEAL_PINHOLE && frame.type === 'D';
-        const projectStart = performance.now();
-        const pixels = this.cameraProjector({
-          positions,
-          indices: candidates,
-          fx: calibration.fx,
-          fy: calibration.fy,
-          cx: calibration.cx,
-          cy: calibration.cy,
-          coefficients: idealDiagnostic ? [0, 0, 0, 0, 0] : calibration.distortionCoefficients,
-          transform: viewerToCameraTransform(frame),
-          // Keep the physical calibration-domain guard before distortion. It
-          // prevents strong polynomials from folding invalid rays into pixels.
-          maxNormalizedX: Math.tan((calibration.fovX * Math.PI) / 360),
-          maxNormalizedY: Math.tan((calibration.fovY * Math.PI) / 360),
-        });
-        projectMs += performance.now() - projectStart;
-        if (!pixels || pixels.length !== candidates.length * 2) {
-          throw new Error(`Stonex X3A: Rust camera projection failed for ${frame.member.name}.`);
-        }
-        const sampleStart = performance.now();
-        for (let index = 0; index < candidates.length; index++) {
-          const pixelX = pixels[index * 2];
-          const pixelY = pixels[index * 2 + 1];
-          if (
-            !Number.isFinite(pixelX) ||
-            !Number.isFinite(pixelY) ||
-            pixelX < 1 ||
-            pixelY < 1 ||
-            pixelX >= calibration.width - 1 ||
-            pixelY >= calibration.height - 1
-          ) {
-            continue;
-          }
-          pixelsInFrame++;
-          const centerX = (pixelX - calibration.cx) / (calibration.width * 0.5);
-          const centerY = (pixelY - calibration.cy) / (calibration.height * 0.5);
-          const score = centerX * centerX + centerY * centerY;
-          const edgeDistance = Math.min(
-            pixelX,
-            pixelY,
-            calibration.width - 1 - pixelX,
-            calibration.height - 1 - pixelY
-          );
-          const edgeMargin = Math.min(calibration.width, calibration.height) * 0.08;
-          const edgeT = Math.max(0, Math.min(1, edgeDistance / edgeMargin));
-          const edgeWeight = edgeT * edgeT * (3 - 2 * edgeT);
-          const weight = edgeWeight / (0.05 + score) ** 2;
-          const pointIndex = candidates[index];
-          if (weight <= bestWeights[pointIndex]) {
-            continue;
-          }
-          bestWeights[pointIndex] = weight;
-          samplesTaken++;
-          const color = sampleCameraRgb(data, frame, pixelX, pixelY);
-          const offset = pointIndex * 3;
-          rawColors[offset] = Math.round(color[0]);
-          rawColors[offset + 1] = Math.round(color[1]);
-          rawColors[offset + 2] = Math.round(color[2]);
-          frameIndices[pointIndex] = frame.archiveFrameIndex;
-          colored[pointIndex] = 1;
-        }
-        sampleMs += performance.now() - sampleStart;
-      }
-
-      counters.marshalMs = marshalMs;
-      counters.projectMs = projectMs;
-      counters.sampleMs = sampleMs;
-      counters.candidateTotal = candidateTotal;
-      counters.pixelsInFrame = pixelsInFrame;
-      counters.samplesTaken = samplesTaken;
-      timingCallback?.(
-        `Stonex X3A colour pass: candidate marshalling ${(marshalMs / 1000).toFixed(1)}s · ` +
-          `Rust projection ${(projectMs / 1000).toFixed(1)}s · JS scoring+sampling ${(sampleMs / 1000).toFixed(1)}s`
+    } else if (rawColors && colors && frameIndices) {
+      // No JavaScript colour pass any more. There used to be one that marshalled
+      // candidate indices, called the Rust batch projector per frame, and then
+      // scored and sampled every projected pixel back in JavaScript - about 80%
+      // of a parse, and a second implementation of what the colour session now
+      // does entirely in Rust. It was kept while the two were compared on a real
+      // archive; that comparison is done, and `stonex::colour`'s own tests cover
+      // the logic.
+      throw new Error(
+        'Stonex X3A photographic colouring requires the Rust/WASM colour session, which failed to load'
       );
-
-      for (const range of scanPointRanges) {
-        let rangeColored = 0;
-        const end = range.pointOffset + range.pointCount;
-        for (let index = range.pointOffset; index < end; index++) {
-          rangeColored += colored[index];
-        }
-        range.photographicallyColoredPoints = rangeColored;
-        photographicallyColoredPoints += rangeColored;
-      }
     }
 
     if (usedRustColour) {

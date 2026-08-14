@@ -23,6 +23,8 @@ serde_json = "1"
 # NPZ is a zip container. Default features pull in encryption and time
 # handling that a reader does not need and that do not all build for wasm.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Gzip for NRRD payloads. The pure-Rust backend, so it builds for wasm.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [profile.release]
 opt-level = 3

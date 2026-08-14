@@ -1254,14 +1254,44 @@ behaviour.
 
 #### 3. Volume and isosurface kernels
 
+**Marching cubes done (August 2026).** `wasm/pointcloud-parser/src/volume/` owns
+the extraction; `marchingCubes.ts` is **429 → 146 lines** and is now the
+decimation choice (`chooseStep`) plus one call. `marchingCubesTables.ts` (326)
+is **deleted** — the tables are generated from it into `volume/tables.rs`, and
+its five validation tests moved to `cargo` next to the data they guard.
+
+Three things worth recording:
+
+- **The generator machinery went with it.** The TypeScript yielded per k-layer
+  so a single-threaded page could stay responsive, but the isosurface is
+  extracted in `volumeSessions.reextractVolume` — the extension host, its own
+  process — so there was nothing to yield to. `extractIsosurfaceAsync` now
+  brackets one call with its cancellation check instead of interleaving.
+- **The tables were generated, not retyped.** A hand-copied 256-row table is
+  exactly the sort of thing that produces plausible geometry with cracks, so
+  they were parsed out of the TypeScript source into Rust.
+- **The existing suite carried the port.** `volumeIsosurface.test.ts` (45 tests)
+  needed only `await`; it then held the Rust to the same behaviour, which is
+  what a port should cost. On top of it, `volume/mod.rs` has its own eight tests
+  against an analytic sphere — vertices on the surface to within a voxel,
+  outward normals, a closed manifold (every edge shared by exactly two
+  triangles), world-space positions under a scaled affine, decimation, empty
+  volumes, and both refusal paths.
+
+Still TypeScript here, and deliberately: `isosurface.ts`'s threshold policy
+(Otsu, the Hounsfield default) and `volumeVoxels.ts`. Both are small, neither is
+on the clock, and the first is the kind of "what should the default be" decision
+that changes with each new dataset.
+
 `visualization/marchingCubes.ts` (429) + `marchingCubesTables.ts` (326) +
 `isosurface.ts` (260) + `volumeVoxels.ts` (362) ≈ 1,400 lines of pure array math
 with no DOM and no Three.js object handling until the very end, where a
 `Float32Array` of triangles becomes a `BufferGeometry`. Textbook fit for the
 Rust/WASM preference at the top of this file, and unlike the parsers there is no
-existing duplicate to reconcile. Also the piece most likely to be shared with
-tiff-visualizer's volume work, so it argues for the Cargo workspace in the item
-below.
+existing duplicate to reconcile. (Checked before starting: tiff-visualizer has
+no marching-cubes or isosurface code — its `volumeExport.ts` hands the volume
+over and leaves the surface to this side — so unlike the pixel readers this was
+not entangled with the shared-crate plan.)
 
 #### 4. NRRD
 
@@ -1269,7 +1299,35 @@ below.
 Straightforward in Rust, shares `flate2` with item 2, and belongs next to the
 volume kernels it feeds.
 
+**Done (August 2026).** `volume/nrrd.rs` reads the header, the affine, the
+endianness and all three encodings (raw, gzip, ascii); `nrrdParser.ts` is **504
+→ 167 lines** and keeps only what needs the host: resolving a detached data
+file, and the header _interpretation_ NRRD has no standard for — space units,
+`units:=HU` versus a DICOM `modality`, the declared range. Ten cargo tests cover
+it, including the two things that are silently wrong rather than loud when
+mishandled: an LPS volume flipped into RAS (read as RAS it mirrors the patient,
+which looks plausible on a symmetric body) and a 4D channel-first volume
+de-interleaved rather than truncated. Gzip now goes through `flate2` rather than
+the platform's `DecompressionStream`.
+
 #### 5. Stonex X3A — partially
+
+**Done (August 2026): the JavaScript colour pass is deleted.** The per-record
+decode was already Rust; what remained was a second colouring implementation —
+marshal candidate indices, call the Rust batch projector per frame, then score
+and sample every projected pixel back in JavaScript. It was kept while the two
+were compared byte for byte on a real archive, and that comparison is what made
+removing it safe. 114 lines gone, and with them the
+`setStonexWasmDisabledForTests` switch that existed only to force it.
+
+An unexpected result: **this fixed a test that had been failing for the whole
+session.** `stonexColour.test.ts` failed under `test:node` with "Rust camera
+projection failed" because the JavaScript path needed the tiff-camera wasm,
+whose path does not resolve there; the Rust colour session does not. `test:node`
+is now clean at 118 passing. The test itself became what it should be — the Rust
+pass on a real archive, checking that colouring is plausible and that every
+coloured point is attributed to a frame — since with one implementation there is
+nothing left to differ from.
 
 `parsers/stonexX3aParser.ts` is the largest single TS parser at 1,376 lines, but
 most of it is container walking, `DESC`/`INST` header interpretation and station
@@ -1468,6 +1526,36 @@ caveat from item 0: a webview Web Worker is not a separate process.
 
 #### 7. Point-cloud math kernels
 
+**Measured, and not ported — the win was in the JavaScript (August 2026).** This
+is the item the "porting is not automatically a win" rule at the top exists for,
+so it was measured first:
+
+| loop                               | before | after     |
+| ---------------------------------- | ------ | --------- |
+| `buildScalarColorArray`, 8M points | 116ms  | **60ms**  |
+| `robustPointBounds`, 8M points     | 10ms   | unchanged |
+
+`buildScalarColorArray` re-runs over the whole cloud on every colormap change,
+so it is one of the few loops a user can feel — and it was returning a
+three-element array _per point_, allocating eight million throwaway arrays.
+Flattening the colormap stops and writing the channels directly halved it. A
+WASM port could not have done better: the colours have to be copied back into a
+JavaScript `Float32Array` for the geometry attribute either way, and the scalar
+field has to be copied in, so ~4N floats cross the boundary to replace a loop
+that now costs 60ms.
+
+`robustPointBounds` samples to 50,000 points before sorting, so it is 10ms
+regardless of cloud size and runs once per load. Copying a 96MB position array
+into wasm to save part of 10ms is not a trade worth making.
+
+`utils/scalarFields.ts` is name policy rather than arithmetic — which properties
+count as scalar fields, how a `scalar:<field>:<map>` mode string parses — and
+stays where the churn is. (The same rules exist in `ply.rs` because the parser
+needs them at parse time; that is the one place the duplication is
+load-bearing.)
+
+#### 7. Point-cloud math kernels (original entry)
+
 Small, pure, and each one removes a JS hot loop over millions of points:
 
 - **`utils/intensity.ts` (127) and `utils/scalarFields.ts` (109)** — min/max
@@ -1485,6 +1573,33 @@ rather than five crossings; individually each is too small to justify the
 boundary.
 
 #### 8. Stonex colour correction and station colouring
+
+**Partly done, and the rest measured rather than assumed (August 2026).**
+
+_Colour correction_ was optimised in place rather than ported: the highlight
+mode is the same for every point, so it now chooses the loop instead of being
+tested inside it — **340ms → 253ms on a 42M-point archive**, identical output.
+It was not ported because the correction is deliberately interactive: it re-runs
+on every white-balance or exposure change _without_ re-parsing, and a port would
+copy the raw colours in, the frame indices in and the corrected colours out —
+336MB per slider move, which is most of what the port would have saved. Making
+that pay needs the colour session to outlive the parse and keep its raw colours
+in wasm memory, which is the "colour never leaves Rust" design this item
+imagines. That is a lifetime change across the parse boundary for roughly a 2x
+on one interaction, and it should be decided on its own terms rather than as a
+side effect of this item.
+
+_Station colouring_ is **not** ported. It is the same shape as the parser's own
+pass that item 5 just deleted — Rust projection, JavaScript scoring and sampling
+— but its sampler is a per-point JavaScript callback that lazily demosaics each
+frame, so porting it means marshalling every frame's decoded plane into wasm
+first. That is exactly what `StonexColourSession` does for the parser's pass, so
+the template exists; what does not yet exist in Rust is the per-station
+visibility depth buffer and the arbitrary station-to-station transforms. Worth
+doing, but it is a new Rust module rather than a move, and it runs once per user
+action over the grey preview sweeps rather than on every parse.
+
+#### 8. Stonex colour correction and station colouring (original entry)
 
 `visualization/stonexColorCorrection.ts` (224) and
 `parsers/stonexStationColoring.ts` (466) are per-pixel and per-point loops that
@@ -1591,10 +1706,14 @@ being added. Item 6 moves ahead of the volume work because it deletes five
 hand-rolled decoders and removes a live boundary crossing, where 3 and 4 add new
 Rust beside no existing duplicate.
 
-**Where this stands (August 2026):** 0, 1 and 2 are done. Item 6 is split — its
-pixel readers wait for the shared crate (see above), its projection and
-conversion kernels do not and are the next thing to pick up. After that the
-order is unchanged: 3 → 4 → 5 → 8.
+**Where this stands (August 2026):** 0, 1, 2, 3, 4 and 5 are done, and item 6's
+projection and conversion kernels with them. Items 7 and 8 were measured rather
+than ported — the wins turned out to be in the JavaScript, and both entries
+carry the numbers.
+
+What is left of the list: **item 6's pixel readers**, waiting on the shared
+crate with tiff-visualizer, and **item 8's station colouring**, which needs a
+new Rust module (per-station visibility and transforms) rather than a move.
 
 Stop after any step whose TypeScript counterpart could not actually be deleted.
 A port that leaves a fallback in place has not reduced the maintenance surface,

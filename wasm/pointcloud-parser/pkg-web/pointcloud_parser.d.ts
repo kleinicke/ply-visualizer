@@ -16,6 +16,25 @@ export class E57ImageResult {
     readonly metadata_json: string;
 }
 
+/**
+ * A triangle mesh, ready for a `BufferGeometry`.
+ */
+export class IsosurfaceMesh {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_gradient_magnitudes(): Float32Array;
+    take_indices(): Uint32Array;
+    take_normals(): Float32Array;
+    take_positions(): Float32Array;
+    /**
+     * The decimation actually used, so callers can report what they rendered.
+     */
+    readonly step: Uint32Array;
+    readonly triangle_count: number;
+    readonly vertex_count: number;
+}
+
 export class LidarCollectionResult {
     private constructor();
     free(): void;
@@ -73,6 +92,24 @@ export class NpyArrayResult {
      */
     readonly name: string;
     readonly shape: Uint32Array;
+}
+
+/**
+ * A decoded volume, handed to JS as f32 samples plus its header facts.
+ */
+export class NrrdVolume {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_samples(): Float32Array;
+    readonly channels: number;
+    readonly ijk_to_world: Float64Array;
+    /**
+     * Header facts as JSON: every field, plus the units and range the viewer
+     * reads back out of them.
+     */
+    readonly metadata_json: string;
+    readonly sizes: Uint32Array;
 }
 
 /**
@@ -263,6 +300,14 @@ export function coarse_align(source: Float32Array, target: Float32Array, setting
 export function dealloc(ptr: number, len: number): void;
 
 /**
+ * Extract an isosurface at `threshold`.
+ *
+ * `sizes` is the volume's (nx, ny, nz); `ijk_to_world` is its row-major 4x4;
+ * `step` is the per-axis decimation, which the caller has already chosen.
+ */
+export function extract_isosurface(samples: Float32Array, sizes: Uint32Array, ijk_to_world: Float64Array, threshold: number, step: Uint32Array, max_triangles: number): IsosurfaceMesh;
+
+/**
  * Closed-form fit from matched correspondences.
  */
 export function fit_correspondences(source: Float32Array, target: Float32Array): RegistrationResult | undefined;
@@ -300,6 +345,12 @@ export function parse_at(ptr: number, len: number, format: string): PointCloudRe
 export function parse_e57(data: Uint8Array, file_name: string): LidarCollectionResult;
 
 export function parse_las(data: Uint8Array, file_name: string): LidarCollectionResult;
+
+/**
+ * Parse a NRRD volume. `payload` supplies a detached data file when the header
+ * names one; pass an empty slice otherwise.
+ */
+export function parse_nrrd(data: Uint8Array, detached: Uint8Array): NrrdVolume;
 
 /**
  * Parse a PCD point cloud in any of its three encodings.
@@ -386,9 +437,11 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_e57imageresult_free: (a: number, b: number) => void;
+    readonly __wbg_isosurfacemesh_free: (a: number, b: number) => void;
     readonly __wbg_lidarcollectionresult_free: (a: number, b: number) => void;
     readonly __wbg_lidarscanresult_free: (a: number, b: number) => void;
     readonly __wbg_npyarrayresult_free: (a: number, b: number) => void;
+    readonly __wbg_nrrdvolume_free: (a: number, b: number) => void;
     readonly __wbg_plyresult_free: (a: number, b: number) => void;
     readonly __wbg_pointcloudresult_free: (a: number, b: number) => void;
     readonly __wbg_registrationresult_free: (a: number, b: number) => void;
@@ -401,8 +454,16 @@ export interface InitOutput {
     readonly e57imageresult_metadata_json: (a: number) => [number, number];
     readonly e57imageresult_take_data: (a: number) => [number, number];
     readonly e57imageresult_take_mask: (a: number) => [number, number];
+    readonly extract_isosurface: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number];
     readonly fit_correspondences: (a: number, b: number, c: number, d: number) => number;
     readonly icp_refine: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly isosurfacemesh_step: (a: number) => [number, number];
+    readonly isosurfacemesh_take_gradient_magnitudes: (a: number) => [number, number];
+    readonly isosurfacemesh_take_indices: (a: number) => [number, number];
+    readonly isosurfacemesh_take_normals: (a: number) => [number, number];
+    readonly isosurfacemesh_take_positions: (a: number) => [number, number];
+    readonly isosurfacemesh_triangle_count: (a: number) => number;
+    readonly isosurfacemesh_vertex_count: (a: number) => number;
     readonly lidarcollectionresult_errors_json: (a: number) => [number, number];
     readonly lidarcollectionresult_image_count: (a: number) => number;
     readonly lidarcollectionresult_scan_count: (a: number) => number;
@@ -432,11 +493,15 @@ export interface InitOutput {
     readonly npyarrayresult_dtype: (a: number) => [number, number];
     readonly npyarrayresult_name: (a: number) => [number, number];
     readonly npyarrayresult_shape: (a: number) => [number, number];
-    readonly npyarrayresult_take_values: (a: number) => [number, number];
+    readonly nrrdvolume_channels: (a: number) => number;
+    readonly nrrdvolume_ijk_to_world: (a: number) => [number, number];
+    readonly nrrdvolume_metadata_json: (a: number) => [number, number];
+    readonly nrrdvolume_sizes: (a: number) => [number, number];
     readonly parse_ascii_ply: (a: number, b: number) => [number, number, number];
     readonly parse_at: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly parse_e57: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly parse_las: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly parse_nrrd: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly parse_pcd: (a: number, b: number) => [number, number, number];
     readonly parse_ply: (a: number, b: number) => [number, number, number];
     readonly parse_ply_at: (a: number, b: number) => [number, number, number];
@@ -451,8 +516,6 @@ export interface InitOutput {
     readonly plyresult_metadata_json: (a: number) => [number, number];
     readonly plyresult_scalar_field_names: (a: number) => [number, number];
     readonly plyresult_take_face_sizes: (a: number) => [number, number];
-    readonly plyresult_take_normals: (a: number) => [number, number];
-    readonly plyresult_take_positions: (a: number) => [number, number];
     readonly plyresult_take_scalar_at: (a: number, b: number) => [number, number];
     readonly plyresult_vertex_count: (a: number) => number;
     readonly pointcloudresult_bbox: (a: number) => [number, number];
@@ -460,7 +523,6 @@ export interface InitOutput {
     readonly pointcloudresult_has_intensity: (a: number) => number;
     readonly pointcloudresult_has_normals: (a: number) => number;
     readonly pointcloudresult_metadata_json: (a: number) => [number, number];
-    readonly pointcloudresult_vertex_count: (a: number) => number;
     readonly register_pair: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly registrationresult_matrix: (a: number) => [number, number];
     readonly registrationresult_stats: (a: number) => [number, number];
@@ -479,7 +541,6 @@ export interface InitOutput {
     readonly stonexpreview_width: (a: number) => number;
     readonly stonexscanpoints_point_count: (a: number) => number;
     readonly stonexscanpoints_take_column_azimuths: (a: number) => [number, number];
-    readonly stonexscanpoints_take_intensity: (a: number) => [number, number];
     readonly streamparser_failed: (a: number) => number;
     readonly streamparser_finish: (a: number) => number;
     readonly streamparser_new: (a: number, b: number, c: number, d: number) => number;
@@ -489,14 +550,20 @@ export interface InitOutput {
     readonly stonexpreview_take_rgba: (a: number) => [number, number];
     readonly stonexrgbimage_take_data: (a: number) => [number, number];
     readonly alloc: (a: number) => number;
+    readonly pointcloudresult_vertex_count: (a: number) => number;
     readonly stonexrgbimage_height: (a: number) => number;
     readonly stonexrgbimage_width: (a: number) => number;
     readonly __wbg_stonexrgbimage_free: (a: number, b: number) => void;
+    readonly npyarrayresult_take_values: (a: number) => [number, number];
+    readonly nrrdvolume_take_samples: (a: number) => [number, number];
     readonly plyresult_take_face_indices: (a: number) => [number, number];
     readonly plyresult_take_intensity: (a: number) => [number, number];
+    readonly plyresult_take_normals: (a: number) => [number, number];
+    readonly plyresult_take_positions: (a: number) => [number, number];
     readonly pointcloudresult_take_intensity: (a: number) => [number, number];
     readonly pointcloudresult_take_normals: (a: number) => [number, number];
     readonly pointcloudresult_take_positions: (a: number) => [number, number];
+    readonly stonexscanpoints_take_intensity: (a: number) => [number, number];
     readonly stonexscanpoints_take_points_per_column: (a: number) => [number, number];
     readonly stonexscanpoints_take_positions: (a: number) => [number, number];
     readonly dealloc: (a: number, b: number) => void;
