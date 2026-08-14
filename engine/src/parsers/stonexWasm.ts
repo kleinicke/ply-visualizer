@@ -38,9 +38,40 @@ export interface StonexColourSession {
   free?(): void;
 }
 
+/**
+ * The cross-station pass, which owns the archive's arrays for its duration and
+ * hands each scan back as it finishes.
+ */
+export interface StonexStationSession {
+  readonly scan_count: number;
+  /** Colours one scan from every station; true when it wrote anything. */
+  colour_scan(scanIndex: number): boolean;
+  scan_colours(scanIndex: number): Uint8Array;
+  scan_frame_indices(scanIndex: number): Uint16Array;
+  readonly newly_colored: number;
+  readonly recolored: number;
+  readonly occluded_samples: number;
+  take_colours(): Uint8Array;
+  take_frame_indices(): Uint16Array;
+  take_coloured(): Uint8Array;
+  take_changed(): Uint8Array;
+  free?(): void;
+}
+
 export interface StonexWasm {
   /** Holds the archive's frames and their decoded panoramas for the parse. */
   StonexColourSession: new (pixels: Uint8Array, framesJson: string) => StonexColourSession;
+  /** Holds the archive for one cross-station colouring pass. */
+  StonexStationSession: new (
+    positions: Float32Array,
+    pixels: Uint8Array,
+    rawColours: Uint8Array,
+    frameIndices: Uint16Array,
+    coloured: Uint8Array,
+    framesJson: string,
+    scansJson: string,
+    optionsJson: string
+  ) => StonexStationSession;
   /** Decodes one X3R record's points, with its per-column bookkeeping. */
   stonex_decode_scan(record: Uint8Array): {
     point_count: number;

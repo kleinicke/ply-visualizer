@@ -144,3 +144,106 @@ export async function parseNrrdWasm(
   raw.free?.();
   return volume;
 }
+
+/* eslint-disable @typescript-eslint/naming-convention -- the wasm-bindgen surface. */
+interface RawVoxelMesh {
+  vertex_count: number;
+  face_count: number;
+  voxel_count: number;
+  step: Uint32Array;
+  voxel_size: Float32Array;
+  take_positions(): Float32Array;
+  take_colors(): Uint8Array;
+  take_intensity(): Float32Array;
+  take_indices(): Uint32Array;
+  free?(): void;
+}
+/* eslint-enable @typescript-eslint/naming-convention */
+
+export interface WasmVoxelMesh {
+  positions: Float32Array;
+  colors: Uint8Array;
+  intensity: Float32Array;
+  indices: Uint32Array;
+  vertexCount: number;
+  faceCount: number;
+  /** Voxels kept, whether or not they showed a face. */
+  voxelCount: number;
+  step: [number, number, number];
+  voxelSize: [number, number, number];
+}
+
+export interface VoxelBrightness {
+  mode: string;
+  windowCenter: number;
+  windowWidth: number;
+  /** Two entries per slice for `slice-auto`; empty otherwise. */
+  sliceRanges: Float64Array;
+  /** Two entries for `volume-auto`; empty otherwise. */
+  volumeRange: Float64Array;
+  monochrome1: boolean;
+}
+
+/** Build the exposed shell of every retained voxel. */
+export async function buildVolumeVoxelsWasm(
+  samples: ArrayLike<number>,
+  sizes: readonly number[],
+  ijkToWorld: readonly number[],
+  threshold: number,
+  step: readonly [number, number, number],
+  maxFaces: number,
+  clip: readonly number[],
+  brightness: VoxelBrightness
+): Promise<WasmVoxelMesh> {
+  const wasm = (await loadVolumeWasm()) as
+    | (VolumeWasm & {
+        build_volume_voxels(
+          samples: Float32Array,
+          sizes: Uint32Array,
+          ijkToWorld: Float64Array,
+          threshold: number,
+          step: Uint32Array,
+          maxFaces: number,
+          clip: Uint32Array,
+          brightnessMode: string,
+          windowCenter: number,
+          windowWidth: number,
+          sliceRanges: Float64Array,
+          volumeRange: Float64Array,
+          monochrome1: boolean
+        ): RawVoxelMesh;
+      })
+    | null;
+  if (!wasm || typeof wasm.build_volume_voxels !== 'function') {
+    throw new Error('Building voxels requires the Rust/WASM kernel');
+  }
+  const values = samples instanceof Float32Array ? samples : Float32Array.from(samples);
+  const raw = wasm.build_volume_voxels(
+    values,
+    Uint32Array.from(sizes),
+    Float64Array.from(ijkToWorld),
+    threshold,
+    Uint32Array.from(step),
+    maxFaces,
+    Uint32Array.from(clip),
+    brightness.mode,
+    brightness.windowCenter,
+    brightness.windowWidth,
+    brightness.sliceRanges,
+    brightness.volumeRange,
+    brightness.monochrome1
+  );
+  const mesh: WasmVoxelMesh = {
+    vertexCount: raw.vertex_count,
+    faceCount: raw.face_count,
+    voxelCount: raw.voxel_count,
+    step: Array.from(raw.step) as [number, number, number],
+    voxelSize: Array.from(raw.voxel_size) as [number, number, number],
+    positions: raw.take_positions(),
+    colors: raw.take_colors(),
+    intensity: raw.take_intensity(),
+    indices: raw.take_indices(),
+  };
+  raw.free?.();
+  return mesh;
+}

@@ -11,6 +11,7 @@
 pub mod bayer;
 pub mod colour;
 pub mod scan;
+mod stations;
 
 use wasm_bindgen::prelude::*;
 
@@ -400,3 +401,5 @@ impl StonexColourSession {
         }
     }
 }
+
+pub use stations::StonexStationSession;

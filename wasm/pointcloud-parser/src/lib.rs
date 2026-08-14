@@ -27,8 +27,12 @@ pub use ply::{parse_ply, parse_ply_at, parse_ply_native, PlyResult};
 pub use registration::bindings::{
     coarse_align, fit_correspondences, icp_refine, register_pair, RegistrationResult,
 };
-pub use stonex::{stonex_decode_frame, stonex_decode_scan, StonexRgbImage, StonexScanPoints};
-pub use volume::{extract_isosurface, parse_nrrd, IsosurfaceMesh, NrrdVolume};
+pub use stonex::{
+    stonex_decode_frame, stonex_decode_scan, StonexRgbImage, StonexScanPoints, StonexStationSession,
+};
+pub use volume::{
+    build_volume_voxels, extract_isosurface, parse_nrrd, IsosurfaceMesh, NrrdVolume, VoxelMesh,
+};
 
 /// Parsed point cloud, returned to JS. Large buffers are moved out with the
 /// `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.

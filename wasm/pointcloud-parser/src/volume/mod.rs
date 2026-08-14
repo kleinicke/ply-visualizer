@@ -16,8 +16,10 @@
 
 mod nrrd;
 mod tables;
+mod voxels;
 
 pub use nrrd::{parse_nrrd, NrrdVolume};
+pub use voxels::{build_volume_voxels, VoxelMesh};
 
 use tables::{CORNER_OFFSETS, EDGE_CORNERS, TRI_TABLE};
 use wasm_bindgen::prelude::*;

@@ -1288,7 +1288,7 @@ export class StonexX3aParser {
       frameIndices,
       colorCalibration,
       photographicallyColoredPoints,
-      stationSources: { data, frames: cameraFrames, projector: this.cameraProjector },
+      stationSources: { data, frames: cameraFrames },
       cameraFrames: cameraMetadata,
     });
     markPhase('result construction');
@@ -1379,8 +1379,7 @@ export class StonexX3aParser {
     timingCallback?: (message: string) => void
   ): Promise<Map<string, number[]> | null> {
     const sources = combined.metadata.stonexStationSources as
-      | { data: Uint8Array; frames: CameraFrame[]; projector?: StonexCameraBatchProjector }
-      | undefined;
+      { data: Uint8Array; frames: CameraFrame[] } | undefined;
     const ranges = combined.metadata.embeddedScanPointRanges as ScanPointRange[] | undefined;
     const supplied = options?.transforms;
     if ((!options?.register && !supplied) || !sources || !ranges || ranges.length === 0) {
@@ -1475,7 +1474,7 @@ export class StonexX3aParser {
   /** The colouring half, once every scan has a placement. */
   private async colorAcrossStations(
     combined: StonexX3aData,
-    sources: { data: Uint8Array; frames: CameraFrame[]; projector?: StonexCameraBatchProjector },
+    sources: { data: Uint8Array; frames: CameraFrame[] },
     ranges: ScanPointRange[],
     transforms: Map<string, number[]>,
     options: StonexStationPipelineOptions,
@@ -1486,7 +1485,7 @@ export class StonexX3aParser {
     }
     const rawColors = combined.metadata.stonexRawColors as Uint8Array | null;
     const frameIndices = combined.metadata.stonexFrameIndices as Uint16Array | null;
-    if (!rawColors || !frameIndices || !sources.projector) {
+    if (!rawColors || !frameIndices) {
       return;
     }
 
@@ -1519,12 +1518,40 @@ export class StonexX3aParser {
         (diagnostic !== 'u-only' || frame.type === 'U') &&
         (diagnostic !== 'd-only' || frame.type === 'D')
     );
+    // Timed from here rather than from the colour call: gathering the sensor
+    // planes is part of what the user waits for, and it is the half a future
+    // change is most likely to make expensive.
+    const colouringStarted = performance.now();
+
+    // One buffer holding every selected frame's raw sensor plane, so a frame
+    // crosses into wasm once for the pass however many scans draw on it — the
+    // same arrangement the parser's own colour session uses.
+    const pixelOffsets = new Map<CameraFrame, number>();
+    let pixelBytes = 0;
+    for (const frame of selectedFrames) {
+      pixelOffsets.set(frame, pixelBytes);
+      pixelBytes += frame.rawWidth * frame.rawHeight;
+    }
+    const framePixels = new Uint8Array(pixelBytes);
+    for (const frame of selectedFrames) {
+      framePixels.set(
+        sources.data.subarray(
+          frame.pixelsOffset,
+          frame.pixelsOffset + frame.rawWidth * frame.rawHeight
+        ),
+        pixelOffsets.get(frame)!
+      );
+    }
+
     const frames: StationFrame[] = selectedFrames.map(frame => ({
       // Keep the original archive index: colour correction and the camera list
       // address that complete list even when a diagnostic temporarily filters it.
       frameNumber: frame.archiveFrameIndex,
       scanStem: frame.scanStem,
       panDegrees: frame.panDegrees,
+      pixelOffset: pixelOffsets.get(frame)!,
+      rawWidth: frame.rawWidth,
+      rawHeight: frame.rawHeight,
       imageWidth: frame.calibration.width,
       imageHeight: frame.calibration.height,
       fx: frame.calibration.fx,
@@ -1538,9 +1565,10 @@ export class StonexX3aParser {
       viewerToCamera: viewerToCameraTransform(frame, diagnostic),
       maxNormalizedX: Math.tan((frame.calibration.fovX * Math.PI) / 360),
       maxNormalizedY: Math.tan((frame.calibration.fovY * Math.PI) / 360),
-      sample: (pixelX, pixelY) => sampleCameraRgb(sources.data, frame, pixelX, pixelY),
     }));
 
+    const gatherMs = performance.now() - colouringStarted;
+    const passStarted = performance.now();
     const changed = new Uint8Array(combined.vertexCount);
     const result = await colorFromAllStations(
       combined.positionsArray,
@@ -1548,9 +1576,9 @@ export class StonexX3aParser {
       frameIndices,
       colored,
       changed,
+      framePixels,
       scans,
       frames,
-      sources.projector,
       {
         recolorAlreadyColored: options.recolorAlreadyColored,
         ownStationOnly: diagnostic === 'own-station-only',
@@ -1568,13 +1596,10 @@ export class StonexX3aParser {
           }),
       }
     );
-    timingCallback?.(
-      `Stonex X3A: coloured ${result.newlyColored.toLocaleString()} previously grey points ` +
-        `(${result.recolored.toLocaleString()} improved, ` +
-        `${result.occludedSamples.toLocaleString()} point-camera pairs rejected as hidden)`
-    );
+    const passMs = performance.now() - passStarted;
 
     // The GPU array is the corrected copy; re-derive it from the new raw values.
+    const correctionStarted = performance.now();
     const colors = combined.colorsArray;
     const calibration = combined.metadata.stonexColorCalibration as
       StonexColorCalibration | undefined;
@@ -1587,6 +1612,19 @@ export class StonexX3aParser {
         colors
       );
     }
+    const correctionMs = performance.now() - correctionStarted;
+
+    // Broken down rather than totalled: the three parts respond to completely
+    // different changes, and a total alone cannot say which one moved.
+    timingCallback?.(
+      `Stonex X3A: coloured ${result.newlyColored.toLocaleString()} previously grey points ` +
+        `(${result.recolored.toLocaleString()} improved, ` +
+        `${result.occludedSamples.toLocaleString()} point-camera pairs rejected as hidden) ` +
+        `in ${Math.round(performance.now() - colouringStarted)}ms ` +
+        `[${Math.round(gatherMs)}ms gathering ${selectedFrames.length} frames, ` +
+        `${Math.round(passMs)}ms colouring ${combined.vertexCount.toLocaleString()} points, ` +
+        `${Math.round(correctionMs)}ms white balance]`
+    );
     let total = 0;
     const changedScans = new Set<string>();
     for (const range of ranges) {

@@ -1017,14 +1017,15 @@ camera model, not a reimplementation.
 
 ### Moving more TypeScript to Rust
 
-Inventory re-taken August 2026 (second pass, after the `camera-models`
-extraction and the X3A work). Current split: **48,775** lines of TS/JS/Svelte in
-`engine/src/`, **7,846** in `src/` (both excluding tests), against **11,638**
-lines of Rust (`wasm/pointcloud-parser` 6,725, `wasm/tiff-decoder` 3,865,
-`wasm/camera-models` 1,048) — Rust is about 17% of the codebase. Effort is
-explicitly not the limiting factor here; the limiting factor is that a second
-implementation is a liability, so the ordering below is by "removes a duplicate
-or a real CPU cost", not by line count.
+Inventory re-taken August 2026 (third pass, after items 1-5, 7 and 8 landed).
+Current split: **45,558** lines of TS/JS/Svelte in `engine/src/`, **7,708** in
+`src/` (both excluding tests), against **18,234** lines of Rust
+(`wasm/pointcloud-parser` 12,311, `wasm/tiff-decoder` 4,415,
+`wasm/camera-models` 1,508) — Rust is about 25% of the codebase, up from 17%
+before this pass, and the TypeScript side shrank by ~3,200 lines rather than
+merely being shadowed. Effort is explicitly not the limiting factor here; the
+limiting factor is that a second implementation is a liability, so the ordering
+below is by "removes a duplicate or a real CPU cost", not by line count.
 
 **The rule this list follows: replace, don't shadow.** Every item is done when
 the TypeScript version is _deleted_, not when a Rust version exists beside it.
@@ -1278,10 +1279,25 @@ Three things worth recording:
   triangles), world-space positions under a scaled affine, decimation, empty
   volumes, and both refusal paths.
 
+**Voxel meshing done (August 2026).** `volumeVoxels.ts` was the honest gap in
+the paragraph that used to stand here: a per-voxel mesh builder written off as
+"not on the clock" without evidence. Measured, it was on the clock — a 256³ ball
+took **2,046ms in JavaScript against 641ms in Rust (3.2×)** for an identical
+790,272 vertices — so it was ported to `volume/voxels.rs` and the file is **362
+→ 181 lines**, now the Rust call plus the `SpatialData` shaping. Eight cargo
+tests cover the parts that are wrong-but-plausible rather than loud: a lone
+voxel gives six faces, two touching voxels hide the shared pair, the face budget
+grows the stride rather than truncating the mesh, clipping cuts real faces, and
+MONOCHROME1 inverts. One real bug surfaced on the way — the reported
+`renderedVoxelCount` was `vertexCount / 4`, which counts quads, so the Rust
+returns a genuine `voxel_count`.
+
 Still TypeScript here, and deliberately: `isosurface.ts`'s threshold policy
-(Otsu, the Hounsfield default) and `volumeVoxels.ts`. Both are small, neither is
-on the clock, and the first is the kind of "what should the default be" decision
-that changes with each new dataset.
+(Otsu, the Hounsfield default). It is the kind of "what should the default be"
+decision that changes with each new dataset, and its two full passes are cheap —
+measured on a 512³ CT stack (134M samples, both strided by 7): `sampleRange`
+25ms, `volumeHistogram` 53ms, against a load that spends far longer decoding and
+marching.
 
 `visualization/marchingCubes.ts` (429) + `marchingCubesTables.ts` (326) +
 `isosurface.ts` (260) + `volumeVoxels.ts` (362) ≈ 1,400 lines of pure array math
@@ -1579,25 +1595,59 @@ boundary.
 _Colour correction_ was optimised in place rather than ported: the highlight
 mode is the same for every point, so it now chooses the loop instead of being
 tested inside it — **340ms → 253ms on a 42M-point archive**, identical output.
-It was not ported because the correction is deliberately interactive: it re-runs
-on every white-balance or exposure change _without_ re-parsing, and a port would
-copy the raw colours in, the frame indices in and the corrected colours out —
-336MB per slider move, which is most of what the port would have saved. Making
-that pay needs the colour session to outlive the parse and keep its raw colours
-in wasm memory, which is the "colour never leaves Rust" design this item
-imagines. That is a lifetime change across the parse boundary for roughly a 2x
-on one interaction, and it should be decided on its own terms rather than as a
-side effect of this item.
+The Rust port was then written and A/B'd against it rather than argued about
+(the table is in item 7): at 20M points it came out at **220ms against the
+JavaScript's 151ms**, and was reverted. The reason is specific and worth
+remembering — this function writes directly into the live colour attribute, so
+the JavaScript moves no data at all, while the port had to copy the raw colours
+and frame indices in, allocate the result in wasm, copy it back out and then
+copy it into `out`.
 
-_Station colouring_ is **not** ported. It is the same shape as the parser's own
-pass that item 5 just deleted — Rust projection, JavaScript scoring and sampling
-— but its sampler is a per-point JavaScript callback that lazily demosaics each
-frame, so porting it means marshalling every frame's decoded plane into wasm
-first. That is exactly what `StonexColourSession` does for the parser's pass, so
-the template exists; what does not yet exist in Rust is the per-station
-visibility depth buffer and the arbitrary station-to-station transforms. Worth
-doing, but it is a new Rust module rather than a move, and it runs once per user
-action over the grey preview sweeps rather than on every parse.
+It only becomes worth porting if the raw colours never cross the boundary, i.e.
+if the colour session keeps them in wasm memory and corrects them there. That is
+the "colour never leaves Rust" design this item imagines, it is a lifetime
+change across the parse boundary, and it should be decided on its own terms.
+
+_Station colouring_ is **done (August 2026)**, and it is the item that shows why
+"does it get faster" is not the only question. `stonex/stations.rs` now owns the
+whole pass — the per-station visibility depth buffers, the station-to-station
+transforms, the projection, the scoring and the sampling — behind a
+`StonexStationSession` built once per pass and driven scan by scan, so a
+finished scan can still be published while the rest run.
+`stonexStationColoring.ts` is **476 → 196 lines** and holds nothing but
+marshalling: scan stems resolved to station indices, frames pointed at their
+plane in the shared pixel buffer, each scan's colours copied back as it lands.
+
+Measured on `Abschnitt_A.x3a` (3.6M points, 6 scans, 10 frames, forced into the
+recolour-everything mode so nothing is skipped), both implementations in one
+process: **JavaScript ~2,140ms against Rust ~1,600ms (1.34×)**, with
+byte-identical results — the same 3,882,793 recolours, the same 229,037
+occlusion rejections and zero points attributed to a different frame. A modest
+speedup, because the JavaScript version already called the Rust batch projector,
+so only the scoring, the transforms and the depth tests actually moved.
+
+The simplification is the larger half of the win, and it is what carried the
+decision:
+
+- **The two colour passes now sample the same way.** The JavaScript kept its own
+  bilinear reader over its own lazily demosaiced cache; the pass now goes
+  through `colour::sample_image` and the parser's own decode, so a point
+  coloured from another station gets the same pixel a point coloured from its
+  own would.
+- **The candidate arrays are gone.** The old pass built a `number[]` of point
+  indices per frame per scan, then walked them again to project — millions of
+  boxed indices per station. Rust projects in the same pass that finds them.
+- **The matrix-convention hazard is now under test.** Column-major placements
+  meeting a row-major `Model2CameraMatrix` is the bug that hides behind the
+  same-station case, where the other factor is the identity; it now has a cargo
+  test with a station that is neither at the origin nor axis-aligned.
+
+Eleven cargo tests cover the rules (colour does not bleed through a wall the
+station measured, a frame facing away offers nothing, existing colour is kept
+unless a recolour is asked for, the more central of two frames wins regardless
+of listing order), and the seven TypeScript tests were rewritten to hold the
+boundary that is still TypeScript rather than a kernel that no longer lives
+there.
 
 #### 8. Stonex colour correction and station colouring (original entry)
 
@@ -1706,14 +1756,16 @@ being added. Item 6 moves ahead of the volume work because it deletes five
 hand-rolled decoders and removes a live boundary crossing, where 3 and 4 add new
 Rust beside no existing duplicate.
 
-**Where this stands (August 2026):** 0, 1, 2, 3, 4 and 5 are done, and item 6's
-projection and conversion kernels with them. Items 7 and 8 were measured rather
-than ported — the wins turned out to be in the JavaScript, and both entries
-carry the numbers.
+**Where this stands (August 2026):** 0, 1, 2, 3, 4, 5 and 8 are done, and item
+6's projection and conversion kernels with them. Item 7 and item 8's colour
+correction were measured rather than ported — the wins turned out to be in the
+JavaScript, and both entries carry the numbers; item 8's station colouring was
+then ported for a modest 1.34× and a large simplification, which is the case
+this list had not had before: a port kept on grounds other than speed.
 
 What is left of the list: **item 6's pixel readers**, waiting on the shared
-crate with tiff-visualizer, and **item 8's station colouring**, which needs a
-new Rust module (per-station visibility and transforms) rather than a move.
+crate with tiff-visualizer. Everything else portable has been ported or measured
+and deliberately left alone.
 
 Stop after any step whose TypeScript counterpart could not actually be deleted.
 A port that leaves a fallback in place has not reduced the maintenance surface,

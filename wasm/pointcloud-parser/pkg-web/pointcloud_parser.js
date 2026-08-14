@@ -1196,6 +1196,201 @@ export class StonexScanPoints {
 if (Symbol.dispose) StonexScanPoints.prototype[Symbol.dispose] = StonexScanPoints.prototype.free;
 
 /**
+ * Colours an archive's scans from every station's cameras, one scan at a time.
+ *
+ * Built once per pass and kept alive across scans, for the same reason the
+ * parser's own colour session is: the point cloud, the raw planes and each
+ * demosaiced panorama are shared by every scan, and the per-station depth
+ * buffers cost a full pass over that station's points to build. Colouring
+ * scan by scan rather than in one call is what lets the host publish a
+ * finished scan while the rest are still running.
+ */
+export class StonexStationSession {
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    StonexStationSessionFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_stonexstationsession_free(ptr, 0);
+  }
+  /**
+   * Colours one scan from every station's cameras.
+   *
+   * Returns true when it wrote anything, so the host can publish only the
+   * scans that actually changed.
+   * @param {number} scan_index
+   * @returns {boolean}
+   */
+  colour_scan(scan_index) {
+    const ret = wasm.stonexstationsession_colour_scan(this.__wbg_ptr, scan_index);
+    return ret !== 0;
+  }
+  /**
+   * Takes the point cloud, the raw planes and the colour arrays by value.
+   *
+   * A `&[f32]` argument is copied into wasm memory for the call and would
+   * have to be copied again to retain it; owning them costs one copy of the
+   * archive instead of two, and the host keeps its own arrays untouched
+   * until it reads the results back at the end.
+   * @param {Float32Array} positions
+   * @param {Uint8Array} pixels
+   * @param {Uint8Array} raw_colours
+   * @param {Uint16Array} frame_indices
+   * @param {Uint8Array} coloured
+   * @param {string} frames_json
+   * @param {string} scans_json
+   * @param {string} options_json
+   */
+  constructor(
+    positions,
+    pixels,
+    raw_colours,
+    frame_indices,
+    coloured,
+    frames_json,
+    scans_json,
+    options_json
+  ) {
+    const ptr0 = passArrayF32ToWasm0(positions, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(pixels, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(raw_colours, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArray16ToWasm0(frame_indices, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ptr4 = passArray8ToWasm0(coloured, wasm.__wbindgen_malloc);
+    const len4 = WASM_VECTOR_LEN;
+    const ptr5 = passStringToWasm0(frames_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len5 = WASM_VECTOR_LEN;
+    const ptr6 = passStringToWasm0(scans_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len6 = WASM_VECTOR_LEN;
+    const ptr7 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len7 = WASM_VECTOR_LEN;
+    const ret = wasm.stonexstationsession_new(
+      ptr0,
+      len0,
+      ptr1,
+      len1,
+      ptr2,
+      len2,
+      ptr3,
+      len3,
+      ptr4,
+      len4,
+      ptr5,
+      len5,
+      ptr6,
+      len6,
+      ptr7,
+      len7
+    );
+    if (ret[2]) {
+      throw takeFromExternrefTable0(ret[1]);
+    }
+    this.__wbg_ptr = ret[0];
+    StonexStationSessionFinalization.register(this, this.__wbg_ptr, this);
+    return this;
+  }
+  /**
+   * Points that gained colour they did not have before.
+   * @returns {number}
+   */
+  get newly_colored() {
+    const ret = wasm.stonexstationsession_newly_colored(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * Point-station pairs rejected because that station could not see the
+   * point. Counted per attempt: one point hidden from three stations
+   * contributes three.
+   * @returns {number}
+   */
+  get occluded_samples() {
+    const ret = wasm.stonexstationsession_occluded_samples(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * Points whose colour was replaced by a better view.
+   * @returns {number}
+   */
+  get recolored() {
+    const ret = wasm.stonexstationsession_recolored(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * This scan's colours, for publishing it before the rest are done.
+   * @param {number} scan_index
+   * @returns {Uint8Array}
+   */
+  scan_colours(scan_index) {
+    const ret = wasm.stonexstationsession_scan_colours(this.__wbg_ptr, scan_index);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {number}
+   */
+  get scan_count() {
+    const ret = wasm.stonexstationsession_scan_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @param {number} scan_index
+   * @returns {Uint16Array}
+   */
+  scan_frame_indices(scan_index) {
+    const ret = wasm.stonexstationsession_scan_frame_indices(this.__wbg_ptr, scan_index);
+    var v1 = getArrayU16FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 2, 2);
+    return v1;
+  }
+  /**
+   * One flag per point, set where this pass wrote.
+   * @returns {Uint8Array}
+   */
+  take_changed() {
+    const ret = wasm.stonexstationsession_take_changed(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {Uint8Array}
+   */
+  take_coloured() {
+    const ret = wasm.stonexstationsession_take_coloured(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {Uint8Array}
+   */
+  take_colours() {
+    const ret = wasm.stonexstationsession_take_colours(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {Uint16Array}
+   */
+  take_frame_indices() {
+    const ret = wasm.stonexstationsession_take_frame_indices(this.__wbg_ptr);
+    var v1 = getArrayU16FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 2, 2);
+    return v1;
+  }
+}
+if (Symbol.dispose)
+  StonexStationSession.prototype[Symbol.dispose] = StonexStationSession.prototype.free;
+
+/**
  * Incremental parser for streaming/overlapped loading. JS reads the file in
  * chunks and calls `push` on each (while the next chunk's read is in flight),
  * then `finish`. Partial lines are stitched across chunk boundaries via carry.
@@ -1253,6 +1448,109 @@ export class StreamParser {
 if (Symbol.dispose) StreamParser.prototype[Symbol.dispose] = StreamParser.prototype.free;
 
 /**
+ * A voxel-shell mesh, ready for a `BufferGeometry`.
+ */
+export class VoxelMesh {
+  static __wrap(ptr) {
+    const obj = Object.create(VoxelMesh.prototype);
+    obj.__wbg_ptr = ptr;
+    VoxelMeshFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    VoxelMeshFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_voxelmesh_free(ptr, 0);
+  }
+  /**
+   * @returns {number}
+   */
+  get face_count() {
+    const ret = wasm.voxelmesh_face_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * The decimation actually used: the stride grows until the build fits the
+   * face budget, and callers report what they rendered.
+   * @returns {Uint32Array}
+   */
+  get step() {
+    const ret = wasm.voxelmesh_step(this.__wbg_ptr);
+    var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Uint8Array}
+   */
+  take_colors() {
+    const ret = wasm.voxelmesh_take_colors(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {Uint32Array}
+   */
+  take_indices() {
+    const ret = wasm.voxelmesh_take_indices(this.__wbg_ptr);
+    var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Float32Array}
+   */
+  take_intensity() {
+    const ret = wasm.voxelmesh_take_intensity(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Float32Array}
+   */
+  take_positions() {
+    const ret = wasm.voxelmesh_take_positions(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {number}
+   */
+  get vertex_count() {
+    const ret = wasm.voxelmesh_vertex_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * Voxels at or above the threshold, whether or not they showed a face.
+   * Reported to the user as what the render mode actually kept.
+   * @returns {number}
+   */
+  get voxel_count() {
+    const ret = wasm.voxelmesh_voxel_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * World-space edge lengths of one emitted box, along i/j/k.
+   * @returns {Float32Array}
+   */
+  get voxel_size() {
+    const ret = wasm.voxelmesh_voxel_size(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+}
+if (Symbol.dispose) VoxelMesh.prototype[Symbol.dispose] = VoxelMesh.prototype.free;
+
+/**
  * Reserve `len` bytes in WASM memory and return the offset. Caller fills it,
  * passes it to `parse_at`, then releases it with `dealloc`.
  * @param {number} len
@@ -1261,6 +1559,87 @@ if (Symbol.dispose) StreamParser.prototype[Symbol.dispose] = StreamParser.protot
 export function alloc(len) {
   const ret = wasm.alloc(len);
   return ret >>> 0;
+}
+
+/**
+ * Build the exposed shell of every retained voxel.
+ *
+ * `clip` is six inclusive bounds (i0,i1,j0,j1,k0,k1); the stride grows from
+ * `step` until the face count fits `max_faces`, because a low threshold on a
+ * large volume would otherwise allocate hundreds of megabytes of geometry.
+ * @param {Float32Array} samples
+ * @param {Uint32Array} sizes
+ * @param {Float64Array} ijk_to_world
+ * @param {number} threshold
+ * @param {Uint32Array} step
+ * @param {number} max_faces
+ * @param {Uint32Array} clip
+ * @param {string} brightness_mode
+ * @param {number} window_center
+ * @param {number} window_width
+ * @param {Float64Array} slice_ranges
+ * @param {Float64Array} volume_range
+ * @param {boolean} monochrome1
+ * @returns {VoxelMesh}
+ */
+export function build_volume_voxels(
+  samples,
+  sizes,
+  ijk_to_world,
+  threshold,
+  step,
+  max_faces,
+  clip,
+  brightness_mode,
+  window_center,
+  window_width,
+  slice_ranges,
+  volume_range,
+  monochrome1
+) {
+  const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(sizes, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passArrayF64ToWasm0(ijk_to_world, wasm.__wbindgen_malloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ptr3 = passArray32ToWasm0(step, wasm.__wbindgen_malloc);
+  const len3 = WASM_VECTOR_LEN;
+  const ptr4 = passArray32ToWasm0(clip, wasm.__wbindgen_malloc);
+  const len4 = WASM_VECTOR_LEN;
+  const ptr5 = passStringToWasm0(brightness_mode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len5 = WASM_VECTOR_LEN;
+  const ptr6 = passArrayF64ToWasm0(slice_ranges, wasm.__wbindgen_malloc);
+  const len6 = WASM_VECTOR_LEN;
+  const ptr7 = passArrayF64ToWasm0(volume_range, wasm.__wbindgen_malloc);
+  const len7 = WASM_VECTOR_LEN;
+  const ret = wasm.build_volume_voxels(
+    ptr0,
+    len0,
+    ptr1,
+    len1,
+    ptr2,
+    len2,
+    threshold,
+    ptr3,
+    len3,
+    max_faces,
+    ptr4,
+    len4,
+    ptr5,
+    len5,
+    window_center,
+    window_width,
+    ptr6,
+    len6,
+    ptr7,
+    len7,
+    monochrome1
+  );
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return VoxelMesh.__wrap(ret[0]);
 }
 
 /**
@@ -1781,10 +2160,18 @@ const StonexScanPointsFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_stonexscanpoints_free(ptr, 1));
+const StonexStationSessionFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_stonexstationsession_free(ptr, 1));
 const StreamParserFinalization =
   typeof FinalizationRegistry === 'undefined'
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_streamparser_free(ptr, 1));
+const VoxelMeshFinalization =
+  typeof FinalizationRegistry === 'undefined'
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_voxelmesh_free(ptr, 1));
 
 function getArrayF32FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
@@ -1877,6 +2264,13 @@ function getUint8ArrayMemory0() {
     cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
   }
   return cachedUint8ArrayMemory0;
+}
+
+function passArray16ToWasm0(arg, malloc) {
+  const ptr = malloc(arg.length * 2, 2) >>> 0;
+  getUint16ArrayMemory0().set(arg, ptr / 2);
+  WASM_VECTOR_LEN = arg.length;
+  return ptr;
 }
 
 function passArray32ToWasm0(arg, malloc) {

@@ -45,11 +45,14 @@ test.describe('Registration in the extension webview bundle', () => {
         }
       };
     });
-    // The extension bundle is split, and it pulls a chunk in during start-up,
-    // so serving only its entry leaves the page dead on a 404. Every script it
-    // asks for has to come from out/webview/, not from the page's own dist.
+    // The extension bundle is split, and it pulls chunks in during start-up, so
+    // serving only its entry leaves the page dead on a 404. Every asset it asks
+    // for has to come from out/webview/, not from the page's own dist — the
+    // content-hashed wasm included. That one used to 404 harmlessly because a
+    // JavaScript parser stood behind it; now that parsing is Rust, a missed
+    // wasm means the page loads no files at all.
     const bundleDirectory = path.dirname(extensionBundle);
-    await page.route('**/*.js', async route => {
+    await page.route('**/*.{js,wasm}', async route => {
       const requested = path.basename(new URL(route.request().url()).pathname);
       const candidate = path.join(
         bundleDirectory,
@@ -59,9 +62,10 @@ test.describe('Registration in the extension webview bundle', () => {
         await route.continue();
         return;
       }
+      const isWasm = candidate.endsWith('.wasm');
       await route.fulfill({
-        contentType: 'application/javascript',
-        body: fs.readFileSync(candidate, 'utf8'),
+        contentType: isWasm ? 'application/wasm' : 'application/javascript',
+        body: isWasm ? fs.readFileSync(candidate) : fs.readFileSync(candidate, 'utf8'),
       });
     });
 

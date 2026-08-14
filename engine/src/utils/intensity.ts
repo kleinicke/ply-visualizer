@@ -123,6 +123,13 @@ export function buildScalarColorArray(
   // Written out rather than calling `mapIntensityValue` per point: this loop
   // re-runs on every colormap change over the whole cloud, and returning a
   // triple per point was allocating one array per point.
+  //
+  // It stays JavaScript on purpose. The Rust version was written and measured
+  // in the same page: 58ms against 68ms at 8M points, because the colours have
+  // to be copied back into a JavaScript array for the geometry attribute
+  // either way. Ten milliseconds does not pay for a second implementation, a
+  // language boundary on the render path, and a module that must already be
+  // loaded before a colour can be drawn.
   const grayscale = mapName === 'grayscale';
   const stops = mapName === 'viridis' ? VIRIDIS_STOPS : COLORS_STOPS;
   const lastStop = stops.length / 3 - 1;

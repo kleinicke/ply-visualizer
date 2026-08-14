@@ -265,6 +265,64 @@ export class StonexScanPoints {
 }
 
 /**
+ * Colours an archive's scans from every station's cameras, one scan at a time.
+ *
+ * Built once per pass and kept alive across scans, for the same reason the
+ * parser's own colour session is: the point cloud, the raw planes and each
+ * demosaiced panorama are shared by every scan, and the per-station depth
+ * buffers cost a full pass over that station's points to build. Colouring
+ * scan by scan rather than in one call is what lets the host publish a
+ * finished scan while the rest are still running.
+ */
+export class StonexStationSession {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Colours one scan from every station's cameras.
+     *
+     * Returns true when it wrote anything, so the host can publish only the
+     * scans that actually changed.
+     */
+    colour_scan(scan_index: number): boolean;
+    /**
+     * Takes the point cloud, the raw planes and the colour arrays by value.
+     *
+     * A `&[f32]` argument is copied into wasm memory for the call and would
+     * have to be copied again to retain it; owning them costs one copy of the
+     * archive instead of two, and the host keeps its own arrays untouched
+     * until it reads the results back at the end.
+     */
+    constructor(positions: Float32Array, pixels: Uint8Array, raw_colours: Uint8Array, frame_indices: Uint16Array, coloured: Uint8Array, frames_json: string, scans_json: string, options_json: string);
+    /**
+     * This scan's colours, for publishing it before the rest are done.
+     */
+    scan_colours(scan_index: number): Uint8Array;
+    scan_frame_indices(scan_index: number): Uint16Array;
+    /**
+     * One flag per point, set where this pass wrote.
+     */
+    take_changed(): Uint8Array;
+    take_coloured(): Uint8Array;
+    take_colours(): Uint8Array;
+    take_frame_indices(): Uint16Array;
+    /**
+     * Points that gained colour they did not have before.
+     */
+    readonly newly_colored: number;
+    /**
+     * Point-station pairs rejected because that station could not see the
+     * point. Counted per attempt: one point hidden from three stations
+     * contributes three.
+     */
+    readonly occluded_samples: number;
+    /**
+     * Points whose colour was replaced by a better view.
+     */
+    readonly recolored: number;
+    readonly scan_count: number;
+}
+
+/**
  * Incremental parser for streaming/overlapped loading. JS reads the file in
  * chunks and calls `push` on each (while the next chunk's read is in flight),
  * then `finish`. Partial lines are stitched across chunk boundaries via carry.
@@ -283,10 +341,48 @@ export class StreamParser {
 }
 
 /**
+ * A voxel-shell mesh, ready for a `BufferGeometry`.
+ */
+export class VoxelMesh {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_colors(): Uint8Array;
+    take_indices(): Uint32Array;
+    take_intensity(): Float32Array;
+    take_positions(): Float32Array;
+    readonly face_count: number;
+    /**
+     * The decimation actually used: the stride grows until the build fits the
+     * face budget, and callers report what they rendered.
+     */
+    readonly step: Uint32Array;
+    readonly vertex_count: number;
+    /**
+     * Voxels at or above the threshold, whether or not they showed a face.
+     * Reported to the user as what the render mode actually kept.
+     */
+    readonly voxel_count: number;
+    /**
+     * World-space edge lengths of one emitted box, along i/j/k.
+     */
+    readonly voxel_size: Float32Array;
+}
+
+/**
  * Reserve `len` bytes in WASM memory and return the offset. Caller fills it,
  * passes it to `parse_at`, then releases it with `dealloc`.
  */
 export function alloc(len: number): number;
+
+/**
+ * Build the exposed shell of every retained voxel.
+ *
+ * `clip` is six inclusive bounds (i0,i1,j0,j1,k0,k1); the stride grows from
+ * `step` until the face count fits `max_faces`, because a low threshold on a
+ * large volume would otherwise allocate hundreds of megabytes of geometry.
+ */
+export function build_volume_voxels(samples: Float32Array, sizes: Uint32Array, ijk_to_world: Float64Array, threshold: number, step: Uint32Array, max_faces: number, clip: Uint32Array, brightness_mode: string, window_center: number, window_width: number, slice_ranges: Float64Array, volume_range: Float64Array, monochrome1: boolean): VoxelMesh;
 
 /**
  * Coarse stage alone, for callers that want the shortlist without paying for

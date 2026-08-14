@@ -1,6 +1,7 @@
 import type { SpatialData } from '../interfaces';
 import type { VolumeData } from '../parsers/nrrdParser';
-import { volumeGreyByteForSlice, type VolumeBrightnessRequest } from './volumePresentation';
+import type { VolumeBrightnessRequest } from './volumePresentation';
+import { buildVolumeVoxelsWasm } from './volumeWasm';
 
 export interface VolumeVoxelsRequest extends VolumeBrightnessRequest {
   threshold: number;
@@ -36,82 +37,17 @@ const DEFAULT_MAX_FACES = 1_000_000;
  * the mapping from sample value to displayed grey stays the same whichever way
  * the camera looks at a face.
  */
-const AXIS_SHADE: readonly [number, number, number] = [0.78, 0.89, 1.0];
-
-/** Corner sign patterns per face: [axis, direction, then four (u,v) sign pairs]. */
-const FACES: ReadonlyArray<{
-  axis: 0 | 1 | 2;
-  dir: 1 | -1;
-  corners: ReadonlyArray<readonly [number, number]>;
-}> = [
-  {
-    axis: 0,
-    dir: 1,
-    corners: [
-      [-1, -1],
-      [1, -1],
-      [1, 1],
-      [-1, 1],
-    ],
-  },
-  {
-    axis: 0,
-    dir: -1,
-    corners: [
-      [-1, -1],
-      [-1, 1],
-      [1, 1],
-      [1, -1],
-    ],
-  },
-  {
-    axis: 1,
-    dir: 1,
-    corners: [
-      [-1, -1],
-      [-1, 1],
-      [1, 1],
-      [1, -1],
-    ],
-  },
-  {
-    axis: 1,
-    dir: -1,
-    corners: [
-      [-1, -1],
-      [1, -1],
-      [1, 1],
-      [-1, 1],
-    ],
-  },
-  {
-    axis: 2,
-    dir: 1,
-    corners: [
-      [-1, -1],
-      [1, -1],
-      [1, 1],
-      [-1, 1],
-    ],
-  },
-  {
-    axis: 2,
-    dir: -1,
-    corners: [
-      [-1, -1],
-      [-1, 1],
-      [1, 1],
-      [1, -1],
-    ],
-  },
-];
-
 /**
  * Emits one solid box per retained voxel. Each box spans exactly the sampled
  * cell in ijk space, so neighbouring voxels touch without gaps or overlap in
  * every direction — including between slices, whose spacing is usually much
  * larger than the in-plane pixel pitch. Faces shared with another retained
  * voxel are dropped, so only the outer shell is built.
+ *
+ * The meshing itself is Rust (`wasm/pointcloud-parser/src/volume/voxels.rs`),
+ * including the stride growth that keeps the build inside its face budget.
+ * What is left here is the request shape and the `SpatialData` the viewer
+ * consumes.
  */
 export async function buildVolumeVoxelsAsync(
   volume: VolumeData,
@@ -122,109 +58,58 @@ export async function buildVolumeVoxelsAsync(
   const maxFaces =
     request.maxFaces === undefined ? DEFAULT_MAX_FACES : Math.max(1, request.maxFaces);
   const clip = resolveClip(volume, request.clip);
-  let multiplier = 1;
-  let faces: number | null = 0;
-  let step: [number, number, number] = [...base] as [number, number, number];
-
-  // Count exposed faces first: a low threshold on a large volume would
-  // otherwise allocate hundreds of megabytes of geometry. Growing the stride
-  // keeps the boxes gap-free because their extent scales with it.
-  do {
-    step = base.map(value => Math.max(1, Math.round(value * multiplier))) as [
-      number,
-      number,
-      number,
-    ];
-    faces = await countFacesAsync(volume, request.threshold, step, clip, maxFaces + 1, isCancelled);
-    if (faces === null) {
-      return null;
-    }
-    multiplier++;
-  } while (faces > maxFaces);
-
-  const vertexCount = faces * 4;
-  const positions = new Float32Array(vertexCount * 3);
-  const colors = new Uint8Array(vertexCount * 3);
-  const intensity = new Float32Array(vertexCount);
-  const indices = new Uint32Array(faces * 6);
-  const m = volume.ijkToWorld;
-  const [nx, ny, nz] = volume.sizes;
-  const [sx, sy, sz] = step;
-
-  // Half-extent vectors of one box, computed once and reused for every voxel.
-  const half: Array<[number, number, number]> = [
-    [(m[0] * sx) / 2, (m[4] * sx) / 2, (m[8] * sx) / 2],
-    [(m[1] * sy) / 2, (m[5] * sy) / 2, (m[9] * sy) / 2],
-    [(m[2] * sz) / 2, (m[6] * sz) / 2, (m[10] * sz) / 2],
-  ];
-  // The sampled voxel represents the cell [i, i+step), so the box centre sits
-  // half a stride past the sample it was taken from.
-  const centreShift: [number, number, number] = [(sx - 1) / 2, (sy - 1) / 2, (sz - 1) / 2];
-  const photometric = volume.header['photometric interpretation'];
-  let vertex = 0;
-  let index = 0;
-  let voxels = 0;
-  for (let k = clipStart(clip, 2, sz); k <= clip[2][1] && k < nz; k += sz) {
-    for (let j = clipStart(clip, 1, sy); j <= clip[1][1] && j < ny; j += sy) {
-      for (let i = clipStart(clip, 0, sx); i <= clip[0][1] && i < nx; i += sx) {
-        const value = volume.samples[i + j * nx + k * nx * ny];
-        if (value < request.threshold) {
-          continue;
-        }
-        voxels++;
-        const ci = i + centreShift[0];
-        const cj = j + centreShift[1];
-        const ck = k + centreShift[2];
-        const cx = m[0] * ci + m[1] * cj + m[2] * ck + m[3];
-        const cy = m[4] * ci + m[5] * cj + m[6] * ck + m[7];
-        const cz = m[8] * ci + m[9] * cj + m[10] * ck + m[11];
-        const grey = volumeGreyByteForSlice(value, k, request, photometric);
-        for (const face of FACES) {
-          const ijk: [number, number, number] = [i, j, k];
-          ijk[face.axis] += face.dir * step[face.axis];
-          if (isSolid(volume, ijk, request.threshold, clip)) {
-            continue;
-          }
-          const normalHalf = half[face.axis];
-          const [uAxis, vAxis] = otherAxes(face.axis);
-          const uHalf = half[uAxis];
-          const vHalf = half[vAxis];
-          const shade = AXIS_SHADE[face.axis];
-          const shaded = Math.round(grey * shade);
-          const first = vertex;
-          for (const [us, vs] of face.corners) {
-            const p = vertex * 3;
-            positions[p] = cx + face.dir * normalHalf[0] + us * uHalf[0] + vs * vHalf[0];
-            positions[p + 1] = cy + face.dir * normalHalf[1] + us * uHalf[1] + vs * vHalf[1];
-            positions[p + 2] = cz + face.dir * normalHalf[2] + us * uHalf[2] + vs * vHalf[2];
-            colors[p] = shaded;
-            colors[p + 1] = shaded;
-            colors[p + 2] = shaded;
-            intensity[vertex] = value;
-            vertex++;
-          }
-          indices[index++] = first;
-          indices[index++] = first + 1;
-          indices[index++] = first + 2;
-          indices[index++] = first;
-          indices[index++] = first + 2;
-          indices[index++] = first + 3;
-        }
-      }
-    }
-    request.onProgress?.(Math.min(1, (k + sz) / nz));
-    if (isCancelled()) {
-      return null;
-    }
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
+  if (isCancelled()) {
+    return null;
   }
-  request.onProgress?.(1);
 
-  const voxelSize: [number, number, number] = [
-    Math.hypot(m[0], m[4], m[8]) * sx,
-    Math.hypot(m[1], m[5], m[9]) * sy,
-    Math.hypot(m[2], m[6], m[10]) * sz,
-  ];
+  const mode = request.brightnessMode ?? 'dicom-window';
+  const sliceRanges =
+    mode === 'slice-auto' && request.sliceRanges
+      ? Float64Array.from(
+          request.sliceRanges.flatMap(range =>
+            range ? [range.min, range.max] : [Number.NaN, Number.NaN]
+          )
+        )
+      : new Float64Array(0);
+  const volumeRange =
+    mode === 'volume-range' && request.volumeRange
+      ? Float64Array.from([request.volumeRange.min, request.volumeRange.max])
+      : new Float64Array(0);
+  const photometric = (volume.header['photometric interpretation'] ?? '').trim().toUpperCase();
+
+  const mesh = await buildVolumeVoxelsWasm(
+    volume.samples,
+    volume.sizes,
+    volume.ijkToWorld,
+    request.threshold,
+    base as [number, number, number],
+    maxFaces,
+    [clip[0][0], clip[0][1], clip[1][0], clip[1][1], clip[2][0], clip[2][1]],
+    {
+      // The Rust kernel names the whole-volume mode 'volume-auto'; the panel
+      // calls it 'volume-range'. One rename at the boundary rather than two
+      // vocabularies inside the kernel.
+      mode: mode === 'volume-range' ? 'volume-auto' : mode,
+      windowCenter: request.windowCenter ?? 0,
+      windowWidth: request.windowWidth ?? 1,
+      sliceRanges,
+      volumeRange,
+      monochrome1: photometric === 'MONOCHROME1',
+    }
+  );
+  request.onProgress?.(1);
+  if (isCancelled()) {
+    return null;
+  }
+
+  const step = mesh.step;
+  const voxelSize = mesh.voxelSize;
+  const faces = mesh.faceCount;
+  const vertexCount = mesh.vertexCount;
+  const positions = mesh.positions;
+  const colors = mesh.colors;
+  const intensity = mesh.intensity;
+  const indices = mesh.indices;
 
   return {
     step,
@@ -265,7 +150,7 @@ export async function buildVolumeVoxelsAsync(
         effectiveSpacing: voxelSize,
         voxelSize,
         voxelClip: clip.map(range => [...range]),
-        renderedVoxelCount: voxels,
+        renderedVoxelCount: mesh.voxelCount,
         renderedFaceCount: faces,
         sourceVoxelCount: volume.sizes[0] * volume.sizes[1] * volume.sizes[2],
         volumeRenderMode: 'voxels',
@@ -273,10 +158,6 @@ export async function buildVolumeVoxelsAsync(
       },
     },
   };
-}
-
-function otherAxes(axis: 0 | 1 | 2): [number, number] {
-  return axis === 0 ? [1, 2] : axis === 1 ? [0, 2] : [0, 1];
 }
 
 type Clip = ReadonlyArray<readonly [number, number]>;
@@ -297,66 +178,4 @@ function resolveClip(volume: VolumeData, requested: Clip | undefined): Clip {
 /** First sample index on the global stride grid that the clip range keeps. */
 function clipStart(clip: Clip, axis: number, stride: number): number {
   return Math.ceil(clip[axis][0] / stride) * stride;
-}
-
-/** A neighbour hides a face only when it is retained and itself visible. */
-function isSolid(
-  volume: VolumeData,
-  ijk: readonly [number, number, number],
-  threshold: number,
-  clip: Clip
-): boolean {
-  const [nx, ny, nz] = volume.sizes;
-  const [i, j, k] = ijk;
-  if (i < 0 || j < 0 || k < 0 || i >= nx || j >= ny || k >= nz) {
-    return false;
-  }
-  if (
-    i < clip[0][0] ||
-    i > clip[0][1] ||
-    j < clip[1][0] ||
-    j > clip[1][1] ||
-    k < clip[2][0] ||
-    k > clip[2][1]
-  ) {
-    return false;
-  }
-  return volume.samples[i + j * nx + k * nx * ny] >= threshold;
-}
-
-async function countFacesAsync(
-  volume: VolumeData,
-  threshold: number,
-  step: readonly [number, number, number],
-  clip: Clip,
-  stopAfter: number,
-  isCancelled: () => boolean
-): Promise<number | null> {
-  const [nx, ny, nz] = volume.sizes;
-  const [sx, sy, sz] = step;
-  let faces = 0;
-  for (let k = clipStart(clip, 2, sz); k <= clip[2][1] && k < nz; k += sz) {
-    for (let j = clipStart(clip, 1, sy); j <= clip[1][1] && j < ny; j += sy) {
-      for (let i = clipStart(clip, 0, sx); i <= clip[0][1] && i < nx; i += sx) {
-        if (volume.samples[i + j * nx + k * nx * ny] < threshold) {
-          continue;
-        }
-        for (const face of FACES) {
-          const ijk: [number, number, number] = [i, j, k];
-          ijk[face.axis] += face.dir * step[face.axis];
-          if (!isSolid(volume, ijk, threshold, clip)) {
-            faces++;
-          }
-        }
-        if (faces >= stopAfter) {
-          return faces;
-        }
-      }
-    }
-    if (isCancelled()) {
-      return null;
-    }
-    await new Promise<void>(resolve => setTimeout(resolve, 0));
-  }
-  return faces;
 }

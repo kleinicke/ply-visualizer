@@ -8,93 +8,60 @@ import {
 /**
  * Cross-station colouring, on a scene small enough to reason about by hand.
  *
- * The whole point of this pass is that it is *selective* — it must colour the
- * grey scans, must not paint through a wall, and must not throw away a good
- * colour for a worse view. Those three are what the assertions below check;
- * the projection maths itself belongs to the shared Rust camera model and is
- * stubbed here so a failure means what it says.
+ * The pass itself is `stonex::stations`, whose own tests cover the rules against
+ * hand-built matrices. What this holds is the boundary the Rust cannot see: scan
+ * stems resolved to station indices, frames pointing at the right plane in the
+ * shared pixel buffer, and each scan's colours copied back into the host's
+ * arrays as it finishes. Those are exactly the parts that stay in TypeScript,
+ * and a mistake in any of them colours the wrong points from the wrong camera
+ * while every cargo test still passes.
  */
 
-const IMAGE_WIDTH = 100;
-const IMAGE_HEIGHT = 100;
+const IMAGE = 100;
+/** Row-major, as a CAL file declares it: the station's +x is the camera's +z. */
+const VIEWER_TO_CAMERA = [0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1];
+const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+const NO_FRAME = 65535;
 
-/**
- * Stand-in for the Rust batch projector: an ideal camera looking down the
- * station's +x axis, so a point's image position follows from its y and z.
- */
-/**
- * The scale comes from the request's own `fx`, so two frames in one pass can
- * project differently — the alternative, keying off call order, breaks as soon
- * as more than one scan is processed.
- */
-function pinholeProjector() {
-  return (request: {
-    positions: Float32Array;
-    indices: Uint32Array;
-    transform: readonly number[];
-    fx: number;
-  }): Float32Array => {
-    const scale = request.fx;
-    const out = new Float32Array(request.indices.length * 2);
-    const m = request.transform;
-    request.indices.forEach((pointIndex, slot) => {
-      const offset = pointIndex * 3;
-      const x = request.positions[offset];
-      const y = request.positions[offset + 1];
-      const z = request.positions[offset + 2];
-      const cx = m[0] * x + m[4] * y + m[8] * z + m[12];
-      const cy = m[1] * x + m[5] * y + m[9] * z + m[13];
-      const cz = m[2] * x + m[6] * y + m[10] * z + m[14];
-      // Camera looks along +z after the viewer-to-camera transform below.
-      if (!(cz > 0)) {
-        out[slot * 2] = NaN;
-        out[slot * 2 + 1] = NaN;
-        return;
-      }
-      out[slot * 2] = IMAGE_WIDTH / 2 + (cx / cz) * scale;
-      out[slot * 2 + 1] = IMAGE_HEIGHT / 2 + (cy / cz) * scale;
-    });
-    return out;
-  };
+/** A flat sensor plane, which demosaics to that grey. */
+function plane(value: number): Uint8Array {
+  return new Uint8Array(IMAGE * IMAGE).fill(value);
 }
-
-/** Column-major: maps the station's +x axis onto the camera's +z. */
-const VIEWER_TO_CAMERA = [0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1];
 
 function makeFrame(overrides: Partial<StationFrame> = {}): StationFrame {
   return {
     frameNumber: 0,
     scanStem: 'station',
     panDegrees: 0,
-    imageWidth: IMAGE_WIDTH,
-    imageHeight: IMAGE_HEIGHT,
+    pixelOffset: 0,
+    rawWidth: IMAGE,
+    rawHeight: IMAGE,
+    imageWidth: IMAGE,
+    imageHeight: IMAGE,
     fx: 50,
     fy: 50,
-    cx: IMAGE_WIDTH / 2,
-    cy: IMAGE_HEIGHT / 2,
+    cx: IMAGE / 2,
+    cy: IMAGE / 2,
     distortionCoefficients: [0, 0, 0, 0, 0],
     viewerToCamera: VIEWER_TO_CAMERA,
     maxNormalizedX: 1,
     maxNormalizedY: 1,
-    sample: () => [10, 200, 30],
     ...overrides,
   };
 }
 
-const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-
 suite('Stonex cross-station colouring', () => {
   /**
-   * Station points sit along +x (azimuth 0, matching a frame panned to 0), and
-   * the second scan's points sit just in front of them.
+   * The photographed station's own points form a wall at x = 10 — azimuth 0,
+   * matching a frame panned to 0 — and the grey scan's points sit wherever the
+   * test puts them relative to it.
    */
-  function buildScene(secondScanPoints: number[]) {
+  function buildScene(greyPoints: number[]) {
     const stationPoints: number[] = [];
     for (let i = 0; i < 40; i++) {
-      // A wall at x = 10, spread a little so the depth bins get populated.
       stationPoints.push(10, (i % 8) * 0.02 - 0.08, Math.floor(i / 8) * 0.02 - 0.05);
     }
-    const positions = new Float32Array([...stationPoints, ...secondScanPoints]);
+    const positions = new Float32Array([...stationPoints, ...greyPoints]);
     const pointCount = positions.length / 3;
     const stationCount = stationPoints.length / 3;
     // The station's own scan is the one that arrived with colour, as it does in
@@ -102,24 +69,21 @@ suite('Stonex cross-station colouring', () => {
     // own wall would count as newly coloured and drown out the assertions.
     const colored = new Uint8Array(pointCount);
     colored.fill(1, 0, stationCount);
-    const frameIndices = new Uint16Array(pointCount).fill(65535);
+    const frameIndices = new Uint16Array(pointCount).fill(NO_FRAME);
     frameIndices.fill(0, 0, stationCount);
     return {
       positions,
       rawColors: new Uint8Array(pointCount * 3),
       frameIndices,
       colored,
+      changed: new Uint8Array(pointCount),
+      grey: stationCount,
       scans: [
-        {
-          scanStem: 'station',
-          pointOffset: 0,
-          pointCount: stationPoints.length / 3,
-          transform: IDENTITY,
-        },
+        { scanStem: 'station', pointOffset: 0, pointCount: stationCount, transform: IDENTITY },
         {
           scanStem: 'grey',
-          pointOffset: stationPoints.length / 3,
-          pointCount: secondScanPoints.length / 3,
+          pointOffset: stationCount,
+          pointCount: greyPoints.length / 3,
           transform: IDENTITY,
         },
       ] as StationScan[],
@@ -127,189 +91,138 @@ suite('Stonex cross-station colouring', () => {
   }
 
   test('colours a grey scan from another station camera', async () => {
-    // A point in front of the wall, in view: it should take the frame's colour.
+    // In front of the wall and in view, so it should take the frame's colour.
     const scene = buildScene([8, 0, 0]);
-    const visible = scene.scans[1].pointOffset;
-
     const result = await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,
       scene.colored,
-      new Uint8Array(scene.positions.length / 3),
+      scene.changed,
+      plane(120),
       scene.scans,
-      [makeFrame()],
-      pinholeProjector() as any
+      [makeFrame({ frameNumber: 3 })]
     );
 
-    assert.strictEqual(result.newlyColored, 1, 'the visible grey point should gain colour');
-    assert.strictEqual(scene.colored[visible], 1);
+    assert.strictEqual(result.newlyColored, 1);
+    assert.strictEqual(scene.frameIndices[scene.grey], 3, 'attributed to the frame that saw it');
     assert.deepStrictEqual(
-      Array.from(scene.rawColors.slice(visible * 3, visible * 3 + 3)),
-      [10, 200, 30]
+      Array.from(scene.rawColors.subarray(scene.grey * 3, scene.grey * 3 + 3)),
+      [120, 120, 120]
     );
-    assert.strictEqual(scene.frameIndices[visible], 0, 'the frame it came from is recorded');
+    assert.strictEqual(scene.changed[scene.grey], 1);
+    assert.strictEqual(scene.colored[scene.grey], 1);
   });
 
   test('own-station diagnostic excludes cross-station photographs', async () => {
     const scene = buildScene([8, 0, 0]);
-    const visible = scene.scans[1].pointOffset;
-
     const result = await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,
       scene.colored,
-      new Uint8Array(scene.positions.length / 3),
+      scene.changed,
+      plane(120),
       scene.scans,
       [makeFrame()],
-      pinholeProjector() as any,
       { ownStationOnly: true }
     );
 
     assert.strictEqual(result.newlyColored, 0);
-    assert.strictEqual(scene.colored[visible], 0);
-    assert.strictEqual(scene.frameIndices[visible], 65535);
+    assert.strictEqual(scene.frameIndices[scene.grey], NO_FRAME);
   });
 
   test('refuses to paint through the wall the station measured', async () => {
-    // Same direction, but behind the station's own wall at x = 10.
-    const scene = buildScene([14, 0, 0]);
-
+    // Two metres behind the wall, in the same direction: not visible from there.
+    const scene = buildScene([12, 0, 0]);
     const result = await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,
       scene.colored,
-      new Uint8Array(scene.positions.length / 3),
+      scene.changed,
+      plane(120),
       scene.scans,
-      [makeFrame()],
-      pinholeProjector() as any
+      [makeFrame()]
     );
 
-    assert.strictEqual(result.newlyColored, 0, 'a hidden point must stay grey');
-    assert.ok(result.occludedSamples > 0, 'and be reported as hidden');
-    assert.strictEqual(scene.colored[scene.scans[1].pointOffset], 0);
+    assert.strictEqual(result.newlyColored, 0);
+    assert.ok(result.occludedSamples >= 1, 'the rejection is reported');
+    assert.strictEqual(scene.frameIndices[scene.grey], NO_FRAME);
   });
 
   test('leaves colour a scan already has alone by default', async () => {
     const scene = buildScene([8, 0, 0]);
-    const point = scene.scans[1].pointOffset;
-    // This grey scan's point already carries colour from somewhere.
-    scene.colored[point] = 1;
-    scene.rawColors.set([1, 2, 3], point * 3);
-    scene.frameIndices[point] = 7;
+    scene.colored[scene.grey] = 1;
+    scene.frameIndices[scene.grey] = 12;
+    scene.rawColors.set([1, 2, 3], scene.grey * 3);
 
     const result = await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,
       scene.colored,
-      new Uint8Array(scene.positions.length / 3),
+      scene.changed,
+      plane(120),
       scene.scans,
-      [makeFrame({ frameNumber: 3, sample: () => [40, 50, 60] })],
-      pinholeProjector() as any
+      [makeFrame({ frameNumber: 3 })]
     );
 
-    assert.strictEqual(result.recolored, 0, 'default mode must not touch existing colour');
-    assert.deepStrictEqual(Array.from(scene.rawColors.slice(point * 3, point * 3 + 3)), [1, 2, 3]);
-    assert.strictEqual(scene.frameIndices[point], 7);
-  });
-
-  test('when recolouring, the most central view wins', async () => {
-    // Offset from the axis, so the projector's scale actually moves the pixel:
-    // a point dead ahead lands at the image centre whatever the focal length.
-    const scene = buildScene([8, 0.9, 0]);
-    const point = scene.scans[1].pointOffset;
-    scene.colored[point] = 1;
-    scene.rawColors.set([1, 2, 3], point * 3);
-
-    // Both frames see it in one pass: one near the edge, one dead centre. The
-    // comparison only means anything inside a single call, which is how the
-    // parser uses it.
-    const result = await colorFromAllStations(
-      scene.positions,
-      scene.rawColors,
-      scene.frameIndices,
-      scene.colored,
-      new Uint8Array(scene.positions.length / 3),
-      scene.scans,
-      [
-        // fx doubles as this stub's focal length: the first lands the point
-        // near the frame edge, the second dead centre.
-        makeFrame({ frameNumber: 9, fx: 380, sample: () => [250, 250, 250] }),
-        makeFrame({ frameNumber: 3, fx: 50, sample: () => [40, 50, 60] }),
-      ],
-      pinholeProjector() as any,
-      { recolorAlreadyColored: true }
-    );
-
-    assert.ok(result.recolored > 0, 'recolouring was asked for');
+    assert.strictEqual(result.newlyColored, 0);
+    assert.strictEqual(result.recolored, 0);
+    assert.strictEqual(scene.frameIndices[scene.grey], 12, 'the earlier frame keeps the point');
     assert.deepStrictEqual(
-      Array.from(scene.rawColors.slice(point * 3, point * 3 + 3)),
-      [40, 50, 60],
-      'the centred view should win over the edge one'
+      Array.from(scene.rawColors.subarray(scene.grey * 3, scene.grey * 3 + 3)),
+      [1, 2, 3]
     );
-    assert.strictEqual(scene.frameIndices[point], 3);
   });
 
-  test('composes the camera transform in the projector layout', async () => {
-    // Regression test for a mix of conventions that no identity-transform case
-    // can catch: `viewerToCamera` is row-major (the CAL file's declared order,
-    // which the Rust projector expects) while scan placements come from
-    // three.js and are column-major. Multiplying them in the wrong layout
-    // yields something correct only when one factor is the identity — which is
-    // the same-station case, so it looked fine on the scans that already had
-    // colour and wrong on exactly the ones this pass exists to fill in.
-    const scene = buildScene([8, 0, 0]);
-    // Station two metres along +x of the common frame, in column-major.
-    const stationTransform = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2, 0, 0, 1];
-    scene.scans[0].transform = stationTransform;
-
-    let seen: readonly number[] | null = null;
-    const capture = ((request: any) => {
-      seen = request.transform;
-      return pinholeProjector()(request);
-    }) as any;
+  test('the most central view wins, and reads that frame own plane', async () => {
+    // Off the axis, so the two focal lengths place it at different distances
+    // from the principal point: the wider frame sees it nearer the centre.
+    const scene = buildScene([8, 0.5, 0]);
+    const pixels = new Uint8Array(IMAGE * IMAGE * 2);
+    pixels.set(plane(40), 0);
+    pixels.set(plane(120), IMAGE * IMAGE);
 
     await colorFromAllStations(
       scene.positions,
       scene.rawColors,
       scene.frameIndices,
       scene.colored,
-      new Uint8Array(scene.positions.length / 3),
+      scene.changed,
+      pixels,
       scene.scans,
-      [makeFrame()],
-      capture
+      [
+        // Listed first, narrower, so it sees the point further out.
+        makeFrame({ frameNumber: 1, fx: 100, fy: 100, pixelOffset: 0 }),
+        makeFrame({ frameNumber: 2, pixelOffset: IMAGE * IMAGE }),
+      ]
     );
 
-    assert.ok(seen, 'the projector should have been called');
-    const composed = seen as unknown as number[];
+    assert.strictEqual(scene.frameIndices[scene.grey], 2, 'the wider, more central frame wins');
+    assert.deepStrictEqual(
+      Array.from(scene.rawColors.subarray(scene.grey * 3, scene.grey * 3 + 3)),
+      [120, 120, 120],
+      'and its colour comes from that frame own plane in the shared buffer'
+    );
+  });
 
-    // The invariant, stated without relying on any particular index: applying
-    // the composed matrix row-major must equal applying the station hop
-    // column-major and then the frame's row-major viewer-to-camera.
-    const point = [8, 0, 0];
-    const rowMajorApply = (m: readonly number[], p: number[]) => [
-      m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
-      m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
-      m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11],
-    ];
-    const columnMajorApply = (m: readonly number[], p: number[]) => [
-      m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12],
-      m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13],
-      m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14],
-    ];
-    // inverse(station) for a pure +2 x translation.
-    const scanToStation = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -2, 0, 0, 1];
-    const expected = rowMajorApply(VIEWER_TO_CAMERA, columnMajorApply(scanToStation, point));
-    const actual = rowMajorApply(composed, point);
-    for (let axis = 0; axis < 3; axis++) {
-      assert.ok(
-        Math.abs(actual[axis] - expected[axis]) < 1e-6,
-        `axis ${axis}: composed gives ${actual[axis]}, expected ${expected[axis]}`
-      );
-    }
+  test('publishes each scan as it finishes, in order', async () => {
+    const scene = buildScene([8, 0, 0]);
+    const published: string[] = [];
+    await colorFromAllStations(
+      scene.positions,
+      scene.rawColors,
+      scene.frameIndices,
+      scene.colored,
+      scene.changed,
+      plane(120),
+      scene.scans,
+      [makeFrame()],
+      { onScanColored: scan => void published.push(scan.scanStem) }
+    );
+    assert.deepStrictEqual(published, ['station', 'grey']);
   });
 
   test('does nothing when no frame belongs to a loaded scan', async () => {
@@ -319,12 +232,13 @@ suite('Stonex cross-station colouring', () => {
       scene.rawColors,
       scene.frameIndices,
       scene.colored,
-      new Uint8Array(scene.positions.length / 3),
+      scene.changed,
+      plane(120),
       scene.scans,
-      [makeFrame({ scanStem: 'a-station-that-was-not-loaded' })],
-      pinholeProjector() as any
+      [makeFrame({ scanStem: 'a-station-not-in-this-archive' })]
     );
+
     assert.strictEqual(result.newlyColored, 0);
-    assert.strictEqual(result.recolored, 0);
+    assert.strictEqual(scene.frameIndices[scene.grey], NO_FRAME);
   });
 });
