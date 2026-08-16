@@ -413,30 +413,36 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // Continue parsing immediately so normal loading retains its overlap with
     // webview startup. Result messages wait at the ready gate if necessary.
-    setImmediate(() =>
-      loadDocumentContent(this.documentLoaderHost, document.uri, webviewPanel, {
-        fileType,
-        isDepthFile,
-        isPfmFile,
-        isNpyFile,
-        isPngFile,
-        isExrFile,
-        isNpyPointCloud,
-        isObjFile,
-        isStlFile,
-        isPcdFile,
-        isPtsFile,
-        isKittiBinFile,
-        isStonexX3aFile,
-        isOffFile,
-        isGltfFile,
-        isVolumeFile,
-        isXyzVariant,
-        isJsonFile,
-        isLidarFile,
-        isSplatContainerFile,
-      })
-    );
+    setImmediate(() => {
+      void (async () => {
+        try {
+          await loadDocumentContent(this.documentLoaderHost, document.uri, webviewPanel, {
+            fileType,
+            isDepthFile,
+            isPfmFile,
+            isNpyFile,
+            isPngFile,
+            isExrFile,
+            isNpyPointCloud,
+            isObjFile,
+            isStlFile,
+            isPcdFile,
+            isPtsFile,
+            isKittiBinFile,
+            isStonexX3aFile,
+            isOffFile,
+            isGltfFile,
+            isVolumeFile,
+            isXyzVariant,
+            isJsonFile,
+            isLidarFile,
+            isSplatContainerFile,
+          });
+        } finally {
+          await webviewPanel.webview.postMessage({ type: 'backgroundOperationComplete' });
+        }
+      })();
+    });
   }
 
   /**
@@ -657,6 +663,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       'style.css'
     );
     const styleUri = webview.asWebviewUri(stylePathOnDisk).toString();
+    const componentStyleUri = webview
+      .asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'out', 'webview', 'bundle.css'))
+      .toString();
 
     // Rust/WASM TIFF/EXR/PNG16 decoder (ported from the tiff-visualizer sister
     // extension; the only image decoder in the webview). The glue defines a
@@ -693,6 +702,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // 2. Replace resource URLs with webview URIs
     html = html.replace(/href="media\/style\.css"/, `href="${styleUri}"`);
+    html = html.replace(/href="bundle\.css"/, `href="${componentStyleUri}"`);
     html = html.replace(
       /src="media\/wasm\/tiff_wasm\.js"/,
       `nonce="${nonce}" src="${tiffWasmGlueUri}"`

@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link href="media/style.css" rel="stylesheet" />
+    <link href="bundle.css" rel="stylesheet" />
     <title>3D Point Cloud Visualizer</title>
     <script async src="https://analytics.re4vive.com/js/pa-GabvR7klxXIEzqdnoWcJw.js"></script>
     <script>
@@ -69,7 +70,10 @@
                 margin-bottom: 8px;
               "
             >
-              <h4 style="margin: 0">File Management</h4>
+              <div style="display: flex; align-items: center; gap: 5px">
+                <h4 style="margin: 0">File Management</h4>
+                <div id="file-activity-indicator-mount"></div>
+              </div>
               <!-- PerformanceStats Svelte component mounts its own #performance-stats root here -->
               <div id="performance-stats-mount"></div>
             </div>
@@ -115,6 +119,8 @@
           </div>
           <!-- ControlsTabBottom Svelte component mounts here (Performance section) -->
           <div id="controls-tab-bottom-mount"></div>
+          <!-- Reproducible fixed-camera point-rendering benchmark controls. -->
+          <div id="point-rendering-experiments-mount"></div>
         </div>
 
         <!-- Info Tab -->

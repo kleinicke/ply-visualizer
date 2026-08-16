@@ -77,6 +77,10 @@ test.describe('Station pipeline trigger', () => {
 
     // Default: fill in the grey scans, leave existing colour alone.
     await panel.locator('.station-pipeline-run').click();
+    await expect(page.locator('#file-activity-indicator')).toHaveAttribute(
+      'aria-label',
+      'Aligning or recolouring point clouds'
+    );
     let sent = await page.evaluate(() => (window as any).__sent);
     expect(sent).toHaveLength(1);
     expect(sent[0].type).toBe('stationPipeline');

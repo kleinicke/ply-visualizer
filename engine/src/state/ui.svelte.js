@@ -19,6 +19,13 @@ export const uiState = $state({
   // default (hidden, "Loading PLY file..." title, no detail line) - see
   // showLoading()/showImmediateLoading()/setLoadingDetail() in main.ts.
   loadingVisible: false,
+  // Non-blocking activity signal beside "File Management". Unlike
+  // loadingVisible, this remains true when an additional file loads behind an
+  // already interactive scene.
+  fileLoading: false,
+  // Messages already delivered by the extension can still be building GPU
+  // geometry or applying colour in the webview after the host-side job ends.
+  backgroundChanges: 0,
   loadingTitle: 'Loading PLY file...',
   loadingDetail: /** @type {string | null} */ (null),
 });

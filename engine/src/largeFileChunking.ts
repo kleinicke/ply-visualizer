@@ -1,5 +1,6 @@
 import { SpatialData, SpatialFace, SpatialVertex } from './interfaces';
 import { noteContainerScanLoaded } from './utils/containerPerf';
+import { uiState } from './state/ui.svelte';
 
 export interface LargeFileChunkingHost {
   isFileLoading: boolean;
@@ -48,6 +49,7 @@ export function handleStartLargeFile(host: LargeFileChunkingHost, message: any):
   );
 
   host.isFileLoading = true;
+  uiState.fileLoading = true;
   host.updateWelcomeMessageVisibility();
 
   // Show loading progress
@@ -163,6 +165,7 @@ export function handleCancelLargeFile(host: LargeFileChunkingHost, message: any)
   host.chunkedFileState.delete(message.transferId || message.fileName);
   if (host.chunkedFileState.size === 0) {
     host.isFileLoading = false;
+    uiState.fileLoading = false;
     document.getElementById('loading')?.classList.add('hidden');
   }
 }
@@ -247,4 +250,8 @@ export async function handleLargeFileComplete(
 
   // Clean up chunked file state
   host.chunkedFileState.delete(stateKey);
+  if (host.chunkedFileState.size === 0) {
+    host.isFileLoading = false;
+    uiState.fileLoading = false;
+  }
 }

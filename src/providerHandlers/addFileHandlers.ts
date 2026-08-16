@@ -447,6 +447,8 @@ export async function handleAddFile(
       } catch (error) {
         console.error(`Failed to load file ${files[i].fsPath}:`, error);
         vscode.window.showErrorMessage(`Failed to load file ${files[i].fsPath}: ${error}`);
+      } finally {
+        await webviewPanel.webview.postMessage({ type: 'backgroundOperationComplete' });
       }
     }
   }
@@ -681,6 +683,8 @@ export async function handleAddFileFromPath(
     vscode.window.showErrorMessage(
       `Failed to add file from path: ${error instanceof Error ? error.message : String(error)}`
     );
+  } finally {
+    await webviewPanel.webview.postMessage({ type: 'backgroundOperationComplete' });
   }
 }
 

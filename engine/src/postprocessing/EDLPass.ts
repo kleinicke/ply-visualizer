@@ -212,7 +212,7 @@ export class EDLPass extends Pass {
         secondRingWeight: { value: this.secondRingWeight },
         exposure: { value: 1.0 },
         cameraNear: { value: 0.001 },
-        cameraFar: { value: 1000000 },
+        cameraFar: { value: 10000000 },
         neighbours: { value: neighbourUniforms },
       },
       vertexShader: EDLVertexShader,

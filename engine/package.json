@@ -10,6 +10,7 @@
     "start": "webpack serve --mode=development --open",
     "test": "playwright test",
     "bench:backend": "node scripts/backend-benchmark.mjs",
+    "bench:points": "node scripts/point-rendering-benchmark.mjs",
     "test:ui": "playwright test --ui",
     "test:debug": "playwright test --debug",
     "check": "svelte-check --tsconfig ./tsconfig.json"

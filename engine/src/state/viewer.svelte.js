@@ -39,7 +39,7 @@ export const viewerState = $state(
     cameraFov: 75,
     // Must match the PerspectiveCamera constructor arguments in initThreeJS.
     cameraNear: 0.001,
-    cameraFar: 1000000,
+    cameraFar: 10000000,
     cameraPositionText: '(0.000, 0.000, 0.000)',
     cameraRotationText: '(0.0°, 0.0°, 0.0°)',
     cameraTargetText: '(0.000, 0.000, 0.000)',

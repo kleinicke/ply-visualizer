@@ -17,6 +17,9 @@ import { MeasurementManager } from './MeasurementManager';
 import { FilmManager } from './film/FilmManager';
 import { mountFilmPanel } from './filmPanelMount';
 import { mountMeasurementQuickActions } from './measurementQuickActionsMount';
+import { mountSmallViewAffordance } from './smallViewAffordanceMount';
+import { mountFileActivityIndicator } from './fileActivityIndicatorMount';
+import { SmallViewAffordance } from './smallViewAffordance';
 import {
   SelectionManager,
   SelectionContext,
@@ -27,6 +30,36 @@ declare const acquireVsCodeApi: () => any;
 
 // Environment detection - works in both VSCode and browser
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
+
+const BACKGROUND_CHANGE_MESSAGES = new Set([
+  'stonexColorReady',
+  'spatialData',
+  'multiSpatialData',
+  'splatContainerUri',
+  'ultimateRawBinaryData',
+  'ultimateRawBinaryUri',
+  'directTypedArrayData',
+  'binarySpatialData',
+  'addFiles',
+  'startLargeFile',
+  'largeFileChunk',
+  'largeFileComplete',
+  'depthData',
+  'objData',
+  'stlData',
+  'xyzData',
+  'pcdData',
+  'ptsData',
+  'kittiBinData',
+  'offData',
+  'gltfData',
+  'volumeData',
+  'colmapModelFiles',
+  'colmapImages',
+  'npyData',
+  'xyzVariantData',
+  'poseData',
+]);
 
 // Shared file handling functionality
 import {
@@ -95,6 +128,7 @@ import {
   shouldApplySavedViewConvention,
   shouldOrientZUp,
 } from './cameraOrientation';
+import { applyFixedClipPlanes, FIXED_CAMERA_FAR, FIXED_CAMERA_NEAR } from './cameraClipping';
 import * as axesFeature from './axesFeature';
 import * as transformationMatrix from './transformationMatrix';
 import * as depthCameraParamsPrompt from './depthCameraParamsPrompt';
@@ -118,6 +152,7 @@ import { mountSequenceControls } from './sequenceControlsMount';
 import { mountFileList } from './fileListMount';
 import { mountStats } from './statsMount';
 import { mountControlsTab } from './controlsTabMount';
+import { PointRenderingExperiments } from './pointRenderingExperiments';
 import { filesState } from './state/files.svelte';
 import { GpuTimer, NULL_GPU_TIMER, createGpuTimer } from './rendering/gpuTimer';
 import type { ViewerRenderer } from './rendering/viewerRenderer';
@@ -266,6 +301,10 @@ class PointCloudVisualizer {
   // Backend-neutral GPU timing; see rendering/gpuTimer.ts. Starts as the null
   // timer so the render loop needs no guards before the renderer exists.
   gpuTimer: GpuTimer = NULL_GPU_TIMER;
+
+  /** Interactive, runtime-only benchmark variants exposed in the Controls tab. */
+  readonly pointRenderingExperiments = new PointRenderingExperiments(this as any);
+  readonly smallViewAffordance = new SmallViewAffordance(this);
 
   // Camera tracking for screen-space scaling
   private lastScalingUpdate: number = 0;
@@ -571,6 +610,7 @@ class PointCloudVisualizer {
       mountSvelteSmokeTest();
       mountErrorOverlay();
       mountLoadingOverlay();
+      mountFileActivityIndicator();
       mountPerformanceStats();
       mountTabNav(this);
 
@@ -631,8 +671,8 @@ class PointCloudVisualizer {
     this.camera = new THREE.PerspectiveCamera(
       75,
       container.clientWidth / container.clientHeight,
-      0.001,
-      1000000 // Further increased far plane for disparity files
+      FIXED_CAMERA_NEAR,
+      FIXED_CAMERA_FAR
     );
     this.camera.position.set(1, 1, 1);
 
@@ -1041,6 +1081,12 @@ class PointCloudVisualizer {
 
   private showLoading(show: boolean, message?: string): void {
     this.isFileLoading = show;
+    // In VS Code the extension host sends backgroundOperationComplete only
+    // after parsing, progressive colour delivery, and every other load phase
+    // has finished. Geometry becoming visible is not that terminal event.
+    if (show || !this.runningInVSCode) {
+      uiState.fileLoading = show;
+    }
 
     if (show) {
       uiState.loadingVisible = true;
@@ -1266,6 +1312,11 @@ class PointCloudVisualizer {
   performRender(): void {
     // The GPU is gone while the context is lost; any GL call would throw.
     if (this.contextLost) {
+      return;
+    }
+    this.pointRenderingExperiments.beforeRender();
+    this.smallViewAffordance.update();
+    if (this.pointRenderingExperiments.renderDepthPrepass()) {
       return;
     }
     const visibilityContext = this.getVisibilityRenderContext();
@@ -1703,6 +1754,7 @@ class PointCloudVisualizer {
     mountControlsTab(this);
     mountFilmPanel(this);
     mountMeasurementQuickActions(this);
+    mountSmallViewAffordance(this);
 
     document.addEventListener('dblclick', e => {
       const slider = e.target;
@@ -1927,10 +1979,7 @@ class PointCloudVisualizer {
       // Move camera along its current direction to the new distance
       const dir = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
       this.camera.position.copy(center.clone().sub(dir.multiplyScalar(distance)));
-      // Conservative clipping planes for massive point clouds
-      this.camera.near = Math.max(0.001, Math.min(0.1, distance / 10000));
-      this.camera.far = Math.max(distance * 100, 1000000);
-      this.camera.updateProjectionMatrix();
+      applyFixedClipPlanes(this.camera);
 
       // Update controls target if present
       if (this.controls && (this.controls as any).target) {
@@ -2109,6 +2158,10 @@ class PointCloudVisualizer {
     axesFeature.showUpVectorIndicator(this, upVector);
   }
 
+  completeBackgroundOperation(): void {
+    uiState.fileLoading = false;
+  }
+
   private showKeyboardShortcuts(): void {
     uiStatus.showKeyboardShortcuts(() => this.createShortcutsUI());
   }
@@ -2120,245 +2173,258 @@ class PointCloudVisualizer {
   private setupMessageHandler(): void {
     window.addEventListener('message', async event => {
       const message = event.data;
+      const tracksBackgroundChange = BACKGROUND_CHANGE_MESSAGES.has(message.type);
+      if (tracksBackgroundChange) {uiState.backgroundChanges++;}
 
-      switch (message.type) {
-        case 'registrationResult':
-          handleRegistrationExtensionResult(message);
-          break;
-        case 'timing':
-          this.handleTimingMessage(message);
-          break;
-        case 'startLoading':
-          this.showImmediateLoading(message);
-          break;
-        case 'timingUpdate':
-          // Allow timing updates, suppress other spam
-          if (
-            typeof message.message === 'string' &&
-            message.message.includes('🧪 Header face types')
-          ) {
-            console.log(message.message);
-          }
-          break;
-        case 'loadingError':
-          const fileType = message.fileType || 'point cloud';
-          const fileName = message.fileName ? ` (${message.fileName})` : '';
-          this.showError(`Failed to load ${fileType} file${fileName}: ${message.error}`);
-          break;
-        case 'stonexColorReady':
-          stationPipelineFeature.applyLoadTimeColors(this, message.updates ?? []);
-          break;
-        case 'stationPipelineProgress':
-          stationPipelineFeature.reportStationPipelineProgress(message.message);
-          break;
-        case 'stationPipelineResult':
-          stationPipelineFeature.handleStationPipelineResult(this, message);
-          break;
-        case 'spatialData':
-        case 'multiSpatialData':
-          try {
-            // Both single and multi-file data are handled the same way now
-            const dataArray = Array.isArray(message.data) ? message.data : [message.data];
-            await this.loadWithPerf('ply', message, () => this.displayFiles(dataArray));
-          } catch (error) {
-            console.error('Error displaying PLY data:', error);
-            this.showError(
-              'Failed to display PLY data: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'splatContainerUri':
-          await handleSplatContainerUri(this, message);
-          break;
-        case 'ultimateRawBinaryData':
-          try {
-            await this.handleUltimateRawBinaryData(message);
-          } catch (error) {
-            console.error('Error handling ultimate raw binary data:', error);
-            this.showError(
-              'Failed to handle ultimate raw binary data: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'ultimateRawBinaryUri':
-          await this.handleUltimateRawBinaryUri(message);
-          break;
-        case 'directTypedArrayData':
-          try {
-            await this.loadWithPerf('ply', message, () => this.handleDirectTypedArrayData(message));
-          } catch (error) {
-            console.error('Error handling direct TypedArray data:', error);
-            this.showError(
-              'Failed to handle direct TypedArray data: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'binarySpatialData':
-          try {
-            await this.loadWithPerf('ply', message, () => this.handleBinarySpatialData(message));
-            stationPipelineFeature.flushPendingLoadTimeColors(this);
-          } catch (error) {
-            console.error('Error handling binary PLY data:', error);
-            this.showError(
-              'Failed to handle binary PLY data: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'addFiles':
-          try {
-            this.addNewFiles(message.data);
-          } catch (error) {
-            console.error('Error adding new files:', error);
-            this.showError(
-              'Failed to add files: ' + (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'sequence:init':
-          try {
-            this.initializeSequence(message.files as string[], message.wildcard as string);
-          } catch (error) {
-            console.error('Error starting sequence:', error);
-            this.showError(
-              'Failed to start sequence: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'sequence:file:ultimate':
-          await this.sequenceHandleUltimate(message);
-          break;
-        case 'sequence:file:ply':
-          await this.sequenceHandlePly(message);
-          break;
-        case 'sequence:file:xyz':
-          await this.sequenceHandleXyz(message);
-          break;
-        case 'sequence:file:obj':
-          await this.sequenceHandleObj(message);
-          break;
-        case 'sequence:file:stl':
-          await this.sequenceHandleStl(message);
-          break;
-        case 'sequence:file:depth':
-          await this.sequenceHandleDepth(message);
-          break;
-        case 'fileRemoved':
-          try {
-            this.removeFileByIndex(message.fileIndex);
-          } catch (error) {
-            console.error('Error removing file:', error);
-            this.showError(
-              'Failed to remove file: ' + (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'startLargeFile':
-          this.handleStartLargeFile(message);
-          break;
-        case 'largeFileChunk':
-          this.handleLargeFileChunk(message);
-          break;
-        case 'largeFileComplete':
-          await this.handleLargeFileComplete(message);
-          break;
-        case 'cancelLargeFile':
-          largeFileChunking.handleCancelLargeFile(this, message);
-          break;
-        case 'depthData':
-          this.handleDepthData(message);
-          break;
-        case 'objData':
-          await this.loadWithPerf('obj', message, () => this.handleObjData(message));
-          break;
-        case 'stlData':
-          await this.loadWithPerf('stl', message, () => this.handleStlData(message));
-          break;
-        case 'xyzData':
-          await this.loadWithPerf('xyz', message, () => this.handleXyzData(message));
-          break;
-        case 'pcdData':
-          await this.loadWithPerf('pcd', message, () => this.handlePcdData(message));
-          break;
-        case 'ptsData':
-          await this.loadWithPerf('pts', message, () => this.handlePtsData(message));
-          break;
-        case 'kittiBinData':
-          await this.loadWithPerf('kitti-bin', message, () => this.handleKittiBinData(message));
-          break;
-        case 'offData':
-          await this.loadWithPerf('off', message, () => this.handleOffData(message));
-          break;
-        case 'gltfData':
-          await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
-          break;
-        case 'volumeData':
-          if (!acceptVolumeResponse(message.data?.metadata?.volumeSessionId, message.requestId)) {
+      try {
+        switch (message.type) {
+          case 'registrationResult':
+            handleRegistrationExtensionResult(message);
             break;
-          }
-          updateVolumeProgress(message.data?.metadata?.volumeSessionId, message.requestId, 1);
-          await this.loadWithPerf('volume', message, () => this.handleVolumeData(message));
-          break;
-        case 'volume:progress':
-          updateVolumeProgress(message.sessionId, message.requestId, message.fraction);
-          break;
-        case 'volume:error':
-          setVolumeError(message.sessionId, message.requestId, message.error);
-          break;
-        case 'colmapModelFiles':
-          await this.loadWithPerf('colmap', message, () => this.handleColmapModelFiles(message));
-          break;
-        case 'colmapImages':
-          await this.handleColmapImages(message);
-          break;
-        case 'npyData':
-          await this.loadWithPerf('npy', message, () => this.handleNpyData(message));
-          break;
-        case 'xyzVariantData':
-          await this.loadWithPerf('xyz', message, () => this.handleXyzVariantData(message));
-          break;
-        case 'cameraParams':
-          this.handleCameraParams(message);
-          break;
-        case 'cameraParamsCancelled':
-          this.handleCameraParamsCancelled(message.requestId);
-          break;
-        case 'datasetTexture':
-          this.handleDatasetTexture(message);
-          break;
-        case 'cameraParamsError':
-          this.handleCameraParamsError(message.error, message.requestId);
-          break;
-        case 'savePlyFileResult':
-          this.handleSaveSpatialFileResult(message);
-          break;
-        case 'colorImageData':
-          this.handleColorImageData(message);
-          break;
-        case 'defaultDepthSettings':
-          this.handleDefaultDepthSettings(message);
-          break;
-        case 'mtlData':
-          this.handleMtlData(message);
-          break;
-        case 'calibrationFileSelected':
-          this.handleCalibrationFileSelected(message);
-          break;
-        case 'poseData':
-          try {
-            await (this as any).handlePoseData(message);
-          } catch (error) {
-            console.error('Error handling pose data:', error);
-            this.showError(
-              'Failed to handle pose data: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
+          case 'timing':
+            this.handleTimingMessage(message);
+            break;
+          case 'startLoading':
+            this.showImmediateLoading(message);
+            break;
+          case 'backgroundOperationComplete':
+            this.completeBackgroundOperation();
+            break;
+          case 'timingUpdate':
+            // Allow timing updates, suppress other spam
+            if (
+              typeof message.message === 'string' &&
+              message.message.includes('🧪 Header face types')
+            ) {
+              console.log(message.message);
+            }
+            break;
+          case 'loadingError':
+            const fileType = message.fileType || 'point cloud';
+            const fileName = message.fileName ? ` (${message.fileName})` : '';
+            this.showError(`Failed to load ${fileType} file${fileName}: ${message.error}`);
+            break;
+          case 'stonexColorReady':
+            stationPipelineFeature.applyLoadTimeColors(this, message.updates ?? []);
+            break;
+          case 'stationPipelineProgress':
+            stationPipelineFeature.reportStationPipelineProgress(message.message);
+            break;
+          case 'stationPipelineResult':
+            stationPipelineFeature.handleStationPipelineResult(this, message);
+            break;
+          case 'spatialData':
+          case 'multiSpatialData':
+            try {
+              // Both single and multi-file data are handled the same way now
+              const dataArray = Array.isArray(message.data) ? message.data : [message.data];
+              await this.loadWithPerf('ply', message, () => this.displayFiles(dataArray));
+            } catch (error) {
+              console.error('Error displaying PLY data:', error);
+              this.showError(
+                'Failed to display PLY data: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'splatContainerUri':
+            await handleSplatContainerUri(this, message);
+            break;
+          case 'ultimateRawBinaryData':
+            try {
+              await this.handleUltimateRawBinaryData(message);
+            } catch (error) {
+              console.error('Error handling ultimate raw binary data:', error);
+              this.showError(
+                'Failed to handle ultimate raw binary data: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'ultimateRawBinaryUri':
+            await this.handleUltimateRawBinaryUri(message);
+            break;
+          case 'directTypedArrayData':
+            try {
+              await this.loadWithPerf('ply', message, () =>
+                this.handleDirectTypedArrayData(message)
+              );
+            } catch (error) {
+              console.error('Error handling direct TypedArray data:', error);
+              this.showError(
+                'Failed to handle direct TypedArray data: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'binarySpatialData':
+            try {
+              await this.loadWithPerf('ply', message, () => this.handleBinarySpatialData(message));
+              stationPipelineFeature.flushPendingLoadTimeColors(this);
+            } catch (error) {
+              console.error('Error handling binary PLY data:', error);
+              this.showError(
+                'Failed to handle binary PLY data: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'addFiles':
+            try {
+              this.addNewFiles(message.data);
+            } catch (error) {
+              console.error('Error adding new files:', error);
+              this.showError(
+                'Failed to add files: ' + (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'sequence:init':
+            try {
+              this.initializeSequence(message.files as string[], message.wildcard as string);
+            } catch (error) {
+              console.error('Error starting sequence:', error);
+              this.showError(
+                'Failed to start sequence: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'sequence:file:ultimate':
+            await this.sequenceHandleUltimate(message);
+            break;
+          case 'sequence:file:ply':
+            await this.sequenceHandlePly(message);
+            break;
+          case 'sequence:file:xyz':
+            await this.sequenceHandleXyz(message);
+            break;
+          case 'sequence:file:obj':
+            await this.sequenceHandleObj(message);
+            break;
+          case 'sequence:file:stl':
+            await this.sequenceHandleStl(message);
+            break;
+          case 'sequence:file:depth':
+            await this.sequenceHandleDepth(message);
+            break;
+          case 'fileRemoved':
+            try {
+              this.removeFileByIndex(message.fileIndex);
+            } catch (error) {
+              console.error('Error removing file:', error);
+              this.showError(
+                'Failed to remove file: ' + (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'startLargeFile':
+            this.handleStartLargeFile(message);
+            break;
+          case 'largeFileChunk':
+            this.handleLargeFileChunk(message);
+            break;
+          case 'largeFileComplete':
+            await this.handleLargeFileComplete(message);
+            break;
+          case 'cancelLargeFile':
+            largeFileChunking.handleCancelLargeFile(this, message);
+            break;
+          case 'depthData':
+            this.handleDepthData(message);
+            break;
+          case 'objData':
+            await this.loadWithPerf('obj', message, () => this.handleObjData(message));
+            break;
+          case 'stlData':
+            await this.loadWithPerf('stl', message, () => this.handleStlData(message));
+            break;
+          case 'xyzData':
+            await this.loadWithPerf('xyz', message, () => this.handleXyzData(message));
+            break;
+          case 'pcdData':
+            await this.loadWithPerf('pcd', message, () => this.handlePcdData(message));
+            break;
+          case 'ptsData':
+            await this.loadWithPerf('pts', message, () => this.handlePtsData(message));
+            break;
+          case 'kittiBinData':
+            await this.loadWithPerf('kitti-bin', message, () => this.handleKittiBinData(message));
+            break;
+          case 'offData':
+            await this.loadWithPerf('off', message, () => this.handleOffData(message));
+            break;
+          case 'gltfData':
+            await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
+            break;
+          case 'volumeData':
+            if (!acceptVolumeResponse(message.data?.metadata?.volumeSessionId, message.requestId)) {
+              break;
+            }
+            updateVolumeProgress(message.data?.metadata?.volumeSessionId, message.requestId, 1);
+            await this.loadWithPerf('volume', message, () => this.handleVolumeData(message));
+            break;
+          case 'volume:progress':
+            updateVolumeProgress(message.sessionId, message.requestId, message.fraction);
+            break;
+          case 'volume:error':
+            setVolumeError(message.sessionId, message.requestId, message.error);
+            break;
+          case 'colmapModelFiles':
+            await this.loadWithPerf('colmap', message, () => this.handleColmapModelFiles(message));
+            break;
+          case 'colmapImages':
+            await this.handleColmapImages(message);
+            break;
+          case 'npyData':
+            await this.loadWithPerf('npy', message, () => this.handleNpyData(message));
+            break;
+          case 'xyzVariantData':
+            await this.loadWithPerf('xyz', message, () => this.handleXyzVariantData(message));
+            break;
+          case 'cameraParams':
+            this.handleCameraParams(message);
+            break;
+          case 'cameraParamsCancelled':
+            this.handleCameraParamsCancelled(message.requestId);
+            break;
+          case 'datasetTexture':
+            this.handleDatasetTexture(message);
+            break;
+          case 'cameraParamsError':
+            this.handleCameraParamsError(message.error, message.requestId);
+            break;
+          case 'savePlyFileResult':
+            this.handleSaveSpatialFileResult(message);
+            break;
+          case 'colorImageData':
+            this.handleColorImageData(message);
+            break;
+          case 'defaultDepthSettings':
+            this.handleDefaultDepthSettings(message);
+            break;
+          case 'mtlData':
+            this.handleMtlData(message);
+            break;
+          case 'calibrationFileSelected':
+            this.handleCalibrationFileSelected(message);
+            break;
+          case 'poseData':
+            try {
+              await (this as any).handlePoseData(message);
+            } catch (error) {
+              console.error('Error handling pose data:', error);
+              this.showError(
+                'Failed to handle pose data: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+        }
+      } finally {
+        if (tracksBackgroundChange) {
+          uiState.backgroundChanges = Math.max(0, uiState.backgroundChanges - 1);
+        }
       }
     });
   }
@@ -2660,10 +2726,7 @@ class PointCloudVisualizer {
     this.camera.position.copy(center.clone().sub(direction.multiplyScalar(distance)));
     this.camera.lookAt(center);
 
-    // Conservative clipping planes for massive coordinate ranges
-    this.camera.near = Math.max(0.001, Math.min(0.1, distance / 10000));
-    this.camera.far = Math.max(distance * 100, 1000000);
-    this.camera.updateProjectionMatrix();
+    applyFixedClipPlanes(this.camera);
 
     // Set rotation center to fitted center
     this.controls.target.copy(center);
@@ -2898,6 +2961,7 @@ class PointCloudVisualizer {
     console.log(`Load: UI start ${fileName} at ${uiStartTime.toFixed(1)}ms`);
 
     this.isFileLoading = true;
+    uiState.fileLoading = true;
     this.updateWelcomeMessageVisibility();
 
     // Store timing for complete analysis

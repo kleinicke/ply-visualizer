@@ -3,6 +3,9 @@ import { uiState } from '../state/ui.svelte';
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
 
+/** Scroll offset remembered independently for each main-panel tab. */
+const tabScrollPositions = new Map<string, number>();
+
 export function showError(message: string): void {
   // Log to console for developer tools visibility
   try {
@@ -11,6 +14,7 @@ export function showError(message: string): void {
   uiState.errorMessage = message;
   uiState.isErrorVisible = true;
   uiState.loadingVisible = false;
+  uiState.fileLoading = false;
   // ErrorOverlay.svelte (components/ErrorOverlay.svelte) renders uiState
   // reactively - no DOM manipulation needed here.
 }
@@ -51,6 +55,11 @@ export function showColorMappingStatus(
 }
 
 export function switchTab(tabName: string): void {
+  const tabContent = document.querySelector('.tab-content') as HTMLElement | null;
+  if (tabContent) {
+    tabScrollPositions.set(uiState.activeTab, tabContent.scrollTop);
+  }
+
   uiState.activeTab = tabName;
   // Remove active class from all tabs and panels
   document.querySelectorAll('.tab-button').forEach(btn => {
@@ -69,6 +78,10 @@ export function switchTab(tabName: string): void {
   }
   if (activePanel) {
     activePanel.classList.add('active');
+  }
+
+  if (tabContent) {
+    tabContent.scrollTop = tabScrollPositions.get(tabName) ?? 0;
   }
 }
 

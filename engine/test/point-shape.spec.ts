@@ -1,6 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 
-/** All point sizes use the same round-disc sprite. */
+/** The original baseline is round; the explicit adaptive mode switches at 4 px. */
 
 function buildSmallPly(pointCount: number): Buffer {
   const header =
@@ -46,28 +46,59 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction(() => (window as any).visualizer !== undefined, { timeout: 30000 });
 });
 
-test('default-size points use the round-disc texture', async ({ page }) => {
+test('the default baseline keeps the original round shader', async ({ page }) => {
   await loadPly(page, buildSmallPly(1000), 'small.ply');
 
   const shape = await page.evaluate(() => {
     const mesh = (window as any).visualizer.meshes[0];
-    return { hasMap: mesh.material.map !== null, alphaTest: mesh.material.alphaTest };
+    return { hasMask: mesh.material.alphaMap !== null, alphaTest: mesh.material.alphaTest };
   });
 
-  expect(shape.hasMap).toBe(true);
+  expect(shape.hasMask).toBe(true);
   expect(shape.alphaTest).toBe(0.5);
 });
 
-test('enlarging points restores the round-disc texture', async ({ page }) => {
+test('switches to round above 4 px with downward hysteresis', async ({ page }) => {
   await loadPly(page, buildSmallPly(1000), 'small.ply');
 
-  const shape = await page.evaluate(() => {
+  const shapes = await page.evaluate(async () => {
     const visualizer = (window as any).visualizer;
-    visualizer.updatePointSize(0, 0.05);
+    visualizer.pointRenderingExperiments.applyMode('adaptive');
     const mesh = visualizer.meshes[0];
-    return { hasMap: mesh.material.map !== null, alphaTest: mesh.material.alphaTest };
+    const geometry = mesh.geometry;
+    geometry.computeBoundingSphere();
+    const localCenter = geometry.boundingSphere.center.clone();
+    const positions = geometry.getAttribute('position');
+    // Keep every point at one depth so this test isolates the exact cutoff;
+    // representative depth selection is covered by projected-point-shape.spec.
+    for (let index = 0; index < positions.count; index++) {
+      positions.setXYZ(index, localCenter.x, localCenter.y, localCenter.z);
+    }
+    positions.needsUpdate = true;
+    visualizer.camera.updateMatrixWorld();
+    mesh.updateWorldMatrix(true, false);
+    const center = localCenter
+      .clone()
+      .applyMatrix4(mesh.matrixWorld)
+      .applyMatrix4(visualizer.camera.matrixWorldInverse);
+    const scale = visualizer.renderer.domElement.height * 0.5;
+    const sizeForPixels = (pixels: number) => (pixels * -center.z) / scale;
+    const apply = async (pixels: number) => {
+      mesh.material.size = sizeForPixels(pixels);
+      visualizer.requestRender();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return { hasMask: mesh.material.alphaMap !== null, alphaTest: mesh.material.alphaTest };
+    };
+    return {
+      belowThreshold: await apply(3.9),
+      aboveFour: await apply(4.1),
+      hysteresis: await apply(3.8),
+      belowBand: await apply(3.4),
+    };
   });
 
-  expect(shape.hasMap).toBe(true);
-  expect(shape.alphaTest).toBe(0.5);
+  expect(shapes.belowThreshold).toEqual({ hasMask: false, alphaTest: 0 });
+  expect(shapes.aboveFour).toEqual({ hasMask: true, alphaTest: 0.5 });
+  expect(shapes.hysteresis).toEqual({ hasMask: true, alphaTest: 0.5 });
+  expect(shapes.belowBand).toEqual({ hasMask: false, alphaTest: 0 });
 });

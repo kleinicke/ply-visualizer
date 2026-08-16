@@ -212,7 +212,12 @@ test.describe('Scan-to-scan registration', () => {
     expect(cornerDeviation(before, corner => corner)).toBeLessThan(1e-6);
 
     await panel.locator('.registration-coarse').click();
+    await expect(page.locator('#file-activity-indicator')).toHaveAttribute(
+      'aria-label',
+      'Aligning point clouds'
+    );
     await expect(panel.locator('.registration-result')).toContainText('Yaw', { timeout: 30_000 });
+    await expect(page.locator('#file-activity-indicator')).toHaveCount(0);
 
     await panel.locator('.registration-icp').click();
     await expect(panel.locator('.registration-result')).toContainText('overlap', {

@@ -2,6 +2,7 @@ import { mount } from 'svelte';
 import ControlsTabTop from './components/ControlsTabTop.svelte';
 import ControlsTabBottom from './components/ControlsTabBottom.svelte';
 import CameraControlsPanel from './components/CameraControlsPanel.svelte';
+import PointRenderingExperiments from './components/PointRenderingExperiments.svelte';
 
 /**
  * Phase 4 (docs/SVELTE_MIGRATION_PLAN.md): replaces the static Controls-tab
@@ -18,6 +19,10 @@ export function mountControlsTab(host: unknown): void {
   const bottom = document.getElementById('controls-tab-bottom-mount');
   if (bottom) {
     mount(ControlsTabBottom, { target: bottom, props: { host } });
+  }
+  const experiments = document.getElementById('point-rendering-experiments-mount');
+  if (experiments) {
+    mount(PointRenderingExperiments, { target: experiments, props: { host } });
   }
   const camera = document.getElementById('camera-controls-panel');
   if (camera) {

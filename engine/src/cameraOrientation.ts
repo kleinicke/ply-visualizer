@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { applyFixedClipPlanes } from './cameraClipping';
 
 /**
  * Initial scene orientation for formats with a defined vertical axis.
@@ -116,7 +117,6 @@ export function applyScannerStartView(
     return false;
   }
   const centre = box.getCenter(new THREE.Vector3());
-  const diagonal = box.getSize(new THREE.Vector3()).length();
 
   // Level gaze towards the bulk of the data. A scanner sitting at the centre
   // of its own scan gives no horizontal direction, so fall back to +X.
@@ -132,9 +132,7 @@ export function applyScannerStartView(
   // around something out in the scene.
   host.camera.position.copy(capturePoint).addScaledVector(direction, -SCANNER_STANDOFF_METRES);
   host.camera.lookAt(capturePoint);
-  host.camera.near = 0.01;
-  host.camera.far = Math.max(diagonal * 20, 1000);
-  host.camera.updateProjectionMatrix();
+  applyFixedClipPlanes(host.camera);
   if (host.controls) {
     host.controls.target.copy(capturePoint);
     host.controls.update?.();
