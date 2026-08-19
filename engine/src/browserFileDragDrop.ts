@@ -285,7 +285,12 @@ export async function handleDropEvent(
     const filePaths = extractDroppedFilePaths(event.dataTransfer);
     if (filePaths.length > 0) {
       host.showImmediateLoading({ fileName: `${filePaths.length} dropped file(s)` });
-      filePaths.forEach(filePath => {
+      filePaths.forEach((filePath, index) => {
+        // Each path finishes independently in the extension host, so each one
+        // needs a matching slot in the webview's pending-load counter.
+        if (index > 0) {
+          host.showImmediateLoading({ fileName: `${filePaths.length} dropped file(s)` });
+        }
         host.vscode.postMessage({
           type: 'addFileFromPath',
           path: filePath,

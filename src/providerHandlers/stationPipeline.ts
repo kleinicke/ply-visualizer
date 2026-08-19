@@ -17,6 +17,7 @@ import * as vscode from 'vscode';
 import {
   StonexX3aParser,
   type StonexStationPipelineOptions,
+  type StonexStationPipelineTiming,
 } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
 import { readFileFast } from './binaryTransfer';
@@ -52,7 +53,9 @@ export async function handleStationPipeline(
     const startedAt = performance.now();
     const progressivelyPublishedScans = new Set<string>();
     const bytes = await readFileFast(vscode.Uri.file(documentPath));
+    const readMs = performance.now() - startedAt;
     const parser = new StonexX3aParser(stonexCameraProjector);
+    const parseStarted = performance.now();
     const parsed = await parser.parseAll(bytes, path.basename(documentPath), notify, {
       ...options,
       onScanColored: async update => {
@@ -75,7 +78,9 @@ export async function handleStationPipeline(
         }
       },
     });
+    const parseAllMs = performance.now() - parseStarted;
 
+    const prepareStarted = performance.now();
     const updates = parsed.map(scan => {
       const metadata = scan.metadata as Record<string, unknown>;
       const changed = metadata.stationColorChanged === true;
@@ -94,12 +99,12 @@ export async function handleStationPipeline(
         photographicallyColoredPoints: metadata.photographicallyColoredPoints as number | undefined,
       };
     });
+    const prepareMs = performance.now() - prepareStarted;
 
-    const coloring = (parsed[0]?.metadata as Record<string, any>)?.stationColoringResult;
-    host.logPerf(
-      `⏱️ PERF[x3a/station-pipeline] ${(performance.now() - startedAt).toFixed(0)}ms for ` +
-        `${parsed.length} scans of ${path.basename(documentPath)}`
-    );
+    const metadata = parsed[0]?.metadata as Record<string, any> | undefined;
+    const coloring = metadata?.stationColoringResult;
+    const timing = metadata?.stationPipelineTiming as StonexStationPipelineTiming | undefined;
+    const publishStarted = performance.now();
     await webviewPanel.webview.postMessage({
       type: 'stationPipelineResult',
       updates,
@@ -107,6 +112,33 @@ export async function handleStationPipeline(
         ? `Coloured ${Number(coloring.newlyColored).toLocaleString()} previously grey points`
         : `Registered ${updates.filter(update => update.transform).length} scans`,
     });
+    const publishMs = performance.now() - publishStarted;
+    const totalMs = performance.now() - startedAt;
+    const pipelineMs = timing?.totalMs ?? 0;
+    const reloadMs = Math.max(0, parseAllMs - pipelineMs);
+    const colourPartsMs = timing
+      ? timing.frameGatherMs + timing.coloringMs + timing.whiteBalanceMs + timing.summarizeMs
+      : 0;
+    const pipelineOverheadMs = Math.max(0, pipelineMs - (timing?.matchingMs ?? 0) - colourPartsMs);
+    const hostOverheadMs = Math.max(
+      0,
+      totalMs - readMs - reloadMs - pipelineMs - prepareMs - publishMs
+    );
+    const operation = options.register ? 'auto-match+recolour-all' : 'recolour-all';
+    host.logPerf(
+      `⏱️ PERF[x3a/${operation} ${path.basename(documentPath)}] ` +
+        `read ${readMs.toFixed(1)}ms · reload ${reloadMs.toFixed(1)}ms · ` +
+        `match ${(timing?.matchingMs ?? 0).toFixed(1)}ms · ` +
+        `colour ${colourPartsMs.toFixed(1)}ms ` +
+        `(frames ${(timing?.frameGatherMs ?? 0).toFixed(1)} + ` +
+        `project ${(timing?.coloringMs ?? 0).toFixed(1)} + ` +
+        `white balance ${(timing?.whiteBalanceMs ?? 0).toFixed(1)} + ` +
+        `summarize ${(timing?.summarizeMs ?? 0).toFixed(1)}) · ` +
+        `pipeline overhead ${pipelineOverheadMs.toFixed(1)}ms · ` +
+        `prepare result ${prepareMs.toFixed(1)}ms · publish ${publishMs.toFixed(1)}ms · ` +
+        `host overhead ${hostOverheadMs.toFixed(1)}ms | total ${totalMs.toFixed(1)}ms  ` +
+        `(${parsed.length} scans)`
+    );
   } catch (error) {
     webviewPanel.webview.postMessage({
       type: 'stationPipelineResult',

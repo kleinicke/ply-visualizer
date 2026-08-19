@@ -354,7 +354,15 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           await handleAddFileFromPath(this.addFileHost, webviewPanel, message.path as string);
           break;
         case 'addDroppedFiles':
-          await handleDroppedFilesFromWebview(this.addFileHost, webviewPanel, message.files || []);
+          try {
+            await handleDroppedFilesFromWebview(
+              this.addFileHost,
+              webviewPanel,
+              message.files || []
+            );
+          } finally {
+            await webviewPanel.webview.postMessage({ type: 'backgroundOperationComplete' });
+          }
           break;
         case 'requestDatasetTexture':
           await this.handleRequestDatasetTexture(webviewPanel, message);

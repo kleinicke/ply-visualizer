@@ -1,5 +1,6 @@
 <script lang="ts">
   import { filesState } from '../state/files.svelte';
+  import { runWithFileActivity } from '../fileActivity';
   import { getExtraScalarFieldNames } from '../utils/scalarFields';
   import CameraFrameList from './CameraFrameList.svelte';
   import E57CorrectionPanel from './E57CorrectionPanel.svelte';
@@ -135,9 +136,9 @@
     host.requestRemoveFile(index);
   }
 
-  function onColorModeChange(e: Event) {
+  async function onColorModeChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value;
-    host.onFileColorModeChange(index, value);
+    await runWithFileActivity(() => host.onFileColorModeChange(index, value));
   }
 
   // Render-mode button availability, matching the original updateFileList() logic.
@@ -466,10 +467,16 @@
     (e.currentTarget as HTMLInputElement).value = String(value);
     applyColorCorrection({ [key]: value });
   }
-  function applyColorCorrection(patch: Partial<StonexColorCorrection>) {
+  let colorCorrectionVersion = 0;
+  async function applyColorCorrection(patch: Partial<StonexColorCorrection>) {
     colorCorrection = { ...colorCorrection, ...patch };
-    setStonexColorCorrection(host, cameraGroup, colorCorrection);
-    host.requestRender();
+    const version = ++colorCorrectionVersion;
+    await runWithFileActivity(() => {
+      // Slider input can enqueue several values before the browser paints.
+      if (version !== colorCorrectionVersion) {return;}
+      setStonexColorCorrection(host, cameraGroup, colorCorrection);
+      host.requestRender();
+    });
   }
 
   const matrixText = $derived.by(() => {

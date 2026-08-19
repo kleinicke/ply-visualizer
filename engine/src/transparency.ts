@@ -35,8 +35,7 @@ export function updateAllMaterialsForTransparency(host: TransparencyHost): void 
   host.meshes.forEach(mesh => {
     if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
       const material = mesh.material as THREE.PointsMaterial;
-      // Only toggle blending; keep alphaTest (the round-disc cutout, set in
-      // optimizeForPointCount) so points stay round across transparency toggles.
+      // The adaptive renderer mirrors blending to its round pass before render.
       material.transparent = host.allowTransparency;
       material.needsUpdate = true;
     }
@@ -46,8 +45,7 @@ export function updateAllMaterialsForTransparency(host: TransparencyHost): void 
   host.vertexPointsObjects.forEach(vertexPoints => {
     if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
       const material = vertexPoints.material as THREE.PointsMaterial;
-      // Only toggle blending; keep alphaTest (the round-disc cutout, set in
-      // optimizeForPointCount) so points stay round across transparency toggles.
+      // Only toggle blending; preserve the material's existing point shape.
       material.transparent = host.allowTransparency;
       material.needsUpdate = true;
     }
@@ -59,7 +57,7 @@ export function updateAllMaterialsForTransparency(host: TransparencyHost): void 
       group.traverse(child => {
         if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
           const material = child.material as THREE.PointsMaterial;
-          // Keep alphaTest (round-disc cutout); only toggle blending.
+          // Keep the material's existing point shape; only toggle blending.
           material.transparent = host.allowTransparency;
           material.needsUpdate = true;
         }

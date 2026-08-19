@@ -2,15 +2,13 @@
   import { uiState } from '../state/ui.svelte';
   import { registrationState, stationPipelineUi } from '../state/registration.svelte';
 
-  const message = $derived(
-    uiState.fileLoading || uiState.backgroundChanges > 0
-      ? 'Loading point clouds'
-      : stationPipelineUi.busy
-        ? 'Aligning or recolouring point clouds'
-        : registrationState.busy
-          ? 'Aligning point clouds'
-          : ''
-  );
+  const message = $derived.by(() => {
+    if (uiState.fileLoading) return 'Loading point clouds';
+    if (uiState.backgroundChanges > 0) return 'Updating point clouds';
+    if (stationPipelineUi.busy) return 'Aligning or recolouring point clouds';
+    if (registrationState.busy) return 'Aligning point clouds';
+    return '';
+  });
 </script>
 
 {#if message}

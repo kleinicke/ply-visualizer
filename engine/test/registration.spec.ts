@@ -248,6 +248,32 @@ test.describe('Scan-to-scan registration', () => {
     expect(cornerDeviation(reverted, corner => corner)).toBeLessThan(1e-6);
   });
 
+  test('align all emits one phase breakdown to the performance output', async ({ page }) => {
+    test.slow();
+    const perfLines: string[] = [];
+    page.on('console', message => {
+      if (message.text().includes('PERF[registration/align-all')) {
+        perfLines.push(message.text());
+      }
+    });
+    await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const panel = page.locator('.file-item').first();
+    await panel.locator('.registration-toggle').click();
+    await panel.locator('.registration-align-all').click();
+    await expect(panel.locator('.registration-result')).toContainText('Aligned 1 of 1', {
+      timeout: 60_000,
+    });
+
+    expect(perfLines).toHaveLength(1);
+    expect(perfLines[0]).toContain('setup ');
+    expect(perfLines[0]).toContain('sample ');
+    expect(perfLines[0]).toContain('match ');
+    expect(perfLines[0]).toContain('apply ');
+    expect(perfLines[0]).toContain('| total ');
+  });
+
   test('picking correspondences aligns from three pairs', async ({ page }) => {
     test.slow();
     await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);

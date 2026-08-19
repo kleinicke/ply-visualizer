@@ -10,7 +10,10 @@ test('round alpha mask does not darken retained point fragments', async ({ page 
       'ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n'
     ),
   });
-  await page.waitForFunction(() => (window as any).visualizer.meshes.length === 1);
+  await page.waitForFunction(() => {
+    const mesh = (window as any).visualizer?.meshes?.[0];
+    return mesh?.children?.some((child: any) => child.name === 'adaptive-round-pass');
+  });
 
   const result = await page.evaluate(async () => {
     const visualizer = (window as any).visualizer;
@@ -23,12 +26,30 @@ test('round alpha mask does not darken retained point fragments', async ({ page 
     visualizer.camera.position.set(0, 0, 5);
     visualizer.camera.lookAt(0, 0, 0);
     visualizer.camera.updateMatrixWorld();
-    mesh.material.vertexColors = false;
-    mesh.material.color.setRGB(0.25, 0.25, 0.25);
-    mesh.material.size = (20 * 5) / (renderer.domElement.height * 0.5);
+    const adaptiveRound = mesh.children.find((child: any) => child.name === 'adaptive-round-pass');
+    mesh.visible = false;
 
-    const read = (mode: string) => {
-      visualizer.pointRenderingExperiments.applyMode(mode);
+    const makeMaterial = (round: boolean) => {
+      const material = mesh.material.clone();
+      material.vertexColors = false;
+      material.color.setRGB(0.25, 0.25, 0.25);
+      material.size = (20 * 5) / (renderer.domElement.height * 0.5);
+      material.map = null;
+      material.alphaMap = round ? adaptiveRound.material.alphaMap : null;
+      material.alphaTest = round ? 0.5 : 0;
+      material.onBeforeCompile = () => {};
+      material.customProgramCacheKey = () => `brightness-${round ? 'round' : 'square'}`;
+      material.needsUpdate = true;
+      return material;
+    };
+    const sample = new mesh.constructor(mesh.geometry, makeMaterial(false));
+    sample.frustumCulled = false;
+    visualizer.scene.add(sample);
+
+    const read = (round: boolean) => {
+      const previous = sample.material;
+      sample.material = makeMaterial(round);
+      previous.dispose();
       renderer.setRenderTarget(null);
       renderer.render(visualizer.scene, visualizer.camera);
       gl.finish();
@@ -48,7 +69,10 @@ test('round alpha mask does not darken retained point fragments', async ({ page 
       }
       return { nonWhite, average: rgb / Math.max(1, nonWhite * 3), minimum };
     };
-    return { square: read('no-alpha'), round: read('baseline') };
+    const result = { square: read(false), round: read(true) };
+    visualizer.scene.remove(sample);
+    sample.material.dispose();
+    return result;
   });
   expect(result.round.minimum).toBeGreaterThanOrEqual(result.square.minimum);
   expect(result.round.average).toBeGreaterThanOrEqual(result.square.average);

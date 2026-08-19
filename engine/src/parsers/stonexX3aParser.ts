@@ -724,6 +724,16 @@ export interface StonexStationPipelineOptions {
   }) => void | Promise<void>;
 }
 
+/** Phase timings retained on the parsed result for the Output-channel summary. */
+export interface StonexStationPipelineTiming {
+  totalMs: number;
+  matchingMs: number;
+  frameGatherMs: number;
+  coloringMs: number;
+  whiteBalanceMs: number;
+  summarizeMs: number;
+}
+
 export class StonexX3aParser {
   constructor(private readonly cameraProjector?: StonexCameraBatchProjector) {}
 
@@ -1385,6 +1395,19 @@ export class StonexX3aParser {
     if ((!options?.register && !supplied) || !sources || !ranges || ranges.length === 0) {
       return null;
     }
+    const pipelineStarted = performance.now();
+    const pipelineTiming: StonexStationPipelineTiming = {
+      totalMs: 0,
+      matchingMs: 0,
+      frameGatherMs: 0,
+      coloringMs: 0,
+      whiteBalanceMs: 0,
+      summarizeMs: 0,
+    };
+    (combined.metadata as Record<string, unknown>).stationPipelineTiming = pipelineTiming;
+    const finishTiming = () => {
+      pipelineTiming.totalMs = performance.now() - pipelineStarted;
+    };
 
     // Placement the caller already has beats anything derived here.
     if (supplied) {
@@ -1408,10 +1431,12 @@ export class StonexX3aParser {
           options,
           timingCallback
         );
+        finishTiming();
         return transforms;
       }
     }
 
+    const matchingStarted = performance.now();
     const photographicStems = new Set(sources.frames.map(frame => frame.scanStem));
     // Anchor: the biggest scan that has its own photographs, so the common
     // frame is one that already carries colour and camera geometry.
@@ -1463,11 +1488,14 @@ export class StonexX3aParser {
         timingCallback?.(`Stonex X3A: ${range.name} could not be registered; left in place`);
       }
     }
+    pipelineTiming.matchingMs = performance.now() - matchingStarted;
 
     if (!options.colorUncolored && !options.recolorAlreadyColored) {
+      finishTiming();
       return transforms;
     }
     await this.colorAcrossStations(combined, sources, ranges, transforms, options, timingCallback);
+    finishTiming();
     return transforms;
   }
 
@@ -1614,6 +1642,14 @@ export class StonexX3aParser {
     }
     const correctionMs = performance.now() - correctionStarted;
 
+    const pipelineTiming = (combined.metadata as Record<string, unknown>).stationPipelineTiming as
+      StonexStationPipelineTiming | undefined;
+    if (pipelineTiming) {
+      pipelineTiming.frameGatherMs = gatherMs;
+      pipelineTiming.coloringMs = passMs;
+      pipelineTiming.whiteBalanceMs = correctionMs;
+    }
+
     // Broken down rather than totalled: the three parts respond to completely
     // different changes, and a total alone cannot say which one moved.
     timingCallback?.(
@@ -1625,6 +1661,7 @@ export class StonexX3aParser {
         `${Math.round(passMs)}ms colouring ${combined.vertexCount.toLocaleString()} points, ` +
         `${Math.round(correctionMs)}ms white balance]`
     );
+    const summarizeStarted = performance.now();
     let total = 0;
     const changedScans = new Set<string>();
     for (const range of ranges) {
@@ -1648,6 +1685,9 @@ export class StonexX3aParser {
       recolored: result.recolored,
       occludedSamples: result.occludedSamples,
     };
+    if (pipelineTiming) {
+      pipelineTiming.summarizeMs = performance.now() - summarizeStarted;
+    }
   }
 }
 

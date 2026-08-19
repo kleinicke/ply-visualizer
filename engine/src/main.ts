@@ -152,7 +152,7 @@ import { mountSequenceControls } from './sequenceControlsMount';
 import { mountFileList } from './fileListMount';
 import { mountStats } from './statsMount';
 import { mountControlsTab } from './controlsTabMount';
-import { PointRenderingExperiments } from './pointRenderingExperiments';
+import { AdaptivePointRenderer } from './visualization/AdaptivePointRenderer';
 import { filesState } from './state/files.svelte';
 import { GpuTimer, NULL_GPU_TIMER, createGpuTimer } from './rendering/gpuTimer';
 import type { ViewerRenderer } from './rendering/viewerRenderer';
@@ -280,6 +280,8 @@ class PointCloudVisualizer {
 
   // Welcome message state
   isFileLoading: boolean = false;
+  /** Host-side loads can overlap; the activity dot stays up until all finish. */
+  private pendingFileLoads = 0;
   // When loading additional file(s) into a non-empty scene, we show progress as a
   // row in the Files list instead of a blocking overlay (the current cloud stays
   // interactive). Holds the label/detail of the in-progress add, or null.
@@ -302,8 +304,8 @@ class PointCloudVisualizer {
   // timer so the render loop needs no guards before the renderer exists.
   gpuTimer: GpuTimer = NULL_GPU_TIMER;
 
-  /** Interactive, runtime-only benchmark variants exposed in the Controls tab. */
-  readonly pointRenderingExperiments = new PointRenderingExperiments(this as any);
+  /** Default per-point square/round two-pass renderer. */
+  readonly adaptivePointRenderer = new AdaptivePointRenderer(this);
   readonly smallViewAffordance = new SmallViewAffordance(this);
 
   // Camera tracking for screen-space scaling
@@ -1314,11 +1316,8 @@ class PointCloudVisualizer {
     if (this.contextLost) {
       return;
     }
-    this.pointRenderingExperiments.beforeRender();
+    this.adaptivePointRenderer.beforeRender();
     this.smallViewAffordance.update();
-    if (this.pointRenderingExperiments.renderDepthPrepass()) {
-      return;
-    }
     const visibilityContext = this.getVisibilityRenderContext();
     const useVisibilityRenderer =
       this.pointRenderingImplementation === 'webgpu-visibility' &&
@@ -2159,7 +2158,8 @@ class PointCloudVisualizer {
   }
 
   completeBackgroundOperation(): void {
-    uiState.fileLoading = false;
+    this.pendingFileLoads = Math.max(0, this.pendingFileLoads - 1);
+    uiState.fileLoading = this.pendingFileLoads > 0;
   }
 
   private showKeyboardShortcuts(): void {
@@ -2174,7 +2174,9 @@ class PointCloudVisualizer {
     window.addEventListener('message', async event => {
       const message = event.data;
       const tracksBackgroundChange = BACKGROUND_CHANGE_MESSAGES.has(message.type);
-      if (tracksBackgroundChange) {uiState.backgroundChanges++;}
+      if (tracksBackgroundChange) {
+        uiState.backgroundChanges++;
+      }
 
       try {
         switch (message.type) {
@@ -2961,6 +2963,9 @@ class PointCloudVisualizer {
     console.log(`Load: UI start ${fileName} at ${uiStartTime.toFixed(1)}ms`);
 
     this.isFileLoading = true;
+    if (this.runningInVSCode) {
+      this.pendingFileLoads++;
+    }
     uiState.fileLoading = true;
     this.updateWelcomeMessageVisibility();
 

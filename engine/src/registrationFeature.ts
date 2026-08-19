@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import type { SpatialData } from './interfaces';
 import { registrationState } from './state/registration.svelte';
 import { updateStonexCameraStations } from './visualization/stonexCameras';
+import { perfLog } from './utils/perfLog';
 import {
   fitCorrespondences,
   icpRefine,
@@ -631,6 +632,13 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
   if (registrationState.busy) {
     return;
   }
+  const startedAt = performance.now();
+  let setupMs = 0;
+  let samplingMs = 0;
+  let matchingMs = 0;
+  let applyMs = 0;
+  let sampledPoints = 0;
+  let aligned = 0;
   const targets = registrationCandidates(host, anchorIndex);
   if (targets.length === 0) {
     registrationState.result = 'Nothing else is loaded to align.';
@@ -642,6 +650,8 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
     registrationState.result = 'The anchor cloud has no point data.';
     return;
   }
+  sampledPoints += anchor.length / 3;
+  setupMs = performance.now() - startedAt;
 
   registrationState.busy = true;
   registrationState.alignAllResults = [];
@@ -652,7 +662,6 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
   await new Promise(resolve => setTimeout(resolve, 0));
 
   const undoAll = new Map<number, THREE.Matrix4>();
-  let aligned = 0;
   try {
     for (let position = 0; position < targets.length; position++) {
       const fileIndex = targets[position];
@@ -660,19 +669,28 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
       registrationState.status = `Aligning ${name} (${position + 1}/${targets.length})...`;
       await new Promise(resolve => setTimeout(resolve, 0));
 
+      const samplingStarted = performance.now();
       const source = worldPoints(host, fileIndex);
+      samplingMs += performance.now() - samplingStarted;
       if (!source) {
         registrationState.alignAllResults.push(`${name}: no point data`);
         continue;
       }
+      sampledPoints += source.length / 3;
 
       try {
         // A fresh copy of the anchor each time: the worker path transfers the
         // buffers it is given, so a shared one would be detached after the
         // first pair.
-        const result = await registerPair(source, anchor.slice(), {
-          coarse: { upAxis: registrationState.upAxis as UpAxis },
-        });
+        const matchingStarted = performance.now();
+        let result: Awaited<ReturnType<typeof registerPair>>;
+        try {
+          result = await registerPair(source, anchor.slice(), {
+            coarse: { upAxis: registrationState.upAxis as UpAxis },
+          });
+        } finally {
+          matchingMs += performance.now() - matchingStarted;
+        }
         if (!result?.icp) {
           registrationState.alignAllResults.push(`${name}: no match found`);
           continue;
@@ -684,12 +702,14 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
           continue;
         }
 
+        const applyStarted = performance.now();
         const previous = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone();
         undoAll.set(fileIndex, previous);
         host.setTransformationMatrix(fileIndex, result.matrix.clone().multiply(previous));
         host.updateMatrixTextarea(fileIndex);
         aligned++;
         registrationState.alignedIndices = [...registrationState.alignedIndices, fileIndex];
+        applyMs += performance.now() - applyStarted;
 
         const margin =
           result.coarse && result.coarse.runnerUpScore > 0
@@ -706,7 +726,6 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
       host.requestRender();
     }
 
-    followStations(host);
     if (undoAll.size > 0) {
       alignAllUndo = undoAll;
       registrationState.canUndoAll = true;
@@ -715,9 +734,22 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
       host.spatialFiles[anchorIndex]?.fileName ?? 'the anchor'
     } · ${registrationBackend()}`;
   } finally {
+    const followStarted = performance.now();
+    followStations(host);
+    applyMs += performance.now() - followStarted;
     registrationState.busy = false;
     registrationState.status = '';
     host.requestRender();
+    const totalMs = performance.now() - startedAt;
+    const overheadMs = Math.max(0, totalMs - setupMs - samplingMs - matchingMs - applyMs);
+    const anchorName = host.spatialFiles[anchorIndex]?.fileName ?? `file ${anchorIndex + 1}`;
+    perfLog(
+      `⏱️ PERF[registration/align-all ${anchorName}] setup ${setupMs.toFixed(1)}ms · ` +
+        `sample ${samplingMs.toFixed(1)}ms · match ${matchingMs.toFixed(1)}ms · ` +
+        `apply ${applyMs.toFixed(1)}ms · UI/overhead ${overheadMs.toFixed(1)}ms | ` +
+        `total ${totalMs.toFixed(1)}ms  (${aligned}/${targets.length} clouds · ` +
+        `${Math.round(sampledPoints).toLocaleString()} sampled pts · ${registrationBackend()})`
+    );
   }
 }
 
