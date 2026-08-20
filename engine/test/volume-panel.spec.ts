@@ -53,6 +53,9 @@ test('volume controls request filtered points and replace them with a thresholde
 
   const threshold = page.getByLabel('Volume threshold value');
   await expect(threshold).toBeVisible();
+  await expect(page.getByText('Visible slices:', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Minimum i slice')).toBeVisible();
+  await expect(page.getByLabel('Maximum k slice')).toBeVisible();
   const brightness = page.getByLabel('Volume brightness mapping');
   await expect(brightness).toHaveValue('slice-auto');
   await brightness.selectOption('volume-range');

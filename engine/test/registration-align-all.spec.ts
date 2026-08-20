@@ -144,15 +144,16 @@ test.describe('Align all to one cloud', () => {
     await page.locator('#hiddenFileInput').setInputFiles([anchorFile, secondFile, thirdFile]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(3);
 
-    // File 0 is the anchor; it must not move.
-    const panel = page.locator('.file-item').nth(0);
-    await panel.locator('.registration-toggle').click();
-    await panel.locator('.registration-align-all').click();
+    // File 0 is the anchor; it must not move. Aligning everything is a
+    // whole-scene action and lives in the Align menu.
+    await page.locator('#global-align-toggle').click();
+    await page.locator('#global-align-anchor').selectOption('0');
+    await page.locator('.global-align-run').click();
 
-    await expect(panel.locator('.registration-result')).toContainText('Aligned 2 of 2', {
+    await expect(page.locator('#global-align-menu .align-summary')).toContainText('2 aligned', {
       timeout: 120_000,
     });
-    await expect(panel.locator('.registration-align-all-results li')).toHaveCount(2);
+    await expect(page.locator('.global-align-results li')).toHaveCount(2);
 
     const matrices = await page.evaluate(
       () =>
@@ -168,8 +169,8 @@ test.describe('Align all to one cloud', () => {
       cornerDeviation(matrices[2], inverseOf(third.yaw, third.tx, third.ty, third.tz))
     ).toBeLessThan(0.05);
 
-    await panel.locator('.registration-undo-all').click();
-    await expect(panel.locator('.registration-result')).toContainText('Reverted');
+    await page.locator('.global-align-undo').click();
+    await expect(page.locator('.global-align-results li')).toHaveCount(0);
     const reverted = await page.evaluate(
       () =>
         (window as any).visualizer.transformationMatrices

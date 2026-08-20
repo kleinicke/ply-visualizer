@@ -3,6 +3,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { StonexX3aParser } from '../../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../../wasmCameraModels';
+import {
+  DEFAULT_STONEX_COLOR_CORRECTION,
+  computeStonexFrameMultipliers,
+} from '../../../engine/src/visualization/stonexColorCorrection';
 
 /**
  * The Rust colour pass on a real archive.
@@ -93,5 +97,31 @@ suite('Stonex colour pass on a real archive', () => {
         `${frame.name}: preview is RGBA at its declared size`
       );
     }
+  });
+
+  /**
+   * The viewer shows the capture, not an opinion about it.
+   *
+   * Every correction defaults to off so the displayed colour is the sample the
+   * camera recorded. This is a decision rather than an oversight — the previous
+   * default rebalanced by camera band — so it gets an assertion instead of
+   * living only in a comment.
+   */
+  test('shows raw capture colour by default', () => {
+    assert.strictEqual(DEFAULT_STONEX_COLOR_CORRECTION.whiteBalance, 'off');
+    assert.strictEqual(DEFAULT_STONEX_COLOR_CORRECTION.exposure, 'off');
+
+    // Off must mean identity, not merely "some other gain": a default that
+    // multiplied by 1.02 would look raw and not be.
+    const calibration = {
+      frames: [
+        { type: 'U' as const, grayRedGain: 1.4, grayBlueGain: 1.9, meanGreen: 120 },
+        { type: 'D' as const, grayRedGain: 1.1, grayBlueGain: 2.3, meanGreen: 60 },
+      ],
+      bandGains: { U: { redGain: 1.5, blueGain: 2.0 } },
+      targetGreen: 90,
+    };
+    const multipliers = computeStonexFrameMultipliers(calibration, DEFAULT_STONEX_COLOR_CORRECTION);
+    assert.deepStrictEqual(Array.from(multipliers), [1, 1, 1, 1, 1, 1]);
   });
 });

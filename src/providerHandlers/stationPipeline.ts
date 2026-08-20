@@ -21,6 +21,7 @@ import {
 } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
 import { readFileFast } from './binaryTransfer';
+import { logStonexPhases } from './documentLoader';
 
 export interface StationPipelineHost {
   logPerf(line: string): void;
@@ -125,6 +126,12 @@ export async function handleStationPipeline(
       totalMs - readMs - reloadMs - pipelineMs - prepareMs - publishMs
     );
     const operation = options.register ? 'auto-match+recolour-all' : 'recolour-all';
+    // `reload` above is a subtraction, which says how long the re-parse took
+    // and nothing about what it did. The parse keeps its own phase report, so
+    // print it: on a large archive most of that time turns out to be the
+    // load-time own-station colour pass, which the station pass then builds on
+    // rather than repeats.
+    logStonexPhases(host, parsed[0], path.basename(documentPath), 'x3a/reload');
     host.logPerf(
       `⏱️ PERF[x3a/${operation} ${path.basename(documentPath)}] ` +
         `read ${readMs.toFixed(1)}ms · reload ${reloadMs.toFixed(1)}ms · ` +

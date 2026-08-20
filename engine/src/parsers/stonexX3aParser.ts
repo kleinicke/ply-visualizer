@@ -1344,6 +1344,14 @@ export class StonexX3aParser {
       geometry => onGeometryReady?.(splitByScan(geometry, null, true)),
       pipeline?.scopeScanStems
     );
+
+    // Tempting and wrong: skipping the load-time own-station colour pass when
+    // the run is going to recolour everything anyway. Measured on
+    // Abschnitt_A.x3a — it loses 229k of 3.60M coloured points (6.4%) and runs
+    // *slower*, because the station pass rejects as occluded, against its own
+    // station's depth buffer, points the load-time pass had happily coloured,
+    // and because every scan then fails the "already fully coloured" skip. The
+    // second pass is not a superset of the first. See docs/performance-method.md.
     const stationTransforms = await this.runStationPipeline(combined, pipeline, timingCallback);
     delete (combined.metadata as Record<string, unknown>).stonexStationSources;
     const ranges = combined.metadata.embeddedScanPointRanges as ScanPointRange[] | undefined;

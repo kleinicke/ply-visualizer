@@ -116,10 +116,36 @@ test('local colour changes are shown as point-cloud updates', async ({ page }) =
   });
   await expect(page.locator('#file-list .file-item')).toHaveCount(1);
 
+  // Watched, not polled. A one-point cloud recolours in well under a frame, so
+  // asking Playwright to *find* the indicator is a race it loses whenever the
+  // machine is fast — it flaked exactly that way under full-suite load. A
+  // MutationObserver installed before the action cannot miss the appearance
+  // however briefly it lasts.
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    (window as any).__activitySeen = seen;
+    const record = () => {
+      const element = document.getElementById('file-activity-indicator');
+      const label = element?.getAttribute('aria-label');
+      if (label && seen[seen.length - 1] !== label) {
+        seen.push(label);
+      }
+    };
+    record();
+    new MutationObserver(record).observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['aria-label'],
+    });
+  });
+
   await page.locator('#color-0').selectOption('1');
-  const indicator = page.locator('#file-activity-indicator');
-  await expect(indicator).toHaveAttribute('aria-label', 'Updating point clouds');
-  await expect(indicator).toHaveCount(0);
+
+  await expect
+    .poll(() => page.evaluate(() => (window as any).__activitySeen as string[]))
+    .toContain('Updating point clouds');
+  await expect(page.locator('#file-activity-indicator')).toHaveCount(0);
 });
 
 test('activity dot uses an explicit blue independent of the editor theme', async ({ page }) => {

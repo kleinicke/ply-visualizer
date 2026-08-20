@@ -182,10 +182,12 @@ test.describe('Scan-to-scan registration', () => {
       visualizer.updateFileList();
     });
 
-    const panel = page.locator('.file-item').first();
-    await panel.locator('.registration-toggle').click();
-    await panel.locator('.station-projection-diagnostic').selectOption('reverse-pan');
-    await panel.locator('.station-pipeline-run').click();
+    // Colouring the archive — and the diagnostics that vary how — belongs to
+    // the whole scene, so it is driven from the Align menu, not a file's panel.
+    await page.locator('#global-align-toggle').click();
+    await page.locator('.align-disclosure').click();
+    await page.locator('.station-projection-diagnostic').selectOption('reverse-pan');
+    await page.locator('.global-align-recolor').click();
 
     const message = await page.evaluate(() => (window as any).__stationMessage);
     expect(message.type).toBe('stationPipeline');
@@ -259,10 +261,9 @@ test.describe('Scan-to-scan registration', () => {
     await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
-    const panel = page.locator('.file-item').first();
-    await panel.locator('.registration-toggle').click();
-    await panel.locator('.registration-align-all').click();
-    await expect(panel.locator('.registration-result')).toContainText('Aligned 1 of 1', {
+    await page.locator('#global-align-toggle').click();
+    await page.locator('.global-align-run').click();
+    await expect(page.locator('#global-align-menu .align-summary')).toContainText('1 aligned', {
       timeout: 60_000,
     });
 
@@ -311,7 +312,7 @@ test.describe('Scan-to-scan registration', () => {
       );
     }
 
-    await expect(panel.locator('.registration-fit')).toContainText('(4)');
+    await expect(panel.locator('.pair-count')).toContainText('4 pairs');
     await panel.locator('.registration-fit').click();
     await expect(panel.locator('.registration-result')).toContainText('Fitted 4 pairs');
 

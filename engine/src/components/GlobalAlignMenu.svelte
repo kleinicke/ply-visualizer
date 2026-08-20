@@ -7,6 +7,7 @@
     firstArchiveScanIndex,
     runStationPipeline,
   } from '../stationPipelineTrigger';
+  import { capturePlaces, setCapturePlaceVisible } from '../stationPipelineFeature';
 
   let { host }: { host: any } = $props();
 
@@ -52,6 +53,28 @@
   );
 
   const STATE_ICON = { queued: '·', running: '◐', aligned: '✓', failed: '✕' } as const;
+
+  // Capture places: everything shot from one tripod position, derived from
+  // where the scans actually registered. They live here rather than in a
+  // file's own panel because they are the colour run's scope — only checked
+  // places are parsed, used as cameras and recoloured — and scope belongs
+  // beside the button that consumes it.
+  const archiveName = $derived(
+    (filesState.renderTick,
+    archiveIndex === null
+      ? undefined
+      : (host.spatialFiles?.[archiveIndex]?.metadata?.containerFileName as string | undefined))
+  );
+  const places = $derived(
+    (filesState.renderTick, filesState.renderModeTick, capturePlaces(host, archiveName))
+  );
+  const placeVisible = (place: { fileIndices: number[] }) =>
+    place.fileIndices.some(index => filesState.visibility[index] !== false);
+
+  function togglePlace(place: any, event: Event) {
+    setCapturePlaceVisible(host, place, (event.currentTarget as HTMLInputElement).checked);
+    filesState.renderModeTick++;
+  }
 
   function fileLabel(index: number): string {
     return host.spatialFiles?.[index]?.fileName || `File ${index + 1}`;
@@ -233,10 +256,55 @@
               <option value="x">X</option>
             </select>
           </label>
-          <p class="align-hint">
-            Capture-place scope and the projection diagnostics stay in the file's own panel — they
-            are about one archive's geometry, not about this run.
-          </p>
+
+          {#if places.length > 1}
+            <div class="align-places">
+              <span class="align-places-head">Capture places</span>
+              {#each places as place (place.name)}
+                <label class="align-check">
+                  <input
+                    type="checkbox"
+                    class="capture-place-toggle"
+                    data-place={place.name}
+                    checked={placeVisible(place)}
+                    onchange={event => togglePlace(place, event)}
+                  />
+                  {place.name}
+                  <span class="align-places-count">
+                    ({place.fileIndices.length} scan{place.fileIndices.length === 1 ? '' : 's'})
+                  </span>
+                </label>
+              {/each}
+              <p class="align-hint">
+                Hides everything captured from one tripod position at once, panoramas included —
+                and unchecked places are skipped by the colour run, which makes a focused run
+                faster.
+              </p>
+            </div>
+          {/if}
+
+          <label class="align-check">
+            Projection diagnostic
+            <select
+              class="station-projection-diagnostic"
+              bind:value={stationPipelineUi.projectionDiagnostic}
+              disabled={stationPipelineUi.busy || registrationState.busy}
+            >
+              <option value="normal">Normal calibrated projection</option>
+              <option value="own-station-only">Own station cameras only</option>
+              <option value="u-only">Upward camera (U) only</option>
+              <option value="d-only">Downward camera (D) only</option>
+              <option value="ideal-pinhole">Ignore lens distortion</option>
+              <option value="reverse-pan">Reverse panorama rotation</option>
+              <option value="invert-extrinsic">Invert camera extrinsic</option>
+            </select>
+          </label>
+          {#if stationPipelineUi.projectionDiagnostic !== 'normal'}
+            <p class="align-hint">
+              Diagnostic runs replace existing camera colour so the selected model can be compared
+              on the same nearby edges. Return this to “Normal” after testing.
+            </p>
+          {/if}
         {/if}
       </section>
     {:else}
@@ -441,5 +509,22 @@
   .align-check {
     display: block;
     margin-top: 5px;
+  }
+  .align-check select {
+    display: block;
+    width: 100%;
+    margin-top: 2px;
+    font-size: 11px;
+  }
+  .align-places {
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid var(--vscode-panel-border);
+  }
+  .align-places-head {
+    font-weight: 600;
+  }
+  .align-places-count {
+    opacity: 0.7;
   }
 </style>

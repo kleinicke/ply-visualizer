@@ -22,6 +22,15 @@ test.describe('Capture places', () => {
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
   });
 
+  /**
+   * Capture places are the colour run's scope, so they live with that run in
+   * the Align menu's options rather than inside one file's panel.
+   */
+  async function openScope(page: any) {
+    await page.locator('#global-align-toggle').click();
+    await page.locator('.align-disclosure').click();
+  }
+
   /** Makes both clouds look like scans out of one archive. */
   async function makeArchive(page: any, secondOffset: number) {
     await page.evaluate((offset: number) => {
@@ -41,14 +50,14 @@ test.describe('Capture places', () => {
 
   test('groups scans on one origin as a single place', async ({ page }) => {
     await makeArchive(page, 0);
-    await page.locator('.file-item').nth(0).locator('.registration-toggle').click();
+    await openScope(page);
     // One place is not worth a list; the section only appears when they differ.
     await expect(page.locator('.capture-place-toggle')).toHaveCount(0);
   });
 
   test('separates registered positions and hides one at a time', async ({ page }) => {
     await makeArchive(page, 12);
-    await page.locator('.file-item').nth(0).locator('.registration-toggle').click();
+    await openScope(page);
 
     const toggles = page.locator('.capture-place-toggle');
     await expect(toggles).toHaveCount(2);

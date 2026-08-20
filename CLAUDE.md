@@ -89,11 +89,15 @@ there; put code in the modules above.
   file: manual pair picking, single-pair ICP, capture-place scope, projection
   diagnostics. Both fire the archive colouring pipeline through the shared
   `stationPipelineTrigger.ts` — never re-implement the scope rules in a
-  component. Long-running work reports progress as structured state, not as a
-  spinner plus a string: `registrationState.alignEntries` (one seeded row per
-  cloud, queued → running → aligned/failed) and `stationPipelineUi.scans` (one
-  row per scan, ticked as the host publishes it). Keep new long operations to
-  that shape.
+  component. The split is by scope, not by convenience: the Align menu owns
+  everything scene- or archive-wide (align all, refine all, undo, colour all,
+  capture-place scope, projection diagnostics), and the per-file panel owns
+  exactly one thing — correcting a single pair (`RegistrationPanel.svelte`:
+  choose the moving cloud, then auto-align/ICP or pick three correspondences).
+  Long-running work reports progress as structured state, not as a spinner plus
+  a string: `registrationState.alignEntries` (one seeded row per cloud, queued →
+  running → aligned/failed) and `stationPipelineUi.scans` (one row per scan,
+  ticked as the host publishes it). Keep new long operations to that shape.
 - Visibility checkboxes use one consistent gesture everywhere: ordinary click
   toggles one item; Shift-click isolates that item; Shift-clicking the already
   isolated item restores the whole sibling group. This applies to files,

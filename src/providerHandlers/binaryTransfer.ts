@@ -179,10 +179,19 @@ export async function resendSplatContainerBytes(
   }
 }
 
+/**
+ * @param logPerf optional Output-channel sink. Handing geometry over was the
+ *   largest and by far the most volatile phase of an X3A load — 5.1 s, 22.1 s
+ *   and 50.2 s on three consecutive opens of the same file — while the only
+ *   numbers about it went to the devtools console, where a benchmark cannot
+ *   see them. One line per scan, saying which route it took and how big it
+ *   was, is what makes that phase arguable instead of mysterious.
+ */
 export async function sendSpatialDataToWebview(
   webviewPanel: vscode.WebviewPanel,
   spatialDataArray: any[],
-  messageType: string
+  messageType: string,
+  logPerf?: (line: string) => void
 ): Promise<void> {
   for (const spatialData of spatialDataArray) {
     console.log(
@@ -211,6 +220,12 @@ export async function sendSpatialDataToWebview(
       }
       const transferTime = performance.now() - startTime;
       console.log(`⚡ Binary transfer complete: ${transferTime.toFixed(1)}ms`);
+      logPerf?.(
+        `⏱️ PERF[transfer/${usedChunking ? 'chunked' : 'packed'} ${spatialData.fileName}] ` +
+          `send ${transferTime.toFixed(1)}ms  (${(packedBytes / 1048576).toFixed(1)} MB · ` +
+          `${spatialData.vertexCount.toLocaleString()} pts · ` +
+          `${((packedBytes / 1048576 / transferTime) * 1000).toFixed(0)} MB/s)`
+      );
     } catch (error) {
       if (usedChunking) {
         throw error;

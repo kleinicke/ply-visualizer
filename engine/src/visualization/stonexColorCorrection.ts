@@ -49,9 +49,19 @@ export interface StonexColorCorrection {
   exposureStops: number;
 }
 
-/** Matches the behaviour shipped before correction was switchable. */
+/**
+ * Show the capture as it was captured.
+ *
+ * Every correction here is off by default deliberately: the raw sample is the
+ * only value in this pipeline that is a measurement rather than a decision, and
+ * a viewer that silently rebalances it makes two archives incomparable for
+ * reasons the user never chose. `band` was the previous default and remains one
+ * selection away in the file's Camera colour controls, along with per-frame
+ * gray-world and exposure matching — which is where cross-camera brightness
+ * differences are meant to be addressed, when the user asks for it.
+ */
 export const DEFAULT_STONEX_COLOR_CORRECTION: StonexColorCorrection = {
-  whiteBalance: 'band',
+  whiteBalance: 'off',
   exposure: 'off',
   highlight: 'clip',
   manualRedGain: 1,

@@ -31,8 +31,8 @@ test.describe('Station pipeline trigger', () => {
       (window as any).visualizer.runningInVSCode = true;
       (window as any).visualizer.updateFileList();
     });
-    await page.locator('.file-item').nth(0).locator('.registration-toggle').click();
-    await expect(page.locator('.station-pipeline-run')).toHaveCount(0);
+    await page.locator('#global-align-toggle').click();
+    await expect(page.locator('.global-align-recolor')).toHaveCount(0);
   });
 
   test('stays hidden for an archive outside the extension', async ({ page }) => {
@@ -45,8 +45,8 @@ test.describe('Station pipeline trigger', () => {
       };
       visualizer.updateFileList();
     });
-    await page.locator('.file-item').nth(0).locator('.registration-toggle').click();
-    await expect(page.locator('.station-pipeline-run')).toHaveCount(0);
+    await page.locator('#global-align-toggle').click();
+    await expect(page.locator('.global-align-recolor')).toHaveCount(0);
   });
 
   test('appears for an archive scan and posts the pipeline options', async ({ page }) => {
@@ -67,16 +67,14 @@ test.describe('Station pipeline trigger', () => {
     });
     expect(posted).toBe(true);
 
-    const panel = page.locator('.file-item').nth(0);
-    await panel.locator('.registration-toggle').click();
-    await expect(panel.locator('.station-pipeline-run')).toBeVisible();
-    await expect(panel.locator('.station-pipeline-run')).toContainText(
-      'Colour using best aligned cameras'
-    );
-    await expect(panel.locator('.station-pipeline-register')).toBeVisible();
+    const panel = page.locator('#global-align-menu');
+    await page.locator('#global-align-toggle').click();
+    await expect(panel.locator('.global-align-recolor')).toBeVisible();
+    await expect(panel.locator('.global-align-recolor')).toContainText('Recolour all');
+    await expect(panel.locator('.global-align-recolor-register')).toBeVisible();
 
     // Default: fill in the grey scans, leave existing colour alone.
-    await panel.locator('.station-pipeline-run').click();
+    await panel.locator('.global-align-recolor').click();
     await expect(page.locator('#file-activity-indicator')).toHaveAttribute(
       'aria-label',
       'Aligning or recolouring point clouds'
@@ -96,7 +94,7 @@ test.describe('Station pipeline trigger', () => {
 
     // The button disables itself until the host answers, so a second run
     // cannot be started on top of the first.
-    await expect(panel.locator('.station-pipeline-run')).toBeDisabled();
+    await expect(panel.locator('.global-align-recolor')).toBeDisabled();
 
     // The inbound half — `stationPipelineResult` coming back from the host —
     // cannot be exercised here: main.ts only installs its message listener when

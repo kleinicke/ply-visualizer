@@ -8,7 +8,6 @@
   import RegistrationPanel from './RegistrationPanel.svelte';
   import TransformSection from './TransformSection.svelte';
   import VolumePanel from './VolumePanel.svelte';
-  import SectionPanel from './SectionPanel.svelte';
   import {
     setStonexColorCorrection,
     setStonexImageDistortion,
@@ -553,7 +552,6 @@
 
       {#if !data.metadata?.volumeSessionId}
         <RegistrationPanel {host} fileIndex={index} />
-        <SectionPanel {host} fileIndex={index} />
       {/if}
 
       <div class="rendering-controls" style="margin-top: 4px; margin-bottom: 6px;">

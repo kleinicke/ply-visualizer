@@ -113,6 +113,40 @@ Look first for **a type or property mismatch causing a silent fallback**, not
 for slow algorithms. That is what most of the real findings in this project and
 its sibling turned out to be.
 
+### Three hypotheses this method killed
+
+All three looked obviously right before anything was measured. Recording them
+here because the cost of this project is not slow code, it is confident work
+done on the wrong thing.
+
+1. **"Chunked postMessage is why geometry delivery takes 5–50 s."** It is not.
+   `PERF[transfer/...]` lines now report each scan's send: 631 MB of geometry
+   crosses in ~2.0 s at 180–470 MB/s, which is at the transport's known ceiling.
+   The 50 s reading came from a machine at load 24. Geometry delivery is 19–20%
+   of an X3A parse; the load-time colour pass is 63–72%.
+2. **"The recolour's 7.5 s `reload` is a black box, so instrument it."** This
+   one held, and it was the cheapest change here: `PERF[x3a/reload]` prints the
+   re-parse's own phases. The answer was that 69% of the reload is the
+   _load-time own-station colour pass being run a second time_. On OHP_FRONT the
+   recolour spends 6.2 s projecting in the re-parse and 8.5 s projecting in the
+   station pass — 14.7 s of a 19.5 s operation is projection.
+3. **"So skip the load-time colour pass when the run recolours everything
+   anyway."** Refuted by A/B: it loses **229k of 3.60M coloured points (6.4%)**
+   and runs _slower_. The station pass is not a superset of the load-time pass —
+   it rejects, against a station's own depth buffer, points the load-time pass
+   coloured, and with nothing pre-coloured every scan also fails the "already
+   fully coloured" early-out. The comparison was a SHA-256 of the final colour
+   buffers from a headless parse of a real archive, which is the only reason
+   this was caught rather than shipped.
+
+`simd128` (`RUSTFLAGS="-C target-feature=+simd128"`) was also measured: the
+colour buffers hash identically — unlike the sibling project, where it shifted
+JPEG output by ±1 — but the medians are 2258 ms against 2267 ms, i.e. no change.
+The projection is branchy scalar work per point (azimuth window, occlusion test,
+iterative undistortion, Bayer sample); there is nothing there for LLVM to
+vectorise. Not adopted: a build flag that changes the shipped binary for no
+measured gain is a liability.
+
 ## 6. Amdahl is the honest answer
 
 When matching is 99% of align-all, a 3x matching win is a 2.9x win. When

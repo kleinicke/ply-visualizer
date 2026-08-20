@@ -88,6 +88,8 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await page.locator('#hiddenFileInput').setInputFiles(plyPath);
     await page.waitForTimeout(2000);
 
+    await expect(page.getByText('Cross section', { exact: true })).toHaveCount(0);
+
     const content = page.locator('#file-content-0');
     const toggle = page.locator('.collapse-toggle[data-file-index="0"]');
     await expect(content).toBeVisible();

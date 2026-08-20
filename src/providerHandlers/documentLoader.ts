@@ -122,10 +122,20 @@ interface StonexPhaseReport {
  * derived rates travel with them, and one run can be compared against another
  * on a machine that is not perfectly quiet.
  */
-function logStonexPhases(
+/**
+ * Break a parse down into its phases in the Output channel.
+ *
+ * Exported because the recolour pipeline re-parses the whole archive and that
+ * re-parse was a black box: the pipeline line reported it as one `reload`
+ * number computed by subtraction, which is the least informative shape a
+ * measurement can have. Same report, different tag, so the two parses stay
+ * distinguishable in the log.
+ */
+export function logStonexPhases(
   host: { logPerf(line: string): void },
   scan: { metadata?: Record<string, unknown> } | undefined,
-  fileName: string
+  fileName: string,
+  tag = 'x3a/phases'
 ): void {
   const report = scan?.metadata?.stonexParsePhases as StonexPhaseReport | undefined;
   if (!report) {
@@ -134,14 +144,14 @@ function logStonexPhases(
   const seconds = (ms: number) => (ms / 1000).toFixed(2);
   const share = (ms: number) => `${((ms / report.totalMs) * 100).toFixed(0)}%`;
   host.logPerf(
-    `⏱️ PERF[x3a/phases] ${fileName} · total ${seconds(report.totalMs)}s · ` +
+    `⏱️ PERF[${tag}] ${fileName} · total ${seconds(report.totalMs)}s · ` +
       `${(report.points / 1e6).toFixed(1)}M pts · ${report.scans} scans · ${report.frames} frames · ` +
       `${(report.archiveBytes / 1e6).toFixed(0)} MB`
   );
   for (const phase of report.phases) {
     if (phase.ms >= 1) {
       host.logPerf(
-        `⏱️ PERF[x3a/phase]   ${phase.name}: ${seconds(phase.ms)}s (${share(phase.ms)})`
+        `⏱️ PERF[${tag.replace(/s$/, '')}]   ${phase.name}: ${seconds(phase.ms)}s (${share(phase.ms)})`
       );
     }
   }
@@ -341,7 +351,12 @@ export async function loadDocumentContent(
           tagContainer(geometry, 'x3a/geometry', archiveName, loadStartedAtEpoch);
           colorContainer.scanCount = geometry.filter(scan => scan.hasColors === false).length;
           geometrySent = true;
-          await sendSpatialDataToWebview(webviewPanel, geometry, 'multiSpatialData');
+          await sendSpatialDataToWebview(
+            webviewPanel,
+            geometry,
+            'multiSpatialData',
+            host.logPerf.bind(host)
+          );
         }
       );
       decorateStonexScans(host, parsed, documentUri, bytes.byteLength);
