@@ -963,11 +963,12 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
    */
   private async handlePlyFetchFallback(message: any): Promise<void> {
     const key = message.docUri as string;
+    let fallbackPanel: vscode.WebviewPanel | undefined;
     this.logPerf(`⏱️ PERF[ply/ext] fetch fallback → postMessage for ${message.fileName || key}`);
     try {
       const uri = vscode.Uri.parse(key);
-      const panel = this.pathToPanel.get(uri.fsPath);
-      if (!panel) {
+      fallbackPanel = this.pathToPanel.get(uri.fsPath);
+      if (!fallbackPanel) {
         return;
       }
       // Re-read and reparse from the URI, then resend over the proven path.
@@ -979,7 +980,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       parsedData.shortPath = this.getShortPath(uri.fsPath);
       parsedData.fileIndex = 0;
       await sendUltimateRawBinary(
-        panel,
+        fallbackPanel,
         parsedData,
         bytes,
         message.messageType || 'multiSpatialData',
@@ -987,6 +988,17 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       );
     } catch (error) {
       console.error('PLY fetch fallback failed:', error);
+      const detail = error instanceof Error ? error.message : String(error);
+      if (fallbackPanel) {
+        void fallbackPanel.webview.postMessage({
+          type: 'loadingError',
+          fileName: message.fileName,
+          fileType: 'PLY',
+          error: detail,
+        });
+      } else {
+        void vscode.window.showErrorMessage(`Failed to load PLY file: ${detail}`);
+      }
     }
   }
 

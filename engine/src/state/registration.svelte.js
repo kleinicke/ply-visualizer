@@ -10,6 +10,9 @@ export const registrationState = $state(
    *   sourceIndex: number | null;
    *   targetIndex: number | null;
    *   picking: boolean;
+   *   workflow: 'choose' | 'coarse-fixed' | 'coarse-moving' | 'coarse-ready' | 'fine-fixed' | 'fine-moving';
+   *   coarseFixedCount: number;
+   *   coarseMovingCount: number;
    *   pairCount: number;
    *   awaiting: 'source' | 'target' | null;
    *   busy: boolean;
@@ -28,6 +31,9 @@ export const registrationState = $state(
     // Unified file index of the cloud held fixed.
     targetIndex: null,
     picking: false,
+    workflow: 'choose',
+    coarseFixedCount: 0,
+    coarseMovingCount: 0,
     pairCount: 0,
     // Which cloud the next double-click is expected to land on, once one half
     // of a correspondence has been picked.

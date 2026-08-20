@@ -221,8 +221,13 @@ export class PlyParser {
     // Calculate binary data start position
     const headerEndPos = headerEndIndex + 'end_header'.length;
     let dataStartPos = headerEndPos;
-    while (dataStartPos < data.length && (data[dataStartPos] === 10 || data[dataStartPos] === 13)) {
+    if (data[dataStartPos] === 13) {
       dataStartPos++;
+      if (data[dataStartPos] === 10) {dataStartPos++;}
+    } else if (data[dataStartPos] === 10) {
+      dataStartPos++;
+    } else {
+      throw new Error('Invalid PLY file: end_header is not terminated by a newline');
     }
 
     const totalTime = performance.now();

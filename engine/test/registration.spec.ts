@@ -275,23 +275,83 @@ test.describe('Scan-to-scan registration', () => {
     expect(perfLines[0]).toContain('| total ');
   });
 
-  test('picking correspondences aligns from three pairs', async ({ page }) => {
+  test('guided coarse matching isolates each cloud and applies three ordered points', async ({
+    page,
+  }) => {
     test.slow();
     await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
     const panel = page.locator('.file-item').nth(0);
     await panel.locator('.registration-toggle').click();
-    await panel.locator('.registration-pick').click();
-    await expect(panel.locator('.registration-fit')).toBeDisabled();
+    await panel.locator('.registration-needs-coarse').click();
+    await expect(page.locator('#file-0')).toBeChecked();
+    await expect(page.locator('#file-1')).not.toBeChecked();
 
-    // Feed correspondences through the same entry point the double-click
-    // handler uses; driving real clicks would test the picker, not this.
+    // The guided route takes all three fixed points first, then the same three
+    // on the moving cloud. Feed them through the double-click entry point;
+    // driving screen coordinates here would test the picker instead.
     const pairs = [
       [0, 0, 0],
       [ROOM_WIDTH, 0, ROOM_HEIGHT],
       [0, ROOM_DEPTH, ROOM_HEIGHT],
-      [ROOM_WIDTH, ROOM_DEPTH, 0],
+    ];
+    for (const corner of pairs) {
+      const [x, y, z] = corner;
+      await page.evaluate(
+        fixedPoint => {
+          const feature = (window as any).registrationFeature;
+          feature.handlePickedPoint((window as any).visualizer, fixedPoint);
+        },
+        { x, y, z }
+      );
+    }
+    await expect(page.locator('#file-0')).not.toBeChecked();
+    await expect(page.locator('#file-1')).toBeChecked();
+
+    for (const corner of pairs) {
+      const [x, y, z] = corner;
+      const angle = (YAW * Math.PI) / 180;
+      const moved = {
+        x: Math.cos(angle) * x - Math.sin(angle) * y + TX,
+        y: Math.sin(angle) * x + Math.cos(angle) * y + TY,
+        z: z + TZ,
+      };
+      await page.evaluate(movedPoint => {
+        const feature = (window as any).registrationFeature;
+        feature.handlePickedPoint((window as any).visualizer, movedPoint);
+      }, moved);
+    }
+
+    await expect(page.locator('#file-0')).toBeChecked();
+    await expect(page.locator('#file-1')).toBeChecked();
+    await panel.locator('.registration-apply-coarse').click();
+    await expect(panel.locator('.registration-result')).toContainText('Coarse match applied');
+    await expect(page.locator('#file-0')).toBeChecked();
+    await expect(page.locator('#file-1')).not.toBeChecked();
+
+    const after = await page.evaluate(
+      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+    );
+    expect(cornerDeviation(after, expectedInverse)).toBeLessThan(0.01);
+
+    await panel.locator('.registration-finish').click();
+    await expect(page.locator('#file-0')).toBeChecked();
+    await expect(page.locator('#file-1')).toBeChecked();
+  });
+
+  test('fine matching alternates visibility and live-fits after three pairs', async ({ page }) => {
+    test.slow();
+    await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+    const panel = page.locator('.file-item').nth(0);
+    await panel.locator('.registration-toggle').click();
+    await panel.locator('.registration-already-coarse').click();
+
+    const pairs = [
+      [0, 0, 0],
+      [ROOM_WIDTH, 0, ROOM_HEIGHT],
+      [0, ROOM_DEPTH, ROOM_HEIGHT],
     ];
     for (const corner of pairs) {
       const [x, y, z] = corner;
@@ -302,20 +362,17 @@ test.describe('Scan-to-scan registration', () => {
         z: z + TZ,
       };
       await page.evaluate(
-        ({ movedPoint, fixedPoint }) => {
+        ({ fixedPoint, movedPoint }) => {
           const feature = (window as any).registrationFeature;
           const visualizer = (window as any).visualizer;
-          feature.handlePickedPoint(visualizer, movedPoint);
           feature.handlePickedPoint(visualizer, fixedPoint);
+          feature.handlePickedPoint(visualizer, movedPoint);
         },
-        { movedPoint: moved, fixedPoint: { x, y, z } }
+        { fixedPoint: { x, y, z }, movedPoint: moved }
       );
     }
 
-    await expect(panel.locator('.pair-count')).toContainText('4 pairs');
-    await panel.locator('.registration-fit').click();
-    await expect(panel.locator('.registration-result')).toContainText('Fitted 4 pairs');
-
+    await expect(panel.locator('.registration-result')).toContainText('Live fit from 3 fine pairs');
     const after = await page.evaluate(
       () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
     );

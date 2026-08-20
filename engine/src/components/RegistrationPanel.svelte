@@ -16,7 +16,7 @@
   // This panel's cloud is the anchor. The selected *other* cloud moves onto it.
   const active = $derived(registrationState.targetIndex === fileIndex);
   const movingIndex = $derived(active ? registrationState.sourceIndex : null);
-  const picking = $derived(active && registrationState.picking);
+  const workflow = $derived(active ? registrationState.workflow : 'choose');
 
   function fileLabel(index: number): string {
     const data = host.spatialFiles?.[index];
@@ -27,6 +27,8 @@
     open = !open;
     if (open && candidates.length > 0 && !active) {
       registration.beginSession(host, candidates[0], fileIndex);
+    } else if (!open && active) {
+      registration.endSession(host);
     }
   }
 
@@ -35,12 +37,6 @@
     registration.beginSession(host, value, fileIndex);
   }
 
-  function togglePicking() {
-    if (!active) {
-      return;
-    }
-    registration.setPicking(host, !registrationState.picking);
-  }
 </script>
 
 {#if candidates.length > 0}
@@ -82,7 +78,7 @@
             <button
               class="registration-coarse pair-primary"
               onclick={() => registration.autoAlign(host)}
-              disabled={!active || registrationState.busy}
+              disabled={!active || registrationState.busy || workflow !== 'choose'}
               title="Yaw sweep, then refine the best few hypotheses"
             >
               Auto-align
@@ -90,7 +86,7 @@
             <button
               class="registration-icp"
               onclick={() => registration.refineIcp(host)}
-              disabled={!active || registrationState.busy}
+              disabled={!active || registrationState.busy || workflow !== 'choose'}
               title="ICP from where the cloud sits now"
             >
               Refine (ICP)
@@ -106,58 +102,62 @@
         </div>
 
         <div class="pair-route">
-          <div class="pair-route-head">
-            Or point at it
-            {#if registrationState.pairCount > 0 || registrationState.awaiting}
-              <span class="pair-count">{registrationState.pairCount} pair{registrationState.pairCount === 1 ? '' : 's'}</span>
-            {/if}
-          </div>
-          <div class="pair-actions">
-            <button
-              class="registration-pick pair-primary"
-              class:active={picking}
-              onclick={togglePicking}
-              disabled={!active || registrationState.busy}
-            >
-              {picking ? 'Stop picking' : 'Pick pairs'}
-            </button>
-            <button
-              class="registration-fit"
-              onclick={() => registration.alignFromPairs(host)}
-              disabled={!active || registrationState.pairCount < 3 || registrationState.busy}
-            >
-              Fit
-            </button>
-            <button
-              class="registration-undo-pair"
-              onclick={() => registration.removeLastPair(host)}
-              disabled={!active || (registrationState.pairCount === 0 && !registrationState.awaiting)}
-            >
-              Undo pick
-            </button>
-            <button
-              class="registration-clear"
-              onclick={() => registration.clearPairs(host)}
-              disabled={!active || registrationState.pairCount === 0}
-            >
-              Clear
-            </button>
-          </div>
-          {#if picking}
-            <p class="pair-hint">
-              {#if registrationState.awaiting === 'target'}
-                Now the same feature on this fixed cloud.
+          <div class="pair-route-head">Manual matching</div>
+          {#if workflow === 'choose'}
+            <p class="pair-hint">Are the two clouds already roughly in the same position?</p>
+            <div class="pair-actions">
+              <button
+                class="registration-already-coarse pair-primary"
+                onclick={() => registration.startGuidedMatching(host, true)}
+                disabled={!active || registrationState.busy}
+              >Yes, start fine matching</button>
+              <button
+                class="registration-needs-coarse"
+                onclick={() => registration.startGuidedMatching(host, false)}
+                disabled={!active || registrationState.busy}
+              >No, guide me through 3 points</button>
+            </div>
+          {:else}
+            <div class="guided-step">
+              {#if workflow === 'coarse-fixed'}
+                Coarse · fixed cloud · {registrationState.coarseFixedCount}/3
+              {:else if workflow === 'coarse-moving'}
+                Coarse · moving cloud · {registrationState.coarseMovingCount}/3
+              {:else if workflow === 'coarse-ready'}
+                Coarse points ready
+              {:else if workflow === 'fine-fixed'}
+                Fine · fixed cloud · {registrationState.pairCount} complete pairs
               {:else}
-                Double-click a feature on “{movingIndex === null
-                  ? 'the moving cloud'
-                  : fileLabel(movingIndex)}”.
+                Fine · moving cloud · match pair {registrationState.pairCount + 1}
               {/if}
-              Three pairs are the minimum; four or more spread around the overlap are better.
-            </p>
+            </div>
+            <p class="pair-hint">{registrationState.status}</p>
+            <div class="pair-actions">
+              {#if workflow === 'coarse-ready'}
+                <button
+                  class="registration-apply-coarse pair-primary"
+                  onclick={() => registration.applyCoarseMatch(host)}
+                  disabled={registrationState.busy}
+                >Apply coarse match</button>
+              {/if}
+              <button
+                class="registration-undo-pair"
+                onclick={() => registration.removeLastPair(host)}
+                disabled={registrationState.busy || (registrationState.coarseFixedCount === 0 && registrationState.coarseMovingCount === 0 && registrationState.pairCount === 0 && !registrationState.awaiting)}
+              >Undo pick</button>
+              <button
+                class="registration-finish"
+                onclick={() => registration.finishGuidedMatching(host)}
+                disabled={registrationState.busy}
+              >Finish</button>
+            </div>
+            {#if workflow === 'fine-fixed' || workflow === 'fine-moving'}
+              <p class="pair-hint">From three fine pairs onward, the transform updates after every completed pair. Coarse landmarks are not reused in the fine fit.</p>
+            {/if}
           {/if}
         </div>
 
-        {#if active && registrationState.status}
+        {#if active && registrationState.status && workflow === 'choose'}
           <div class="pair-status">{registrationState.status}</div>
         {/if}
         {#if active && registrationState.result}
@@ -223,10 +223,6 @@
     align-items: baseline;
     font-weight: 600;
     margin-bottom: 4px;
-  }
-  .pair-count {
-    font-weight: 400;
-    opacity: 0.7;
   }
   .pair-actions {
     display: flex;

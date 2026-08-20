@@ -6,6 +6,7 @@ import { parsePlyFromResponse, parsePlyWasm, type PlyParseResult } from './parse
 export interface BinaryDataHandlersHost {
   vscode: { postMessage(message: any): void };
   lastAbsoluteMs: number;
+  showError(message: string): void;
   addNewFiles(newFiles: SpatialData[]): void;
   displayFiles(dataArray: SpatialData[]): Promise<void>;
   handleUltimateRawBinaryData(message: any, preparsed?: PlyParseResult): Promise<void>;
@@ -50,22 +51,17 @@ export async function handleUltimateRawBinaryUri(
   host: BinaryDataHandlersHost,
   message: any
 ): Promise<void> {
+  let response: Response;
+  const fetchStart = performance.now();
   try {
     // Stamp when the (small) URI message arrived, BEFORE the fetch, so the
     // timer's `transfer` is just the URI crossing and the fetch is its own
     // phase (no double counting).
     message.uriReceivedAt = Date.now();
-    const fetchStart = performance.now();
-    const response = await fetch(message.fileUri);
+    response = await fetch(message.fileUri);
     if (!response.ok) {
       throw new Error(`fetch failed: ${response.status}`);
     }
-    // Streamed straight into wasm memory and parsed there, so the file never
-    // exists as a JavaScript buffer. `fetch` and `parse` are one phase here
-    // because they overlap by construction - the timer records the pair.
-    const parsed = await parsePlyFromResponse(response);
-    message.fetchMs = performance.now() - fetchStart;
-    await host.handleUltimateRawBinaryData(message, parsed);
   } catch (error) {
     console.warn('[PLY] fetch path failed, requesting postMessage fallback:', error);
     host.vscode.postMessage({
@@ -74,6 +70,20 @@ export async function handleUltimateRawBinaryUri(
       fileName: message.fileName,
       messageType: message.messageType,
     });
+    return;
+  }
+
+  try {
+    // Streamed straight into wasm memory and parsed there, so the file never
+    // exists as a JavaScript buffer. `fetch` and `parse` are one phase here
+    // because they overlap by construction - the timer records the pair.
+    const parsed = await parsePlyFromResponse(response);
+    message.fetchMs = performance.now() - fetchStart;
+    await host.handleUltimateRawBinaryData(message, parsed);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error('[PLY] parsing failed:', error);
+    host.showError(`Failed to load PLY file (${message.fileName}): ${detail}`);
   }
 }
 

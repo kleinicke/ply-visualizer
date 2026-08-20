@@ -26,9 +26,11 @@ export interface RegistrationHost {
   scene: THREE.Scene;
   spatialFiles: SpatialData[];
   transformationMatrices: THREE.Matrix4[];
+  fileVisibility?: boolean[];
   /** X3A camera profiles, so panoramas follow the scans they were shot from. */
   cameraGroups?: THREE.Group[];
   setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void;
+  setFileEntryVisibility?(fileIndex: number, visible: boolean): void;
   updateMatrixTextarea(fileIndex: number): void;
   requestRender(): void;
 }
@@ -57,12 +59,15 @@ interface Session {
   sourceIndex: number;
   targetIndex: number;
   pairs: Correspondence[];
+  coarseFixed: THREE.Vector3[];
+  coarseMoving: THREE.Vector3[];
   pending: { point: THREE.Vector3; onSource: boolean } | null;
   /** Transform of the source file before this session touched it. */
   undoMatrix: THREE.Matrix4 | null;
   markers: THREE.Group | null;
   /** Cached once per session; the scene's scale does not change under it. */
   markerRadius: number | null;
+  savedVisibility: boolean[] | null;
 }
 
 let session: Session | null = null;
@@ -139,6 +144,8 @@ function syncState(): void {
   registrationState.sourceIndex = session ? session.sourceIndex : null;
   registrationState.targetIndex = session ? session.targetIndex : null;
   registrationState.pairCount = session ? session.pairs.length : 0;
+  registrationState.coarseFixedCount = session ? session.coarseFixed.length : 0;
+  registrationState.coarseMovingCount = session ? session.coarseMoving.length : 0;
   registrationState.awaiting = session?.pending
     ? session.pending.onSource
       ? 'target'
@@ -160,25 +167,98 @@ export function beginSession(
     sourceIndex,
     targetIndex,
     pairs: [],
+    coarseFixed: [],
+    coarseMoving: [],
     pending: null,
     undoMatrix: null,
     markers: null,
     markerRadius: null,
+    savedVisibility: null,
   };
+  registrationState.workflow = 'choose';
   registrationState.status = '';
   registrationState.result = '';
   syncState();
 }
 
 export function endSession(host: RegistrationHost): void {
+  restoreVisibility(host);
   if (session?.markers) {
     host.scene.remove(session.markers);
     disposeMarkers(session.markers);
   }
   session = null;
   registrationState.picking = false;
+  registrationState.workflow = 'choose';
   syncState();
   host.requestRender();
+}
+
+function captureVisibility(host: RegistrationHost): void {
+  if (!session || session.savedVisibility || !host.fileVisibility) {return;}
+  session.savedVisibility = host.fileVisibility.map(value => value !== false);
+}
+
+function setWorkflowVisibility(host: RegistrationHost, visibleIndices: number[]): void {
+  if (!session || !host.setFileEntryVisibility || !host.fileVisibility) {return;}
+  captureVisibility(host);
+  const visible = new Set(visibleIndices);
+  for (let index = 0; index < host.fileVisibility.length; index++) {
+    host.setFileEntryVisibility(index, visible.has(index));
+  }
+  host.requestRender();
+}
+
+function restoreVisibility(host: RegistrationHost): void {
+  if (!session?.savedVisibility || !host.setFileEntryVisibility) {return;}
+  session.savedVisibility.forEach((visible, index) => host.setFileEntryVisibility!(index, visible));
+  session.savedVisibility = null;
+  host.requestRender();
+}
+
+function showFixed(host: RegistrationHost): void {
+  if (session) {setWorkflowVisibility(host, [session.targetIndex]);}
+}
+
+function showMoving(host: RegistrationHost): void {
+  if (session) {setWorkflowVisibility(host, [session.sourceIndex]);}
+}
+
+function showPair(host: RegistrationHost): void {
+  if (session) {setWorkflowVisibility(host, [session.targetIndex, session.sourceIndex]);}
+}
+
+/** Starts the guided manual route at either coarse landmarks or fine pairs. */
+export function startGuidedMatching(host: RegistrationHost, alreadyCoarse: boolean): void {
+  if (!session || registrationState.busy) {return;}
+  session.pairs = [];
+  session.pending = null;
+  session.coarseFixed = [];
+  session.coarseMoving = [];
+  registrationState.picking = true;
+  registrationState.result = '';
+  if (alreadyCoarse) {
+    registrationState.workflow = 'fine-fixed';
+    registrationState.status = 'Fine match: pick a distinctive point on the fixed cloud.';
+  } else {
+    registrationState.workflow = 'coarse-fixed';
+    registrationState.status = 'Coarse match: pick 3 well-spread points on the fixed cloud.';
+  }
+  showFixed(host);
+  refreshMarkers(host);
+  syncState();
+}
+
+/** Leaves guided picking and restores the scene visibility from before it. */
+export function finishGuidedMatching(host: RegistrationHost): void {
+  if (!session) {return;}
+  registrationState.picking = false;
+  registrationState.workflow = 'choose';
+  registrationState.status = '';
+  session.pending = null;
+  restoreVisibility(host);
+  refreshMarkers(host);
+  syncState();
 }
 
 export function setPicking(host: RegistrationHost, picking: boolean): void {
@@ -196,6 +276,8 @@ export function clearPairs(host: RegistrationHost): void {
   }
   session.pairs = [];
   session.pending = null;
+  session.coarseFixed = [];
+  session.coarseMoving = [];
   refreshMarkers(host);
   syncState();
 }
@@ -204,7 +286,29 @@ export function removeLastPair(host: RegistrationHost): void {
   if (!session) {
     return;
   }
-  if (session.pending) {
+  if (registrationState.workflow === 'coarse-ready') {
+    session.coarseMoving.pop();
+    registrationState.workflow = 'coarse-moving';
+    registrationState.picking = true;
+    registrationState.status = 'Pick the third matching point again on the moving cloud.';
+    showMoving(host);
+  } else if (registrationState.workflow === 'coarse-moving') {
+    if (session.coarseMoving.length > 0) {
+      session.coarseMoving.pop();
+    } else {
+      session.coarseFixed.pop();
+      registrationState.workflow = 'coarse-fixed';
+      registrationState.status = 'Pick the last coarse point again on the fixed cloud.';
+      showFixed(host);
+    }
+  } else if (registrationState.workflow === 'coarse-fixed') {
+    session.coarseFixed.pop();
+  } else if (registrationState.workflow === 'fine-moving') {
+    session.pending = null;
+    registrationState.workflow = 'fine-fixed';
+    registrationState.status = 'Pick a point on the fixed cloud.';
+    showFixed(host);
+  } else if (session.pending) {
     session.pending = null;
   } else {
     session.pairs.pop();
@@ -266,6 +370,72 @@ export function handlePickedPoint(
     return false;
   }
   const point = new THREE.Vector3(picked.x, picked.y, picked.z);
+
+  if (registrationState.busy) {
+    return true;
+  }
+
+  switch (registrationState.workflow) {
+    case 'coarse-fixed': {
+      if (session.coarseFixed.length < 3) {session.coarseFixed.push(point);}
+      if (session.coarseFixed.length === 3) {
+        registrationState.workflow = 'coarse-moving';
+        registrationState.status =
+          'Now pick the same 3 features, in the same order, on the moving cloud.';
+        showMoving(host);
+      } else {
+        registrationState.status = `Coarse match: pick ${3 - session.coarseFixed.length} more point${session.coarseFixed.length === 2 ? '' : 's'} on the fixed cloud.`;
+      }
+      refreshMarkers(host);
+      syncState();
+      return true;
+    }
+    case 'coarse-moving': {
+      if (session.coarseMoving.length < 3) {session.coarseMoving.push(point);}
+      if (session.coarseMoving.length === 3) {
+        registrationState.workflow = 'coarse-ready';
+        registrationState.picking = false;
+        registrationState.status = 'Three coarse correspondences are ready.';
+        showPair(host);
+      } else {
+        registrationState.status = `Coarse match: pick ${3 - session.coarseMoving.length} more matching point${session.coarseMoving.length === 2 ? '' : 's'} on the moving cloud.`;
+      }
+      refreshMarkers(host);
+      syncState();
+      return true;
+    }
+    case 'fine-fixed': {
+      session.pending = { point, onSource: false };
+      registrationState.workflow = 'fine-moving';
+      registrationState.status = 'Pick the same feature on the moving cloud.';
+      showMoving(host);
+      refreshMarkers(host);
+      syncState();
+      return true;
+    }
+    case 'fine-moving': {
+      if (!session.pending) {
+        registrationState.workflow = 'fine-fixed';
+        showFixed(host);
+        syncState();
+        return true;
+      }
+      session.pairs.push({ source: point, target: session.pending.point.clone() });
+      session.pending = null;
+      registrationState.workflow = 'fine-fixed';
+      registrationState.status =
+        session.pairs.length < 3
+          ? `${session.pairs.length} fine pair${session.pairs.length === 1 ? '' : 's'} picked; ${3 - session.pairs.length} more before live adjustment.`
+          : `Adjusting from ${session.pairs.length} fine pairs…`;
+      showFixed(host);
+      refreshMarkers(host);
+      syncState();
+      if (session.pairs.length >= 3) {void fitFinePairsLive(host);}
+      return true;
+    }
+    default:
+      break;
+  }
 
   const sourceDistance = nearestVertexDistanceSq(host, session.sourceIndex, point);
   const targetDistance = nearestVertexDistanceSq(host, session.targetIndex, point);
@@ -350,6 +520,23 @@ function refreshMarkers(host: RegistrationHost): void {
   const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false });
 
   const linePoints: number[] = [];
+  for (const point of session.coarseFixed) {
+    const marker = new THREE.Mesh(sphere, targetMaterial);
+    marker.position.copy(point);
+    marker.renderOrder = 999;
+    group.add(marker);
+  }
+  for (let index = 0; index < session.coarseMoving.length; index++) {
+    const point = session.coarseMoving[index];
+    const marker = new THREE.Mesh(sphere, sourceMaterial);
+    marker.position.copy(point);
+    marker.renderOrder = 999;
+    group.add(marker);
+    const fixed = session.coarseFixed[index];
+    if (fixed) {
+      linePoints.push(point.x, point.y, point.z, fixed.x, fixed.y, fixed.z);
+    }
+  }
   for (const pair of session.pairs) {
     const source = new THREE.Mesh(sphere, sourceMaterial);
     source.position.copy(pair.source);
@@ -501,6 +688,81 @@ export async function alignFromPairs(host: RegistrationHost): Promise<void> {
     registrationState.result =
       `Fitted ${count} pairs · RMS ${(fit.rmse ?? 0).toFixed(3)} · ` +
       `worst ${(fit.maxError ?? 0).toFixed(3)}`;
+  } catch (error) {
+    registrationState.result = describeFailure(error);
+  } finally {
+    registrationState.busy = false;
+  }
+}
+
+export async function applyCoarseMatch(host: RegistrationHost): Promise<void> {
+  if (
+    !session ||
+    session.coarseFixed.length !== 3 ||
+    session.coarseMoving.length !== 3 ||
+    registrationState.busy
+  ) {
+    return;
+  }
+  const fixed = new Float32Array(9);
+  const moving = new Float32Array(9);
+  for (let index = 0; index < 3; index++) {
+    fixed.set(session.coarseFixed[index].toArray(), index * 3);
+    moving.set(session.coarseMoving[index].toArray(), index * 3);
+  }
+
+  registrationState.busy = true;
+  try {
+    const fit = await fitCorrespondences(moving, fixed);
+    if (!fit) {
+      registrationState.result =
+        'Those coarse points are degenerate. Pick three features that are well spread out.';
+      return;
+    }
+    applyDelta(host, fit.matrix);
+    // The coarse landmarks have done their job. The transform stays, but the
+    // fine solve starts with a clean correspondence set so approximate points
+    // cannot dilute the precise ones that follow.
+    session.coarseFixed = [];
+    session.coarseMoving = [];
+    session.pairs = [];
+    session.pending = null;
+    registrationState.workflow = 'fine-fixed';
+    registrationState.picking = true;
+    registrationState.status = 'Fine match: pick a distinctive point on the fixed cloud.';
+    registrationState.result = `Coarse match applied · RMS ${(fit.rmse ?? 0).toFixed(3)}`;
+    showFixed(host);
+    refreshMarkers(host);
+    syncState();
+  } catch (error) {
+    registrationState.result = describeFailure(error);
+  } finally {
+    registrationState.busy = false;
+  }
+}
+
+async function fitFinePairsLive(host: RegistrationHost): Promise<void> {
+  if (!session || session.pairs.length < 3 || registrationState.busy) {return;}
+  const count = session.pairs.length;
+  const source = new Float32Array(count * 3);
+  const target = new Float32Array(count * 3);
+  session.pairs.forEach((pair, index) => {
+    source.set(pair.source.toArray(), index * 3);
+    target.set(pair.target.toArray(), index * 3);
+  });
+  registrationState.busy = true;
+  try {
+    const fit = await fitCorrespondences(source, target);
+    if (!fit) {
+      registrationState.result =
+        'The fine points are degenerate. Add points that are spread across the overlap.';
+      return;
+    }
+    applyDelta(host, fit.matrix);
+    registrationState.status = 'Pick another point on the fixed cloud, or finish.';
+    registrationState.result =
+      `Live fit from ${count} fine pairs · RMS ${(fit.rmse ?? 0).toFixed(4)} · ` +
+      `worst ${(fit.maxError ?? 0).toFixed(4)}`;
   } catch (error) {
     registrationState.result = describeFailure(error);
   } finally {

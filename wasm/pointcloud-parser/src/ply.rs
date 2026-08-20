@@ -239,8 +239,19 @@ fn parse_header(data: &[u8]) -> Result<PlyHeader, String> {
     }
 
     let mut start = end + b"end_header".len();
-    while start < data.len() && (data[start] == b'\n' || data[start] == b'\r') {
-        start += 1;
+    // Consume exactly the line ending that terminates `end_header`. Binary
+    // payload bytes are arbitrary: the first byte of a valid float may itself
+    // be 0x0a or 0x0d, so skipping all newline-looking bytes corrupts the
+    // record alignment and turns otherwise valid positions into NaNs.
+    match data.get(start).copied() {
+        Some(b'\r') => {
+            start += 1;
+            if data.get(start) == Some(&b'\n') {
+                start += 1;
+            }
+        }
+        Some(b'\n') => start += 1,
+        _ => return Err("end_header is not terminated by a newline".into()),
     }
     header.data_start = start;
     Ok(header)
@@ -699,6 +710,24 @@ fn parse_ply_inner(data: &[u8]) -> Result<PlyResult, String> {
         )?,
     }
 
+    let actual = sink.positions.len() / 3;
+    if actual != vertex_count {
+        return Err(format!(
+            "PLY vertex data is truncated: header declares {vertex_count} vertices, but only {actual} complete records are present"
+        ));
+    }
+    if let Some((index, _)) = sink
+        .positions
+        .chunks_exact(3)
+        .enumerate()
+        .find(|(_, xyz)| xyz.iter().any(|value| !value.is_finite()))
+    {
+        return Err(format!(
+            "PLY contains a non-finite x/y/z coordinate at vertex {}",
+            index + 1
+        ));
+    }
+
     let metadata = format!(
         "{{\"format\":\"{}\",\"version\":\"{}\",\"comments\":[{}]}}",
         match header.encoding {
@@ -715,7 +744,7 @@ fn parse_ply_inner(data: &[u8]) -> Result<PlyResult, String> {
             .join(",")
     );
 
-    let actual = (sink.positions.len() / 3) as u32;
+    let actual = actual as u32;
     let (min, max) = if actual == 0 {
         ([0.0; 3], [0.0; 3])
     } else {
@@ -757,7 +786,10 @@ fn read_ascii_body(
     for element in &header.elements {
         for _ in 0..element.count {
             if pos >= data.len() {
-                return Ok(()); // truncated file: keep what was read
+                return Err(format!(
+                    "PLY {} data is truncated: header declares {} records",
+                    element.name, element.count
+                ));
             }
             line.clear();
             read_ascii_line(data, &mut pos, &mut line);
@@ -961,7 +993,13 @@ fn read_binary_body(
                     // Only whole records that are actually present are read, so
                     // the loops below need no per-value bounds test.
                     let available = data.len().saturating_sub(pos) / stride;
-                    let n = element.count.min(available);
+                    if available < element.count {
+                        return Err(format!(
+                            "PLY vertex data is truncated: header declares {} vertices, but only {available} complete records are present",
+                            element.count
+                        ));
+                    }
+                    let n = element.count;
                     let fields: Vec<BinaryField> = sink
                         .plan
                         .targets
@@ -989,7 +1027,10 @@ fn read_binary_body(
                     for _ in 0..element.count {
                         values.clear();
                         if !read_record_sequential(data, &mut pos, element, little, &mut values) {
-                            return Ok(());
+                            return Err(format!(
+                                "PLY vertex data is truncated: header declares {} vertices",
+                                element.count
+                            ));
                         }
                         sink.push(&values);
                     }
@@ -998,7 +1039,10 @@ fn read_binary_body(
         } else if element.name == "face" {
             for _ in 0..element.count {
                 if !read_face_record(data, &mut pos, element, little, face_indices, face_sizes) {
-                    return Ok(());
+                    return Err(format!(
+                        "PLY face data is truncated: header declares {} faces",
+                        element.count
+                    ));
                 }
             }
         } else {
@@ -1007,7 +1051,10 @@ fn read_binary_body(
             for _ in 0..element.count {
                 values.clear();
                 if !read_record_sequential(data, &mut pos, element, little, &mut values) {
-                    return Ok(());
+                    return Err(format!(
+                        "PLY {} data is truncated: header declares {} records",
+                        element.name, element.count
+                    ));
                 }
             }
         }
@@ -1339,17 +1386,35 @@ mod tests {
         assert_eq!(result.colors, vec![255, 128, 0]);
     }
 
-    /// A truncated file yields the vertices that are actually there rather than
-    /// zero-filled ones or a panic.
+    /// A truncated file is rejected rather than being displayed with a count
+    /// that disagrees with its header.
     #[test]
-    fn a_truncated_binary_body_keeps_what_it_read() {
+    fn a_truncated_binary_body_is_rejected() {
         let mut data = b"ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n".to_vec();
         for v in [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0] {
             data.extend_from_slice(&v.to_le_bytes());
         }
-        let result = parse_ply_inner(&data).unwrap();
-        assert_eq!(result.vertex_count, 2);
-        assert_eq!(result.positions, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let error = match parse_ply_inner(&data) {
+            Ok(_) => panic!("truncated PLY unexpectedly parsed"),
+            Err(error) => error,
+        };
+        assert!(error.contains("truncated"), "{error}");
+        assert!(error.contains("3 vertices"), "{error}");
+    }
+
+    #[test]
+    fn binary_payload_may_start_with_a_newline_byte() {
+        for first_byte in [b'\r', b'\n'] {
+            let mut data = b"ply\nformat binary_little_endian 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n".to_vec();
+            let x = f32::from_bits(0x3dcc_cc00 | u32::from(first_byte));
+            data.extend_from_slice(&x.to_le_bytes());
+            data.extend_from_slice(&2.0f32.to_le_bytes());
+            data.extend_from_slice(&3.0f32.to_le_bytes());
+
+            let result = parse_ply_inner(&data).unwrap();
+            assert_eq!(result.vertex_count, 1);
+            assert_eq!(result.positions, vec![x, 2.0, 3.0]);
+        }
     }
 
     /// The binary splat path, which takes the indexed writer rather than the
