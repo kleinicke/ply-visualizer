@@ -508,7 +508,7 @@
       class:active={viewerState.cameraConvention === 'opencv'}
       onclick={onOpenCVConvention}
     >
-      OpenCV (Y down) <span class="button-shortcut">C</span>
+      OpenCV (Y down) <span class="button-shortcut">V</span>
     </button>
     <button
       id="opengl-convention"

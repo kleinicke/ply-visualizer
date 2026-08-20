@@ -175,6 +175,12 @@ export function applyStationPipelineUpdates(
     }
     selectRecoloredMode(host, fileIndex);
     refreshRecoloredAttribute(host, fileIndex, data);
+    // The host publishes each scan as it finishes, so ticking the row here is a
+    // report of what has actually landed rather than an estimate.
+    const progressRow = stationPipelineUi.scans.find(scan => scan.name === update.scanName);
+    if (progressRow) {
+      progressRow.colored = true;
+    }
     outcome.recolored++;
   }
 
@@ -232,6 +238,9 @@ export function beginStationRecolor(
 ): number {
   pendingRecolor.clear();
   const scope = scopeScanStems?.length ? new Set(scopeScanStems) : null;
+  // Rebuilt from scratch: the progress list belongs to this run, and a leftover
+  // row from the previous one would read as work that is not happening.
+  const scanOrder: Array<{ index: number; name: string }> = [];
   let prepared = 0;
   for (let index = 0; index < host.spatialFiles.length; index++) {
     const data = host.spatialFiles[index];
@@ -255,10 +264,12 @@ export function beginStationRecolor(
       previousMode: host.individualColorModes?.[index] ?? 'original',
       filled: false,
     });
+    scanOrder.push({ index, name: String(data.metadata.embeddedScanName) });
     selectRecoloredMode(host, index);
     refreshRecoloredAttribute(host, index, data);
     prepared++;
   }
+  stationPipelineUi.scans = scanOrder.map(scan => ({ name: scan.name, colored: false }));
   if (prepared > 0) {
     host.updateFileList?.();
     host.requestRender();
@@ -317,6 +328,15 @@ export function handleStationPipelineResult(
   }
   stationPipelineUi.busy = false;
   const untouched = completeUntouchedScans(host);
+  // A scan no camera could improve never produces an update, so without this
+  // the progress list would sit at "5 of 6" after a run that is genuinely
+  // finished. On an error the rows stay as they were - unfinished, which is
+  // what happened.
+  if (!message.error) {
+    for (const scan of stationPipelineUi.scans) {
+      scan.colored = true;
+    }
+  }
   if (message.error) {
     stationPipelineUi.message = `Station pipeline failed: ${message.error}`;
     return;

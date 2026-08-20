@@ -33,7 +33,17 @@ npm run test:ui          # UI tests (VS Code Extension Tester, ui-tests/)
 cd engine && npm test    # Playwright engine tests — fastest feedback loop
 cd engine && npm run dev # Standalone page dev server
 cd engine && npm run bench:backend -- <file>   # WebGL vs WebGPU on one file
+npm run benchmark:vscode # Real VS Code, scrapes the extension's own PERF lines
 ```
+
+- Performance work has a method, and it is not optional reading:
+  **docs/performance-method.md**. Short version: measure the PERF line the user
+  sees, discard the first (cold) run, check `uptime` before believing a number,
+  and verify the output as well as the speed. The benchmark scenario is
+  scriptable beyond loading —
+  `STEPS=open,alignAll,recolorAll FILES=testfiles/lidar/Abschnitt_A.x3a node scripts/benchmark-vscode.mjs`
+  opens an archive, aligns every scan to the first, and recolours from the
+  cameras, timing each step from the extension's own log.
 
 - **F5** launches the Extension Development Host for manual testing. Test data
   lives in `testfiles/`, organized by format (`ply/`, `stl/`, `obj/`, `np/`,
@@ -72,6 +82,18 @@ there; put code in the modules above.
 
 ## Conventions and gotchas
 
+- Aligning is a scene-wide operation, so its entry point is the **Align** button
+  beside "+ Add Point Cloud" (`GlobalAlignMenu.svelte`), which appears once two
+  clouds with point data are loaded. The per-file panel
+  (`RegistrationPanel.svelte`) keeps the things that are genuinely about one
+  file: manual pair picking, single-pair ICP, capture-place scope, projection
+  diagnostics. Both fire the archive colouring pipeline through the shared
+  `stationPipelineTrigger.ts` — never re-implement the scope rules in a
+  component. Long-running work reports progress as structured state, not as a
+  spinner plus a string: `registrationState.alignEntries` (one seeded row per
+  cloud, queued → running → aligned/failed) and `stationPipelineUi.scans` (one
+  row per scan, ticked as the host publishes it). Keep new long operations to
+  that shape.
 - Visibility checkboxes use one consistent gesture everywhere: ordinary click
   toggles one item; Shift-click isolates that item; Shift-clicking the already
   isolated item restores the whole sibling group. This applies to files,

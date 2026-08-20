@@ -359,6 +359,9 @@ body {
 /* File Management */
 .file-controls {
   display: flex;
+  /* Wraps so the align menu can claim a full-width row of its own beneath the
+     two buttons (see GlobalAlignMenu.svelte). */
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
 }

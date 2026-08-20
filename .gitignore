@@ -25,3 +25,6 @@ engine/playwright-report/
 
 # OS files
 .DS_Store
+
+# Benchmark output (scripts/benchmark-vscode.mjs); regenerated on every run.
+benchmark-vscode-result.json

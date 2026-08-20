@@ -128,6 +128,29 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     };
   }
 
+  /**
+   * Run one scripted benchmark step in the visible viewer.
+   *
+   * The benchmark harness lives in the extension host, but aligning and
+   * recolouring are webview operations; this forwards the step so the harness
+   * can time the same code path the buttons run. Not contributed as a palette
+   * command — it exists for scripts/benchmark-vscode.mjs.
+   *
+   * @returns false when no viewer is open to receive the step.
+   */
+  public async runBenchmarkScenario(step: string, anchorIndex = 0): Promise<boolean> {
+    const panels = [...this.activePanels];
+    // The focused viewer when there is one, otherwise the most recently opened:
+    // a benchmark opens exactly one file at a time, so the last is the right
+    // fallback rather than an arbitrary pick.
+    const panel = panels.find(candidate => candidate.active) ?? panels[panels.length - 1];
+    if (!panel) {
+      return false;
+    }
+    await panel.webview.postMessage({ type: 'benchmarkScenario', step, anchorIndex });
+    return true;
+  }
+
   /** Append a timestamped line to the "3D Visualizer" Output channel. */
   private logPerf(line: string): void {
     // The webview emits the single authoritative end-to-end timing line per load

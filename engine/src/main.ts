@@ -150,6 +150,8 @@ import { mountWelcomeMessage } from './welcomeMessageMount';
 import { mountPerformanceStats } from './performanceStatsMount';
 import { mountSequenceControls } from './sequenceControlsMount';
 import { mountFileList } from './fileListMount';
+import { mountGlobalAlignMenu } from './globalAlignMenuMount';
+import { runBenchmarkScenario } from './benchmarkScenario';
 import { mountStats } from './statsMount';
 import { mountControlsTab } from './controlsTabMount';
 import { AdaptivePointRenderer } from './visualization/AdaptivePointRenderer';
@@ -1749,6 +1751,7 @@ class PointCloudVisualizer {
     // File list - Svelte component (components/FileList.svelte), see
     // updateFileList() and docs/SVELTE_MIGRATION_PLAN.md Phase 3.
     mountFileList(this);
+    mountGlobalAlignMenu(this);
     mountStats(this);
     mountControlsTab(this);
     mountFilmPanel(this);
@@ -1783,6 +1786,14 @@ class PointCloudVisualizer {
         return;
       }
 
+      // Every shortcut here is a bare letter, so anything with a modifier
+      // belongs to the editor or the OS, not to us. Without this the handler
+      // swallowed Cmd/Ctrl+C, +A, +S and +F - each one calling preventDefault
+      // on a keystroke the user meant for copy, select-all, save or find.
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        return;
+      }
+
       switch (e.key.toLowerCase()) {
         case 'h':
           this.showKeyboardShortcuts();
@@ -1804,7 +1815,9 @@ class PointCloudVisualizer {
           this.toggleAxesVisibility();
           e.preventDefault();
           break;
-        case 'c':
+        // Deliberately not 'c': that key belongs to copying, and a viewer
+        // shortcut sitting on it is a trap even with the modifier guard above.
+        case 'v':
           this.setOpenCVCameraConvention();
           if (this.vscode) {
             this.vscode.postMessage({ type: 'saveCameraConvention', convention: 'opencv' });
@@ -2182,6 +2195,12 @@ class PointCloudVisualizer {
         switch (message.type) {
           case 'registrationResult':
             handleRegistrationExtensionResult(message);
+            break;
+          // Benchmark harness only (scripts/benchmark-vscode.mjs): runs one
+          // scripted step of the load → align → recolour scenario. See
+          // benchmarkScenario.ts for why this seam exists.
+          case 'benchmarkScenario':
+            await runBenchmarkScenario(this, message.step, message.anchorIndex ?? 0);
             break;
           case 'timing':
             this.handleTimingMessage(message);

@@ -2,11 +2,12 @@
   import { filesState } from '../state/files.svelte';
   import { registrationState, stationPipelineUi } from '../state/registration.svelte';
   import * as registration from '../registrationFeature';
+  import { capturePlaces, setCapturePlaceVisible } from '../stationPipelineFeature';
   import {
-    beginStationRecolor,
-    capturePlaces,
-    setCapturePlaceVisible,
-  } from '../stationPipelineFeature';
+    archiveNameOf,
+    canRunStationPipeline,
+    runStationPipeline,
+  } from '../stationPipelineTrigger';
 
   let { host, fileIndex }: { host: any; fileIndex: number } = $props();
 
@@ -41,100 +42,16 @@
 
   // X3A archives carry several scans from several stations in one file, and
   // only the scans a panorama was shot from arrive coloured. Everything below
-  // is specific to that, so it stays hidden for every other format.
-  const archiveName = $derived(
-    (filesState.renderTick, host.spatialFiles?.[fileIndex]?.metadata?.containerFileName as string | undefined)
-  );
-  // The pipeline needs a process that still holds the archive, which only the
-  // extension has; the standalone page never sees this control.
+  // is specific to that, so it stays hidden for every other format. The scope
+  // and message rules live in stationPipelineTrigger.ts because the global
+  // align menu fires the same pipeline.
+  const archiveName = $derived((filesState.renderTick, archiveNameOf(host, fileIndex)));
   const canRunPipeline = $derived(
-    (filesState.renderTick, !!archiveName && host.runningInVSCode === true && !!host.vscode)
+    (filesState.renderTick, canRunStationPipeline(host, fileIndex))
   );
-
-  /**
-   * The placement the viewer currently has for every scan of this archive,
-   * keyed by scan stem.
-   *
-   * Colouring needs the scans in one frame, but it does not care how they got
-   * there — "align all", a hand-built matrix, or an archive that was already
-   * consistent all work. Sending what is on screen means the pipeline never
-   * throws away alignment the user has already done or corrected.
-   */
-  function currentTransforms(scope: ReadonlySet<string>): Record<string, number[]> {
-    const transforms: Record<string, number[]> = {};
-    const alignedOnly =
-      registrationState.alignmentAnchorIndex === fileIndex &&
-      registrationState.alignedIndices.length > 0
-        ? new Set(registrationState.alignedIndices)
-        : null;
-    for (let index = 0; index < (host.spatialFiles?.length ?? 0); index++) {
-      const metadata = host.spatialFiles[index]?.metadata;
-      if (metadata?.containerFileName !== archiveName || !metadata?.embeddedScanName) {
-        continue;
-      }
-      if (alignedOnly && !alignedOnly.has(index)) {
-        continue;
-      }
-      const stem = String(metadata.embeddedScanName).replace(/\.x3r$/i, '');
-      if (!scope.has(stem)) {
-        continue;
-      }
-      transforms[stem] = Array.from(host.transformationMatrices[index].elements);
-    }
-    return transforms;
-  }
-
-  /** Checked capture places are also the archive-processing scope. */
-  function visibleArchiveStems(): string[] {
-    const stems: string[] = [];
-    for (let index = 0; index < (host.spatialFiles?.length ?? 0); index++) {
-      const metadata = host.spatialFiles[index]?.metadata;
-      if (
-        metadata?.containerFileName !== archiveName ||
-        !metadata?.embeddedScanName ||
-        filesState.visibility[index] === false
-      ) {
-        continue;
-      }
-      stems.push(String(metadata.embeddedScanName).replace(/\.x3r$/i, ''));
-    }
-    // The action lives in this cloud's panel; never allow a stale visibility
-    // signal to produce an empty, expensive no-op request.
-    if (stems.length === 0) {
-      const own = host.spatialFiles?.[fileIndex]?.metadata?.embeddedScanName;
-      if (own) stems.push(String(own).replace(/\.x3r$/i, ''));
-    }
-    return stems;
-  }
 
   function runPipeline(register: boolean) {
-    const scopeScanStems = visibleArchiveStems();
-    const scope = new Set(scopeScanStems);
-    const diagnostic = stationPipelineUi.projectionDiagnostic;
-    const diagnosticRun = diagnostic !== 'normal';
-    const recolorExisting = stationPipelineUi.recolorAlreadyColored || diagnosticRun;
-    stationPipelineUi.busy = true;
-    stationPipelineUi.message = register
-      ? 'Registering every scan, then colouring...'
-      : diagnosticRun
-        ? `Testing projection variant: ${diagnostic}...`
-        : 'Colouring with the current alignment...';
-    // Blank the archive and switch to the camera view first, so the scans
-    // visibly fill in as the host reports each one instead of the view sitting
-    // unchanged for a minute and then flipping.
-    beginStationRecolor(host, archiveName!, !recolorExisting, scopeScanStems);
-    host.vscode.postMessage({
-      type: 'stationPipeline',
-      options: {
-        register,
-        transforms: register ? undefined : currentTransforms(scope),
-        colorUncolored: true,
-        recolorAlreadyColored: recolorExisting,
-        projectionDiagnostic: diagnostic,
-        scopeScanStems,
-        upAxis: registrationState.upAxis,
-      },
-    });
+    runStationPipeline(host, fileIndex, register);
   }
 
   // Capture places, derived from where the scans actually registered. Before
@@ -286,13 +203,13 @@
             coarse alignment followed by ICP refinement. One bad pair cannot drag the rest out of
             place; failures are listed and excluded from best-camera colouring.
           </p>
-          {#if registrationState.alignAllResults.length > 0}
+          {#if registrationState.alignEntries.length > 0}
             <ul
               class="registration-align-all-results"
               style="margin:4px 0 0;padding-left:14px;font-family:monospace;"
             >
-              {#each registrationState.alignAllResults as line (line)}
-                <li>{line}</li>
+              {#each registrationState.alignEntries as entry (entry.index)}
+                <li>{entry.name}: {entry.detail || entry.state}</li>
               {/each}
             </ul>
           {/if}

@@ -180,4 +180,39 @@ test.describe('Align all to one cloud', () => {
       expect(cornerDeviation(matrix, corner => corner)).toBeLessThan(1e-6);
     }
   });
+
+  /**
+   * Refine-only skips the yaw sweep, so it can only close a gap ICP can see
+   * from where the clouds already sit. Given a small offset it must land on the
+   * anchor; the point of the mode is that it is cheap and cannot re-derive a
+   * coarse hypothesis that discards a placement the user already trusts.
+   */
+  test('refine-only closes a small offset without the coarse sweep', async ({ page }) => {
+    test.slow();
+    await page.goto('/3d-visualizer/');
+    await page.waitForSelector('#three-canvas');
+    await page.waitForTimeout(500);
+
+    const nudged = path.join(directory, 'nudged.ply');
+    const room = roomPoints(40000, 424242);
+    writeAsciiPly(nudged, yawTranslate(room, 3, 0.12, -0.09, 0.04));
+    await page.locator('#hiddenFileInput').setInputFiles([anchorFile, nudged]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    await page.locator('#global-align-toggle').click();
+    await page.locator('.global-align-refine').click();
+    // The row appears queued before the solve starts, so waiting for the row
+    // would read the matrices mid-run; wait for it to reach a terminal state.
+    await expect(page.locator('.global-align-results li')).toHaveCount(1);
+    await expect(page.locator('.align-row-aligned')).toHaveCount(1, { timeout: 120_000 });
+
+    const matrices = await page.evaluate(
+      () =>
+        (window as any).visualizer.transformationMatrices
+          .slice(0, 2)
+          .map((m: any) => m.elements.slice()) as number[][]
+    );
+    expect(cornerDeviation(matrices[0], corner => corner)).toBeLessThan(1e-6);
+    expect(cornerDeviation(matrices[1], inverseOf(3, 0.12, -0.09, 0.04))).toBeLessThan(0.05);
+  });
 });

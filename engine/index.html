@@ -85,6 +85,11 @@
               >
                 + Add Point Cloud
               </button>
+              <!-- GlobalAlignMenu mounts its button and its drop-down panel
+                   here. display:contents so both become direct flex children of
+                   .file-controls: the button sits beside "+ Add Point Cloud",
+                   the panel wraps onto its own full-width row below. -->
+              <div id="global-align-mount" style="display: contents"></div>
             </div>
             <div id="file-list"></div>
           </div>
@@ -209,7 +214,7 @@
                 <span class="shortcut-desc">Toggle axes</span>
               </div>
               <div class="shortcut-item">
-                <span class="shortcut-key">C</span>
+                <span class="shortcut-key">V</span>
                 <span class="shortcut-desc">OpenCV convention (Y down)</span>
               </div>
               <div class="shortcut-item">

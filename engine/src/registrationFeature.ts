@@ -627,11 +627,23 @@ export async function refineIcp(host: RegistrationHost): Promise<void> {
  *
  * The anchor keeps its own transform, so whatever frame it is already in
  * becomes the common frame.
+ *
+ * `refineOnly` skips the yaw sweep and runs ICP alone from wherever each cloud
+ * currently sits. That is the right mode for an archive whose scans arrive
+ * roughly placed, or for a second pass after a hand correction: it is far
+ * cheaper, and it cannot re-derive a coarse hypothesis that throws away a
+ * placement the user already trusts. It is the wrong mode for clouds that are
+ * still far apart — ICP alone has no way back from that.
  */
-export async function alignAllTo(host: RegistrationHost, anchorIndex: number): Promise<void> {
+export async function alignAllTo(
+  host: RegistrationHost,
+  anchorIndex: number,
+  options: { refineOnly?: boolean } = {}
+): Promise<void> {
   if (registrationState.busy) {
     return;
   }
+  const refineOnly = options.refineOnly === true;
   const startedAt = performance.now();
   let setupMs = 0;
   let samplingMs = 0;
@@ -654,7 +666,15 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
   setupMs = performance.now() - startedAt;
 
   registrationState.busy = true;
-  registrationState.alignAllResults = [];
+  // Seed every target as queued before the first solve, so the panel shows the
+  // whole run up front instead of a list that grows out of nothing.
+  registrationState.alignEntries = targets.map(index => ({
+    index,
+    name: host.spatialFiles[index]?.fileName ?? `File ${index + 1}`,
+    state: 'queued' as const,
+    detail: '',
+  }));
+  registrationState.alignDone = 0;
   registrationState.alignmentAnchorIndex = anchorIndex;
   registrationState.alignedIndices = [anchorIndex];
   // Yield once so the panel shows the first status before the solver blocks
@@ -666,14 +686,28 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
     for (let position = 0; position < targets.length; position++) {
       const fileIndex = targets[position];
       const name = host.spatialFiles[fileIndex]?.fileName ?? `File ${fileIndex + 1}`;
-      registrationState.status = `Aligning ${name} (${position + 1}/${targets.length})...`;
+      const finish = (state: 'aligned' | 'failed', detail: string) => {
+        const entry = registrationState.alignEntries[position];
+        if (entry) {
+          entry.state = state;
+          entry.detail = detail;
+        }
+        registrationState.alignDone = position + 1;
+      };
+      const running = registrationState.alignEntries[position];
+      if (running) {
+        running.state = 'running';
+      }
+      registrationState.status = `${refineOnly ? 'Refining' : 'Aligning'} ${name} (${
+        position + 1
+      }/${targets.length})...`;
       await new Promise(resolve => setTimeout(resolve, 0));
 
       const samplingStarted = performance.now();
       const source = worldPoints(host, fileIndex);
       samplingMs += performance.now() - samplingStarted;
       if (!source) {
-        registrationState.alignAllResults.push(`${name}: no point data`);
+        finish('failed', 'no point data');
         continue;
       }
       sampledPoints += source.length / 3;
@@ -686,19 +720,17 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
         let result: Awaited<ReturnType<typeof registerPair>>;
         try {
           result = await registerPair(source, anchor.slice(), {
-            coarse: { upAxis: registrationState.upAxis as UpAxis },
+            coarse: refineOnly ? false : { upAxis: registrationState.upAxis as UpAxis },
           });
         } finally {
           matchingMs += performance.now() - matchingStarted;
         }
         if (!result?.icp) {
-          registrationState.alignAllResults.push(`${name}: no match found`);
+          finish('failed', refineOnly ? 'nothing to refine against' : 'no match found');
           continue;
         }
         if (result.icp.fitness < 0.03 || result.icp.inlierCount < 30) {
-          registrationState.alignAllResults.push(
-            `${name}: only ${(result.icp.fitness * 100).toFixed(1)}% overlap; excluded`
-          );
+          finish('failed', `only ${(result.icp.fitness * 100).toFixed(1)}% overlap; excluded`);
           continue;
         }
 
@@ -715,13 +747,13 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
           result.coarse && result.coarse.runnerUpScore > 0
             ? result.coarse.score / result.coarse.runnerUpScore
             : Infinity;
-        registrationState.alignAllResults.push(
-          `${name}: RMS ${result.icp.inlierRmse.toFixed(3)} · ` +
-            `overlap ${(result.icp.fitness * 100).toFixed(0)}%` +
+        finish(
+          'aligned',
+          `RMS ${result.icp.inlierRmse.toFixed(3)} · overlap ${(result.icp.fitness * 100).toFixed(0)}%` +
             (Number.isFinite(margin) && margin < 1.2 ? ' · ambiguous, check it' : '')
         );
       } catch (error) {
-        registrationState.alignAllResults.push(`${name}: ${describeFailure(error)}`);
+        finish('failed', describeFailure(error));
       }
       host.requestRender();
     }
@@ -730,7 +762,9 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
       alignAllUndo = undoAll;
       registrationState.canUndoAll = true;
     }
-    registrationState.result = `Aligned ${aligned} of ${targets.length} clouds to ${
+    registrationState.result = `${refineOnly ? 'Refined' : 'Aligned'} ${aligned} of ${
+      targets.length
+    } clouds to ${
       host.spatialFiles[anchorIndex]?.fileName ?? 'the anchor'
     } · ${registrationBackend()}`;
   } finally {
@@ -744,7 +778,8 @@ export async function alignAllTo(host: RegistrationHost, anchorIndex: number): P
     const overheadMs = Math.max(0, totalMs - setupMs - samplingMs - matchingMs - applyMs);
     const anchorName = host.spatialFiles[anchorIndex]?.fileName ?? `file ${anchorIndex + 1}`;
     perfLog(
-      `⏱️ PERF[registration/align-all ${anchorName}] setup ${setupMs.toFixed(1)}ms · ` +
+      `⏱️ PERF[registration/${refineOnly ? 'refine-all' : 'align-all'} ${anchorName}] ` +
+        `setup ${setupMs.toFixed(1)}ms · ` +
         `sample ${samplingMs.toFixed(1)}ms · match ${matchingMs.toFixed(1)}ms · ` +
         `apply ${applyMs.toFixed(1)}ms · UI/overhead ${overheadMs.toFixed(1)}ms | ` +
         `total ${totalMs.toFixed(1)}ms  (${aligned}/${targets.length} clouds · ` +
@@ -767,7 +802,8 @@ export function undoAlignAll(host: RegistrationHost): void {
   followStations(host);
   alignAllUndo = null;
   registrationState.canUndoAll = false;
-  registrationState.alignAllResults = [];
+  registrationState.alignEntries = [];
+  registrationState.alignDone = 0;
   registrationState.alignmentAnchorIndex = null;
   registrationState.alignedIndices = [];
   registrationState.result = 'Reverted every transform that align-all changed.';

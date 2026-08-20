@@ -108,6 +108,18 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Benchmark harness hook, deliberately not contributed in package.json so it
+  // stays out of the command palette: scripts/benchmark-vscode.mjs drives the
+  // load -> align -> recolour scenario through it. See
+  // docs/performance-method.md.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'plyViewer.benchmarkScenario',
+      async (step: string, anchorIndex?: number) =>
+        provider.runBenchmarkScenario(step, anchorIndex ?? 0)
+    )
+  );
+
   // Register command for playing a point cloud sequence via wildcard
   context.subscriptions.push(
     vscode.commands.registerCommand('plyViewer.playPointCloudSequence', async () => {

@@ -323,6 +323,7 @@
     "test:ui": "pnpm run compile && cd ui-tests && pnpm exec tsc && cd .. && node ./out/ui-tests/ui-test-runner.js",
     "test:all": "pnpm run test && pnpm run test:ui",
     "test:stl": "node test-stl.js",
+    "benchmark:vscode": "pnpm run compile && node ./scripts/benchmark-vscode.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky"
