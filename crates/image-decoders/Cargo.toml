@@ -1,0 +1,62 @@
+[package]
+name = "scientific-image-decoders"
+version = "0.1.0"
+edition = "2021"
+description = "Pure Rust decoders for scientific, medical, HDR, and standard image formats"
+license = "MIT"
+repository = "https://github.com/kleinicke/scientific-image-decoders"
+keywords = ["image", "decoder", "scientific", "medical", "tiff"]
+categories = ["multimedia::images", "parser-implementations"]
+readme = "README.md"
+
+[features]
+default = ["all-formats"]
+all-formats = [
+    "tiff",
+    "exr",
+    "png",
+    "hdr",
+    "jpeg",
+    "pfm",
+    "netpbm",
+    "npy",
+    "fits",
+    "netcdf",
+    "dicom",
+    "czi",
+    "nd2",
+    "lif",
+    "demosaic",
+]
+tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt"]
+exr = ["dep:exr"]
+png = ["dep:png"]
+hdr = []
+jpeg = ["dep:zune-jpeg"]
+pfm = []
+netpbm = []
+npy = []
+fits = []
+netcdf = []
+dicom = ["dep:dicom-object", "dep:dicom-pixeldata"]
+czi = []
+nd2 = []
+lif = []
+demosaic = []
+
+[dependencies]
+tiff = { version = "0.11.3", features = ["webp"], optional = true }
+exr = { version = "1.74", default-features = false, optional = true }
+png = { version = "0.17", default-features = false, optional = true }
+ruzstd = { version = "0.8", optional = true }
+weezl = { version = "0.1.12", optional = true }
+flate2 = { version = "1.1", optional = true }
+zune-jpeg = { version = "0.5", optional = true }
+hayro-ccitt = { version = "0.3", optional = true }
+wide = "0.7"
+dicom-object = { version = "0.10", default-features = false, optional = true }
+dicom-pixeldata = { version = "0.10", default-features = false, features = ["native"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+

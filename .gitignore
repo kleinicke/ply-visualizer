@@ -19,6 +19,9 @@ coverage/
 engine/node_modules/
 engine/dist/
 
+# Rust build output for the vendored decoder crate
+crates/image-decoders/target/
+
 # Test outputs
 engine/test-results/
 engine/playwright-report/

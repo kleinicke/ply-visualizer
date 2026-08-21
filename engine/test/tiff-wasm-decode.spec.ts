@@ -92,6 +92,58 @@ test.describe('WASM TIFF decoding in the webview', () => {
     });
   }
 
+  test('decodes 16-bit PNG through the vendored Rust backend', async ({ page }) => {
+    const bytes = Array.from(
+      new Uint8Array(fs.readFileSync(path.resolve('../testfiles/png/test_depth_16bit_mm.png')))
+    );
+    const result = await page.evaluate(async (data: number[]) => {
+      const wasmApi = typeof wasm_bindgen === 'undefined' ? null : wasm_bindgen;
+      await wasmApi({ module_or_path: (globalThis as any).__TIFF_WASM_URL__ });
+      const decoded = wasmApi.decode_png16_fast(new Uint8Array(data));
+      try {
+        const samples = decoded.take_data_as_u16();
+        return {
+          width: decoded.width,
+          height: decoded.height,
+          channels: decoded.channels,
+          bitDepth: decoded.bit_depth,
+          sampleCount: samples.length,
+        };
+      } finally {
+        decoded.free();
+      }
+    }, bytes);
+
+    expect(result.bitDepth).toBe(16);
+    expect(result.sampleCount).toBe(result.width * result.height * result.channels);
+  });
+
+  test('decodes EXR through the vendored Rust backend', async ({ page }) => {
+    const bytes = Array.from(
+      new Uint8Array(fs.readFileSync(path.resolve('../testfiles/exr/simple_uncompressed.exr')))
+    );
+    const result = await page.evaluate(async (data: number[]) => {
+      const wasmApi = typeof wasm_bindgen === 'undefined' ? null : wasm_bindgen;
+      await wasmApi({ module_or_path: (globalThis as any).__TIFF_WASM_URL__ });
+      const decoded = wasmApi.decode_exr_fast(new Uint8Array(data));
+      try {
+        const samples = decoded.take_data_as_f32();
+        return {
+          width: decoded.width,
+          height: decoded.height,
+          channels: decoded.channels,
+          sampleCount: samples.length,
+        };
+      } finally {
+        decoded.free();
+      }
+    }, bytes);
+
+    expect(result.width).toBeGreaterThan(0);
+    expect(result.height).toBeGreaterThan(0);
+    expect(result.sampleCount).toBe(result.width * result.height * result.channels);
+  });
+
   test('projects a depth TIFF to a point cloud with no JS fallback available', async ({ page }) => {
     await page
       .locator('#hiddenFileInput')

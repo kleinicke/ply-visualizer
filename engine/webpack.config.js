@@ -118,14 +118,10 @@ module.exports = {
         {
           from: 'about/index.html',
           to: 'index.html',
-          transform(content) {
-            return (
-              content
-                .toString()
-                // Update link back to 3D visualizer
-                .replace(/href="\.\.\/"/g, 'href="3d-visualizer/"')
-            );
-          },
+        },
+        {
+          from: 'about/site.css',
+          to: 'site.css',
         },
         {
           from: 'media',
