@@ -84,7 +84,9 @@ test('bands reproduce a whole-image projection exactly', async ({ page }) => {
         for (let index = 0; index < bands; index++) {
           const from = index * rows;
           const bandRows = Math.min(rows, height - from);
-          if (bandRows <= 0) {break;}
+          if (bandRows <= 0) {
+            break;
+          }
           const slice = data.slice(from * width, (from + bandRows) * width);
           const band = depthApi.projectDepthBandWasmSync(
             slice,

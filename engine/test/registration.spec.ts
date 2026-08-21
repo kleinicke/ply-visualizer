@@ -440,10 +440,14 @@ test.describe('Scan-to-scan registration', () => {
         const group = (window as any).visualizer.scene.getObjectByName(
           'registration-correspondences'
         );
-        if (!group) {return { total: 0, colors: [] as string[] };}
+        if (!group) {
+          return { total: 0, colors: [] as string[] };
+        }
         const colors: string[] = [];
         group.traverse((object: any) => {
-          if (object.isMesh) {colors.push('#' + object.material.color.getHexString());}
+          if (object.isMesh) {
+            colors.push('#' + object.material.color.getHexString());
+          }
         });
         return { total: colors.length, colors };
       });
@@ -515,7 +519,9 @@ test.describe('Scan-to-scan registration', () => {
         );
         let count = 0;
         group?.traverse((object: any) => {
-          if (object.isMesh) {count++;}
+          if (object.isMesh) {
+            count++;
+          }
         });
         return count;
       });

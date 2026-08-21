@@ -62,8 +62,17 @@ export class AdaptivePointRenderer {
 
   private createView(source: THREE.Points): AdaptivePointView {
     const sourceMaterial = source.material as THREE.PointsMaterial;
-    const inheritedCompile = sourceMaterial.onBeforeCompile;
-    const inheritedCacheKey = sourceMaterial.customProgramCacheKey.bind(sourceMaterial);
+    // The material's *own* hooks, never a band wrapper this class installed
+    // earlier. A material can reach here twice — a depth reconversion assigns
+    // the new material to the existing mesh, which builds a view, and then
+    // hands the same material to the replacement mesh, which builds another —
+    // and capturing the wrapper as "inherited" made the second round pass
+    // inherit the square pass's rejection on top of its own. The two are
+    // complementary, so between them they rejected every point: everything
+    // above the pixel threshold was drawn by nobody, and raising the point
+    // size only pushed more points over it.
+    const { compile: inheritedCompile, cacheKey: inheritedCacheKey } =
+      originalHooks(sourceMaterial);
     const roundMaterial = sourceMaterial.clone();
 
     configurePointBand(sourceMaterial, 'square', inheritedCompile, inheritedCacheKey);
@@ -131,6 +140,33 @@ export class AdaptivePointRenderer {
       this.removeView(source, view);
     }
   }
+}
+
+/**
+ * The pristine `onBeforeCompile` / `customProgramCacheKey` for a material.
+ *
+ * Stashed on first sight and returned unchanged afterwards, so configuring a
+ * band is idempotent however many times a material passes through a view.
+ */
+const PRISTINE_HOOKS = new WeakMap<
+  THREE.Material,
+  { compile: THREE.Material['onBeforeCompile']; cacheKey: () => string }
+>();
+
+function originalHooks(material: THREE.PointsMaterial): {
+  compile: THREE.Material['onBeforeCompile'];
+  cacheKey: () => string;
+} {
+  const existing = PRISTINE_HOOKS.get(material);
+  if (existing) {
+    return existing;
+  }
+  const hooks = {
+    compile: material.onBeforeCompile,
+    cacheKey: material.customProgramCacheKey.bind(material),
+  };
+  PRISTINE_HOOKS.set(material, hooks);
+  return hooks;
 }
 
 function configurePointBand(
