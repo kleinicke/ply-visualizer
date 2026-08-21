@@ -15,10 +15,9 @@ fi
 
 echo "✅ Build completed successfully!"
 
-# Webpack CopyPlugin handles all file copying with path transformations:
-# - /index.html → About page (profile)
-# - /3d-visualizer/index.html → 3D Visualizer
-# - /about/impressum.html, /about/datenschutz.html → Legal pages
+# Webpack CopyPlugin handles all file copying:
+# - /index.html → 3D Visualizer
+# - /3d-visualizer/index.html → compatibility path for old links and tests
 # - /media/ → Static assets
 
 echo "📦 Files in dist/ directory:"

@@ -9,10 +9,9 @@ One shared visualization engine with two thin hosts:
 
 1. **VS Code extension** (`src/`) — the primary product; wires the engine into a
    custom editor webview
-2. **Standalone page** (`engine/`, deployed at https://f-kleinicke.de) — public
-   demo and the fast test surface (Playwright against a browser page skips
-   booting VS Code/Electron). The usable extension is on the subpage
-   /3d-visualizer
+2. **Standalone page** (`engine/`, deployed at https://3d.f-kleinicke.de) —
+   public demo and the fast test surface (Playwright against a browser page
+   skips booting VS Code/Electron)
 
 **Core rule:** all shared functionality (parsers, rendering, controls, depth
 processing, webview UI) lives in `engine/src/`. `src/` stays thin and only does

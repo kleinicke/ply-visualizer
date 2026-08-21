@@ -31,3 +31,6 @@ engine/playwright-report/
 
 # Benchmark output (scripts/benchmark-vscode.mjs); regenerated on every run.
 benchmark-vscode-result.json
+
+# Local Netlify folder
+.netlify

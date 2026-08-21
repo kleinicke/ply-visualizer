@@ -84,7 +84,13 @@ module.exports = {
     }),
     new CopyWebpackPlugin({
       patterns: [
-        // 3D Visualizer goes to /3d-visualizer/ path
+        // The standalone application is the root of its own deployment.
+        {
+          from: 'index.html',
+          to: 'index.html',
+        },
+        // Keep the old path buildable so existing links and local browser tests
+        // continue to work during the domain migration.
         {
           from: 'index.html',
           to: '3d-visualizer/index.html',
@@ -103,38 +109,12 @@ module.exports = {
                   /'media\/(geotiff\.min\.js|wasm\/tiff_wasm(?:_bg)?\.(?:js|wasm))'/g,
                   "'../media/$1'"
                 )
-                // Update navigation: About button goes to root (about page is now at root)
-                .replace(
-                  /<a href="about\/" class="nav-button">About<\/a>/g,
-                  '<a href="../" class="nav-button">About</a>'
-                )
-                // Impressum and Datenschutz are at root level, need ../ from 3d-visualizer/
-                .replace(/href="impressum\.html"/g, 'href="../impressum.html"')
-                .replace(/href="datenschutz\.html"/g, 'href="../datenschutz.html"')
             );
           },
-        },
-        // About page becomes the root index
-        {
-          from: 'about/index.html',
-          to: 'index.html',
-        },
-        {
-          from: 'about/site.css',
-          to: 'site.css',
         },
         {
           from: 'media',
           to: 'media',
-        },
-        // Impressum and Datenschutz at root level
-        {
-          from: 'impressum.html',
-          to: 'impressum.html',
-        },
-        {
-          from: 'datenschutz.html',
-          to: 'datenschutz.html',
         },
         {
           from: 'src/themes',

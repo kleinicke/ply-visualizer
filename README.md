@@ -18,7 +18,7 @@ heavy decoding, so files with millions of points open in seconds.
 - Use Eye-Dome Lighting and brightness correction for clearer uncolored geometry
 - Measure distances and adjust camera, rotation center and view parameters
 - Use the same viewer outside VS Code on the static website:
-  https://f-kleinicke.de
+  https://3d.f-kleinicke.de
 
 ## Supported formats
 
