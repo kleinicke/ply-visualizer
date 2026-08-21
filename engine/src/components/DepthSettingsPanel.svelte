@@ -10,7 +10,7 @@
 
   let { host, fileIndex, data }: { host: any; fileIndex: number; data: any } = $props();
 
-  let open = $state(false);
+  const open = $derived(depthSettingsState.openPanelIndices.includes(fileIndex));
   let principalPointOpen = $state(false);
   let distortionOpen = $state(false);
   let disparityOffsetOpen = $state(false);
@@ -82,7 +82,13 @@
   });
 
   function toggle() {
-    open = !open;
+    const indices = depthSettingsState.openPanelIndices;
+    const at = indices.indexOf(fileIndex);
+    if (at === -1) {
+      indices.push(fileIndex);
+    } else {
+      indices.splice(at, 1);
+    }
   }
 
   function blurOnWheel(e: WheelEvent) {

@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
 import { applyDepthResultTypedArrays } from './depthResultArrays';
 import { depthSettingsState } from '../state/depthSettings.svelte';
+import { runWithFileActivity } from '../fileActivity';
+import { PerfTimer } from '../utils/perfLog';
 
 export interface LiveDepthUpdateHost {
   liveDepthUpdateFiles: Set<number>;
@@ -25,6 +27,7 @@ export interface LiveDepthUpdateHost {
   individualColorModes: string[];
   pointSizes: number[];
   scene: THREE.Scene;
+  smallViewAffordance?: { notifyGeometryReplaced(): void };
   getDepthSettingsFromFileUI(fileIndex: number): CameraParams;
   processDepthToPointCloud(
     depthData: ArrayBuffer,
@@ -145,11 +148,31 @@ export function waitForNextFrame(): Promise<void> {
   });
 }
 
+/**
+ * Re-run one depth file's conversion and swap its geometry in.
+ *
+ * Everything expensive that *can* be off the main thread already is — the
+ * decode and projection run in the depth worker. What is left has to be on the
+ * main thread because it touches the WebGL context, so the goal is not "no
+ * blocking" but "no blocking the user cannot see coming and no single block
+ * long enough to swallow input": the busy dot is raised and painted first, and
+ * the remaining work is broken at frame boundaries so the panel keeps
+ * responding between chunks rather than locking up for the whole update.
+ */
 export async function applyDepthSettings(
   host: LiveDepthUpdateHost,
   fileIndex: number,
   liveVersion?: number
 ): Promise<void> {
+  await runWithFileActivity(() => applyDepthSettingsInner(host, fileIndex, liveVersion));
+}
+
+async function applyDepthSettingsInner(
+  host: LiveDepthUpdateHost,
+  fileIndex: number,
+  liveVersion?: number
+): Promise<void> {
+  const perf = new PerfTimer('depth/reapply');
   try {
     // Get the current values from the form using the helper method
     const newCameraParams = host.getDepthSettingsFromFileUI(fileIndex);
@@ -189,12 +212,15 @@ export async function applyDepthSettings(
     host.showStatus(`Reprocessing ${fileType} with new settings...`);
 
     // Process the depth data with new parameters using the new system
+    perf.file(depthData.fileName);
+    perf.mark('read-form');
     const result = await host.processDepthToPointCloud(
       depthData.originalData,
       depthData.fileName,
       newCameraParams,
       depthData.colorImageData
     );
+    perf.mark('worker');
     if (!isLiveDepthResultCurrent(host, fileIndex, liveVersion)) {
       return;
     }
@@ -244,6 +270,7 @@ export async function applyDepthSettings(
     console.log(
       `🎨 Depth settings apply - fileIndex: ${fileIndex}, hasColors: ${spatialData.hasColors}, colorMode: ${colorMode}, vertexCount: ${spatialData.vertexCount}`
     );
+    perf.mark('arrays');
     const newMaterial = host.createMaterialForFile(spatialData, fileIndex);
     host.meshes[fileIndex].material = newMaterial;
 
@@ -267,6 +294,14 @@ export async function applyDepthSettings(
       oldMesh.geometry.dispose();
     }
 
+    perf.mark('material');
+    // Yield once more before the single unavoidable block (building the buffers
+    // and handing them to the GPU), so the busy dot and any pending input are
+    // dealt with immediately before it rather than after.
+    await waitForNextFrame();
+    if (!isLiveDepthResultCurrent(host, fileIndex, liveVersion)) {
+      return;
+    }
     const geometry = host.createGeometryFromSpatialData(spatialData);
     const newMesh = new THREE.Points(geometry, newMaterial);
 
@@ -276,7 +311,12 @@ export async function applyDepthSettings(
     host.meshes[fileIndex] = newMesh;
     host.scene.add(newMesh);
 
+    perf.mark('geometry');
+    // The cloud may have landed somewhere else entirely; let the fit prompt
+    // treat "not on screen at all" as small until the user moves the camera.
+    host.smallViewAffordance?.notifyGeometryReplaced();
     host.performRender();
+    perf.mark('render');
 
     // Dispose old material
     if (oldMaterial) {
@@ -290,6 +330,8 @@ export async function applyDepthSettings(
     // Update UI
     host.updateFileStats();
     host.showStatus(`${fileType} settings applied successfully!`);
+    perf.note('verts', spatialData.vertexCount ?? 0);
+    perf.summary();
   } catch (error) {
     console.error(`Error applying depth settings:`, error);
     host.showError(

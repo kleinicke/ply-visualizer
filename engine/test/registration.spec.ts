@@ -153,14 +153,31 @@ test.describe('Scan-to-scan registration', () => {
     await page.waitForTimeout(500);
   });
 
+  /**
+   * Open the one-pair workspace on `fixedIndex`.
+   *
+   * It lives in the Align menu now rather than in a file's row: pair correction
+   * is still per-file work, but choosing which two clouds to correct is not
+   * something to hunt for by expanding rows.
+   */
+  async function openPairPanel(page: any, fixedIndex = 0) {
+    await page.locator('#global-align-toggle').click();
+    await page.locator('.align-single-toggle').click();
+    await page.locator('#global-align-single-fixed').selectOption(String(fixedIndex));
+    return page.locator('#global-align-menu');
+  }
+
   test('the panel appears only once there is something to align against', async ({ page }) => {
     await page.locator('#hiddenFileInput').setInputFiles(fixedFile);
     await expect(page.locator('#file-list .file-item')).toHaveCount(1);
-    await expect(page.locator('.registration-toggle')).toHaveCount(0);
+    // One cloud has nothing to align against, so the Align menu is not offered.
+    await expect(page.locator('#global-align-toggle')).toHaveCount(0);
 
     await page.locator('#hiddenFileInput').setInputFiles(movedFile);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
-    await expect(page.locator('.registration-toggle')).toHaveCount(2);
+    await expect(page.locator('#global-align-toggle')).toBeVisible();
+    const panel = await openPairPanel(page);
+    await expect(panel.locator('.registration-coarse')).toBeVisible();
   });
 
   test('projection diagnostics are sent as replacement-colour runs', async ({ page }) => {
@@ -185,7 +202,7 @@ test.describe('Scan-to-scan registration', () => {
     // Colouring the archive — and the diagnostics that vary how — belongs to
     // the whole scene, so it is driven from the Align menu, not a file's panel.
     await page.locator('#global-align-toggle').click();
-    await page.locator('.align-disclosure').click();
+    await page.locator('.align-options-toggle').click();
     await page.locator('.station-projection-diagnostic').selectOption('reverse-pan');
     await page.locator('.global-align-recolor').click();
 
@@ -202,10 +219,8 @@ test.describe('Scan-to-scan registration', () => {
     await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
-    // Open the fixed station's anchor-centric panel. File 1 is selected by
-    // default as the cloud that moves onto it.
-    const panel = page.locator('.file-item').nth(0);
-    await panel.locator('.registration-toggle').click();
+    // File 1 is selected by default as the cloud that moves onto the fixed one.
+    const panel = await openPairPanel(page);
     await expect(panel.locator('.registration-coarse')).toBeVisible();
 
     const before = await page.evaluate(
@@ -282,8 +297,7 @@ test.describe('Scan-to-scan registration', () => {
     await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
-    const panel = page.locator('.file-item').nth(0);
-    await panel.locator('.registration-toggle').click();
+    const panel = await openPairPanel(page);
     await panel.locator('.registration-needs-coarse').click();
     await expect(page.locator('#file-0')).toBeChecked();
     await expect(page.locator('#file-1')).not.toBeChecked();
@@ -344,8 +358,7 @@ test.describe('Scan-to-scan registration', () => {
     test.slow();
     await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
-    const panel = page.locator('.file-item').nth(0);
-    await panel.locator('.registration-toggle').click();
+    const panel = await openPairPanel(page);
     await panel.locator('.registration-already-coarse').click();
 
     const pairs = [
@@ -377,5 +390,156 @@ test.describe('Scan-to-scan registration', () => {
       () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
     );
     expect(cornerDeviation(after, expectedInverse)).toBeLessThan(0.01);
+  });
+
+  /**
+   * The gesture itself, not the handler behind it.
+   *
+   * Picking used to claim the plain double-click, which meant that while it was
+   * armed the one thing you constantly need — moving the rotation centre to
+   * look around for the same corner in the other cloud — was unavailable. It is
+   * on ⌘/Ctrl now, and a plain double-click has to stay navigation.
+   */
+  test('picks on Cmd/Ctrl + double-click and leaves the plain one to navigation', async ({
+    page,
+  }) => {
+    await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+    const panel = await openPairPanel(page);
+    await panel.locator('.registration-needs-coarse').click();
+
+    const canvas = page.locator('#three-canvas');
+    const box = (await canvas.boundingBox())!;
+    const centre = { x: box.width / 2, y: box.height / 2 };
+
+    await canvas.dblclick({ position: centre });
+    expect(
+      await page.evaluate(() => (window as any).__plyRegistrationState?.coarseFixedCount ?? -1)
+    ).toBe(0);
+
+    await canvas.dblclick({ position: centre, modifiers: ['ControlOrMeta'] });
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.coarseFixedCount))
+      .toBe(1);
+  });
+
+  /**
+   * A pick answers "where is this feature in this cloud". Drawing the other
+   * cloud's answer on top of the one you are searching turns that into a hint
+   * in the wrong place — it marks where the feature *will* be after the fit,
+   * not where it is now.
+   */
+  test('shows only the picks belonging to the cloud on screen', async ({ page }) => {
+    await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+    const panel = await openPairPanel(page);
+    await panel.locator('.registration-needs-coarse').click();
+
+    const markerCount = () =>
+      page.evaluate(() => {
+        const group = (window as any).visualizer.scene.getObjectByName(
+          'registration-correspondences'
+        );
+        if (!group) {return { total: 0, colors: [] as string[] };}
+        const colors: string[] = [];
+        group.traverse((object: any) => {
+          if (object.isMesh) {colors.push('#' + object.material.color.getHexString());}
+        });
+        return { total: colors.length, colors };
+      });
+
+    // Two on the fixed cloud, which is still the cloud on screen...
+    await page.evaluate(() => {
+      const feature = (window as any).registrationFeature;
+      const visualizer = (window as any).visualizer;
+      for (const point of [
+        { x: 0, y: 0, z: 0 },
+        { x: 8, y: 0, z: 3 },
+      ]) {
+        feature.handlePickedPoint(visualizer, point);
+      }
+    });
+    expect((await markerCount()).total).toBe(2);
+
+    // ...the third completes the set and hands over to the moving cloud.
+    await page.evaluate(() => {
+      (window as any).registrationFeature.handlePickedPoint((window as any).visualizer, {
+        x: 0,
+        y: 6,
+        z: 3,
+      });
+    });
+
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState.workflow))
+      .toBe('coarse-moving');
+    const onMoving = await markerCount();
+    expect(onMoving.total).toBe(0);
+  });
+
+  /**
+   * Finishing is not discarding.
+   *
+   * The markers come off the scene so the result can be looked at, but the
+   * pairs stay so the work can be continued — and any single pair can be
+   * replaced without starting the set again.
+   */
+  test('finish hides the markers, keeps the pairs, and can re-pick one', async ({ page }) => {
+    await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+    const panel = await openPairPanel(page);
+    await panel.locator('.registration-already-coarse').click();
+
+    // Three complete pairs, placed through the same entry point the picker uses.
+    await page.evaluate(() => {
+      const feature = (window as any).registrationFeature;
+      const visualizer = (window as any).visualizer;
+      const corners = [
+        [0, 0, 0],
+        [8, 0, 3],
+        [0, 6, 3],
+      ];
+      for (const [x, y, z] of corners) {
+        feature.handlePickedPoint(visualizer, { x, y, z });
+        feature.handlePickedPoint(visualizer, { x: x + 1.2, y: y - 0.8, z: z + 0.15 });
+      }
+    });
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState.pairCount))
+      .toBe(3);
+
+    const markerCount = () =>
+      page.evaluate(() => {
+        const group = (window as any).visualizer.scene.getObjectByName(
+          'registration-correspondences'
+        );
+        let count = 0;
+        group?.traverse((object: any) => {
+          if (object.isMesh) {count++;}
+        });
+        return count;
+      });
+    expect(await markerCount()).toBeGreaterThan(0);
+
+    await panel.locator('.registration-finish').click();
+    // Markers gone from the scene, pairs still on the session.
+    expect(await markerCount()).toBe(0);
+    await expect(panel.locator('.pair-list-row')).toHaveCount(3);
+
+    // Re-picking pair 2 drops it and returns to picking, ready for two points.
+    await panel.locator('.registration-recapture[data-pair-index="1"]').click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState.pairCount))
+      .toBe(2);
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState.picking))
+      .toBe(true);
+
+    // And resuming from a finished state keeps what is left rather than clearing.
+    await panel.locator('.registration-finish').click();
+    await panel.locator('.registration-resume').click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState.pairCount))
+      .toBe(2);
   });
 });

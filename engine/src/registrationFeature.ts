@@ -195,12 +195,23 @@ export function endSession(host: RegistrationHost): void {
 }
 
 function captureVisibility(host: RegistrationHost): void {
-  if (!session || session.savedVisibility || !host.fileVisibility) {return;}
+  if (!session || session.savedVisibility || !host.fileVisibility) {
+    return;
+  }
   session.savedVisibility = host.fileVisibility.map(value => value !== false);
 }
 
 function setWorkflowVisibility(host: RegistrationHost, visibleIndices: number[]): void {
-  if (!session || !host.setFileEntryVisibility || !host.fileVisibility) {return;}
+  if (!session || !host.setFileEntryVisibility || !host.fileVisibility) {
+    return;
+  }
+  // Opt-out, because isolating is right for the common case (two scans of one
+  // room look alike, and picking the same corner twice is impossible with both
+  // drawn) and wrong when the whole point is to see how far apart they are.
+  if (!registrationState.isolateWhilePicking) {
+    restoreVisibility(host);
+    return;
+  }
   captureVisibility(host);
   const visible = new Set(visibleIndices);
   for (let index = 0; index < host.fileVisibility.length; index++) {
@@ -210,27 +221,37 @@ function setWorkflowVisibility(host: RegistrationHost, visibleIndices: number[])
 }
 
 function restoreVisibility(host: RegistrationHost): void {
-  if (!session?.savedVisibility || !host.setFileEntryVisibility) {return;}
+  if (!session?.savedVisibility || !host.setFileEntryVisibility) {
+    return;
+  }
   session.savedVisibility.forEach((visible, index) => host.setFileEntryVisibility!(index, visible));
   session.savedVisibility = null;
   host.requestRender();
 }
 
 function showFixed(host: RegistrationHost): void {
-  if (session) {setWorkflowVisibility(host, [session.targetIndex]);}
+  if (session) {
+    setWorkflowVisibility(host, [session.targetIndex]);
+  }
 }
 
 function showMoving(host: RegistrationHost): void {
-  if (session) {setWorkflowVisibility(host, [session.sourceIndex]);}
+  if (session) {
+    setWorkflowVisibility(host, [session.sourceIndex]);
+  }
 }
 
 function showPair(host: RegistrationHost): void {
-  if (session) {setWorkflowVisibility(host, [session.targetIndex, session.sourceIndex]);}
+  if (session) {
+    setWorkflowVisibility(host, [session.targetIndex, session.sourceIndex]);
+  }
 }
 
 /** Starts the guided manual route at either coarse landmarks or fine pairs. */
 export function startGuidedMatching(host: RegistrationHost, alreadyCoarse: boolean): void {
-  if (!session || registrationState.busy) {return;}
+  if (!session || registrationState.busy) {
+    return;
+  }
   session.pairs = [];
   session.pending = null;
   session.coarseFixed = [];
@@ -239,24 +260,102 @@ export function startGuidedMatching(host: RegistrationHost, alreadyCoarse: boole
   registrationState.result = '';
   if (alreadyCoarse) {
     registrationState.workflow = 'fine-fixed';
-    registrationState.status = 'Fine match: pick a distinctive point on the fixed cloud.';
+    registrationState.status =
+      'Fine match — ⌘/Ctrl + double-click a distinctive feature on the fixed cloud.';
   } else {
     registrationState.workflow = 'coarse-fixed';
-    registrationState.status = 'Coarse match: pick 3 well-spread points on the fixed cloud.';
+    registrationState.status =
+      'Coarse match — ⌘/Ctrl + double-click 3 well-spread features on the fixed cloud.';
   }
   showFixed(host);
   refreshMarkers(host);
   syncState();
 }
 
-/** Leaves guided picking and restores the scene visibility from before it. */
+/**
+ * Re-apply the isolation rule for the step the workflow is on.
+ *
+ * Called when the toggle changes mid-pick: turning it off has to put the other
+ * clouds back immediately, and turning it on has to hide them again, without
+ * losing the picks made so far.
+ */
+export function refreshPickingVisibility(host: RegistrationHost): void {
+  if (!session || !registrationState.picking) {
+    return;
+  }
+  switch (registrationState.workflow) {
+    case 'coarse-fixed':
+    case 'fine-fixed':
+      showFixed(host);
+      break;
+    case 'coarse-moving':
+    case 'fine-moving':
+      showMoving(host);
+      break;
+    default:
+      showPair(host);
+  }
+}
+
+/**
+ * Leaves guided picking, restores the scene, and keeps the work.
+ *
+ * The pairs stay on the session so `resumeGuidedMatching` picks the thread back
+ * up rather than starting over. Finishing is about getting the markers and the
+ * isolation out of the way, not about discarding correspondences that took real
+ * effort to place.
+ */
 export function finishGuidedMatching(host: RegistrationHost): void {
-  if (!session) {return;}
+  if (!session) {
+    return;
+  }
   registrationState.picking = false;
   registrationState.workflow = 'choose';
   registrationState.status = '';
   session.pending = null;
   restoreVisibility(host);
+  refreshMarkers(host);
+  syncState();
+}
+
+/** Picks the fine-matching thread back up with the pairs already placed. */
+export function resumeGuidedMatching(host: RegistrationHost): void {
+  if (!session || registrationState.busy) {
+    return;
+  }
+  session.pending = null;
+  registrationState.picking = true;
+  registrationState.workflow = 'fine-fixed';
+  registrationState.status =
+    session.pairs.length > 0
+      ? `${session.pairs.length} pair${session.pairs.length === 1 ? '' : 's'} kept — ⌘/Ctrl + double-click the next feature on the fixed cloud.`
+      : 'Fine match — ⌘/Ctrl + double-click a distinctive feature on the fixed cloud.';
+  showFixed(host);
+  refreshMarkers(host);
+  syncState();
+}
+
+/**
+ * Drop one pair and go back to picking, so it can be placed again.
+ *
+ * Removed rather than edited in place: a correspondence is two points that have
+ * to agree, and replacing one half on its own is how a pair ends up describing
+ * two different features. The replacement is appended, so the pairs after it
+ * shift down by one.
+ */
+export function recapturePair(host: RegistrationHost, pairIndex: number): void {
+  if (!session || registrationState.busy) {
+    return;
+  }
+  if (pairIndex < 0 || pairIndex >= session.pairs.length) {
+    return;
+  }
+  session.pairs.splice(pairIndex, 1);
+  session.pending = null;
+  registrationState.picking = true;
+  registrationState.workflow = 'fine-fixed';
+  registrationState.status = `Re-picking pair ${pairIndex + 1} — ⌘/Ctrl + double-click the feature on the fixed cloud.`;
+  showFixed(host);
   refreshMarkers(host);
   syncState();
 }
@@ -290,7 +389,8 @@ export function removeLastPair(host: RegistrationHost): void {
     session.coarseMoving.pop();
     registrationState.workflow = 'coarse-moving';
     registrationState.picking = true;
-    registrationState.status = 'Pick the third matching point again on the moving cloud.';
+    registrationState.status =
+      '⌘/Ctrl + double-click the third matching feature again on the moving cloud.';
     showMoving(host);
   } else if (registrationState.workflow === 'coarse-moving') {
     if (session.coarseMoving.length > 0) {
@@ -298,7 +398,8 @@ export function removeLastPair(host: RegistrationHost): void {
     } else {
       session.coarseFixed.pop();
       registrationState.workflow = 'coarse-fixed';
-      registrationState.status = 'Pick the last coarse point again on the fixed cloud.';
+      registrationState.status =
+        '⌘/Ctrl + double-click the last coarse feature again on the fixed cloud.';
       showFixed(host);
     }
   } else if (registrationState.workflow === 'coarse-fixed') {
@@ -306,7 +407,7 @@ export function removeLastPair(host: RegistrationHost): void {
   } else if (registrationState.workflow === 'fine-moving') {
     session.pending = null;
     registrationState.workflow = 'fine-fixed';
-    registrationState.status = 'Pick a point on the fixed cloud.';
+    registrationState.status = '⌘/Ctrl + double-click a feature on the fixed cloud.';
     showFixed(host);
   } else if (session.pending) {
     session.pending = null;
@@ -377,28 +478,32 @@ export function handlePickedPoint(
 
   switch (registrationState.workflow) {
     case 'coarse-fixed': {
-      if (session.coarseFixed.length < 3) {session.coarseFixed.push(point);}
+      if (session.coarseFixed.length < 3) {
+        session.coarseFixed.push(point);
+      }
       if (session.coarseFixed.length === 3) {
         registrationState.workflow = 'coarse-moving';
         registrationState.status =
           'Now pick the same 3 features, in the same order, on the moving cloud.';
         showMoving(host);
       } else {
-        registrationState.status = `Coarse match: pick ${3 - session.coarseFixed.length} more point${session.coarseFixed.length === 2 ? '' : 's'} on the fixed cloud.`;
+        registrationState.status = `Coarse match — ${3 - session.coarseFixed.length} more feature${session.coarseFixed.length === 2 ? '' : 's'} on the fixed cloud (⌘/Ctrl + double-click).`;
       }
       refreshMarkers(host);
       syncState();
       return true;
     }
     case 'coarse-moving': {
-      if (session.coarseMoving.length < 3) {session.coarseMoving.push(point);}
+      if (session.coarseMoving.length < 3) {
+        session.coarseMoving.push(point);
+      }
       if (session.coarseMoving.length === 3) {
         registrationState.workflow = 'coarse-ready';
         registrationState.picking = false;
-        registrationState.status = 'Three coarse correspondences are ready.';
+        registrationState.status = 'Three coarse pairs ready — apply them, then refine.';
         showPair(host);
       } else {
-        registrationState.status = `Coarse match: pick ${3 - session.coarseMoving.length} more matching point${session.coarseMoving.length === 2 ? '' : 's'} on the moving cloud.`;
+        registrationState.status = `Coarse match — the same ${3 - session.coarseMoving.length} feature${session.coarseMoving.length === 2 ? '' : 's'} again on the moving cloud (⌘/Ctrl + double-click).`;
       }
       refreshMarkers(host);
       syncState();
@@ -407,7 +512,7 @@ export function handlePickedPoint(
     case 'fine-fixed': {
       session.pending = { point, onSource: false };
       registrationState.workflow = 'fine-moving';
-      registrationState.status = 'Pick the same feature on the moving cloud.';
+      registrationState.status = '⌘/Ctrl + double-click the same feature on the moving cloud.';
       showMoving(host);
       refreshMarkers(host);
       syncState();
@@ -430,7 +535,9 @@ export function handlePickedPoint(
       showFixed(host);
       refreshMarkers(host);
       syncState();
-      if (session.pairs.length >= 3) {void fitFinePairsLive(host);}
+      if (session.pairs.length >= 3) {
+        void fitFinePairsLive(host);
+      }
       return true;
     }
     default:
@@ -496,7 +603,9 @@ function markerRadius(host: RegistrationHost): number {
     const size = box.isEmpty() ? 1 : box.getSize(new THREE.Vector3()).length();
     session.markerRadius = Math.max(size * 0.004, 1e-4);
   }
-  return session.markerRadius;
+  // Scaled at read time, not baked into the cached radius, so moving the
+  // slider re-renders the existing picks instead of only affecting the next.
+  return session.markerRadius * Math.max(0.05, registrationState.markerScale);
 }
 
 function refreshMarkers(host: RegistrationHost): void {
@@ -509,6 +618,14 @@ function refreshMarkers(host: RegistrationHost): void {
     session.markers = null;
   }
 
+  // Finishing hides the picks without discarding them: the session keeps every
+  // pair so the work can be resumed, but a scene left covered in markers after
+  // the user said they were done is clutter over the result they wanted to see.
+  if (!registrationState.picking) {
+    host.requestRender();
+    return;
+  }
+
   const group = new THREE.Group();
   group.name = 'registration-correspondences';
   // Markers sit on top of the geometry they annotate; without this they hide
@@ -519,39 +636,65 @@ function refreshMarkers(host: RegistrationHost): void {
   const pendingMaterial = new THREE.MeshBasicMaterial({ color: 0xffe066, depthTest: false });
   const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false });
 
+  // Markers follow whichever cloud is on screen. Picking the same corner twice
+  // means looking for it without its answer already drawn on top: while the
+  // moving cloud is up, the fixed cloud's picks are not just clutter, they are
+  // a hint in the wrong place — they sit where the feature *will* be, not where
+  // it is. Both sets return whenever both clouds are visible.
+  const isolated = registrationState.isolateWhilePicking && registrationState.picking;
+  const side: 'fixed' | 'moving' | 'both' = !isolated
+    ? 'both'
+    : registrationState.workflow === 'coarse-fixed' || registrationState.workflow === 'fine-fixed'
+      ? 'fixed'
+      : registrationState.workflow === 'coarse-moving' ||
+          registrationState.workflow === 'fine-moving'
+        ? 'moving'
+        : 'both';
+  const showFixedSide = side !== 'moving';
+  const showMovingSide = side !== 'fixed';
+
   const linePoints: number[] = [];
-  for (const point of session.coarseFixed) {
-    const marker = new THREE.Mesh(sphere, targetMaterial);
-    marker.position.copy(point);
-    marker.renderOrder = 999;
-    group.add(marker);
+  if (showFixedSide) {
+    for (const point of session.coarseFixed) {
+      const marker = new THREE.Mesh(sphere, targetMaterial);
+      marker.position.copy(point);
+      marker.renderOrder = 999;
+      group.add(marker);
+    }
   }
   for (let index = 0; index < session.coarseMoving.length; index++) {
     const point = session.coarseMoving[index];
-    const marker = new THREE.Mesh(sphere, sourceMaterial);
-    marker.position.copy(point);
-    marker.renderOrder = 999;
-    group.add(marker);
+    if (showMovingSide) {
+      const marker = new THREE.Mesh(sphere, sourceMaterial);
+      marker.position.copy(point);
+      marker.renderOrder = 999;
+      group.add(marker);
+    }
     const fixed = session.coarseFixed[index];
-    if (fixed) {
+    // A correspondence line only means anything with both ends on screen.
+    if (fixed && side === 'both') {
       linePoints.push(point.x, point.y, point.z, fixed.x, fixed.y, fixed.z);
     }
   }
   for (const pair of session.pairs) {
-    const source = new THREE.Mesh(sphere, sourceMaterial);
-    source.position.copy(pair.source);
-    source.renderOrder = 999;
-    group.add(source);
-
-    const target = new THREE.Mesh(sphere, targetMaterial);
-    target.position.copy(pair.target);
-    target.renderOrder = 999;
-    group.add(target);
-
-    linePoints.push(pair.source.x, pair.source.y, pair.source.z);
-    linePoints.push(pair.target.x, pair.target.y, pair.target.z);
+    if (showMovingSide) {
+      const source = new THREE.Mesh(sphere, sourceMaterial);
+      source.position.copy(pair.source);
+      source.renderOrder = 999;
+      group.add(source);
+    }
+    if (showFixedSide) {
+      const target = new THREE.Mesh(sphere, targetMaterial);
+      target.position.copy(pair.target);
+      target.renderOrder = 999;
+      group.add(target);
+    }
+    if (side === 'both') {
+      linePoints.push(pair.source.x, pair.source.y, pair.source.z);
+      linePoints.push(pair.target.x, pair.target.y, pair.target.z);
+    }
   }
-  if (session.pending) {
+  if (session.pending && (session.pending.onSource ? showMovingSide : showFixedSide)) {
     const marker = new THREE.Mesh(sphere, pendingMaterial);
     marker.position.copy(session.pending.point);
     marker.renderOrder = 999;
@@ -729,7 +872,8 @@ export async function applyCoarseMatch(host: RegistrationHost): Promise<void> {
     session.pending = null;
     registrationState.workflow = 'fine-fixed';
     registrationState.picking = true;
-    registrationState.status = 'Fine match: pick a distinctive point on the fixed cloud.';
+    registrationState.status =
+      'Fine match — ⌘/Ctrl + double-click a distinctive feature on the fixed cloud.';
     registrationState.result = `Coarse match applied · RMS ${(fit.rmse ?? 0).toFixed(3)}`;
     showFixed(host);
     refreshMarkers(host);
@@ -742,7 +886,9 @@ export async function applyCoarseMatch(host: RegistrationHost): Promise<void> {
 }
 
 async function fitFinePairsLive(host: RegistrationHost): Promise<void> {
-  if (!session || session.pairs.length < 3 || registrationState.busy) {return;}
+  if (!session || session.pairs.length < 3 || registrationState.busy) {
+    return;
+  }
   const count = session.pairs.length;
   const source = new Float32Array(count * 3);
   const target = new Float32Array(count * 3);
@@ -759,7 +905,8 @@ async function fitFinePairsLive(host: RegistrationHost): Promise<void> {
       return;
     }
     applyDelta(host, fit.matrix);
-    registrationState.status = 'Pick another point on the fixed cloud, or finish.';
+    registrationState.status =
+      '⌘/Ctrl + double-click another feature on the fixed cloud, or finish.';
     registrationState.result =
       `Live fit from ${count} fine pairs · RMS ${(fit.rmse ?? 0).toFixed(4)} · ` +
       `worst ${(fit.maxError ?? 0).toFixed(4)}`;
@@ -878,6 +1025,207 @@ export async function refineIcp(host: RegistrationHost): Promise<void> {
 }
 
 /**
+ * Subsample a set of world-space clouds into one target for the solver.
+ *
+ * The union is what makes the complex mode work: a cloud with no overlap at all
+ * against the reference usually overlaps something that has already been
+ * placed, and once that neighbour is in the union it becomes a valid target.
+ */
+function unionPoints(host: RegistrationHost, indices: readonly number[]): Float32Array | null {
+  const parts: Float32Array[] = [];
+  let total = 0;
+  for (const index of indices) {
+    const points = worldPoints(host, index);
+    if (points && points.length >= 3) {
+      parts.push(points);
+      total += points.length;
+    }
+  }
+  if (total === 0) {
+    return null;
+  }
+  // The solver is priced per point, so a union of eight clouds must not cost
+  // eight times one cloud; stride each part down to its share of the budget.
+  const budget = MAX_SOLVER_POINTS * 3;
+  const stride = Math.max(1, Math.ceil(total / budget));
+  const out = new Float32Array(Math.ceil(total / stride) + 3);
+  let write = 0;
+  for (const part of parts) {
+    for (let index = 0; index + 2 < part.length && write + 2 < out.length; index += stride * 3) {
+      const base = index - (index % 3);
+      out[write++] = part[base];
+      out[write++] = part[base + 1];
+      out[write++] = part[base + 2];
+    }
+  }
+  return write >= 3 ? out.subarray(0, write - (write % 3)) : null;
+}
+
+/**
+ * Complex-scene alignment: grow outward from the anchor instead of matching
+ * everything to it.
+ *
+ * The star arrangement the simple mode uses assumes every cloud overlaps the
+ * reference and is comparable to it. Neither holds on a real site: a reference
+ * that is coarse but wide matches a dense local scan badly, and a cloud at the
+ * far end of a corridor may share nothing with the reference while sharing
+ * plenty with its neighbour.
+ *
+ * So this places what it can, adds it to the target, and tries again. Each
+ * sweep attempts every unplaced cloud against the union of everything placed so
+ * far; a sweep that places nothing ends the run. The cost is that a cloud can be
+ * attempted several times — this mode is opt-in for that reason — and the
+ * benefit is that the order stops mattering: a cloud only has to overlap
+ * *something* already placed, not the reference in particular.
+ *
+ * One-step undo still covers the whole run, and a cloud that never attaches is
+ * reported rather than left silently wherever it was.
+ */
+async function growFromAnchor(
+  host: RegistrationHost,
+  anchorIndex: number,
+  targets: readonly number[],
+  anchor: Float32Array,
+  startedAt: number
+): Promise<void> {
+  let matchingMs = 0;
+  let applyMs = 0;
+  let sampledPoints = anchor.length / 3;
+  let aligned = 0;
+  let sweeps = 0;
+
+  registrationState.busy = true;
+  registrationState.alignEntries = targets.map(index => ({
+    index,
+    name: host.spatialFiles[index]?.fileName ?? `File ${index + 1}`,
+    state: 'queued' as const,
+    detail: '',
+  }));
+  registrationState.alignDone = 0;
+  registrationState.alignmentAnchorIndex = anchorIndex;
+  registrationState.alignedIndices = [anchorIndex];
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const undoAll = new Map<number, THREE.Matrix4>();
+  const placed = [anchorIndex];
+  const remaining = new Set(targets);
+  const entryFor = (fileIndex: number) =>
+    registrationState.alignEntries.find(entry => entry.index === fileIndex);
+
+  try {
+    let progress = true;
+    while (progress && remaining.size > 0) {
+      progress = false;
+      sweeps++;
+      const target = unionPoints(host, placed);
+      if (!target) {
+        break;
+      }
+      for (const fileIndex of [...remaining]) {
+        const name = host.spatialFiles[fileIndex]?.fileName ?? `File ${fileIndex + 1}`;
+        const entry = entryFor(fileIndex);
+        if (entry) {
+          entry.state = 'running';
+        }
+        registrationState.status = `Sweep ${sweeps} · matching ${name} against ${placed.length} placed cloud${placed.length === 1 ? '' : 's'}...`;
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const source = worldPoints(host, fileIndex);
+        if (!source) {
+          remaining.delete(fileIndex);
+          if (entry) {
+            entry.state = 'failed';
+            entry.detail = 'no point data';
+          }
+          registrationState.alignDone = targets.length - remaining.size;
+          continue;
+        }
+        sampledPoints += source.length / 3;
+
+        let result: Awaited<ReturnType<typeof registerPair>> = null;
+        const matchStarted = performance.now();
+        try {
+          result = await registerPair(source, target.slice(), {
+            coarse: { upAxis: registrationState.upAxis as UpAxis },
+          });
+        } catch (error) {
+          if (entry) {
+            entry.state = 'queued';
+            entry.detail = describeFailure(error);
+          }
+        } finally {
+          matchingMs += performance.now() - matchStarted;
+        }
+
+        if (!result?.icp || result.icp.fitness < 0.03 || result.icp.inlierCount < 30) {
+          // Not failed — just not yet. The union grows with every placement, so
+          // the same cloud may match on a later sweep.
+          if (entry) {
+            entry.state = 'queued';
+            entry.detail = result?.icp
+              ? `${(result.icp.fitness * 100).toFixed(1)}% overlap so far`
+              : 'no match yet';
+          }
+          continue;
+        }
+
+        const applyStarted = performance.now();
+        const previous = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone();
+        undoAll.set(fileIndex, previous);
+        host.setTransformationMatrix(fileIndex, result.matrix.clone().multiply(previous));
+        host.updateMatrixTextarea(fileIndex);
+        applyMs += performance.now() - applyStarted;
+
+        placed.push(fileIndex);
+        remaining.delete(fileIndex);
+        aligned++;
+        progress = true;
+        registrationState.alignedIndices = [...registrationState.alignedIndices, fileIndex];
+        registrationState.alignDone = targets.length - remaining.size;
+        if (entry) {
+          entry.state = 'aligned';
+          entry.detail =
+            `RMS ${result.icp.inlierRmse.toFixed(3)} · overlap ${(result.icp.fitness * 100).toFixed(0)}%` +
+            (sweeps > 1 ? ` · sweep ${sweeps}` : '');
+        }
+        host.requestRender();
+        break; // The union changed; restart the sweep against the bigger target.
+      }
+    }
+
+    for (const fileIndex of remaining) {
+      const entry = entryFor(fileIndex);
+      if (entry) {
+        entry.state = 'failed';
+        entry.detail = entry.detail || 'never overlapped anything placed';
+      }
+    }
+    registrationState.alignDone = targets.length;
+
+    if (undoAll.size > 0) {
+      alignAllUndo = undoAll;
+      registrationState.canUndoAll = true;
+    }
+    registrationState.result = `Placed ${aligned} of ${targets.length} clouds in ${sweeps} sweep${sweeps === 1 ? '' : 's'} · ${registrationBackend()}`;
+  } finally {
+    const followStarted = performance.now();
+    followStations(host);
+    applyMs += performance.now() - followStarted;
+    registrationState.busy = false;
+    registrationState.status = '';
+    host.requestRender();
+    const totalMs = performance.now() - startedAt;
+    const anchorName = host.spatialFiles[anchorIndex]?.fileName ?? `file ${anchorIndex + 1}`;
+    perfLog(
+      `⏱️ PERF[registration/align-all-complex ${anchorName}] ` +
+        `match ${matchingMs.toFixed(1)}ms · apply ${applyMs.toFixed(1)}ms | ` +
+        `total ${totalMs.toFixed(1)}ms  (${aligned}/${targets.length} clouds · ${sweeps} sweeps · ` +
+        `${Math.round(sampledPoints).toLocaleString()} sampled pts · ${registrationBackend()})`
+    );
+  }
+}
+
+/**
  * Aligns every other loaded cloud onto one anchor.
  *
  * A star, not a chain: each cloud is registered directly against the anchor
@@ -900,12 +1248,13 @@ export async function refineIcp(host: RegistrationHost): Promise<void> {
 export async function alignAllTo(
   host: RegistrationHost,
   anchorIndex: number,
-  options: { refineOnly?: boolean } = {}
+  options: { refineOnly?: boolean; complex?: boolean } = {}
 ): Promise<void> {
   if (registrationState.busy) {
     return;
   }
   const refineOnly = options.refineOnly === true;
+  const complex = options.complex === true;
   const startedAt = performance.now();
   let setupMs = 0;
   let samplingMs = 0;
@@ -926,6 +1275,11 @@ export async function alignAllTo(
   }
   sampledPoints += anchor.length / 3;
   setupMs = performance.now() - startedAt;
+
+  if (complex && !refineOnly) {
+    await growFromAnchor(host, anchorIndex, targets, anchor, startedAt);
+    return;
+  }
 
   registrationState.busy = true;
   // Seed every target as queued before the first solve, so the panel shows the

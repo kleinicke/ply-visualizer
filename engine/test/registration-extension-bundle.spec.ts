@@ -81,8 +81,11 @@ test.describe('Registration in the extension webview bundle', () => {
       ]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
-    const panel = page.locator('.file-item').nth(1);
-    await panel.locator('.registration-toggle').click();
+    // The pair workspace moved into the Align menu.
+    await page.locator('#global-align-toggle').click();
+    await page.locator('.align-single-toggle').click();
+    await page.locator('#global-align-single-fixed').selectOption('1');
+    const panel = page.locator('#global-align-menu');
     await panel.locator('.registration-icp').click();
 
     const result = panel.locator('.registration-result');

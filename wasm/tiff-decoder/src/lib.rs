@@ -4112,11 +4112,91 @@ pub fn normalize_depth_fast(
     })
 }
 
+/// One horizontal band of an image, projected with the *whole* image's depth
+/// range and row offset.
+///
+/// Splitting the unprojection across workers is only sound if every band agrees
+/// on two things it cannot see from its own rows: the grey ramp's endpoints
+/// (which are logarithmic over the full depth range, so a per-band range shows
+/// up as banding), and where the band sits in the image (`row_offset`, which
+/// the returned pixel coordinates need — the intrinsics are pre-shifted by the
+/// caller so the rays themselves are already correct).
+///
+/// `depth_min`/`depth_max` come from one pass over the full image; pass
+/// non-finite values to fall back to this band's own range.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn project_depth_band(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    row_offset: u32,
+    depth_min: f32,
+    depth_max: f32,
+    kind: &str,
+    camera_model: &str,
+    convention: &str,
+    fx: f32,
+    fy: f32,
+    cx: f32,
+    cy: f32,
+    coefficients: &[f64],
+) -> Result<DepthProjectResult, JsValue> {
+    project_depth_impl(
+        data,
+        width,
+        height,
+        row_offset,
+        Some((depth_min, depth_max)),
+        kind,
+        camera_model,
+        convention,
+        fx,
+        fy,
+        cx,
+        cy,
+        coefficients,
+    )
+}
+
 #[wasm_bindgen]
 pub fn project_depth_fast(
     data: &[f32],
     width: u32,
     height: u32,
+    kind: &str,
+    camera_model: &str,
+    convention: &str,
+    fx: f32,
+    fy: f32,
+    cx: f32,
+    cy: f32,
+    coefficients: &[f64],
+) -> Result<DepthProjectResult, JsValue> {
+    project_depth_impl(
+        data,
+        width,
+        height,
+        0,
+        None,
+        kind,
+        camera_model,
+        convention,
+        fx,
+        fy,
+        cx,
+        cy,
+        coefficients,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_depth_impl(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    row_offset: u32,
+    depth_range: Option<(f32, f32)>,
     kind: &str,
     camera_model: &str,
     convention: &str,
@@ -4179,6 +4259,15 @@ pub fn project_depth_fast(
         Vec::new()
     };
 
+    // A supplied range is the whole image's; without one this call is the whole
+    // image and its own range is the right one.
+    if let Some((supplied_min, supplied_max)) = depth_range {
+        if supplied_min.is_finite() && supplied_max.is_finite() && supplied_max > 0.0 {
+            min_depth = supplied_min;
+            max_depth = supplied_max;
+        }
+    }
+
     let is_z_depth = kind == "z";
     let convention_sign = if convention == "opengl" { -1.0 } else { 1.0 };
     let log_min = if valid_count > 0 { min_depth.ln() } else { 0.0 };
@@ -4237,7 +4326,7 @@ pub fn project_depth_fast(
             colors.extend_from_slice(&[gray, gray, gray]);
             if needs_pixel_coords {
                 pixel_coords.push(u.min(u16::MAX as usize) as u16);
-                pixel_coords.push(v.min(u16::MAX as usize) as u16);
+                pixel_coords.push((v + row_offset as usize).min(u16::MAX as usize) as u16);
             }
             point_index += 1;
         }

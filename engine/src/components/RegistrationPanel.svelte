@@ -3,9 +3,24 @@
   import { registrationState } from '../state/registration.svelte';
   import * as registration from '../registrationFeature';
 
-  let { host, fileIndex }: { host: any; fileIndex: number } = $props();
+  let {
+    host,
+    fileIndex,
+    // Rendered inside the Align menu rather than inside a file's row: there is
+    // no disclosure of its own then, and the fixed cloud comes from the menu's
+    // selector instead of from which row you opened.
+    embedded = false,
+  }: { host: any; fileIndex: number; embedded?: boolean } = $props();
 
   let open = $state(false);
+  const shown = $derived(embedded || open);
+
+  // Embedded, the session follows the caller's choice of fixed cloud.
+  $effect(() => {
+    if (embedded && candidates.length > 0 && registrationState.targetIndex !== fileIndex) {
+      registration.beginSession(host, candidates[0], fileIndex);
+    }
+  });
 
   // Recomputed on the file list's render tick rather than reactively: files
   // load and unload through main.ts's parallel arrays, which are not
@@ -41,21 +56,28 @@
 
 {#if candidates.length > 0}
   <div class="registration-section">
-    <button class="registration-toggle" data-file-index={fileIndex} onclick={toggle}>
-      <span class="toggle-icon">{open ? '▼' : '▶'}</span> Align one cloud to this one
-    </button>
+    {#if !embedded}
+      <button class="registration-toggle" data-file-index={fileIndex} onclick={toggle}>
+        <span class="toggle-icon">{open ? '▼' : '▶'}</span> Align one cloud to this one
+      </button>
+    {/if}
 
-    {#if open}
+    {#if shown}
       <!-- Deliberately just the one-pair workspace. Aligning everything, undoing
            it, colouring the archive and its scope all belong to the whole scene
            and live in the Align menu beside "+ Add Point Cloud"; duplicating
            them here is how two copies of one control end up disagreeing. -->
-      <div class="pair-panel">
-        <div class="pair-header">
-          <span class="pair-fixed" title={fileLabel(fileIndex)}
-            >Fixed: {fileLabel(fileIndex)}</span
-          >
-        </div>
+      <div class="pair-panel" class:pair-panel-embedded={embedded}>
+        <!-- Embedded, the Align menu is already the window and its own selector
+             already named the fixed cloud; a second frame around it and a
+             heading repeating the choice are both noise. -->
+        {#if !embedded}
+          <div class="pair-header">
+            <span class="pair-fixed" title={fileLabel(fileIndex)}
+              >Fixed: {fileLabel(fileIndex)}</span
+            >
+          </div>
+        {/if}
 
         <label class="pair-row" for={`registration-target-${fileIndex}`}>
           <span>Move</span>
@@ -104,31 +126,60 @@
         <div class="pair-route">
           <div class="pair-route-head">Manual matching</div>
           {#if workflow === 'choose'}
-            <p class="pair-hint">Are the two clouds already roughly in the same position?</p>
-            <div class="pair-actions">
+            <!-- Start from the situation on screen, not from the name of an
+                 algorithm: the question people can answer while looking at two
+                 clouds is "are these on top of each other or not". -->
+            <p class="pair-hint">Pick the route that matches what you see:</p>
+            <div class="pair-route-choice">
               <button
-                class="registration-already-coarse pair-primary"
-                onclick={() => registration.startGuidedMatching(host, true)}
-                disabled={!active || registrationState.busy}
-              >Yes, start fine matching</button>
-              <button
-                class="registration-needs-coarse"
+                class="registration-needs-coarse pair-primary"
                 onclick={() => registration.startGuidedMatching(host, false)}
                 disabled={!active || registrationState.busy}
-              >No, guide me through 3 points</button>
+              >Far apart or rotated</button>
+              <span class="pair-route-note"
+                >3 matching features, then it continues into fine matching automatically.</span
+              >
             </div>
+            <div class="pair-route-choice">
+              <button
+                class="registration-already-coarse"
+                onclick={() => registration.startGuidedMatching(host, true)}
+                disabled={!active || registrationState.busy}
+              >Already roughly on top</button>
+              <span class="pair-route-note"
+                >Straight to matched pairs; the fit updates from the third pair on.</span
+              >
+            </div>
+            <p class="pair-hint">Picking is <strong>⌘/Ctrl + double-click</strong>. A plain double-click still moves the rotation centre, so you can navigate while picking.</p>
+            {#if registrationState.pairCount > 0}
+              <!-- Finishing hid the markers; the pairs are still here. -->
+              <div class="pair-actions" style="margin-top:5px;">
+                <button
+                  class="registration-resume pair-primary"
+                  onclick={() => registration.resumeGuidedMatching(host)}
+                  disabled={!active || registrationState.busy}
+                >Resume fine matching</button>
+              </div>
+            {/if}
           {:else}
+            <!-- Which of the two stages, which cloud is on screen, how far in:
+                 the three things you need to know to make the next click. -->
             <div class="guided-step">
+              <span class="guided-stage"
+                >{workflow.startsWith('coarse') ? 'Step 1 · coarse' : 'Step 2 · fine'}</span
+              >
               {#if workflow === 'coarse-fixed'}
-                Coarse · fixed cloud · {registrationState.coarseFixedCount}/3
+                fixed cloud · {registrationState.coarseFixedCount}/3
               {:else if workflow === 'coarse-moving'}
-                Coarse · moving cloud · {registrationState.coarseMovingCount}/3
+                moving cloud · {registrationState.coarseMovingCount}/3
               {:else if workflow === 'coarse-ready'}
-                Coarse points ready
+                ready to apply
               {:else if workflow === 'fine-fixed'}
-                Fine · fixed cloud · {registrationState.pairCount} complete pairs
+                fixed cloud · {registrationState.pairCount} pair{registrationState.pairCount === 1
+                  ? ''
+                  : 's'} done
               {:else}
-                Fine · moving cloud · match pair {registrationState.pairCount + 1}
+                moving cloud · matching pair {registrationState.pairCount + 1}
               {/if}
             </div>
             <p class="pair-hint">{registrationState.status}</p>
@@ -154,8 +205,62 @@
             {#if workflow === 'fine-fixed' || workflow === 'fine-moving'}
               <p class="pair-hint">From three fine pairs onward, the transform updates after every completed pair. Coarse landmarks are not reused in the fine fit.</p>
             {/if}
+
+            <!-- Both of these exist because the markers and the second cloud
+                 are the two things that hide the feature you are trying to
+                 click on. -->
+            <label class="pick-aid" for={`registration-marker-${fileIndex}`}>
+              <span>Marker size</span>
+              <input
+                id={`registration-marker-${fileIndex}`}
+                class="registration-marker-size"
+                type="range"
+                min="0.1"
+                max="1.5"
+                step="0.05"
+                title="Size of the picked-point balls, relative to the scene. Double-click to reset."
+                bind:value={registrationState.markerScale}
+                oninput={() => host.requestRender()}
+                ondblclick={() => {
+                  registrationState.markerScale = 0.35;
+                  host.requestRender();
+                }}
+              />
+            </label>
+            <label class="pick-aid">
+              <input
+                type="checkbox"
+                class="registration-isolate"
+                bind:checked={registrationState.isolateWhilePicking}
+                onchange={() => registration.refreshPickingVisibility(host)}
+              />
+              <span>Show only the cloud being picked</span>
+            </label>
           {/if}
         </div>
+
+        {#if active && registrationState.pairCount > 0}
+          <!-- One row per pair, so a bad correspondence can be replaced without
+               starting the whole set again. Re-picking removes the pair and
+               appends its replacement, which is why the numbers can shift. -->
+          <div class="pair-list">
+            <div class="pair-route-head">
+              Pairs<span class="pair-count">{registrationState.pairCount} kept</span>
+            </div>
+            {#each Array(registrationState.pairCount) as _, pairIndex (pairIndex)}
+              <div class="pair-list-row">
+                <span class="pair-list-number">{pairIndex + 1}</span>
+                <button
+                  class="registration-recapture"
+                  data-pair-index={pairIndex}
+                  onclick={() => registration.recapturePair(host, pairIndex)}
+                  disabled={!active || registrationState.busy}
+                  title="Drop this pair and pick both of its points again"
+                >Re-pick</button>
+              </div>
+            {/each}
+          </div>
+        {/if}
 
         {#if active && registrationState.status && workflow === 'choose'}
           <div class="pair-status">{registrationState.status}</div>
@@ -190,6 +295,13 @@
     padding: 8px;
     margin-top: 4px;
     font-size: 11px;
+  }
+  .pair-panel-embedded {
+    background: none;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    margin-top: 2px;
   }
   .pair-header {
     margin-bottom: 5px;
@@ -243,6 +355,54 @@
   .pair-primary:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+  .pair-list {
+    margin-top: 8px;
+    border-top: 1px solid var(--vscode-panel-border);
+    padding-top: 6px;
+  }
+  .pair-list-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 0;
+  }
+  .pair-list-number {
+    width: 16px;
+    text-align: right;
+    opacity: 0.75;
+    font-family: var(--vscode-editor-font-family, monospace);
+  }
+  .pair-list-row button {
+    font-size: 10px;
+    padding: 1px 6px;
+  }
+  .pick-aid {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 5px;
+  }
+  .pick-aid input[type='range'] {
+    flex: 1;
+    min-width: 0;
+  }
+  .pair-route-choice {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .pair-route-choice button {
+    flex: 0 0 auto;
+    font-size: 11px;
+  }
+  .pair-route-note {
+    opacity: 0.7;
+    line-height: 1.35;
+  }
+  .guided-stage {
+    font-weight: 600;
   }
   .pair-hint {
     margin: 5px 0 0;

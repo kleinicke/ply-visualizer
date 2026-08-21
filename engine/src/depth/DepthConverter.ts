@@ -1,6 +1,6 @@
 import { CameraParams, DepthConversionResult, SpatialVertex } from '../interfaces';
 import { registerDefaultReaders, readDepth, registerReader } from './DepthRegistry';
-import { normalizeDepth, projectToPointCloud } from './DepthProjector';
+import { normalizeDepth, projectToPointCloud, projectToPointCloudParallel } from './DepthProjector';
 import { PngReader } from './readers/PngReader';
 import { TifReader } from './readers/TifReader';
 import { DepthImage, DepthMetadata } from './types';
@@ -79,7 +79,7 @@ export class DepthConverter {
       const decodeMs = performance.now() - decodeStart;
 
       const projectStart = performance.now();
-      const result = this.projectDecodedDepthImage(decoded, fileName, cameraParams);
+      const result = await this.projectDecodedDepthImage(decoded, fileName, cameraParams);
       result.timings = {
         decodeMs,
         projectMs: performance.now() - projectStart,
@@ -142,11 +142,15 @@ export class DepthConverter {
     return { image, meta };
   }
 
-  projectDecodedDepthImage(
+  /**
+   * Async because the projection may be split across a worker pool; it still
+   * resolves to exactly what the single-pass path returns.
+   */
+  async projectDecodedDepthImage(
     decoded: DecodedDepthImage,
     fileName: string,
     cameraParams: CameraParams
-  ): DepthConversionResult {
+  ): Promise<DepthConversionResult> {
     const { image, meta: baseMeta } = decoded;
 
     // Auto-calculate cx/cy if not provided
@@ -246,7 +250,7 @@ export class DepthConverter {
   - depthScale: ${cameraParams.depthScale ?? 'not set'}
   - depthBias: ${cameraParams.depthBias ?? 'not set'}`);
 
-    const result = projectToPointCloud(norm, projectionParams);
+    const result = await projectToPointCloudParallel(norm, projectionParams);
 
     if (result.projectionDiagnostics?.rejectedCount) {
       console.warn(

@@ -235,3 +235,35 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await expect(liveUpdateCheckbox).not.toBeChecked();
   });
 });
+
+/**
+ * The renderer draws on demand. A control that changes what a cloud looks like
+ * and does not ask for a frame appears to do nothing until the camera happens
+ * to move, which is exactly how switching from projected colour to a flat one
+ * presented itself.
+ */
+test('changing a colour mode asks for a frame', async ({ page }) => {
+  await page.goto('/3d-visualizer/');
+  await page.waitForSelector('#three-canvas');
+  await page.waitForTimeout(500);
+  await page
+    .locator('#hiddenFileInput')
+    .setInputFiles(path.resolve('../testfiles/ply/test_small_mesh.ply'));
+  await expect(page.locator('#file-list .file-item')).toHaveCount(1);
+
+  const renders = await page.evaluate(() => {
+    const visualizer = (window as any).visualizer;
+    let count = 0;
+    const original = visualizer.requestRender.bind(visualizer);
+    visualizer.requestRender = () => {
+      count++;
+      original();
+    };
+    (window as any).__renderCount = () => count;
+    return true;
+  });
+  expect(renders).toBe(true);
+
+  await page.locator('#color-0').selectOption('1');
+  await expect.poll(() => page.evaluate(() => (window as any).__renderCount())).toBeGreaterThan(0);
+});

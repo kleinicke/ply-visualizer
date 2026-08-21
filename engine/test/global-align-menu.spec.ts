@@ -185,4 +185,31 @@ test.describe('Global align menu', () => {
     });
     await expect(page.locator('.align-scan-list .align-row-aligned')).toHaveCount(1);
   });
+
+  /**
+   * Both toggles ship off, and the white-balance one only exists where the
+   * gains it reads do: they come from each camera band's reference patch, so a
+   * scene with no camera profiles has nothing to apply.
+   */
+  test('offers complex-scene and band white balance, both off by default', async ({ page }) => {
+    await page.locator('#hiddenFileInput').setInputFiles([smallPly, binaryPly]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+    await page.locator('#global-align-toggle').click();
+
+    await expect(page.locator('.global-align-complex')).not.toBeChecked();
+
+    await page.locator('.align-options-toggle').click();
+    // Plain PLYs carry no camera profile, so the toggle is absent rather than
+    // present and inert.
+    await expect(page.locator('.global-band-white-balance')).toHaveCount(0);
+
+    await page.evaluate(() => {
+      const visualizer = (window as any).visualizer;
+      visualizer.cameraGroups = [{ userData: { profileName: 'Site', colorCorrection: undefined } }];
+      visualizer.updateFileList();
+    });
+    const toggle = page.locator('.global-band-white-balance');
+    await expect(toggle).toBeVisible();
+    await expect(toggle).not.toBeChecked();
+  });
 });

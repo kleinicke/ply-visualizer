@@ -131,6 +131,13 @@ let wasm_bindgen;
     return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
   }
 
+  function passArrayF32ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 4, 4) >>> 0;
+    getFloat32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+  }
+
   let cachedFloat64ArrayMemory0 = null;
 
   function getFloat64ArrayMemory0() {
@@ -152,37 +159,65 @@ let wasm_bindgen;
     wasm.__externref_table_dealloc(idx);
     return value;
   }
-
-  function getArrayF64FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
-  }
   /**
-   * Project one OpenCV-coordinate ray. Returns
-   * `[valid, converged, iterations, u, v]`.
+   * @param {Float32Array} data
+   * @param {number} width
+   * @param {number} height
+   * @param {string} kind
    * @param {string} camera_model
+   * @param {string} convention
    * @param {number} fx
    * @param {number} fy
    * @param {number} cx
    * @param {number} cy
    * @param {Float64Array} coefficients
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
-   * @returns {Float64Array}
+   * @returns {DepthProjectResult}
    */
-  __exports.camera_project = function (camera_model, fx, fy, cx, cy, coefficients, x, y, z) {
-    const ptr0 = passStringToWasm0(camera_model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  __exports.project_depth_fast = function (
+    data,
+    width,
+    height,
+    kind,
+    camera_model,
+    convention,
+    fx,
+    fy,
+    cx,
+    cy,
+    coefficients
+  ) {
+    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
+    const ptr1 = passStringToWasm0(kind, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.camera_project(ptr0, len0, fx, fy, cx, cy, ptr1, len1, x, y, z);
-    if (ret[3]) {
-      throw takeFromExternrefTable0(ret[2]);
+    const ptr2 = passStringToWasm0(camera_model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(convention, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ptr4 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
+    const len4 = WASM_VECTOR_LEN;
+    const ret = wasm.project_depth_fast(
+      ptr0,
+      len0,
+      width,
+      height,
+      ptr1,
+      len1,
+      ptr2,
+      len2,
+      ptr3,
+      len3,
+      fx,
+      fy,
+      cx,
+      cy,
+      ptr4,
+      len4
+    );
+    if (ret[2]) {
+      throw takeFromExternrefTable0(ret[1]);
     }
-    var v3 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-    return v3;
+    return DepthProjectResult.__wrap(ret[0]);
   };
 
   function passArray8ToWasm0(arg, malloc) {
@@ -220,40 +255,6 @@ let wasm_bindgen;
     }
     return JpegResult.__wrap(ret[0]);
   };
-
-  /**
-   * Unproject one pixel to a unit OpenCV-coordinate ray. Returns
-   * `[valid, converged, iterations, x, y, z]`.
-   * @param {string} camera_model
-   * @param {number} fx
-   * @param {number} fy
-   * @param {number} cx
-   * @param {number} cy
-   * @param {Float64Array} coefficients
-   * @param {number} u
-   * @param {number} v
-   * @returns {Float64Array}
-   */
-  __exports.camera_unproject = function (camera_model, fx, fy, cx, cy, coefficients, u, v) {
-    const ptr0 = passStringToWasm0(camera_model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.camera_unproject(ptr0, len0, fx, fy, cx, cy, ptr1, len1, u, v);
-    if (ret[3]) {
-      throw takeFromExternrefTable0(ret[2]);
-    }
-    var v3 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-    return v3;
-  };
-
-  function passArrayF32ToWasm0(arg, malloc) {
-    const ptr = malloc(arg.length * 4, 4) >>> 0;
-    getFloat32ArrayMemory0().set(arg, ptr / 4);
-    WASM_VECTOR_LEN = arg.length;
-    return ptr;
-  }
 
   let cachedUint32ArrayMemory0 = null;
 
@@ -339,6 +340,38 @@ let wasm_bindgen;
     return v6;
   };
 
+  function getArrayF64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+  }
+  /**
+   * Project one OpenCV-coordinate ray. Returns
+   * `[valid, converged, iterations, u, v]`.
+   * @param {string} camera_model
+   * @param {number} fx
+   * @param {number} fy
+   * @param {number} cx
+   * @param {number} cy
+   * @param {Float64Array} coefficients
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @returns {Float64Array}
+   */
+  __exports.camera_project = function (camera_model, fx, fy, cx, cy, coefficients, x, y, z) {
+    const ptr0 = passStringToWasm0(camera_model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.camera_project(ptr0, len0, fx, fy, cx, cy, ptr1, len1, x, y, z);
+    if (ret[3]) {
+      throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v3;
+  };
+
   /**
    * @param {Uint8Array} data
    * @returns {HdrResult}
@@ -418,6 +451,33 @@ let wasm_bindgen;
       throw takeFromExternrefTable0(ret[1]);
     }
     return NormalizeDepthResult.__wrap(ret[0]);
+  };
+
+  /**
+   * Unproject one pixel to a unit OpenCV-coordinate ray. Returns
+   * `[valid, converged, iterations, x, y, z]`.
+   * @param {string} camera_model
+   * @param {number} fx
+   * @param {number} fy
+   * @param {number} cx
+   * @param {number} cy
+   * @param {Float64Array} coefficients
+   * @param {number} u
+   * @param {number} v
+   * @returns {Float64Array}
+   */
+  __exports.camera_unproject = function (camera_model, fx, fy, cx, cy, coefficients, u, v) {
+    const ptr0 = passStringToWasm0(camera_model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.camera_unproject(ptr0, len0, fx, fy, cx, cy, ptr1, len1, u, v);
+    if (ret[3]) {
+      throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v3;
   };
 
   /**
@@ -502,9 +562,24 @@ let wasm_bindgen;
   };
 
   /**
+   * One horizontal band of an image, projected with the *whole* image's depth
+   * range and row offset.
+   *
+   * Splitting the unprojection across workers is only sound if every band agrees
+   * on two things it cannot see from its own rows: the grey ramp's endpoints
+   * (which are logarithmic over the full depth range, so a per-band range shows
+   * up as banding), and where the band sits in the image (`row_offset`, which
+   * the returned pixel coordinates need — the intrinsics are pre-shifted by the
+   * caller so the rays themselves are already correct).
+   *
+   * `depth_min`/`depth_max` come from one pass over the full image; pass
+   * non-finite values to fall back to this band's own range.
    * @param {Float32Array} data
    * @param {number} width
    * @param {number} height
+   * @param {number} row_offset
+   * @param {number} depth_min
+   * @param {number} depth_max
    * @param {string} kind
    * @param {string} camera_model
    * @param {string} convention
@@ -515,10 +590,13 @@ let wasm_bindgen;
    * @param {Float64Array} coefficients
    * @returns {DepthProjectResult}
    */
-  __exports.project_depth_fast = function (
+  __exports.project_depth_band = function (
     data,
     width,
     height,
+    row_offset,
+    depth_min,
+    depth_max,
     kind,
     camera_model,
     convention,
@@ -538,11 +616,14 @@ let wasm_bindgen;
     const len3 = WASM_VECTOR_LEN;
     const ptr4 = passArrayF64ToWasm0(coefficients, wasm.__wbindgen_malloc);
     const len4 = WASM_VECTOR_LEN;
-    const ret = wasm.project_depth_fast(
+    const ret = wasm.project_depth_band(
       ptr0,
       len0,
       width,
       height,
+      row_offset,
+      depth_min,
+      depth_max,
       ptr1,
       len1,
       ptr2,

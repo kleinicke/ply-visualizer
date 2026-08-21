@@ -1,5 +1,6 @@
 import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
 import { PerfTimer } from '../utils/perfLog';
+import { depthSettingsState } from '../state/depthSettings.svelte';
 import { colorsToUint8 } from './depthResultArrays';
 import {
   collectCameraParamsForBrowserPrompt,
@@ -401,21 +402,13 @@ export async function processDepthWithParams(
   // The file name is already in the PERF[kind name] tag; no need to repeat it.
   perf.summary();
 
-  // Auto-open Depth Settings panel for newly created depth-derived file in browser
-  setTimeout(() => {
-    try {
-      const idx = spatialData.fileIndex || 0;
-      const panel = document.getElementById(`depth-panel-${idx}`);
-      const toggleBtn = document.querySelector(`.depth-settings-toggle[data-file-index="${idx}"]`);
-      if (panel && toggleBtn) {
-        panel.style.display = 'block';
-        const icon = (toggleBtn as HTMLElement).querySelector('.toggle-icon');
-        if (icon) {
-          icon.textContent = '▼';
-        }
-      }
-    } catch {}
-  }, 0);
+  // A freshly converted depth file opens its settings: the numbers that
+  // produced it are the ones most likely to need changing. Recorded as state
+  // rather than poked into the DOM, so the panel's own toggle stays in step.
+  const openIndex = spatialData.fileIndex || 0;
+  if (!depthSettingsState.openPanelIndices.includes(openIndex)) {
+    depthSettingsState.openPanelIndices.push(openIndex);
+  }
 
   // Clean up
   host.pendingDepthFiles.delete(requestId);

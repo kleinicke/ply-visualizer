@@ -8,11 +8,23 @@
     runStationPipeline,
   } from '../stationPipelineTrigger';
   import { capturePlaces, setCapturePlaceVisible } from '../stationPipelineFeature';
+  import { setStonexColorCorrection } from '../visualization/stonexCameras';
+  import { normalizeStonexColorCorrection } from '../visualization/stonexColorCorrection';
+  import RegistrationPanel from './RegistrationPanel.svelte';
 
   let { host }: { host: any } = $props();
 
   let open = $state(false);
   let showOptions = $state(false);
+  // The one-pair workspace, folded away by default: correcting a single pair is
+  // what you reach for when an automatic run leaves one cloud wrong, not what
+  // you start with.
+  let showSingle = $state(false);
+  // Off by default, like every other correction: the viewer shows the capture.
+  let bandWhiteBalance = $state(false);
+  // Grow outward from the reference instead of matching everything to it.
+  let complexScene = $state(false);
+  let singleFixed = $state<number | null>(null);
   // null until the user picks one; the first loaded cloud is the default, which
   // is what someone who just opened a multi-scan archive almost always wants.
   let anchorChoice = $state<number | null>(null);
@@ -31,6 +43,27 @@
     anchorChoice !== null && alignable.includes(anchorChoice) ? anchorChoice : (alignable[0] ?? 0)
   );
   const movingCount = $derived(Math.max(0, alignable.length - 1));
+
+  const singleFixedIndex = $derived(
+    singleFixed !== null && alignable.includes(singleFixed) ? singleFixed : (alignable[0] ?? 0)
+  );
+
+  // Only archives carry the per-band reference patches this reads.
+  const hasCameraProfiles = $derived((filesState.renderTick, (host.cameraGroups?.length ?? 0) > 0));
+
+  function applyBandWhiteBalance(enabled: boolean) {
+    bandWhiteBalance = enabled;
+    for (const group of host.cameraGroups ?? []) {
+      const current = normalizeStonexColorCorrection(group.userData?.colorCorrection);
+      // Patch only the white-balance mode: exposure and manual gains are the
+      // file panel's business and must survive this toggle.
+      setStonexColorCorrection(host, group, {
+        ...current,
+        whiteBalance: enabled ? 'band' : 'off',
+      });
+    }
+    host.requestRender();
+  }
 
   const archiveIndex = $derived((filesState.renderTick, firstArchiveScanIndex(host)));
   // Colouring needs the photographs and the camera profile out of the archive,
@@ -93,6 +126,20 @@
   });
 </script>
 
+{#snippet whiteBalanceToggle()}
+  {#if hasCameraProfiles}
+    <label class="align-check" title="Per-camera-band gains measured from each frame's reference patch. Off by default: the viewer shows the raw capture.">
+      <input
+        type="checkbox"
+        class="global-band-white-balance"
+        checked={bandWhiteBalance}
+        onchange={event => applyBandWhiteBalance((event.currentTarget as HTMLInputElement).checked)}
+      />
+      Band white balance
+    </label>
+  {/if}
+{/snippet}
+
 {#if available}
   <button
     id="global-align-toggle"
@@ -129,7 +176,7 @@
       <div class="align-actions">
         <button
           class="global-align-run align-primary"
-          onclick={() => registration.alignAllTo(host, anchorIndex)}
+          onclick={() => registration.alignAllTo(host, anchorIndex, { complex: complexScene })}
           disabled={registrationState.busy}
           title="Coarse yaw search followed by ICP, for every other cloud"
         >
@@ -150,6 +197,18 @@
         >
           Undo
         </button>
+        <label
+          class="align-inline-check"
+          title="Place what matches, add it to the target, and try the rest again. For scenes where a cloud may share nothing with the reference but plenty with its neighbour."
+        >
+          <input
+            type="checkbox"
+            class="global-align-complex"
+            bind:checked={complexScene}
+            disabled={registrationState.busy}
+          />
+          Complex scene
+        </label>
       </div>
 
       {#if entries.length > 0}
@@ -240,7 +299,10 @@
           <div class="align-message">{stationPipelineUi.message}</div>
         {/if}
 
-        <button class="align-disclosure" onclick={() => (showOptions = !showOptions)}>
+        <button
+          class="align-disclosure align-options-toggle"
+          onclick={() => (showOptions = !showOptions)}
+        >
           {showOptions ? '▾' : '▸'} Options
         </button>
         {#if showOptions}
@@ -248,6 +310,7 @@
             <input type="checkbox" bind:checked={stationPipelineUi.recolorAlreadyColored} />
             Also recolour scans that already have camera colour
           </label>
+          {@render whiteBalanceToggle()}
           <label class="align-check">
             Up axis for the coarse search
             <select bind:value={registrationState.upAxis}>
@@ -308,7 +371,10 @@
         {/if}
       </section>
     {:else}
-      <button class="align-disclosure" onclick={() => (showOptions = !showOptions)}>
+      <button
+          class="align-disclosure align-options-toggle"
+          onclick={() => (showOptions = !showOptions)}
+        >
         {showOptions ? '▾' : '▸'} Options
       </button>
       {#if showOptions}
@@ -320,8 +386,37 @@
             <option value="x">X</option>
           </select>
         </label>
+        {@render whiteBalanceToggle()}
       {/if}
     {/if}
+
+    <!-- Last, and collapsed. It used to live inside every file's row, which
+         hid a whole-scene decision behind whichever row you happened to open
+         and repeated the same controls once per cloud. -->
+    <div class="align-single">
+      <button
+        class="align-disclosure align-single-toggle"
+        onclick={() => (showSingle = !showSingle)}
+      >
+        {showSingle ? '▾' : '▸'} Align single clouds
+      </button>
+      {#if showSingle}
+        <label class="align-check" for="global-align-single-fixed">
+          Keep fixed
+          <select
+            id="global-align-single-fixed"
+            value={singleFixedIndex}
+            onchange={event =>
+              (singleFixed = Number((event.currentTarget as HTMLSelectElement).value))}
+          >
+            {#each alignable as index (index)}
+              <option value={index}>{fileLabel(index)}</option>
+            {/each}
+          </select>
+        </label>
+        <RegistrationPanel {host} fileIndex={singleFixedIndex} embedded={true} />
+      {/if}
+    </div>
   </div>
 {/if}
 
@@ -510,11 +605,22 @@
     display: block;
     margin-top: 5px;
   }
+  .align-inline-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
   .align-check select {
     display: block;
     width: 100%;
     margin-top: 2px;
     font-size: 11px;
+  }
+  .align-single {
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid var(--vscode-panel-border);
   }
   .align-places {
     margin-top: 7px;

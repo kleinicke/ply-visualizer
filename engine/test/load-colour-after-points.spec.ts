@@ -159,8 +159,13 @@ test('raw colour crosses once and is corrected in the webview', async ({ page })
   });
 
   expect(result).toMatchObject({ applied: 1, scanName: 'Site_raw.x3r' });
+  // The raw sample is kept, separately from what is displayed...
   expect(result.raw).toEqual([10, 20, 30]);
-  expect(result.corrected).toEqual([20, 20, 90]);
+  // ...and what is displayed is that same sample, because the viewer now ships
+  // every correction off: the band gains in the calibration above are available
+  // to the file's Camera colour controls, not applied behind the user's back.
+  // The multiply itself is pinned in src/test/suite/stonexColour.test.ts.
+  expect(result.corrected).toEqual([10, 20, 30]);
 });
 
 test('colour arriving before its geometry is queued and flushed', async ({ page }) => {

@@ -25,6 +25,8 @@ export const registrationState = $state(
    *   alignmentAnchorIndex: number | null;
    *   alignedIndices: number[];
    *   upAxis: 'x' | 'y' | 'z';
+   *   markerScale: number;
+   *   isolateWhilePicking: boolean;
    * }} */ ({
     // Unified file index of the cloud being moved, or null when idle.
     sourceIndex: null,
@@ -57,6 +59,16 @@ export const registrationState = $state(
     alignmentAnchorIndex: null,
     alignedIndices: [],
     upAxis: 'z',
+    // Picked-point markers, as a multiple of the default 0.4%-of-the-scene
+    // radius. The default used to be that 0.4%, which on a room-scale scan is
+    // an 8 cm ball: big enough to sit on top of the feature you are trying to
+    // match and hide it, which defeats the one gesture that needs to be
+    // precise.
+    markerScale: 0.35,
+    // Show only the cloud currently being picked. Two overlapping scans of the
+    // same room are hard to tell apart at the best of times, and impossible
+    // when you are looking for the same corner in both.
+    isolateWhilePicking: true,
   })
 );
 

@@ -28,7 +28,7 @@ test.describe('Capture places', () => {
    */
   async function openScope(page: any) {
     await page.locator('#global-align-toggle').click();
-    await page.locator('.align-disclosure').click();
+    await page.locator('.align-options-toggle').click();
   }
 
   /** Makes both clouds look like scans out of one archive. */

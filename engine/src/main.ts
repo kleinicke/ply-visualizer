@@ -178,7 +178,13 @@ import { alignSourceOrigin } from './utils/sourceOrigin';
 import { SectionPlaneManager } from './visualization/sectionPlanes';
 import type { VolumeData } from './parsers/nrrdParser';
 import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
-import { initTiffWasm } from './depth/readers/tiffWasm';
+import {
+  initTiffWasm,
+  projectDepthBandWasmSync,
+  projectDepthWasmSync,
+} from './depth/readers/tiffWasm';
+import { projectDepthInBands } from './depth/depthProjectionPool';
+import { registrationState } from './state/registration.svelte';
 import {
   inspectNpyWasm,
   isNpyPointCloudShape,
@@ -1616,9 +1622,14 @@ class PointCloudVisualizer {
         console.log(`⚫ Selected point cloud: ${info}`);
       }
 
-      // Correspondence picking claims the plain double-click while it is armed,
-      // so aiming at a feature does not also move the rotation center.
-      if (!event.shiftKey && registrationFeature.handlePickedPoint(this, selectedPoint)) {
+      // Correspondence picking is on Cmd/Ctrl + double-click, not on the plain
+      // one. Claiming the plain gesture meant that while picking was armed the
+      // only way to move the rotation centre — the thing you need constantly
+      // while hunting for the same corner in two clouds — was to stop picking.
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        registrationFeature.handlePickedPoint(this, selectedPoint)
+      ) {
         console.log(`🎯 Registration correspondence point added (${info})`);
         this.requestRender();
         return;
@@ -1648,6 +1659,8 @@ class PointCloudVisualizer {
     if (
       !this.sequenceMode &&
       !event.shiftKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
       this.selectionManager.isFarFromAllVisibleObjects(mouseScreenX, mouseScreenY, canvas)
     ) {
       console.log('🧭 Double-click in empty space - fitting view to all objects');
@@ -2853,6 +2866,11 @@ class PointCloudVisualizer {
         }
       }
     }
+    // The renderer draws on demand, so a colour change that does not ask for a
+    // frame is invisible until something else does — a camera nudge, a resize.
+    // Switching a cloud from its projected colour to a flat one looked like a
+    // control that did nothing at all.
+    this.requestRender();
   }
 
   private toggleFileVisibility(fileIndex: number): void {
@@ -4832,7 +4850,21 @@ class PointCloudVisualizer {
 // Same reason again: the depth kernels are reached through a camera-parameters
 // dialog and a worker, neither of which a spec can use to check the arithmetic
 // of a single pixel.
-(window as any).__plyDepth = { initTiffWasm, normalizeDepth, projectToPointCloud };
+(window as any).__plyDepth = {
+  initTiffWasm,
+  normalizeDepth,
+  projectToPointCloud,
+  // Both projection entry points, so a test can compare the banded path against
+  // the single-pass one through the same API the pipeline uses rather than
+  // reaching for the raw wasm global.
+  projectDepthWasmSync,
+  projectDepthBandWasmSync,
+};
+// The pool itself, so a benchmark can time it against the single pass.
+(window as any).__plyDepthPool = { projectDepthInBands };
+// The picking workflow's live counters, so a test can assert what a real
+// double-click did rather than calling the handler behind it.
+(window as any).__plyRegistrationState = registrationState;
 // Test handle for the file-list state, following __plyContainerPerf above.
 // Lets a browser test drive the background-work row without needing the
 // extension host to stream real images.

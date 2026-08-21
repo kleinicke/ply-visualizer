@@ -6,6 +6,7 @@ import {
 } from './cameraModels';
 import type { CameraModel } from './types';
 import { CameraParams } from '../interfaces';
+import { depthSettingsState } from '../state/depthSettings.svelte';
 
 /**
  * The distortion coefficients as the panel now holds them: one input per
@@ -101,10 +102,9 @@ export function captureDepthPanelStates(
     const match = id.match(/depth-panel-(\d+)/);
     if (match) {
       const fileIndex = parseInt(match[1]);
-      const displayStyle = (panel as HTMLElement).style.display;
-      const isVisible =
-        displayStyle === 'block' ||
-        (displayStyle === '' && (panel as HTMLElement).offsetHeight > 0);
+      // The panel's own state, not its rendered style: the component owns the
+      // display now, and reading it back would race the render.
+      const isVisible = depthSettingsState.openPanelIndices.includes(fileIndex);
 
       // Capture current form values
       const formValues = captureDepthFormValues(host, fileIndex);
@@ -185,19 +185,14 @@ export function restoreDepthPanelStates(
           `🔄 Restoring state for file ${fileIndex}: ${state.panelOpen ? 'open' : 'closed'}`
         );
 
-        // Restore panel visibility
-        if (state.panelOpen) {
-          (panel as HTMLElement).style.display = 'block';
-          const icon = toggleButton.querySelector('.toggle-icon');
-          if (icon) {
-            icon.textContent = '▼';
-          }
-        } else {
-          (panel as HTMLElement).style.display = 'none';
-          const icon = toggleButton.querySelector('.toggle-icon');
-          if (icon) {
-            icon.textContent = '▶';
-          }
+        // Restore panel visibility through the state the component reads, so
+        // the panel and its arrow cannot end up disagreeing.
+        const indices = depthSettingsState.openPanelIndices;
+        const at = indices.indexOf(fileIndex);
+        if (state.panelOpen && at === -1) {
+          indices.push(fileIndex);
+        } else if (!state.panelOpen && at !== -1) {
+          indices.splice(at, 1);
         }
 
         // Restore form values

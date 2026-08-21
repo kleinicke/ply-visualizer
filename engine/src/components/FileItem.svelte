@@ -5,7 +5,6 @@
   import CameraFrameList from './CameraFrameList.svelte';
   import E57CorrectionPanel from './E57CorrectionPanel.svelte';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
-  import RegistrationPanel from './RegistrationPanel.svelte';
   import TransformSection from './TransformSection.svelte';
   import VolumePanel from './VolumePanel.svelte';
   import {
@@ -549,10 +548,6 @@
       {/if}
 
       <TransformSection {host} fileIndex={index} {matrixText} />
-
-      {#if !data.metadata?.volumeSessionId}
-        <RegistrationPanel {host} fileIndex={index} />
-      {/if}
 
       <div class="rendering-controls" style="margin-top: 4px; margin-bottom: 6px;">
         <div style="display: grid; grid-template-columns: {renderModeGridColumns}; gap: 3px;">
