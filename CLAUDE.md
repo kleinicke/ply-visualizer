@@ -35,6 +35,10 @@ cd engine && npm run bench:backend -- <file>   # WebGL vs WebGPU on one file
 npm run benchmark:vscode # Real VS Code, scrapes the extension's own PERF lines
 ```
 
+The standalone engine is served at `/` in local browser tests and at the root of
+`3d.f-kleinicke.de` in production. The separate portfolio website is not part of
+this repository.
+
 - Performance work has a method, and it is not optional reading:
   **docs/performance-method.md**. Short version: measure the PERF line the user
   sees, discard the first (cold) run, check `uptime` before believing a number,
@@ -135,6 +139,9 @@ there; put code in the modules above.
 
 ## Dependency notes
 
+- Node 24 is the repository build and development toolchain, declared once in
+  `.nvmrc` and consumed by local nvm, GitHub Actions, and Netlify. This does not
+  change the Node runtime embedded in supported VS Code versions.
 - `@types/vscode` and `@types/node` are pinned deliberately, not stale.
   `@types/vscode` tracks `engines.vscode` (currently `^1.104.0`, a roughly
   12-month support window) and `@types/node` tracks the Node that the _minimum_
@@ -146,15 +153,12 @@ there; put code in the modules above.
   TS 7 support.
 - After bumping `@playwright/test`, run `npx playwright install chromium` in
   `engine/` or every spec fails with "Executable doesn't exist".
-- `7zip-bin` is transitive (via `7zip-min`), so `webpack.config.js` resolves it
-  through its parent rather than assuming `node_modules/7zip-bin` — that path
-  only exists when the package manager hoists it, which pnpm does not.
-- `engine/` is a pnpm workspace member (`pnpm-workspace.yaml`), so one
-  `pnpm install` at the root provisions both trees from the single committed
-  `pnpm-lock.yaml`. Do not run `npm install` inside `engine/` — that recreates
-  the split, unlocked tree this replaced. The extension bundle legitimately
-  resolves `@sparkjsdev/spark` out of `engine/`, which is why the engine has to
-  be installed for the root build to work.
+- `engine/` is an npm workspace declared by the root `package.json`. Run
+  `npm install` at the repository root so the extension and standalone engine
+  are provisioned from the single committed `package-lock.json`; do not create a
+  separate lockfile inside `engine/`. The extension bundle legitimately resolves
+  `@sparkjsdev/spark` from the engine workspace, which is why both packages are
+  installed together.
 - The engine Playwright suite is GPU- and memory-bound, so
   `engine/playwright.config.ts` caps workers rather than using Playwright's
   default of half the cores. Raising it makes the heavy file-loading specs time

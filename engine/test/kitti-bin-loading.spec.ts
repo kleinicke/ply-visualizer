@@ -4,7 +4,7 @@ import path from 'path';
 const fixture = (name: string) => path.resolve(`test/fixtures/kitti/${name}`);
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
 });
 

@@ -11,7 +11,7 @@ import path from 'path';
  */
 test.describe('Recolored colour mode', () => {
   test('appears only once a result exists, and preserves the original', async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
     await page
@@ -86,7 +86,7 @@ test.describe('Recolored colour mode', () => {
     // was projected from the archive's photographs by this extension, so
     // calling it "Original" hides the very distinction the second mode exists
     // to draw.
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
     await page
@@ -122,7 +122,7 @@ test.describe('Recolored colour mode', () => {
     // The run takes a minute on a real archive. Blanking the scans first and
     // painting each one as it lands is what makes it legible; without it the
     // view sits unchanged and then flips in a single step.
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
     await page
@@ -199,7 +199,7 @@ test.describe('Recolored colour mode', () => {
   test('preserves existing camera colour when recolouring it was not requested', async ({
     page,
   }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
     await page
@@ -228,7 +228,7 @@ test.describe('Recolored colour mode', () => {
     // "All stations" is a view, not a diff. A single-station archive's only
     // camera already produced what it would show, so the scan keeps the mode
     // with its own colour in it rather than being handed back or left white.
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
     await page
@@ -279,7 +279,7 @@ test.describe('Recolored colour mode', () => {
     // Both modes carry sRGB camera bytes. Skipping the decode on one of them
     // renders it washed out beside the other, which is exactly how the bug
     // showed up: the colours were right, the transfer function was not.
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
     await page

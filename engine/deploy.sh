@@ -17,7 +17,6 @@ echo "✅ Build completed successfully!"
 
 # Webpack CopyPlugin handles all file copying:
 # - /index.html → 3D Visualizer
-# - /3d-visualizer/index.html → compatibility path for old links and tests
 # - /media/ → Static assets
 
 echo "📦 Files in dist/ directory:"

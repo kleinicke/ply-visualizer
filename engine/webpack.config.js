@@ -89,41 +89,17 @@ module.exports = {
           from: 'index.html',
           to: 'index.html',
         },
-        // Keep the old path buildable so existing links and local browser tests
-        // continue to work during the domain migration.
-        {
-          from: 'index.html',
-          to: '3d-visualizer/index.html',
-          transform(content) {
-            return (
-              content
-                .toString()
-                // Update paths to be relative from 3d-visualizer subdirectory
-                .replace(/src="bundle\.js"/g, 'src="../bundle.js"')
-                .replace(/href="bundle\.css"/g, 'href="../bundle.css"')
-                .replace(/src="media\//g, 'src="../media/')
-                .replace(/href="media\//g, 'href="../media/')
-                // Worker bootstrap URLs are strings rather than script tags;
-                // from /3d-visualizer/ they must also point one level up.
-                .replace(
-                  /'media\/(geotiff\.min\.js|wasm\/tiff_wasm(?:_bg)?\.(?:js|wasm))'/g,
-                  "'../media/$1'"
-                )
-            );
-          },
-        },
         {
           from: 'media',
           to: 'media',
         },
         {
-          from: 'src/themes',
-          to: 'src/themes',
+          from: 'examples',
+          to: 'examples',
         },
-        // Also copy themes for 3d-visualizer subdirectory (themes are fetched relative to HTML location)
         {
           from: 'src/themes',
-          to: '3d-visualizer/src/themes',
+          to: 'src/themes',
         },
       ],
     }),

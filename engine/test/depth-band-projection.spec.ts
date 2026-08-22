@@ -12,7 +12,7 @@ import { test, expect } from '@playwright/test';
  * up at one.
  */
 test('bands reproduce a whole-image projection exactly', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForFunction(() => (window as any).__plyDepth !== undefined);
 

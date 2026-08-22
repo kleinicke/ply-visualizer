@@ -11,7 +11,7 @@ import path from 'path';
  * arrival half gets its own test.
  */
 test('a scan shown without colour takes it when it arrives', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(500);
   await page
@@ -63,7 +63,7 @@ test('colour that arrives in chunks is reassembled', async ({ page }) => {
   // reporting anything, so a large scan's colour travels in pieces. Nothing may
   // be shown until the closing piece lands, or a half-filled array reaches the
   // screen.
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(500);
   await page
@@ -117,7 +117,7 @@ test('colour that arrives in chunks is reassembled', async ({ page }) => {
 });
 
 test('raw colour crosses once and is corrected in the webview', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(500);
   await page
@@ -169,7 +169,7 @@ test('raw colour crosses once and is corrected in the webview', async ({ page })
 });
 
 test('colour arriving before its geometry is queued and flushed', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(500);
   await page

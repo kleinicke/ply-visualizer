@@ -20,7 +20,7 @@ test.describe('Registration without a worker', () => {
         }
       };
     });
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
   });

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('round alpha mask does not darken retained point fragments', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => (window as any).visualizer !== undefined);
   await page.locator('#hiddenFileInput').setInputFiles({
     name: 'one-point.ply',

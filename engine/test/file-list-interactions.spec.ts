@@ -10,7 +10,7 @@ import path from 'path';
  */
 test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(1000);
   });
@@ -243,7 +243,7 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
  * presented itself.
  */
 test('changing a colour mode asks for a frame', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(500);
   await page

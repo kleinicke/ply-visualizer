@@ -15,7 +15,7 @@ import path from 'path';
 const fixture = (name: string) => path.resolve(`test/fixtures/ascii/${name}`);
 
 async function load(page: Page, name: string) {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.locator('#hiddenFileInput').setInputFiles(fixture(name));
   await expect(page.locator('#file-list .file-item')).toHaveCount(1, { timeout: 10_000 });

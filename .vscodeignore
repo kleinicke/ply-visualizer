@@ -14,12 +14,17 @@ engine/**
 # Rust/WASM sources and build caches. Runtime WASM artifacts are copied to
 # out/wasm/ or engine/media/ by the build.
 wasm/**
+crates/**
 
 # Config files
 .gitignore
 .editorconfig
 .yarnrc
 .npmrc
+.nvmrc
+.netlify/**
+netlify.toml
+package-lock.json
 vsc-extension-quickstart.md
 **/tsconfig.json
 **/.eslintrc.json
@@ -63,6 +68,8 @@ test_pc2.ply
 test_simple.ply
 
 # Development scripts and tools
+scripts/**
+benchmark-vscode-result.json
 analyze-calls.mjs
 analyze-coverage.mjs
 build-call-graph.mjs

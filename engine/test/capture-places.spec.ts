@@ -10,7 +10,7 @@ import path from 'path';
  */
 test.describe('Capture places', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
     await page

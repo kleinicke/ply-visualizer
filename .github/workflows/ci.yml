@@ -22,33 +22,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
+          node-version-file: .nvmrc
+          cache: npm
 
-      # --frozen-lockfile is the point of the workspace conversion: it fails if
-      # pnpm-lock.yaml does not match the manifests, so a dependency change that
-      # was not committed cannot pass CI.
+      # npm ci fails if package-lock.json does not match the manifests, so an
+      # uncommitted dependency change cannot pass CI.
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Build extension
-        run: pnpm run compile
+        run: npm run compile
 
       - name: Lint and type-check
-        run: pnpm run lint
+        run: npm run lint
 
       - name: Unit tests (no VS Code)
-        run: pnpm run test:node
+        run: npm run test:node
 
       # Guards the packaging path, which is otherwise only exercised at release
       # time, and surfaces the VSIX size in the log so growth is visible.
       - name: Package VSIX
         run: |
-          pnpm exec vsce package --no-dependencies -o ply-visualizer-ci.vsix
+          npm exec -- vsce package --no-dependencies -o ply-visualizer-ci.vsix
           ls -lh ply-visualizer-ci.vsix
 
       - uses: actions/upload-artifact@v4
@@ -64,24 +61,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
+          node-version-file: .nvmrc
+          cache: npm
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       # playwright.config.ts serves engine/dist over http, so the standalone
       # bundle has to exist before the tests start.
       - name: Build standalone page
-        run: pnpm --filter ply-visualizer-engine run build
+        run: npm run build --workspace=engine
 
       - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
-        working-directory: engine
+        run: npm exec -- playwright install --with-deps chromium
 
       # testfiles/ is 8.2 GB and deliberately gitignored, so the fixture-heavy
       # specs cannot run on a clean checkout. Select the specs that build their
@@ -91,7 +85,7 @@ jobs:
         # xargs rather than an unquoted variable: word-splitting an unquoted
         # expansion is shell-dependent (zsh does not split), and this should not
         # silently collapse into a single non-matching regex.
-        run: grep -L '\.\./testfiles/' test/*.spec.ts | xargs pnpm exec playwright test
+        run: grep -L '\.\./testfiles/' test/*.spec.ts | xargs npm exec -- playwright test
         working-directory: engine
 
       - uses: actions/upload-artifact@v4
@@ -109,17 +103,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
+          node-version-file: .nvmrc
+          cache: npm
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       # VS Code is an Electron app: without a display it exits before the
       # extension host starts.
       - name: Run VS Code tests
-        run: xvfb-run -a pnpm run test
+        run: xvfb-run -a npm test

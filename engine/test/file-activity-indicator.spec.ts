@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test('shows file activity for non-blocking loads and clears when loading finishes', async ({
   page,
 }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => (window as any).visualizer !== undefined);
 
   const indicator = page.locator('#file-activity-indicator');
@@ -24,7 +24,7 @@ test('shows file activity for non-blocking loads and clears when loading finishe
 test('extension activity survives geometry display and ends only on host completion', async ({
   page,
 }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => (window as any).visualizer !== undefined);
   const indicator = page.locator('#file-activity-indicator');
 
@@ -45,7 +45,7 @@ test('extension activity survives geometry display and ends only on host complet
 test('extension activity survives chunked X3A geometry while colouring continues', async ({
   page,
 }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => (window as any).visualizer !== undefined);
   const indicator = page.locator('#file-activity-indicator');
 
@@ -87,7 +87,7 @@ test('extension activity survives chunked X3A geometry while colouring continues
 test('overlapping extension loads keep the indicator until every load completes', async ({
   page,
 }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => (window as any).visualizer !== undefined);
   const indicator = page.locator('#file-activity-indicator');
 
@@ -105,7 +105,7 @@ test('overlapping extension loads keep the indicator until every load completes'
 });
 
 test('local colour changes are shown as point-cloud updates', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => (window as any).visualizer !== undefined);
   await page.locator('#hiddenFileInput').setInputFiles({
     name: 'activity-colour.ply',
@@ -149,7 +149,7 @@ test('local colour changes are shown as point-cloud updates', async ({ page }) =
 });
 
 test('activity dot uses an explicit blue independent of the editor theme', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => (window as any).visualizer !== undefined);
   await page.evaluate(() => {
     (window as any).visualizer.showImmediateLoading({ fileName: 'blue-test.ply' });

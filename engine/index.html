@@ -35,14 +35,8 @@
   </head>
 
   <body>
-    <!-- Hidden file input for browser file loading -->
-    <input
-      type="file"
-      id="hiddenFileInput"
-      multiple
-      accept=".ply,.xyz,.xyzn,.xyzrgb,.obj,.stl,.pcd,.pts,.bin,.x3a,.off,.gltf,.glb,.tif,.tiff,.pfm,.npy,.npz,.png,.exr,.json,.spz,.splat,.ksplat,.sog"
-      style="display: none"
-    />
+    <!-- Keep the picker rendered: iOS may ignore programmatic clicks on display:none inputs. -->
+    <input type="file" id="hiddenFileInput" class="browser-file-input" multiple />
 
     <!-- LoadingOverlay Svelte component mounts its own #loading root here -->
     <div id="loading-mount"></div>

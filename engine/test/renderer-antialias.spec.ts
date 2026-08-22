@@ -11,7 +11,7 @@ import { test, expect, Page } from '@playwright/test';
  */
 
 async function contextAntialiasing(page: Page, query: string) {
-  await page.goto(`/3d-visualizer/${query}`);
+  await page.goto(`/${query}`);
   await page.waitForFunction(() => (window as any).visualizer !== undefined, { timeout: 30000 });
   return page.evaluate(() => {
     const gl = (window as any).visualizer.renderer.getContext();

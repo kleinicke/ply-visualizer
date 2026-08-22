@@ -13,7 +13,7 @@ import path from 'path';
  * it is wired to the second file.
  */
 async function loadTwoDepthImages(page: Page): Promise<void> {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(500);
   await page
@@ -111,7 +111,7 @@ test('a depth image added after the first still live-updates', async ({ page }) 
   test.slow();
   // The other way two depth images end up loaded: one at a time, through the
   // add-file path rather than one multi-select.
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(500);
   for (const file of ['../testfiles/tif/depth.tif', '../testfiles/tif/depth_zstd.tif']) {

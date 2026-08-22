@@ -90,7 +90,7 @@ async function timedDoubleClick(page: Page, relX: number, relY: number): Promise
 
 test.describe('Double-click point picking', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(2000);
   });

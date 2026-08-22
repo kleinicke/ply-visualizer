@@ -7,7 +7,7 @@ import * as path from 'path';
 test('3DGS file previews with DC colors and toggles into splat mode', async ({ page }) => {
   page.on('pageerror', error => console.error('Page error:', error.message));
 
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(1000);
 
@@ -262,7 +262,7 @@ test('3DGS file previews with DC colors and toggles into splat mode', async ({ p
 test('.splat container loads with splat mode on by default', async ({ page }) => {
   page.on('pageerror', error => console.error('Page error:', error.message));
 
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(1000);
 
@@ -321,7 +321,7 @@ test('removing a file during splat decode does not attach a ghost mesh', async (
     await route.fulfill({ status: 200, body: source });
   });
 
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.locator('#hiddenFileInput').setInputFiles({
     name: 'remove-during-load.ply',

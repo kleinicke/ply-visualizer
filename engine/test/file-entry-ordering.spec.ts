@@ -21,7 +21,7 @@ const CAMERA_PROFILE = path.resolve('../testfiles/json/camera_profile.json');
 const POSE = path.resolve('../testfiles/json/hpe_3d_reduced_nonan.json');
 
 async function open(page: import('@playwright/test').Page) {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
 }
 

@@ -31,7 +31,7 @@ async function loadPly(page: Page): Promise<void> {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => (window as any).visualizer !== undefined);
   await loadPly(page);
 });

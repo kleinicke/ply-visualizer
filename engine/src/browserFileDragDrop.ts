@@ -371,6 +371,28 @@ export async function handleDroppedFiles(
   await handleBrowserFiles(host, files);
 }
 
+export async function loadExamplePointCloud(host: BrowserFileDragDropHost): Promise<void> {
+  if (isVSCode) {
+    return;
+  }
+
+  try {
+    const response = await fetch('examples/example-point-cloud.ply');
+    if (!response.ok) {
+      throw new Error(`download returned ${response.status}`);
+    }
+
+    const file = new File([await response.arrayBuffer()], 'example-point-cloud.ply', {
+      type: 'application/octet-stream',
+    });
+    await handleBrowserFiles(host, [file]);
+  } catch (error) {
+    host.showError(
+      `Failed to load the example point cloud: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 export async function handleBrowserFiles(
   host: BrowserFileDragDropHost,
   files: File[]

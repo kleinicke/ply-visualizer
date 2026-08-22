@@ -630,7 +630,10 @@ class PointCloudVisualizer {
       });
 
       // Setup welcome message interactivity
-      mountWelcomeMessage(() => this.triggerOpenFile());
+      mountWelcomeMessage(
+        () => this.triggerOpenFile(),
+        () => browserFileDragDrop.loadExamplePointCloud(this)
+      );
 
       // Initial check for formatted welcome message
       this.updateWelcomeMessageVisibility();

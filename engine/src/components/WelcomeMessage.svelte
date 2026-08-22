@@ -1,7 +1,21 @@
 <script lang="ts">
   import { uiState } from '../state/ui.svelte';
 
-  let { onAddCloud }: { onAddCloud: () => void } = $props();
+  let {
+    onAddCloud,
+    onLoadExample,
+  }: { onAddCloud: () => void; onLoadExample: () => Promise<void> } = $props();
+
+  let loadingExample = $state(false);
+
+  async function loadExample(): Promise<void> {
+    loadingExample = true;
+    try {
+      await onLoadExample();
+    } finally {
+      loadingExample = false;
+    }
+  }
 </script>
 
 <div id="welcome-message" class="welcome-message" class:hidden={!uiState.showWelcomeMessage}>
@@ -16,6 +30,12 @@
         >+ Add Point Cloud</strong
       >
       button to select a file you want to visualize.
+    </p>
+    <p class="example-prompt">
+      No file at hand?
+      <button id="welcome-load-example" class="example-button" onclick={loadExample} disabled={loadingExample}>
+        {loadingExample ? 'Loading example…' : 'Load example'}
+      </button>
     </p>
   </div>
 </div>

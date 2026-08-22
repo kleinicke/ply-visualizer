@@ -137,7 +137,7 @@ test.describe('Align all to one cloud', () => {
 
   test('brings both other clouds onto the anchor, and undo puts them back', async ({ page }) => {
     test.slow();
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
 
@@ -190,7 +190,7 @@ test.describe('Align all to one cloud', () => {
    */
   test('refine-only closes a small offset without the coarse sweep', async ({ page }) => {
     test.slow();
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
 

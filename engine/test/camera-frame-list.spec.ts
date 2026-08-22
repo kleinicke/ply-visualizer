@@ -9,7 +9,7 @@ import path from 'path';
  */
 test.describe('Individual camera list', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page
       .locator('#hiddenFileInput')
@@ -138,7 +138,7 @@ test.describe('Individual camera list', () => {
 test.describe('Per-camera image visibility', () => {
   test('checkboxes follow the profile-wide image toggle', async ({ page }) => {
     test.setTimeout(120_000);
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page
       .locator('#hiddenFileInput')

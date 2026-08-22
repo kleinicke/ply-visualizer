@@ -148,7 +148,7 @@ test.describe('Scan-to-scan registration', () => {
   });
 
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
   });

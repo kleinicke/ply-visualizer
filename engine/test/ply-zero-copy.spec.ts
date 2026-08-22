@@ -66,7 +66,7 @@ test.beforeAll(() => {
 test('streaming into wasm memory parses identically to handing over the bytes', async ({
   page,
 }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
 
   const both = await page.evaluate(async () => {
@@ -103,7 +103,7 @@ test('streaming into wasm memory parses identically to handing over the bytes', 
 });
 
 test('a response with no content-length still parses, via the copying path', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
 
   const result = await page.evaluate(async () => {

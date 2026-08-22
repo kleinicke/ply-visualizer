@@ -19,7 +19,7 @@ import path from 'path';
 //    opposite sign, so the roll sign here must DIFFER from legacy trackball.
 
 async function setup(page: Page, mode: 'ball' | 'legacy') {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(1000);
 

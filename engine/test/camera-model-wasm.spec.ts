@@ -4,7 +4,7 @@ import goldens from './fixtures/camera-model-goldens.json';
 const intrinsics = { fx: 510, fy: 470, cx: 320, cy: 240 };
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.evaluate(async () => {
     const api = (0, eval)('wasm_bindgen');
     await api({ module_or_path: (globalThis as any).__TIFF_WASM_URL__ });

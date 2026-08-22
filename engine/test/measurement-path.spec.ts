@@ -7,7 +7,7 @@ import path from 'path';
 // must stay untouched while measuring, and undo/clear must work.
 
 async function setup(page: Page) {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(1000);
 

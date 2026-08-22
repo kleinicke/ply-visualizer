@@ -890,6 +890,31 @@ body {
   border-bottom-style: solid;
 }
 
+.welcome-content .example-prompt {
+  margin: 18px 0 0;
+  font-size: 13px;
+}
+
+.example-button {
+  margin-left: 6px;
+  padding: 5px 10px;
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.example-button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.example-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 /* Camera Controls Sections */
 .camera-controls-section {
   margin-bottom: 16px;
@@ -1188,11 +1213,22 @@ body {
 /* Bottom right navigation buttons */
 .bottom-right-nav {
   position: absolute;
-  bottom: 20px;
-  right: 20px;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  right: calc(20px + env(safe-area-inset-right, 0px));
   display: flex;
   gap: 8px;
   z-index: 100;
+}
+
+/* Visually hidden, but still rendered so mobile Safari can open the file picker. */
+.browser-file-input {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .nav-button {
@@ -1219,16 +1255,6 @@ body {
 .nav-button:active {
   background-color: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
-}
-
-/* Mobile override for navigation buttons - must come after base styles */
-@media (max-width: 768px) {
-  .bottom-right-nav {
-    bottom: auto;
-    top: 10px;
-    right: auto;
-    left: 10px;
-  }
 }
 
 /* Measurement labels */

@@ -61,7 +61,7 @@ async function decodeInPage(page: import('@playwright/test').Page, filePath: str
 
 test.describe('WASM TIFF decoding in the webview', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
   });
 

@@ -1,11 +1,11 @@
 *.ply
+!engine/examples/example-point-cloud.ply
 *.xyz
 *.exr
 .vscode-test
 node_modules
 out
 *.vsix
-package-lock.json
 testfiles/new_formats/**
 testfiles
 # Root-anchored: this is for the scratch dataset cache at the repo root. An

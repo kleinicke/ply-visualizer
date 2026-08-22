@@ -35,7 +35,7 @@ test.beforeAll(() => {
 // is still fetching. `dist` is build output and the next build clears it.
 
 async function open(page: Page, file: string) {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.locator('#hiddenFileInput').setInputFiles(file);
 }
@@ -43,7 +43,7 @@ async function open(page: Page, file: string) {
 test('an array whose last dimension is 3 is recognised as points and flattened', async ({
   page,
 }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
 
   const result = await page.evaluate(async () => {
@@ -78,7 +78,7 @@ test('a shipped uncompressed NPZ still reads', async ({ page }) => {
 });
 
 test('a big-endian NPY reads with the declared byte order', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
 
   const values = await page.evaluate(async () => {
@@ -93,7 +93,7 @@ test('a big-endian NPY reads with the declared byte order', async ({ page }) => 
 });
 
 test('a one-dimensional shape parses; the trailing comma used to throw', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
 
   const array = await page.evaluate(async () => {

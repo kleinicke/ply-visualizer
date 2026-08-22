@@ -6,7 +6,7 @@ import path from 'path';
 // canvas recording via MediaRecorder.
 
 async function setup(page: Page) {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(1000);
 

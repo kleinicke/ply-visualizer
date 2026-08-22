@@ -8,7 +8,7 @@ import { test, expect } from '@playwright/test';
  */
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => (window as any).__plyContainerPerf !== undefined, {
     timeout: 30000,
   });

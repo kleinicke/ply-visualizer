@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test';
 test('volume controls request filtered points and replace them with a thresholded mesh', async ({
   page,
 }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => (window as any).visualizer !== undefined);
   await page.waitForTimeout(500);
 

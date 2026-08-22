@@ -4,7 +4,7 @@ import path from 'path';
 /** Stable keyed rows must retain native form state through every list refresh. */
 test.describe('Depth panel state across a file-list refresh', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(1000);
   });

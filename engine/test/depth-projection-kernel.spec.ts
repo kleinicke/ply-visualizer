@@ -48,7 +48,7 @@ async function project(
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
 });
 

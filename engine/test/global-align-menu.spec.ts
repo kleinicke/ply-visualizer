@@ -15,7 +15,7 @@ test.describe('Global align menu', () => {
   const binaryPly = path.resolve('../testfiles/ply/test_small_mesh_binary.ply');
 
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(500);
   });

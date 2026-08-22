@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test('Svelte Phase 0 tooling smoke test mounts inside the real webview bundle', async ({
   page,
 }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForTimeout(1000);
 
   const marker = page.locator('#svelte-smoke-test');

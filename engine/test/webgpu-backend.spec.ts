@@ -10,7 +10,7 @@ import { test, expect } from '@playwright/test';
  */
 
 async function bootBackend(page: import('@playwright/test').Page, query: string) {
-  await page.goto(`/3d-visualizer/${query}`);
+  await page.goto(`/${query}`);
   await page.waitForSelector('#three-canvas');
   await page.waitForFunction(() => (window as any).visualizer?.renderer !== undefined);
   return page.evaluate(() => {
@@ -31,7 +31,7 @@ test('default boot uses the WebGL backend', async ({ page }) => {
 });
 
 test('point controls expose independent fallbacks when WebGPU is unavailable', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForFunction(() => Boolean((window as any).visualizer));
 
   const state = await page.evaluate(() => {
@@ -106,7 +106,7 @@ test('?webgpu=1 starts WebGPU, or falls back to a working WebGL viewer', async (
 test('the WebGPU backend disables the WebGL-only features rather than breaking', async ({
   page,
 }) => {
-  await page.goto('/3d-visualizer/?webgpu=1');
+  await page.goto('/?webgpu=1');
   await page.waitForSelector('#three-canvas');
   await page.waitForFunction(() => (window as any).visualizer?.renderer !== undefined);
 

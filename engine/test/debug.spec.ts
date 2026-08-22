@@ -13,7 +13,7 @@ test('Debug UI initialization', async ({ page }) => {
   });
 
   // Go to the page
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
 
   // Wait for the page to load
   await page.waitForTimeout(5000);
