@@ -263,6 +263,10 @@ body {
   min-height: 0;
 }
 
+.tab-content.collapsed {
+  display: none;
+}
+
 .tab-panel {
   display: none;
   padding: 16px;

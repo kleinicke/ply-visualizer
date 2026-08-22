@@ -11,7 +11,7 @@
   ];
 
   function onTabClick(tabId: string) {
-    host.switchTab(tabId);
+    host.switchTab(uiState.activeTab === tabId ? null : tabId);
   }
 </script>
 
@@ -21,6 +21,7 @@
       class="tab-button"
       class:active={uiState.activeTab === tab.id}
       data-tab={tab.id}
+      aria-pressed={uiState.activeTab === tab.id}
       onclick={() => onTabClick(tab.id)}>{tab.label}</button
     >
   {/each}

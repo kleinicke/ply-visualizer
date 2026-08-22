@@ -2049,7 +2049,7 @@ class PointCloudVisualizer {
     } catch {}
   }
 
-  private switchTab(tabName: string): void {
+  private switchTab(tabName: string | null): void {
     uiStatus.switchTab(tabName);
   }
 

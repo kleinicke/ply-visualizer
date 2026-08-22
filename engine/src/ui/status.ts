@@ -54,9 +54,9 @@ export function showColorMappingStatus(
   }
 }
 
-export function switchTab(tabName: string): void {
+export function switchTab(tabName: string | null): void {
   const tabContent = document.querySelector('.tab-content') as HTMLElement | null;
-  if (tabContent) {
+  if (tabContent && uiState.activeTab) {
     tabScrollPositions.set(uiState.activeTab, tabContent.scrollTop);
   }
 
@@ -68,6 +68,12 @@ export function switchTab(tabName: string): void {
   document.querySelectorAll('.tab-panel').forEach(panel => {
     panel.classList.remove('active');
   });
+
+  tabContent?.classList.toggle('collapsed', tabName === null);
+
+  if (tabName === null) {
+    return;
+  }
 
   // Add active class to selected tab and panel
   const activeTabBtn = document.querySelector(`[data-tab="${tabName}"]`);

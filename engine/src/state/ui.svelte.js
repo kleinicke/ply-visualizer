@@ -8,7 +8,7 @@ export const uiState = $state({
   statusMessage: '',
   // Matches the default-active tab in index.html's static markup
   // (#files-tab / [data-tab="files"] both start with class="... active").
-  activeTab: 'files',
+  activeTab: /** @type {string | null} */ ('files'),
   showWelcomeMessage: false,
   perfStatsText: '',
   sequenceMode: false,
