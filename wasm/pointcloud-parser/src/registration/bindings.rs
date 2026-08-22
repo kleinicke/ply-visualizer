@@ -135,6 +135,8 @@ struct RegisterStats {
     candidates_tried: usize,
     /// "coarse", "given" or "none" - which start the winning pose came from.
     started_from: Option<String>,
+    /// Finest voxel cell the ICP stage used; see `RegisterResult::voxel_cell`.
+    voxel_cell: Option<f64>,
     /// How well the *source* cloud's own surfaces pin its position down; see
     /// `conditioning::position_conditioning`. Carried on the result because a
     /// caller ordering a multi-cloud run needs it to know whether this pose is
@@ -221,6 +223,7 @@ pub fn register_pair(
         candidates_tried: result.candidates_tried,
         started_from: Some(result.started_from.to_string()),
         source_conditioning: Some(position_conditioning(source, 0.0)),
+        voxel_cell: Some(result.voxel_cell),
         rmse: None,
         max_error: None,
     };

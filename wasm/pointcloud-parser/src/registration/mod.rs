@@ -50,6 +50,10 @@ pub struct RegisterOptions {
 
 pub struct RegisterResult {
     pub matrix: Mat4,
+    /// Finest voxel cell the ICP stage used, so a caller can normalize the
+    /// residual by the same scale the solver judged it at. Comparing two
+    /// candidates' RMS without it compares numbers measured differently.
+    pub voxel_cell: f64,
     pub coarse: Option<CoarseResult>,
     pub icp: Option<IcpResult>,
     /// Which coarse candidate won, or -1 when a caller-supplied start won or
@@ -73,11 +77,35 @@ fn icp_quality(result: &IcpResult, cell: f64) -> f64 {
     result.fitness / (1.0 + result.inlier_rmse / cell.max(1e-6))
 }
 
+/// Extra levels the screening pass runs on, relative to the caller's coarsest.
+///
+/// These used to be a fixed `[8.0, 4.0]`. For the default ladder of
+/// `[4.0, 2.0, 1.0]` that is exactly twice and once its coarsest level, which
+/// these multipliers reproduce — but a caller asking for a finer ladder used to
+/// get the same absolute scales, and screening at scale 8 uses a gate of
+/// several hundred millimetres. That is wide enough that a cloud sitting metres
+/// away still finds correspondences on the far wall and outscores the right
+/// answer, which is then discarded before any fine level looks at it.
+/// Expressing them relative to the caller's own coarsest scale keeps the
+/// screening gate proportional to the accuracy that caller asked for, and
+/// leaves the default path byte-for-byte as it was.
+const SCREENING_MULTIPLIERS: [f64; 2] = [2.0, 1.0];
+
+fn screening_scales(scales: &[f64]) -> Vec<f64> {
+    let coarsest = scales.iter().copied().fold(1.0f64, f64::max);
+    SCREENING_MULTIPLIERS
+        .iter()
+        .map(|multiplier| coarsest * multiplier)
+        .collect()
+}
+
 pub fn register_clouds(
     source: &[f32],
     target: &[f32],
     options: RegisterOptions,
 ) -> Option<RegisterResult> {
+    let extra_starts = &options.extra_starts;
+    let options = &options;
     let mut matrix = options
         .icp
         .as_ref()
@@ -96,6 +124,7 @@ pub fn register_clouds(
     let mut candidate_index = -1i32;
     let mut candidates_tried = 0usize;
     let mut started_from = "none";
+    let mut voxel_cell = 0.0f64;
 
     if let Some(icp_options) = &options.icp {
         // Refining every shortlisted yaw and keeping the best is what makes the
@@ -113,7 +142,7 @@ pub fn register_clouds(
         // separate them is where the guess came from: a pose inherited from a
         // scan shot at the same station is a structural fact, and it should not
         // lose to a statistical tie.
-        let mut starts: Vec<Mat4> = options.extra_starts.clone();
+        let mut starts: Vec<Mat4> = extra_starts.to_vec();
         let given_start_count = starts.len();
         match &coarse {
             Some(result) => starts.extend(
@@ -133,25 +162,22 @@ pub fn register_clouds(
         let cell = icp_options
             .voxel_size
             .unwrap_or_else(|| default_voxel_size(source, target));
+        voxel_cell = cell;
 
         // One pyramid for every attempt. Preparing a level — voxel downsample,
         // grid, PCA normals over the target — dwarfs the iteration loop that
         // uses it, so doing it once instead of once per candidate is the whole
         // difference between a snappy auto-align and a coffee break.
-        let screening_scales = vec![8.0, 4.0];
+        let screening_scales = screening_scales(&icp_options.scales);
         let mut all_scales: Vec<f64> = icp_options.scales.clone();
         if screening {
             all_scales.extend_from_slice(&screening_scales);
         }
-        let pyramid = IcpPyramid::build(
-            source,
-            target,
-            cell,
-            &IcpOptions {
-                scales: all_scales,
-                ..clone_icp_options(icp_options)
-            },
-        );
+        let level_options = IcpOptions {
+            scales: all_scales,
+            ..clone_icp_options(icp_options)
+        };
+        let pyramid = IcpPyramid::build(source, target, cell, &level_options);
 
         // The screening pass wants a thinner query set than the final refine;
         // striding the prepared level costs nothing, where a second pyramid at
@@ -250,6 +276,7 @@ pub fn register_clouds(
     }
     Some(RegisterResult {
         matrix,
+        voxel_cell,
         coarse,
         icp: icp_result,
         candidate_index,

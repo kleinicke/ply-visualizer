@@ -1179,6 +1179,28 @@ const CONFIDENT_FITNESS = 0.5;
 const WELL_CONDITIONED_POSITION = 0.08;
 
 /**
+ * How good a placement is, for choosing between candidates.
+ *
+ * Overlap alone is not enough, and the archive shows why: a scan that slid half
+ * a metre along a wall kept 97 % overlap while its residual nearly doubled, so
+ * ranking on overlap preferred the wrong pose. Rewarding overlap while
+ * penalizing residual relative to the cell it was measured at ranks the honest
+ * fit above both the slid one and the one that locked onto a single patch.
+ *
+ * This mirrors `icp_quality` in the Rust solver, which uses it to choose
+ * between starting poses; the two stages should not disagree about what good
+ * means.
+ */
+function placementQuality(result: NonNullable<Awaited<ReturnType<typeof registerPair>>>): number {
+  const icp = result.icp;
+  if (!icp) {
+    return 0;
+  }
+  const cell = result.voxelCell > 0 ? result.voxelCell : 1e-6;
+  return icp.fitness / (1 + icp.inlierRmse / cell);
+}
+
+/**
  * Starting poses to offer the solver for `fileIndex`: the pose of every cloud
  * already placed, expressed as the delta that would carry this one onto it.
  *
@@ -1446,7 +1468,7 @@ async function growFromAnchor(
         scored.sort(
           (a, b) =>
             Number(b.trustworthy) - Number(a.trustworthy) ||
-            b.result.icp!.fitness - a.result.icp!.fitness
+            placementQuality(b.result) - placementQuality(a.result)
         );
         const { fileIndex, result } = scored[0];
         const entry = entryFor(fileIndex);

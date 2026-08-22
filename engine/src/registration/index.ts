@@ -120,6 +120,14 @@ export interface RegistrationResult {
    * rather than of the fit, so it is trustworthy before the fit is.
    */
   sourceConditioning: number;
+  /**
+   * Finest voxel cell the ICP stage used, in scene units.
+   *
+   * Needed to compare two results: an RMS of 3 mm means something different at
+   * a 2 mm cell than at a 20 mm one, so ranking candidates on raw RMS compares
+   * numbers that were not measured the same way.
+   */
+  voxelCell: number;
 }
 
 export interface RegisterPairOptions {
@@ -321,6 +329,7 @@ function decode(matrix: Float64Array | null, stats: string | null): Registration
     maxError: parsed.maxError ?? null,
     startedFrom: parsed.startedFrom ?? 'none',
     sourceConditioning: parsed.sourceConditioning ?? 1,
+    voxelCell: parsed.voxelCell ?? 0,
   };
 }
 
