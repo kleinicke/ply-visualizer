@@ -385,6 +385,15 @@ export function alloc(len: number): number;
 export function build_volume_voxels(samples: Float32Array, sizes: Uint32Array, ijk_to_world: Float64Array, threshold: number, step: Uint32Array, max_faces: number, clip: Uint32Array, brightness_mode: string, window_center: number, window_width: number, slice_ranges: Float64Array, volume_range: Float64Array, monochrome1: boolean): VoxelMesh;
 
 /**
+ * Smallest eigenvalue of a cloud's normalized normal-covariance, in [0, 1/3].
+ *
+ * A caller ordering a multi-cloud alignment uses this to tell which clouds can
+ * be placed from a blind search and which have to wait for a neighbour: see
+ * `position_conditioning`.
+ */
+export function cloud_position_conditioning(points: Float32Array, cell: number): number;
+
+/**
  * Coarse stage alone, for callers that want the shortlist without paying for
  * refinement.
  */

@@ -290,6 +290,31 @@ test.describe('Scan-to-scan registration', () => {
     expect(perfLines[0]).toContain('| total ');
   });
 
+  test('the complex pass reports its own phase breakdown', async ({ page }) => {
+    test.slow();
+    const perfLines: string[] = [];
+    page.on('console', message => {
+      if (message.text().includes('PERF[registration/align-all-complex')) {
+        perfLines.push(message.text());
+      }
+    });
+    await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    await page.locator('#global-align-toggle').click();
+    await page.locator('.global-align-complex').check();
+    await page.locator('.global-align-run').click();
+    await expect(page.locator('#global-align-menu .align-summary')).toContainText('1 aligned', {
+      timeout: 60_000,
+    });
+
+    expect(perfLines).toHaveLength(1);
+    expect(perfLines[0]).toContain('match ');
+    expect(perfLines[0]).toContain('apply ');
+    expect(perfLines[0]).toContain('| total ');
+    expect(perfLines[0]).toContain('sweeps');
+  });
+
   test('guided coarse matching isolates each cloud and applies three ordered points', async ({
     page,
   }) => {
@@ -341,17 +366,124 @@ test.describe('Scan-to-scan registration', () => {
     await expect(page.locator('#file-1')).toBeChecked();
     await panel.locator('.registration-apply-coarse').click();
     await expect(panel.locator('.registration-result')).toContainText('Coarse match applied');
+
+    // Coarse matching now ends as its own step: both clouds stay on screen so
+    // the result can be judged, and nothing advances until asked.
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.workflow))
+      .toBe('coarse-done');
     await expect(page.locator('#file-0')).toBeChecked();
-    await expect(page.locator('#file-1')).not.toBeChecked();
+    await expect(page.locator('#file-1')).toBeChecked();
 
     const after = await page.evaluate(
       () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
     );
     expect(cornerDeviation(after, expectedInverse)).toBeLessThan(0.01);
 
+    // The three landmarks that were used are reported individually, with the
+    // gap each one still has to its match.
+    await expect(panel.locator('.coarse-residual')).toHaveCount(3);
+    await expect(panel.locator('.registration-result')).toContainText('worst');
+
+    // Fine matching is a deliberate second click, and only then does the
+    // isolation switch back to the fixed cloud.
+    await expect(panel.locator('.registration-start-fine')).toBeVisible();
+    await panel.locator('.registration-start-fine').click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.workflow))
+      .toBe('fine-fixed');
+    await expect(page.locator('#file-0')).toBeChecked();
+    await expect(page.locator('#file-1')).not.toBeChecked();
+
     await panel.locator('.registration-finish').click();
     await expect(page.locator('#file-0')).toBeChecked();
     await expect(page.locator('#file-1')).toBeChecked();
+  });
+
+  test('a reviewed coarse match can be redone without leaving the applied transform behind', async ({
+    page,
+  }) => {
+    test.slow();
+    await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const panel = await openPairPanel(page);
+    await panel.locator('.registration-needs-coarse').click();
+
+    const corners = [
+      [0, 0, 0],
+      [ROOM_WIDTH, 0, ROOM_HEIGHT],
+      [0, ROOM_DEPTH, ROOM_HEIGHT],
+    ];
+    for (const [x, y, z] of corners) {
+      await page.evaluate(
+        point => {
+          const feature = (window as any).registrationFeature;
+          feature.handlePickedPoint((window as any).visualizer, point);
+        },
+        { x, y, z }
+      );
+    }
+    for (const [x, y, z] of corners) {
+      const angle = (YAW * Math.PI) / 180;
+      await page.evaluate(
+        point => {
+          const feature = (window as any).registrationFeature;
+          feature.handlePickedPoint((window as any).visualizer, point);
+        },
+        {
+          x: Math.cos(angle) * x - Math.sin(angle) * y + TX,
+          y: Math.sin(angle) * x + Math.cos(angle) * y + TY,
+          z: z + TZ,
+        }
+      );
+    }
+    await panel.locator('.registration-apply-coarse').click();
+    await expect(panel.locator('.coarse-residual')).toHaveCount(3);
+
+    // Redoing starts a fresh set of landmarks rather than resetting the cloud:
+    // the transform that was already applied stays on screen.
+    const applied = await page.evaluate(
+      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+    );
+    await panel.locator('.registration-redo-coarse').click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.workflow))
+      .toBe('coarse-fixed');
+    await expect(panel.locator('.coarse-residual')).toHaveCount(0);
+    const kept = await page.evaluate(
+      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+    );
+    expect(kept).toEqual(applied);
+  });
+
+  test('can solve one cloud against every other cloud at once', async ({ page }) => {
+    test.slow();
+    await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const panel = await openPairPanel(page);
+    // Off by default: the panel's own cloud is the reference until asked
+    // otherwise.
+    await expect(panel.locator('.registration-all-others')).not.toBeChecked();
+    await panel.locator('.registration-all-others').check();
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as any).__plyRegistrationState?.matchAgainstAllOthers)
+      )
+      .toBe(true);
+
+    await panel.locator('.registration-coarse').click();
+    await expect(panel.locator('.registration-result')).toContainText('Yaw', {
+      timeout: 120_000,
+    });
+
+    // With two clouds loaded "all others" is the same single cloud, so the
+    // answer must still be the station offset.
+    const after = await page.evaluate(
+      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+    );
+    expect(cornerDeviation(after, expectedInverse)).toBeLessThan(0.05);
   });
 
   test('fine matching alternates visibility and live-fits after three pairs', async ({ page }) => {

@@ -104,6 +104,22 @@ export interface RegistrationResult {
   /** Set by `fitCorrespondences` only. */
   rmse: number | null;
   maxError: number | null;
+  /**
+   * Which family of starting pose produced the winner: 'coarse' for the yaw
+   * sweep, 'given' for one of `extraStarts`, 'none' when ICP ran alone.
+   */
+  startedFrom: 'coarse' | 'given' | 'none';
+  /**
+   * How well the source cloud's own surfaces pin its position down, in
+   * `[0, 1/3]`; see the Rust `position_conditioning`.
+   *
+   * Point-to-plane registration only feels motion across a surface, so a scan
+   * of one flat wall is free to slide within it — and sliding keeps its points
+   * on the wall, so its overlap can *rise* as it goes wrong. Neither `fitness`
+   * nor `inlierRmse` can see that. This can, and it is a property of the cloud
+   * rather than of the fit, so it is trustworthy before the fit is.
+   */
+  sourceConditioning: number;
 }
 
 export interface RegisterPairOptions {
@@ -116,6 +132,16 @@ export interface RegisterPairOptions {
    * often not the tallest correlation peak.
    */
   maxCandidates?: number;
+  /**
+   * Poses to screen alongside the sweep's candidates, as world-space deltas.
+   *
+   * The yaw sweep searches from nothing, and on a narrow window onto a flat
+   * wall it correlates about as well at the wrong yaw as the right one. A
+   * caller with a better guess should say so: screening one costs a pass over
+   * a pyramid the solver has already built, and the same quality score decides
+   * whether it beats the sweep.
+   */
+  extraStarts?: THREE.Matrix4[];
 }
 
 let worker: Worker | null = null;
@@ -293,6 +319,8 @@ function decode(matrix: Float64Array | null, stats: string | null): Registration
     candidatesTried: parsed.candidatesTried ?? 0,
     rmse: parsed.rmse ?? null,
     maxError: parsed.maxError ?? null,
+    startedFrom: parsed.startedFrom ?? 'none',
+    sourceConditioning: parsed.sourceConditioning ?? 1,
   };
 }
 
@@ -383,6 +411,7 @@ export function registerPair(
     coarse: options.coarse === false ? undefined : (options.coarse ?? {}),
     icp: options.icp === false ? undefined : icpSettings(options.icp ?? {}),
     maxCandidates: options.maxCandidates,
+    extraStarts: options.extraStarts?.map(matrix => Array.from(matrix.elements)),
   });
 }
 

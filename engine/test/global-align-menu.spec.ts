@@ -187,16 +187,25 @@ test.describe('Global align menu', () => {
   });
 
   /**
-   * Both toggles ship off, and the white-balance one only exists where the
+   * All three toggles ship off, and the white-balance one only exists where the
    * gains it reads do: they come from each camera band's reference patch, so a
    * scene with no camera profiles has nothing to apply.
    */
-  test('offers complex-scene and band white balance, both off by default', async ({ page }) => {
+  test('offers nested, complex and band white balance, all off by default', async ({ page }) => {
     await page.locator('#hiddenFileInput').setInputFiles([smallPly, binaryPly]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
     await page.locator('#global-align-toggle').click();
 
+    await expect(page.locator('.global-align-nested')).not.toBeChecked();
     await expect(page.locator('.global-align-complex')).not.toBeChecked();
+
+    // They are two amounts of work for the same walk, so choosing one has to
+    // release the other rather than leaving both claimed.
+    await page.locator('.global-align-complex').check();
+    await expect(page.locator('.global-align-nested')).not.toBeChecked();
+    await page.locator('.global-align-nested').check();
+    await expect(page.locator('.global-align-complex')).not.toBeChecked();
+    await page.locator('.global-align-nested').uncheck();
 
     await page.locator('.align-options-toggle').click();
     // Plain PLYs carry no camera profile, so the toggle is absent rather than

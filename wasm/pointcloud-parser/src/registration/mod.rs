@@ -16,6 +16,7 @@
 
 pub mod bindings;
 pub mod coarse_align;
+pub mod conditioning;
 pub mod fft;
 pub mod icp;
 pub mod linalg;
@@ -35,15 +36,30 @@ pub struct RegisterOptions {
     /// How many of the coarse stage's yaw candidates to refine. Each costs one
     /// ICP run. 1 trusts the top peak; the default tries the shortlist.
     pub max_candidates: usize,
+    /// Poses the caller already believes in, screened alongside the sweep's.
+    ///
+    /// The yaw sweep is a search for a pose from nothing, and it is the weakest
+    /// link on scans that give the top-down raster little to correlate: a
+    /// narrow window onto a flat wall correlates about as well at the wrong
+    /// yaw as the right one. A caller often knows better. Aligning a set of
+    /// scans, the pose of a cloud already placed is an excellent guess for the
+    /// next one — scans shot from a single station share a pose exactly — and
+    /// screening it here costs one pass over a pyramid that is already built.
+    pub extra_starts: Vec<Mat4>,
 }
 
 pub struct RegisterResult {
     pub matrix: Mat4,
     pub coarse: Option<CoarseResult>,
     pub icp: Option<IcpResult>,
-    /// Which coarse candidate won, or -1 when the coarse stage was skipped.
+    /// Which coarse candidate won, or -1 when a caller-supplied start won or
+    /// the coarse stage was skipped. Read it with `started_from`.
     pub candidate_index: i32,
     pub candidates_tried: usize,
+    /// Which family of starting pose the winner came from: "coarse", "given",
+    /// or "none". Worth reporting, because a run where the sweep never wins is
+    /// a run where the sweep is not earning its seconds.
+    pub started_from: &'static str,
 }
 
 /// Quality of a converged ICP result, for choosing between poses.
@@ -79,20 +95,36 @@ pub fn register_clouds(
     let mut icp_result: Option<IcpResult> = None;
     let mut candidate_index = -1i32;
     let mut candidates_tried = 0usize;
+    let mut started_from = "none";
 
     if let Some(icp_options) = &options.icp {
         // Refining every shortlisted yaw and keeping the best is what makes the
         // automatic path work on real scans, where the correct yaw often is not
         // the tallest correlation peak. Without a coarse stage there is one start.
-        let starts: Vec<Mat4> = match &coarse {
-            Some(result) => result
-                .candidates
-                .iter()
-                .take(options.max_candidates.max(1))
-                .map(|candidate| candidate.matrix)
-                .collect(),
-            None => vec![matrix],
-        };
+        // The caller's guesses go first, and the 5 % margin below then means a
+        // sweep candidate has to be clearly better to displace one.
+        //
+        // That ordering is the point, not an accident. A scan that sees mostly
+        // one flat wall is free to slide along it at almost no cost in
+        // residual, and because sliding keeps every point on the wall it can
+        // even raise the overlap slightly. Fitness and RMS therefore cannot
+        // tell a slid pose from the right one - measured on a real archive the
+        // wrong pose scored 50% against the right pose's 49%. What does
+        // separate them is where the guess came from: a pose inherited from a
+        // scan shot at the same station is a structural fact, and it should not
+        // lose to a statistical tie.
+        let mut starts: Vec<Mat4> = options.extra_starts.clone();
+        let given_start_count = starts.len();
+        match &coarse {
+            Some(result) => starts.extend(
+                result
+                    .candidates
+                    .iter()
+                    .take(options.max_candidates.max(1))
+                    .map(|candidate| candidate.matrix),
+            ),
+            None => starts.push(matrix),
+        }
 
         // Screening pass: coarse scales and a low iteration cap are enough to
         // tell a yaw that is converging from one that is wandering, and running
@@ -174,7 +206,19 @@ pub fn register_clouds(
             if quality > threshold {
                 best_quality = quality;
                 best_start = Some(attempt.matrix);
-                candidate_index = if coarse.is_some() { index as i32 } else { -1 };
+                let given = index < given_start_count;
+                started_from = if given {
+                    "given"
+                } else if coarse.is_some() {
+                    "coarse"
+                } else {
+                    "none"
+                };
+                candidate_index = if !given && coarse.is_some() {
+                    (index - given_start_count) as i32
+                } else {
+                    -1
+                };
                 icp_result = Some(attempt);
             }
         }
@@ -210,6 +254,7 @@ pub fn register_clouds(
         icp: icp_result,
         candidate_index,
         candidates_tried,
+        started_from,
     })
 }
 

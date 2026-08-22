@@ -183,6 +183,56 @@ test.describe('Align all to one cloud', () => {
   });
 
   /**
+   * The complex strategy walks and then settles, so it has to land the same
+   * scene as the star pass on a scene the star pass already handles - and it
+   * must still leave the anchor untouched.
+   */
+  test('the complex strategy places every cloud and leaves the anchor alone', async ({ page }) => {
+    test.slow();
+    await page.goto('/');
+    await page.waitForSelector('#three-canvas');
+    await page.waitForTimeout(500);
+
+    await page.locator('#hiddenFileInput').setInputFiles([anchorFile, secondFile, thirdFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(3);
+
+    await page.locator('#global-align-toggle').click();
+    await page.locator('#global-align-anchor').selectOption('0');
+    await page.locator('.global-align-complex').check();
+    await page.locator('.global-align-run').click();
+
+    await expect(page.locator('#global-align-menu .align-summary')).toContainText('2 aligned', {
+      timeout: 180_000,
+    });
+
+    const matrices = await page.evaluate(
+      () =>
+        (window as any).visualizer.transformationMatrices
+          .slice(0, 3)
+          .map((m: any) => m.elements.slice()) as number[][]
+    );
+    expect(cornerDeviation(matrices[0], corner => corner)).toBeLessThan(1e-6);
+    expect(
+      cornerDeviation(matrices[1], inverseOf(second.yaw, second.tx, second.ty, second.tz))
+    ).toBeLessThan(0.05);
+    expect(
+      cornerDeviation(matrices[2], inverseOf(third.yaw, third.tx, third.ty, third.tz))
+    ).toBeLessThan(0.05);
+
+    // One undo still covers the whole run, settle pass included.
+    await page.locator('.global-align-undo').click();
+    const reverted = await page.evaluate(
+      () =>
+        (window as any).visualizer.transformationMatrices
+          .slice(0, 3)
+          .map((m: any) => m.elements.slice()) as number[][]
+    );
+    for (const matrix of reverted) {
+      expect(cornerDeviation(matrix, corner => corner)).toBeLessThan(1e-6);
+    }
+  });
+
+  /**
    * Refine-only skips the yaw sweep, so it can only close a gap ICP can see
    * from where the clouds already sit. Given a small offset it must land on the
    * anchor; the point of the mode is that it is cheap and cannot re-derive a

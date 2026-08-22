@@ -443,6 +443,95 @@ fn icp_reports_low_fitness_without_overlap() {
     }
 }
 
+/// A caller-supplied start reaches a pose ICP cannot walk to on its own.
+///
+/// This is the case X3A archives are full of: the answer for one scan is a pose
+/// a neighbouring scan already holds, and it is nowhere near where the cloud
+/// currently sits. ICP alone cannot cross that gap — its gate is a few
+/// centimetres — so without the hint the pair simply does not register.
+#[test]
+fn an_extra_start_reaches_a_pose_icp_cannot_walk_to() {
+    let room = make_room(60000, 4242);
+    let truth = yaw_matrix(-64.0, -2.3, 1.4, 0.2);
+    let source = transform_points(&room, &truth);
+    let answer = invert_rigid(&truth);
+
+    let icp_options = || IcpOptions {
+        voxel_size: Some(0.05),
+        ..Default::default()
+    };
+
+    // No coarse stage, so the only starts are identity and whatever is given.
+    let with_hint = register_clouds(
+        &source,
+        &room,
+        RegisterOptions {
+            coarse: None,
+            icp: Some(icp_options()),
+            max_candidates: 5,
+            extra_starts: vec![answer],
+        },
+    )
+    .expect("a registration result");
+
+    assert_eq!(with_hint.started_from, "given");
+    let deviation = max_deviation(&source, &with_hint.matrix, &answer, 37);
+    assert!(deviation < 0.05, "deviation {deviation:.4} m");
+
+    // Without it, ICP starts at identity and never crosses the 64-degree gap.
+    let without = register_clouds(
+        &source,
+        &room,
+        RegisterOptions {
+            coarse: None,
+            icp: Some(icp_options()),
+            max_candidates: 5,
+            extra_starts: Vec::new(),
+        },
+    );
+    let stranded = match &without {
+        None => true,
+        Some(result) => {
+            max_deviation(&source, &result.matrix, &answer, 37) > 0.5
+                || result.icp.as_ref().is_none_or(|icp| icp.fitness < 0.2)
+        }
+    };
+    assert!(
+        stranded,
+        "ICP reached the pose unaided, so the hint proves nothing"
+    );
+}
+
+/// An empty list has to leave the solver exactly as it was.
+#[test]
+fn no_extra_starts_keeps_the_sweep_in_charge() {
+    let room = make_room(60000, 4242);
+    let truth = yaw_matrix(-64.0, -2.3, 1.4, 0.2);
+    let source = transform_points(&room, &truth);
+
+    let result = register_clouds(
+        &source,
+        &room,
+        RegisterOptions {
+            coarse: Some(CoarseOptions {
+                up_axis: UpAxis::Z,
+                resolution: 128,
+                ..Default::default()
+            }),
+            icp: Some(IcpOptions {
+                voxel_size: Some(0.05),
+                ..Default::default()
+            }),
+            max_candidates: 5,
+            extra_starts: Vec::new(),
+        },
+    )
+    .expect("a registration result");
+    assert_eq!(result.started_from, "coarse");
+    let deviation = max_deviation(&source, &result.matrix, &invert_rigid(&truth), 37);
+    assert!(deviation < 0.05, "deviation {deviation:.4} m");
+}
+
 #[test]
 fn register_clouds_recovers_a_station_offset_to_centimetres() {
     let room = make_room(60000, 777);
@@ -463,6 +552,7 @@ fn register_clouds_recovers_a_station_offset_to_centimetres() {
                 ..Default::default()
             }),
             max_candidates: 5,
+            extra_starts: Vec::new(),
         },
     )
     .expect("a registration result");
@@ -502,6 +592,7 @@ fn a_single_candidate_skips_the_screening_pass() {
                 ..Default::default()
             }),
             max_candidates: 1,
+            extra_starts: Vec::new(),
         },
     )
     .expect("a registration result");
@@ -509,4 +600,41 @@ fn a_single_candidate_skips_the_screening_pass() {
 
     let deviation = max_deviation(&source, &result.matrix, &invert_rigid(&truth), 37);
     assert!(deviation < 0.05, "deviation {deviation:.4} m");
+}
+
+/// The number that decides whether a cloud can be placed from a blind search.
+///
+/// A box interior shows walls, floor and ceiling, so every direction is felt.
+/// A single plane leaves two directions free, and the two cases have to land on
+/// opposite sides of any threshold a caller might pick.
+#[test]
+fn position_conditioning_separates_a_room_from_a_wall() {
+    use super::conditioning::position_conditioning;
+
+    let room = make_room(60000, 99);
+    let room_score = position_conditioning(&room, 0.0);
+
+    let mut wall = Vec::with_capacity(60000 * 3);
+    let mut seed = 7u64;
+    let mut next = || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((seed >> 33) as f64 / 2147483648.0) as f32
+    };
+    for _ in 0..60000 {
+        wall.push(next() * 4.0);
+        wall.push(next() * 4.0);
+        wall.push(next() * 0.002);
+    }
+    let wall_score = position_conditioning(&wall, 0.0);
+
+    assert!(
+        room_score > 0.1,
+        "a closed room should feel every direction, got {room_score:.4}"
+    );
+    assert!(
+        wall_score < 0.02,
+        "a single plane should leave two directions free, got {wall_score:.4}"
+    );
 }

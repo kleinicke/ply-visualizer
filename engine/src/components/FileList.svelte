@@ -2,6 +2,7 @@
   import { filesState } from '../state/files.svelte';
   import { addTooltipsToTruncatedFilenames } from '../ui/dialogs';
   import { escapeHtml } from '../ui/dialogs';
+  import AllPointColors from './AllPointColors.svelte';
   import AllPointSizes from './AllPointSizes.svelte';
   import FileItem from './FileItem.svelte';
 
@@ -86,4 +87,5 @@
     </div>
   {/if}
   <AllPointSizes {host} />
+  <AllPointColors {host} />
 {/if}

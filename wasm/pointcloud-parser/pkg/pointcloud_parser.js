@@ -1662,6 +1662,24 @@ function build_volume_voxels(
 exports.build_volume_voxels = build_volume_voxels;
 
 /**
+ * Smallest eigenvalue of a cloud's normalized normal-covariance, in [0, 1/3].
+ *
+ * A caller ordering a multi-cloud alignment uses this to tell which clouds can
+ * be placed from a blind search and which have to wait for a neighbour: see
+ * `position_conditioning`.
+ * @param {Float32Array} points
+ * @param {number} cell
+ * @returns {number}
+ */
+function cloud_position_conditioning(points, cell) {
+  const ptr0 = passArrayF32ToWasm0(points, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.cloud_position_conditioning(ptr0, len0, cell);
+  return ret;
+}
+exports.cloud_position_conditioning = cloud_position_conditioning;
+
+/**
  * Coarse stage alone, for callers that want the shortlist without paying for
  * refinement.
  * @param {Float32Array} source

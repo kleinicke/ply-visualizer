@@ -10,9 +10,10 @@ export const registrationState = $state(
    *   sourceIndex: number | null;
    *   targetIndex: number | null;
    *   picking: boolean;
-   *   workflow: 'choose' | 'coarse-fixed' | 'coarse-moving' | 'coarse-ready' | 'fine-fixed' | 'fine-moving';
+   *   workflow: 'choose' | 'coarse-fixed' | 'coarse-moving' | 'coarse-ready' | 'coarse-done' | 'fine-fixed' | 'fine-moving';
    *   coarseFixedCount: number;
    *   coarseMovingCount: number;
+   *   coarseResiduals: number[];
    *   pairCount: number;
    *   awaiting: 'source' | 'target' | null;
    *   busy: boolean;
@@ -24,6 +25,7 @@ export const registrationState = $state(
    *   alignDone: number;
    *   alignmentAnchorIndex: number | null;
    *   alignedIndices: number[];
+   *   matchAgainstAllOthers: boolean;
    *   upAxis: 'x' | 'y' | 'z';
    *   markerScale: number;
    *   isolateWhilePicking: boolean;
@@ -36,6 +38,10 @@ export const registrationState = $state(
     workflow: 'choose',
     coarseFixedCount: 0,
     coarseMovingCount: 0,
+    // Distance between each applied coarse landmark and the fixed point it was
+    // matched to. An aggregate RMS hides the one mis-picked corner that caused
+    // it, which is the only thing worth knowing after a three-point fit.
+    coarseResiduals: [],
     pairCount: 0,
     // Which cloud the next double-click is expected to land on, once one half
     // of a correspondence has been picked.
@@ -58,6 +64,11 @@ export const registrationState = $state(
     // compete merely because its identity transform is still on screen.
     alignmentAnchorIndex: null,
     alignedIndices: [],
+    // Solve the moving cloud against every other loaded cloud at once, rather
+    // than against the one this panel names. It removes the need to decide
+    // which single cloud is trustworthy enough to hold still, which is a guess
+    // the user often cannot make before seeing the result.
+    matchAgainstAllOthers: false,
     upAxis: 'z',
     // Picked-point markers, as a multiple of the default 0.4%-of-the-scene
     // radius. The default used to be that 0.4%, which on a room-scale scan is

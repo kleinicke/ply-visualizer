@@ -23,7 +23,26 @@
   // Off by default, like every other correction: the viewer shows the capture.
   let bandWhiteBalance = $state(false);
   // Grow outward from the reference instead of matching everything to it.
+  // Both off: one pass against the reference is the cheap answer and is right
+  // whenever the reference genuinely overlaps everything. The two growing
+  // strategies are opt-in because each costs extra solver passes.
+  let nestedScene = $state(false);
   let complexScene = $state(false);
+
+  // They describe the same walk with different amounts of work, so running both
+  // means nothing; picking one clears the other.
+  function chooseNested(on: boolean): void {
+    nestedScene = on;
+    if (on) {
+      complexScene = false;
+    }
+  }
+  function chooseComplex(on: boolean): void {
+    complexScene = on;
+    if (on) {
+      nestedScene = false;
+    }
+  }
   let singleFixed = $state<number | null>(null);
   // null until the user picks one; the first loaded cloud is the default, which
   // is what someone who just opened a multi-scan archive almost always wants.
@@ -176,7 +195,11 @@
       <div class="align-actions">
         <button
           class="global-align-run align-primary"
-          onclick={() => registration.alignAllTo(host, anchorIndex, { complex: complexScene })}
+          onclick={() =>
+            registration.alignAllTo(host, anchorIndex, {
+              nested: nestedScene,
+              complex: complexScene,
+            })}
           disabled={registrationState.busy}
           title="Coarse yaw search followed by ICP, for every other cloud"
         >
@@ -203,8 +226,22 @@
         >
           <input
             type="checkbox"
+            class="global-align-nested"
+            checked={nestedScene}
+            onchange={event => chooseNested(event.currentTarget.checked)}
+            disabled={registrationState.busy}
+          />
+          Nested scene
+        </label>
+        <label
+          class="align-inline-check"
+          title="The nested walk, plus two things it lacks: every remaining cloud is scored before one is committed, and the solver is offered the poses of the clouds already placed. Slower, and far less dependent on which cloud you make the reference."
+        >
+          <input
+            type="checkbox"
             class="global-align-complex"
-            bind:checked={complexScene}
+            checked={complexScene}
+            onchange={event => chooseComplex(event.currentTarget.checked)}
             disabled={registrationState.busy}
           />
           Complex scene

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use super::coarse_align::{coarse_align_4dof, CoarseOptions, RasterFeature, UpAxis};
+use super::conditioning::position_conditioning;
 use super::icp::{icp_point_to_plane, IcpOptions};
 use super::linalg::Mat4;
 use super::rigid_fit::fit_rigid_transform;
@@ -47,6 +48,8 @@ pub struct RegisterSettings {
     pub coarse: Option<CoarseSettings>,
     pub icp: Option<IcpSettings>,
     pub max_candidates: Option<usize>,
+    /// Extra starting poses to screen, each a column-major 4x4.
+    pub extra_starts: Option<Vec<Vec<f64>>>,
 }
 
 impl CoarseSettings {
@@ -130,6 +133,13 @@ struct RegisterStats {
     icp: Option<IcpStats>,
     candidate_index: i32,
     candidates_tried: usize,
+    /// "coarse", "given" or "none" - which start the winning pose came from.
+    started_from: Option<String>,
+    /// How well the *source* cloud's own surfaces pin its position down; see
+    /// `conditioning::position_conditioning`. Carried on the result because a
+    /// caller ordering a multi-cloud run needs it to know whether this pose is
+    /// evidence or a guess, and the source is already here.
+    source_conditioning: Option<f64>,
     rmse: Option<f64>,
     max_error: Option<f64>,
 }
@@ -172,6 +182,16 @@ pub fn register_pair(
         coarse: settings.coarse.as_ref().map(|coarse| coarse.build()),
         icp: settings.icp.as_ref().map(|icp| icp.build()),
         max_candidates: settings.max_candidates.unwrap_or(5),
+        // A malformed entry is dropped rather than failing the call: the sweep
+        // is still a complete answer without the caller's hint.
+        extra_starts: settings
+            .extra_starts
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|values| values.len() == 16)
+            .map(|values| Mat4::from_slice(values))
+            .collect(),
     };
     let result = register_clouds(source, target, options)?;
 
@@ -199,6 +219,8 @@ pub fn register_pair(
         }),
         candidate_index: result.candidate_index,
         candidates_tried: result.candidates_tried,
+        started_from: Some(result.started_from.to_string()),
+        source_conditioning: Some(position_conditioning(source, 0.0)),
         rmse: None,
         max_error: None,
     };
@@ -284,4 +306,14 @@ pub fn fit_correspondences(source: &[f32], target: &[f32]) -> Option<Registratio
         matrix: fit.matrix.0.to_vec(),
         stats: stats_json(&stats),
     })
+}
+
+/// Smallest eigenvalue of a cloud's normalized normal-covariance, in [0, 1/3].
+///
+/// A caller ordering a multi-cloud alignment uses this to tell which clouds can
+/// be placed from a blind search and which have to wait for a neighbour: see
+/// `position_conditioning`.
+#[wasm_bindgen]
+pub fn cloud_position_conditioning(points: &[f32], cell: f64) -> f64 {
+    position_conditioning(points, cell)
 }

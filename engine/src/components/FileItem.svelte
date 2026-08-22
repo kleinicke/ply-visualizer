@@ -1,7 +1,7 @@
 <script lang="ts">
   import { filesState } from '../state/files.svelte';
   import { runWithFileActivity } from '../fileActivity';
-  import { getExtraScalarFieldNames } from '../utils/scalarFields';
+  import { getPointCloudColorOptions } from '../colorOptions';
   import CameraFrameList from './CameraFrameList.svelte';
   import E57CorrectionPanel from './E57CorrectionPanel.svelte';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
@@ -61,9 +61,13 @@
       (host.isDepthDerivedFile(data) || (data as any).isDepthDerived)
   );
 
-  const scalarFieldNames = $derived(
-    kind === 'pointcloud' && data ? getExtraScalarFieldNames(data) : []
-  );
+  const colorOptions = $derived.by(() => {
+    filesState.renderTick;
+    filesState.renderModeTick;
+    return kind === 'pointcloud' && data
+      ? getPointCloudColorOptions(host, data, index, colorMode === 'original')
+      : [];
+  });
 
   // Set when an E57's points were painted from its embedded photos because the
   // scan itself stored no colour. Worth saying out loud: those colours are a
@@ -191,27 +195,6 @@
   // Volume voxels are solid boxes sized from the voxel spacing, so there is no
   // point sprite whose size could be tuned.
   const hasPointSize = $derived(data?.metadata?.volumeRenderMode !== 'voxels');
-  // Offered only once the station pipeline has produced an array to show; the
-  // scan's own colour stays under "Original" either way.
-  /**
-   * True when the colour under "Original" was produced by this extension
-   * projecting the file's own photographs, rather than read from the file.
-   *
-   * An X3R sample is a range and a pulse width - there is no colour in it - so
-   * calling that projection "Original" invites exactly the confusion of not
-   * being able to tell it apart from the cross-station result, which is the
-   * same operation over more cameras.
-   */
-  const colorIsProjected = $derived(
-    (filesState.renderTick,
-    !!data?.metadata?.stonexRawColors || !!data?.metadata?.e57PhotographicallyColoredPoints)
-  );
-
-  const hasRecoloredColors = $derived(
-    (filesState.renderTick,
-    filesState.renderModeTick,
-    data?.metadata?.stationRecoloredColors instanceof Uint8Array)
-  );
 
   function onRenderModeClick(mode: string) {
     host.toggleUniversalRenderMode(index, mode);
@@ -646,25 +629,9 @@
         <div class="color-control">
           <label for={`color-${index}`}>Color:</label>
           <select id={`color-${index}`} class="color-selector" value={colorMode} onchange={onColorModeChange}>
-          {#if data.hasColors || colorMode === 'original'}
-            <option value="original"
-              >{colorIsProjected ? 'Camera colour (projected)' : 'Original'}</option
-            >
-          {/if}
-          {#if hasRecoloredColors}
-            <option value="recolored">Camera (all stations)</option>
-          {/if}
-          {#if host.hasIntensityData(data)}
-            <option value="intensity">Intensity</option>
-            <option value="intensity-viridis">Intensity (Viridis)</option>
-            <option value="intensity-colors">Intensity (Colors)</option>
-          {/if}
-          {#each scalarFieldNames as fieldName (fieldName)}
-            <option value={`scalar:${fieldName}:viridis`}>{fieldName} (Viridis)</option>
-            <option value={`scalar:${fieldName}:grayscale`}>{fieldName} (Gray)</option>
+          {#each colorOptions as option (option.value)}
+            <option value={option.value}>{option.label}</option>
           {/each}
-          <option value="assigned">Assigned ({host.getColorName(index)})</option>
-          {@html host.getColorOptions(index)}
           </select>
           {#if photoColoredPoints}
             <div

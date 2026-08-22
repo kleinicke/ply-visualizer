@@ -33,6 +33,19 @@
   const movingIndex = $derived(active ? registrationState.sourceIndex : null);
   const workflow = $derived(active ? registrationState.workflow : 'choose');
 
+  const worstCoarseResidual = $derived(
+    registrationState.coarseResiduals.length > 0
+      ? Math.max(...registrationState.coarseResiduals)
+      : 0
+  );
+
+  // Scene units are metres on every scanner archive this is used with, and a
+  // three-point fit lands in the centimetre range, so millimetres are the
+  // resolution that makes one bad landmark stand out.
+  function formatResidual(value: number): string {
+    return value < 1 ? `${(value * 1000).toFixed(0)} mm` : `${value.toFixed(3)} m`;
+  }
+
   function fileLabel(index: number): string {
     const data = host.spatialFiles?.[index];
     return data?.fileName || `File ${index + 1}`;
@@ -92,6 +105,27 @@
           </select>
         </label>
 
+        <!-- Which cloud holds still is a guess you often cannot make before
+             seeing the result, so it can be declined: solve against everything
+             else at once and let the extra geometry decide. -->
+        <label class="pair-row pair-against" for={`registration-all-others-${fileIndex}`}>
+          <span>Onto</span>
+          <span class="pair-against-choice">
+            <input
+              id={`registration-all-others-${fileIndex}`}
+              type="checkbox"
+              class="registration-all-others"
+              bind:checked={registrationState.matchAgainstAllOthers}
+              disabled={!active || registrationState.busy}
+            />
+            {#if registrationState.matchAgainstAllOthers}
+              all other clouds ({candidates.length + 1})
+            {:else}
+              {fileLabel(fileIndex)} only
+            {/if}
+          </span>
+        </label>
+
         <!-- Two routes to the same place, in the order you would reach for
              them: let the solver try, or show it three points when it cannot. -->
         <div class="pair-route">
@@ -137,7 +171,8 @@
                 disabled={!active || registrationState.busy}
               >Far apart or rotated</button>
               <span class="pair-route-note"
-                >3 matching features, then it continues into fine matching automatically.</span
+                >3 matching features, applied as one step. Fine matching is a separate choice
+                afterwards.</span
               >
             </div>
             <div class="pair-route-choice">
@@ -174,6 +209,8 @@
                 moving cloud · {registrationState.coarseMovingCount}/3
               {:else if workflow === 'coarse-ready'}
                 ready to apply
+              {:else if workflow === 'coarse-done'}
+                applied · review the 3 landmarks
               {:else if workflow === 'fine-fixed'}
                 fixed cloud · {registrationState.pairCount} pair{registrationState.pairCount === 1
                   ? ''
@@ -191,11 +228,26 @@
                   disabled={registrationState.busy}
                 >Apply coarse match</button>
               {/if}
-              <button
-                class="registration-undo-pair"
-                onclick={() => registration.removeLastPair(host)}
-                disabled={registrationState.busy || (registrationState.coarseFixedCount === 0 && registrationState.coarseMovingCount === 0 && registrationState.pairCount === 0 && !registrationState.awaiting)}
-              >Undo pick</button>
+              {#if workflow === 'coarse-done'}
+                <!-- Coarse matching is finished work. Fine matching is the next
+                     job, not the second half of this one, so it takes a click. -->
+                <button
+                  class="registration-start-fine pair-primary"
+                  onclick={() => registration.startFineMatching(host)}
+                  disabled={registrationState.busy}
+                >Start fine matching</button>
+                <button
+                  class="registration-redo-coarse"
+                  onclick={() => registration.startGuidedMatching(host, false)}
+                  disabled={registrationState.busy}
+                >Redo coarse match</button>
+              {:else}
+                <button
+                  class="registration-undo-pair"
+                  onclick={() => registration.removeLastPair(host)}
+                  disabled={registrationState.busy || (registrationState.coarseFixedCount === 0 && registrationState.coarseMovingCount === 0 && registrationState.pairCount === 0 && !registrationState.awaiting)}
+                >Undo pick</button>
+              {/if}
               <button
                 class="registration-finish"
                 onclick={() => registration.finishGuidedMatching(host)}
@@ -238,6 +290,28 @@
             </label>
           {/if}
         </div>
+
+        {#if active && registrationState.coarseResiduals.length > 0}
+          <!-- The three landmarks that were actually used, each with the gap
+               that survived the fit. One bad row is a mis-picked corner, and
+               that is invisible in the aggregate RMS. -->
+          <div class="pair-list">
+            <div class="pair-route-head">
+              Coarse landmarks<span class="pair-count">after fit</span>
+            </div>
+            {#each registrationState.coarseResiduals as residual, landmarkIndex (landmarkIndex)}
+              <div class="pair-list-row">
+                <span class="pair-list-number">{landmarkIndex + 1}</span>
+                <span
+                  class="coarse-residual"
+                  class:coarse-residual-worst={residual >= worstCoarseResidual &&
+                    registrationState.coarseResiduals.length > 1}
+                  title="Distance between this landmark and the feature it was matched to, after the fit"
+                >{formatResidual(residual)}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
 
         {#if active && registrationState.pairCount > 0}
           <!-- One row per pair, so a bad correspondence can be replaced without
@@ -376,6 +450,27 @@
   .pair-list-row button {
     font-size: 10px;
     padding: 1px 6px;
+  }
+  .coarse-residual {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 10px;
+    opacity: 0.85;
+    font-variant-numeric: tabular-nums;
+  }
+  /* The worst of three is the one worth re-picking, so it is the one that
+     should catch the eye without reading all three numbers. */
+  .coarse-residual-worst {
+    color: var(--vscode-editorWarning-foreground, #cca700);
+    opacity: 1;
+  }
+  .pair-against-choice {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .pick-aid {
     display: flex;

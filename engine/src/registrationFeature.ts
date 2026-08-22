@@ -61,6 +61,8 @@ interface Session {
   pairs: Correspondence[];
   coarseFixed: THREE.Vector3[];
   coarseMoving: THREE.Vector3[];
+  /** Per-landmark residual of the last applied coarse fit, in scene units. */
+  coarseResiduals: number[];
   pending: { point: THREE.Vector3; onSource: boolean } | null;
   /** Transform of the source file before this session touched it. */
   undoMatrix: THREE.Matrix4 | null;
@@ -71,6 +73,14 @@ interface Session {
 }
 
 let session: Session | null = null;
+
+/**
+ * Steps that are not picking but still need the landmarks drawn: the user is
+ * being asked to judge the picks rather than add to them.
+ */
+function isReviewStep(workflow: string): boolean {
+  return workflow === 'coarse-ready' || workflow === 'coarse-done';
+}
 
 /**
  * Cap on points handed to the solvers. Both stages downsample internally, so
@@ -146,6 +156,7 @@ function syncState(): void {
   registrationState.pairCount = session ? session.pairs.length : 0;
   registrationState.coarseFixedCount = session ? session.coarseFixed.length : 0;
   registrationState.coarseMovingCount = session ? session.coarseMoving.length : 0;
+  registrationState.coarseResiduals = session ? [...session.coarseResiduals] : [];
   registrationState.awaiting = session?.pending
     ? session.pending.onSource
       ? 'target'
@@ -167,6 +178,7 @@ export function beginSession(
     sourceIndex,
     targetIndex,
     pairs: [],
+    coarseResiduals: [],
     coarseFixed: [],
     coarseMoving: [],
     pending: null,
@@ -256,6 +268,7 @@ export function startGuidedMatching(host: RegistrationHost, alreadyCoarse: boole
   session.pending = null;
   session.coarseFixed = [];
   session.coarseMoving = [];
+  session.coarseResiduals = [];
   registrationState.picking = true;
   registrationState.result = '';
   if (alreadyCoarse) {
@@ -270,6 +283,20 @@ export function startGuidedMatching(host: RegistrationHost, alreadyCoarse: boole
   showFixed(host);
   refreshMarkers(host);
   syncState();
+}
+
+/**
+ * Moves from a reviewed coarse match into fine matching, on purpose.
+ *
+ * The coarse landmarks are dropped rather than carried in: they were picked to
+ * be roughly right over a large baseline, and averaging them into the precise
+ * pairs that follow would drag the fine fit back towards them.
+ */
+export function startFineMatching(host: RegistrationHost): void {
+  if (!session || registrationState.busy) {
+    return;
+  }
+  startGuidedMatching(host, true);
 }
 
 /**
@@ -377,12 +404,18 @@ export function clearPairs(host: RegistrationHost): void {
   session.pending = null;
   session.coarseFixed = [];
   session.coarseMoving = [];
+  session.coarseResiduals = [];
   refreshMarkers(host);
   syncState();
 }
 
 export function removeLastPair(host: RegistrationHost): void {
   if (!session) {
+    return;
+  }
+  if (registrationState.workflow === 'coarse-done') {
+    // The fit is already applied; stepping back one landmark would describe a
+    // set that no longer matches the transform on screen. Redo or undo instead.
     return;
   }
   if (registrationState.workflow === 'coarse-ready') {
@@ -621,7 +654,11 @@ function refreshMarkers(host: RegistrationHost): void {
   // Finishing hides the picks without discarding them: the session keeps every
   // pair so the work can be resumed, but a scene left covered in markers after
   // the user said they were done is clutter over the result they wanted to see.
-  if (!registrationState.picking) {
+  //
+  // The two review steps are the exception. 'coarse-ready' asks the user to
+  // confirm three landmarks and 'coarse-done' shows how well they ended up
+  // matching, and neither question can be answered with the picks hidden.
+  if (!registrationState.picking && !isReviewStep(registrationState.workflow)) {
     host.requestRender();
     return;
   }
@@ -751,6 +788,12 @@ function applyDelta(host: RegistrationHost, delta: THREE.Matrix4): void {
   for (const pair of session.pairs) {
     pair.source.applyMatrix4(delta);
   }
+  // Coarse landmarks are source-side world points like any pair's source, so
+  // they have to ride along or the review that follows would draw them where
+  // the geometry used to be.
+  for (const point of session.coarseMoving) {
+    point.applyMatrix4(delta);
+  }
   if (session.pending?.onSource) {
     session.pending.point.applyMatrix4(delta);
   }
@@ -785,6 +828,9 @@ export function undo(host: RegistrationHost): void {
   host.updateMatrixTextarea(session.sourceIndex);
   for (const pair of session.pairs) {
     pair.source.applyMatrix4(delta);
+  }
+  for (const point of session.coarseMoving) {
+    point.applyMatrix4(delta);
   }
   if (session.pending?.onSource) {
     session.pending.point.applyMatrix4(delta);
@@ -863,19 +909,23 @@ export async function applyCoarseMatch(host: RegistrationHost): Promise<void> {
       return;
     }
     applyDelta(host, fit.matrix);
-    // The coarse landmarks have done their job. The transform stays, but the
-    // fine solve starts with a clean correspondence set so approximate points
-    // cannot dilute the precise ones that follow.
-    session.coarseFixed = [];
-    session.coarseMoving = [];
+    // Stop here. Coarse matching is a complete operation, and running straight
+    // into fine matching hid both of the things the user needs at this moment:
+    // which features they actually picked, and how far apart the three of them
+    // ended up. `applyDelta` has already carried the landmarks onto their new
+    // positions, so the gap to each fixed point *is* the residual.
+    session.coarseResiduals = session.coarseMoving.map((point, index) =>
+      point.distanceTo(session!.coarseFixed[index])
+    );
     session.pairs = [];
     session.pending = null;
-    registrationState.workflow = 'fine-fixed';
-    registrationState.picking = true;
+    registrationState.workflow = 'coarse-done';
+    registrationState.picking = false;
+    const worst = Math.max(...session.coarseResiduals);
     registrationState.status =
-      'Fine match — ⌘/Ctrl + double-click a distinctive feature on the fixed cloud.';
-    registrationState.result = `Coarse match applied · RMS ${(fit.rmse ?? 0).toFixed(3)}`;
-    showFixed(host);
+      'Coarse match applied. Check the three landmarks below, then start fine matching or redo the coarse match.';
+    registrationState.result = `Coarse match applied · RMS ${(fit.rmse ?? 0).toFixed(3)} · worst ${worst.toFixed(3)}`;
+    showPair(host);
     refreshMarkers(host);
     syncState();
   } catch (error) {
@@ -926,12 +976,38 @@ async function fitFinePairsLive(host: RegistrationHost): Promise<void> {
  * refining only that one lands on the wrong pose about as often as the right
  * one; letting ICP arbitrate costs a few extra seconds and settles it.
  */
+/**
+ * The cloud (or clouds) the solver should hold still for this session.
+ *
+ * Normally that is the one the panel names. With `matchAgainstAllOthers` it is
+ * every other loaded cloud at once, which is the honest option when you cannot
+ * say in advance which single cloud is well enough placed to be a reference —
+ * a scan that overlaps the named cloud barely and its neighbour heavily gets
+ * both, and the extra geometry constrains directions one cloud alone leaves
+ * free.
+ */
+function solverTarget(host: RegistrationHost): Float32Array | null {
+  if (!session) {
+    return null;
+  }
+  if (!registrationState.matchAgainstAllOthers) {
+    return worldPoints(host, session.targetIndex);
+  }
+  const others: number[] = [];
+  for (let index = 0; index < host.spatialFiles.length; index++) {
+    if (index !== session.sourceIndex && positionsOf(host.spatialFiles[index])) {
+      others.push(index);
+    }
+  }
+  return others.length > 0 ? unionPoints(host, others) : null;
+}
+
 export async function autoAlign(host: RegistrationHost): Promise<void> {
   if (!session || registrationState.busy) {
     return;
   }
   const source = worldPoints(host, session.sourceIndex);
-  const target = worldPoints(host, session.targetIndex);
+  const target = solverTarget(host);
   if (!source || !target) {
     registrationState.result = 'Both clouds need point data.';
     return;
@@ -980,7 +1056,7 @@ export async function refineIcp(host: RegistrationHost): Promise<void> {
     return;
   }
   const source = worldPoints(host, session.sourceIndex);
-  const target = worldPoints(host, session.targetIndex);
+  const target = solverTarget(host);
   if (!source || !target) {
     registrationState.result = 'Both clouds need point data.';
     return;
@@ -1062,6 +1138,145 @@ function unionPoints(host: RegistrationHost, indices: readonly number[]): Float3
 }
 
 /**
+ * Minimum overlap a placement has to reach before it is applied at all.
+ *
+ * The old floor was 3 %, which is barely distinguishable from noise: ICP can
+ * lock a tight residual onto one accidental patch and report a perfectly finite
+ * transform, and on a narrow window onto a flat wall it regularly does. A cloud
+ * that only manages this much against everything placed so far is better left
+ * for a later sweep, when the union it is being matched to has grown.
+ */
+const MIN_ACCEPT_FITNESS = 0.1;
+
+/** The original floor, kept so the nested strategy behaves as it always did. */
+const LEGACY_ACCEPT_FITNESS = 0.03;
+
+type GrowStrategy = 'nested' | 'complex';
+
+/**
+ * Overlap at which a placement is taken without looking at the alternatives.
+ *
+ * Scoring every remaining cloud each sweep is what makes the order stop
+ * mattering, but it costs a solver run per cloud per sweep. A match this strong
+ * is not going to be beaten by a cloud further down the list, so taking it
+ * immediately buys the robustness back at close to the old price.
+ */
+const CONFIDENT_FITNESS = 0.5;
+
+/**
+ * Below this, a cloud cannot be trusted to a blind search and has to wait for a
+ * neighbour to inherit from.
+ *
+ * Measured on a nine-scan station archive: the five clouds whose surfaces face
+ * more than one way score 0.125 to 0.190, and the four dominated by a single
+ * wall score 0.006 to 0.032. Nothing lands between, so the threshold does not
+ * have to be delicate.
+ *
+ * A cloud below it is never rejected, only deferred — and placed anyway once it
+ * is all that is left, because a cloud left where it started is not a better
+ * answer than a cloud placed imperfectly and reported as such.
+ */
+const WELL_CONDITIONED_POSITION = 0.08;
+
+/**
+ * Starting poses to offer the solver for `fileIndex`: the pose of every cloud
+ * already placed, expressed as the delta that would carry this one onto it.
+ *
+ * Scans shot from one station share a pose exactly, so a placed neighbour's
+ * transform is not merely a hint, it is frequently the answer — and the yaw
+ * sweep, which searches from nothing, is exactly the stage that cannot find it
+ * on a narrow window onto a flat wall. Distinct poses only: a station that
+ * contributed four scans would otherwise cost four identical screening runs.
+ */
+function inheritedStarts(
+  host: RegistrationHost,
+  placed: readonly number[],
+  fileIndex: number
+): THREE.Matrix4[] {
+  const inverse = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone().invert();
+  const starts: THREE.Matrix4[] = [];
+  for (const index of placed) {
+    const pose = host.transformationMatrices[index] ?? new THREE.Matrix4();
+    const delta = pose.clone().multiply(inverse);
+    if (!starts.some(existing => sameTransform(existing, delta))) {
+      starts.push(delta);
+    }
+  }
+  return starts;
+}
+
+function sameTransform(a: THREE.Matrix4, b: THREE.Matrix4): boolean {
+  for (let i = 0; i < 16; i++) {
+    if (Math.abs(a.elements[i] - b.elements[i]) > 1e-6) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * One more pass over everything placed, now that every station is on screen.
+ *
+ * Placement order is a chicken-and-egg problem the growing walk cannot escape:
+ * a cloud matched early can only inherit from what happened to be placed by
+ * then, and a scan whose one reliable reference is its own station-mate will be
+ * guessed at if that mate comes later. On a real archive that cost exactly one
+ * scan a 0.46 m slide along a wall — its sweep pose scored 50 % overlap against
+ * the right pose's 49 %, so no amount of ranking would have caught it.
+ *
+ * So: re-solve each cloud with ICP alone from the poses of the others, and keep
+ * the result only when an inherited pose wins. "Stay where you are" is one of
+ * the starts, and it wins by default, so a cloud that was already right is left
+ * alone and only a cloud with a genuinely better story moves.
+ */
+async function settlePlacements(
+  host: RegistrationHost,
+  anchorIndex: number,
+  placed: readonly number[],
+  entryFor: (fileIndex: number) => { detail: string } | undefined
+): Promise<void> {
+  const movable = placed.filter(index => index !== anchorIndex);
+  for (let position = 0; position < movable.length; position++) {
+    const fileIndex = movable[position];
+    const name = host.spatialFiles[fileIndex]?.fileName ?? `File ${fileIndex + 1}`;
+    registrationState.status = `Settling ${position + 1} of ${movable.length} · ${name}...`;
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const others = placed.filter(index => index !== fileIndex);
+    const target = unionPoints(host, others);
+    const source = worldPoints(host, fileIndex);
+    if (!target || !source) {
+      continue;
+    }
+    let result: Awaited<ReturnType<typeof registerPair>> = null;
+    try {
+      // No yaw sweep: this is a correction, not a search, and the sweep is the
+      // stage that put the cloud where it is.
+      result = await registerPair(source, target, {
+        coarse: false,
+        extraStarts: inheritedStarts(host, others, fileIndex),
+      });
+    } catch {
+      continue;
+    }
+    if (!result?.icp || result.startedFrom !== 'given') {
+      continue;
+    }
+    const previous = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone();
+    host.setTransformationMatrix(fileIndex, result.matrix.clone().multiply(previous));
+    host.updateMatrixTextarea(fileIndex);
+    const entry = entryFor(fileIndex);
+    if (entry) {
+      entry.detail =
+        `RMS ${result.icp.inlierRmse.toFixed(3)} · overlap ${(result.icp.fitness * 100).toFixed(0)}%` +
+        ' · settled onto a placed scan';
+    }
+    host.requestRender();
+  }
+  registrationState.status = '';
+}
+
+/**
  * Complex-scene alignment: grow outward from the anchor instead of matching
  * everything to it.
  *
@@ -1078,6 +1293,14 @@ function unionPoints(host: RegistrationHost, indices: readonly number[]): Float3
  * benefit is that the order stops mattering: a cloud only has to overlap
  * *something* already placed, not the reference in particular.
  *
+ * Which cloud goes next is the decision that turned out to matter most. Taking
+ * whichever one first scraped past the gate made the outcome depend on file
+ * order: a marginal cloud placed early poisons the union that every later cloud
+ * is matched against, and on a nine-scan archive that was the difference
+ * between two clouds landing a metre out and none. So a sweep scores every
+ * remaining cloud and places the best, short-circuiting as soon as one is
+ * clearly good enough that nothing else could beat it.
+ *
  * One-step undo still covers the whole run, and a cloud that never attaches is
  * reported rather than left silently wherever it was.
  */
@@ -1086,8 +1309,17 @@ async function growFromAnchor(
   anchorIndex: number,
   targets: readonly number[],
   anchor: Float32Array,
-  startedAt: number
+  startedAt: number,
+  strategy: GrowStrategy
 ): Promise<void> {
+  // 'nested' is the original walk: take the first cloud that clears a low bar,
+  // and give the solver nothing but the yaw sweep to go on. 'complex' scores
+  // every remaining cloud before committing and offers the solver the poses of
+  // the clouds already placed. Measured against ground truth on a nine-scan
+  // station archive the second placed every cloud from every anchor tried; the
+  // first left two of nine a metre out.
+  const rank = strategy === 'complex';
+  const acceptFitness = rank ? MIN_ACCEPT_FITNESS : LEGACY_ACCEPT_FITNESS;
   let matchingMs = 0;
   let applyMs = 0;
   let sampledPoints = anchor.length / 3;
@@ -1109,6 +1341,10 @@ async function growFromAnchor(
   const undoAll = new Map<number, THREE.Matrix4>();
   const placed = [anchorIndex];
   const remaining = new Set(targets);
+  // How many passes each cloud was tried in before it stuck. A cloud that took
+  // several is one whose placement leaned on clouds placed after it was first
+  // considered, which is worth seeing next to its overlap.
+  const attempts = new Map<number, number>();
   const entryFor = (fileIndex: number) =>
     registrationState.alignEntries.find(entry => entry.index === fileIndex);
 
@@ -1121,15 +1357,28 @@ async function growFromAnchor(
       if (!target) {
         break;
       }
+      type Scored = {
+        fileIndex: number;
+        result: NonNullable<Awaited<ReturnType<typeof registerPair>>>;
+        trustworthy: boolean;
+      };
+      const scored: Scored[] = [];
+
       for (const fileIndex of [...remaining]) {
         const name = host.spatialFiles[fileIndex]?.fileName ?? `File ${fileIndex + 1}`;
         const entry = entryFor(fileIndex);
         if (entry) {
           entry.state = 'running';
         }
-        registrationState.status = `Sweep ${sweeps} · matching ${name} against ${placed.length} placed cloud${placed.length === 1 ? '' : 's'}...`;
+        // Each pass places exactly one cloud, so the run is at most one pass
+        // per target and the total is knowable up front. "Sweep 7" on its own
+        // says nothing about how much is left.
+        registrationState.status =
+          `Placing ${placed.length} of ${targets.length} · trying ${name} against ` +
+          `${placed.length} placed cloud${placed.length === 1 ? '' : 's'}...`;
         await new Promise(resolve => setTimeout(resolve, 0));
 
+        attempts.set(fileIndex, (attempts.get(fileIndex) ?? 0) + 1);
         const source = worldPoints(host, fileIndex);
         if (!source) {
           remaining.delete(fileIndex);
@@ -1147,6 +1396,7 @@ async function growFromAnchor(
         try {
           result = await registerPair(source, target.slice(), {
             coarse: { upAxis: registrationState.upAxis as UpAxis },
+            extraStarts: rank ? inheritedStarts(host, placed, fileIndex) : undefined,
           });
         } catch (error) {
           if (entry) {
@@ -1157,7 +1407,7 @@ async function growFromAnchor(
           matchingMs += performance.now() - matchStarted;
         }
 
-        if (!result?.icp || result.icp.fitness < 0.03 || result.icp.inlierCount < 30) {
+        if (!result?.icp || result.icp.fitness < acceptFitness || result.icp.inlierCount < 30) {
           // Not failed — just not yet. The union grows with every placement, so
           // the same cloud may match on a later sweep.
           if (entry) {
@@ -1168,6 +1418,38 @@ async function growFromAnchor(
           }
           continue;
         }
+
+        // A cloud that cannot feel its own position goes last. Left to the
+        // sweep it slides along its wall, and its overlap rises as it does, so
+        // ranking on score alone actively prefers the wrong pose. Waiting costs
+        // a sweep and usually buys an inherited pose that is exactly right.
+        const trustworthy =
+          result.startedFrom === 'given' || result.sourceConditioning >= WELL_CONDITIONED_POSITION;
+        scored.push({ fileIndex, result, trustworthy });
+        if (entry) {
+          entry.state = 'queued';
+          entry.detail = trustworthy
+            ? `${(result.icp.fitness * 100).toFixed(0)}% overlap`
+            : `${(result.icp.fitness * 100).toFixed(0)}% overlap · could slide, waiting`;
+        }
+        // Nested commits to the first cloud over the bar, which is what makes
+        // it cheap and what makes its outcome depend on file order.
+        if (!rank || (trustworthy && result.icp.fitness >= CONFIDENT_FITNESS)) {
+          break;
+        }
+      }
+
+      if (scored.length > 0) {
+        // Best overlap wins. RMS is deliberately not in the comparison: a wrong
+        // pose that locked onto one small patch has an excellent RMS, and that
+        // is the failure this ordering exists to avoid.
+        scored.sort(
+          (a, b) =>
+            Number(b.trustworthy) - Number(a.trustworthy) ||
+            b.result.icp!.fitness - a.result.icp!.fitness
+        );
+        const { fileIndex, result } = scored[0];
+        const entry = entryFor(fileIndex);
 
         const applyStarted = performance.now();
         const previous = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone();
@@ -1185,11 +1467,12 @@ async function growFromAnchor(
         if (entry) {
           entry.state = 'aligned';
           entry.detail =
-            `RMS ${result.icp.inlierRmse.toFixed(3)} · overlap ${(result.icp.fitness * 100).toFixed(0)}%` +
-            (sweeps > 1 ? ` · sweep ${sweeps}` : '');
+            `RMS ${result.icp!.inlierRmse.toFixed(3)} · overlap ${(result.icp!.fitness * 100).toFixed(0)}%` +
+            (result.startedFrom === 'given' ? ' · from a placed scan' : '') +
+            ((attempts.get(fileIndex) ?? 1) > 1 ? ` · ${attempts.get(fileIndex)} tries` : '') +
+            (result.sourceConditioning < WELL_CONDITIONED_POSITION ? ' · could slide' : '');
         }
         host.requestRender();
-        break; // The union changed; restart the sweep against the bigger target.
       }
     }
 
@@ -1201,6 +1484,10 @@ async function growFromAnchor(
       }
     }
     registrationState.alignDone = targets.length;
+
+    if (rank && placed.length > 2) {
+      await settlePlacements(host, anchorIndex, placed, entryFor);
+    }
 
     if (undoAll.size > 0) {
       alignAllUndo = undoAll;
@@ -1217,7 +1504,7 @@ async function growFromAnchor(
     const totalMs = performance.now() - startedAt;
     const anchorName = host.spatialFiles[anchorIndex]?.fileName ?? `file ${anchorIndex + 1}`;
     perfLog(
-      `⏱️ PERF[registration/align-all-complex ${anchorName}] ` +
+      `⏱️ PERF[registration/align-all-${strategy} ${anchorName}] ` +
         `match ${matchingMs.toFixed(1)}ms · apply ${applyMs.toFixed(1)}ms | ` +
         `total ${totalMs.toFixed(1)}ms  (${aligned}/${targets.length} clouds · ${sweeps} sweeps · ` +
         `${Math.round(sampledPoints).toLocaleString()} sampled pts · ${registrationBackend()})`
@@ -1248,13 +1535,21 @@ async function growFromAnchor(
 export async function alignAllTo(
   host: RegistrationHost,
   anchorIndex: number,
-  options: { refineOnly?: boolean; complex?: boolean } = {}
+  options: { refineOnly?: boolean; nested?: boolean; complex?: boolean } = {}
 ): Promise<void> {
   if (registrationState.busy) {
     return;
   }
   const refineOnly = options.refineOnly === true;
-  const complex = options.complex === true;
+  // Two flavours of the growing strategy. `nested` is the original one, kept
+  // because it is cheap and was what the archive-colouring workflow was tuned
+  // against; `complex` is the same walk with the ordering and the extra
+  // starting poses that a nine-scan station archive needed.
+  const strategy: GrowStrategy | null = options.complex
+    ? 'complex'
+    : options.nested
+      ? 'nested'
+      : null;
   const startedAt = performance.now();
   let setupMs = 0;
   let samplingMs = 0;
@@ -1276,8 +1571,8 @@ export async function alignAllTo(
   sampledPoints += anchor.length / 3;
   setupMs = performance.now() - startedAt;
 
-  if (complex && !refineOnly) {
-    await growFromAnchor(host, anchorIndex, targets, anchor, startedAt);
+  if (strategy && !refineOnly) {
+    await growFromAnchor(host, anchorIndex, targets, anchor, startedAt, strategy);
     return;
   }
 
