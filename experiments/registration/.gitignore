@@ -1,0 +1,3 @@
+# Measurement output. Regenerate with the scripts; the numbers that matter are
+# in the reports, and stale result files are worse than no result files.
+*.txt

@@ -20,6 +20,24 @@
   // what you reach for when an automatic run leaves one cloud wrong, not what
   // you start with.
   let showSingle = $state(false);
+
+  /**
+   * Opens the single-pair workspace on exactly the two clouds that need
+   * joining, and starts the three-point route on them.
+   *
+   * The point of the suggestion is that the user should not have to work out
+   * *which* pair to fix — the solver already knows, and asking them to hunt for
+   * it is most of the work.
+   */
+  function linkByHand(
+    suggestion: { movingIndex: number; fixedIndex: number } | null
+  ) {
+    if (!suggestion) return;
+    singleFixed = suggestion.fixedIndex;
+    showSingle = true;
+    registration.beginSession(host, suggestion.movingIndex, suggestion.fixedIndex);
+    registration.startGuidedMatching(host, false);
+  }
   // Off by default, like every other correction: the viewer shows the capture.
   let bandWhiteBalance = $state(false);
   // Grow outward from the reference instead of matching everything to it.
@@ -276,6 +294,56 @@
             </li>
           {/each}
         </ul>
+
+        {#if !registrationState.busy && registrationState.unattachedGroups.length > 0}
+          <!-- A list of failures tells you something went wrong. This tells you
+               what to do about it. The clouds that could not attach are grouped
+               by whether they can see each other, so a group needs one link
+               rather than one per cloud, and the pair named is the one the
+               solver found most promising while still not trusting it. -->
+          <div class="align-gap">
+            <div class="align-gap-head">Needs one link to finish</div>
+            {#each registrationState.unattachedGroups as group, groupIndex (groupIndex)}
+              <div class="align-gap-group">
+                <div class="align-gap-members">
+                  {group.indices.length === 1 ? 'This cloud' : `These ${group.indices.length} clouds`}
+                  stayed separate: <strong>{group.names.join(', ')}</strong>
+                </div>
+                {#if group.suggestion}
+                  <div class="align-gap-suggest">
+                    Closest connection to the placed scene:
+                    <strong>{group.suggestion.movingName}</strong> onto
+                    <strong>{group.suggestion.fixedName}</strong>
+                    ({group.suggestion.overlapPercent}% overlap — too little to trust automatically,
+                    enough to pick three matching points by eye).
+                  </div>
+                  <button
+                    class="global-align-link align-primary"
+                    onclick={() => linkByHand(group.suggestion)}
+                    disabled={registrationState.busy}
+                  >Link these two by hand</button>
+                {:else}
+                  <div class="align-gap-suggest">
+                    No overlap with the placed scene was found at all. This group may be a separate
+                    part of the site; align one of its clouds to any cloud you recognise.
+                  </div>
+                {/if}
+              </div>
+            {/each}
+            <button
+              class="global-align-continue"
+              onclick={() =>
+                registration.alignAllTo(host, anchorIndex, {
+                  nested: nestedScene,
+                  complex: complexScene,
+                })}
+              disabled={registrationState.busy}
+            >Continue aligning</button>
+            <p class="align-hint">
+              One link is enough: everything else follows from pairs already measured.
+            </p>
+          </div>
+        {/if}
       {:else}
         <p class="align-hint">
           Each cloud is matched against the reference on its own, so one bad pair cannot drag the
@@ -559,6 +627,31 @@
     height: 100%;
     background-color: var(--vscode-progressBar-background, var(--vscode-button-background));
     transition: width 0.2s ease-out;
+  }
+  .align-gap {
+    margin-top: 8px;
+    padding: 8px 9px;
+    border: 1px solid var(--vscode-editorWarning-foreground, #cca700);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 8%, transparent);
+  }
+  .align-gap-head {
+    font-weight: 600;
+    margin-bottom: 5px;
+  }
+  .align-gap-group {
+    margin-bottom: 8px;
+  }
+  .align-gap-members,
+  .align-gap-suggest {
+    margin-bottom: 4px;
+    line-height: 1.4;
+  }
+  .align-gap-suggest {
+    opacity: 0.85;
+  }
+  .global-align-continue {
+    margin-top: 4px;
   }
   .align-summary {
     margin-top: 4px;

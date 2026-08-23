@@ -25,6 +25,7 @@ export const registrationState = $state(
    *   alignDone: number;
    *   alignmentAnchorIndex: number | null;
    *   alignedIndices: number[];
+   *   unattachedGroups: { indices: number[]; names: string[]; suggestion: { movingIndex: number; fixedIndex: number; movingName: string; fixedName: string; overlapPercent: number } | null }[];
    *   matchAgainstAllOthers: boolean;
    *   upAxis: 'x' | 'y' | 'z';
    *   markerScale: number;
@@ -64,6 +65,10 @@ export const registrationState = $state(
     // compete merely because its identity transform is still on screen.
     alignmentAnchorIndex: null,
     alignedIndices: [],
+    // Clouds the automatic run could not attach, grouped by whether they can
+    // see each other, each with the single most promising pair that would join
+    // it back to the scene. Empty whenever everything was placed.
+    unattachedGroups: [],
     // Solve the moving cloud against every other loaded cloud at once, rather
     // than against the one this panel names. It removes the need to decide
     // which single cloud is trustworthy enough to hold still, which is a guess

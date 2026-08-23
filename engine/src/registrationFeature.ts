@@ -49,6 +49,20 @@ function describeFailure(error: unknown): string {
   return `Alignment failed (${registrationBackend()}): ${message}`;
 }
 
+/** One cluster of clouds the automatic run could not attach. */
+export interface UnattachedGroup {
+  indices: number[];
+  names: string[];
+  /** The most promising single pair to link this group back to the scene. */
+  suggestion: {
+    movingIndex: number;
+    fixedIndex: number;
+    movingName: string;
+    fixedName: string;
+    overlapPercent: number;
+  } | null;
+}
+
 /** Correspondences are stored in world space, as picked. */
 interface Correspondence {
   source: THREE.Vector3;
@@ -1138,6 +1152,143 @@ function unionPoints(host: RegistrationHost, indices: readonly number[]): Float3
 }
 
 /**
+ * Points, cheaply, for the scouting pass that runs after a failed alignment.
+ *
+ * This stage only has to rank candidate partners, never to place anything, so
+ * it can be far coarser than a real solve — and it runs once per unattached
+ * cloud per candidate, so it has to be.
+ */
+const SCOUT_POINTS = 50_000;
+
+function scoutPoints(host: RegistrationHost, fileIndex: number): Float32Array | null {
+  const world = worldPoints(host, fileIndex);
+  if (!world) {
+    return null;
+  }
+  const count = Math.floor(world.length / 3);
+  const stride = Math.max(1, Math.ceil(count / SCOUT_POINTS));
+  if (stride === 1) {
+    return world;
+  }
+  const out = new Float32Array(Math.ceil(count / stride) * 3);
+  let write = 0;
+  for (let i = 0; i < count; i += stride) {
+    out[write++] = world[i * 3];
+    out[write++] = world[i * 3 + 1];
+    out[write++] = world[i * 3 + 2];
+  }
+  return out.subarray(0, write);
+}
+
+/**
+ * Works out what a person would have to do to rescue a failed alignment.
+ *
+ * When the automatic run stops, the clouds it could not attach are not a random
+ * set: they are the parts of the site that never shared enough surface with
+ * anything already placed. Measured across three archives, the solver places a
+ * pair reliably above roughly half shared surface and essentially never below
+ * a third — so the clouds left over are the ones separated by a genuinely thin
+ * connection, and there are usually very few such connections.
+ *
+ * That makes the useful question narrow enough to answer: which unattached
+ * clouds belong together, and for each of those groups, which single pair of
+ * clouds is the most promising bridge to the part of the scene that is already
+ * placed. One correspondence on that pair is enough to make everything else
+ * follow from measurements the solver has already taken.
+ */
+async function analyseUnattached(
+  host: RegistrationHost,
+  placed: readonly number[],
+  unattached: readonly number[]
+): Promise<void> {
+  registrationState.unattachedGroups = [];
+  if (unattached.length === 0 || placed.length === 0) {
+    return;
+  }
+  registrationState.status = 'Working out what is missing...';
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const points = new Map<number, Float32Array>();
+  for (const index of [...unattached, ...placed]) {
+    const sample = scoutPoints(host, index);
+    if (sample) {
+      points.set(index, sample);
+    }
+  }
+  const overlapOf = async (a: number, b: number): Promise<number> => {
+    const source = points.get(a);
+    const target = points.get(b);
+    if (!source || !target) {
+      return 0;
+    }
+    try {
+      const result = await registerPair(source, target.slice(), {
+        coarse: { upAxis: registrationState.upAxis as UpAxis, resolution: 64 },
+      });
+      return result?.icp?.fitness ?? 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  // Group the unattached clouds by whether they can see each other. A group is
+  // rescued by one link, not one link per cloud, and saying otherwise would ask
+  // for far more work than the scene needs.
+  const parent = new Map(unattached.map(index => [index, index]));
+  const find = (index: number): number => {
+    const up = parent.get(index)!;
+    if (up === index) {
+      return index;
+    }
+    const root = find(up);
+    parent.set(index, root);
+    return root;
+  };
+  for (let i = 0; i < unattached.length; i++) {
+    for (let j = i + 1; j < unattached.length; j++) {
+      if ((await overlapOf(unattached[i], unattached[j])) >= 0.25) {
+        parent.set(find(unattached[i]), find(unattached[j]));
+      }
+    }
+  }
+
+  const grouped = new Map<number, number[]>();
+  for (const index of unattached) {
+    const root = find(index);
+    grouped.set(root, [...(grouped.get(root) ?? []), index]);
+  }
+
+  const groups: UnattachedGroup[] = [];
+  for (const members of grouped.values()) {
+    let best: { from: number; to: number; overlap: number } | null = null;
+    for (const from of members) {
+      for (const to of placed) {
+        const overlap = await overlapOf(from, to);
+        if (!best || overlap > best.overlap) {
+          best = { from, to, overlap };
+        }
+      }
+    }
+    groups.push({
+      indices: members,
+      names: members.map(index => host.spatialFiles[index]?.fileName ?? `File ${index + 1}`),
+      suggestion:
+        best && best.overlap > 0
+          ? {
+              movingIndex: best.from,
+              fixedIndex: best.to,
+              movingName: host.spatialFiles[best.from]?.fileName ?? `File ${best.from + 1}`,
+              fixedName: host.spatialFiles[best.to]?.fileName ?? `File ${best.to + 1}`,
+              overlapPercent: Math.round(best.overlap * 100),
+            }
+          : null,
+    });
+  }
+  registrationState.unattachedGroups = groups;
+  registrationState.status = '';
+}
+
+/**
  * Minimum overlap a placement has to reach before it is applied at all.
  *
  * The old floor was 3 %, which is barely distinguishable from noise: ICP can
@@ -1507,6 +1658,12 @@ async function growFromAnchor(
     }
     registrationState.alignDone = targets.length;
 
+    // A list of failures is not actionable. Which groups they form, and which
+    // single pair would join each one back to the scene, is.
+    if (remaining.size > 0) {
+      await analyseUnattached(host, placed, [...remaining]);
+    }
+
     if (rank && placed.length > 2) {
       await settlePlacements(host, anchorIndex, placed, entryFor);
     }
@@ -1563,6 +1720,8 @@ export async function alignAllTo(
     return;
   }
   const refineOnly = options.refineOnly === true;
+  // A suggestion from a previous run describes a scene that no longer exists.
+  registrationState.unattachedGroups = [];
   // Two flavours of the growing strategy. `nested` is the original one, kept
   // because it is cheap and was what the archive-colouring workflow was tuned
   // against; `complex` is the same walk with the ordering and the extra

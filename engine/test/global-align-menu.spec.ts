@@ -187,6 +187,64 @@ test.describe('Global align menu', () => {
   });
 
   /**
+   * A run that cannot finish should say what would finish it.
+   *
+   * The value is not the warning, it is the specific pair: the solver already
+   * knows which two clouds are the most promising bridge, and making the user
+   * hunt for that pair is most of the work. Driven through injected state so
+   * the assertion is about the guidance, not about constructing a scene that
+   * happens to fail.
+   */
+  test('names the clouds that stayed separate and opens the pair that would join them', async ({
+    page,
+  }) => {
+    await page.locator('#hiddenFileInput').setInputFiles([smallPly, binaryPly]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+    await page.locator('#global-align-toggle').click();
+
+    // No run has failed, so nothing is offered.
+    await expect(page.locator('.align-gap')).toHaveCount(0);
+
+    await page.evaluate(() => {
+      const state = (window as any).__plyRegistrationState;
+      state.alignEntries = [{ index: 1, name: 'far corner', state: 'failed', detail: 'no match' }];
+      state.alignDone = 1;
+      state.unattachedGroups = [
+        {
+          indices: [1],
+          names: ['far corner'],
+          suggestion: {
+            movingIndex: 1,
+            fixedIndex: 0,
+            movingName: 'far corner',
+            fixedName: 'main room',
+            overlapPercent: 18,
+          },
+        },
+      ];
+    });
+
+    const gap = page.locator('.align-gap');
+    await expect(gap).toBeVisible();
+    await expect(gap).toContainText('far corner');
+    await expect(gap).toContainText('main room');
+    await expect(gap).toContainText('18%');
+
+    // The button opens the single-pair workspace already pointed at that pair,
+    // in the three-point route, so the next thing the user does is pick a point.
+    await page.locator('.global-align-link').click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.workflow))
+      .toBe('coarse-fixed');
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.sourceIndex))
+      .toBe(1);
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.targetIndex))
+      .toBe(0);
+  });
+
+  /**
    * All three toggles ship off, and the white-balance one only exists where the
    * gains it reads do: they come from each camera band's reference patch, so a
    * scene with no camera profiles has nothing to apply.

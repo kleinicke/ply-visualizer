@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { filenameTooltip } from '../src/ui/dialogs';
 
 /**
  * Pinning coverage for updateFileList() interactions, written before Svelte
@@ -97,6 +98,15 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await expect(content).toBeHidden();
     await toggle.click();
     await expect(content).toBeVisible();
+  });
+
+  test('container rows reveal the displayed embedded filename in their tooltip', () => {
+    expect(filenameTooltip('survey/archive.x3a', 'very-long-embedded-scan-name.x3r')).toBe(
+      'survey/archive.x3a / very-long-embedded-scan-name.x3r'
+    );
+    expect(filenameTooltip('survey/ordinary-cloud.ply', 'ordinary-cloud.ply')).toBe(
+      'survey/ordinary-cloud.ply'
+    );
   });
 
   test('changing a mesh render mode preserves the file-list position', async ({ page }) => {

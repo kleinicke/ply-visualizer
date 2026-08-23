@@ -80,6 +80,18 @@ pub struct CoarseOptions {
     pub max_samples: usize,
     pub feature: RasterFeature,
     pub candidate_count: usize,
+    /// Translation peaks kept per yaw. 1 reproduces the original behaviour.
+    pub peaks_per_yaw: usize,
+    /// Correlation window as a multiple of the larger cloud's span.
+    ///
+    /// This is the search range for translation, and it is easy to make too
+    /// small without noticing. The stage pre-centres one cloud's median on the
+    /// other's, but a scan's median sits on its own axis at roughly its mean
+    /// range, so for two scans of one room the pre-shift is near zero whatever
+    /// the instrument positions were — it carries no information about them.
+    /// The whole station offset therefore has to come out of the correlation,
+    /// and anything beyond half the window aliases rather than being found.
+    pub window_factor: f64,
 }
 
 impl Default for CoarseOptions {
@@ -91,6 +103,8 @@ impl Default for CoarseOptions {
             max_samples: 200_000,
             feature: RasterFeature::Verticality,
             candidate_count: 5,
+            peaks_per_yaw: 1,
+            window_factor: 1.5,
         }
     }
 }
@@ -203,9 +217,22 @@ fn rasterize(
 }
 
 /// Phase correlation of `source` against a pre-transformed target spectrum.
-/// Returns the integer cell shift that has to be *added* to the source to land
-/// on the target, and the peak height.
-fn correlate(source: &[f64], target_re: &[f64], target_im: &[f64], n: usize) -> (i64, i64, f64) {
+///
+/// Returns up to `wanted` separated peaks, strongest first: the integer cell
+/// shift to *add* to the source to land on the target, and the peak height.
+///
+/// More than one matters because the surface is genuinely multimodal. A scan
+/// pair in a room with repeated structure produces several translations that
+/// explain the overlap about equally well, and keeping only the tallest throws
+/// away hypotheses a later, better-informed stage could have chosen between.
+/// The extra peaks are nearly free: the transform is already computed.
+fn correlate_peaks(
+    source: &[f64],
+    target_re: &[f64],
+    target_im: &[f64],
+    n: usize,
+    wanted: usize,
+) -> Vec<(i64, i64, f64)> {
     let mut re = source.to_vec();
     let mut im = vec![0.0f64; n * n];
     fft2d(&mut re, &mut im, n, false);
@@ -228,33 +255,32 @@ fn correlate(source: &[f64], target_re: &[f64], target_im: &[f64], n: usize) -> 
     }
     fft2d(&mut re, &mut im, n, true);
 
-    let mut peak = f64::NEG_INFINITY;
-    let mut peak_index = 0usize;
-    for (i, &value) in re.iter().enumerate() {
-        if value > peak {
-            peak = value;
-            peak_index = i;
-        }
-    }
-
-    let raw_a = (peak_index % n) as i64;
-    let raw_b = (peak_index / n) as i64;
-    let half = (n / 2) as i64;
     // A peak past the halfway point is a negative shift wrapped around by the
     // transform's periodicity.
-    (
-        if raw_a > half {
-            raw_a - n as i64
-        } else {
-            raw_a
-        },
-        if raw_b > half {
-            raw_b - n as i64
-        } else {
-            raw_b
-        },
-        peak,
-    )
+    let half = (n / 2) as i64;
+    let unwrap = |raw: i64| if raw > half { raw - n as i64 } else { raw };
+    // Peaks must be separated, or the cells around the tallest come back as
+    // "alternatives" and the shortlist describes a single hypothesis.
+    let separation = (n as i64 / 16).max(3);
+
+    let mut found: Vec<(i64, i64, f64)> = Vec::with_capacity(wanted.max(1));
+    let mut order: Vec<usize> = (0..re.len()).collect();
+    order.sort_by(|&x, &y| re[y].total_cmp(&re[x]));
+    for index in order {
+        if found.len() >= wanted.max(1) {
+            break;
+        }
+        let a = unwrap((index % n) as i64);
+        let b = unwrap((index / n) as i64);
+        if found
+            .iter()
+            .any(|&(fa, fb, _)| (fa - a).abs() <= separation && (fb - b).abs() <= separation)
+        {
+            continue;
+        }
+        found.push((a, b, re[index]));
+    }
+    found
 }
 
 /// Robust centre and working extent of a cloud, seen from above. Percentiles
@@ -404,7 +430,7 @@ pub fn coarse_align_4dof(
     // Half again as wide as the larger cloud, so a shift of up to three
     // quarters of a cloud's extent stays inside the transform's unambiguous
     // range instead of aliasing around it.
-    let window = source_span.max(target_span) * 1.5;
+    let window = source_span.max(target_span) * options.window_factor.max(1.0);
     let cell = window / n as f64;
     let origin_a = target_centroid[axis_a] - window / 2.0;
     let origin_b = target_centroid[axis_b] - window / 2.0;
@@ -441,7 +467,7 @@ pub fn coarse_align_4dof(
     let mut target_im = vec![0.0f64; n * n];
     fft2d(&mut target_re, &mut target_im, n, false);
 
-    let evaluate = |yaw_degrees: f64| -> Hypothesis {
+    let evaluate_peaks = |yaw_degrees: f64, wanted: usize| -> Vec<Hypothesis> {
         let grid = rasterize(
             &shifted_source,
             axes,
@@ -454,19 +480,33 @@ pub fn coarse_align_4dof(
             source_stride,
             options.feature,
         );
-        let (shift_a, shift_b, peak) = correlate(&grid, &target_re, &target_im, n);
-        Hypothesis {
-            yaw_degrees,
-            shift_a,
-            shift_b,
-            peak,
-        }
+        correlate_peaks(&grid, &target_re, &target_im, n, wanted)
+            .into_iter()
+            .map(|(shift_a, shift_b, peak)| Hypothesis {
+                yaw_degrees,
+                shift_a,
+                shift_b,
+                peak,
+            })
+            .collect()
+    };
+    let evaluate = |yaw_degrees: f64| -> Hypothesis {
+        evaluate_peaks(yaw_degrees, 1)
+            .into_iter()
+            .next()
+            .unwrap_or(Hypothesis {
+                yaw_degrees,
+                shift_a: 0,
+                shift_b: 0,
+                peak: f64::NEG_INFINITY,
+            })
     };
 
+    let peaks = options.peaks_per_yaw.max(1);
     let mut sweep: Vec<Hypothesis> = Vec::new();
     let mut yaw = 0.0;
     while yaw < 360.0 {
-        sweep.push(evaluate(yaw));
+        sweep.extend(evaluate_peaks(yaw, peaks));
         yaw += options.yaw_step_degrees;
     }
     sweep.sort_by(|x, y| y.peak.total_cmp(&x.peak));
@@ -478,10 +518,17 @@ pub fn coarse_align_4dof(
 
     // Several yaws either side of one peak are the same hypothesis; keep only
     // separated ones so the shortlist holds genuinely different guesses.
+    // Two hypotheses are the same guess only if they agree about the yaw *and*
+    // the translation. Keeping more than one peak per yaw makes that
+    // distinction load-bearing: the flip of a room and its true pose can share
+    // a yaw and differ entirely in where the station stood.
+    let shift_separation = (n as i64 / 16).max(3);
     let mut distinct: Vec<Hypothesis> = Vec::new();
     for hypothesis in &sweep {
         if distinct.iter().all(|kept| {
             angular_distance(kept.yaw_degrees, hypothesis.yaw_degrees) > options.yaw_step_degrees
+                || (kept.shift_a - hypothesis.shift_a).abs() > shift_separation
+                || (kept.shift_b - hypothesis.shift_b).abs() > shift_separation
         }) {
             distinct.push(*hypothesis);
         }
@@ -501,9 +548,16 @@ pub fn coarse_align_4dof(
                 if offset == 0 {
                     continue;
                 }
-                let candidate = evaluate(hypothesis.yaw_degrees + offset as f64);
-                if candidate.peak > best.peak {
-                    best = candidate;
+                // Only peaks belonging to *this* hypothesis: at a neighbouring
+                // yaw the tallest peak may be a different mode entirely, and
+                // following it turns a refinement into a silent jump.
+                for candidate in evaluate_peaks(hypothesis.yaw_degrees + offset as f64, peaks) {
+                    if candidate.peak > best.peak
+                        && (candidate.shift_a - hypothesis.shift_a).abs() <= shift_separation
+                        && (candidate.shift_b - hypothesis.shift_b).abs() <= shift_separation
+                    {
+                        best = candidate;
+                    }
                 }
             }
             best

@@ -10,7 +10,7 @@ use wasm_bindgen::prelude::*;
 
 use super::coarse_align::{coarse_align_4dof, CoarseOptions, RasterFeature, UpAxis};
 use super::conditioning::position_conditioning;
-use super::icp::{icp_point_to_plane, IcpOptions};
+use super::icp::{default_voxel_size, icp_point_to_plane, IcpOptions};
 use super::linalg::Mat4;
 use super::rigid_fit::fit_rigid_transform;
 use super::{register_clouds, RegisterOptions};
@@ -24,6 +24,8 @@ pub struct CoarseSettings {
     pub max_samples: Option<usize>,
     pub feature: Option<String>,
     pub candidate_count: Option<usize>,
+    pub peaks_per_yaw: Option<usize>,
+    pub window_factor: Option<f64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -70,6 +72,8 @@ impl CoarseSettings {
                 .map(RasterFeature::from_str)
                 .unwrap_or(defaults.feature),
             candidate_count: self.candidate_count.unwrap_or(defaults.candidate_count),
+            peaks_per_yaw: self.peaks_per_yaw.unwrap_or(defaults.peaks_per_yaw),
+            window_factor: self.window_factor.unwrap_or(defaults.window_factor),
         }
     }
 }
@@ -286,6 +290,12 @@ pub fn icp_refine(
             fitness: result.fitness,
             converged: result.converged,
         }),
+        voxel_cell: Some(
+            settings
+                .build()
+                .voxel_size
+                .unwrap_or_else(|| default_voxel_size(source, target)),
+        ),
         candidate_index: -1,
         ..Default::default()
     };
