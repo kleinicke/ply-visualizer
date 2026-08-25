@@ -6,12 +6,14 @@ body {
   color: var(--vscode-editor-foreground);
   overflow: hidden;
   height: 100vh;
+  height: 100dvh;
 }
 
 #viewer-container {
   position: relative;
   width: 100%;
   height: 100vh;
+  height: 100dvh;
 }
 
 .seq-slider {
@@ -28,6 +30,11 @@ body {
   display: block;
   width: 100%;
   height: 100%;
+  /* Canvas gestures belong to the 3D controls. Keep native scrolling on the
+     overlaid panel, but do not let the browser steal pinch or drag gestures
+     that begin over the scene. */
+  touch-action: none;
+  user-select: none;
 }
 
 .loading {

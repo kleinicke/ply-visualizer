@@ -26,7 +26,7 @@ export const viewerState = $state(
    *   cameraTargetText: string;
    * }}
    */ ({
-    controlScheme: 'trackball',
+    controlScheme: 'legacy-trackball',
     cameraConvention: 'opengl',
     edlEnabled: false,
     edlStrength: 1.0,

@@ -18,6 +18,22 @@ import { SPLAT_CONTAINER_REGEX } from './visualization/splatMode';
 
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
+const SCIENTIFIC_IMAGE_ORIGINS = new Set([
+  'https://images.f-kleinicke.de',
+  'http://localhost:4173',
+  'http://127.0.0.1:4173',
+]);
+const SCIENTIFIC_IMAGE_DEPTH_FILE = /\.(?:tiff?|pfm|np[yz]|png)$/i;
+const receivedScientificImageHandoffs = new Set<string>();
+
+function trackWebsiteEvent(name: string): void {
+  const plausible = (
+    window as typeof window & {
+      plausible?: (eventName: string) => void;
+    }
+  ).plausible;
+  plausible?.(name);
+}
 
 export interface BrowserFileDragDropHost {
   browserFileHandler: BrowserMessageHandler | null;
@@ -258,6 +274,54 @@ export function setupBrowserFileHandlers(host: BrowserFileDragDropHost): void {
     document.body.style.backgroundColor = '';
     void handleDropEvent(host, event);
   });
+
+  if (!isVSCode) {
+    setupScientificImageHandoff(host);
+  }
+}
+
+/** Receive a local depth image directly from images.f-kleinicke.de. */
+export function setupScientificImageHandoff(host: BrowserFileDragDropHost): void {
+  window.addEventListener('message', event => {
+    if (!SCIENTIFIC_IMAGE_ORIGINS.has(event.origin)) {
+      return;
+    }
+    const message = event.data;
+    const id = typeof message?.id === 'string' ? message.id : '';
+    if (!id) {
+      return;
+    }
+    if (message.type === 'scientific-image-handoff-probe') {
+      (event.source as WindowProxy | null)?.postMessage(
+        { type: 'scientific-image-viewer-ready', id },
+        event.origin
+      );
+      return;
+    }
+    if (
+      message.type !== 'scientific-image-depth' ||
+      receivedScientificImageHandoffs.has(id) ||
+      !(message.data instanceof ArrayBuffer)
+    ) {
+      return;
+    }
+    const fileName =
+      String(message.fileName || '')
+        .split(/[\\/]/)
+        .pop() || 'depth.tiff';
+    if (!SCIENTIFIC_IMAGE_DEPTH_FILE.test(fileName)) {
+      host.showError(
+        `The Scientific Image Visualizer sent an unsupported depth format: ${fileName}`
+      );
+      return;
+    }
+    receivedScientificImageHandoffs.add(id);
+    void handleBrowserFiles(host, [
+      new File([message.data], fileName, {
+        type: 'application/octet-stream',
+      }),
+    ]);
+  });
 }
 
 export function handleDragOver(event: DragEvent): void {
@@ -386,6 +450,7 @@ export async function loadExamplePointCloud(host: BrowserFileDragDropHost): Prom
       type: 'application/octet-stream',
     });
     await handleBrowserFiles(host, [file]);
+    trackWebsiteEvent('Example Point Cloud Loaded');
   } catch (error) {
     host.showError(
       `Failed to load the example point cloud: ${error instanceof Error ? error.message : String(error)}`

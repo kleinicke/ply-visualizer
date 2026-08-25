@@ -429,6 +429,11 @@
       Set Rotation Center to Origin <span class="button-shortcut">W</span>
     </button>
   </div>
+  <p class="setting-description">
+    Touch uses stable-up navigation independently of the selected mouse controls: drag with one
+    finger to orbit; move, twist, and pinch with two fingers to orbit and zoom together; double-tap
+    to set the rotation center. Twisting orbits around the up-axis rather than rolling the camera.
+  </p>
 </div>
 <div class="panel-section">
   <h4 style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px;">
@@ -545,7 +550,7 @@
       class="control-button"
       class:active={viewerState.controlScheme === 'legacy-trackball'}
       onclick={onLegacyTrackball}
-      title="The previous default: delta-based three.js TrackballControls with momentum"
+      title="Default: delta-based three.js TrackballControls with momentum"
     >
       Legacy Trackball <span class="button-shortcut">I</span>
     </button>

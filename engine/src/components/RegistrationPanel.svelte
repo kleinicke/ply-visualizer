@@ -33,6 +33,43 @@
   const movingIndex = $derived(active ? registrationState.sourceIndex : null);
   const workflow = $derived(active ? registrationState.workflow : 'choose');
 
+  // Which step the workflow is on, and therefore which side the next click
+  // belongs to. `viewOverride` changes what is *shown*, never whose turn it is.
+  const coarseStep = $derived(workflow.startsWith('coarse'));
+  const onFixedStep = $derived(workflow === 'coarse-fixed' || workflow === 'fine-fixed');
+  const shownSide = $derived(
+    registrationState.viewOverride ??
+      (onFixedStep ? 'fixed' : workflow === 'choose' ? 'both' : 'moving')
+  );
+  const fixedPicked = $derived(
+    coarseStep
+      ? registrationState.coarseFixedCount
+      : registrationState.pairCount + (registrationState.awaiting === 'source' ? 1 : 0)
+  );
+  const movingPicked = $derived(
+    coarseStep
+      ? registrationState.coarseMovingCount
+      : registrationState.pairCount + (registrationState.awaiting === 'target' ? 1 : 0)
+  );
+  /**
+   * One chip per pick so far: complete pairs, plus the half-finished one.
+   * Seeing three chips where you expected two is how a mis-click gets caught
+   * before it becomes a bad correspondence.
+   */
+  const picks = $derived.by(() => {
+    const out = [];
+    if (coarseStep) {
+      for (let i = 0; i < registrationState.coarseFixedCount; i++) {
+        out.push({ state: i < registrationState.coarseMovingCount ? 'pair' : 'fixed' });
+      }
+    } else {
+      for (let i = 0; i < registrationState.pairCount; i++) out.push({ state: 'pair' });
+      if (registrationState.awaiting === 'source') out.push({ state: 'fixed' });
+      else if (registrationState.awaiting === 'target') out.push({ state: 'moving' });
+    }
+    return out;
+  });
+
   const worstCoarseResidual = $derived(
     registrationState.coarseResiduals.length > 0
       ? Math.max(...registrationState.coarseResiduals)
@@ -220,6 +257,58 @@
               {/if}
             </div>
             <p class="pair-hint">{registrationState.status}</p>
+
+            <!-- What you have picked, and a way to look at either cloud without
+                 losing your place. Both exist for the same reason: the hard part
+                 of picking the same feature twice is knowing whether it is even
+                 visible in the other scan, and counting picks in your head while
+                 the view keeps switching is how pairs end up describing two
+                 different corners. -->
+            <div class="pick-status">
+              <div class="pick-tally">
+                <span class="pick-side" class:pick-side-active={onFixedStep}>
+                  Fixed <strong>{fixedPicked}</strong>{coarseStep ? '/3' : ''}
+                </span>
+                <span class="pick-side" class:pick-side-active={!onFixedStep}>
+                  Moving <strong>{movingPicked}</strong>{coarseStep ? '/3' : ''}
+                </span>
+              </div>
+              <div class="pick-views">
+                <span class="pick-views-label">Look at</span>
+                <button
+                  class="registration-view-fixed"
+                  class:pick-view-on={shownSide === 'fixed'}
+                  onclick={() => registration.showSide(host, 'fixed')}
+                  title="Show only the fixed cloud"
+                >Fixed</button>
+                <button
+                  class="registration-view-moving"
+                  class:pick-view-on={shownSide === 'moving'}
+                  onclick={() => registration.showSide(host, 'moving')}
+                  title="Show only the moving cloud"
+                >Moving</button>
+                <button
+                  class="registration-view-both"
+                  class:pick-view-on={shownSide === 'both'}
+                  onclick={() => registration.showSide(host, 'both')}
+                  title="Show both clouds at once"
+                >Both</button>
+              </div>
+              {#if picks.length > 0}
+                <div class="pick-chips">
+                  {#each picks as pick, pickIndex (pickIndex)}
+                    <span
+                      class={`pick-chip pick-chip-${pick.state}`}
+                      title={pick.state === 'pair'
+                        ? 'Picked on both clouds'
+                        : pick.state === 'fixed'
+                          ? 'Picked on the fixed cloud, still needs its match'
+                          : 'Picked on the moving cloud, still needs its match'}
+                    >{pickIndex + 1}</span>
+                  {/each}
+                </div>
+              {/if}
+            </div>
             <div class="pair-actions">
               {#if workflow === 'coarse-ready'}
                 <button
@@ -450,6 +539,64 @@
   .pair-list-row button {
     font-size: 10px;
     padding: 1px 6px;
+  }
+  .pick-status {
+    margin-top: 6px;
+    padding: 6px 7px;
+    border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+    border-radius: 4px;
+  }
+  .pick-tally {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 5px;
+  }
+  .pick-side {
+    opacity: 0.6;
+  }
+  /* The side the next click belongs to, so the tally also answers "whose turn". */
+  .pick-side-active {
+    opacity: 1;
+    font-weight: 600;
+  }
+  .pick-views {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .pick-views-label {
+    opacity: 0.7;
+    margin-right: 2px;
+  }
+  .pick-views button {
+    font-size: 10px;
+    padding: 1px 7px;
+  }
+  .pick-view-on {
+    outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  }
+  .pick-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-top: 5px;
+  }
+  .pick-chip {
+    min-width: 16px;
+    text-align: center;
+    border-radius: 3px;
+    font-size: 10px;
+    padding: 0 3px;
+    font-family: var(--vscode-editor-font-family, monospace);
+  }
+  .pick-chip-pair {
+    background: color-mix(in srgb, var(--vscode-charts-green, #89d185) 30%, transparent);
+  }
+  .pick-chip-fixed {
+    background: color-mix(in srgb, var(--vscode-charts-blue, #2ad4ff) 30%, transparent);
+  }
+  .pick-chip-moving {
+    background: color-mix(in srgb, var(--vscode-charts-orange, #ff8c1a) 30%, transparent);
   }
   .coarse-residual {
     font-family: var(--vscode-editor-font-family, monospace);

@@ -72,6 +72,19 @@ interface Correspondence {
 interface Session {
   sourceIndex: number;
   targetIndex: number;
+  /**
+   * Every cloud that moves with this session, and everything held still.
+   *
+   * Usually one each. The case that matters is rescuing a group the automatic
+   * run could not attach: those clouds are already solved relative to *each
+   * other*, so they form one rigid object with a single unknown pose, and
+   * placing them one at a time would ask for the same correspondence several
+   * times over. Holding the whole placed scene still rather than one nominated
+   * cloud matters as much — a feature can then be picked wherever it is
+   * recognisable, not only on whichever cloud the suggestion named.
+   */
+  sourceGroup: number[];
+  targetGroup: number[];
   pairs: Correspondence[];
   coarseFixed: THREE.Vector3[];
   coarseMoving: THREE.Vector3[];
@@ -179,6 +192,30 @@ function syncState(): void {
   registrationState.canUndo = !!session?.undoMatrix;
 }
 
+/**
+ * Starts a session that moves a whole group of clouds against a whole scene.
+ *
+ * The rescue case: several clouds already solved relative to each other, needing
+ * one shared pose, matched against everything already placed rather than one
+ * nominated cloud. `beginSession` is this with groups of one.
+ */
+export function beginGroupSession(
+  host: RegistrationHost,
+  sourceIndices: readonly number[],
+  targetIndices: readonly number[]
+): void {
+  if (sourceIndices.length === 0 || targetIndices.length === 0) {
+    return;
+  }
+  beginSession(host, sourceIndices[0], targetIndices[0]);
+  if (!session) {
+    return;
+  }
+  session.sourceGroup = [...sourceIndices];
+  session.targetGroup = [...targetIndices];
+  syncState();
+}
+
 export function beginSession(
   host: RegistrationHost,
   sourceIndex: number,
@@ -191,6 +228,8 @@ export function beginSession(
   session = {
     sourceIndex,
     targetIndex,
+    sourceGroup: [sourceIndex],
+    targetGroup: [targetIndex],
     pairs: [],
     coarseResiduals: [],
     coarseFixed: [],
@@ -257,19 +296,48 @@ function restoreVisibility(host: RegistrationHost): void {
 
 function showFixed(host: RegistrationHost): void {
   if (session) {
+    registrationState.viewOverride = null;
     setWorkflowVisibility(host, [session.targetIndex]);
   }
 }
 
+/**
+ * Shows one side of the pair on demand, without moving the workflow on.
+ *
+ * Picking the same feature twice means finding it twice, and the hard part is
+ * knowing whether the corner you just clicked is even visible in the other
+ * scan. Flipping between the two answers that in a second; the alternative is
+ * picking blind and discovering the mistake three points later.
+ *
+ * The override lasts until the next pick, at which point the step's own
+ * isolation takes back over.
+ */
+export function showSide(host: RegistrationHost, side: 'fixed' | 'moving' | 'both'): void {
+  if (!session) {
+    return;
+  }
+  registrationState.viewOverride = side;
+  const indices =
+    side === 'fixed'
+      ? [session.targetIndex]
+      : side === 'moving'
+        ? [session.sourceIndex]
+        : [session.targetIndex, session.sourceIndex];
+  setWorkflowVisibility(host, indices);
+  refreshMarkers(host);
+}
+
 function showMoving(host: RegistrationHost): void {
   if (session) {
-    setWorkflowVisibility(host, [session.sourceIndex]);
+    registrationState.viewOverride = null;
+    setWorkflowVisibility(host, session.sourceGroup);
   }
 }
 
 function showPair(host: RegistrationHost): void {
   if (session) {
-    setWorkflowVisibility(host, [session.targetIndex, session.sourceIndex]);
+    registrationState.viewOverride = null;
+    setWorkflowVisibility(host, [...session.targetGroup, ...session.sourceGroup]);
   }
 }
 
@@ -523,6 +591,11 @@ export function handlePickedPoint(
     return true;
   }
 
+  // A pick hands the view back to whichever step owns the next click. Looking
+  // at the other cloud is a glance, not a mode: leaving the override in place
+  // would mean the next point is picked on a cloud the step is not asking for.
+  registrationState.viewOverride = null;
+
   switch (registrationState.workflow) {
     case 'coarse-fixed': {
       if (session.coarseFixed.length < 3) {
@@ -535,6 +608,7 @@ export function handlePickedPoint(
         showMoving(host);
       } else {
         registrationState.status = `Coarse match — ${3 - session.coarseFixed.length} more feature${session.coarseFixed.length === 2 ? '' : 's'} on the fixed cloud (⌘/Ctrl + double-click).`;
+        refreshPickingVisibility(host);
       }
       refreshMarkers(host);
       syncState();
@@ -551,6 +625,7 @@ export function handlePickedPoint(
         showPair(host);
       } else {
         registrationState.status = `Coarse match — the same ${3 - session.coarseMoving.length} feature${session.coarseMoving.length === 2 ? '' : 's'} again on the moving cloud (⌘/Ctrl + double-click).`;
+        refreshPickingVisibility(host);
       }
       refreshMarkers(host);
       syncState();
@@ -695,12 +770,13 @@ function refreshMarkers(host: RegistrationHost): void {
   const isolated = registrationState.isolateWhilePicking && registrationState.picking;
   const side: 'fixed' | 'moving' | 'both' = !isolated
     ? 'both'
-    : registrationState.workflow === 'coarse-fixed' || registrationState.workflow === 'fine-fixed'
-      ? 'fixed'
-      : registrationState.workflow === 'coarse-moving' ||
-          registrationState.workflow === 'fine-moving'
-        ? 'moving'
-        : 'both';
+    : (registrationState.viewOverride ??
+      (registrationState.workflow === 'coarse-fixed' || registrationState.workflow === 'fine-fixed'
+        ? 'fixed'
+        : registrationState.workflow === 'coarse-moving' ||
+            registrationState.workflow === 'fine-moving'
+          ? 'moving'
+          : 'both'));
   const showFixedSide = side !== 'moving';
   const showMovingSide = side !== 'fixed';
 
@@ -786,8 +862,14 @@ function applyDelta(host: RegistrationHost, delta: THREE.Matrix4): void {
   if (!session.undoMatrix) {
     session.undoMatrix = previous;
   }
-  host.setTransformationMatrix(session.sourceIndex, delta.clone().multiply(previous));
-  host.updateMatrixTextarea(session.sourceIndex);
+  // Every cloud in the moving group takes the same delta, which is what keeps a
+  // rescued group rigid: their poses relative to each other are already solved,
+  // and this supplies only the one pose they share.
+  for (const index of session.sourceGroup) {
+    const before = (host.transformationMatrices[index] ?? new THREE.Matrix4()).clone();
+    host.setTransformationMatrix(index, delta.clone().multiply(before));
+    host.updateMatrixTextarea(index);
+  }
 
   // If this pair belongs to the latest anchor-wide workflow, a successful
   // manual/automatic correction makes the previously failed cloud trustworthy
@@ -838,8 +920,12 @@ export function undo(host: RegistrationHost): void {
   const current = (host.transformationMatrices[session.sourceIndex] ?? new THREE.Matrix4()).clone();
   const delta = restore.clone().multiply(current.invert());
 
-  host.setTransformationMatrix(session.sourceIndex, restore.clone());
-  host.updateMatrixTextarea(session.sourceIndex);
+  // The same delta that moved the group has to move all of it back.
+  for (const index of session.sourceGroup) {
+    const before = (host.transformationMatrices[index] ?? new THREE.Matrix4()).clone();
+    host.setTransformationMatrix(index, delta.clone().multiply(before));
+    host.updateMatrixTextarea(index);
+  }
   for (const pair of session.pairs) {
     pair.source.applyMatrix4(delta);
   }
@@ -1000,12 +1086,24 @@ async function fitFinePairsLive(host: RegistrationHost): Promise<void> {
  * both, and the extra geometry constrains directions one cloud alone leaves
  * free.
  */
+/** The moving side's points: the whole group when there is one. */
+function solverSource(host: RegistrationHost): Float32Array | null {
+  if (!session) {
+    return null;
+  }
+  return session.sourceGroup.length > 1
+    ? unionPoints(host, session.sourceGroup)
+    : worldPoints(host, session.sourceIndex);
+}
+
 function solverTarget(host: RegistrationHost): Float32Array | null {
   if (!session) {
     return null;
   }
   if (!registrationState.matchAgainstAllOthers) {
-    return worldPoints(host, session.targetIndex);
+    return session.targetGroup.length > 1
+      ? unionPoints(host, session.targetGroup)
+      : worldPoints(host, session.targetIndex);
   }
   const others: number[] = [];
   for (let index = 0; index < host.spatialFiles.length; index++) {
@@ -1020,7 +1118,7 @@ export async function autoAlign(host: RegistrationHost): Promise<void> {
   if (!session || registrationState.busy) {
     return;
   }
-  const source = worldPoints(host, session.sourceIndex);
+  const source = solverSource(host);
   const target = solverTarget(host);
   if (!source || !target) {
     registrationState.result = 'Both clouds need point data.';
@@ -1069,7 +1167,7 @@ export async function refineIcp(host: RegistrationHost): Promise<void> {
   if (!session || registrationState.busy) {
     return;
   }
-  const source = worldPoints(host, session.sourceIndex);
+  const source = solverSource(host);
   const target = solverTarget(host);
   if (!source || !target) {
     registrationState.result = 'Both clouds need point data.';
@@ -1257,6 +1355,41 @@ async function analyseUnattached(
     const root = find(index);
     grouped.set(root, [...(grouped.get(root) ?? []), index]);
   }
+
+  // Solve each group against itself first. Its members overlap each other well
+  // enough to have been grouped at all, so their relative poses are recoverable
+  // — and once they are, the group needs one pose from a person rather than one
+  // per cloud.
+  for (const members of grouped.values()) {
+    if (members.length < 2) {
+      continue;
+    }
+    const settled = [members[0]];
+    for (const member of members.slice(1)) {
+      const source = worldPoints(host, member);
+      const target = unionPoints(host, settled);
+      if (!source || !target) {
+        continue;
+      }
+      try {
+        const result = await registerPair(source, target, {
+          coarse: { upAxis: registrationState.upAxis as UpAxis },
+          extraStarts: inheritedStarts(host, settled, member),
+        });
+        if (result?.icp && result.icp.fitness >= MIN_ACCEPT_FITNESS) {
+          const previous = (host.transformationMatrices[member] ?? new THREE.Matrix4()).clone();
+          host.setTransformationMatrix(member, result.matrix.clone().multiply(previous));
+          host.updateMatrixTextarea(member);
+          settled.push(member);
+        }
+      } catch {
+        // A group that will not solve internally is still worth offering; the
+        // user can place its members one at a time.
+      }
+    }
+  }
+  followStations(host);
+  host.requestRender();
 
   const groups: UnattachedGroup[] = [];
   for (const members of grouped.values()) {

@@ -2071,12 +2071,13 @@ resize-during-recording tests.
 ### CloudCompare-style rotation direction
 
 **Status: RESOLVED (July 2026) — shipped as `CloudCompareControls` in
-`engine/src/controls.ts` and then PROMOTED TO THE DEFAULT "Trackball" scheme
-(`T`).** The previous delta-based three.js TrackballControls remains available
-as "Legacy Trackball" (`I`); the old roll-only "Inverse Trackball" scheme and
-its shadow-state `_rotateCamera` patch were removed with their specs
-(inverse-trackball-rotation, measure-accumulated-roll, rotation-drift-check —
-the accumulated-roll spec had been failing on main anyway).
+`engine/src/controls.ts` as the optional virtual-ball "Trackball" scheme
+(`T`).** The delta-based three.js TrackballControls remains the default as
+"Legacy Trackball" (`I`), following user preference; the old roll-only "Inverse
+Trackball" scheme and its shadow-state `_rotateCamera` patch were removed with
+their specs (inverse-trackball-rotation, measure-accumulated-roll,
+rotation-drift-check — the accumulated-roll spec had been failing on main
+anyway).
 
 Sensitivity design (second iteration, after user feedback that the pure ball was
 too slow): orbit and roll are split into independently scaled parts, because
@@ -2151,6 +2152,60 @@ Why the multiple past attempts failed (post-mortem opinion):
 Cost/benefit verdict: repeated significant effort, no stable result, and users
 adapt to rotation direction quickly — but a lost camera was the real pain, and
 the void-double-click shortcut solves that directly.
+
+### Navigation anchor and touch input (August 2026)
+
+**Status: automatic safe-area centering and canvas multi-touch implemented;
+manual anchor adjustment and the broader touch-target audit remain open.** The
+viewer UI is always a top-right overlay. On a wide screen it mostly consumes the
+right side; on a phone its fixed 300 px width consumes most of the width and its
+content extends down from the top. The genuinely visible canvas is therefore
+L-shaped, not a smaller rectangle, and the camera's useful visual center is
+usually not the canvas midpoint.
+
+Issues and proposed behavior:
+
+- Keep the 3D rotation target and its screen-space anchor as separate concepts.
+  Double-click chooses the world-space target. The screen anchor determines
+  where that target is projected and stays stable while orbiting.
+- Do not continuously chase the panel's exact centroid: opening a tab, loading
+  another row, or resizing its content would then make the scene move while the
+  user operates the UI. Recalculate the automatic anchor only for viewport /
+  orientation changes, panel show/hide, and an explicit fit/reset action.
+- Pick the automatic anchor from the largest useful unobstructed rectangle. For
+  a relatively narrow panel this is normally the full-height area to its left;
+  when the panel occupies most of a phone's width it is normally the area below
+  it. Choose from the measured panel/canvas bounds rather than a desktop/mobile
+  breakpoint, and use hysteresis so a tiny resize cannot flip between the two.
+  This is implemented in `engine/src/screenAnchor.ts`; fit-to-view uses the same
+  safe rectangle, and collapsing the panel reduces its influence to the small
+  remaining tab bar.
+- Cmd/Ctrl + drag is the proposed manual anchor adjustment. Show a small
+  crosshair only while the anchor differs from the automatic position and give
+  it an obvious reset-to-automatic action. Right-drag and Shift + left-drag
+  remain pan. Cmd/Ctrl + double-click remains registration picking.
+- Shift + left-drag was unreliable on a macOS force-click trackpad because the
+  pointer event could omit `shiftKey`. The custom controls now also consult the
+  window's live keyboard-modifier state; keep the browser regression test in
+  `engine/test/trackball-rotation.spec.ts`.
+
+Touch previously had accidental partial support rather than a designed gesture
+model. `engine/src/touchNavigation.ts` now owns touch independently of the
+selected mouse scheme. The implemented touch model is:
+
+- one-finger drag: orbit while preserving the current up direction;
+- two-finger pinch and twist: zoom and roll simultaneously; twisting chooses a
+  new up direction, while translating both fingers together does not orbit;
+- no touch pan; double-tap supplies the important target-changing path;
+- double-tap: choose the rotation target, matching desktop double-click;
+- `touch-action: none` on the rendering canvas only, so the browser does not
+  steal navigation gestures while panel scrolling remains native.
+
+Touch-friendliness also needs a UI audit shared by the standalone page and VS
+Code webview: several controls are substantially smaller than a comfortable 44
+px touch target, some help exists only on hover, and the panel's bottom-edge
+resize implementation listens only to mouse events. Prefer a collapsible panel
+on narrow touch screens over requiring users to grab that invisible resize edge.
 
 ## Discarded
 

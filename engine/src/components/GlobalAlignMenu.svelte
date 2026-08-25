@@ -30,12 +30,22 @@
    * it is most of the work.
    */
   function linkByHand(
-    suggestion: { movingIndex: number; fixedIndex: number } | null
+    group: {
+      indices: number[];
+      suggestion: { movingIndex: number; fixedIndex: number } | null;
+    } | null
   ) {
-    if (!suggestion) return;
-    singleFixed = suggestion.fixedIndex;
+    if (!group?.suggestion) return;
+    singleFixed = group.suggestion.fixedIndex;
     showSingle = true;
-    registration.beginSession(host, suggestion.movingIndex, suggestion.fixedIndex);
+    // The whole group moves against the whole placed scene, not one cloud
+    // against one cloud. The group is already solved internally, so it needs a
+    // single shared pose; and holding every placed cloud still means a feature
+    // can be picked wherever it is recognisable rather than only on the cloud
+    // the suggestion happened to name.
+    registration.beginGroupSession(host, group.indices, registrationState.alignedIndices.length > 0
+      ? registrationState.alignedIndices
+      : [group.suggestion.fixedIndex]);
     registration.startGuidedMatching(host, false);
   }
   // Off by default, like every other correction: the viewer shows the capture.
@@ -311,17 +321,19 @@
                 </div>
                 {#if group.suggestion}
                   <div class="align-gap-suggest">
-                    Closest connection to the placed scene:
-                    <strong>{group.suggestion.movingName}</strong> onto
-                    <strong>{group.suggestion.fixedName}</strong>
-                    ({group.suggestion.overlapPercent}% overlap — too little to trust automatically,
-                    enough to pick three matching points by eye).
+                    {group.indices.length > 1
+                      ? 'They are already aligned to each other, so they move as one and need a single placement.'
+                      : 'It needs one placement.'}
+                    Look near <strong>{group.suggestion.movingName}</strong> and
+                    <strong>{group.suggestion.fixedName}</strong> — that is where they overlap most
+                    ({group.suggestion.overlapPercent}%), too little to trust automatically but
+                    enough to pick three matching points by eye.
                   </div>
                   <button
                     class="global-align-link align-primary"
-                    onclick={() => linkByHand(group.suggestion)}
+                    onclick={() => linkByHand(group)}
                     disabled={registrationState.busy}
-                  >Link these two by hand</button>
+                  >Place this group by hand</button>
                 {:else}
                   <div class="align-gap-suggest">
                     No overlap with the placed scene was found at all. This group may be a separate

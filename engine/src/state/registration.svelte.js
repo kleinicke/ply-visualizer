@@ -14,6 +14,7 @@ export const registrationState = $state(
    *   coarseFixedCount: number;
    *   coarseMovingCount: number;
    *   coarseResiduals: number[];
+   *   viewOverride: 'fixed' | 'moving' | 'both' | null;
    *   pairCount: number;
    *   awaiting: 'source' | 'target' | null;
    *   busy: boolean;
@@ -43,6 +44,10 @@ export const registrationState = $state(
     // matched to. An aggregate RMS hides the one mis-picked corner that caused
     // it, which is the only thing worth knowing after a three-point fit.
     coarseResiduals: [],
+    // Which cloud the user asked to look at, overriding what the current step
+    // would show. Cleared whenever the workflow moves on, so checking whether a
+    // feature is visible in both scans never costs you your place.
+    viewOverride: null,
     pairCount: 0,
     // Which cloud the next double-click is expected to land on, once one half
     // of a correspondence has been picked.

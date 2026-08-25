@@ -229,16 +229,18 @@ test.describe('Global align menu', () => {
     await expect(gap).toContainText('far corner');
     await expect(gap).toContainText('main room');
     await expect(gap).toContainText('18%');
+    await expect(page.locator('.global-align-link')).toContainText('Place this group by hand');
 
     // The button opens the single-pair workspace already pointed at that pair,
     // in the three-point route, so the next thing the user does is pick a point.
     await page.locator('.global-align-link').click();
-    await expect
-      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.workflow))
-      .toBe('coarse-fixed');
+    // The whole group moves, and the whole placed scene is held still.
     await expect
       .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.sourceIndex))
       .toBe(1);
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.workflow))
+      .toBe('coarse-fixed');
     await expect
       .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.targetIndex))
       .toBe(0);

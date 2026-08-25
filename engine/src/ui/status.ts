@@ -97,9 +97,9 @@ export function showKeyboardShortcuts(onCreateShortcutsUI: () => void): void {
   Y: Set Y-up (default)
   Z: Set Z-up (CAD style)
   R: Reset camera and up vector
-  T: Switch to Trackball controls (virtual ball, default)
+  T: Switch to Trackball controls (virtual ball)
   O: Switch to OrbitControls
-  I: Switch to Legacy Trackball controls (delta-based)
+  I: Switch to Legacy Trackball controls (delta-based, default)
   K: Switch to ArcballControls
   C: Set OpenCV camera convention (Y-down)
   B: Set OpenGL camera convention (Y-up)
@@ -142,9 +142,9 @@ export function createShortcutsUI(onUpdateControlStatus: () => void): void {
                 <div><span style="font-weight: bold;">Y</span> Set Y-up orientation (default)</div>
                 <div><span style="font-weight: bold;">Z</span> Set Z-up orientation (CAD style)</div>
                 <div><span style="font-weight: bold;">R</span> Reset camera and up vector</div>
-                <div><span style="font-weight: bold;">T</span> Switch to Trackball controls (default)</div>
+                <div><span style="font-weight: bold;">T</span> Switch to Trackball controls (virtual ball)</div>
                 <div><span style="font-weight: bold;">O</span> Switch to OrbitControls</div>
-                <div><span style="font-weight: bold;">I</span> Switch to Legacy Trackball controls</div>
+                <div><span style="font-weight: bold;">I</span> Switch to Legacy Trackball controls (default)</div>
                 <div><span style="font-weight: bold;">K</span> Switch to ArcballControls</div>
             </div>
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">📷 Camera Conventions</div>

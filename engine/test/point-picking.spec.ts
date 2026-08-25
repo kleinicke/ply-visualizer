@@ -88,6 +88,15 @@ async function timedDoubleClick(page: Page, relX: number, relY: number): Promise
   );
 }
 
+/** The fitted cloud/rotation target is centered in the unobstructed safe area. */
+async function targetRelativePosition(page: Page): Promise<{ x: number; y: number }> {
+  return page.evaluate(() => {
+    const viewer: any = (window as any).visualizer;
+    const projected = viewer.controls.target.clone().project(viewer.camera);
+    return { x: (projected.x + 1) / 2, y: (1 - projected.y) / 2 };
+  });
+}
+
 test.describe('Double-click point picking', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -102,10 +111,11 @@ test.describe('Double-click point picking', () => {
     page.on('console', msg => logs.push(msg.text()));
 
     await loadPly(page, buildLargePly(POINT_COUNT), 'picking_perf.ply');
+    let target = await targetRelativePosition(page);
 
     // Sanity: pick works at the default (fitted) zoom level
     logs.length = 0;
-    const zoomedInMs = await timedDoubleClick(page, 0.5, 0.5);
+    const zoomedInMs = await timedDoubleClick(page, target.x, target.y);
     await expect.poll(() => logs.join('\n')).toContain('screen-space pick');
     console.log(`Zoomed-in pick handler time: ${zoomedInMs.toFixed(1)}ms`);
 
@@ -114,7 +124,7 @@ test.describe('Double-click point picking', () => {
     const canvas = page.locator('#three-canvas');
     const box = await canvas.boundingBox();
     expect(box).not.toBeNull();
-    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.move(box!.x + box!.width * target.x, box!.y + box!.height * target.y);
     for (let i = 0; i < 30; i++) {
       await page.mouse.wheel(0, 500);
       await page.waitForTimeout(50);
@@ -122,7 +132,8 @@ test.describe('Double-click point picking', () => {
     await page.waitForTimeout(500);
 
     logs.length = 0;
-    const zoomedOutMs = await timedDoubleClick(page, 0.5, 0.5);
+    target = await targetRelativePosition(page);
+    const zoomedOutMs = await timedDoubleClick(page, target.x, target.y);
     console.log(`Zoomed-out pick handler time: ${zoomedOutMs.toFixed(1)}ms`);
 
     await expect.poll(() => logs.join('\n')).toContain('screen-space pick');
@@ -139,11 +150,12 @@ test.describe('Double-click point picking', () => {
     page.on('console', msg => logs.push(msg.text()));
 
     await loadPly(page, buildLargePly(10_000), 'picking_miss.ply');
+    let target = await targetRelativePosition(page);
 
     // Zoom out so the cloud shrinks to a small blob in the center
     const canvas = page.locator('#three-canvas');
     const box = await canvas.boundingBox();
-    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.move(box!.x + box!.width * target.x, box!.y + box!.height * target.y);
     for (let i = 0; i < 30; i++) {
       await page.mouse.wheel(0, 500);
       await page.waitForTimeout(50);
@@ -153,7 +165,8 @@ test.describe('Double-click point picking', () => {
     // A miss close to the cloud must not move the camera (failed pick, not
     // a recovery gesture)
     logs.length = 0;
-    await timedDoubleClick(page, 0.5 + 80 / box!.width, 0.5);
+    target = await targetRelativePosition(page);
+    await timedDoubleClick(page, target.x + 80 / box!.width, target.y);
     await expect.poll(() => logs.join('\n')).toContain('No selectable object found');
     let output = logs.join('\n');
     expect(output).toContain('No selectable object found');
@@ -167,7 +180,8 @@ test.describe('Double-click point picking', () => {
 
     // After the refit the cloud fills the view again and picking works
     logs.length = 0;
-    await timedDoubleClick(page, 0.5, 0.5);
+    target = await targetRelativePosition(page);
+    await timedDoubleClick(page, target.x, target.y);
     await expect.poll(() => logs.join('\n')).toContain('screen-space pick');
   });
 });

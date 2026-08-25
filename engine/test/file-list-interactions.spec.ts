@@ -100,6 +100,23 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await expect(content).toBeVisible();
   });
 
+  test('shift-click collapses and expands every file item', async ({ page }) => {
+    await page
+      .locator('#hiddenFileInput')
+      .setInputFiles([
+        path.resolve('../testfiles/ply/test_small_mesh.ply'),
+        path.resolve('../testfiles/ply/test_small_mesh_binary.ply'),
+      ]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const firstToggle = page.locator('.collapse-toggle[data-file-index="0"]');
+    await firstToggle.click({ modifiers: ['Shift'] });
+    await expect(page.locator('.file-item-content:visible')).toHaveCount(0);
+
+    await firstToggle.click({ modifiers: ['Shift'] });
+    await expect(page.locator('.file-item-content:visible')).toHaveCount(2);
+  });
+
   test('container rows reveal the displayed embedded filename in their tooltip', () => {
     expect(filenameTooltip('survey/archive.x3a', 'very-long-embedded-scan-name.x3r')).toBe(
       'survey/archive.x3a / very-long-embedded-scan-name.x3r'

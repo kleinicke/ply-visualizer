@@ -457,6 +457,53 @@ test.describe('Scan-to-scan registration', () => {
     expect(kept).toEqual(applied);
   });
 
+  /**
+   * The picking aid: it has to answer "whose turn", "how many so far" and "is
+   * this feature even visible in the other scan" without costing you your place.
+   */
+  test('tracks picks per cloud and flips between the two views without losing the step', async ({
+    page,
+  }) => {
+    test.slow();
+    await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const panel = await openPairPanel(page);
+    await panel.locator('.registration-needs-coarse').click();
+    await expect(panel.locator('.pick-status')).toBeVisible();
+    await expect(panel.locator('.pick-tally')).toContainText('Fixed 0/3');
+
+    await page.evaluate(() => {
+      const feature = (window as any).registrationFeature;
+      feature.handlePickedPoint((window as any).visualizer, { x: 0, y: 0, z: 0 });
+    });
+    await expect(panel.locator('.pick-tally')).toContainText('Fixed 1/3');
+    await expect(panel.locator('.pick-chip')).toHaveCount(1);
+
+    // Looking at the moving cloud must not advance the step: the next click is
+    // still the fixed cloud's second point.
+    await panel.locator('.registration-view-moving').click();
+    await expect(page.locator('#file-0')).not.toBeChecked();
+    await expect(page.locator('#file-1')).toBeChecked();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.workflow))
+      .toBe('coarse-fixed');
+
+    await panel.locator('.registration-view-both').click();
+    await expect(page.locator('#file-0')).toBeChecked();
+    await expect(page.locator('#file-1')).toBeChecked();
+
+    // The next pick returns the view to the step that owns it.
+    await page.evaluate(() => {
+      const feature = (window as any).registrationFeature;
+      feature.handlePickedPoint((window as any).visualizer, { x: 1, y: 0, z: 0 });
+    });
+    await expect(panel.locator('.pick-tally')).toContainText('Fixed 2/3');
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.viewOverride))
+      .toBe(null);
+  });
+
   test('can solve one cloud against every other cloud at once', async ({ page }) => {
     test.slow();
     await page.locator('#hiddenFileInput').setInputFiles([fixedFile, movedFile]);

@@ -130,10 +130,10 @@ there; put code in the modules above.
   per-file Spark splat-render toggle; SPZ/SPLAT/KSPLAT/SOG containers open
   through Spark with splat mode on by default
   (`engine/src/visualization/splatMode.ts`).
-- Known issues: (The old "rotation inverted vs CloudCompare" complaint is
-  resolved: the default Trackball scheme is now a CloudCompare-style virtual
-  ball; the old delta trackball is "Legacy Trackball" (`I`) — see the resolved
-  post-mortem in docs/BACKLOG.md.)
+- Control schemes: "Legacy Trackball" (`I`), the delta-based three.js
+  TrackballControls implementation, is the default. The CloudCompare-style
+  virtual-ball "Trackball" scheme remains available under `T`; see the resolved
+  rotation-direction post-mortem in docs/BACKLOG.md.
 - I've got a tiff/image viewing extension as well. Sometimes I add a prompt in
   the wrong window. Tell me.
 

@@ -20,6 +20,8 @@ import { mountMeasurementQuickActions } from './measurementQuickActionsMount';
 import { mountSmallViewAffordance } from './smallViewAffordanceMount';
 import { mountFileActivityIndicator } from './fileActivityIndicatorMount';
 import { SmallViewAffordance } from './smallViewAffordance';
+import { ScreenAnchorController, type SafeViewRect } from './screenAnchor';
+import { TouchNavigationController } from './touchNavigation';
 import {
   SelectionManager,
   SelectionContext,
@@ -285,6 +287,9 @@ class PointCloudVisualizer {
   needsRender: boolean = false;
   private animationId: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private screenAnchor: ScreenAnchorController | null = null;
+  private touchNavigation: TouchNavigationController | null = null;
+  private pointPickGeneration = 0;
 
   // Welcome message state
   isFileLoading: boolean = false;
@@ -624,6 +629,16 @@ class PointCloudVisualizer {
       mountPerformanceStats();
       mountTabNav(this);
 
+      const panel = document.getElementById('main-ui-panel');
+      if (panel) {
+        this.screenAnchor = new ScreenAnchorController({
+          camera: this.camera,
+          canvas: this.renderer.domElement,
+          panel,
+          onChange: safeRect => this.applyControlScreenRegion(safeRect),
+        });
+      }
+
       // Setup color image loader callback
       this.colorImageLoader.setStatusCallback((message, type) => {
         this.showColorMappingStatus(message, type);
@@ -747,6 +762,15 @@ class PointCloudVisualizer {
 
     // Initialize controls
     this.initializeControls();
+    this.touchNavigation = new TouchNavigationController({
+      camera: this.camera,
+      element: this.renderer.domElement,
+      getControls: () => this.controls,
+      onChange: () => this.requestRender(),
+      onDoubleTap: (clientX, clientY) => {
+        void this.onDoubleClick(new MouseEvent('dblclick', { bubbles: true, clientX, clientY }));
+      },
+    });
 
     // Initialize measurement manager
     this.measurementManager = new MeasurementManager(this.scene, this.camera, this.renderer);
@@ -827,7 +851,7 @@ class PointCloudVisualizer {
     }
 
     if (this.controlType === 'trackball') {
-      // Default sphere-projected "virtual ball" trackball: center drags
+      // Optional sphere-projected "virtual ball" trackball: center drags
       // orbit, while rim/tangential drags roll the scene under the cursor.
       this.controls = new VirtualBallControls(this.camera, this.renderer.domElement);
       const ball = this.controls as VirtualBallControls;
@@ -844,7 +868,7 @@ class PointCloudVisualizer {
       ball.zoomSpeed = 2.5;
       ball.panSpeed = 1.5;
     } else if (this.controlType === 'legacy-trackball') {
-      // The pre-2026-07 default: three.js delta-based TrackballControls.
+      // Default: three.js delta-based TrackballControls.
       this.controls = new TrackballControls(this.camera, this.renderer.domElement);
       const trackballControls = this.controls as TrackballControls;
       trackballControls.rotateSpeed = 5.0;
@@ -886,12 +910,24 @@ class PointCloudVisualizer {
     this.camera.up.copy(currentUp);
     this.controls.target.copy(currentTarget);
     this.controls.update();
+    const safeRect = this.screenAnchor?.getSafeRect();
+    if (safeRect) {
+      this.applyControlScreenRegion(safeRect);
+    }
 
     // Initialize rotation center tracking
     this.lastRotationCenter.copy(this.controls.target);
 
     // Update control status to highlight active button
     this.updateControlStatus();
+  }
+
+  private applyControlScreenRegion(safeRect: SafeViewRect): void {
+    const controls = this.controls as typeof this.controls & {
+      setScreenRegion?(region: SafeViewRect): void;
+    };
+    controls.setScreenRegion?.(safeRect);
+    this.requestRender();
   }
 
   private setupAxesVisibility(): void {
@@ -1052,6 +1088,11 @@ class PointCloudVisualizer {
       this.resizeObserver = null;
     }
 
+    this.touchNavigation?.dispose();
+    this.touchNavigation = null;
+    this.screenAnchor?.dispose();
+    this.screenAnchor = null;
+
     // Clean up measurements
     if (this.measurementManager) {
       this.measurementManager.dispose();
@@ -1146,6 +1187,7 @@ class PointCloudVisualizer {
     this.camera.aspect = container.clientWidth / container.clientHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(container.clientWidth, container.clientHeight);
+    this.screenAnchor?.refreshAutomatic();
 
     // Update EDL composer and render targets on resize
     if (this.effectComposer) {
@@ -1591,6 +1633,11 @@ class PointCloudVisualizer {
       return;
     }
 
+    // Only the most recently started pick may change the viewer. This protects
+    // touch double-taps from a later Safari compatibility event and prevents an
+    // older asynchronous pick from overwriting a newer result.
+    const pickGeneration = ++this.pointPickGeneration;
+
     // Get canvas and mouse position in screen coordinates
     const canvas = this.renderer.domElement;
     const rect = canvas.getBoundingClientRect();
@@ -1608,6 +1655,10 @@ class PointCloudVisualizer {
       mouseScreenY,
       canvas
     );
+
+    if (pickGeneration !== this.pointPickGeneration) {
+      return;
+    }
 
     if (result) {
       const { point: selectedPoint, info } = result;
@@ -2001,8 +2052,15 @@ class PointCloudVisualizer {
       const size = box.getSize(new THREE.Vector3());
       const center = box.getCenter(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
-      const fov = this.camera.fov * (Math.PI / 180);
-      const distance = (maxDim / 2 / Math.tan(fov / 2)) * 1.5;
+      this.screenAnchor?.refreshAutomatic();
+      const safeFraction = this.screenAnchor?.getFitFractions() ?? { width: 1, height: 1 };
+      const vFov = this.camera.fov * (Math.PI / 180);
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
+      const distance =
+        Math.max(
+          maxDim / (2 * Math.tan(vFov / 2) * safeFraction.height),
+          maxDim / (2 * Math.tan(hFov / 2) * safeFraction.width)
+        ) * 1.5;
 
       // Move camera along its current direction to the new distance
       const dir = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
@@ -2051,6 +2109,10 @@ class PointCloudVisualizer {
 
   private switchTab(tabName: string | null): void {
     uiStatus.switchTab(tabName);
+    // Tab collapse/expansion is intentional layout state, so it is one of the
+    // few times the automatic visual center should follow the panel. Ordinary
+    // row/content changes do not call this and therefore cannot move the view.
+    requestAnimationFrame(() => this.screenAnchor?.refreshAutomatic());
   }
 
   private toggleAxesVisibility(): void {
@@ -2747,10 +2809,15 @@ class PointCloudVisualizer {
     const center = fitBox.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 1e-6);
 
+    // Fit against the unobstructed region selected by ScreenAnchorController,
+    // not the full canvas hidden partly beneath the top-right menu.
+    this.screenAnchor?.refreshAutomatic();
+    const safeFraction = this.screenAnchor?.getFitFractions() ?? { width: 1, height: 1 };
+
     const vFov = this.camera.fov * (Math.PI / 180);
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
-    const fitHeightDistance = maxDim / (2 * Math.tan(vFov / 2));
-    const fitWidthDistance = maxDim / (2 * Math.tan(hFov / 2));
+    const fitHeightDistance = maxDim / (2 * Math.tan(vFov / 2) * safeFraction.height);
+    const fitWidthDistance = maxDim / (2 * Math.tan(hFov / 2) * safeFraction.width);
     const distance = Math.max(fitHeightDistance, fitWidthDistance) * 1.5; // padding
 
     // Keep current camera viewing direction and move along it.

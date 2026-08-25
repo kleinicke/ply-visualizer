@@ -2,6 +2,8 @@
   import { filesState } from '../state/files.svelte';
   import { runWithFileActivity } from '../fileActivity';
   import { getPointCloudColorOptions } from '../colorOptions';
+  import { ensureKeyboardModifierTracking, isShiftPressed } from '../keyboardModifiers';
+  import { getRenderModeOptions, hasRenderMode } from '../renderModeOptions';
   import CameraFrameList from './CameraFrameList.svelte';
   import E57CorrectionPanel from './E57CorrectionPanel.svelte';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
@@ -24,6 +26,8 @@
     index,
     kind,
   }: { host: any; index: number; kind: 'pointcloud' | 'pose' | 'camera' } = $props();
+
+  ensureKeyboardModifierTracking();
 
   const data = $derived(
     (filesState.renderTick, kind === 'pointcloud' ? host.spatialFiles[index] : null)
@@ -110,10 +114,17 @@
     return `background-color: ${colorHex}`;
   }
 
-  function toggleCollapse() {
+  function toggleCollapse(event: MouseEvent) {
     const newCollapsed = !collapsed;
-    host.fileItemsCollapsed[index] = newCollapsed;
-    filesState.collapsed[index] = newCollapsed;
+    if (event.shiftKey) {
+      for (let fileIndex = 0; fileIndex < host.fileEntries.length; fileIndex++) {
+        host.fileItemsCollapsed[fileIndex] = newCollapsed;
+        filesState.collapsed[fileIndex] = newCollapsed;
+      }
+    } else {
+      host.fileItemsCollapsed[index] = newCollapsed;
+      filesState.collapsed[index] = newCollapsed;
+    }
   }
 
   function onVisibilityClick(e: MouseEvent) {
@@ -140,45 +151,32 @@
 
   async function onColorModeChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value;
-    await runWithFileActivity(() => host.onFileColorModeChange(index, value));
+    // A select's change Event has no modifier fields. Read the live keyboard
+    // state here so Shift means "held while choosing this option", regardless
+    // of whether it was held when the list was first opened.
+    const applyToAll = kind === 'pointcloud' && isShiftPressed();
+    await runWithFileActivity(() => {
+      if (!applyToAll) {
+        host.onFileColorModeChange(index, value);
+        return;
+      }
+      for (let fileIndex = 0; fileIndex < host.spatialFiles.length; fileIndex++) {
+        const fileData = host.spatialFiles[fileIndex];
+        if (
+          fileData &&
+          !host.splatMode?.isActive(fileIndex) &&
+          getPointCloudColorOptions(host, fileData, fileIndex).some(
+            option => option.value === value
+          )
+        ) {
+          host.onFileColorModeChange(fileIndex, value);
+        }
+      }
+    });
   }
 
-  // Render-mode button availability, matching the original updateFileList() logic.
-  const hasFaces = $derived(kind === 'pointcloud' && data?.faceCount > 0);
-  const hasLines = $derived(
-    kind === 'pointcloud' && (data as any)?.objData && (data as any).objData.lineCount > 0
-  );
-  const hasGeometry = $derived(hasFaces || hasLines);
-  const hasNormalsData = $derived(kind === 'pointcloud' && (data?.hasNormals || hasFaces));
-  const isPtsFile = $derived(kind === 'pointcloud' && data?.fileName?.toLowerCase().endsWith('.pts'));
-  const shouldShowNormals = $derived(
-    hasNormalsData && (!isPtsFile || (data?.vertices.length > 0 && data.vertices[0]?.nx !== undefined))
-  );
   const renderModeButtons = $derived(
-    (() => {
-      if (kind === 'pointcloud' && data) {
-        // Kept for parity with the pre-Phase-3 updateFileList(), which
-        // Playwright specs assert on (faceCount/hasFaces/hasGeometry signal
-        // that parsing + render-mode computation completed for this file).
-        console.log(
-          `File ${index}: ${data.fileName}, faceCount=${data.faceCount}, lineCount=${(data as any).objData?.lineCount || 0}, hasNormals=${data.hasNormals}, hasFaces=${hasFaces}, hasLines=${hasLines}, hasGeometry=${hasGeometry}`
-        );
-      }
-      const buttons: Array<{ mode: string; label: string; cls: string }> = [
-        { mode: 'points', label: '👁️ Points', cls: 'points-btn' },
-      ];
-      if (kind === 'pointcloud' && data && host.splatMode?.canEnable(data)) {
-        buttons.push({ mode: 'splat', label: '✨ Splats', cls: 'splat-btn' });
-      }
-      if (hasGeometry) {
-        buttons.push({ mode: 'mesh', label: '🔷 Mesh', cls: 'mesh-btn' });
-        buttons.push({ mode: 'wireframe', label: '📐 Wireframe', cls: 'wireframe-btn' });
-      }
-      if (shouldShowNormals) {
-        buttons.push({ mode: 'normals', label: '📏 Normals', cls: 'normals-btn' });
-      }
-      return buttons;
-    })()
+    kind === 'pointcloud' && data ? getRenderModeOptions(host, data) : []
   );
   const renderModeGridColumns = $derived(
     { 1: '1fr', 2: '1fr 1fr', 3: '1fr 1fr 1fr', 4: '1fr 1fr 1fr 1fr' }[renderModeButtons.length] ||
@@ -196,26 +194,48 @@
   // point sprite whose size could be tuned.
   const hasPointSize = $derived(data?.metadata?.volumeRenderMode !== 'voxels');
 
-  function onRenderModeClick(mode: string) {
-    host.toggleUniversalRenderMode(index, mode);
+  function onRenderModeClick(event: MouseEvent, mode: string) {
+    if (!event.shiftKey) {
+      host.toggleUniversalRenderMode(index, mode);
+      return;
+    }
+
+    const targetActive = !isRenderModeActiveFor(index, mode);
+    for (let fileIndex = 0; fileIndex < host.spatialFiles.length; fileIndex++) {
+      const fileData = host.spatialFiles[fileIndex];
+      if (
+        fileData &&
+        hasRenderMode(host, fileData, mode) &&
+        isRenderModeActiveFor(fileIndex, mode) !== targetActive
+      ) {
+        host.toggleUniversalRenderMode(fileIndex, mode);
+      }
+    }
   }
 
   function isRenderModeActive(mode: string): boolean {
     // Re-evaluate parallel-array state without remounting the complete file
     // list (which would discard its scroll position and local row state).
     filesState.renderModeTick;
+    return isRenderModeActiveFor(index, mode);
+  }
+
+  function isRenderModeActiveFor(fileIndex: number, mode: string): boolean {
+    const fileData = host.spatialFiles[fileIndex];
+    const supportsSplats = !!fileData && !!host.splatMode?.canEnable(fileData);
+    const fileSplatActive = supportsSplats && !!host.splatMode?.isActive(fileIndex);
     switch (mode) {
       case 'points':
-        return canRenderSplats ? !splatActive : (host.pointsVisible[index] ?? true);
+        return supportsSplats ? !fileSplatActive : (host.pointsVisible[fileIndex] ?? true);
       case 'splat':
-        return splatActive;
+        return fileSplatActive;
       case 'mesh':
       case 'solid':
-        return host.solidVisible[index] ?? true;
+        return host.solidVisible[fileIndex] ?? true;
       case 'wireframe':
-        return host.wireframeVisible[index] ?? false;
+        return host.wireframeVisible[fileIndex] ?? false;
       case 'normals':
-        return host.normalsVisible[index] ?? false;
+        return host.normalsVisible[fileIndex] ?? false;
       default:
         return false;
     }
@@ -295,19 +315,46 @@
     return kind === 'pose' ? 0.02 : kind === 'camera' ? 1.0 : recommendedPointSize;
   }
 
-  function setPointSize(value: number) {
-    host.updatePointSize(index, value);
-    filesState.pointSizes[index] = value;
-    const slider = document.getElementById(`size-${index}`) as HTMLInputElement | null;
-    const input = document.getElementById(`size-input-${index}`) as HTMLInputElement | null;
+  let sizeShiftToAll = false;
+
+  function setPointSizeForIndex(fileIndex: number, value: number) {
+    host.updatePointSize(fileIndex, value);
+    filesState.pointSizes[fileIndex] = value;
+    const slider = document.getElementById(`size-${fileIndex}`) as HTMLInputElement | null;
+    const input = document.getElementById(`size-input-${fileIndex}`) as HTMLInputElement | null;
     if (slider) slider.value = String(value);
     if (input) input.value = value.toFixed(sizePrecision);
+  }
+
+  function setPointSize(value: number, applyToAll = false) {
+    if (applyToAll && kind === 'pointcloud') {
+      for (let fileIndex = 0; fileIndex < host.spatialFiles.length; fileIndex++) {
+        const fileData = host.spatialFiles[fileIndex];
+        if (
+          fileData &&
+          fileData.metadata?.volumeRenderMode !== 'voxels' &&
+          !host.splatMode?.isActive(fileIndex)
+        ) {
+          setPointSizeForIndex(fileIndex, value);
+        }
+      }
+    } else {
+      setPointSizeForIndex(index, value);
+    }
     host.requestRender();
   }
 
   function onSizeSliderInput(e: Event) {
     const newSize = parseFloat((e.target as HTMLInputElement).value);
-    setPointSize(newSize);
+    setPointSize(newSize, sizeShiftToAll);
+  }
+
+  function onSizeSliderPointerDown(e: PointerEvent) {
+    sizeShiftToAll = kind === 'pointcloud' && e.shiftKey;
+  }
+
+  function onSizeSliderPointerEnd() {
+    sizeShiftToAll = false;
   }
 
   function onSizeSliderReset(e: MouseEvent) {
@@ -501,7 +548,7 @@
       title={collapsed ? 'Expand' : 'Collapse'}
       onclick={(e: MouseEvent) => {
         e.stopPropagation();
-        toggleCollapse();
+        toggleCollapse(e);
       }}
     >
       <span class="collapse-icon">{collapsed ? '▶' : '▼'}</span>
@@ -541,7 +588,7 @@
               data-file-index={index}
               data-mode={btn.mode}
               style={`padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer; background: ${isRenderModeActive(btn.mode) ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)'}; color: ${isRenderModeActive(btn.mode) ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)'};`}
-              onclick={() => onRenderModeClick(btn.mode)}>{btn.label}</button
+              onclick={(event) => onRenderModeClick(event, btn.mode)}>{btn.label}</button
             >
           {/each}
         </div>
@@ -590,6 +637,9 @@
             value={pointSize}
             class="size-slider"
             style="width: 100%;"
+            onpointerdown={onSizeSliderPointerDown}
+            onpointerup={onSizeSliderPointerEnd}
+            onpointercancel={onSizeSliderPointerEnd}
             oninput={onSizeSliderInput}
             ondblclick={onSizeSliderReset}
             title="Double-click to reset"
@@ -628,7 +678,12 @@
       {#if !splatActive}
         <div class="color-control">
           <label for={`color-${index}`}>Color:</label>
-          <select id={`color-${index}`} class="color-selector" value={colorMode} onchange={onColorModeChange}>
+          <select
+            id={`color-${index}`}
+            class="color-selector"
+            value={colorMode}
+            onchange={onColorModeChange}
+          >
           {#each colorOptions as option (option.value)}
             <option value={option.value}>{option.label}</option>
           {/each}

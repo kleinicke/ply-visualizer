@@ -98,6 +98,14 @@ module.exports = {
           to: 'examples',
         },
         {
+          from: 'manifest.webmanifest',
+          to: 'manifest.webmanifest',
+        },
+        {
+          from: '../icon.png',
+          to: 'apple-touch-icon.png',
+        },
+        {
           from: 'src/themes',
           to: 'src/themes',
         },
