@@ -112,6 +112,11 @@ there; put code in the modules above.
   `value` is their default; controls with a computed or semantic default must
   provide an explicit `ondblclick` handler. Give the slider a reset tooltip and
   test the interaction when adding a new slider family.
+- Eye Dome Lighting defaults to **Auto** and `E` cycles Auto → All → Off. Auto
+  runs only when a visible point cloud uses a uniform material colour and masks
+  per-point RGB/projected/intensity/scalar-coloured pixels from darkening; all
+  visible geometry still contributes to the shared depth buffer. Keep this
+  eligibility tied to the active colour mode, not merely to source RGB data.
 - `engine/index.html` is the single source of truth for the UI shell.
   `src/pointCloudEditorProvider.ts` reads and rewrites it at runtime — never
   duplicate HTML between the two hosts.

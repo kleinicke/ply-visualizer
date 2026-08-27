@@ -97,6 +97,7 @@ test('loads the guided release example with its predefined presentation', async 
         return {
           colorMode: visualizer.individualColorModes[0],
           edlEnabled: visualizer.edlEnabled,
+          edlMode: visualizer.edlMode,
           keyframes: visualizer.filmManager.getKeyframes().length,
           playing: visualizer.filmManager.isPlaying(),
           measurementPathCount: measurementProject.paths.length,
@@ -108,6 +109,7 @@ test('loads the guided release example with its predefined presentation', async 
     .toEqual({
       colorMode: '0',
       edlEnabled: true,
+      edlMode: 'auto',
       keyframes: 4,
       playing: true,
       measurementPathCount: 1,
@@ -120,7 +122,7 @@ test('loads the guided release example with its predefined presentation', async 
   await expect(page.locator('#close-measurement-path')).toHaveClass(/active/);
 });
 
-test('keeps the original point cloud as a basic example with EDL enabled', async ({ page }) => {
+test('keeps the original point cloud as a basic example with automatic EDL', async ({ page }) => {
   await page.route('https://analytics.re4vive.com/**', route => route.abort());
   await page.goto('/');
 
@@ -130,5 +132,5 @@ test('keeps the original point cloud as a basic example with EDL enabled', async
   await expect(page.locator('#file-list')).toContainText('example-point-cloud.ply', {
     timeout: 30_000,
   });
-  await expect.poll(() => page.evaluate(() => (window as any).visualizer.edlEnabled)).toBe(true);
+  await expect.poll(() => page.evaluate(() => (window as any).visualizer.edlMode)).toBe('auto');
 });

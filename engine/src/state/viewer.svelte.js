@@ -13,6 +13,7 @@ export const viewerState = $state(
    *   controlScheme: string;
    *   cameraConvention: string;
    *   edlEnabled: boolean;
+   *   edlMode: 'auto' | 'all' | 'off';
    *   edlStrength: number;
    *   edlRadius: number;
    *   brightnessStops: number;
@@ -28,7 +29,8 @@ export const viewerState = $state(
    */ ({
     controlScheme: 'legacy-trackball',
     cameraConvention: 'opengl',
-    edlEnabled: false,
+    edlEnabled: true,
+    edlMode: 'auto',
     edlStrength: 1.0,
     edlRadius: 1.4,
     brightnessStops: 0,

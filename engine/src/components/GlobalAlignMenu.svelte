@@ -240,12 +240,12 @@
       </button>
       <button
         id="tools-edl"
-        class:active={viewerState.edlEnabled}
-        aria-pressed={viewerState.edlEnabled}
+        class:active={viewerState.edlMode !== 'off'}
+        aria-label={`Eye Dome Lighting: ${viewerState.edlMode}`}
         onclick={() => host.toggleEDL()}
         disabled={!host.effectComposer}
       >
-        Eye Dome Lighting <span>{viewerState.edlEnabled ? 'On' : 'Off'} · E</span>
+        Eye Dome Lighting <span>{viewerState.edlMode[0].toUpperCase() + viewerState.edlMode.slice(1)} · E</span>
       </button>
       <button id="tools-world-origin" onclick={setRotationCenterToOrigin}>
         Rotation center: world origin <span>W</span>

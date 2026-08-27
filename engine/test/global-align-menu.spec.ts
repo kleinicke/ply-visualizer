@@ -114,9 +114,15 @@ test.describe('Global align menu', () => {
       .poll(() => page.evaluate(() => (window as any).visualizer.controls.target.toArray()))
       .toEqual([0, 0, 0]);
 
-    await expect(page.locator('#tools-edl')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#tools-edl')).toHaveAttribute(
+      'aria-label',
+      'Eye Dome Lighting: auto'
+    );
     await page.locator('#tools-edl').click();
-    await expect(page.locator('#tools-edl')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#tools-edl')).toHaveAttribute(
+      'aria-label',
+      'Eye Dome Lighting: all'
+    );
   });
 
   test('aligns every other cloud onto the selected anchor', async ({ page }) => {

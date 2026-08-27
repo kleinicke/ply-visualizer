@@ -263,7 +263,11 @@ class PointCloudVisualizer {
   allowTransparency: boolean = false;
 
   // Eye Dome Lighting (EDL) state
-  edlEnabled: boolean = false;
+  // Auto is the default: the pass runs only while at least one visible point
+  // cloud uses a uniform material colour. `edlEnabled` remains as a backwards-
+  // compatible master switch for benchmarks and integrations.
+  edlEnabled: boolean = true;
+  edlMode: edl.EDLMode = 'auto';
   edlStrength: number = 1.0;
   edlRadius: number = 1.4;
   edlSecondRingWeight: number = 0.0;
@@ -1374,9 +1378,10 @@ class PointCloudVisualizer {
     this.adaptivePointRenderer.beforeRender();
     this.smallViewAffordance.update();
     const visibilityContext = this.getVisibilityRenderContext();
+    const useEDL = edl.prepareEDLFrame(this);
     const useVisibilityRenderer =
       this.pointRenderingImplementation === 'webgpu-visibility' &&
-      !this.edlEnabled &&
+      !useEDL &&
       !this.allowTransparency &&
       !!this.webgpuVisibilityRenderer &&
       this.webgpuVisibilityRenderer.canRender(visibilityContext);
@@ -1410,7 +1415,7 @@ class PointCloudVisualizer {
     }
 
     this.webgpuVisibilityRenderer?.setEnabled(false);
-    if (this.edlEnabled && this.effectComposer) {
+    if (useEDL && this.effectComposer) {
       this.effectComposer.render();
     } else {
       this.renderer.render(this.scene, this.camera);

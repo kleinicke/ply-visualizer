@@ -42,7 +42,6 @@ export interface BrowserFileDragDropHost {
   vscode: { postMessage(message: any): void };
   spatialFiles: SpatialData[];
   filmManager: FilmManager | null;
-  edlEnabled: boolean;
   fileDepthData: Map<
     number,
     {
@@ -61,7 +60,6 @@ export interface BrowserFileDragDropHost {
   handlePoseData(message: any): Promise<void>;
   displayFiles(dataArray: SpatialData[]): Promise<void>;
   onFileColorModeChange(fileIndex: number, value: string): void;
-  toggleEDL(): void;
   setOpenGLCameraConvention(): void;
   loadMeasurementPathProject(jsonText: string): boolean;
   updatePrinciplePointFields(fileIndex: number, dims: { width: number; height: number }): void;
@@ -464,9 +462,6 @@ export async function loadExamplePointCloud(
         type: 'application/octet-stream',
       });
       await handleBrowserFiles(host, [file]);
-      if (!host.edlEnabled) {
-        host.toggleEDL();
-      }
       trackWebsiteEvent('Example Point Cloud Loaded');
     } catch (error) {
       host.showError(
@@ -505,9 +500,6 @@ export async function loadExamplePointCloud(
     // This example intentionally starts as a clean white cloud, while the
     // per-file colour picker still offers its embedded RGB data as Original.
     host.onFileColorModeChange(firstExampleIndex, '0');
-    if (!host.edlEnabled) {
-      host.toggleEDL();
-    }
     host.setOpenGLCameraConvention();
 
     const measurementPath = await measurementPathResponse.text();

@@ -334,17 +334,18 @@
       <button
         id="toggle-edl"
         class="control-button"
-        class:active={viewerState.edlEnabled}
+        class:active={viewerState.edlMode !== 'off'}
+        aria-label={`Eye Dome Lighting: ${viewerState.edlMode}`}
         onclick={onToggleEdl}
       >
-        Eye Dome Lighting <span class="button-shortcut">E</span>
+        Eye Dome Lighting: {viewerState.edlMode[0].toUpperCase() + viewerState.edlMode.slice(1)} <span class="button-shortcut">E</span>
       </button>
     </div>
     <p class="setting-description">
-      Eye Dome Lighting enhances depth perception by darkening edges and silhouettes. Works with
-      all geometry types and combines with any lighting mode.
+      Auto shades uniformly coloured point clouds while preserving per-point colours. All shades
+      every geometry type; Off bypasses the post-processing pass.
     </p>
-    <div id="edl-settings" style="display: {viewerState.edlEnabled ? 'block' : 'none'}; margin-top: 8px;">
+    <div id="edl-settings" style="display: {viewerState.edlMode !== 'off' ? 'block' : 'none'}; margin-top: 8px;">
       <div id="edl-advanced-settings" style="margin-bottom: 6px;">
         <div class="control-group" style="margin-bottom: 6px;">
           <label for="edl-second-ring-slider" style="font-size: 11px;">Second Ring:</label>
