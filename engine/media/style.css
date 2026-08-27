@@ -304,6 +304,15 @@ body {
 }
 
 /* Control Buttons */
+/* Buttons retain keyboard focus for shortcut handling, but never paint a
+   focus ring/highlight after they have been clicked. Active/toggled state is
+   still communicated by each control's explicit .active styling. */
+button:focus,
+button:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 .control-buttons {
   display: flex;
   flex-direction: column;
@@ -906,8 +915,15 @@ body {
   font-size: 13px;
 }
 
+.example-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .example-button {
-  margin-left: 6px;
   padding: 5px 10px;
   color: var(--vscode-button-secondaryForeground);
   background: var(--vscode-button-secondaryBackground);

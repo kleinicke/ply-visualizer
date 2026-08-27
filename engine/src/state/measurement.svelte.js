@@ -11,6 +11,7 @@ export const measurementState = $state(
    *   pathClosed: boolean;
    *   pathCount: number;
    *   pathStartMode: 'center' | 'free' | null;
+   *   pickingEnabled: boolean;
    *   segmentLengths: number[];
    *   totalLength: number;
    * }}
@@ -19,6 +20,7 @@ export const measurementState = $state(
     pathClosed: false,
     pathCount: 0,
     pathStartMode: 'center',
+    pickingEnabled: false,
     segmentLengths: [],
     totalLength: 0,
   })

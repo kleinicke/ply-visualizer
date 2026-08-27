@@ -14,6 +14,7 @@ import { CustomArcballControls, TurntableControls, VirtualBallControls } from '.
 import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
 import { RotationCenterManager, RotationCenterMode } from './RotationCenterManager';
 import { MeasurementManager } from './MeasurementManager';
+import { measurementState } from './state/measurement.svelte';
 import { FilmManager } from './film/FilmManager';
 import { mountFilmPanel } from './filmPanelMount';
 import { mountMeasurementQuickActions } from './measurementQuickActionsMount';
@@ -647,7 +648,8 @@ class PointCloudVisualizer {
       // Setup welcome message interactivity
       mountWelcomeMessage(
         () => this.triggerOpenFile(),
-        () => browserFileDragDrop.loadExamplePointCloud(this)
+        () => browserFileDragDrop.loadExamplePointCloud(this, 'guided'),
+        () => browserFileDragDrop.loadExamplePointCloud(this, 'basic')
       );
 
       // Initial check for formatted welcome message
@@ -773,7 +775,7 @@ class PointCloudVisualizer {
     });
 
     // Initialize measurement manager
-    this.measurementManager = new MeasurementManager(this.scene, this.camera, this.renderer);
+    this.measurementManager = new MeasurementManager(this.scene, this.camera, this.renderer, this);
 
     // Initialize selection manager
     this.selectionManager = new SelectionManager(this.getSelectionContext());
@@ -1448,7 +1450,7 @@ class PointCloudVisualizer {
   /**
    * Toggle Eye Dome Lighting on/off.
    */
-  private toggleEDL(): void {
+  toggleEDL(): void {
     edl.toggleEDL(this);
   }
 
@@ -1692,7 +1694,7 @@ class PointCloudVisualizer {
       // Shift + double-click is the single measurement gesture. The first
       // implicit path starts at the rotation center; an explicitly created
       // free path starts at the first picked point instead.
-      if (event.shiftKey && this.measurementManager) {
+      if ((event.shiftKey || measurementState.pickingEnabled) && this.measurementManager) {
         const rotationCenter = this.controls.target.clone();
         this.measurementManager.prepareForPathPoint(rotationCenter);
         this.measurementManager.addPathPoint(selectedPoint);
@@ -4035,8 +4037,12 @@ class PointCloudVisualizer {
     cameraConvention.setOpenCVCameraConvention(this);
   }
 
-  private setOpenGLCameraConvention(): void {
+  setOpenGLCameraConvention(): void {
     cameraConvention.setOpenGLCameraConvention(this);
+  }
+
+  loadMeasurementPathProject(jsonText: string): boolean {
+    return this.measurementManager?.loadPathProject(jsonText) ?? false;
   }
 
   updateAxesForCameraConvention(convention: 'opencv' | 'opengl'): void {

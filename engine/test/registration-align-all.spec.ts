@@ -147,6 +147,7 @@ test.describe('Align all to one cloud', () => {
     // File 0 is the anchor; it must not move. Aligning everything is a
     // whole-scene action and lives in the Align menu.
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await page.locator('#global-align-anchor').selectOption('0');
     await page.locator('.global-align-run').click();
 
@@ -197,6 +198,7 @@ test.describe('Align all to one cloud', () => {
     await expect(page.locator('#file-list .file-item')).toHaveCount(3);
 
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await page.locator('#global-align-anchor').selectOption('0');
     await page.locator('.global-align-complex').check();
     await page.locator('.global-align-run').click();
@@ -251,6 +253,7 @@ test.describe('Align all to one cloud', () => {
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await page.locator('.global-align-refine').click();
     // The row appears queued before the solve starts, so waiting for the row
     // would read the matrices mid-run; wait for it to reach a terminal state.

@@ -6,7 +6,7 @@
   let {
     host,
     fileIndex,
-    // Rendered inside the Align menu rather than inside a file's row: there is
+    // Rendered inside the Tools menu's Align workspace rather than inside a file's row: there is
     // no disclosure of its own then, and the fixed cloud comes from the menu's
     // selector instead of from which row you opened.
     embedded = false,
@@ -115,10 +115,10 @@
     {#if shown}
       <!-- Deliberately just the one-pair workspace. Aligning everything, undoing
            it, colouring the archive and its scope all belong to the whole scene
-           and live in the Align menu beside "+ Add Point Cloud"; duplicating
+           and live in Tools → Align beside "+ Add Point Cloud"; duplicating
            them here is how two copies of one control end up disagreeing. -->
       <div class="pair-panel" class:pair-panel-embedded={embedded}>
-        <!-- Embedded, the Align menu is already the window and its own selector
+        <!-- Embedded, the Align workspace is already the window and its own selector
              already named the fixed cloud; a second frame around it and a
              heading repeating the choice are both noise. -->
         {#if !embedded}

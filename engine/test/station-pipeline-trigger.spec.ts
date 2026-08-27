@@ -32,6 +32,7 @@ test.describe('Station pipeline trigger', () => {
       (window as any).visualizer.updateFileList();
     });
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await expect(page.locator('.global-align-recolor')).toHaveCount(0);
   });
 
@@ -46,6 +47,7 @@ test.describe('Station pipeline trigger', () => {
       visualizer.updateFileList();
     });
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await expect(page.locator('.global-align-recolor')).toHaveCount(0);
   });
 
@@ -69,6 +71,7 @@ test.describe('Station pipeline trigger', () => {
 
     const panel = page.locator('#global-align-menu');
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await expect(panel.locator('.global-align-recolor')).toBeVisible();
     await expect(panel.locator('.global-align-recolor')).toContainText('Recolour all');
     await expect(panel.locator('.global-align-recolor-register')).toBeVisible();

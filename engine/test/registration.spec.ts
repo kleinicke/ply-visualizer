@@ -162,16 +162,22 @@ test.describe('Scan-to-scan registration', () => {
    */
   async function openPairPanel(page: any, fixedIndex = 0) {
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await page.locator('.align-single-toggle').click();
     await page.locator('#global-align-single-fixed').selectOption(String(fixedIndex));
     return page.locator('#global-align-menu');
   }
 
-  test('the panel appears only once there is something to align against', async ({ page }) => {
+  test('the alignment workspace appears only once there is something to align against', async ({
+    page,
+  }) => {
     await page.locator('#hiddenFileInput').setInputFiles(fixedFile);
     await expect(page.locator('#file-list .file-item')).toHaveCount(1);
-    // One cloud has nothing to align against, so the Align menu is not offered.
-    await expect(page.locator('#global-align-toggle')).toHaveCount(0);
+    // General tools remain available, but one cloud has nothing to align against.
+    await expect(page.locator('#global-align-toggle')).toBeVisible();
+    await page.locator('#global-align-toggle').click();
+    await expect(page.locator('#tools-align')).toBeDisabled();
+    await page.locator('#global-align-toggle').click();
 
     await page.locator('#hiddenFileInput').setInputFiles(movedFile);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
@@ -202,6 +208,7 @@ test.describe('Scan-to-scan registration', () => {
     // Colouring the archive — and the diagnostics that vary how — belongs to
     // the whole scene, so it is driven from the Align menu, not a file's panel.
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await page.locator('.align-options-toggle').click();
     await page.locator('.station-projection-diagnostic').selectOption('reverse-pan');
     await page.locator('.global-align-recolor').click();
@@ -277,6 +284,7 @@ test.describe('Scan-to-scan registration', () => {
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await page.locator('.global-align-run').click();
     await expect(page.locator('#global-align-menu .align-summary')).toContainText('1 aligned', {
       timeout: 60_000,
@@ -302,6 +310,7 @@ test.describe('Scan-to-scan registration', () => {
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await page.locator('.global-align-complex').check();
     await page.locator('.global-align-run').click();
     await expect(page.locator('#global-align-menu .align-summary')).toContainText('1 aligned', {

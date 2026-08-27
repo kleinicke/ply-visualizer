@@ -1,6 +1,8 @@
 <script lang="ts">
   import { filesState } from '../state/files.svelte';
+  import { measurementState } from '../state/measurement.svelte';
   import { registrationState, stationPipelineUi } from '../state/registration.svelte';
+  import { viewerState } from '../state/viewer.svelte';
   import * as registration from '../registrationFeature';
   import {
     canRunStationPipeline,
@@ -15,6 +17,7 @@
   let { host }: { host: any } = $props();
 
   let open = $state(false);
+  let showAlign = $state(false);
   let showOptions = $state(false);
   // The one-pair workspace, folded away by default: correcting a single pair is
   // what you reach for when an automatic run leaves one cloud wrong, not what
@@ -82,9 +85,9 @@
   const alignable = $derived(
     (filesState.renderTick, registration.registrationCandidates(host, -1))
   );
-  // One cloud has nothing to align to, so the control does not exist until a
-  // second one is loaded — that is also what keeps "+ Add Point Cloud" at full
-  // width in the ordinary single-file case.
+  const hasObjects = $derived((filesState.renderTick, host.fileEntries.length > 0));
+  // One cloud has nothing to align to, but the surrounding Tools menu also
+  // contains measurement and viewer options and therefore remains useful.
   const available = $derived(alignable.length >= 2);
   const anchorIndex = $derived(
     anchorChoice !== null && alignable.includes(anchorChoice) ? anchorChoice : (alignable[0] ?? 0)
@@ -164,12 +167,35 @@
     anchorChoice = Number((event.currentTarget as HTMLSelectElement).value);
   }
 
+  function toggleTools(): void {
+    open = !open;
+    if (!open) {
+      showAlign = false;
+    }
+  }
+
+  function toggleMeasurementMode(): void {
+    const enabled = host.measurementManager?.togglePickMode();
+    if (enabled === undefined) return;
+    host.showStatus(
+      enabled
+        ? 'Measurement mode: ON — double-click or double-tap points to measure'
+        : 'Measurement mode: OFF — double-click or double-tap moves the rotation center'
+    );
+  }
+
+  function setRotationCenterToOrigin(): void {
+    host.setRotationCenterToOrigin();
+    host.updateRotationOriginButtonState();
+  }
+
   $effect(() => {
     // A menu left open after everything is unloaded would reappear on the next
     // load in a state the user did not choose.
-    if (!available) {
+    if (!hasObjects) {
       open = false;
     }
+    if (!available) showAlign = false;
   });
 </script>
 
@@ -187,22 +213,67 @@
   {/if}
 {/snippet}
 
-{#if available}
+{#if hasObjects}
   <button
     id="global-align-toggle"
     class="primary-button global-align-toggle"
-    class:active={open}
+    class:active={open || measurementState.pickingEnabled}
     aria-expanded={open}
     aria-controls="global-align-menu"
-    title="Align the loaded point clouds to one another"
-    onclick={() => (open = !open)}
+    title="Alignment, measurement and useful viewer options"
+    onclick={toggleTools}
   >
-    Align {open ? '▾' : '▸'}
+    Tools {open ? '▾' : '▸'}
   </button>
 {/if}
 
-{#if available && open}
+{#if hasObjects && open}
   <div id="global-align-menu" class="align-menu">
+    <div class="tool-menu-actions">
+      <button
+        id="tools-measure"
+        class:active={measurementState.pickingEnabled}
+        aria-pressed={measurementState.pickingEnabled}
+        onclick={toggleMeasurementMode}
+      >
+        Measure points <span>{measurementState.pickingEnabled ? 'On' : 'Off'}</span>
+      </button>
+      <button
+        id="tools-edl"
+        class:active={viewerState.edlEnabled}
+        aria-pressed={viewerState.edlEnabled}
+        onclick={() => host.toggleEDL()}
+        disabled={!host.effectComposer}
+      >
+        Eye Dome Lighting <span>{viewerState.edlEnabled ? 'On' : 'Off'} · E</span>
+      </button>
+      <button id="tools-world-origin" onclick={setRotationCenterToOrigin}>
+        Rotation center: world origin <span>W</span>
+      </button>
+      {#if available}
+        <button
+          id="tools-align"
+          class="tools-align-button"
+          class:active={showAlign}
+          aria-expanded={showAlign}
+          onclick={() => (showAlign = !showAlign)}
+        >
+          Align point clouds <span>{showAlign ? '▾' : '▸'}</span>
+        </button>
+      {:else}
+        <button
+          id="tools-align"
+          class="tools-align-button"
+          disabled
+          title="Load at least two point clouds to align them"
+        >
+          Align point clouds <span>2+ files</span>
+        </button>
+      {/if}
+    </div>
+
+    {#if available && showAlign}
+    <div class="align-workspace">
     <!-- One reference for both stages: aligning and colouring are the same
          decision made twice, and asking for it twice is how they end up
          disagreeing. -->
@@ -534,6 +605,8 @@
         <RegistrationPanel {host} fileIndex={singleFixedIndex} embedded={true} />
       {/if}
     </div>
+    </div>
+    {/if}
   </div>
 {/if}
 
@@ -556,6 +629,60 @@
     border-radius: 4px;
     padding: 8px;
     font-size: 11px;
+  }
+  .tool-menu-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .tool-menu-actions button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 7px;
+    border: 1px solid var(--vscode-button-border);
+    border-radius: 3px;
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .tool-menu-actions button:hover:not(:disabled),
+  .tool-menu-actions button.active {
+    background: var(--vscode-button-secondaryHoverBackground);
+  }
+  .tool-menu-actions button.active {
+    border-color: var(--vscode-focusBorder);
+  }
+  .tool-menu-actions .tools-align-button {
+    margin-top: 3px;
+    border-top-width: 2px;
+  }
+  .tool-menu-actions .tools-align-button.active {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border-color: var(--vscode-focusBorder);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 35%, transparent);
+  }
+  .tool-menu-actions .tools-align-button.active span {
+    color: var(--vscode-button-foreground);
+  }
+  .tool-menu-actions button:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+  .tool-menu-actions button span {
+    flex: 0 0 auto;
+    color: var(--vscode-descriptionForeground);
+    font-size: 9px;
+  }
+  .align-workspace {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--vscode-panel-border);
   }
   .align-reference {
     padding-bottom: 8px;

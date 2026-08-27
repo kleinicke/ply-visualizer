@@ -37,6 +37,7 @@ test.describe('Registration without a worker', () => {
 
     // The pair workspace moved into the Align menu.
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await page.locator('.align-single-toggle').click();
     await page.locator('#global-align-single-fixed').selectOption('1');
     const panel = page.locator('#global-align-menu');

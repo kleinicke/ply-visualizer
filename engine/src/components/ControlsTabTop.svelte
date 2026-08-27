@@ -199,6 +199,9 @@
       host.showStatus('All measurement paths cleared');
     }
   }
+  function onExportPaths() {
+    host.measurementManager?.savePaths();
+  }
 
   function onOpenCVConvention() {
     host.setOpenCVCameraConvention();
@@ -430,9 +433,10 @@
     </button>
   </div>
   <p class="setting-description">
-    Touch uses stable-up navigation independently of the selected mouse controls: drag with one
-    finger to orbit; move, twist, and pinch with two fingers to orbit and zoom together; double-tap
-    to set the rotation center. Twisting orbits around the up-axis rather than rolling the camera.
+    Touch is independent of the selected mouse controls: drag with one finger to orbit while
+    preserving the current up direction; pinch with two fingers to zoom and twist them to roll.
+    Moving two fingers together does not orbit. Double-tap sets the rotation center unless
+    Measurement mode is enabled in Files → Tools.
   </p>
 </div>
 <div class="panel-section">
@@ -480,6 +484,9 @@
       {measurementState.pathClosed ? 'Open Loop' : 'Close Loop'}
     </button>
     {#if measurementState.pathCount > 0}
+      <button id="export-measurement-paths" class="control-button" onclick={onExportPaths}>
+        Export Paths JSON
+      </button>
       <button id="clear-all-measurement-paths" class="control-button" onclick={onClearAllPaths}>
         Clear All Paths
       </button>
@@ -500,8 +507,9 @@
     </div>
   {/if}
   <div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 8px">
-    Shift + Double-click adds points. By default the first path starts at the rotation center;
-    use New Free Path when the first picked point should be point A.
+    Shift + Double-click adds points. On touch, enable Measurement mode in Files → Tools and
+    double-tap points. By default the first path starts at the rotation center; use New Free Path
+    when the first picked point should be point A.
   </div>
 </div>
 <div class="panel-section">

@@ -199,6 +199,20 @@ test('new measurement path keeps completed paths visible', async ({ page }) => {
     };
   });
   expect(result).toEqual({ pathCount: 2, labels: 2 });
+  await expect(page.locator('#export-measurement-paths')).toBeVisible();
+  const exported = await page.evaluate(() => {
+    const v: any = (window as any).visualizer;
+    return JSON.parse(v.measurementManager.buildPathProjectJson());
+  });
+  expect(exported).toMatchObject({
+    version: 1,
+    type: 'measurement-paths',
+    coordinateSpace: 'world',
+    units: 'scene-units',
+  });
+  expect(exported.paths).toHaveLength(2);
+  expect(exported.paths[0].points).toHaveLength(2);
+  expect(exported.paths[1].points).toHaveLength(2);
   await expect(page.locator('#clear-all-measurement-paths')).toBeVisible();
   await page.click('#clear-all-measurement-paths');
   await expect(page.locator('#new-measurement-path-from-center')).not.toHaveClass(/active/);

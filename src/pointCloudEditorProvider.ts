@@ -352,6 +352,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         case 'saveCameraPath':
           await this.handleSaveCameraPath(message);
           break;
+        case 'saveMeasurementPaths':
+          await this.handleSaveMeasurementPaths(message);
+          break;
         case 'selectColorImage':
           await this.handleSelectColorImage(webviewPanel, message);
           break;
@@ -1126,6 +1129,29 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     } catch (error) {
       vscode.window.showErrorMessage(
         `Failed to save camera path: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async handleSaveMeasurementPaths(message: any): Promise<void> {
+    try {
+      const saveUri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(message.defaultFileName),
+        filters: {
+          'Measurement Path JSON': ['json'],
+          'All Files': ['*'],
+        },
+      });
+      if (!saveUri) {
+        return;
+      }
+      await vscode.workspace.fs.writeFile(saveUri, Buffer.from(message.content, 'utf8'));
+      vscode.window.showInformationMessage(
+        `Measurement paths saved: ${path.basename(saveUri.fsPath)}`
+      );
+    } catch (error) {
+      vscode.window.showErrorMessage(
+        `Failed to save measurement paths: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

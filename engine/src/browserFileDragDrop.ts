@@ -15,6 +15,8 @@ import {
   parseColmapModel,
 } from './formats/colmap/colmapFiles';
 import { SPLAT_CONTAINER_REGEX } from './visualization/splatMode';
+import { filmState } from './state/film.svelte';
+import type { FilmManager } from './film/FilmManager';
 
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
@@ -39,6 +41,8 @@ export interface BrowserFileDragDropHost {
   browserFileHandler: BrowserMessageHandler | null;
   vscode: { postMessage(message: any): void };
   spatialFiles: SpatialData[];
+  filmManager: FilmManager | null;
+  edlEnabled: boolean;
   fileDepthData: Map<
     number,
     {
@@ -56,6 +60,10 @@ export interface BrowserFileDragDropHost {
   handleCameraProfile(data: any, fileName: string): void;
   handlePoseData(message: any): Promise<void>;
   displayFiles(dataArray: SpatialData[]): Promise<void>;
+  onFileColorModeChange(fileIndex: number, value: string): void;
+  toggleEDL(): void;
+  setOpenGLCameraConvention(): void;
+  loadMeasurementPathProject(jsonText: string): boolean;
   updatePrinciplePointFields(fileIndex: number, dims: { width: number; height: number }): void;
   splatMode: {
     loadContainer(fileName: string, bytes: Uint8Array): Promise<SpatialData>;
@@ -435,21 +443,84 @@ export async function handleDroppedFiles(
   await handleBrowserFiles(host, files);
 }
 
-export async function loadExamplePointCloud(host: BrowserFileDragDropHost): Promise<void> {
+export type ExamplePointCloudKind = 'guided' | 'basic';
+
+export async function loadExamplePointCloud(
+  host: BrowserFileDragDropHost,
+  kind: ExamplePointCloudKind = 'guided'
+): Promise<void> {
   if (isVSCode) {
     return;
   }
 
+  if (kind === 'basic') {
+    try {
+      const response = await fetch('examples/example-point-cloud.ply');
+      if (!response.ok) {
+        throw new Error(`download returned ${response.status}`);
+      }
+
+      const file = new File([await response.arrayBuffer()], 'example-point-cloud.ply', {
+        type: 'application/octet-stream',
+      });
+      await handleBrowserFiles(host, [file]);
+      if (!host.edlEnabled) {
+        host.toggleEDL();
+      }
+      trackWebsiteEvent('Example Point Cloud Loaded');
+    } catch (error) {
+      host.showError(
+        `Failed to load the basic example point cloud: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    return;
+  }
+
   try {
-    const response = await fetch('examples/example-point-cloud.ply');
-    if (!response.ok) {
-      throw new Error(`download returned ${response.status}`);
+    const [pointCloudResponse, cameraPathResponse, measurementPathResponse] = await Promise.all([
+      fetch('/examples/test_pc2_binary-v1.7.0.ply'),
+      fetch('examples/camera-path-2026-08-27-14-27-47.json'),
+      fetch('examples/measurement-paths-2026-08-27-15-49-45.json'),
+    ]);
+    if (!pointCloudResponse.ok) {
+      throw new Error(`point-cloud download returned ${pointCloudResponse.status}`);
+    }
+    if (!cameraPathResponse.ok) {
+      throw new Error(`camera-path download returned ${cameraPathResponse.status}`);
+    }
+    if (!measurementPathResponse.ok) {
+      throw new Error(`measurement-path download returned ${measurementPathResponse.status}`);
     }
 
-    const file = new File([await response.arrayBuffer()], 'example-point-cloud.ply', {
+    const firstExampleIndex = host.spatialFiles.length;
+    const file = new File([await pointCloudResponse.arrayBuffer()], 'test_pc2_binary.ply', {
       type: 'application/octet-stream',
     });
     await handleBrowserFiles(host, [file]);
+
+    if (host.spatialFiles.length <= firstExampleIndex) {
+      throw new Error('the point cloud could not be displayed');
+    }
+
+    // This example intentionally starts as a clean white cloud, while the
+    // per-file colour picker still offers its embedded RGB data as Original.
+    host.onFileColorModeChange(firstExampleIndex, '0');
+    if (!host.edlEnabled) {
+      host.toggleEDL();
+    }
+    host.setOpenGLCameraConvention();
+
+    const measurementPath = await measurementPathResponse.text();
+    if (!host.loadMeasurementPathProject(measurementPath)) {
+      throw new Error('the bundled measurement path is invalid');
+    }
+
+    const cameraPath = await cameraPathResponse.text();
+    if (!host.filmManager?.loadProject(cameraPath)) {
+      throw new Error('the bundled camera path is invalid');
+    }
+    filmState.loop = true;
+    host.filmManager.play();
     trackWebsiteEvent('Example Point Cloud Loaded');
   } catch (error) {
     host.showError(

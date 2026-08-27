@@ -28,6 +28,7 @@ test.describe('Capture places', () => {
    */
   async function openScope(page: any) {
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await page.locator('.align-options-toggle').click();
   }
 

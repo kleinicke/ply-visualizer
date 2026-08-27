@@ -252,6 +252,43 @@ test('one-finger double-tap uses the desktop rotation-center picking path', asyn
     .toEqual([1, 2, 3]);
 });
 
+test('measurement mode turns a touch double-tap into a measurement pick', async ({ page }) => {
+  await prepareCamera(page);
+  const canvas = (await page.locator('#three-canvas').boundingBox())!;
+  const x = canvas.x + canvas.width * 0.35;
+  const y = canvas.y + canvas.height * 0.55;
+
+  await page.evaluate(() => {
+    const viewer: any = (window as any).visualizer;
+    const selectedPoint = viewer.controls.target.clone().set(1, 2, 3);
+    viewer.selectionManager.updateContext = () => {};
+    viewer.selectionManager.selectPointWithLoggingAsync = async () => ({
+      point: selectedPoint,
+      info: 'touch-measurement point',
+    });
+    viewer.measurementManager.togglePickMode();
+  });
+
+  await dispatchTouches(page, 'touchstart', [{ id: 1, x, y }]);
+  await dispatchTouches(page, 'touchend', []);
+  await dispatchTouches(page, 'touchstart', [{ id: 2, x: x + 2, y: y + 2 }]);
+  await dispatchTouches(page, 'touchend', []);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (window as any).visualizer.measurementManager
+          .getPathPoints()
+          .map((point: any) => point.toArray())
+      )
+    )
+    .toEqual([
+      [0, 0, 0],
+      [1, 2, 3],
+    ]);
+  expect(await cameraState(page)).toMatchObject({ target: [0, 0, 0] });
+});
+
 test('rotation-center feedback always contains only the latest red marker', async ({ page }) => {
   await prepareCamera(page);
 

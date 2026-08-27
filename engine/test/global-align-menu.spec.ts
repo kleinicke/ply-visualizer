@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import path from 'path';
 
 /**
- * The align control beside "+ Add Point Cloud".
+ * The Tools control beside "+ Add Point Cloud", including its Align workspace.
  *
  * Aligning used to be reachable only from inside one file's expanded panel,
  * which hid the operation that is about the whole scene. What is easy to get
@@ -20,14 +20,19 @@ test.describe('Global align menu', () => {
     await page.waitForTimeout(500);
   });
 
-  test('stays hidden until a second cloud is loaded', async ({ page }) => {
+  test('offers tools for one cloud and enables alignment after a second is loaded', async ({
+    page,
+  }) => {
     await page.locator('#hiddenFileInput').setInputFiles([smallPly]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(1);
-    await expect(page.locator('#global-align-toggle')).toHaveCount(0);
+    await expect(page.locator('#global-align-toggle')).toHaveText(/Tools/);
+    await page.locator('#global-align-toggle').click();
+    await expect(page.locator('#tools-measure')).toBeVisible();
+    await expect(page.locator('#tools-align')).toBeDisabled();
 
     await page.locator('#hiddenFileInput').setInputFiles([binaryPly]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
-    await expect(page.locator('#global-align-toggle')).toBeVisible();
+    await expect(page.locator('#tools-align')).toBeEnabled();
   });
 
   test('opens a menu listing every loaded cloud as a possible anchor', async ({ page }) => {
@@ -36,7 +41,27 @@ test.describe('Global align menu', () => {
 
     await expect(page.locator('#global-align-menu')).toHaveCount(0);
     await page.locator('#global-align-toggle').click();
+    await expect(page.locator('#global-align-anchor')).toHaveCount(0);
+    await expect(page.locator('#tools-align')).toHaveAttribute('aria-expanded', 'false');
+    const collapsedBackground = await page
+      .locator('#tools-align')
+      .evaluate(element => getComputedStyle(element).backgroundColor);
+    await page.locator('#tools-align').click();
+    await expect(page.locator('#tools-align')).toHaveAttribute('aria-expanded', 'true');
+    const expandedBackground = await page
+      .locator('#tools-align')
+      .evaluate(element => getComputedStyle(element).backgroundColor);
+    expect(expandedBackground).not.toBe(collapsedBackground);
     await expect(page.locator('#global-align-menu')).toBeVisible();
+
+    // Closing Tools also closes its nested workspace. Reopening the outer menu
+    // must never reopen Align on the user's behalf.
+    await page.locator('#global-align-toggle').click();
+    await expect(page.locator('#global-align-menu')).toHaveCount(0);
+    await page.locator('#global-align-toggle').click();
+    await expect(page.locator('#tools-align')).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('#global-align-anchor')).toHaveCount(0);
+    await page.locator('#tools-align').click();
 
     const anchor = page.locator('#global-align-anchor');
     await expect(anchor.locator('option')).toHaveCount(2);
@@ -53,21 +78,45 @@ test.describe('Global align menu', () => {
     await expect(page.locator('.align-row')).toHaveCount(0);
   });
 
-  test('shares the row with a narrower add button', async ({ page }) => {
+  test('shares the file-controls row with the add button', async ({ page }) => {
     await page.locator('#hiddenFileInput').setInputFiles([smallPly]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(1);
-    const soloWidth = (await page.locator('#add-file').boundingBox())!.width;
-
-    await page.locator('#hiddenFileInput').setInputFiles([binaryPly]);
-    await expect(page.locator('#global-align-toggle')).toBeVisible();
-    const sharedWidth = (await page.locator('#add-file').boundingBox())!.width;
-    const alignBox = (await page.locator('#global-align-toggle').boundingBox())!;
-
-    expect(sharedWidth).toBeLessThan(soloWidth);
-    expect(alignBox.width).toBeGreaterThan(0);
+    const toolsBox = (await page.locator('#global-align-toggle').boundingBox())!;
     // Same row, not stacked.
     const addBox = (await page.locator('#add-file').boundingBox())!;
-    expect(Math.abs(alignBox.y - addBox.y)).toBeLessThan(4);
+    expect(Math.abs(toolsBox.y - addBox.y)).toBeLessThan(4);
+    expect(toolsBox.width).toBeGreaterThan(0);
+  });
+
+  test('shows four compact options without category headings', async ({ page }) => {
+    await page.locator('#hiddenFileInput').setInputFiles([smallPly]);
+    await page.locator('#global-align-toggle').click();
+
+    await expect(page.locator('.tool-group-label')).toHaveCount(0);
+    await expect(page.locator('.tool-menu-actions > button')).toHaveCount(4);
+    await expect
+      .poll(() =>
+        page
+          .locator('.tool-menu-actions > button')
+          .evaluateAll(buttons => buttons.map(button => button.id))
+      )
+      .toEqual(['tools-measure', 'tools-edl', 'tools-world-origin', 'tools-align']);
+    await expect(page.locator('#tools-measure')).toHaveAttribute('aria-pressed', 'false');
+    await page.locator('#tools-measure').click();
+    await expect(page.locator('#tools-measure')).toHaveAttribute('aria-pressed', 'true');
+
+    await page.evaluate(() => {
+      const viewer: any = (window as any).visualizer;
+      viewer.controls.target.set(3, 4, 5);
+    });
+    await page.locator('#tools-world-origin').click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).visualizer.controls.target.toArray()))
+      .toEqual([0, 0, 0]);
+
+    await expect(page.locator('#tools-edl')).toHaveAttribute('aria-pressed', 'false');
+    await page.locator('#tools-edl').click();
+    await expect(page.locator('#tools-edl')).toHaveAttribute('aria-pressed', 'true');
   });
 
   test('aligns every other cloud onto the selected anchor', async ({ page }) => {
@@ -83,6 +132,7 @@ test.describe('Global align menu', () => {
     });
 
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     await page.locator('#global-align-anchor').selectOption('0');
     await page.locator('.global-align-run').click();
 
@@ -128,6 +178,7 @@ test.describe('Global align menu', () => {
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
     // Two ordinary PLYs: no archive, no colouring.
     await expect(page.locator('.global-align-recolor')).toHaveCount(0);
 
@@ -201,6 +252,7 @@ test.describe('Global align menu', () => {
     await page.locator('#hiddenFileInput').setInputFiles([smallPly, binaryPly]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
 
     // No run has failed, so nothing is offered.
     await expect(page.locator('.align-gap')).toHaveCount(0);
@@ -255,6 +307,7 @@ test.describe('Global align menu', () => {
     await page.locator('#hiddenFileInput').setInputFiles([smallPly, binaryPly]);
     await expect(page.locator('#file-list .file-item')).toHaveCount(2);
     await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
 
     await expect(page.locator('.global-align-nested')).not.toBeChecked();
     await expect(page.locator('.global-align-complex')).not.toBeChecked();

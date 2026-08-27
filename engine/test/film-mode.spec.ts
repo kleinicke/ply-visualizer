@@ -104,6 +104,65 @@ test('keyframes, playback, and camera restoration', async ({ page }) => {
   }
 });
 
+test('buttons do not paint a focus highlight after keyboard shortcuts', async ({ page }) => {
+  await setup(page);
+
+  await page.click('#film-add-keyframe');
+  await page.keyboard.press('e');
+
+  const focusStyle = await page.locator('#film-add-keyframe').evaluate(button => {
+    const style = getComputedStyle(button);
+    return { outline: style.outlineStyle, shadow: style.boxShadow };
+  });
+  expect(focusStyle).toEqual({ outline: 'none', shadow: 'none' });
+});
+
+test('manual navigation interrupts playback at the current camera pose', async ({ page }) => {
+  await setup(page);
+
+  await setCameraPose(page, [3, 0, 0]);
+  await page.click('#film-add-keyframe');
+  await setCameraPose(page, [0, 0, 3]);
+  await page.click('#film-add-keyframe');
+  await page.evaluate(() => {
+    const v: any = (window as any).visualizer;
+    v.filmManager.updateKeyframe(0, { duration: 2 });
+  });
+
+  await page.click('#film-play');
+  await page.waitForTimeout(500);
+  const before = await camPos(page);
+
+  const canvas = page.locator('#three-canvas');
+  const box = await canvas.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+
+  const interrupted = await page.evaluate(() => {
+    const v: any = (window as any).visualizer;
+    return {
+      pos: v.camera.position.toArray() as number[],
+      playing: v.filmManager.isPlaying(),
+      controlsEnabled: v.controls.enabled,
+    };
+  });
+  expect(interrupted.playing).toBe(false);
+  expect(interrupted.controlsEnabled).toBe(true);
+  for (let i = 0; i < 3; i++) {
+    expect(Math.abs(interrupted.pos[i] - before[i])).toBeLessThan(0.15);
+  }
+
+  // The same gesture is now owned by the interactive controls.
+  await page.mouse.move(box!.x + box!.width * 0.65, box!.y + box!.height / 2, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  const afterDrag = await camPos(page);
+  expect(Math.hypot(...afterDrag.map((value, i) => value - interrupted.pos[i]))).toBeGreaterThan(
+    0.01
+  );
+});
+
 test('keyframe project JSON round-trips', async ({ page }) => {
   await setup(page);
 

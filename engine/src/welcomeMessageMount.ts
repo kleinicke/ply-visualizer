@@ -7,11 +7,15 @@ import WelcomeMessage from './components/WelcomeMessage.svelte';
  */
 export function mountWelcomeMessage(
   onAddCloud: () => void,
-  onLoadExample: () => Promise<void>
+  onLoadGuidedExample: () => Promise<void>,
+  onLoadBasicExample: () => Promise<void>
 ): void {
   const target = document.getElementById('welcome-message-mount');
   if (!target) {
     return;
   }
-  mount(WelcomeMessage, { target, props: { onAddCloud, onLoadExample } });
+  mount(WelcomeMessage, {
+    target,
+    props: { onAddCloud, onLoadGuidedExample, onLoadBasicExample },
+  });
 }
