@@ -2,6 +2,12 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { EDLPass } from './postprocessing/EDLPass';
 import { viewerState } from './state/viewer.svelte';
+import { SpatialData } from './interfaces';
+import { shouldUseVertexColors } from './colorMode';
+
+export type EDLMode = 'auto' | 'all' | 'off';
+
+const EDL_MODE_ORDER: readonly EDLMode[] = ['auto', 'all', 'off'];
 
 export interface EDLHost {
   /**
@@ -12,7 +18,12 @@ export interface EDLHost {
   webglRenderer: THREE.WebGLRenderer | null;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
+  meshes: THREE.Object3D[];
+  spatialFiles: SpatialData[];
+  fileVisibility: boolean[];
+  individualColorModes: string[];
   edlEnabled: boolean;
+  edlMode: EDLMode;
   edlStrength: number;
   edlRadius: number;
   edlSecondRingWeight: number;
@@ -28,6 +39,10 @@ export function initEDLComposer(host: EDLHost): void {
     return;
   }
   if (!host.webglRenderer) {
+    host.edlEnabled = false;
+    host.edlMode = 'off';
+    viewerState.edlEnabled = false;
+    viewerState.edlMode = 'off';
     console.log('🔦 EDL unavailable: the WebGPU backend has no EDL implementation');
     return;
   }
@@ -51,20 +66,60 @@ export function initEDLComposer(host: EDLHost): void {
 }
 
 /**
- * Toggle Eye Dome Lighting on/off.
+ * Cycle Eye Dome Lighting through Auto, All and Off.
  */
 export function toggleEDL(host: EDLHost): void {
   if (!host.effectComposer) {
     host.showStatus('Eye Dome Lighting is not available on the WebGPU backend');
     return;
   }
-  host.edlEnabled = !host.edlEnabled;
+  const current = EDL_MODE_ORDER.indexOf(host.edlMode);
+  host.edlMode = EDL_MODE_ORDER[(current + 1) % EDL_MODE_ORDER.length];
+  host.edlEnabled = host.edlMode !== 'off';
   viewerState.edlEnabled = host.edlEnabled;
+  viewerState.edlMode = host.edlMode;
   updateEDLButtonState(host);
   updateEDLSettingsVisibility(host);
   host.requestRender();
-  host.showStatus(`Eye Dome Lighting: ${host.edlEnabled ? 'ON' : 'OFF'}`);
-  console.log(`🔦 EDL ${host.edlEnabled ? 'enabled' : 'disabled'}`);
+  const label = host.edlMode === 'auto' ? 'AUTO (uniform colours)' : host.edlMode.toUpperCase();
+  host.showStatus(`Eye Dome Lighting: ${label}`);
+  console.log(`🔦 EDL ${label}`);
+}
+
+/**
+ * Visible point clouds whose active colour mode is a single material colour.
+ * Per-point RGB, projected/recoloured, intensity and scalar colour modes are
+ * deliberately excluded even if the source file also offers a flat mode.
+ */
+export function getAutoEDLPointClouds(host: EDLHost): THREE.Points[] {
+  const eligible: THREE.Points[] = [];
+  for (let index = 0; index < host.spatialFiles.length; index++) {
+    const object = host.meshes[index];
+    const data = host.spatialFiles[index];
+    if (
+      object instanceof THREE.Points &&
+      host.fileVisibility[index] !== false &&
+      object.visible &&
+      !shouldUseVertexColors(data, host.individualColorModes[index] ?? 'assigned')
+    ) {
+      eligible.push(object);
+    }
+  }
+  return eligible;
+}
+
+/** Prepare the pass for this frame and report whether it should run at all. */
+export function prepareEDLFrame(host: EDLHost): boolean {
+  if (!host.edlEnabled || host.edlMode === 'off' || !host.effectComposer || !host.edlPass) {
+    return false;
+  }
+  if (host.edlMode === 'all') {
+    host.edlPass.setEligibleObjects(null);
+    return true;
+  }
+  const eligible = getAutoEDLPointClouds(host);
+  host.edlPass.setEligibleObjects(eligible);
+  return eligible.length > 0;
 }
 
 /**
@@ -73,7 +128,7 @@ export function toggleEDL(host: EDLHost): void {
 export function updateEDLButtonState(host: EDLHost): void {
   const btn = document.getElementById('toggle-edl');
   if (btn) {
-    if (host.edlEnabled) {
+    if (host.edlMode !== 'off') {
       btn.classList.add('active');
     } else {
       btn.classList.remove('active');
@@ -87,6 +142,6 @@ export function updateEDLButtonState(host: EDLHost): void {
 export function updateEDLSettingsVisibility(host: EDLHost): void {
   const settings = document.getElementById('edl-settings');
   if (settings) {
-    settings.style.display = host.edlEnabled ? 'block' : 'none';
+    settings.style.display = host.edlMode !== 'off' ? 'block' : 'none';
   }
 }

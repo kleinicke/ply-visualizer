@@ -3,6 +3,9 @@ import { uiState } from '../state/ui.svelte';
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
 
+/** Scroll offset remembered independently for each main-panel tab. */
+const tabScrollPositions = new Map<string, number>();
+
 export function showError(message: string): void {
   // Log to console for developer tools visibility
   try {
@@ -11,6 +14,7 @@ export function showError(message: string): void {
   uiState.errorMessage = message;
   uiState.isErrorVisible = true;
   uiState.loadingVisible = false;
+  uiState.fileLoading = false;
   // ErrorOverlay.svelte (components/ErrorOverlay.svelte) renders uiState
   // reactively - no DOM manipulation needed here.
 }
@@ -50,7 +54,12 @@ export function showColorMappingStatus(
   }
 }
 
-export function switchTab(tabName: string): void {
+export function switchTab(tabName: string | null): void {
+  const tabContent = document.querySelector('.tab-content') as HTMLElement | null;
+  if (tabContent && uiState.activeTab) {
+    tabScrollPositions.set(uiState.activeTab, tabContent.scrollTop);
+  }
+
   uiState.activeTab = tabName;
   // Remove active class from all tabs and panels
   document.querySelectorAll('.tab-button').forEach(btn => {
@@ -59,6 +68,12 @@ export function switchTab(tabName: string): void {
   document.querySelectorAll('.tab-panel').forEach(panel => {
     panel.classList.remove('active');
   });
+
+  tabContent?.classList.toggle('collapsed', tabName === null);
+
+  if (tabName === null) {
+    return;
+  }
 
   // Add active class to selected tab and panel
   const activeTabBtn = document.querySelector(`[data-tab="${tabName}"]`);
@@ -70,6 +85,10 @@ export function switchTab(tabName: string): void {
   if (activePanel) {
     activePanel.classList.add('active');
   }
+
+  if (tabContent) {
+    tabContent.scrollTop = tabScrollPositions.get(tabName) ?? 0;
+  }
 }
 
 export function showKeyboardShortcuts(onCreateShortcutsUI: () => void): void {
@@ -78,9 +97,9 @@ export function showKeyboardShortcuts(onCreateShortcutsUI: () => void): void {
   Y: Set Y-up (default)
   Z: Set Z-up (CAD style)
   R: Reset camera and up vector
-  T: Switch to Trackball controls (virtual ball, default)
+  T: Switch to Trackball controls (virtual ball)
   O: Switch to OrbitControls
-  I: Switch to Legacy Trackball controls (delta-based)
+  I: Switch to Legacy Trackball controls (delta-based, default)
   K: Switch to ArcballControls
   C: Set OpenCV camera convention (Y-down)
   B: Set OpenGL camera convention (Y-up)
@@ -123,9 +142,9 @@ export function createShortcutsUI(onUpdateControlStatus: () => void): void {
                 <div><span style="font-weight: bold;">Y</span> Set Y-up orientation (default)</div>
                 <div><span style="font-weight: bold;">Z</span> Set Z-up orientation (CAD style)</div>
                 <div><span style="font-weight: bold;">R</span> Reset camera and up vector</div>
-                <div><span style="font-weight: bold;">T</span> Switch to Trackball controls (default)</div>
+                <div><span style="font-weight: bold;">T</span> Switch to Trackball controls (virtual ball)</div>
                 <div><span style="font-weight: bold;">O</span> Switch to OrbitControls</div>
-                <div><span style="font-weight: bold;">I</span> Switch to Legacy Trackball controls</div>
+                <div><span style="font-weight: bold;">I</span> Switch to Legacy Trackball controls (default)</div>
                 <div><span style="font-weight: bold;">K</span> Switch to ArcballControls</div>
             </div>
             <div style="font-weight: bold; margin: 8px 0 4px 0; color: var(--vscode-textLink-foreground);">📷 Camera Conventions</div>

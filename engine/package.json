@@ -2,7 +2,6 @@
   "name": "ply-visualizer-engine",
   "version": "1.0.0",
   "description": "Shared visualization engine (parsers, renderer, controls) plus its standalone web host",
-  "packageManager": "pnpm@10.32.1",
   "main": "src/main.ts",
   "scripts": {
     "build": "webpack --mode=production",

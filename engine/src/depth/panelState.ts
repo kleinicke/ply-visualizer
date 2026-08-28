@@ -1,4 +1,59 @@
+import {
+  CAMERA_MODEL_COEFFICIENT_GROUPS,
+  coefficientsFromGroups,
+  groupsFromCoefficients,
+  normalizeToOfferedCameraModel,
+} from './cameraModels';
+import type { CameraModel } from './types';
 import { CameraParams } from '../interfaces';
+import { depthSettingsState } from '../state/depthSettings.svelte';
+
+/**
+ * The distortion coefficients as the panel now holds them: one input per
+ * coefficient, named the way the selected model names them.
+ *
+ * A blank box is zero, which is what lets a calibration that gives a single
+ * radial term be entered as a single number. The joined string is still the
+ * shape the rest of the pipeline expects.
+ */
+function readCoefficientInputs(fileIndex: number, model: string): string {
+  const groups = CAMERA_MODEL_COEFFICIENT_GROUPS[model as CameraModel];
+  if (!groups) {
+    return '';
+  }
+  const entered = groups.map((_, index) => {
+    const input = document.getElementById(
+      `coefficient-group-${fileIndex}-${index}`
+    ) as HTMLInputElement | null;
+    return input?.value ?? '';
+  });
+  return coefficientsFromGroups(model as CameraModel, entered).join(',');
+}
+
+/** Writes a joined coefficient string back into the grouped inputs. */
+function writeCoefficientInputs(
+  fileIndex: number,
+  model: string,
+  joined: string | undefined
+): void {
+  const groups = CAMERA_MODEL_COEFFICIENT_GROUPS[model as CameraModel];
+  if (!groups) {
+    return;
+  }
+  const ordered = (joined ?? '')
+    .split(',')
+    .map(value => Number(value.trim()))
+    .map(value => (Number.isFinite(value) ? value : 0));
+  const perGroup = groupsFromCoefficients(model as CameraModel, ordered);
+  perGroup.forEach((value, index) => {
+    const input = document.getElementById(
+      `coefficient-group-${fileIndex}-${index}`
+    ) as HTMLInputElement | null;
+    if (input) {
+      input.value = value;
+    }
+  });
+}
 
 export interface DepthPanelStateHost {
   fileDepthData: Map<number, { depthDimensions: { width: number; height: number } }>;
@@ -47,10 +102,9 @@ export function captureDepthPanelStates(
     const match = id.match(/depth-panel-(\d+)/);
     if (match) {
       const fileIndex = parseInt(match[1]);
-      const displayStyle = (panel as HTMLElement).style.display;
-      const isVisible =
-        displayStyle === 'block' ||
-        (displayStyle === '' && (panel as HTMLElement).offsetHeight > 0);
+      // The panel's own state, not its rendered style: the component owns the
+      // display now, and reading it back would race the render.
+      const isVisible = depthSettingsState.openPanelIndices.includes(fileIndex);
 
       // Capture current form values
       const formValues = captureDepthFormValues(host, fileIndex);
@@ -101,7 +155,7 @@ export function captureDepthFormValues(
     k5: getValue(`k5-${fileIndex}`),
     p1: getValue(`p1-${fileIndex}`),
     p2: getValue(`p2-${fileIndex}`),
-    coefficients: getValue(`camera-coefficients-${fileIndex}`),
+    coefficients: readCoefficientInputs(fileIndex, getValue(`camera-model-${fileIndex}`) ?? ''),
     imageRectified: (document.getElementById(`image-rectified-${fileIndex}`) as HTMLInputElement)
       ?.checked
       ? 'true'
@@ -131,19 +185,14 @@ export function restoreDepthPanelStates(
           `🔄 Restoring state for file ${fileIndex}: ${state.panelOpen ? 'open' : 'closed'}`
         );
 
-        // Restore panel visibility
-        if (state.panelOpen) {
-          (panel as HTMLElement).style.display = 'block';
-          const icon = toggleButton.querySelector('.toggle-icon');
-          if (icon) {
-            icon.textContent = '▼';
-          }
-        } else {
-          (panel as HTMLElement).style.display = 'none';
-          const icon = toggleButton.querySelector('.toggle-icon');
-          if (icon) {
-            icon.textContent = '▶';
-          }
+        // Restore panel visibility through the state the component reads, so
+        // the panel and its arrow cannot end up disagreeing.
+        const indices = depthSettingsState.openPanelIndices;
+        const at = indices.indexOf(fileIndex);
+        if (state.panelOpen && at === -1) {
+          indices.push(fileIndex);
+        } else if (!state.panelOpen && at !== -1) {
+          indices.splice(at, 1);
         }
 
         // Restore form values
@@ -190,7 +239,13 @@ export function restoreDepthFormValues(
   setValue(`fy-${fileIndex}`, formValues.fy);
   setValue(`cx-${fileIndex}`, formValues.cx);
   setValue(`cy-${fileIndex}`, formValues.cy);
-  setValue(`camera-model-${fileIndex}`, formValues.cameraModel);
+  // Settings saved before the picker was consolidated still name the specific
+  // models; assigning one the select does not carry leaves it showing nothing,
+  // which is what "an empty camera model is selected" looked like.
+  setValue(
+    `camera-model-${fileIndex}`,
+    normalizeToOfferedCameraModel((formValues.cameraModel ?? '') as CameraModel).model
+  );
   setValue(`depth-type-${fileIndex}`, formValues.depthType);
   setValue(`baseline-${fileIndex}`, formValues.baseline);
   setValue(`disparity-offset-${fileIndex}`, formValues.disparityOffset);
@@ -205,7 +260,11 @@ export function restoreDepthFormValues(
   setValue(`k5-${fileIndex}`, formValues.k5);
   setValue(`p1-${fileIndex}`, formValues.p1);
   setValue(`p2-${fileIndex}`, formValues.p2);
-  setValue(`camera-coefficients-${fileIndex}`, formValues.coefficients);
+  writeCoefficientInputs(
+    fileIndex,
+    formValues.cameraModel ?? '',
+    formValues.coefficients ?? undefined
+  );
   const rectifiedInput = document.getElementById(
     `image-rectified-${fileIndex}`
   ) as HTMLInputElement | null;
@@ -297,9 +356,10 @@ export function getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
   const k5Input = document.getElementById(`k5-${fileIndex}`) as HTMLInputElement;
   const p1Input = document.getElementById(`p1-${fileIndex}`) as HTMLInputElement;
   const p2Input = document.getElementById(`p2-${fileIndex}`) as HTMLInputElement;
-  const coefficientsInput = document.getElementById(
-    `camera-coefficients-${fileIndex}`
-  ) as HTMLInputElement;
+  const coefficientsJoined = readCoefficientInputs(
+    fileIndex,
+    (document.getElementById(`camera-model-${fileIndex}`) as HTMLSelectElement | null)?.value ?? ''
+  );
   const imageRectifiedInput = document.getElementById(
     `image-rectified-${fileIndex}`
   ) as HTMLInputElement;
@@ -318,12 +378,12 @@ export function getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
   const k5 = k5Input?.value && k5Input.value.trim() !== '' ? parseFloat(k5Input.value) : undefined;
   const p1 = p1Input?.value && p1Input.value.trim() !== '' ? parseFloat(p1Input.value) : undefined;
   const p2 = p2Input?.value && p2Input.value.trim() !== '' ? parseFloat(p2Input.value) : undefined;
-  const coefficients = coefficientsInput?.value
-    ? coefficientsInput.value.split(',').map(value => Number(value.trim()))
+  const coefficients = coefficientsJoined
+    ? coefficientsJoined.split(',').map(value => Number(value.trim()))
     : undefined;
 
   return {
-    cameraModel: (cameraModelSelect?.value as any) || 'pinhole-ideal',
+    cameraModel: (cameraModelSelect?.value as any) || 'pinhole-opencv',
     fx: fx,
     fy: fy,
     cx: cx,

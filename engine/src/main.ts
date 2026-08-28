@@ -14,15 +14,55 @@ import { CustomArcballControls, TurntableControls, VirtualBallControls } from '.
 import { initializeThemes, getThemeByName, applyTheme, getCurrentThemeName } from './themes';
 import { RotationCenterManager, RotationCenterMode } from './RotationCenterManager';
 import { MeasurementManager } from './MeasurementManager';
+import { measurementState } from './state/measurement.svelte';
 import { FilmManager } from './film/FilmManager';
 import { mountFilmPanel } from './filmPanelMount';
 import { mountMeasurementQuickActions } from './measurementQuickActionsMount';
-import { SelectionManager, SelectionContext } from './SelectionManager';
+import { mountSmallViewAffordance } from './smallViewAffordanceMount';
+import { mountFileActivityIndicator } from './fileActivityIndicatorMount';
+import { SmallViewAffordance } from './smallViewAffordance';
+import { ScreenAnchorController, type SafeViewRect } from './screenAnchor';
+import { TouchNavigationController } from './touchNavigation';
+import {
+  SelectionManager,
+  SelectionContext,
+  type PointPickingImplementation,
+} from './SelectionManager';
 
 declare const acquireVsCodeApi: () => any;
 
 // Environment detection - works in both VSCode and browser
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
+
+const BACKGROUND_CHANGE_MESSAGES = new Set([
+  'stonexColorReady',
+  'spatialData',
+  'multiSpatialData',
+  'splatContainerUri',
+  'ultimateRawBinaryData',
+  'ultimateRawBinaryUri',
+  'directTypedArrayData',
+  'binarySpatialData',
+  'addFiles',
+  'startLargeFile',
+  'largeFileChunk',
+  'largeFileComplete',
+  'depthData',
+  'objData',
+  'stlData',
+  'xyzData',
+  'pcdData',
+  'ptsData',
+  'kittiBinData',
+  'offData',
+  'gltfData',
+  'volumeData',
+  'colmapModelFiles',
+  'colmapImages',
+  'npyData',
+  'xyzVariantData',
+  'poseData',
+]);
 
 // Shared file handling functionality
 import {
@@ -76,13 +116,22 @@ import * as cameraConvention from './cameraConvention';
 import * as edl from './edl';
 import * as transparency from './transparency';
 import * as plyExport from './plyExport';
+import * as colorModeModule from './colorMode';
+import * as registrationFeature from './registrationFeature';
+import {
+  configureRegistrationExtensionHost,
+  handleRegistrationExtensionResult,
+} from './registration';
+import * as stationPipelineFeature from './stationPipelineFeature';
 import * as rotationCenterFeature from './rotationCenterFeature';
 import {
   applyScannerStartView,
   applyZUpOrientation,
   scannerCapturePointFor,
+  shouldApplySavedViewConvention,
   shouldOrientZUp,
 } from './cameraOrientation';
+import { applyFixedClipPlanes, FIXED_CAMERA_FAR, FIXED_CAMERA_NEAR } from './cameraClipping';
 import * as axesFeature from './axesFeature';
 import * as transformationMatrix from './transformationMatrix';
 import * as depthCameraParamsPrompt from './depthCameraParamsPrompt';
@@ -104,22 +153,53 @@ import { mountWelcomeMessage } from './welcomeMessageMount';
 import { mountPerformanceStats } from './performanceStatsMount';
 import { mountSequenceControls } from './sequenceControlsMount';
 import { mountFileList } from './fileListMount';
+import { mountGlobalAlignMenu } from './globalAlignMenuMount';
+import { runBenchmarkScenario } from './benchmarkScenario';
 import { mountStats } from './statsMount';
 import { mountControlsTab } from './controlsTabMount';
+import { AdaptivePointRenderer } from './visualization/AdaptivePointRenderer';
 import { filesState } from './state/files.svelte';
 import { GpuTimer, NULL_GPU_TIMER, createGpuTimer } from './rendering/gpuTimer';
 import type { ViewerRenderer } from './rendering/viewerRenderer';
 import { RendererBackend, WEBGPU_CAVEATS, createViewerRenderer } from './rendering/rendererBackend';
+import {
+  WebGPUVisibilityRenderer,
+  type PointRenderingImplementation,
+  type VisibilityRenderContext,
+} from './rendering/WebGPUVisibilityRenderer';
 import { FileEntryRegistry } from './state/fileEntries';
 import { insertEntryState, removeEntryState } from './state/fileEntryState';
 import { viewerState } from './state/viewer.svelte';
 import { uiState } from './state/ui.svelte';
+import { acceptVolumeResponse, setVolumeError, updateVolumeProgress } from './state/volume.svelte';
 import { flushSync } from 'svelte';
 import { formatFileSize } from './utils/format';
 import { ColorProcessor } from './colorProcessor';
 import { DepthConverter } from './depth/DepthConverter';
 import { DepthWorkerClient } from './depth/DepthWorkerClient';
 import { alignSourceOrigin } from './utils/sourceOrigin';
+import { SectionPlaneManager } from './visualization/sectionPlanes';
+import type { VolumeData } from './parsers/nrrdParser';
+import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
+import {
+  initTiffWasm,
+  projectDepthBandWasmSync,
+  projectDepthWasmSync,
+} from './depth/readers/tiffWasm';
+import { projectDepthInBands } from './depth/depthProjectionPool';
+import { registrationState } from './state/registration.svelte';
+import {
+  inspectNpyWasm,
+  isNpyPointCloudShape,
+  parsePlyFromResponse,
+  parsePlyWasm,
+  readNpyWasm,
+  type PlyParseResult,
+} from './parsers/pointcloudWasm';
+import { buildVolumePointsAsync } from './visualization/volumePoints';
+import { buildVolumeMeshAsync } from './visualization/isosurface';
+import { buildVolumeSlicesAsync } from './visualization/volumeSlices';
+import { buildVolumeVoxelsAsync } from './visualization/volumeVoxels';
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
@@ -127,6 +207,15 @@ import { alignSourceOrigin } from './utils/sourceOrigin';
  */
 
 class PointCloudVisualizer {
+  /**
+   * Whether a VS Code extension host is on the other end of `vscode`.
+   *
+   * Features that need a process still holding the opened file — the X3A
+   * station pipeline re-reads the archive — key off this rather than sniffing
+   * for `acquireVsCodeApi`, which cannot be faked in a test without flipping
+   * the whole page into webview mode.
+   */
+  readonly runningInVSCode: boolean = isVSCode;
   vscode: any = isVSCode
     ? acquireVsCodeApi()
     : {
@@ -150,6 +239,12 @@ class PointCloudVisualizer {
    * whether they can run at all.
    */
   webglRenderer: THREE.WebGLRenderer | null = null;
+  sectionPlanes = new SectionPlaneManager();
+  /** Original voxel arrays retained for local threshold/mode changes. */
+  private volumeSources = new Map<
+    string,
+    { volume: VolumeData; metadata: any; generation: number }
+  >();
   // True between a WebGL context loss and its restoration. While lost, the GPU
   // is gone, so we must not render or touch GL objects — doing so throws and
   // crashes the webview. This is the safety net for the multi-window
@@ -168,7 +263,11 @@ class PointCloudVisualizer {
   allowTransparency: boolean = false;
 
   // Eye Dome Lighting (EDL) state
-  edlEnabled: boolean = false;
+  // Auto is the default: the pass runs only while at least one visible point
+  // cloud uses a uniform material colour. `edlEnabled` remains as a backwards-
+  // compatible master switch for benchmarks and integrations.
+  edlEnabled: boolean = true;
+  edlMode: edl.EDLMode = 'auto';
   edlStrength: number = 1.0;
   edlRadius: number = 1.4;
   edlSecondRingWeight: number = 0.0;
@@ -179,6 +278,13 @@ class PointCloudVisualizer {
   rotationCenterManager: RotationCenterManager = new RotationCenterManager();
   private measurementManager: MeasurementManager | null = null;
   private selectionManager: SelectionManager | null = null;
+  webgpuPickingAvailable: boolean = false;
+  webgpuPickingUnavailableReason: string | null = 'WebGPU availability has not been checked';
+  pointPickingImplementation: PointPickingImplementation = 'cpu';
+  webgpuPointRenderingAvailable: boolean = false;
+  webgpuPointRenderingUnavailableReason: string | null = 'WebGPU availability has not been checked';
+  pointRenderingImplementation: PointRenderingImplementation = 'current';
+  private webgpuVisibilityRenderer: WebGPUVisibilityRenderer | null = null;
   // Video mode: camera keyframes, playback and recording (film/FilmManager.ts)
   filmManager: FilmManager | null = null;
 
@@ -186,9 +292,14 @@ class PointCloudVisualizer {
   needsRender: boolean = false;
   private animationId: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private screenAnchor: ScreenAnchorController | null = null;
+  private touchNavigation: TouchNavigationController | null = null;
+  private pointPickGeneration = 0;
 
   // Welcome message state
   isFileLoading: boolean = false;
+  /** Host-side loads can overlap; the activity dot stays up until all finish. */
+  private pendingFileLoads = 0;
   // When loading additional file(s) into a non-empty scene, we show progress as a
   // row in the Files list instead of a blocking overlay (the current cloud stays
   // interactive). Holds the label/detail of the in-progress add, or null.
@@ -210,6 +321,10 @@ class PointCloudVisualizer {
   // Backend-neutral GPU timing; see rendering/gpuTimer.ts. Starts as the null
   // timer so the render loop needs no guards before the renderer exists.
   gpuTimer: GpuTimer = NULL_GPU_TIMER;
+
+  /** Default per-point square/round two-pass renderer. */
+  readonly adaptivePointRenderer = new AdaptivePointRenderer(this);
+  readonly smallViewAffordance = new SmallViewAffordance(this);
 
   // Camera tracking for screen-space scaling
   private lastScalingUpdate: number = 0;
@@ -412,7 +527,7 @@ class PointCloudVisualizer {
     fy: undefined, // Optional, defaults to fx if not provided
     cx: undefined, // Will be auto-calculated per image based on dimensions
     cy: undefined, // Will be auto-calculated per image based on dimensions
-    cameraModel: 'pinhole-ideal',
+    cameraModel: 'pinhole-opencv',
     depthType: 'euclidean',
     convention: 'opengl',
     pngScaleFactor: 1000, // Default for PNG files
@@ -502,7 +617,7 @@ class PointCloudVisualizer {
       renderModeToggles.updateUniversalRenderButtonStates(this);
       // FileItem's mode-dependent controls are declarative; wake Svelte after
       // the asynchronous Spark state changes.
-      filesState.renderTick += 1;
+      filesState.renderModeTick += 1;
     };
     this.init();
   }
@@ -515,8 +630,19 @@ class PointCloudVisualizer {
       mountSvelteSmokeTest();
       mountErrorOverlay();
       mountLoadingOverlay();
+      mountFileActivityIndicator();
       mountPerformanceStats();
       mountTabNav(this);
+
+      const panel = document.getElementById('main-ui-panel');
+      if (panel) {
+        this.screenAnchor = new ScreenAnchorController({
+          camera: this.camera,
+          canvas: this.renderer.domElement,
+          panel,
+          onChange: safeRect => this.applyControlScreenRegion(safeRect),
+        });
+      }
 
       // Setup color image loader callback
       this.colorImageLoader.setStatusCallback((message, type) => {
@@ -524,7 +650,11 @@ class PointCloudVisualizer {
       });
 
       // Setup welcome message interactivity
-      mountWelcomeMessage(() => this.triggerOpenFile());
+      mountWelcomeMessage(
+        () => this.triggerOpenFile(),
+        () => browserFileDragDrop.loadExamplePointCloud(this, 'guided'),
+        () => browserFileDragDrop.loadExamplePointCloud(this, 'basic')
+      );
 
       // Initial check for formatted welcome message
       this.updateWelcomeMessageVisibility();
@@ -535,6 +665,7 @@ class PointCloudVisualizer {
 
       if (isVSCode) {
         // VSCode extension environment
+        configureRegistrationExtensionHost(message => this.vscode.postMessage(message));
         this.setupMessageHandler();
         // The extension may already be parsing a restored document, but it
         // queues all outbound messages until this listener is installed.
@@ -574,8 +705,8 @@ class PointCloudVisualizer {
     this.camera = new THREE.PerspectiveCamera(
       75,
       container.clientWidth / container.clientHeight,
-      0.001,
-      1000000 // Further increased far plane for disparity files
+      FIXED_CAMERA_NEAR,
+      FIXED_CAMERA_FAR
     );
     this.camera.position.set(1, 1, 1);
 
@@ -595,6 +726,7 @@ class PointCloudVisualizer {
     this.renderer = selection.renderer;
     this.rendererBackend = selection.backend;
     this.webglRenderer = selection.webglRenderer;
+    this.sectionPlanes.attachRenderer(this.renderer);
     if (selection.fallbackReason) {
       console.warn(`⚠️ Falling back to WebGL. ${selection.fallbackReason}`);
     }
@@ -636,12 +768,35 @@ class PointCloudVisualizer {
 
     // Initialize controls
     this.initializeControls();
+    this.touchNavigation = new TouchNavigationController({
+      camera: this.camera,
+      element: this.renderer.domElement,
+      getControls: () => this.controls,
+      onChange: () => this.requestRender(),
+      onDoubleTap: (clientX, clientY) => {
+        void this.onDoubleClick(new MouseEvent('dblclick', { bubbles: true, clientX, clientY }));
+      },
+    });
 
     // Initialize measurement manager
-    this.measurementManager = new MeasurementManager(this.scene, this.camera, this.renderer);
+    this.measurementManager = new MeasurementManager(this.scene, this.camera, this.renderer, this);
 
     // Initialize selection manager
     this.selectionManager = new SelectionManager(this.getSelectionContext());
+    await this.selectionManager.initializeWebGPUPicker();
+    this.webgpuPickingAvailable = this.selectionManager.isWebGPUPickingAvailable();
+    this.webgpuPickingUnavailableReason = this.selectionManager.getWebGPUUnavailableReason();
+    this.pointPickingImplementation = this.selectionManager.getPointPickingImplementation();
+    console.log(
+      this.webgpuPickingAvailable
+        ? '⚡ WebGPU point picking available and enabled'
+        : `ℹ️ WebGPU point picking unavailable; using CPU (${this.webgpuPickingUnavailableReason})`
+    );
+
+    const visibilitySelection = await WebGPUVisibilityRenderer.create(container);
+    this.webgpuVisibilityRenderer = visibilitySelection.renderer;
+    this.webgpuPointRenderingAvailable = visibilitySelection.renderer !== null;
+    this.webgpuPointRenderingUnavailableReason = visibilitySelection.unavailableReason;
 
     // Initialize video mode (camera keyframes / recording)
     this.filmManager = new FilmManager(this);
@@ -702,7 +857,7 @@ class PointCloudVisualizer {
     }
 
     if (this.controlType === 'trackball') {
-      // Default sphere-projected "virtual ball" trackball: center drags
+      // Optional sphere-projected "virtual ball" trackball: center drags
       // orbit, while rim/tangential drags roll the scene under the cursor.
       this.controls = new VirtualBallControls(this.camera, this.renderer.domElement);
       const ball = this.controls as VirtualBallControls;
@@ -719,7 +874,7 @@ class PointCloudVisualizer {
       ball.zoomSpeed = 2.5;
       ball.panSpeed = 1.5;
     } else if (this.controlType === 'legacy-trackball') {
-      // The pre-2026-07 default: three.js delta-based TrackballControls.
+      // Default: three.js delta-based TrackballControls.
       this.controls = new TrackballControls(this.camera, this.renderer.domElement);
       const trackballControls = this.controls as TrackballControls;
       trackballControls.rotateSpeed = 5.0;
@@ -761,12 +916,24 @@ class PointCloudVisualizer {
     this.camera.up.copy(currentUp);
     this.controls.target.copy(currentTarget);
     this.controls.update();
+    const safeRect = this.screenAnchor?.getSafeRect();
+    if (safeRect) {
+      this.applyControlScreenRegion(safeRect);
+    }
 
     // Initialize rotation center tracking
     this.lastRotationCenter.copy(this.controls.target);
 
     // Update control status to highlight active button
     this.updateControlStatus();
+  }
+
+  private applyControlScreenRegion(safeRect: SafeViewRect): void {
+    const controls = this.controls as typeof this.controls & {
+      setScreenRegion?(region: SafeViewRect): void;
+    };
+    controls.setScreenRegion?.(safeRect);
+    this.requestRender();
   }
 
   private setupAxesVisibility(): void {
@@ -916,6 +1083,7 @@ class PointCloudVisualizer {
       pointSizes: this.pointSizes,
       screenSpaceScaling: this.screenSpaceScaling,
       splatMeshes: this.spatialFiles.map((_, index) => this.splatMode.getMesh(index)),
+      clippingPlanes: this.renderer.clippingPlanes,
     };
   }
 
@@ -926,11 +1094,24 @@ class PointCloudVisualizer {
       this.resizeObserver = null;
     }
 
+    this.touchNavigation?.dispose();
+    this.touchNavigation = null;
+    this.screenAnchor?.dispose();
+    this.screenAnchor = null;
+
     // Clean up measurements
     if (this.measurementManager) {
       this.measurementManager.dispose();
       this.measurementManager = null;
     }
+
+    if (this.selectionManager) {
+      this.selectionManager.dispose();
+      this.selectionManager = null;
+    }
+
+    this.webgpuVisibilityRenderer?.dispose();
+    this.webgpuVisibilityRenderer = null;
 
     // Clean up video mode
     if (this.filmManager) {
@@ -960,6 +1141,12 @@ class PointCloudVisualizer {
 
   private showLoading(show: boolean, message?: string): void {
     this.isFileLoading = show;
+    // In VS Code the extension host sends backgroundOperationComplete only
+    // after parsing, progressive colour delivery, and every other load phase
+    // has finished. Geometry becoming visible is not that terminal event.
+    if (show || !this.runningInVSCode) {
+      uiState.fileLoading = show;
+    }
 
     if (show) {
       uiState.loadingVisible = true;
@@ -1006,6 +1193,7 @@ class PointCloudVisualizer {
     this.camera.aspect = container.clientWidth / container.clientHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(container.clientWidth, container.clientHeight);
+    this.screenAnchor?.refreshAutomatic();
 
     // Update EDL composer and render targets on resize
     if (this.effectComposer) {
@@ -1187,11 +1375,72 @@ class PointCloudVisualizer {
     if (this.contextLost) {
       return;
     }
-    if (this.edlEnabled && this.effectComposer) {
+    this.adaptivePointRenderer.beforeRender();
+    this.smallViewAffordance.update();
+    const visibilityContext = this.getVisibilityRenderContext();
+    const useEDL = edl.prepareEDLFrame(this);
+    const useVisibilityRenderer =
+      this.pointRenderingImplementation === 'webgpu-visibility' &&
+      !useEDL &&
+      !this.allowTransparency &&
+      !!this.webgpuVisibilityRenderer &&
+      this.webgpuVisibilityRenderer.canRender(visibilityContext);
+
+    if (useVisibilityRenderer && this.webgpuVisibilityRenderer) {
+      const visibility = visibilityContext.pointClouds.map(cloud => cloud.visible);
+      for (const cloud of visibilityContext.pointClouds) {
+        cloud.visible = false;
+      }
+      try {
+        this.renderer.render(this.scene, this.camera);
+      } finally {
+        visibilityContext.pointClouds.forEach(
+          (cloud, index) => (cloud.visible = visibility[index])
+        );
+      }
+      try {
+        this.webgpuVisibilityRenderer.setEnabled(true);
+        if (!this.webgpuVisibilityRenderer.render(visibilityContext)) {
+          this.webgpuVisibilityRenderer.setEnabled(false);
+          this.renderer.render(this.scene, this.camera);
+        }
+      } catch (error) {
+        console.warn(
+          `WebGPU visibility rendering failed; using current renderer: ${error instanceof Error ? error.message : String(error)}`
+        );
+        this.webgpuVisibilityRenderer.setEnabled(false);
+        this.renderer.render(this.scene, this.camera);
+      }
+      return;
+    }
+
+    this.webgpuVisibilityRenderer?.setEnabled(false);
+    if (useEDL && this.effectComposer) {
       this.effectComposer.render();
     } else {
       this.renderer.render(this.scene, this.camera);
     }
+  }
+
+  private getVisibilityRenderContext(): VisibilityRenderContext {
+    const pointClouds = this.meshes.filter(
+      (mesh, index): mesh is THREE.Points =>
+        !!mesh &&
+        this.fileVisibility[index] &&
+        mesh.visible &&
+        mesh instanceof THREE.Points &&
+        mesh.material instanceof THREE.PointsMaterial
+    );
+    return {
+      camera: this.camera,
+      pointClouds,
+      clippingPlanes: this.renderer.clippingPlanes,
+      brightnessStops: this.brightnessStops,
+      hasDepthConflicts: this.meshes.some(
+        (mesh, index) =>
+          !!mesh && this.fileVisibility[index] && mesh.visible && !(mesh instanceof THREE.Points)
+      ),
+    };
   }
 
   /**
@@ -1206,7 +1455,7 @@ class PointCloudVisualizer {
   /**
    * Toggle Eye Dome Lighting on/off.
    */
-  private toggleEDL(): void {
+  toggleEDL(): void {
     edl.toggleEDL(this);
   }
 
@@ -1359,10 +1608,42 @@ class PointCloudVisualizer {
     rotationCenterFeature.setRotationCenterToOrigin(this);
   }
 
-  private onDoubleClick(event: MouseEvent): void {
+  setPointPickingImplementation(implementation: PointPickingImplementation): void {
+    this.selectionManager?.setPointPickingImplementation(implementation);
+    this.pointPickingImplementation =
+      this.selectionManager?.getPointPickingImplementation() ?? 'cpu';
+    this.showStatus(
+      this.pointPickingImplementation === 'webgpu'
+        ? 'Using WebGPU point picking'
+        : 'Using CPU point picking'
+    );
+  }
+
+  setPointRenderingImplementation(implementation: PointRenderingImplementation): void {
+    this.pointRenderingImplementation =
+      implementation === 'webgpu-visibility' && this.webgpuVisibilityRenderer
+        ? 'webgpu-visibility'
+        : 'current';
+    this.webgpuVisibilityRenderer?.setEnabled(
+      this.pointRenderingImplementation === 'webgpu-visibility'
+    );
+    this.showStatus(
+      this.pointRenderingImplementation === 'webgpu-visibility'
+        ? 'Using WebGPU one-pixel visibility rendering where compatible'
+        : 'Using current point rendering'
+    );
+    this.requestRender();
+  }
+
+  private async onDoubleClick(event: MouseEvent): Promise<void> {
     if (!this.selectionManager) {
       return;
     }
+
+    // Only the most recently started pick may change the viewer. This protects
+    // touch double-taps from a later Safari compatibility event and prevents an
+    // older asynchronous pick from overwriting a newer result.
+    const pickGeneration = ++this.pointPickGeneration;
 
     // Get canvas and mouse position in screen coordinates
     const canvas = this.renderer.domElement;
@@ -1376,7 +1657,15 @@ class PointCloudVisualizer {
     this.selectionManager.updateContext(this.getSelectionContext());
 
     // Try to select a point with detailed logging
-    const result = this.selectionManager.selectPointWithLogging(mouseScreenX, mouseScreenY, canvas);
+    const result = await this.selectionManager.selectPointWithLoggingAsync(
+      mouseScreenX,
+      mouseScreenY,
+      canvas
+    );
+
+    if (pickGeneration !== this.pointPickGeneration) {
+      return;
+    }
 
     if (result) {
       const { point: selectedPoint, info } = result;
@@ -1394,10 +1683,23 @@ class PointCloudVisualizer {
         console.log(`⚫ Selected point cloud: ${info}`);
       }
 
+      // Correspondence picking is on Cmd/Ctrl + double-click, not on the plain
+      // one. Claiming the plain gesture meant that while picking was armed the
+      // only way to move the rotation centre — the thing you need constantly
+      // while hunting for the same corner in two clouds — was to stop picking.
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        registrationFeature.handlePickedPoint(this, selectedPoint)
+      ) {
+        console.log(`🎯 Registration correspondence point added (${info})`);
+        this.requestRender();
+        return;
+      }
+
       // Shift + double-click is the single measurement gesture. The first
       // implicit path starts at the rotation center; an explicitly created
       // free path starts at the first picked point instead.
-      if (event.shiftKey && this.measurementManager) {
+      if ((event.shiftKey || measurementState.pickingEnabled) && this.measurementManager) {
         const rotationCenter = this.controls.target.clone();
         this.measurementManager.prepareForPathPoint(rotationCenter);
         this.measurementManager.addPathPoint(selectedPoint);
@@ -1418,6 +1720,8 @@ class PointCloudVisualizer {
     if (
       !this.sequenceMode &&
       !event.shiftKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
       this.selectionManager.isFarFromAllVisibleObjects(mouseScreenX, mouseScreenY, canvas)
     ) {
       console.log('🧭 Double-click in empty space - fitting view to all objects');
@@ -1521,10 +1825,12 @@ class PointCloudVisualizer {
     // File list - Svelte component (components/FileList.svelte), see
     // updateFileList() and docs/SVELTE_MIGRATION_PLAN.md Phase 3.
     mountFileList(this);
+    mountGlobalAlignMenu(this);
     mountStats(this);
     mountControlsTab(this);
     mountFilmPanel(this);
     mountMeasurementQuickActions(this);
+    mountSmallViewAffordance(this);
 
     document.addEventListener('dblclick', e => {
       const slider = e.target;
@@ -1554,6 +1860,14 @@ class PointCloudVisualizer {
         return;
       }
 
+      // Every shortcut here is a bare letter, so anything with a modifier
+      // belongs to the editor or the OS, not to us. Without this the handler
+      // swallowed Cmd/Ctrl+C, +A, +S and +F - each one calling preventDefault
+      // on a keystroke the user meant for copy, select-all, save or find.
+      if (e.metaKey || e.ctrlKey || e.altKey) {
+        return;
+      }
+
       switch (e.key.toLowerCase()) {
         case 'h':
           this.showKeyboardShortcuts();
@@ -1575,7 +1889,9 @@ class PointCloudVisualizer {
           this.toggleAxesVisibility();
           e.preventDefault();
           break;
-        case 'c':
+        // Deliberately not 'c': that key belongs to copying, and a viewer
+        // shortcut sitting on it is a trap even with the modifier guard above.
+        case 'v':
           this.setOpenCVCameraConvention();
           if (this.vscode) {
             this.vscode.postMessage({ type: 'saveCameraConvention', convention: 'opencv' });
@@ -1743,16 +2059,20 @@ class PointCloudVisualizer {
       const size = box.getSize(new THREE.Vector3());
       const center = box.getCenter(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
-      const fov = this.camera.fov * (Math.PI / 180);
-      const distance = (maxDim / 2 / Math.tan(fov / 2)) * 1.5;
+      this.screenAnchor?.refreshAutomatic();
+      const safeFraction = this.screenAnchor?.getFitFractions() ?? { width: 1, height: 1 };
+      const vFov = this.camera.fov * (Math.PI / 180);
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
+      const distance =
+        Math.max(
+          maxDim / (2 * Math.tan(vFov / 2) * safeFraction.height),
+          maxDim / (2 * Math.tan(hFov / 2) * safeFraction.width)
+        ) * 1.5;
 
       // Move camera along its current direction to the new distance
       const dir = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
       this.camera.position.copy(center.clone().sub(dir.multiplyScalar(distance)));
-      // Conservative clipping planes for massive point clouds
-      this.camera.near = Math.max(0.001, Math.min(0.1, distance / 10000));
-      this.camera.far = Math.max(distance * 100, 1000000);
-      this.camera.updateProjectionMatrix();
+      applyFixedClipPlanes(this.camera);
 
       // Update controls target if present
       if (this.controls && (this.controls as any).target) {
@@ -1794,8 +2114,12 @@ class PointCloudVisualizer {
     } catch {}
   }
 
-  private switchTab(tabName: string): void {
+  private switchTab(tabName: string | null): void {
     uiStatus.switchTab(tabName);
+    // Tab collapse/expansion is intentional layout state, so it is one of the
+    // few times the automatic visual center should follow the panel. Ordinary
+    // row/content changes do not call this and therefore cannot move the view.
+    requestAnimationFrame(() => this.screenAnchor?.refreshAutomatic());
   }
 
   private toggleAxesVisibility(): void {
@@ -1931,6 +2255,11 @@ class PointCloudVisualizer {
     axesFeature.showUpVectorIndicator(this, upVector);
   }
 
+  completeBackgroundOperation(): void {
+    this.pendingFileLoads = Math.max(0, this.pendingFileLoads - 1);
+    uiState.fileLoading = this.pendingFileLoads > 0;
+  }
+
   private showKeyboardShortcuts(): void {
     uiStatus.showKeyboardShortcuts(() => this.createShortcutsUI());
   }
@@ -1942,219 +2271,266 @@ class PointCloudVisualizer {
   private setupMessageHandler(): void {
     window.addEventListener('message', async event => {
       const message = event.data;
+      const tracksBackgroundChange = BACKGROUND_CHANGE_MESSAGES.has(message.type);
+      if (tracksBackgroundChange) {
+        uiState.backgroundChanges++;
+      }
 
-      switch (message.type) {
-        case 'timing':
-          this.handleTimingMessage(message);
-          break;
-        case 'startLoading':
-          this.showImmediateLoading(message);
-          break;
-        case 'timingUpdate':
-          // Allow timing updates, suppress other spam
-          if (
-            typeof message.message === 'string' &&
-            message.message.includes('🧪 Header face types')
-          ) {
-            console.log(message.message);
-          }
-          break;
-        case 'loadingError':
-          const fileType = message.fileType || 'point cloud';
-          const fileName = message.fileName ? ` (${message.fileName})` : '';
-          this.showError(`Failed to load ${fileType} file${fileName}: ${message.error}`);
-          break;
-        case 'spatialData':
-        case 'multiSpatialData':
-          try {
-            // Both single and multi-file data are handled the same way now
-            const dataArray = Array.isArray(message.data) ? message.data : [message.data];
-            await this.loadWithPerf('ply', message, () => this.displayFiles(dataArray));
-          } catch (error) {
-            console.error('Error displaying PLY data:', error);
-            this.showError(
-              'Failed to display PLY data: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'splatContainerUri':
-          await handleSplatContainerUri(this, message);
-          break;
-        case 'ultimateRawBinaryData':
-          try {
-            await this.handleUltimateRawBinaryData(message);
-          } catch (error) {
-            console.error('Error handling ultimate raw binary data:', error);
-            this.showError(
-              'Failed to handle ultimate raw binary data: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'ultimateRawBinaryUri':
-          await this.handleUltimateRawBinaryUri(message);
-          break;
-        case 'directTypedArrayData':
-          try {
-            await this.loadWithPerf('ply', message, () => this.handleDirectTypedArrayData(message));
-          } catch (error) {
-            console.error('Error handling direct TypedArray data:', error);
-            this.showError(
-              'Failed to handle direct TypedArray data: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'binarySpatialData':
-          try {
-            await this.loadWithPerf('ply', message, () => this.handleBinarySpatialData(message));
-          } catch (error) {
-            console.error('Error handling binary PLY data:', error);
-            this.showError(
-              'Failed to handle binary PLY data: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'addFiles':
-          try {
-            this.addNewFiles(message.data);
-          } catch (error) {
-            console.error('Error adding new files:', error);
-            this.showError(
-              'Failed to add files: ' + (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'sequence:init':
-          try {
-            this.initializeSequence(message.files as string[], message.wildcard as string);
-          } catch (error) {
-            console.error('Error starting sequence:', error);
-            this.showError(
-              'Failed to start sequence: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'sequence:file:ultimate':
-          await this.sequenceHandleUltimate(message);
-          break;
-        case 'sequence:file:ply':
-          await this.sequenceHandlePly(message);
-          break;
-        case 'sequence:file:xyz':
-          await this.sequenceHandleXyz(message);
-          break;
-        case 'sequence:file:obj':
-          await this.sequenceHandleObj(message);
-          break;
-        case 'sequence:file:stl':
-          await this.sequenceHandleStl(message);
-          break;
-        case 'sequence:file:depth':
-          await this.sequenceHandleDepth(message);
-          break;
-        case 'fileRemoved':
-          try {
-            this.removeFileByIndex(message.fileIndex);
-          } catch (error) {
-            console.error('Error removing file:', error);
-            this.showError(
-              'Failed to remove file: ' + (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
-        case 'startLargeFile':
-          this.handleStartLargeFile(message);
-          break;
-        case 'largeFileChunk':
-          this.handleLargeFileChunk(message);
-          break;
-        case 'largeFileComplete':
-          await this.handleLargeFileComplete(message);
-          break;
-        case 'cancelLargeFile':
-          largeFileChunking.handleCancelLargeFile(this, message);
-          break;
-        case 'depthData':
-          this.handleDepthData(message);
-          break;
-        case 'objData':
-          await this.loadWithPerf('obj', message, () => this.handleObjData(message));
-          break;
-        case 'stlData':
-          await this.loadWithPerf('stl', message, () => this.handleStlData(message));
-          break;
-        case 'xyzData':
-          await this.loadWithPerf('xyz', message, () => this.handleXyzData(message));
-          break;
-        case 'pcdData':
-          await this.loadWithPerf('pcd', message, () => this.handlePcdData(message));
-          break;
-        case 'ptsData':
-          await this.loadWithPerf('pts', message, () => this.handlePtsData(message));
-          break;
-        case 'kittiBinData':
-          await this.loadWithPerf('kitti-bin', message, () => this.handleKittiBinData(message));
-          break;
-        case 'offData':
-          await this.loadWithPerf('off', message, () => this.handleOffData(message));
-          break;
-        case 'gltfData':
-          await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
-          break;
-        case 'colmapModelFiles':
-          await this.loadWithPerf('colmap', message, () => this.handleColmapModelFiles(message));
-          break;
-        case 'colmapImages':
-          await this.handleColmapImages(message);
-          break;
-        case 'npyData':
-          await this.loadWithPerf('npy', message, () => this.handleNpyData(message));
-          break;
-        case 'xyzVariantData':
-          await this.loadWithPerf('xyz', message, () => this.handleXyzVariantData(message));
-          break;
-        case 'cameraParams':
-          this.handleCameraParams(message);
-          break;
-        case 'cameraParamsCancelled':
-          this.handleCameraParamsCancelled(message.requestId);
-          break;
-        case 'datasetTexture':
-          this.handleDatasetTexture(message);
-          break;
-        case 'cameraParamsError':
-          this.handleCameraParamsError(message.error, message.requestId);
-          break;
-        case 'savePlyFileResult':
-          this.handleSaveSpatialFileResult(message);
-          break;
-        case 'colorImageData':
-          this.handleColorImageData(message);
-          break;
-        case 'defaultDepthSettings':
-          this.handleDefaultDepthSettings(message);
-          break;
-        case 'mtlData':
-          this.handleMtlData(message);
-          break;
-        case 'calibrationFileSelected':
-          this.handleCalibrationFileSelected(message);
-          break;
-        case 'poseData':
-          try {
-            await (this as any).handlePoseData(message);
-          } catch (error) {
-            console.error('Error handling pose data:', error);
-            this.showError(
-              'Failed to handle pose data: ' +
-                (error instanceof Error ? error.message : String(error))
-            );
-          }
-          break;
+      try {
+        switch (message.type) {
+          case 'registrationResult':
+            handleRegistrationExtensionResult(message);
+            break;
+          // Benchmark harness only (scripts/benchmark-vscode.mjs): runs one
+          // scripted step of the load → align → recolour scenario. See
+          // benchmarkScenario.ts for why this seam exists.
+          case 'benchmarkScenario':
+            await runBenchmarkScenario(this, message.step, message.anchorIndex ?? 0);
+            break;
+          case 'timing':
+            this.handleTimingMessage(message);
+            break;
+          case 'startLoading':
+            this.showImmediateLoading(message);
+            break;
+          case 'backgroundOperationComplete':
+            this.completeBackgroundOperation();
+            break;
+          case 'timingUpdate':
+            // Allow timing updates, suppress other spam
+            if (
+              typeof message.message === 'string' &&
+              message.message.includes('🧪 Header face types')
+            ) {
+              console.log(message.message);
+            }
+            break;
+          case 'loadingError':
+            const fileType = message.fileType || 'point cloud';
+            const fileName = message.fileName ? ` (${message.fileName})` : '';
+            this.showError(`Failed to load ${fileType} file${fileName}: ${message.error}`);
+            break;
+          case 'stonexColorReady':
+            stationPipelineFeature.applyLoadTimeColors(this, message.updates ?? []);
+            break;
+          case 'stationPipelineProgress':
+            stationPipelineFeature.reportStationPipelineProgress(message.message);
+            break;
+          case 'stationPipelineResult':
+            stationPipelineFeature.handleStationPipelineResult(this, message);
+            break;
+          case 'spatialData':
+          case 'multiSpatialData':
+            try {
+              // Both single and multi-file data are handled the same way now
+              const dataArray = Array.isArray(message.data) ? message.data : [message.data];
+              await this.loadWithPerf('ply', message, () => this.displayFiles(dataArray));
+            } catch (error) {
+              console.error('Error displaying PLY data:', error);
+              this.showError(
+                'Failed to display PLY data: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'splatContainerUri':
+            await handleSplatContainerUri(this, message);
+            break;
+          case 'ultimateRawBinaryData':
+            try {
+              await this.handleUltimateRawBinaryData(message);
+            } catch (error) {
+              console.error('Error handling ultimate raw binary data:', error);
+              this.showError(
+                'Failed to handle ultimate raw binary data: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'ultimateRawBinaryUri':
+            await this.handleUltimateRawBinaryUri(message);
+            break;
+          case 'directTypedArrayData':
+            try {
+              await this.loadWithPerf('ply', message, () =>
+                this.handleDirectTypedArrayData(message)
+              );
+            } catch (error) {
+              console.error('Error handling direct TypedArray data:', error);
+              this.showError(
+                'Failed to handle direct TypedArray data: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'binarySpatialData':
+            try {
+              await this.loadWithPerf('ply', message, () => this.handleBinarySpatialData(message));
+              stationPipelineFeature.flushPendingLoadTimeColors(this);
+            } catch (error) {
+              console.error('Error handling binary PLY data:', error);
+              this.showError(
+                'Failed to handle binary PLY data: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'addFiles':
+            try {
+              this.addNewFiles(message.data);
+            } catch (error) {
+              console.error('Error adding new files:', error);
+              this.showError(
+                'Failed to add files: ' + (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'sequence:init':
+            try {
+              this.initializeSequence(message.files as string[], message.wildcard as string);
+            } catch (error) {
+              console.error('Error starting sequence:', error);
+              this.showError(
+                'Failed to start sequence: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'sequence:file:ultimate':
+            await this.sequenceHandleUltimate(message);
+            break;
+          case 'sequence:file:ply':
+            await this.sequenceHandlePly(message);
+            break;
+          case 'sequence:file:xyz':
+            await this.sequenceHandleXyz(message);
+            break;
+          case 'sequence:file:obj':
+            await this.sequenceHandleObj(message);
+            break;
+          case 'sequence:file:stl':
+            await this.sequenceHandleStl(message);
+            break;
+          case 'sequence:file:depth':
+            await this.sequenceHandleDepth(message);
+            break;
+          case 'fileRemoved':
+            try {
+              this.removeFileByIndex(message.fileIndex);
+            } catch (error) {
+              console.error('Error removing file:', error);
+              this.showError(
+                'Failed to remove file: ' + (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+          case 'startLargeFile':
+            this.handleStartLargeFile(message);
+            break;
+          case 'largeFileChunk':
+            this.handleLargeFileChunk(message);
+            break;
+          case 'largeFileComplete':
+            await this.handleLargeFileComplete(message);
+            break;
+          case 'cancelLargeFile':
+            largeFileChunking.handleCancelLargeFile(this, message);
+            break;
+          case 'depthData':
+            this.handleDepthData(message);
+            break;
+          case 'objData':
+            await this.loadWithPerf('obj', message, () => this.handleObjData(message));
+            break;
+          case 'stlData':
+            await this.loadWithPerf('stl', message, () => this.handleStlData(message));
+            break;
+          case 'xyzData':
+            await this.loadWithPerf('xyz', message, () => this.handleXyzData(message));
+            break;
+          case 'pcdData':
+            await this.loadWithPerf('pcd', message, () => this.handlePcdData(message));
+            break;
+          case 'ptsData':
+            await this.loadWithPerf('pts', message, () => this.handlePtsData(message));
+            break;
+          case 'kittiBinData':
+            await this.loadWithPerf('kitti-bin', message, () => this.handleKittiBinData(message));
+            break;
+          case 'offData':
+            await this.loadWithPerf('off', message, () => this.handleOffData(message));
+            break;
+          case 'gltfData':
+            await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
+            break;
+          case 'volumeData':
+            if (!acceptVolumeResponse(message.data?.metadata?.volumeSessionId, message.requestId)) {
+              break;
+            }
+            updateVolumeProgress(message.data?.metadata?.volumeSessionId, message.requestId, 1);
+            await this.loadWithPerf('volume', message, () => this.handleVolumeData(message));
+            break;
+          case 'volume:progress':
+            updateVolumeProgress(message.sessionId, message.requestId, message.fraction);
+            break;
+          case 'volume:error':
+            setVolumeError(message.sessionId, message.requestId, message.error);
+            break;
+          case 'colmapModelFiles':
+            await this.loadWithPerf('colmap', message, () => this.handleColmapModelFiles(message));
+            break;
+          case 'colmapImages':
+            await this.handleColmapImages(message);
+            break;
+          case 'npyData':
+            await this.loadWithPerf('npy', message, () => this.handleNpyData(message));
+            break;
+          case 'xyzVariantData':
+            await this.loadWithPerf('xyz', message, () => this.handleXyzVariantData(message));
+            break;
+          case 'cameraParams':
+            this.handleCameraParams(message);
+            break;
+          case 'cameraParamsCancelled':
+            this.handleCameraParamsCancelled(message.requestId);
+            break;
+          case 'datasetTexture':
+            this.handleDatasetTexture(message);
+            break;
+          case 'cameraParamsError':
+            this.handleCameraParamsError(message.error, message.requestId);
+            break;
+          case 'savePlyFileResult':
+            this.handleSaveSpatialFileResult(message);
+            break;
+          case 'colorImageData':
+            this.handleColorImageData(message);
+            break;
+          case 'defaultDepthSettings':
+            this.handleDefaultDepthSettings(message);
+            break;
+          case 'mtlData':
+            this.handleMtlData(message);
+            break;
+          case 'calibrationFileSelected':
+            this.handleCalibrationFileSelected(message);
+            break;
+          case 'poseData':
+            try {
+              await (this as any).handlePoseData(message);
+            } catch (error) {
+              console.error('Error handling pose data:', error);
+              this.showError(
+                'Failed to handle pose data: ' +
+                  (error instanceof Error ? error.message : String(error))
+              );
+            }
+            break;
+        }
+      } finally {
+        if (tracksBackgroundChange) {
+          uiState.backgroundChanges = Math.max(0, uiState.backgroundChanges - 1);
+        }
       }
     });
   }
@@ -2312,9 +2688,14 @@ class PointCloudVisualizer {
 
     if (data.faceCount > 0) {
       // Mesh material
-      const material: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial = this.useUnlitPly
-        ? new THREE.MeshBasicMaterial()
-        : new THREE.MeshLambertMaterial();
+      const material: THREE.MeshBasicMaterial | THREE.MeshLambertMaterial =
+        // Slice planes and voxel boxes carry their presentation grey directly
+        // in the vertex colours, so scene lighting must not tint them.
+        this.useUnlitPly ||
+        data.metadata?.volumeRenderMode === 'slices' ||
+        data.metadata?.volumeRenderMode === 'voxels'
+          ? new THREE.MeshBasicMaterial()
+          : new THREE.MeshLambertMaterial();
       material.side = THREE.DoubleSide; // More robust visibility if face winding varies
       // For files without explicit normals, prefer flat shading to avoid odd gradients
       if (material instanceof THREE.MeshLambertMaterial) {
@@ -2435,10 +2816,15 @@ class PointCloudVisualizer {
     const center = fitBox.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 1e-6);
 
+    // Fit against the unobstructed region selected by ScreenAnchorController,
+    // not the full canvas hidden partly beneath the top-right menu.
+    this.screenAnchor?.refreshAutomatic();
+    const safeFraction = this.screenAnchor?.getFitFractions() ?? { width: 1, height: 1 };
+
     const vFov = this.camera.fov * (Math.PI / 180);
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect);
-    const fitHeightDistance = maxDim / (2 * Math.tan(vFov / 2));
-    const fitWidthDistance = maxDim / (2 * Math.tan(hFov / 2));
+    const fitHeightDistance = maxDim / (2 * Math.tan(vFov / 2) * safeFraction.height);
+    const fitWidthDistance = maxDim / (2 * Math.tan(hFov / 2) * safeFraction.width);
     const distance = Math.max(fitHeightDistance, fitWidthDistance) * 1.5; // padding
 
     // Keep current camera viewing direction and move along it.
@@ -2451,10 +2837,7 @@ class PointCloudVisualizer {
     this.camera.position.copy(center.clone().sub(direction.multiplyScalar(distance)));
     this.camera.lookAt(center);
 
-    // Conservative clipping planes for massive coordinate ranges
-    this.camera.near = Math.max(0.001, Math.min(0.1, distance / 10000));
-    this.camera.far = Math.max(distance * 100, 1000000);
-    this.camera.updateProjectionMatrix();
+    applyFixedClipPlanes(this.camera);
 
     // Set rotation center to fitted center
     this.controls.target.copy(center);
@@ -2492,11 +2875,22 @@ class PointCloudVisualizer {
     // camera getter methods below) each time renderTick changes - mirroring
     // this method's old "regenerate everything from scratch" model without
     // needing every underlying field to be individually reactive.
+    // A settings update may change row contents, but must never move the
+    // user's place in the list. FileList keeps stable keyed rows; preserving
+    // the container offset here is a second invariant at the one refresh
+    // boundary all current and future settings use.
+    const fileList = document.getElementById('file-list');
+    const scrollTop = fileList?.scrollTop ?? 0;
+    const scrollLeft = fileList?.scrollLeft ?? 0;
     filesState.renderTick++;
     // Force the Svelte re-render to apply synchronously so the button-state
     // sync calls below see the freshly rendered DOM, matching the old
     // synchronous innerHTML-then-listeners-then-button-states ordering.
     flushSync();
+    if (fileList) {
+      fileList.scrollTop = scrollTop;
+      fileList.scrollLeft = scrollLeft;
+    }
     this.updatePointsNormalsButtonStates();
     this.updateUniversalRenderButtonStates();
     this.updateDefaultButtonState();
@@ -2506,7 +2900,8 @@ class PointCloudVisualizer {
     return commentSettings.isDepthDerivedFile(data);
   }
 
-  private onFileColorModeChange(fileIndex: number, value: string): void {
+  /** Also the entry point for code that switches a mode, not just the picker. */
+  onFileColorModeChange(fileIndex: number, value: string): void {
     this.individualColorModes[fileIndex] = value;
     filesState.colorModes[fileIndex] = value;
     const isPose = fileIndex >= this.spatialFiles.length;
@@ -2548,6 +2943,11 @@ class PointCloudVisualizer {
         }
       }
     }
+    // The renderer draws on demand, so a colour change that does not ask for a
+    // frame is invisible until something else does — a camera nudge, a resize.
+    // Switching a cloud from its projected colour to a flat one looked like a
+    // control that did nothing at all.
+    this.requestRender();
   }
 
   private toggleFileVisibility(fileIndex: number): void {
@@ -2562,7 +2962,8 @@ class PointCloudVisualizer {
     this.setFileEntryVisibility(fileIndex, desiredVisible);
   }
 
-  private setFileEntryVisibility(fileIndex: number, desiredVisible: boolean): void {
+  /** Used by the capture-place toggles, which move several entries at once. */
+  setFileEntryVisibility(fileIndex: number, desiredVisible: boolean): void {
     this.fileVisibility[fileIndex] = desiredVisible;
     filesState.visibility[fileIndex] = desiredVisible;
 
@@ -2609,7 +3010,7 @@ class PointCloudVisualizer {
    */
   private toggleUniversalRenderMode(fileIndex: number, mode: string): void {
     renderModeToggles.toggleUniversalRenderMode(this, fileIndex, mode);
-    filesState.renderTick += 1;
+    filesState.renderModeTick += 1;
   }
 
   private toggleSolidRendering(fileIndex: number): void {
@@ -2676,6 +3077,10 @@ class PointCloudVisualizer {
     console.log(`Load: UI start ${fileName} at ${uiStartTime.toFixed(1)}ms`);
 
     this.isFileLoading = true;
+    if (this.runningInVSCode) {
+      this.pendingFileLoads++;
+    }
+    uiState.fileLoading = true;
     this.updateWelcomeMessageVisibility();
 
     // Store timing for complete analysis
@@ -2844,11 +3249,16 @@ class PointCloudVisualizer {
       // Initialize color mode before creating material. The slot already exists
       // at entryIndex, so this only assigns.
       const initialColorMode =
-        this.useOriginalColors && data.hasColors
+        (data.metadata?.volumeRenderMode === 'slices' ||
+          data.metadata?.volumeRenderMode === 'points' ||
+          data.metadata?.volumeRenderMode === 'voxels') &&
+        data.hasColors
           ? 'original'
-          : this.hasIntensityData(data)
-            ? 'intensity'
-            : 'assigned';
+          : this.useOriginalColors && data.hasColors
+            ? 'original'
+            : this.hasIntensityData(data)
+              ? 'intensity'
+              : 'assigned';
       this.individualColorModes[data.fileIndex] = initialColorMode;
       filesState.colorModes[data.fileIndex] = initialColorMode;
       console.log(
@@ -3397,9 +3807,18 @@ class PointCloudVisualizer {
     }
 
     // Remove from arrays
+    const volumeSessionId = this.spatialFiles[fileIndex]?.metadata?.volumeSessionId;
+    if (typeof volumeSessionId === 'string') {
+      const source = this.volumeSources.get(volumeSessionId);
+      if (source) {
+        source.generation++;
+      }
+      this.volumeSources.delete(volumeSessionId);
+    }
     this.splatMode.onFileRemoved(fileIndex);
     this.splatModeActive.splice(fileIndex, 1);
     this.spatialFiles.splice(fileIndex, 1);
+    this.sectionPlanes.onFileRemoved(fileIndex);
     this.meshes.splice(fileIndex, 1);
     this.normalsVisualizers.splice(fileIndex, 1); // Remove normals visualizer for this file
     this.vertexPointsObjects.splice(fileIndex, 1); // Remove vertex points object for this file
@@ -3519,8 +3938,8 @@ class PointCloudVisualizer {
     await binaryDataHandlers.handleUltimateRawBinaryUri(this, message);
   }
 
-  async handleUltimateRawBinaryData(message: any): Promise<void> {
-    await binaryDataHandlers.handleUltimateRawBinaryData(this, message);
+  async handleUltimateRawBinaryData(message: any, preparsed?: PlyParseResult): Promise<void> {
+    await binaryDataHandlers.handleUltimateRawBinaryData(this, message, preparsed);
   }
 
   private async handleDirectTypedArrayData(message: any): Promise<void> {
@@ -3541,9 +3960,11 @@ class PointCloudVisualizer {
 
   private async handleLargeFileComplete(message: any): Promise<void> {
     await largeFileChunking.handleLargeFileComplete(this, message);
+    stationPipelineFeature.flushPendingLoadTimeColors(this);
   }
 
-  private updatePointSize(fileIndex: number, newSize: number): void {
+  /** Called from the file rows and from the all-clouds slider in the controls. */
+  updatePointSize(fileIndex: number, newSize: number): void {
     pointSizeScaling.updatePointSize(this, fileIndex, newSize);
   }
 
@@ -3621,8 +4042,12 @@ class PointCloudVisualizer {
     cameraConvention.setOpenCVCameraConvention(this);
   }
 
-  private setOpenGLCameraConvention(): void {
+  setOpenGLCameraConvention(): void {
     cameraConvention.setOpenGLCameraConvention(this);
+  }
+
+  loadMeasurementPathProject(jsonText: string): boolean {
+    return this.measurementManager?.loadPathProject(jsonText) ?? false;
   }
 
   updateAxesForCameraConvention(convention: 'opencv' | 'opengl'): void {
@@ -3886,6 +4311,157 @@ class PointCloudVisualizer {
     await formatDataHandlers.handleGltfData(this, message);
   }
 
+  private async handleVolumeData(message: any): Promise<void> {
+    this.retainVolumeSource(message.data);
+    await formatDataHandlers.handleVolumeData(this, message);
+  }
+
+  private retainVolumeSource(data: SpatialData | undefined): void {
+    const metadata = data?.metadata as any;
+    const sessionId = metadata?.volumeSessionId;
+    const sizes = metadata?.volumeSizes;
+    const samples = data?.intensityArray;
+    if (
+      typeof sessionId !== 'string' ||
+      !Array.isArray(sizes) ||
+      sizes.length !== 3 ||
+      !samples ||
+      samples.length !== sizes[0] * sizes[1] * sizes[2]
+    ) {
+      return;
+    }
+
+    this.volumeSources.set(sessionId, {
+      volume: {
+        sizes: [...sizes] as [number, number, number],
+        samples,
+        ijkToWorld: [...metadata.ijkToWorld],
+        spaceUnits: metadata.spaceUnits || 'm',
+        intensityUnits: metadata.intensityUnits,
+        range: metadata.volumeRange,
+        channels: Number(metadata.channels) || 1,
+        header: {
+          'photometric interpretation': metadata.photometricInterpretation || 'MONOCHROME2',
+        },
+        fileName: data.fileName,
+      },
+      metadata: { ...metadata },
+      generation: 0,
+    });
+  }
+
+  async reextractVolumeLocally(request: {
+    sessionId: string;
+    fileIndex: number;
+    threshold: number;
+    step: [number, number, number];
+    renderMode: 'points' | 'mesh' | 'slices' | 'voxels';
+    windowCenter: number;
+    windowWidth: number;
+    brightnessMode: 'slice-auto' | 'dicom-window' | 'volume-range';
+    sliceIndices: [number, number, number];
+    /** Visible index range per axis; voxel mode clips in geometry, not planes. */
+    clipRanges?: Array<[number, number]>;
+    requestId: number;
+  }): Promise<void> {
+    const source = this.volumeSources.get(request.sessionId);
+    if (!source) {
+      // Older/partial volume payloads can still use the extension-host fallback.
+      this.vscode.postMessage({ type: 'volume:reextract', ...request });
+      return;
+    }
+
+    const generation = ++source.generation;
+    const cancelled = () => generation !== source.generation;
+    const onProgress = (fraction: number) =>
+      updateVolumeProgress(request.sessionId, request.requestId, fraction);
+
+    try {
+      const result =
+        request.renderMode === 'slices'
+          ? await buildVolumeSlicesAsync(
+              source.volume,
+              {
+                windowCenter: request.windowCenter,
+                windowWidth: request.windowWidth,
+                brightnessMode: request.brightnessMode,
+                volumeRange: source.metadata.volumeRange,
+                sliceRanges: source.metadata.volumeSliceRanges,
+                slices: request.sliceIndices,
+                onProgress,
+              },
+              cancelled
+            )
+          : request.renderMode === 'mesh'
+            ? await buildVolumeMeshAsync(
+                source.volume,
+                { threshold: request.threshold, step: request.step, onProgress },
+                cancelled
+              )
+            : request.renderMode === 'voxels'
+              ? await buildVolumeVoxelsAsync(
+                  source.volume,
+                  {
+                    threshold: request.threshold,
+                    step: [1, 1, 1],
+                    clip: request.clipRanges,
+                    windowCenter: request.windowCenter,
+                    windowWidth: request.windowWidth,
+                    brightnessMode: request.brightnessMode,
+                    volumeRange: source.metadata.volumeRange,
+                    sliceRanges: source.metadata.volumeSliceRanges,
+                    onProgress,
+                  },
+                  cancelled
+                )
+              : await buildVolumePointsAsync(
+                  source.volume,
+                  {
+                    threshold: request.threshold,
+                    step: [1, 1, 1],
+                    windowCenter: request.windowCenter,
+                    windowWidth: request.windowWidth,
+                    brightnessMode: request.brightnessMode,
+                    volumeRange: source.metadata.volumeRange,
+                    sliceRanges: source.metadata.volumeSliceRanges,
+                    onProgress,
+                  },
+                  cancelled
+                );
+      if (!result || cancelled()) {
+        return;
+      }
+
+      result.data.metadata = {
+        ...source.metadata,
+        ...result.data.metadata,
+        volumeSessionId: request.sessionId,
+        volumeRenderMode: request.renderMode,
+        threshold: request.threshold,
+        windowCenter: request.windowCenter,
+        windowWidth: request.windowWidth,
+        brightnessMode: request.brightnessMode,
+        meshExtractionStep: request.step,
+        sliceIndices: request.sliceIndices,
+      };
+      updateVolumeProgress(request.sessionId, request.requestId, 1);
+      await this.handleVolumeData({
+        data: result.data,
+        fileName: source.volume.fileName,
+        replaceFileIndex: request.fileIndex,
+        requestId: request.requestId,
+      });
+    } catch (error) {
+      if (!cancelled()) {
+        setVolumeError(
+          request.sessionId,
+          request.requestId,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+  }
+
   private async handleXyzVariantData(message: any): Promise<void> {
     await formatDataHandlers.handleXyzVariantData(this, message);
   }
@@ -4052,7 +4628,7 @@ class PointCloudVisualizer {
         fy: message.settings.fy,
         cx: this.defaultDepthSettings.cx, // Keep existing cx, don't load from storage
         cy: this.defaultDepthSettings.cy, // Keep existing cy, don't load from storage
-        cameraModel: message.settings.cameraModel || 'pinhole-ideal',
+        cameraModel: message.settings.cameraModel || 'pinhole-opencv',
         depthType: message.settings.depthType || 'euclidean',
         baseline: message.settings.baseline,
         convention: message.settings.convention || 'opengl',
@@ -4062,11 +4638,17 @@ class PointCloudVisualizer {
       };
       console.log('✅ Loaded default depth settings from extension:', this.defaultDepthSettings);
 
-      // Apply saved camera view convention if present
-      if (message.viewConvention === 'opencv') {
-        this.setOpenCVCameraConvention();
-      } else if (message.viewConvention === 'opengl') {
-        this.setOpenGLCameraConvention();
+      // X3A/X3R and E57 define Z as world-up. The settings response is
+      // asynchronous and can arrive after their first camera fit, so applying
+      // a persisted generic OpenCV/OpenGL view here would deterministically
+      // tip the survey onto its side. A response received before geometry is
+      // still safe: the first fit establishes the format-defined up axis.
+      if (shouldApplySavedViewConvention(this.spatialFiles)) {
+        if (message.viewConvention === 'opencv') {
+          this.setOpenCVCameraConvention();
+        } else if (message.viewConvention === 'opengl') {
+          this.setOpenGLCameraConvention();
+        }
       }
 
       // Update any existing depth file forms to use new defaults
@@ -4339,6 +4921,31 @@ class PointCloudVisualizer {
 // Test hook: container totals only arise from multi-scan E57/X3A loads driven by
 // the extension host, so specs exercise the accumulator directly.
 (window as any).__plyContainerPerf = containerPerf;
+// Test hook, same reason as __plyContainerPerf: the zero-copy PLY route runs
+// only when the extension host hands the webview a URI to fetch, so a browser
+// spec has no other way to reach it.
+(window as any).__plyParsePly = { parsePlyFromResponse, parsePlyWasm };
+// Same reason: the NumPy reader's dtype and shape handling is worth testing
+// directly, not only through a depth panel that shows one pixel of the result.
+(window as any).__plyNpy = { inspectNpyWasm, isNpyPointCloudShape, readNpyWasm };
+// Same reason again: the depth kernels are reached through a camera-parameters
+// dialog and a worker, neither of which a spec can use to check the arithmetic
+// of a single pixel.
+(window as any).__plyDepth = {
+  initTiffWasm,
+  normalizeDepth,
+  projectToPointCloud,
+  // Both projection entry points, so a test can compare the banded path against
+  // the single-pass one through the same API the pipeline uses rather than
+  // reaching for the raw wasm global.
+  projectDepthWasmSync,
+  projectDepthBandWasmSync,
+};
+// The pool itself, so a benchmark can time it against the single pass.
+(window as any).__plyDepthPool = { projectDepthInBands };
+// The picking workflow's live counters, so a test can assert what a real
+// double-click did rather than calling the handler behind it.
+(window as any).__plyRegistrationState = registrationState;
 // Test handle for the file-list state, following __plyContainerPerf above.
 // Lets a browser test drive the background-work row without needing the
 // extension host to stream real images.
@@ -4361,6 +4968,17 @@ async function initializeVisualizer() {
   if (!visualizer) {
     visualizer = new PointCloudVisualizer();
     (window as any).visualizer = visualizer;
+    // Alongside the visualizer for the same reason: driving an alignment from
+    // the console (or from a spec) needs the module's entry points, and it has
+    // no other handle in the page.
+    (window as any).registrationFeature = registrationFeature;
+    // Same reason: the station pipeline's result handler is only reachable
+    // through the webview's message listener, which the standalone page never
+    // installs, so a spec has no other way to drive it.
+    (window as any).stationPipelineFeature = stationPipelineFeature;
+    // The colour-mode predicates decide how vertex colours are interpreted;
+    // exposing them lets a spec assert the two photographic modes agree.
+    (window as any).__colorMode = colorModeModule;
     console.log('✅ PointCloudVisualizer initialized');
   }
 }

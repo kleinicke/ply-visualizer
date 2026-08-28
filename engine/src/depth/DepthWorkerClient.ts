@@ -124,14 +124,11 @@ export class DepthWorkerClient {
     cameraParams: CameraParams,
     colorImageData?: ImageData
   ): Promise<DepthConversionResult> {
-    if (
-      cameraParams.cameraModel !== 'pinhole-ideal' &&
-      cameraParams.cameraModel !== 'fisheye-equidistant'
-    ) {
-      const ready = await initTiffWasm();
-      if (!ready) {
-        throw new Error(`${cameraParams.cameraModel} requires the Rust/WASM camera-model kernel`);
-      }
+    // Every camera model needs the kernel now, not only the distorted ones:
+    // the JavaScript projection that used to cover pinhole and equidistant
+    // fisheye is gone.
+    if (!(await initTiffWasm())) {
+      throw new Error(`${cameraParams.cameraModel} requires the Rust/WASM camera-model kernel`);
     }
     const result = await this.fallbackConverter.processDepthToPointCloud(
       depthData,

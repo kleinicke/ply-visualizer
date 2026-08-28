@@ -7,7 +7,7 @@ import path from 'path';
 // gone, but the interaction stays covered for the current schemes.)
 
 async function setup(page: Page, mode: 'ball' | 'legacy') {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(1000);
   await page.click('[data-tab="files"]');

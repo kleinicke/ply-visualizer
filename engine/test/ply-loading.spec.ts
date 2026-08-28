@@ -3,7 +3,7 @@ import path from 'path';
 
 test.describe('PLY File Loading', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
 
     // Wait for the visualizer to initialize
     await page.waitForSelector('#viewer-container');
@@ -151,6 +151,30 @@ test.describe('PLY File Loading', () => {
     } finally {
       // Clean up
       fs.unlinkSync(invalidFilePath);
+    }
+  });
+
+  test('shows a visible error when a binary PLY body is truncated', async ({ page }) => {
+    const fs = require('fs');
+    const os = require('os');
+    const truncatedFilePath = path.join(os.tmpdir(), `truncated-${process.pid}.ply`);
+    const header = Buffer.from(
+      'ply\nformat binary_little_endian 1.0\nelement vertex 2\nproperty float x\nproperty float y\nproperty float z\nend_header\n'
+    );
+    const oneVertex = Buffer.alloc(12);
+    oneVertex.writeFloatLE(1, 0);
+    oneVertex.writeFloatLE(2, 4);
+    oneVertex.writeFloatLE(3, 8);
+    fs.writeFileSync(truncatedFilePath, Buffer.concat([header, oneVertex]));
+
+    try {
+      await page.locator('#hiddenFileInput').setInputFiles(truncatedFilePath);
+      await expect(page.locator('#error')).toBeVisible();
+      await expect(page.locator('#error-message')).toContainText('truncated');
+      await expect(page.locator('#error-message')).toContainText('2 vertices');
+      await expect(page.locator('#file-list .file-item')).toHaveCount(0);
+    } finally {
+      fs.unlinkSync(truncatedFilePath);
     }
   });
 

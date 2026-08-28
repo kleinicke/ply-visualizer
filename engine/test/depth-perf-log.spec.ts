@@ -17,7 +17,7 @@ test('a depth load emits exactly one PERF line whose phases sum to the total', a
     }
   });
 
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
 
   await page.locator('#hiddenFileInput').setInputFiles(path.resolve('../testfiles/tif/depth.tif'));

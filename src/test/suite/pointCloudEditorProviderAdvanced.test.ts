@@ -4,6 +4,73 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { handleAddFileFromPath } from '../../providerHandlers/addFileHandlers';
+import {
+  buildInitialVolumeData,
+  clearVolume,
+  reextractVolume,
+  retainVolume,
+} from '../../providerHandlers/volumeSessions';
+import {
+  buildDicomSeriesNrrd,
+  dicomSeriesDisplayName,
+  dicomSeriesFileName,
+  parseDicomSlice,
+  scanDicomFolder,
+} from '../../providerHandlers/dicomFolderLoader';
+import { NrrdParser } from '../../../engine/src/parsers/nrrdParser';
+
+function dicomElement(group: number, element: number, vr: string, value: Buffer): Buffer {
+  const padded =
+    value.length % 2 ? Buffer.concat([value, Buffer.from(vr === 'UI' ? [0] : [32])]) : value;
+  const long = new Set(['OB', 'OW', 'OF', 'SQ', 'UT', 'UN']).has(vr);
+  const header = Buffer.alloc(long ? 12 : 8);
+  header.writeUInt16LE(group, 0);
+  header.writeUInt16LE(element, 2);
+  header.write(vr, 4, 2, 'ascii');
+  if (long) {
+    header.writeUInt32LE(padded.length, 8);
+  } else {
+    header.writeUInt16LE(padded.length, 6);
+  }
+  return Buffer.concat([header, padded]);
+}
+
+function makeSyntheticDicom(instance: number, zMillimetres: number): Buffer {
+  const text = (value: string) => Buffer.from(value, 'ascii');
+  const ushort = (value: number) => {
+    const buffer = Buffer.alloc(2);
+    buffer.writeUInt16LE(value);
+    return buffer;
+  };
+  const pixels = Buffer.alloc(8);
+  [0, 100, 200, 300].forEach((value, index) => pixels.writeUInt16LE(value, index * 2));
+  return Buffer.concat([
+    Buffer.alloc(128),
+    Buffer.from('DICM'),
+    dicomElement(0x0002, 0x0010, 'UI', text('1.2.840.10008.1.2.1')),
+    dicomElement(0x0008, 0x0060, 'CS', text('CT')),
+    dicomElement(0x0008, 0x0018, 'UI', text(`1.2.3.4.${instance}`)),
+    dicomElement(0x0020, 0x000d, 'UI', text('1.2.3')),
+    dicomElement(0x0020, 0x000e, 'UI', text('1.2.3.4')),
+    dicomElement(0x0020, 0x0011, 'IS', text('7')),
+    dicomElement(0x0020, 0x0013, 'IS', text(String(instance))),
+    dicomElement(0x0020, 0x0032, 'DS', text(`-100\\-50\\${zMillimetres}`)),
+    dicomElement(0x0020, 0x0037, 'DS', text('1\\0\\0\\0\\1\\0')),
+    dicomElement(0x0028, 0x0002, 'US', ushort(1)),
+    dicomElement(0x0028, 0x0004, 'CS', text('MONOCHROME2')),
+    dicomElement(0x0028, 0x0010, 'US', ushort(2)),
+    dicomElement(0x0028, 0x0011, 'US', ushort(2)),
+    dicomElement(0x0028, 0x0030, 'DS', text('0.5\\0.75')),
+    dicomElement(0x0028, 0x0100, 'US', ushort(16)),
+    dicomElement(0x0028, 0x0101, 'US', ushort(12)),
+    dicomElement(0x0028, 0x0103, 'US', ushort(0)),
+    dicomElement(0x0028, 0x1050, 'DS', text('40')),
+    dicomElement(0x0028, 0x1051, 'DS', text('400')),
+    dicomElement(0x0028, 0x1052, 'DS', text('-1000')),
+    dicomElement(0x0028, 0x1053, 'DS', text('1')),
+    dicomElement(0x7fe0, 0x0010, 'OW', pixels),
+  ]);
+}
 
 suite('Point Cloud Editor Provider Advanced Test Suite', () => {
   let extension: vscode.Extension<any> | undefined;
@@ -136,6 +203,190 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
       Array.from(new Float32Array(dataMessage.scalarFieldBuffers.intensity)),
       [0.25, 0.75]
     );
+  });
+
+  test('Should add an NRRD volume with its own retained session', async () => {
+    const fileName = `add-volume-test-${process.pid}-${Date.now()}.nrrd`;
+    const filePath = path.join(os.tmpdir(), fileName);
+    const size = 6;
+    const samples = new Float32Array(size ** 3);
+    for (let k = 0; k < size; k++) {
+      for (let j = 0; j < size; j++) {
+        for (let i = 0; i < size; i++) {
+          samples[i + j * size + k * size * size] = 2 - Math.hypot(i - 2.5, j - 2.5, k - 2.5);
+        }
+      }
+    }
+    const header = Buffer.from(
+      `NRRD0004\ntype: float\ndimension: 3\nsizes: ${size} ${size} ${size}\n` +
+        'encoding: raw\nendian: little\n\n',
+      'ascii'
+    );
+    fs.writeFileSync(
+      filePath,
+      Buffer.concat([header, Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength)])
+    );
+
+    const messages: any[] = [];
+    const retained: string[] = [];
+    const host = {
+      getShortPath: (value: string) => path.basename(value),
+      logPerf: () => undefined,
+      setLoadStartedAt: () => undefined,
+      retainVolumeSession: (_panel: vscode.WebviewPanel, key: string) => retained.push(key),
+      tryAutoLoadMtl: async () => undefined,
+    };
+    const webviewPanel = {
+      webview: {
+        postMessage: async (message: any) => {
+          messages.push(message);
+          return true;
+        },
+      },
+    } as unknown as vscode.WebviewPanel;
+
+    try {
+      await handleAddFileFromPath(host, webviewPanel, filePath);
+      const message = messages.find(candidate => candidate.type === 'volumeData');
+      assert.ok(message, 'The added NRRD should be sent as volume data');
+      assert.strictEqual(message.isAddFile, true);
+      assert.strictEqual(message.data.faceCount, 0);
+      assert.strictEqual(message.data.vertexCount, size ** 3);
+      assert.strictEqual(message.data.metadata.volumeRenderMode, 'points');
+      assert.deepStrictEqual(message.data.metadata.extractionStep, [1, 1, 1]);
+      assert.ok(message.data.colorsArray instanceof Uint8Array);
+      assert.strictEqual(
+        message.data.metadata.volumeSessionId,
+        vscode.Uri.file(filePath).toString()
+      );
+      assert.deepStrictEqual(retained, [vscode.Uri.file(filePath).toString()]);
+
+      const key = vscode.Uri.file(filePath).toString();
+      await reextractVolume(key, webviewPanel, {
+        fileIndex: 0,
+        requestId: 'thresholded-points',
+        renderMode: 'points',
+        threshold: 1,
+      });
+      const thresholdedPoints = messages.find(
+        candidate => candidate.type === 'volumeData' && candidate.requestId === 'thresholded-points'
+      );
+      assert.ok(thresholdedPoints.data.vertexCount < size ** 3);
+      assert.ok(
+        Array.from(thresholdedPoints.data.intensityArray as Float32Array).every(value => value >= 1)
+      );
+
+      await reextractVolume(key, webviewPanel, {
+        fileIndex: 0,
+        requestId: 'thresholded-mesh',
+        renderMode: 'mesh',
+        threshold: 1,
+        step: [1, 1, 1],
+      });
+      const thresholdedMesh = messages.find(
+        candidate => candidate.type === 'volumeData' && candidate.requestId === 'thresholded-mesh'
+      );
+      assert.ok(thresholdedMesh.data.faceCount > 0);
+      assert.strictEqual(thresholdedMesh.data.metadata.volumeRenderMode, 'mesh');
+      assert.strictEqual(thresholdedMesh.data.metadata.threshold, 1);
+    } finally {
+      clearVolume(vscode.Uri.file(filePath).toString());
+      fs.unlinkSync(filePath);
+    }
+  });
+
+  test('Should discover extensionless DICOM slices and build a metre-scale volume', async () => {
+    const folder = path.join(os.tmpdir(), `dicom-folder-test-${process.pid}-${Date.now()}`);
+    fs.mkdirSync(folder);
+    fs.writeFileSync(path.join(folder, 'slice-one'), makeSyntheticDicom(1, 0));
+    fs.writeFileSync(path.join(folder, 'slice-one-copy'), makeSyntheticDicom(1, 0));
+    fs.writeFileSync(path.join(folder, 'slice-two'), makeSyntheticDicom(2, 2));
+    fs.writeFileSync(path.join(folder, 'notes.txt'), 'not a DICOM file');
+
+    try {
+      const parsed = parseDicomSlice(
+        vscode.Uri.file(path.join(folder, 'slice-one')),
+        fs.readFileSync(path.join(folder, 'slice-one'))
+      );
+      assert.ok(parsed);
+      assert.strictEqual(parsed.windowCenter, 40);
+      assert.strictEqual(parsed.windowWidth, 400);
+
+      const series = await scanDicomFolder(vscode.Uri.file(folder));
+      assert.strictEqual(series.length, 1);
+      assert.strictEqual(series[0].slices.length, 2);
+      const nrrd = buildDicomSeriesNrrd(series[0]);
+      const volume = await new NrrdParser().parse(nrrd, 'direct-dicom.nrrd');
+      assert.deepStrictEqual(volume.sizes, [2, 2, 2]);
+      assert.strictEqual(volume.spaceUnits, 'm');
+      assert.ok(Math.abs(volume.ijkToWorld[0] + 0.00075) < 1e-9);
+      assert.ok(Math.abs(volume.ijkToWorld[5] + 0.0005) < 1e-9);
+      assert.ok(Math.abs(volume.ijkToWorld[10] - 0.002) < 1e-9);
+      assert.strictEqual(volume.ijkToWorld[3], 0.1);
+      assert.strictEqual(volume.ijkToWorld[7], 0.05);
+      assert.strictEqual(volume.samples[0], -1000);
+      assert.strictEqual(volume.samples[3], -700);
+      assert.strictEqual(volume.header['window center'], '40');
+      assert.strictEqual(volume.header['window width'], '400');
+      assert.strictEqual(volume.header['dicom series number'], '7');
+      assert.strictEqual(volume.header['content'], 'Series 7 CT');
+      assert.strictEqual(dicomSeriesDisplayName(series[0], 1), 'Series 7 CT');
+      assert.strictEqual(dicomSeriesFileName(series[0], 1), 'series-7-ct.nrrd');
+    } finally {
+      fs.rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  test('Should scan the real extensionless Siemens DICOM folder', async function () {
+    this.timeout(30_000);
+
+    const folder =
+      '/Users/florian/Projects/cursor/test_data/testfiles/scientific/MRT OSG Februar 2023';
+    if (!fs.existsSync(folder)) {
+      this.skip();
+      return;
+    }
+
+    const series = await scanDicomFolder(vscode.Uri.file(folder));
+    assert.strictEqual(series.length, 4);
+    assert.deepStrictEqual(
+      series.map(item => item.slices.length),
+      [44, 26, 26, 36]
+    );
+    assert.deepStrictEqual(
+      series.map((item, index) => dicomSeriesFileName(item, index + 1)),
+      ['series-3-mr.nrrd', 'series-4-mr.nrrd', 'series-5-mr.nrrd', 'series-6-mr.nrrd']
+    );
+    assert.ok(series.every(item => item.slices.every(slice => !path.extname(slice.uri.fsPath))));
+    const nrrd = buildDicomSeriesNrrd(series[0]);
+    const volume = await new NrrdParser().parse(nrrd, 'real-siemens-series.nrrd');
+    assert.deepStrictEqual(volume.sizes, [640, 640, 44]);
+    assert.strictEqual(volume.spaceUnits, 'm');
+    const physicalSpacing = [
+      Math.hypot(volume.ijkToWorld[0], volume.ijkToWorld[4], volume.ijkToWorld[8]),
+      Math.hypot(volume.ijkToWorld[1], volume.ijkToWorld[5], volume.ijkToWorld[9]),
+      Math.hypot(volume.ijkToWorld[2], volume.ijkToWorld[6], volume.ijkToWorld[10]),
+    ];
+    assert.ok(Math.abs(physicalSpacing[0] - 0.000234375) < 1e-9);
+    assert.ok(Math.abs(physicalSpacing[1] - 0.000234375) < 1e-9);
+    assert.ok(Math.abs(physicalSpacing[2] - 0.0033) < 1e-9);
+    assert.ok(Array.from(volume.samples.subarray(0, 1024)).every(Number.isFinite));
+
+    const sessionKey = 'test:real-siemens-point-volume';
+    try {
+      const retained = retainVolume(sessionKey, volume);
+      assert.strictEqual(retained.options.brightnessMode, 'slice-auto');
+      assert.strictEqual(retained.sliceRanges.length, 44);
+      const points = buildInitialVolumeData(retained);
+      assert.strictEqual(points.faceCount, 0);
+      assert.strictEqual(points.vertexCount, 640 * 640 * 44);
+      assert.strictEqual(points.intensityArray?.length, points.vertexCount);
+      assert.strictEqual(points.colorsArray?.length, points.vertexCount * 3);
+      assert.deepStrictEqual(points.metadata?.extractionStep, [1, 1, 1]);
+      assert.strictEqual(points.metadata?.brightnessMode, 'slice-auto');
+    } finally {
+      clearVolume(sessionKey);
+    }
   });
 
   test('Should support webview serialization', () => {

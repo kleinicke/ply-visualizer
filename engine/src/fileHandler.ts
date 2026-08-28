@@ -117,15 +117,15 @@ export function detectFileType(fileName: string): FileTypeInfo | null {
  * Detects file type with content-based analysis for NPY files
  * NPY files can contain either depth images or XYZ point cloud data
  */
-export function detectFileTypeWithContent(
+export async function detectFileTypeWithContent(
   fileName: string,
   fileData?: Uint8Array
-): FileTypeInfo | null {
+): Promise<FileTypeInfo | null> {
   const basicType = detectFileType(fileName);
   if (!basicType || !fileData) {
     return basicType;
   }
-  const refined = formats.find(basicType.extension)?.refineCategory?.(fileData);
+  const refined = await formats.find(basicType.extension)?.refineCategory?.(fileData);
   if (!refined) {
     return basicType;
   }
@@ -365,7 +365,10 @@ export function generateDepthRequestId(): string {
 export const DEFAULT_DEPTH_SETTINGS = {
   fx: 1000,
   fy: 1000,
-  cameraModel: 'pinhole-ideal',
+  // The panel offers the general models; an ideal pinhole is this one with
+  // zero distortion, and naming a model the picker does not carry would leave
+  // it showing nothing.
+  cameraModel: 'pinhole-opencv',
   depthType: 'euclidean',
   convention: 'opengl',
   baseline: 50,
@@ -444,7 +447,7 @@ export async function handleVSCodeCameraParams(
       ? {
           fx: savedSettings.fx || 1000,
           fy: savedSettings.fy,
-          cameraModel: savedSettings.cameraModel || 'pinhole-ideal',
+          cameraModel: savedSettings.cameraModel || 'pinhole-opencv',
           depthType: savedSettings.depthType || 'euclidean',
           convention: savedSettings.convention || 'opengl',
           baseline: savedSettings.baseline || 50,
@@ -713,6 +716,13 @@ export async function convertDepthToUnified(
     await import('./depth/DepthRegistry');
   const { normalizeDepth, projectToPointCloud } = await import('./depth/DepthProjector');
   const { PngReader } = await import('./depth/readers/PngReader');
+  const { initTiffWasm } = await import('./depth/readers/tiffWasm');
+
+  // Normalization and projection are Rust-only; there is no JavaScript path
+  // left to fall back to, so the module is loaded before either is called.
+  if (!(await initTiffWasm())) {
+    throw new Error('Depth conversion requires the Rust/WASM kernel, which failed to load');
+  }
 
   registerDefaultReaders();
 

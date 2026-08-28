@@ -1,0 +1,15 @@
+[build]
+  command = "npm run build --workspace=engine && node engine/scripts/fetch-example-assets.mjs"
+  publish = "engine/dist"
+
+[[headers]]
+  for = "/examples/test_pc2_binary-v1.7.0.ply"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"

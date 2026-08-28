@@ -1,10 +1,14 @@
 <script lang="ts">
   import { filesState } from '../state/files.svelte';
-  import { getExtraScalarFieldNames } from '../utils/scalarFields';
+  import { runWithFileActivity } from '../fileActivity';
+  import { getPointCloudColorOptions } from '../colorOptions';
+  import { ensureKeyboardModifierTracking, isShiftPressed } from '../keyboardModifiers';
+  import { getRenderModeOptions, hasRenderMode } from '../renderModeOptions';
   import CameraFrameList from './CameraFrameList.svelte';
   import E57CorrectionPanel from './E57CorrectionPanel.svelte';
   import DepthSettingsPanel from './DepthSettingsPanel.svelte';
   import TransformSection from './TransformSection.svelte';
+  import VolumePanel from './VolumePanel.svelte';
   import {
     setStonexColorCorrection,
     setStonexImageDistortion,
@@ -23,22 +27,33 @@
     kind,
   }: { host: any; index: number; kind: 'pointcloud' | 'pose' | 'camera' } = $props();
 
-  const data = $derived(kind === 'pointcloud' ? host.spatialFiles[index] : null);
+  ensureKeyboardModifierTracking();
+
+  const data = $derived(
+    (filesState.renderTick, kind === 'pointcloud' ? host.spatialFiles[index] : null)
+  );
   // Position within poseGroups/cameraGroups. The per-pose toggle arrays and the
   // camera label arrays are keyed by it; host methods take the unified index.
-  const poseIndex = $derived(host.fileEntries.kindIndexAt(index));
-  const meta = $derived(kind === 'pose' ? host.poseMeta[poseIndex] : null);
-  const cameraIndex = $derived(host.fileEntries.kindIndexAt(index));
-  const cameraGroup = $derived(kind === 'camera' ? host.cameraGroups[cameraIndex] : null);
-  const cameraProfileName = $derived(kind === 'camera' ? host.cameraNames[cameraIndex] : '');
+  const poseIndex = $derived((filesState.renderTick, host.fileEntries.kindIndexAt(index)));
+  const meta = $derived(
+    (filesState.renderTick, kind === 'pose' ? host.poseMeta[poseIndex] : null)
+  );
+  const cameraIndex = $derived((filesState.renderTick, host.fileEntries.kindIndexAt(index)));
+  const cameraGroup = $derived(
+    (filesState.renderTick, kind === 'camera' ? host.cameraGroups[cameraIndex] : null)
+  );
+  const cameraProfileName = $derived(
+    (filesState.renderTick, kind === 'camera' ? host.cameraNames[cameraIndex] : '')
+  );
   // Set by sources that fetch their images after the frames are on screen
   // (COLMAP). Absent for sources whose previews are embedded and already
   // decoded, so nothing extra is shown for those.
-  const cameraImageProgress = $derived(
-    kind === 'camera'
+  const cameraImageProgress = $derived.by(() => {
+    filesState.renderTick;
+    return kind === 'camera'
       ? (cameraGroup?.userData.imageProgress as { done: number; total: number } | undefined) ?? null
-      : null
-  );
+      : null;
+  });
 
   const visible = $derived(filesState.visibility[index] ?? true);
   const collapsed = $derived(filesState.collapsed[index] ?? false);
@@ -50,9 +65,13 @@
       (host.isDepthDerivedFile(data) || (data as any).isDepthDerived)
   );
 
-  const scalarFieldNames = $derived(
-    kind === 'pointcloud' && data ? getExtraScalarFieldNames(data) : []
-  );
+  const colorOptions = $derived.by(() => {
+    filesState.renderTick;
+    filesState.renderModeTick;
+    return kind === 'pointcloud' && data
+      ? getPointCloudColorOptions(host, data, index, colorMode === 'original')
+      : [];
+  });
 
   // Set when an E57's points were painted from its embedded photos because the
   // scan itself stored no colour. Worth saying out loud: those colours are a
@@ -95,10 +114,17 @@
     return `background-color: ${colorHex}`;
   }
 
-  function toggleCollapse() {
+  function toggleCollapse(event: MouseEvent) {
     const newCollapsed = !collapsed;
-    host.fileItemsCollapsed[index] = newCollapsed;
-    filesState.collapsed[index] = newCollapsed;
+    if (event.shiftKey) {
+      for (let fileIndex = 0; fileIndex < host.fileEntries.length; fileIndex++) {
+        host.fileItemsCollapsed[fileIndex] = newCollapsed;
+        filesState.collapsed[fileIndex] = newCollapsed;
+      }
+    } else {
+      host.fileItemsCollapsed[index] = newCollapsed;
+      filesState.collapsed[index] = newCollapsed;
+    }
   }
 
   function onVisibilityClick(e: MouseEvent) {
@@ -123,47 +149,34 @@
     host.requestRemoveFile(index);
   }
 
-  function onColorModeChange(e: Event) {
+  async function onColorModeChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value;
-    host.onFileColorModeChange(index, value);
+    // A select's change Event has no modifier fields. Read the live keyboard
+    // state here so Shift means "held while choosing this option", regardless
+    // of whether it was held when the list was first opened.
+    const applyToAll = kind === 'pointcloud' && isShiftPressed();
+    await runWithFileActivity(() => {
+      if (!applyToAll) {
+        host.onFileColorModeChange(index, value);
+        return;
+      }
+      for (let fileIndex = 0; fileIndex < host.spatialFiles.length; fileIndex++) {
+        const fileData = host.spatialFiles[fileIndex];
+        if (
+          fileData &&
+          !host.splatMode?.isActive(fileIndex) &&
+          getPointCloudColorOptions(host, fileData, fileIndex).some(
+            option => option.value === value
+          )
+        ) {
+          host.onFileColorModeChange(fileIndex, value);
+        }
+      }
+    });
   }
 
-  // Render-mode button availability, matching the original updateFileList() logic.
-  const hasFaces = $derived(kind === 'pointcloud' && data?.faceCount > 0);
-  const hasLines = $derived(
-    kind === 'pointcloud' && (data as any)?.objData && (data as any).objData.lineCount > 0
-  );
-  const hasGeometry = $derived(hasFaces || hasLines);
-  const hasNormalsData = $derived(kind === 'pointcloud' && (data?.hasNormals || hasFaces));
-  const isPtsFile = $derived(kind === 'pointcloud' && data?.fileName?.toLowerCase().endsWith('.pts'));
-  const shouldShowNormals = $derived(
-    hasNormalsData && (!isPtsFile || (data?.vertices.length > 0 && data.vertices[0]?.nx !== undefined))
-  );
   const renderModeButtons = $derived(
-    (() => {
-      if (kind === 'pointcloud' && data) {
-        // Kept for parity with the pre-Phase-3 updateFileList(), which
-        // Playwright specs assert on (faceCount/hasFaces/hasGeometry signal
-        // that parsing + render-mode computation completed for this file).
-        console.log(
-          `File ${index}: ${data.fileName}, faceCount=${data.faceCount}, lineCount=${(data as any).objData?.lineCount || 0}, hasNormals=${data.hasNormals}, hasFaces=${hasFaces}, hasLines=${hasLines}, hasGeometry=${hasGeometry}`
-        );
-      }
-      const buttons: Array<{ mode: string; label: string; cls: string }> = [
-        { mode: 'points', label: '👁️ Points', cls: 'points-btn' },
-      ];
-      if (kind === 'pointcloud' && data && host.splatMode?.canEnable(data)) {
-        buttons.push({ mode: 'splat', label: '✨ Splats', cls: 'splat-btn' });
-      }
-      if (hasGeometry) {
-        buttons.push({ mode: 'mesh', label: '🔷 Mesh', cls: 'mesh-btn' });
-        buttons.push({ mode: 'wireframe', label: '📐 Wireframe', cls: 'wireframe-btn' });
-      }
-      if (shouldShowNormals) {
-        buttons.push({ mode: 'normals', label: '📏 Normals', cls: 'normals-btn' });
-      }
-      return buttons;
-    })()
+    kind === 'pointcloud' && data ? getRenderModeOptions(host, data) : []
   );
   const renderModeGridColumns = $derived(
     { 1: '1fr', 2: '1fr 1fr', 3: '1fr 1fr 1fr', 4: '1fr 1fr 1fr 1fr' }[renderModeButtons.length] ||
@@ -173,29 +186,56 @@
     kind === 'pointcloud' && !!data && !!host.splatMode?.canEnable(data)
   );
   const splatActive = $derived.by(() => {
-    filesState.renderTick;
+    filesState.renderModeTick;
     return canRenderSplats && !!host.splatMode?.isActive(index);
   });
 
-  function onRenderModeClick(mode: string) {
-    host.toggleUniversalRenderMode(index, mode);
+  // Volume voxels are solid boxes sized from the voxel spacing, so there is no
+  // point sprite whose size could be tuned.
+  const hasPointSize = $derived(data?.metadata?.volumeRenderMode !== 'voxels');
+
+  function onRenderModeClick(event: MouseEvent, mode: string) {
+    if (!event.shiftKey) {
+      host.toggleUniversalRenderMode(index, mode);
+      return;
+    }
+
+    const targetActive = !isRenderModeActiveFor(index, mode);
+    for (let fileIndex = 0; fileIndex < host.spatialFiles.length; fileIndex++) {
+      const fileData = host.spatialFiles[fileIndex];
+      if (
+        fileData &&
+        hasRenderMode(host, fileData, mode) &&
+        isRenderModeActiveFor(fileIndex, mode) !== targetActive
+      ) {
+        host.toggleUniversalRenderMode(fileIndex, mode);
+      }
+    }
   }
 
   function isRenderModeActive(mode: string): boolean {
-    // Re-evaluate parallel-array state after main.ts bumps the render tick.
-    filesState.renderTick;
+    // Re-evaluate parallel-array state without remounting the complete file
+    // list (which would discard its scroll position and local row state).
+    filesState.renderModeTick;
+    return isRenderModeActiveFor(index, mode);
+  }
+
+  function isRenderModeActiveFor(fileIndex: number, mode: string): boolean {
+    const fileData = host.spatialFiles[fileIndex];
+    const supportsSplats = !!fileData && !!host.splatMode?.canEnable(fileData);
+    const fileSplatActive = supportsSplats && !!host.splatMode?.isActive(fileIndex);
     switch (mode) {
       case 'points':
-        return canRenderSplats ? !splatActive : (host.pointsVisible[index] ?? true);
+        return supportsSplats ? !fileSplatActive : (host.pointsVisible[fileIndex] ?? true);
       case 'splat':
-        return splatActive;
+        return fileSplatActive;
       case 'mesh':
       case 'solid':
-        return host.solidVisible[index] ?? true;
+        return host.solidVisible[fileIndex] ?? true;
       case 'wireframe':
-        return host.wireframeVisible[index] ?? false;
+        return host.wireframeVisible[fileIndex] ?? false;
       case 'normals':
-        return host.normalsVisible[index] ?? false;
+        return host.normalsVisible[fileIndex] ?? false;
       default:
         return false;
     }
@@ -275,19 +315,46 @@
     return kind === 'pose' ? 0.02 : kind === 'camera' ? 1.0 : recommendedPointSize;
   }
 
-  function setPointSize(value: number) {
-    host.updatePointSize(index, value);
-    filesState.pointSizes[index] = value;
-    const slider = document.getElementById(`size-${index}`) as HTMLInputElement | null;
-    const input = document.getElementById(`size-input-${index}`) as HTMLInputElement | null;
+  let sizeShiftToAll = false;
+
+  function setPointSizeForIndex(fileIndex: number, value: number) {
+    host.updatePointSize(fileIndex, value);
+    filesState.pointSizes[fileIndex] = value;
+    const slider = document.getElementById(`size-${fileIndex}`) as HTMLInputElement | null;
+    const input = document.getElementById(`size-input-${fileIndex}`) as HTMLInputElement | null;
     if (slider) slider.value = String(value);
     if (input) input.value = value.toFixed(sizePrecision);
+  }
+
+  function setPointSize(value: number, applyToAll = false) {
+    if (applyToAll && kind === 'pointcloud') {
+      for (let fileIndex = 0; fileIndex < host.spatialFiles.length; fileIndex++) {
+        const fileData = host.spatialFiles[fileIndex];
+        if (
+          fileData &&
+          fileData.metadata?.volumeRenderMode !== 'voxels' &&
+          !host.splatMode?.isActive(fileIndex)
+        ) {
+          setPointSizeForIndex(fileIndex, value);
+        }
+      }
+    } else {
+      setPointSizeForIndex(index, value);
+    }
     host.requestRender();
   }
 
   function onSizeSliderInput(e: Event) {
     const newSize = parseFloat((e.target as HTMLInputElement).value);
-    setPointSize(newSize);
+    setPointSize(newSize, sizeShiftToAll);
+  }
+
+  function onSizeSliderPointerDown(e: PointerEvent) {
+    sizeShiftToAll = kind === 'pointcloud' && e.shiftKey;
+  }
+
+  function onSizeSliderPointerEnd() {
+    sizeShiftToAll = false;
   }
 
   function onSizeSliderReset(e: MouseEvent) {
@@ -428,26 +495,31 @@
     (e.currentTarget as HTMLInputElement).value = String(value);
     applyColorCorrection({ [key]: value });
   }
-  function applyColorCorrection(patch: Partial<StonexColorCorrection>) {
+  let colorCorrectionVersion = 0;
+  async function applyColorCorrection(patch: Partial<StonexColorCorrection>) {
     colorCorrection = { ...colorCorrection, ...patch };
-    setStonexColorCorrection(host, cameraGroup, colorCorrection);
-    host.requestRender();
+    const version = ++colorCorrectionVersion;
+    await runWithFileActivity(() => {
+      // Slider input can enqueue several values before the browser paints.
+      if (version !== colorCorrectionVersion) {return;}
+      setStonexColorCorrection(host, cameraGroup, colorCorrection);
+      host.requestRender();
+    });
   }
 
-  const matrixText = $derived(
-    (() => {
-      const arr = host.getTransformationMatrixAsArray(index);
-      let str = '';
-      for (let r = 0; r < 4; ++r) {
-        str += arr
-          .slice(r * 4, r * 4 + 4)
-          .map((v: number) => v.toFixed(6))
-          .join(' ');
-        str += '\n';
-      }
-      return str;
-    })()
-  );
+  const matrixText = $derived.by(() => {
+    filesState.renderTick;
+    const arr = host.getTransformationMatrixAsArray(index);
+    let str = '';
+    for (let r = 0; r < 4; ++r) {
+      str += arr
+        .slice(r * 4, r * 4 + 4)
+        .map((v: number) => v.toFixed(6))
+        .join(' ');
+      str += '\n';
+    }
+    return str;
+  });
 
   const name = $derived(
     kind === 'pointcloud'
@@ -468,7 +540,7 @@
   );
 </script>
 
-<div class="file-item">
+<div class="file-item" data-render-tick={filesState.renderTick}>
   <div class="file-item-main">
     <button
       class="collapse-toggle"
@@ -476,7 +548,7 @@
       title={collapsed ? 'Expand' : 'Collapse'}
       onclick={(e: MouseEvent) => {
         e.stopPropagation();
-        toggleCollapse();
+        toggleCollapse(e);
       }}
     >
       <span class="collapse-icon">{collapsed ? '▶' : '▼'}</span>
@@ -501,6 +573,10 @@
         <DepthSettingsPanel {host} fileIndex={index} {data} />
       {/if}
 
+      {#if data.metadata?.volumeSessionId}
+        <VolumePanel {host} {data} fileIndex={index} />
+      {/if}
+
       <TransformSection {host} fileIndex={index} {matrixText} />
 
       <div class="rendering-controls" style="margin-top: 4px; margin-bottom: 6px;">
@@ -512,7 +588,7 @@
               data-file-index={index}
               data-mode={btn.mode}
               style={`padding: 3px 6px; border: 1px solid var(--vscode-panel-border); border-radius: 2px; font-size: 9px; cursor: pointer; background: ${isRenderModeActive(btn.mode) ? 'var(--vscode-button-background)' : 'var(--vscode-button-secondaryBackground)'}; color: ${isRenderModeActive(btn.mode) ? 'var(--vscode-button-foreground)' : 'var(--vscode-button-secondaryForeground)'};`}
-              onclick={() => onRenderModeClick(btn.mode)}>{btn.label}</button
+              onclick={(event) => onRenderModeClick(event, btn.mode)}>{btn.label}</button
             >
           {/each}
         </div>
@@ -549,7 +625,7 @@
         </div>
       {/if}
 
-      {#if !splatActive}
+      {#if !splatActive && hasPointSize}
         <div class="point-size-control" style="margin-top: 4px;">
           <label for={`size-${index}`} style="font-size: 11px;">Point Size:</label>
           <input
@@ -561,6 +637,9 @@
             value={pointSize}
             class="size-slider"
             style="width: 100%;"
+            onpointerdown={onSizeSliderPointerDown}
+            onpointerup={onSizeSliderPointerEnd}
+            onpointercancel={onSizeSliderPointerEnd}
             oninput={onSizeSliderInput}
             ondblclick={onSizeSliderReset}
             title="Double-click to reset"
@@ -599,21 +678,15 @@
       {#if !splatActive}
         <div class="color-control">
           <label for={`color-${index}`}>Color:</label>
-          <select id={`color-${index}`} class="color-selector" value={colorMode} onchange={onColorModeChange}>
-          {#if data.hasColors}
-            <option value="original">Original</option>
-          {/if}
-          {#if host.hasIntensityData(data)}
-            <option value="intensity">Intensity</option>
-            <option value="intensity-viridis">Intensity (Viridis)</option>
-            <option value="intensity-colors">Intensity (Colors)</option>
-          {/if}
-          {#each scalarFieldNames as fieldName (fieldName)}
-            <option value={`scalar:${fieldName}:viridis`}>{fieldName} (Viridis)</option>
-            <option value={`scalar:${fieldName}:grayscale`}>{fieldName} (Gray)</option>
+          <select
+            id={`color-${index}`}
+            class="color-selector"
+            value={colorMode}
+            onchange={onColorModeChange}
+          >
+          {#each colorOptions as option (option.value)}
+            <option value={option.value}>{option.label}</option>
           {/each}
-          <option value="assigned">Assigned ({host.getColorName(index)})</option>
-          {@html host.getColorOptions(index)}
           </select>
           {#if photoColoredPoints}
             <div

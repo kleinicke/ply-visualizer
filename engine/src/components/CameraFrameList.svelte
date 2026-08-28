@@ -67,6 +67,34 @@
     host.requestRender();
   }
 
+  /**
+   * Shift-click is the shared visibility gesture: isolate this camera, then
+   * Shift-click the isolated camera again to restore every camera image.
+   * This component is shared by every camera source, so the behavior cannot
+   * drift between Stonex, E57, COLMAP and JSON profiles.
+   */
+  function onFrameImageClick(frameIndex: number, event: MouseEvent) {
+    if (!event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    const selectedIsSoleVisible =
+      visible[frameIndex] && visible.every((value, i) => i === frameIndex || !value);
+    const showAll = selectedIsSoleVisible;
+    for (let index = 0; index < frames.length; index++) {
+      setCameraFrameImageVisible(frames[index].group, showAll || index === frameIndex);
+    }
+    renderTick++;
+    host.requestRender();
+
+    // Checkbox default-action rollback happens after the click handler in some
+    // browsers. Reassert the scene-derived state once that action has settled.
+    const checkbox = event.currentTarget as HTMLInputElement;
+    window.setTimeout(() => {
+      checkbox.checked = isCameraFrameImageVisible(frames[frameIndex].group);
+    }, 0);
+  }
+
   function onLookThrough(frameIndex: number) {
     lookThroughCameraFrame(host, frames[frameIndex].group);
   }
@@ -122,8 +150,9 @@
         {#if frame.hasImagePlane}
           <input
             type="checkbox"
-            title="Show this camera's image"
+            title="Show this camera's image; Shift-click to isolate it or restore all"
             checked={visible[frameIndex]}
+            onclick={event => onFrameImageClick(frameIndex, event)}
             onchange={event => onFrameImageChange(frameIndex, event)}
           />
         {/if}

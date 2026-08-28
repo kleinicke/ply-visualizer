@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import path from 'path';
 
 test('Phase 4: controls tab, camera tab, and stats render and respond', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(1000);
 
@@ -12,9 +12,16 @@ test('Phase 4: controls tab, camera tab, and stats render and respond', async ({
 
   const edlBtn = page.locator('#toggle-edl');
   await expect(edlBtn).toBeVisible();
+  await expect(edlBtn).toHaveClass(/active/);
+  await expect(edlBtn).toHaveAttribute('aria-label', 'Eye Dome Lighting: auto');
+  await edlBtn.click();
+  await expect(edlBtn).toHaveAttribute('aria-label', 'Eye Dome Lighting: all');
+  await expect(edlBtn).toHaveClass(/active/);
+  await edlBtn.click();
+  await expect(edlBtn).toHaveAttribute('aria-label', 'Eye Dome Lighting: off');
   await expect(edlBtn).not.toHaveClass(/active/);
   await edlBtn.click();
-  await expect(edlBtn).toHaveClass(/active/);
+  await expect(edlBtn).toHaveAttribute('aria-label', 'Eye Dome Lighting: auto');
   const edlSettings = page.locator('#edl-settings');
   await expect(edlSettings).toBeVisible();
 

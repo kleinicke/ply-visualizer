@@ -49,9 +49,19 @@ export interface StonexColorCorrection {
   exposureStops: number;
 }
 
-/** Matches the behaviour shipped before correction was switchable. */
+/**
+ * Show the capture as it was captured.
+ *
+ * Every correction here is off by default deliberately: the raw sample is the
+ * only value in this pipeline that is a measurement rather than a decision, and
+ * a viewer that silently rebalances it makes two archives incomparable for
+ * reasons the user never chose. `band` was the previous default and remains one
+ * selection away in the file's Camera colour controls, along with per-frame
+ * gray-world and exposure matching — which is where cross-camera brightness
+ * differences are meant to be addressed, when the user asks for it.
+ */
 export const DEFAULT_STONEX_COLOR_CORRECTION: StonexColorCorrection = {
-  whiteBalance: 'band',
+  whiteBalance: 'off',
   exposure: 'off',
   highlight: 'clip',
   manualRedGain: 1,
@@ -174,6 +184,48 @@ export function applyStonexColorCorrectionToPoints(
   const pointCount = frameIndex.length;
   const frameCount = multipliers.length / 3;
 
+  // The highlight mode is the same for every point, so it picks the loop rather
+  // than being tested inside one.
+  //
+  // This stays JavaScript, and unusually the measurement says it must: the Rust
+  // version was written and A/B'd in the same page at 20M points and came out
+  // *slower*, 220ms against 151ms. The reason is `out` — this writes straight
+  // into the live colour attribute, while the port had to copy the raw colours
+  // and frame indices in, allocate the result in wasm, copy it back out and
+  // then copy it into `out`. Roughly 280MB of traffic to replace a loop that
+  // does none. It only becomes worth porting if the raw colours stop crossing
+  // the boundary at all, which means the colour session keeping them - see
+  // "colour never leaves Rust" in the backlog.
+  if (preserveHue) {
+    for (let point = 0; point < pointCount; point++) {
+      const offset = point * 3;
+      const frame = frameIndex[point];
+      if (frame >= frameCount) {
+        out[offset] = raw[offset];
+        out[offset + 1] = raw[offset + 1];
+        out[offset + 2] = raw[offset + 2];
+        continue;
+      }
+      const gain = frame * 3;
+      let red = raw[offset] * multipliers[gain];
+      let green = raw[offset + 1] * multipliers[gain + 1];
+      let blue = raw[offset + 2] * multipliers[gain + 2];
+      // Scaling all three by the same factor keeps the hue of blown highlights,
+      // instead of clipping red and blue first and leaving a green cast.
+      const peak = red > green ? (red > blue ? red : blue) : green > blue ? green : blue;
+      if (peak > 255) {
+        const scale = 255 / peak;
+        red *= scale;
+        green *= scale;
+        blue *= scale;
+      }
+      out[offset] = red < 0 ? 0 : red > 255 ? 255 : Math.round(red);
+      out[offset + 1] = green < 0 ? 0 : green > 255 ? 255 : Math.round(green);
+      out[offset + 2] = blue < 0 ? 0 : blue > 255 ? 255 : Math.round(blue);
+    }
+    return;
+  }
+
   for (let point = 0; point < pointCount; point++) {
     const offset = point * 3;
     const frame = frameIndex[point];
@@ -185,14 +237,12 @@ export function applyStonexColorCorrectionToPoints(
       continue;
     }
     const gain = frame * 3;
-    writeCorrected(
-      out,
-      offset,
-      raw[offset] * multipliers[gain],
-      raw[offset + 1] * multipliers[gain + 1],
-      raw[offset + 2] * multipliers[gain + 2],
-      preserveHue
-    );
+    const red = raw[offset] * multipliers[gain];
+    const green = raw[offset + 1] * multipliers[gain + 1];
+    const blue = raw[offset + 2] * multipliers[gain + 2];
+    out[offset] = red < 0 ? 0 : red > 255 ? 255 : Math.round(red);
+    out[offset + 1] = green < 0 ? 0 : green > 255 ? 255 : Math.round(green);
+    out[offset + 2] = blue < 0 ? 0 : blue > 255 ? 255 : Math.round(blue);
   }
 }
 

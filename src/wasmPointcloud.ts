@@ -229,38 +229,10 @@ export function parseXyzWasm(
 }
 
 /**
- * Decide whether a colored XYZ file's colors are written as ints (`4`) or floats
- * (`0.0156`, `1.0`) by scanning a text sample. ONE decision per file (writers are
- * consistent), and only the COLOR columns (index ≥ 3) are checked — positions
- * always have decimals. Returns 'unit' (float, scale ×255), 'byte' (int 0-255),
- * or 'auto' if there are no color columns / nothing decisive.
+ * Re-exported so the extension host and the webview share one implementation;
+ * the body lives beside the parser wrapper in the engine.
  */
-export function detectXyzColorMode(sample: Uint8Array, variant: string): string {
-  // Only the 6-column colored variant has separate r/g/b at indices 3-5.
-  if (variant !== 'xyzrgb') {
-    return 'auto';
-  }
-  const text = Buffer.from(sample).toString('latin1');
-  const lines = text.split('\n');
-  // Drop the last (possibly truncated) line from the sample.
-  for (let li = 0; li < lines.length - 1; li++) {
-    const t = lines[li].trim();
-    if (!t || t.startsWith('#')) {
-      continue;
-    }
-    const toks = t.split(/\s+/);
-    if (toks.length < 6) {
-      continue;
-    }
-    for (let i = 3; i < toks.length; i++) {
-      const tok = toks[i];
-      if (tok.includes('.') || tok.includes('e') || tok.includes('E')) {
-        return 'unit'; // a color written with a decimal/exponent → float file
-      }
-    }
-  }
-  return 'byte';
-}
+export { detectXyzColorMode } from '../engine/src/parsers/pointcloudWasm';
 
 /** Parse an ASCII PLY point cloud. Returns null on failure (caller falls back). */
 export function parseAsciiPlyWasm(bytes: Uint8Array): WasmPointCloud | null {
@@ -327,47 +299,5 @@ export async function streamParseFile(
     if (fh) {
       await fh.close();
     }
-  }
-}
-
-/** Parse an ASCII PCD point cloud. Returns null on failure (caller falls back). */
-export function parsePcdAsciiWasm(bytes: Uint8Array): WasmPointCloud | null {
-  const m = load();
-  if (!m) {
-    return null;
-  }
-  try {
-    return marshal(m.parse_pcd_ascii(bytes));
-  } catch (error) {
-    console.warn('[pointcloud-wasm] parse_pcd_ascii failed, falling back:', error);
-    return null;
-  }
-}
-
-/** Parse a binary (DATA binary) PCD point cloud. Returns null on failure. */
-export function parsePcdBinaryWasm(bytes: Uint8Array): WasmPointCloud | null {
-  const m = load();
-  if (!m || typeof m.parse_pcd_binary !== 'function') {
-    return null;
-  }
-  try {
-    return marshal(m.parse_pcd_binary(bytes));
-  } catch (error) {
-    console.warn('[pointcloud-wasm] parse_pcd_binary failed, falling back:', error);
-    return null;
-  }
-}
-
-/** Parse a PTS point cloud. Returns null on failure (caller falls back). */
-export function parsePtsWasm(bytes: Uint8Array): WasmPointCloud | null {
-  const m = load();
-  if (!m || typeof m.parse_pts !== 'function') {
-    return null;
-  }
-  try {
-    return marshal(m.parse_pts(bytes));
-  } catch (error) {
-    console.warn('[pointcloud-wasm] parse_pts failed, falling back:', error);
-    return null;
   }
 }

@@ -1,0 +1,18 @@
+{
+  "name": "3D Point Cloud and Mesh Visualizer",
+  "short_name": "3D Visualizer",
+  "description": "View point clouds, meshes and depth images directly in the browser.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1e1e1e",
+  "theme_color": "#1e1e1e",
+  "icons": [
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

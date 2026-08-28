@@ -6,12 +6,14 @@ body {
   color: var(--vscode-editor-foreground);
   overflow: hidden;
   height: 100vh;
+  height: 100dvh;
 }
 
 #viewer-container {
   position: relative;
   width: 100%;
   height: 100vh;
+  height: 100dvh;
 }
 
 .seq-slider {
@@ -28,6 +30,11 @@ body {
   display: block;
   width: 100%;
   height: 100%;
+  /* Canvas gestures belong to the 3D controls. Keep native scrolling on the
+     overlaid panel, but do not let the browser steal pinch or drag gestures
+     that begin over the scene. */
+  touch-action: none;
+  user-select: none;
 }
 
 .loading {
@@ -263,6 +270,10 @@ body {
   min-height: 0;
 }
 
+.tab-content.collapsed {
+  display: none;
+}
+
 .tab-panel {
   display: none;
   padding: 16px;
@@ -293,6 +304,15 @@ body {
 }
 
 /* Control Buttons */
+/* Buttons retain keyboard focus for shortcut handling, but never paint a
+   focus ring/highlight after they have been clicked. Active/toggled state is
+   still communicated by each control's explicit .active styling. */
+button:focus,
+button:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 .control-buttons {
   display: flex;
   flex-direction: column;
@@ -325,6 +345,17 @@ body {
   border-color: var(--vscode-button-border);
 }
 
+.control-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.control-button:disabled:hover {
+  background-color: var(--vscode-button-secondaryBackground);
+  border-color: var(--vscode-button-border);
+}
+
 .setting-description {
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
@@ -348,6 +379,9 @@ body {
 /* File Management */
 .file-controls {
   display: flex;
+  /* Wraps so the align menu can claim a full-width row of its own beneath the
+     two buttons (see GlobalAlignMenu.svelte). */
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -876,6 +910,38 @@ body {
   border-bottom-style: solid;
 }
 
+.welcome-content .example-prompt {
+  margin: 18px 0 0;
+  font-size: 13px;
+}
+
+.example-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.example-button {
+  padding: 5px 10px;
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.example-button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.example-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 /* Camera Controls Sections */
 .camera-controls-section {
   margin-bottom: 16px;
@@ -1174,11 +1240,22 @@ body {
 /* Bottom right navigation buttons */
 .bottom-right-nav {
   position: absolute;
-  bottom: 20px;
-  right: 20px;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  right: calc(20px + env(safe-area-inset-right, 0px));
   display: flex;
   gap: 8px;
   z-index: 100;
+}
+
+/* Visually hidden, but still rendered so mobile Safari can open the file picker. */
+.browser-file-input {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .nav-button {
@@ -1205,16 +1282,6 @@ body {
 .nav-button:active {
   background-color: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
-}
-
-/* Mobile override for navigation buttons - must come after base styles */
-@media (max-width: 768px) {
-  .bottom-right-nav {
-    bottom: auto;
-    top: 10px;
-    right: auto;
-    left: 10px;
-  }
 }
 
 /* Measurement labels */

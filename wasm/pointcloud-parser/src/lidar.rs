@@ -703,19 +703,17 @@ pub fn parse_e57(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
             })
             .unwrap_or([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]);
 
-        let mut append_representation = |
-            representation: &'static str,
-            projectable: bool,
-            camera_model: Option<&'static str>,
-            blob: &e57::ImageBlob,
-            mask_blob: Option<&e57::Blob>,
-            width: u32,
-            height: u32,
-            fx: Option<f64>,
-            fy: Option<f64>,
-            cx: Option<f64>,
-            cy: Option<f64>,
-        | {
+        let mut append_representation = |representation: &'static str,
+                                         projectable: bool,
+                                         camera_model: Option<&'static str>,
+                                         blob: &e57::ImageBlob,
+                                         mask_blob: Option<&e57::Blob>,
+                                         width: u32,
+                                         height: u32,
+                                         fx: Option<f64>,
+                                         fy: Option<f64>,
+                                         cx: Option<f64>,
+                                         cy: Option<f64>| {
             if blob.data.length > MAX_EMBEDDED_IMAGE_BYTES {
                 errors.push(format!(
                     "image {} {representation}: {:.1} MiB blob exceeds the 512 MiB safety limit",
@@ -726,7 +724,10 @@ pub fn parse_e57(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
             }
             let mut data = Vec::with_capacity(blob.data.length.min(usize::MAX as u64) as usize);
             if let Err(error) = reader.blob(&blob.data, &mut data) {
-                errors.push(format!("image {} {representation}: {error}", image_index + 1));
+                errors.push(format!(
+                    "image {} {representation}: {error}",
+                    image_index + 1
+                ));
                 return;
             }
             let mut mask = Vec::new();
@@ -740,7 +741,10 @@ pub fn parse_e57(data: Vec<u8>, file_name: &str) -> Result<LidarCollectionResult
                 }
                 mask.reserve(mask_blob.length.min(usize::MAX as u64) as usize);
                 if let Err(error) = reader.blob(mask_blob, &mut mask) {
-                    errors.push(format!("image {} {representation} mask: {error}", image_index + 1));
+                    errors.push(format!(
+                        "image {} {representation} mask: {error}",
+                        image_index + 1
+                    ));
                     mask.clear();
                 }
             }

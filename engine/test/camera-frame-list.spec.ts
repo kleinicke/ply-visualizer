@@ -9,7 +9,7 @@ import path from 'path';
  */
 test.describe('Individual camera list', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page
       .locator('#hiddenFileInput')
@@ -96,6 +96,38 @@ test.describe('Individual camera list', () => {
     expect(moved).toBeLessThan(0.01);
     expect(turned).toBeGreaterThan(0.01);
   });
+
+  test('Shift-click isolates one camera image and repeats to restore all', async ({ page }) => {
+    // The lightweight JSON profile has no textures. Give its first three
+    // shared frame groups plane-shaped children before opening the list; the
+    // interaction under test is source-independent CameraFrameList behavior.
+    await page.evaluate(() => {
+      const groups = (window as any).visualizer.cameraGroups[0].children.slice(0, 3);
+      for (const group of groups) {
+        const plane = group.children[0].clone();
+        plane.name = 'cameraImagePlane';
+        plane.visible = true;
+        group.add(plane);
+      }
+    });
+    await page.getByRole('button', { name: /Individual cameras/ }).click();
+
+    const images = page.locator('.camera-frame-row input[type="checkbox"]');
+    await expect(images).toHaveCount(3);
+    for (let index = 0; index < 3; index++) {
+      await expect(images.nth(index)).toBeChecked();
+    }
+
+    await images.nth(1).click({ modifiers: ['Shift'] });
+    await expect(images.nth(0)).not.toBeChecked();
+    await expect(images.nth(1)).toBeChecked();
+    await expect(images.nth(2)).not.toBeChecked();
+
+    await images.nth(1).click({ modifiers: ['Shift'] });
+    await expect(images.nth(0)).toBeChecked();
+    await expect(images.nth(1)).toBeChecked();
+    await expect(images.nth(2)).toBeChecked();
+  });
 });
 
 /**
@@ -106,7 +138,7 @@ test.describe('Individual camera list', () => {
 test.describe('Per-camera image visibility', () => {
   test('checkboxes follow the profile-wide image toggle', async ({ page }) => {
     test.setTimeout(120_000);
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page
       .locator('#hiddenFileInput')

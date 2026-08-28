@@ -47,7 +47,7 @@ test.beforeAll(() => {
 });
 
 async function load(page: import('@playwright/test').Page, files: string[]) {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.locator('#hiddenFileInput').setInputFiles(files);
   await expect(page.locator(ROWS)).toHaveCount(2);
@@ -144,7 +144,7 @@ test('reprojection error is available as a scalar field', async ({ page }) => {
 
 test('a model without cameras and images is left to the normal pipelines', async ({ page }) => {
   // points3D alone is not a reconstruction; it must not be silently swallowed.
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.locator('#hiddenFileInput').setInputFiles([path.join(BIN_DIR, 'points3D.bin')]);
   // `.bin` is KITTI by extension, so this either fails to parse or loads as a

@@ -1,13 +1,28 @@
 import { PlyParser } from '../parsers/plyParser';
 import { ObjParser } from '../parsers/objParser';
 import { StlParser } from '../parsers/stlParser';
-import { PcdParser } from '../parsers/pcdParser';
-import { PtsParser } from '../parsers/ptsParser';
+import {
+  describeLayout,
+  parsePcdWasm,
+  parsePtsWasm,
+  parseXyzWasm,
+  toPcdPayload,
+  toPointCloudPayload,
+} from '../parsers/pointcloudWasm';
 import { KittiBinParser } from '../parsers/kittiBinParser';
 import { StonexX3aParser } from '../parsers/stonexX3aParser';
 import { OffParser } from '../parsers/offParser';
 import { GltfParser } from '../parsers/gltfParser';
-import { NpyParser, isNpyPointCloudData } from '../parsers/npyParser';
+import { NpyParser } from '../parsers/npyParser';
+import { inspectNpyWasm, isNpyPointCloudShape } from '../parsers/pointcloudWasm';
+import { NrrdParser } from '../parsers/nrrdParser';
+import { sampleRange } from '../visualization/isosurface';
+import { buildVolumePoints } from '../visualization/volumePoints';
+import {
+  defaultVolumeBrightnessMode,
+  resolveVolumeWindow,
+  volumeSliceRanges,
+} from '../visualization/volumePresentation';
 import { initTiffWasm, projectCameraPointsWasmSync } from '../depth/readers/tiffWasm';
 import { FormatRegistry, UnifiedConverter } from './formatRegistry';
 
@@ -75,12 +90,20 @@ export function registerBuiltinFormats(
   });
 
   registry.register({
-    // XYZ variants are ASCII point lists the PLY parser already handles.
     extensions: ['xyz', 'xyzn', 'xyzrgb'],
     category: 'pointCloud',
     async parse({ data, fileName, timingCallback }) {
-      const xyzData = await new PlyParser().parse(data, timingCallback);
-      return { data: { ...xyzData, fileName }, type: 'xyzData' };
+      // The variant decides the column layout, and only the file name carries
+      // it - `.xyzn` is normals, `.xyzrgb` colours, plain `.xyz` auto-detects.
+      const variant = fileName.split('.').pop()?.toLowerCase() ?? 'xyz';
+      timingCallback?.(`🔍 XYZ: parsing ${variant} in Rust...`);
+      const parsed = await parseXyzWasm(data, variant);
+      timingCallback?.(`✅ XYZ: parsed ${parsed.vertexCount.toLocaleString()} points`);
+      const payload = toPointCloudPayload(parsed, 'ascii', [
+        `Converted from ${variant.toUpperCase()}: ${fileName}`,
+        `Format variant: ${variant}`,
+      ]);
+      return { data: convertToUnifiedFormat(payload, fileName), type: 'xyzData' };
     },
   });
 
@@ -88,8 +111,13 @@ export function registerBuiltinFormats(
     extensions: ['pcd'],
     category: 'pointCloud',
     async parse({ data, fileName, timingCallback }) {
-      const pcdData = await new PcdParser().parse(data, timingCallback);
-      return { data: convertToUnifiedFormat(pcdData, fileName), type: 'pcdData' };
+      timingCallback?.('🔍 PCD: parsing in Rust...');
+      const parsed = await parsePcdWasm(data);
+      timingCallback?.(
+        `✅ PCD: parsed ${parsed.vertexCount.toLocaleString()} points (${parsed.header.format}, ` +
+          `fields: ${parsed.header.fields.join(' ')})`
+      );
+      return { data: convertToUnifiedFormat(toPcdPayload(parsed), fileName), type: 'pcdData' };
     },
   });
 
@@ -97,8 +125,15 @@ export function registerBuiltinFormats(
     extensions: ['pts'],
     category: 'pointCloud',
     async parse({ data, fileName, timingCallback }) {
-      const ptsData = await new PtsParser().parse(data, timingCallback);
-      return { data: convertToUnifiedFormat(ptsData, fileName), type: 'ptsData' };
+      timingCallback?.('🔍 PTS: parsing in Rust...');
+      const parsed = await parsePtsWasm(data);
+      timingCallback?.(
+        `✅ PTS: parsed ${parsed.vertexCount.toLocaleString()} points (${describeLayout(parsed)})`
+      );
+      return {
+        data: convertToUnifiedFormat(toPointCloudPayload(parsed, 'pts'), fileName),
+        type: 'ptsData',
+      };
     },
   });
 
@@ -171,6 +206,32 @@ export function registerBuiltinFormats(
   });
 
   registry.register({
+    // Volumes. NRRD is the payload the tiff-visualizer bridge hands over for
+    // DICOM/OME-TIFF stacks, and the format 3D Slicer and ITK write, so the
+    // same path serves both. The canonical representation is one point per
+    // retained voxel, coloured with the source presentation window.
+    extensions: ['nrrd', 'nhdr'],
+    category: 'mesh',
+    async parse({ data, fileName, timingCallback }) {
+      const volume = await new NrrdParser().parse(data, fileName, timingCallback);
+      const range = sampleRange(volume);
+      const window = resolveVolumeWindow(volume, range);
+      const { data: pointData } = buildVolumePoints(volume, {
+        threshold: range.min,
+        step: [1, 1, 1],
+        windowCenter: window.center,
+        windowWidth: window.width,
+        brightnessMode: defaultVolumeBrightnessMode(volume),
+        volumeRange: range,
+        sliceRanges: volumeSliceRanges(volume),
+        onProgress: fraction =>
+          timingCallback?.(`🧊 Volume points: ${(fraction * 100).toFixed(0)}%`),
+      });
+      return { data: { ...pointData, fileName }, type: 'spatialData' };
+    },
+  });
+
+  registry.register({
     // Depth formats are projected by DepthRegistry, not parsed here.
     extensions: ['tif', 'tiff', 'pfm', 'npz', 'png', 'exr'],
     category: 'depthImage',
@@ -181,13 +242,10 @@ export function registerBuiltinFormats(
     // shape tells them apart, hence refineCategory.
     extensions: ['npy'],
     category: 'depthImage',
-    refineCategory(data) {
+    async refineCategory(data) {
       try {
-        const buffer = data.buffer.slice(
-          data.byteOffset,
-          data.byteOffset + data.byteLength
-        ) as ArrayBuffer;
-        return isNpyPointCloudData(buffer) ? 'pointCloud' : null;
+        const [array] = await inspectNpyWasm(data);
+        return array && isNpyPointCloudShape(array.shape) ? 'pointCloud' : null;
       } catch (error) {
         // Unreadable header: keep the depth-image assumption, as before.
         console.warn('Failed to analyze NPY content, treating as depth image:', error);

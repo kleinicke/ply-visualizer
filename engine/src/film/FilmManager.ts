@@ -65,6 +65,16 @@ export class FilmManager {
 
   constructor(host: FilmHost) {
     this.host = host;
+    // Listen on window capture so playback yields before any mouse, wheel, or
+    // touch controller sees the gesture. In particular TouchNavigation records
+    // the controls' enabled state on pointerdown; cancelling here prevents it
+    // from restoring the playback-disabled state when the finger is lifted.
+    window.addEventListener('pointerdown', this.onNavigationIntent, { capture: true });
+    window.addEventListener('wheel', this.onNavigationIntent, { capture: true, passive: true });
+    window.addEventListener('touchstart', this.onNavigationIntent, {
+      capture: true,
+      passive: true,
+    });
   }
 
   getKeyframes(): CameraKeyframe[] {
@@ -181,8 +191,8 @@ export class FilmManager {
     this.tick();
   }
 
-  /** Stop playback, restore the pre-playback camera, finalize any recording. */
-  stop(): void {
+  /** Stop playback, normally restoring the pre-playback camera. */
+  stop(restorePose = true): void {
     if (!this.playing) {
       return;
     }
@@ -194,15 +204,28 @@ export class FilmManager {
     }
     this.host.controls.enabled = true;
 
-    if (this.savedPose) {
+    if (restorePose && this.savedPose) {
       this.applySample(this.savedPose);
-      this.savedPose = null;
     }
+    this.savedPose = null;
 
     if (this.recorder) {
       this.finishRecording();
     }
   }
+
+  /**
+   * A navigation gesture takes over from the animated camera at its exact
+   * current pose. The event then continues to the re-enabled controls, so the
+   * same pointerdown/wheel/touchstart begins the user's movement immediately.
+   */
+  private readonly onNavigationIntent = (event: Event): void => {
+    if (!this.playing || !this.host.renderer.domElement.contains(event.target as Node)) {
+      return;
+    }
+    this.stop(false);
+    this.host.showStatus('Camera path paused for manual navigation');
+  };
 
   private tick = (): void => {
     if (!this.playing) {
@@ -552,6 +575,9 @@ export class FilmManager {
 
   dispose(): void {
     this.stop();
+    window.removeEventListener('pointerdown', this.onNavigationIntent, { capture: true });
+    window.removeEventListener('wheel', this.onNavigationIntent, { capture: true });
+    window.removeEventListener('touchstart', this.onNavigationIntent, { capture: true });
     filmState.frustumsVisible = false;
     this.rebuildFrustums();
   }

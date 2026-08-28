@@ -1,9 +1,12 @@
 {
   "name": "ply-visualizer",
   "displayName": "3D Point Cloud and Mesh Visualizer (PLY, ...)",
-  "description": "A fast 3D visualizer for point clouds and meshes using Three.js. Supports PLY, LAS/LAZ, E57, KITTI BIN, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth conversion.",
+  "description": "A fast 3D visualizer for point clouds and meshes, powered by Rust/WebAssembly decoding and Three.js rendering. Supports PLY, LAS/LAZ, E57, KITTI BIN, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth conversion.",
   "version": "1.7.2",
-  "packageManager": "pnpm@10.32.1",
+  "packageManager": "npm@11.17.0",
+  "workspaces": [
+    "engine"
+  ],
   "publisher": "kleinicke",
   "icon": "icon.png",
   "repository": {
@@ -54,11 +57,17 @@
     "eyedome",
     "viewer",
     "three.js",
+    "rust",
+    "webassembly",
+    "wasm",
     "depth image",
     "depth map",
     "CloudCompare"
   ],
   "main": "./out/extension.js",
+  "imports": {
+    "#registration-wasm-loader": "./out/engine/src/registration/wasmLoader.js"
+  },
   "contributes": {
     "configuration": {
       "title": "3D Visualizer",
@@ -134,6 +143,12 @@
           },
           {
             "filenamePattern": "*.sog"
+          },
+          {
+            "filenamePattern": "*.nrrd"
+          },
+          {
+            "filenamePattern": "*.nhdr"
           }
         ]
       },
@@ -165,8 +180,18 @@
         "category": "3D Visualizer"
       },
       {
+        "command": "plyViewer.openDicomFolder",
+        "title": "Open DICOM Folder as Volume",
+        "category": "3D Visualizer"
+      },
+      {
         "command": "plyViewer.playPointCloudSequence",
         "title": "Play Point Cloud Sequence (Wildcard)",
+        "category": "3D Visualizer"
+      },
+      {
+        "command": "plyViewer.showTimingOutput",
+        "title": "Show Timing Output",
         "category": "3D Visualizer"
       },
       {
@@ -283,24 +308,25 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run clean && pnpm run compile",
+    "vscode:prepublish": "npm run clean && npm run compile",
     "compile": "webpack",
     "build:wasm": "cd wasm/pointcloud-parser && wasm-pack build --target nodejs --release --out-dir pkg && wasm-pack build --target web --release --out-dir pkg-web && node -e \"require('fs').rmSync('pkg-web/.gitignore', { force: true })\" && cd ../tiff-decoder && wasm-pack build --target nodejs --release --out-dir pkg-nodejs && wasm-pack build --target no-modules --release --out-dir pkg-nomodules && cp pkg-nomodules/tiff_wasm.js ../../engine/media/wasm/tiff_wasm.js && cp pkg-nomodules/tiff_wasm_bg.wasm ../../engine/media/wasm/tiff_wasm_bg.wasm",
     "compile:tests": "tsc",
-    "compile:all": "pnpm run compile && pnpm run compile:tests",
+    "compile:all": "npm run compile && npm run compile:tests",
     "watch": "webpack --watch",
-    "pretest": "pnpm run clean && pnpm run compile:all && pnpm run lint",
+    "pretest": "npm run clean && npm run compile:all && npm run lint",
     "clean": "rm -rf out/",
-    "lint": "eslint src --ext ts && pnpm run lint:svelte",
-    "lint:svelte": "cd engine && pnpm run check",
+    "lint": "eslint src --ext ts && npm run lint:svelte",
+    "lint:svelte": "npm run check --workspace=engine",
     "test": "node ./out/src/test/runTest.js",
-    "test:node": "pnpm run compile:tests && mocha --ui tdd \"out/src/test/suite/**/*.test.js\" --ignore \"out/src/test/suite/extension.test.js\" --ignore \"out/src/test/suite/extensionAdvanced.test.js\" --ignore \"out/src/test/suite/integration.test.js\" --ignore \"out/src/test/suite/pointCloudEditorProviderAdvanced.test.js\"",
-    "test:coverage": "pnpm run pretest && c8 node ./out/src/test/runTest.js",
-    "coverage": "pnpm run test:coverage && pnpm run coverage:report",
+    "test:node": "npm run compile:tests && mocha --ui tdd \"out/src/test/suite/**/*.test.js\" --ignore \"out/src/test/suite/extension.test.js\" --ignore \"out/src/test/suite/extensionAdvanced.test.js\" --ignore \"out/src/test/suite/integration.test.js\" --ignore \"out/src/test/suite/pointCloudEditorProviderAdvanced.test.js\"",
+    "test:coverage": "npm run pretest && c8 node ./out/src/test/runTest.js",
+    "coverage": "npm run test:coverage && npm run coverage:report",
     "coverage:report": "c8 report && node ./analyze-coverage.mjs",
-    "test:ui": "pnpm run compile && cd ui-tests && pnpm exec tsc && cd .. && node ./out/ui-tests/ui-test-runner.js",
-    "test:all": "pnpm run test && pnpm run test:ui",
+    "test:ui": "npm run compile && tsc -p ui-tests/tsconfig.json && node ./out/ui-tests/ui-test-runner.js",
+    "test:all": "npm run test && npm run test:ui",
     "test:stl": "node test-stl.js",
+    "benchmark:vscode": "npm run compile && node ./scripts/benchmark-vscode.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky"

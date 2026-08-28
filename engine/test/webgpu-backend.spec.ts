@@ -10,7 +10,7 @@ import { test, expect } from '@playwright/test';
  */
 
 async function bootBackend(page: import('@playwright/test').Page, query: string) {
-  await page.goto(`/3d-visualizer/${query}`);
+  await page.goto(`/${query}`);
   await page.waitForSelector('#three-canvas');
   await page.waitForFunction(() => (window as any).visualizer?.renderer !== undefined);
   return page.evaluate(() => {
@@ -28,6 +28,57 @@ test('default boot uses the WebGL backend', async ({ page }) => {
   expect(result.backend).toBe('webgl');
   expect(result.hasWebglRenderer).toBe(true);
   expect(result.canvasWidth).toBeGreaterThan(0);
+});
+
+test('point controls expose independent fallbacks when WebGPU is unavailable', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForFunction(() => Boolean((window as any).visualizer));
+
+  const state = await page.evaluate(() => {
+    const visualizer = (window as any).visualizer;
+    return {
+      pickingAvailable: visualizer.webgpuPickingAvailable as boolean,
+      pickingImplementation: visualizer.pointPickingImplementation as string,
+      renderingAvailable: visualizer.webgpuPointRenderingAvailable as boolean,
+      renderingImplementation: visualizer.pointRenderingImplementation as string,
+    };
+  });
+  await page.locator('[data-tab="controls"]').click();
+  const cpu = page.locator('#point-picking-cpu');
+  const webgpu = page.locator('#point-picking-webgpu');
+  const currentRendering = page.locator('#point-rendering-current');
+  const webgpuRendering = page.locator('#point-rendering-webgpu');
+  await expect(cpu).toBeVisible();
+  await expect(webgpu).toBeVisible();
+  await expect(currentRendering).toBeVisible();
+  await expect(webgpuRendering).toBeVisible();
+
+  if (state.pickingAvailable) {
+    expect(state.pickingImplementation).toBe('webgpu');
+    await expect(webgpu).toBeEnabled();
+    await cpu.click();
+    await expect(cpu).toHaveClass(/active/);
+    await webgpu.click();
+    await expect(webgpu).toHaveClass(/active/);
+  } else {
+    expect(state.pickingImplementation).toBe('cpu');
+    await expect(cpu).toHaveClass(/active/);
+    await expect(webgpu).toBeDisabled();
+    await expect(webgpu).toHaveAttribute('title', /WebGPU unavailable:/);
+  }
+
+  expect(state.renderingImplementation).toBe('current');
+  await expect(currentRendering).toHaveClass(/active/);
+  if (state.renderingAvailable) {
+    await expect(webgpuRendering).toBeEnabled();
+    await webgpuRendering.click();
+    await expect(webgpuRendering).toHaveClass(/active/);
+    await currentRendering.click();
+    await expect(currentRendering).toHaveClass(/active/);
+  } else {
+    await expect(webgpuRendering).toBeDisabled();
+    await expect(webgpuRendering).toHaveAttribute('title', /WebGPU unavailable:/);
+  }
 });
 
 test('?webgpu=1 starts WebGPU, or falls back to a working WebGL viewer', async ({ page }) => {
@@ -55,7 +106,7 @@ test('?webgpu=1 starts WebGPU, or falls back to a working WebGL viewer', async (
 test('the WebGPU backend disables the WebGL-only features rather than breaking', async ({
   page,
 }) => {
-  await page.goto('/3d-visualizer/?webgpu=1');
+  await page.goto('/?webgpu=1');
   await page.waitForSelector('#three-canvas');
   await page.waitForFunction(() => (window as any).visualizer?.renderer !== undefined);
 

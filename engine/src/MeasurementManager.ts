@@ -2,6 +2,14 @@ import * as THREE from 'three';
 import { measurementState } from './state/measurement.svelte';
 import type { ViewerRenderer } from './rendering/viewerRenderer';
 
+declare const acquireVsCodeApi: () => any;
+const isVSCode = typeof acquireVsCodeApi !== 'undefined';
+
+interface MeasurementPersistenceHost {
+  vscode: { postMessage(message: any): void };
+  showStatus(message: string): void;
+}
+
 /**
  * Format a distance with appropriate units. Shared by the 3D labels and the
  * Measurements panel.
@@ -48,6 +56,7 @@ export class MeasurementManager {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private renderer: ViewerRenderer;
+  private persistenceHost: MeasurementPersistenceHost;
   private labelsContainer: HTMLDivElement | null = null;
 
   // Completed paths keep their visuals while the newest path remains editable.
@@ -61,10 +70,16 @@ export class MeasurementManager {
   private pendingStartMode: PathStartMode | null = 'center';
   private lastUsedStartMode: PathStartMode = 'center';
 
-  constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, renderer: ViewerRenderer) {
+  constructor(
+    scene: THREE.Scene,
+    camera: THREE.PerspectiveCamera,
+    renderer: ViewerRenderer,
+    persistenceHost: MeasurementPersistenceHost
+  ) {
     this.scene = scene;
     this.camera = camera;
     this.renderer = renderer;
+    this.persistenceHost = persistenceHost;
     this.initializeLabelsContainer();
   }
 
@@ -195,6 +210,11 @@ export class MeasurementManager {
     this.syncPathState();
   }
 
+  togglePickMode(): boolean {
+    measurementState.pickingEnabled = !measurementState.pickingEnabled;
+    return measurementState.pickingEnabled;
+  }
+
   /** Consume the armed one-shot mode immediately before adding a picked point. */
   prepareForPathPoint(rotationCenter: THREE.Vector3): void {
     const mode = this.pendingStartMode;
@@ -224,6 +244,115 @@ export class MeasurementManager {
 
   getPathCount(): number {
     return this.paths.filter(path => path.points.length > 0).length;
+  }
+
+  buildPathProjectJson(): string {
+    const paths = this.paths
+      .filter(path => path.points.length > 0)
+      .map((path, index) => {
+        const segmentLengths = this.getSegmentLengths(path);
+        return {
+          name: `Path ${index + 1}`,
+          closed: path.closed,
+          points: path.points.map(point => point.toArray()),
+          segmentLengths,
+          totalLength: segmentLengths.reduce((sum, length) => sum + length, 0),
+        };
+      });
+    return JSON.stringify(
+      {
+        version: 1,
+        type: 'measurement-paths',
+        coordinateSpace: 'world',
+        units: 'scene-units',
+        paths,
+      },
+      null,
+      2
+    );
+  }
+
+  loadPathProject(jsonText: string): boolean {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      this.persistenceHost.showStatus('Measurement path file is not valid JSON');
+      return false;
+    }
+
+    const sourcePaths = (parsed as any)?.paths;
+    if (!Array.isArray(sourcePaths) || sourcePaths.length === 0) {
+      this.persistenceHost.showStatus('Measurement path file has no paths');
+      return false;
+    }
+
+    const loadedPaths: MeasurementPath[] = [];
+    for (const sourcePath of sourcePaths) {
+      if (!Array.isArray(sourcePath?.points) || sourcePath.points.length === 0) {
+        this.persistenceHost.showStatus('Measurement path file contains an empty path');
+        return false;
+      }
+      const points: THREE.Vector3[] = [];
+      for (const point of sourcePath.points) {
+        if (
+          !Array.isArray(point) ||
+          point.length !== 3 ||
+          !point.every(value => typeof value === 'number' && Number.isFinite(value))
+        ) {
+          this.persistenceHost.showStatus('Measurement path file contains an invalid point');
+          return false;
+        }
+        points.push(new THREE.Vector3(point[0], point[1], point[2]));
+      }
+      loadedPaths.push({
+        ...this.createPath(),
+        points,
+        closed: sourcePath.closed === true,
+      });
+    }
+
+    this.clearAllPaths();
+    this.paths = loadedPaths;
+    this.activePathIndex = loadedPaths.length - 1;
+    this.closeLoopEnabled = loadedPaths[this.activePathIndex].closed;
+    this.pendingStartMode = null;
+    for (const path of loadedPaths) {
+      this.rebuildPathVisuals(path);
+    }
+    this.syncPathState();
+    this.persistenceHost.showStatus(
+      `Loaded ${loadedPaths.length} measurement ${loadedPaths.length === 1 ? 'path' : 'paths'}`
+    );
+    return true;
+  }
+
+  savePaths(): void {
+    if (this.getPathCount() === 0) {
+      this.persistenceHost.showStatus('No measurement paths to export');
+      return;
+    }
+
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+/, '');
+    const fileName = `measurement-paths-${stamp}.json`;
+    const content = this.buildPathProjectJson();
+
+    if (isVSCode) {
+      this.persistenceHost.vscode.postMessage({
+        type: 'saveMeasurementPaths',
+        content,
+        defaultFileName: fileName,
+      });
+      return;
+    }
+
+    const url = URL.createObjectURL(new Blob([content], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    this.persistenceHost.showStatus(`Measurement paths saved: ${fileName}`);
   }
 
   clearAllPaths(): void {
@@ -505,6 +634,7 @@ export class MeasurementManager {
    * Clean up all resources
    */
   dispose(): void {
+    measurementState.pickingEnabled = false;
     this.clearAll();
 
     if (this.labelsContainer && this.labelsContainer.parentNode) {

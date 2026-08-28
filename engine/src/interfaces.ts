@@ -43,6 +43,13 @@ export interface SpatialData {
   positionsArray?: Float32Array;
   colorsArray?: Uint8Array | null;
   normalsArray?: Float32Array | null;
+  /**
+   * Triangle indices for meshes on the typed-array path, replacing `faces`.
+   * An isosurface is millions of triangles, where an object per face costs
+   * more memory than the source volume; when this is set, `faces` stays empty
+   * and `faceCount` carries the count.
+   */
+  indicesArray?: Uint32Array | null;
   intensityArray?: Float32Array | null;
   scalarFields?: Record<string, Float32Array>;
   useTypedArrays?: boolean;

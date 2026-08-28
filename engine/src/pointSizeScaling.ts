@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { FileEntryRegistry } from './state/fileEntries';
 import { SpatialData } from './interfaces';
-import { applyPointShape, DEFAULT_POINT_SIZE } from './visualization/PointCloudRenderer';
+import { DEFAULT_POINT_SIZE } from './visualization/PointCloudRenderer';
 
 export interface PointSizeScalingHost {
   fileEntries: FileEntryRegistry;
@@ -22,17 +22,15 @@ export interface PointSizeScalingHost {
 }
 
 /**
- * Set a point size and keep the round-point decision in sync with it. Points
- * only get the disc texture once they are wide enough to show one; applyPointShape
- * is a no-op unless that crosses the threshold, so this is safe on hot paths.
+ * Set a world-space point size. The render path separately chooses square or
+ * round sprites from its projected pixel size.
  */
 function setPointSize(
-  host: PointSizeScalingHost,
+  _host: PointSizeScalingHost,
   material: THREE.PointsMaterial,
   size: number
 ): void {
   material.size = size;
-  applyPointShape(material, host.allowTransparency);
 }
 
 export function toggleScreenSpaceScaling(host: PointSizeScalingHost): void {

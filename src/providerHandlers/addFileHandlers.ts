@@ -3,8 +3,12 @@ import * as path from 'path';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
 import { ObjParser } from '../../engine/src/parsers/objParser';
 import { StlParser } from '../../engine/src/parsers/stlParser';
-import { PcdParser } from '../../engine/src/parsers/pcdParser';
-import { PtsParser } from '../../engine/src/parsers/ptsParser';
+import {
+  parsePcdWasm,
+  parsePtsWasm,
+  toPcdPayload,
+  toPointCloudPayload,
+} from '../../engine/src/parsers/pointcloudWasm';
 import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
@@ -12,6 +16,7 @@ import { isColmapModelFile } from '../../engine/src/formats/colmap/colmapFiles';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
+import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
 import {
   detectFileTypeWithContent,
   isPlyBinary,
@@ -28,11 +33,13 @@ import {
   SPLAT_CONTAINER_EXTENSIONS,
 } from './binaryTransfer';
 import { parseLidarWasm } from '../wasmPointcloud';
+import { buildInitialVolumeData, decorateVolumeData, retainVolume } from './volumeSessions';
 
 export interface AddFileHost {
   getShortPath(filePath: string): string;
   logPerf(line: string): void;
   setLoadStartedAt(ts: number): void;
+  retainVolumeSession?(webviewPanel: vscode.WebviewPanel, key: string): void;
   tryAutoLoadMtl(
     webviewPanel: vscode.WebviewPanel,
     objUri: vscode.Uri,
@@ -226,7 +233,6 @@ export async function handleAddFile(
             await sendUltimateRawBinary(
               webviewPanel,
               headerResult.headerInfo,
-              headerResult,
               spatialData,
               'addFiles',
               host.logPerf.bind(host)
@@ -346,8 +352,7 @@ export async function handleAddFile(
         // Handle PCD files
         if (fileExtension === '.pcd') {
           const pcdData = await vscode.workspace.fs.readFile(files[i]);
-          const pcdParser = new PcdParser();
-          const parsedData = await pcdParser.parse(pcdData);
+          const parsedData = toPcdPayload(await parsePcdWasm(pcdData));
 
           webviewPanel.webview.postMessage({
             type: 'pcdData',
@@ -364,8 +369,7 @@ export async function handleAddFile(
         // Handle PTS files
         if (fileExtension === '.pts') {
           const ptsData = await vscode.workspace.fs.readFile(files[i]);
-          const ptsParser = new PtsParser();
-          const parsedData = await ptsParser.parse(ptsData);
+          const parsedData = toPointCloudPayload(await parsePtsWasm(ptsData), 'pts');
 
           webviewPanel.webview.postMessage({
             type: 'ptsData',
@@ -443,6 +447,8 @@ export async function handleAddFile(
       } catch (error) {
         console.error(`Failed to load file ${files[i].fsPath}:`, error);
         vscode.window.showErrorMessage(`Failed to load file ${files[i].fsPath}: ${error}`);
+      } finally {
+        await webviewPanel.webview.postMessage({ type: 'backgroundOperationComplete' });
       }
     }
   }
@@ -493,6 +499,38 @@ export async function handleAddFileFromPath(
       return;
     }
 
+    if (ext === '.nrrd' || ext === '.nhdr') {
+      const bytes = await vscode.workspace.fs.readFile(fileUri);
+      const directory = vscode.Uri.joinPath(fileUri, '..');
+      const volume = await new NrrdParser().parse(
+        bytes,
+        fileName,
+        undefined,
+        async relative =>
+          new Uint8Array(
+            await vscode.workspace.fs.readFile(vscode.Uri.joinPath(directory, relative))
+          )
+      );
+      const volumeDisplayName = volume.header['dicom series number']
+        ? volume.header['content'] || fileName
+        : fileName;
+      volume.fileName = volumeDisplayName;
+      const key = fileUri.toString();
+      const session = retainVolume(key, volume);
+      host.retainVolumeSession?.(webviewPanel, key);
+      const data = buildInitialVolumeData(session);
+      decorateVolumeData(data, key, session);
+      webviewPanel.webview.postMessage({
+        type: 'volumeData',
+        fileName: volumeDisplayName,
+        shortPath,
+        fileSizeInBytes: bytes.byteLength,
+        data,
+        isAddFile: true,
+      });
+      return;
+    }
+
     if (
       ext === '.tif' ||
       ext === '.tiff' ||
@@ -526,7 +564,6 @@ export async function handleAddFileFromPath(
         await sendUltimateRawBinary(
           webviewPanel,
           headerResult.headerInfo,
-          headerResult,
           spatialData,
           'addFiles',
           host.logPerf.bind(host)
@@ -582,8 +619,7 @@ export async function handleAddFileFromPath(
     }
     if (ext === '.pcd') {
       const pcdData = await vscode.workspace.fs.readFile(fileUri);
-      const pcdParser = new PcdParser();
-      const parsedData = await pcdParser.parse(pcdData);
+      const parsedData = toPcdPayload(await parsePcdWasm(pcdData));
       webviewPanel.webview.postMessage({
         type: 'pcdData',
         fileName,
@@ -595,8 +631,7 @@ export async function handleAddFileFromPath(
     }
     if (ext === '.pts') {
       const ptsData = await vscode.workspace.fs.readFile(fileUri);
-      const ptsParser = new PtsParser();
-      const parsedData = await ptsParser.parse(ptsData);
+      const parsedData = toPointCloudPayload(await parsePtsWasm(ptsData), 'pts');
       webviewPanel.webview.postMessage({
         type: 'ptsData',
         fileName,
@@ -648,6 +683,8 @@ export async function handleAddFileFromPath(
     vscode.window.showErrorMessage(
       `Failed to add file from path: ${error instanceof Error ? error.message : String(error)}`
     );
+  } finally {
+    await webviewPanel.webview.postMessage({ type: 'backgroundOperationComplete' });
   }
 }
 
@@ -690,7 +727,7 @@ export async function handleDroppedFilesFromWebview(
       const fileData = toUint8Array(droppedFile.data);
       const shortPath = fileName;
       const ext = path.extname(fileName).toLowerCase();
-      const fileType = detectFileTypeWithContent(fileName, fileData);
+      const fileType = await detectFileTypeWithContent(fileName, fileData);
 
       if (!fileType) {
         webviewPanel.webview.postMessage({
@@ -770,7 +807,6 @@ export async function handleDroppedFilesFromWebview(
           await sendUltimateRawBinary(
             webviewPanel,
             headerResult.headerInfo,
-            headerResult,
             fileData,
             'addFiles',
             host.logPerf.bind(host)
@@ -825,8 +861,7 @@ export async function handleDroppedFilesFromWebview(
       }
 
       if (ext === '.pcd') {
-        const pcdParser = new PcdParser();
-        const parsedData = await pcdParser.parse(fileData);
+        const parsedData = toPcdPayload(await parsePcdWasm(fileData));
         webviewPanel.webview.postMessage({
           type: 'pcdData',
           fileName,
@@ -838,8 +873,7 @@ export async function handleDroppedFilesFromWebview(
       }
 
       if (ext === '.pts') {
-        const ptsParser = new PtsParser();
-        const parsedData = await ptsParser.parse(fileData);
+        const parsedData = toPointCloudPayload(await parsePtsWasm(fileData), 'pts');
         webviewPanel.webview.postMessage({
           type: 'ptsData',
           fileName,

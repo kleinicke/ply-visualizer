@@ -15,6 +15,10 @@
   let gammaEnabled = $state(!host.convertSrgbToLinear);
   // svelte-ignore state_referenced_locally
   let rotationCenterMode = $state(host.rotationCenterManager.getMode());
+  // svelte-ignore state_referenced_locally
+  let pointPickingImplementation = $state(host.pointPickingImplementation);
+  // svelte-ignore state_referenced_locally
+  let pointRenderingImplementation = $state(host.pointRenderingImplementation);
 
   function onBrightnessInput(e: Event) {
     const val = parseFloat((e.target as HTMLInputElement).value);
@@ -138,6 +142,14 @@
     host.setRotationCenterToOrigin();
     host.updateRotationOriginButtonState();
   }
+  function setPointPickingImplementation(implementation: 'cpu' | 'webgpu') {
+    host.setPointPickingImplementation(implementation);
+    pointPickingImplementation = host.pointPickingImplementation;
+  }
+  function setPointRenderingImplementation(implementation: 'current' | 'webgpu-visibility') {
+    host.setPointRenderingImplementation(implementation);
+    pointRenderingImplementation = host.pointRenderingImplementation;
+  }
 
   function onUndoPathPoint() {
     if (host.measurementManager) {
@@ -186,6 +198,9 @@
       host.requestRender();
       host.showStatus('All measurement paths cleared');
     }
+  }
+  function onExportPaths() {
+    host.measurementManager?.savePaths();
   }
 
   function onOpenCVConvention() {
@@ -262,6 +277,7 @@
     host.updateLightingButtonsState();
     host.showStatus('Using flat lighting');
   }
+
 </script>
 
 <div class="panel-section">
@@ -308,8 +324,7 @@
       >
     </div>
     <p class="setting-description" style="margin-top: 0;">
-      Brightness adjusts the rendered geometry. Background adjusts only the neutral backdrop.
-      Double-click a slider to reset it.
+      Brightness adjusts the rendered geometry. Background adjusts only the neutral backdrop. Double-click a slider to reset it.
     </p>
   </div>
   <div
@@ -319,17 +334,18 @@
       <button
         id="toggle-edl"
         class="control-button"
-        class:active={viewerState.edlEnabled}
+        class:active={viewerState.edlMode !== 'off'}
+        aria-label={`Eye Dome Lighting: ${viewerState.edlMode}`}
         onclick={onToggleEdl}
       >
-        Eye Dome Lighting <span class="button-shortcut">E</span>
+        Eye Dome Lighting: {viewerState.edlMode[0].toUpperCase() + viewerState.edlMode.slice(1)} <span class="button-shortcut">E</span>
       </button>
     </div>
     <p class="setting-description">
-      Eye Dome Lighting enhances depth perception by darkening edges and silhouettes. Works with
-      all geometry types and combines with any lighting mode.
+      Auto shades uniformly coloured point clouds while preserving per-point colours. All shades
+      every geometry type; Off bypasses the post-processing pass.
     </p>
-    <div id="edl-settings" style="display: {viewerState.edlEnabled ? 'block' : 'none'}; margin-top: 8px;">
+    <div id="edl-settings" style="display: {viewerState.edlMode !== 'off' ? 'block' : 'none'}; margin-top: 8px;">
       <div id="edl-advanced-settings" style="margin-bottom: 6px;">
         <div class="control-group" style="margin-bottom: 6px;">
           <label for="edl-second-ring-slider" style="font-size: 11px;">Second Ring:</label>
@@ -417,6 +433,12 @@
       Set Rotation Center to Origin <span class="button-shortcut">W</span>
     </button>
   </div>
+  <p class="setting-description">
+    Touch is independent of the selected mouse controls: drag with one finger to orbit while
+    preserving the current up direction; pinch with two fingers to zoom and twist them to roll.
+    Moving two fingers together does not orbit. Double-tap sets the rotation center unless
+    Measurement mode is enabled in Files → Tools.
+  </p>
 </div>
 <div class="panel-section">
   <h4 style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px;">
@@ -463,6 +485,9 @@
       {measurementState.pathClosed ? 'Open Loop' : 'Close Loop'}
     </button>
     {#if measurementState.pathCount > 0}
+      <button id="export-measurement-paths" class="control-button" onclick={onExportPaths}>
+        Export Paths JSON
+      </button>
       <button id="clear-all-measurement-paths" class="control-button" onclick={onClearAllPaths}>
         Clear All Paths
       </button>
@@ -483,8 +508,9 @@
     </div>
   {/if}
   <div style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 8px">
-    Shift + Double-click adds points. By default the first path starts at the rotation center;
-    use New Free Path when the first picked point should be point A.
+    Shift + Double-click adds points. On touch, enable Measurement mode in Files → Tools and
+    double-tap points. By default the first path starts at the rotation center; use New Free Path
+    when the first picked point should be point A.
   </div>
 </div>
 <div class="panel-section">
@@ -496,7 +522,7 @@
       class:active={viewerState.cameraConvention === 'opencv'}
       onclick={onOpenCVConvention}
     >
-      OpenCV (Y down) <span class="button-shortcut">C</span>
+      OpenCV (Y down) <span class="button-shortcut">V</span>
     </button>
     <button
       id="opengl-convention"
@@ -533,7 +559,7 @@
       class="control-button"
       class:active={viewerState.controlScheme === 'legacy-trackball'}
       onclick={onLegacyTrackball}
-      title="The previous default: delta-based three.js TrackballControls with momentum"
+      title="Default: delta-based three.js TrackballControls with momentum"
     >
       Legacy Trackball <span class="button-shortcut">I</span>
     </button>
@@ -580,6 +606,64 @@
     Move Camera: Camera slides on view plane to center clicked point. Keep Camera: Only rotation
     target changes, camera stays in place. Keep Distance: Camera moves to maintain same distance
     from new center.
+  </p>
+</div>
+<div class="panel-section">
+  <h4>Point Picking</h4>
+  <div class="control-buttons">
+    <button
+      id="point-picking-cpu"
+      class="control-button"
+      class:active={pointPickingImplementation === 'cpu'}
+      onclick={() => setPointPickingImplementation('cpu')}
+    >
+      CPU
+    </button>
+    <button
+      id="point-picking-webgpu"
+      class="control-button"
+      class:active={pointPickingImplementation === 'webgpu'}
+      disabled={!host.webgpuPickingAvailable}
+      title={host.webgpuPickingAvailable
+        ? 'Use the GPU compute picker'
+        : `WebGPU unavailable: ${host.webgpuPickingUnavailableReason}`}
+      onclick={() => setPointPickingImplementation('webgpu')}
+    >
+      WebGPU
+    </button>
+  </div>
+  <p class="setting-description">
+    WebGPU scans point clouds in parallel and is selected automatically when available. CPU keeps
+    the original screen-space implementation.
+  </p>
+</div>
+<div class="panel-section">
+  <h4>Point Rendering</h4>
+  <div class="control-buttons">
+    <button
+      id="point-rendering-current"
+      class="control-button"
+      class:active={pointRenderingImplementation === 'current'}
+      onclick={() => setPointRenderingImplementation('current')}
+    >
+      Current
+    </button>
+    <button
+      id="point-rendering-webgpu"
+      class="control-button"
+      class:active={pointRenderingImplementation === 'webgpu-visibility'}
+      disabled={!host.webgpuPointRenderingAvailable}
+      title={host.webgpuPointRenderingAvailable
+        ? 'Resolve opaque one-pixel point visibility with WebGPU compute'
+        : `WebGPU unavailable: ${host.webgpuPointRenderingUnavailableReason}`}
+      onclick={() => setPointRenderingImplementation('webgpu-visibility')}
+    >
+      WebGPU Visibility
+    </button>
+  </div>
+  <p class="setting-description">
+    Keeps every point and resolves the front-most opaque one-pixel point per screen pixel. Enlarged
+    points, transparency, EDL and incompatible scenes automatically use Current.
   </p>
 </div>
 <div class="panel-section">

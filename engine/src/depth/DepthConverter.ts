@@ -1,9 +1,10 @@
 import { CameraParams, DepthConversionResult, SpatialVertex } from '../interfaces';
 import { registerDefaultReaders, readDepth, registerReader } from './DepthRegistry';
-import { normalizeDepth, projectToPointCloud } from './DepthProjector';
+import { normalizeDepth, projectToPointCloud, projectToPointCloudParallel } from './DepthProjector';
 import { PngReader } from './readers/PngReader';
 import { TifReader } from './readers/TifReader';
 import { DepthImage, DepthMetadata } from './types';
+import { initTiffWasm } from './readers/tiffWasm';
 
 export interface DecodedDepthImage {
   image: DepthImage;
@@ -66,13 +67,19 @@ export class DepthConverter {
         `[2025-10-25T${new Date().toISOString().split('T')[1]}] Converting depth image to point cloud...`
       );
 
+      // Projection is Rust-only, so the module has to be up before the
+      // decoded image reaches it. Loading it is idempotent and cached.
+      if (!(await initTiffWasm())) {
+        throw new Error('Depth conversion requires the Rust/WASM kernel, which failed to load');
+      }
+
       // Timed for the caller's single PERF line, mirroring depthWorker.ts.
       const decodeStart = performance.now();
       const decoded = await this.decodeDepthImage(depthData, fileName, cameraParams);
       const decodeMs = performance.now() - decodeStart;
 
       const projectStart = performance.now();
-      const result = this.projectDecodedDepthImage(decoded, fileName, cameraParams);
+      const result = await this.projectDecodedDepthImage(decoded, fileName, cameraParams);
       result.timings = {
         decodeMs,
         projectMs: performance.now() - projectStart,
@@ -135,11 +142,15 @@ export class DepthConverter {
     return { image, meta };
   }
 
-  projectDecodedDepthImage(
+  /**
+   * Async because the projection may be split across a worker pool; it still
+   * resolves to exactly what the single-pass path returns.
+   */
+  async projectDecodedDepthImage(
     decoded: DecodedDepthImage,
     fileName: string,
     cameraParams: CameraParams
-  ): DepthConversionResult {
+  ): Promise<DepthConversionResult> {
     const { image, meta: baseMeta } = decoded;
 
     // Auto-calculate cx/cy if not provided
@@ -239,7 +250,7 @@ export class DepthConverter {
   - depthScale: ${cameraParams.depthScale ?? 'not set'}
   - depthBias: ${cameraParams.depthBias ?? 'not set'}`);
 
-    const result = projectToPointCloud(norm, projectionParams);
+    const result = await projectToPointCloudParallel(norm, projectionParams);
 
     if (result.projectionDiagnostics?.rejectedCount) {
       console.warn(

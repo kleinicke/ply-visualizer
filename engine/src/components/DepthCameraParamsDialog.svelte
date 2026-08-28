@@ -184,16 +184,15 @@
         id="camera-model"
         style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;"
       >
-        <option value="pinhole-ideal">Pinhole (Ideal)</option>
-        <option value="pinhole-opencv">Pinhole (OpenCV)</option>
-        <option value="fisheye-equidistant">Fisheye (Equidistant)</option>
-        <option value="fisheye-opencv">Fisheye (OpenCV)</option>
-        <option value="fisheye-kb3">Kannala-Brandt KB3</option>
-        <option value="fisheye624">Project Aria Fisheye624</option>
+        <!-- Two general models; every other one is a special case with
+             coefficients left at zero, and unused terms cost nothing because
+             `resolveCameraModel` reduces to the cheapest equivalent model. -->
+        <option value="pinhole-opencv">Pinhole</option>
+        <option value="fisheye624">Fisheye</option>
       </select>
       <label for="camera-coefficients" style="display: block; margin: 8px 0 5px;">Ordered distortion coefficients:</label>
       <input id="camera-coefficients" value="0,0,0,0,0,0,0,0,0,0,0,0,0,0" style="width: 100%; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px;" />
-      <div style="font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 3px;">OpenCV pinhole: k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY · OpenCV fisheye: k1..k4 · KB3: k0..k3 · Fisheye624: k0..k5,p0,p1,s0..s3</div>
+      <div style="font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 3px;">All zero is an ideal pinhole or an equidistant fisheye. Pinhole: k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY · Fisheye: k0..k5,p0,p1,s0..s3 — OpenCV fisheye k1..k4 and Kannala-Brandt k0..k3 are the first four of these</div>
     </div>
 
     <div style="display: flex; justify-content: flex-end; gap: 10px;">

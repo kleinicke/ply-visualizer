@@ -12,6 +12,33 @@ export interface RotationCenterFeatureHost {
   requestRender(): void;
 }
 
+interface RotationCenterFeedback {
+  geometry: THREE.SphereGeometry;
+  material: THREE.MeshBasicMaterial;
+  sphere: THREE.Mesh;
+  timeout: ReturnType<typeof setTimeout> | null;
+}
+
+const feedbackByHost = new WeakMap<RotationCenterFeatureHost, RotationCenterFeedback>();
+
+function removeRotationCenterFeedback(
+  host: RotationCenterFeatureHost,
+  expectedFeedback?: RotationCenterFeedback
+): void {
+  const feedback = feedbackByHost.get(host);
+  if (!feedback || (expectedFeedback && feedback !== expectedFeedback)) {
+    return;
+  }
+
+  if (feedback.timeout !== null) {
+    clearTimeout(feedback.timeout);
+  }
+  host.scene.remove(feedback.sphere);
+  feedback.geometry.dispose();
+  feedback.material.dispose();
+  feedbackByHost.delete(host);
+}
+
 export function setRotationCenterToOrigin(host: RotationCenterFeatureHost): void {
   // Temporarily remove change listener to prevent continuous rendering
   const changeHandler = () => host.requestRender();
@@ -69,6 +96,11 @@ export function showRotationCenterFeedback(
   host: RotationCenterFeatureHost,
   point: THREE.Vector3
 ): void {
+  // Safari can emit a compatibility double-click after our touch double-tap,
+  // and consecutive asynchronous picks can complete close together. Keep the
+  // feedback as a singleton so these paths can never leave two red markers.
+  removeRotationCenterFeedback(host);
+
   // Create a temporary visual indicator at the rotation center
   const geometry = new THREE.SphereGeometry(0.01, 8, 6);
   const material = new THREE.MeshBasicMaterial({
@@ -77,17 +109,23 @@ export function showRotationCenterFeedback(
     opacity: 0.8,
   });
   const sphere = new THREE.Mesh(geometry, material);
+  sphere.name = 'rotation-center-feedback';
   sphere.position.copy(point);
 
   host.scene.add(sphere);
 
   // Remove the indicator after 2 seconds
-  setTimeout(() => {
-    host.scene.remove(sphere);
-    geometry.dispose();
-    material.dispose();
+  const feedback: RotationCenterFeedback = {
+    geometry,
+    material,
+    sphere,
+    timeout: null,
+  };
+  feedback.timeout = setTimeout(() => {
+    removeRotationCenterFeedback(host, feedback);
     host.requestRender();
   }, 2000);
+  feedbackByHost.set(host, feedback);
 }
 
 export function updateRotationOriginButtonState(host: RotationCenterFeatureHost): void {

@@ -1,4 +1,14 @@
 import * as THREE from 'three';
+import { ensureKeyboardModifierTracking, isShiftPressed } from './keyboardModifiers';
+
+/**
+ * PointerEvent.shiftKey is not consistently populated for a force-click drag
+ * on macOS trackpads (notably inside a VS Code webview). Keep the event value
+ * for normal mice, but fall back to the keyboard state tracked by the window.
+ */
+function wantsPan(e: PointerEvent): boolean {
+  return e.button !== 0 || e.shiftKey || isShiftPressed();
+}
 
 /**
  * Sphere-projected ("virtual ball") trackball controls.
@@ -86,10 +96,12 @@ export class VirtualBallControls {
   // Outstanding wheel zoom (log scale), eased toward zero in update().
   private pendingZoomLog = 0;
   private listeners: Map<string, Set<(e?: any) => void>> = new Map();
+  private screenRegion: { x: number; y: number; width: number; height: number } | null = null;
 
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
     this.object = camera;
     this.domElement = domElement;
+    ensureKeyboardModifierTracking();
     this.addDOMListeners();
   }
 
@@ -116,6 +128,10 @@ export class VirtualBallControls {
     this.listeners.get(type)?.delete(listener);
   }
 
+  setScreenRegion(region: { x: number; y: number; width: number; height: number }): void {
+    this.screenRegion = { ...region };
+  }
+
   private dispatchEvent(type: 'start' | 'end' | 'change'): void {
     const set = this.listeners.get(type);
     if (!set) {
@@ -139,9 +155,12 @@ export class VirtualBallControls {
    */
   private projectOnUnitSphere(clientX: number, clientY: number): THREE.Vector3 {
     const rect = this.domElement.getBoundingClientRect();
-    const halfMin = Math.min(rect.width, rect.height) / 2;
-    const x = (clientX - rect.left - rect.width / 2) / halfMin;
-    const y = (rect.top + rect.height / 2 - clientY) / halfMin;
+    const region = this.screenRegion ?? { x: 0, y: 0, width: rect.width, height: rect.height };
+    const halfMin = Math.min(region.width, region.height) / 2;
+    const centerX = rect.left + region.x + region.width / 2;
+    const centerY = rect.top + region.y + region.height / 2;
+    const x = (clientX - centerX) / halfMin;
+    const y = (centerY - clientY) / halfMin;
     const v = new THREE.Vector3(x, y, 0);
     const len2 = x * x + y * y;
     if (len2 <= 1) {
@@ -157,7 +176,7 @@ export class VirtualBallControls {
       return;
     }
     this.domElement.setPointerCapture(e.pointerId);
-    if (e.button === 0 && !e.shiftKey) {
+    if (!wantsPan(e)) {
       this.isRotating = true;
       this.dragStartSphere.copy(this.projectOnUnitSphere(e.clientX, e.clientY));
       this.prevSphere.copy(this.dragStartSphere);
@@ -340,10 +359,12 @@ export class CustomArcballControls {
   private lastX = 0;
   private lastY = 0;
   private listeners: Map<string, Set<(e?: any) => void>> = new Map();
+  private screenRegion: { x: number; y: number; width: number; height: number } | null = null;
 
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
     this.object = camera;
     this.domElement = domElement;
+    ensureKeyboardModifierTracking();
     this.addDOMListeners();
   }
 
@@ -370,6 +391,10 @@ export class CustomArcballControls {
     this.listeners.get(type)?.delete(listener);
   }
 
+  setScreenRegion(region: { x: number; y: number; width: number; height: number }): void {
+    this.screenRegion = { ...region };
+  }
+
   private dispatchEvent(type: 'start' | 'end' | 'change'): void {
     const set = this.listeners.get(type);
     if (!set) {
@@ -386,8 +411,9 @@ export class CustomArcballControls {
 
   private projectOnUnitSphere(clientX: number, clientY: number): THREE.Vector3 {
     const rect = this.getCanvasRect();
-    const x = (2 * (clientX - rect.left)) / rect.width - 1;
-    const y = 1 - (2 * (clientY - rect.top)) / rect.height;
+    const region = this.screenRegion ?? { x: 0, y: 0, width: rect.width, height: rect.height };
+    const x = (2 * (clientX - rect.left - region.x)) / region.width - 1;
+    const y = 1 - (2 * (clientY - rect.top - region.y)) / region.height;
     const v = new THREE.Vector3(x, y, 0);
     const len2 = x * x + y * y;
     if (len2 <= 1) {
@@ -400,10 +426,11 @@ export class CustomArcballControls {
 
   private vectorFromCenter(clientX: number, clientY: number): THREE.Vector2 {
     const rect = this.getCanvasRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const vx = (clientX - cx) / (rect.width / 2);
-    const vy = (cy - clientY) / (rect.height / 2);
+    const region = this.screenRegion ?? { x: 0, y: 0, width: rect.width, height: rect.height };
+    const cx = rect.left + region.x + region.width / 2;
+    const cy = rect.top + region.y + region.height / 2;
+    const vx = (clientX - cx) / (region.width / 2);
+    const vy = (cy - clientY) / (region.height / 2);
     const v = new THREE.Vector2(vx, vy);
     if (v.lengthSq() > 1) {
       v.normalize();
@@ -416,7 +443,7 @@ export class CustomArcballControls {
       return;
     }
     this.domElement.setPointerCapture(e.pointerId);
-    if (e.button === 0 && !e.shiftKey) {
+    if (!wantsPan(e)) {
       this.isRotating = true;
       this.lastArcVec.copy(this.projectOnUnitSphere(e.clientX, e.clientY));
       this.lastCenterVec.copy(this.vectorFromCenter(e.clientX, e.clientY));
@@ -590,6 +617,7 @@ export class TurntableControls {
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
     this.object = camera;
     this.domElement = domElement;
+    ensureKeyboardModifierTracking();
     this.addDOMListeners();
   }
 
@@ -637,7 +665,7 @@ export class TurntableControls {
     this.domElement.setPointerCapture(e.pointerId);
     this.lastX = e.clientX;
     this.lastY = e.clientY;
-    if (e.button === 0 && !e.shiftKey) {
+    if (!wantsPan(e)) {
       this.isRotating = true;
       this.dispatchEvent('start');
     } else {

@@ -15,14 +15,33 @@ import {
   parseColmapModel,
 } from './formats/colmap/colmapFiles';
 import { SPLAT_CONTAINER_REGEX } from './visualization/splatMode';
+import { filmState } from './state/film.svelte';
+import type { FilmManager } from './film/FilmManager';
 
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
+const SCIENTIFIC_IMAGE_ORIGINS = new Set([
+  'https://images.f-kleinicke.de',
+  'http://localhost:4173',
+  'http://127.0.0.1:4173',
+]);
+const SCIENTIFIC_IMAGE_DEPTH_FILE = /\.(?:tiff?|pfm|np[yz]|png)$/i;
+const receivedScientificImageHandoffs = new Set<string>();
+
+function trackWebsiteEvent(name: string): void {
+  const plausible = (
+    window as typeof window & {
+      plausible?: (eventName: string) => void;
+    }
+  ).plausible;
+  plausible?.(name);
+}
 
 export interface BrowserFileDragDropHost {
   browserFileHandler: BrowserMessageHandler | null;
   vscode: { postMessage(message: any): void };
   spatialFiles: SpatialData[];
+  filmManager: FilmManager | null;
   fileDepthData: Map<
     number,
     {
@@ -40,6 +59,9 @@ export interface BrowserFileDragDropHost {
   handleCameraProfile(data: any, fileName: string): void;
   handlePoseData(message: any): Promise<void>;
   displayFiles(dataArray: SpatialData[]): Promise<void>;
+  onFileColorModeChange(fileIndex: number, value: string): void;
+  setOpenGLCameraConvention(): void;
+  loadMeasurementPathProject(jsonText: string): boolean;
   updatePrinciplePointFields(fileIndex: number, dims: { width: number; height: number }): void;
   splatMode: {
     loadContainer(fileName: string, bytes: Uint8Array): Promise<SpatialData>;
@@ -258,6 +280,54 @@ export function setupBrowserFileHandlers(host: BrowserFileDragDropHost): void {
     document.body.style.backgroundColor = '';
     void handleDropEvent(host, event);
   });
+
+  if (!isVSCode) {
+    setupScientificImageHandoff(host);
+  }
+}
+
+/** Receive a local depth image directly from images.f-kleinicke.de. */
+export function setupScientificImageHandoff(host: BrowserFileDragDropHost): void {
+  window.addEventListener('message', event => {
+    if (!SCIENTIFIC_IMAGE_ORIGINS.has(event.origin)) {
+      return;
+    }
+    const message = event.data;
+    const id = typeof message?.id === 'string' ? message.id : '';
+    if (!id) {
+      return;
+    }
+    if (message.type === 'scientific-image-handoff-probe') {
+      (event.source as WindowProxy | null)?.postMessage(
+        { type: 'scientific-image-viewer-ready', id },
+        event.origin
+      );
+      return;
+    }
+    if (
+      message.type !== 'scientific-image-depth' ||
+      receivedScientificImageHandoffs.has(id) ||
+      !(message.data instanceof ArrayBuffer)
+    ) {
+      return;
+    }
+    const fileName =
+      String(message.fileName || '')
+        .split(/[\\/]/)
+        .pop() || 'depth.tiff';
+    if (!SCIENTIFIC_IMAGE_DEPTH_FILE.test(fileName)) {
+      host.showError(
+        `The Scientific Image Visualizer sent an unsupported depth format: ${fileName}`
+      );
+      return;
+    }
+    receivedScientificImageHandoffs.add(id);
+    void handleBrowserFiles(host, [
+      new File([message.data], fileName, {
+        type: 'application/octet-stream',
+      }),
+    ]);
+  });
 }
 
 export function handleDragOver(event: DragEvent): void {
@@ -285,7 +355,12 @@ export async function handleDropEvent(
     const filePaths = extractDroppedFilePaths(event.dataTransfer);
     if (filePaths.length > 0) {
       host.showImmediateLoading({ fileName: `${filePaths.length} dropped file(s)` });
-      filePaths.forEach(filePath => {
+      filePaths.forEach((filePath, index) => {
+        // Each path finishes independently in the extension host, so each one
+        // needs a matching slot in the webview's pending-load counter.
+        if (index > 0) {
+          host.showImmediateLoading({ fileName: `${filePaths.length} dropped file(s)` });
+        }
         host.vscode.postMessage({
           type: 'addFileFromPath',
           path: filePath,
@@ -366,6 +441,86 @@ export async function handleDroppedFiles(
   await handleBrowserFiles(host, files);
 }
 
+export type ExamplePointCloudKind = 'guided' | 'basic';
+
+export async function loadExamplePointCloud(
+  host: BrowserFileDragDropHost,
+  kind: ExamplePointCloudKind = 'guided'
+): Promise<void> {
+  if (isVSCode) {
+    return;
+  }
+
+  if (kind === 'basic') {
+    try {
+      const response = await fetch('examples/example-point-cloud.ply');
+      if (!response.ok) {
+        throw new Error(`download returned ${response.status}`);
+      }
+
+      const file = new File([await response.arrayBuffer()], 'example-point-cloud.ply', {
+        type: 'application/octet-stream',
+      });
+      await handleBrowserFiles(host, [file]);
+      trackWebsiteEvent('Example Point Cloud Loaded');
+    } catch (error) {
+      host.showError(
+        `Failed to load the basic example point cloud: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+    return;
+  }
+
+  try {
+    const [pointCloudResponse, cameraPathResponse, measurementPathResponse] = await Promise.all([
+      fetch('/examples/test_pc2_binary-v1.7.0.ply'),
+      fetch('examples/camera-path-2026-08-27-14-27-47.json'),
+      fetch('examples/measurement-paths-2026-08-27-15-49-45.json'),
+    ]);
+    if (!pointCloudResponse.ok) {
+      throw new Error(`point-cloud download returned ${pointCloudResponse.status}`);
+    }
+    if (!cameraPathResponse.ok) {
+      throw new Error(`camera-path download returned ${cameraPathResponse.status}`);
+    }
+    if (!measurementPathResponse.ok) {
+      throw new Error(`measurement-path download returned ${measurementPathResponse.status}`);
+    }
+
+    const firstExampleIndex = host.spatialFiles.length;
+    const file = new File([await pointCloudResponse.arrayBuffer()], 'test_pc2_binary.ply', {
+      type: 'application/octet-stream',
+    });
+    await handleBrowserFiles(host, [file]);
+
+    if (host.spatialFiles.length <= firstExampleIndex) {
+      throw new Error('the point cloud could not be displayed');
+    }
+
+    // This example intentionally starts as a clean white cloud, while the
+    // per-file colour picker still offers its embedded RGB data as Original.
+    host.onFileColorModeChange(firstExampleIndex, '0');
+    host.setOpenGLCameraConvention();
+
+    const measurementPath = await measurementPathResponse.text();
+    if (!host.loadMeasurementPathProject(measurementPath)) {
+      throw new Error('the bundled measurement path is invalid');
+    }
+
+    const cameraPath = await cameraPathResponse.text();
+    if (!host.filmManager?.loadProject(cameraPath)) {
+      throw new Error('the bundled camera path is invalid');
+    }
+    filmState.loop = true;
+    host.filmManager.play();
+    trackWebsiteEvent('Example Point Cloud Loaded');
+  } catch (error) {
+    host.showError(
+      `Failed to load the example point cloud: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 export async function handleBrowserFiles(
   host: BrowserFileDragDropHost,
   files: File[]
@@ -386,8 +541,8 @@ export async function handleBrowserFiles(
     const depthFiles: typeof fileData = [];
     const regularFiles: typeof fileData = [];
 
-    fileData.forEach(file => {
-      const fileType = detectFileTypeWithContent(file.name, file.data);
+    for (const file of fileData) {
+      const fileType = await detectFileTypeWithContent(file.name, file.data);
       if (fileType?.isDepthFile) {
         depthFiles.push(file);
       } else if (fileType?.category === 'poseData') {
@@ -396,7 +551,7 @@ export async function handleBrowserFiles(
       } else {
         regularFiles.push(file);
       }
-    });
+    }
 
     const spatialDataArray: SpatialData[] = [];
     // Remember starting index to map newly added files
@@ -532,10 +687,13 @@ export async function handleBrowserFiles(
     }
 
     // Handle JSON files - check if they're camera profiles or pose data
-    const jsonFiles = fileData.filter(file => {
-      const fileType = detectFileTypeWithContent(file.name, file.data);
-      return fileType?.category === 'poseData';
-    });
+    const jsonFiles: typeof fileData = [];
+    for (const file of fileData) {
+      const fileType = await detectFileTypeWithContent(file.name, file.data);
+      if (fileType?.category === 'poseData') {
+        jsonFiles.push(file);
+      }
+    }
 
     for (const file of jsonFiles) {
       console.log(`📍 JSON file detected: ${file.name}`);
@@ -562,9 +720,16 @@ export async function handleBrowserFiles(
     if (spatialDataArray.length > 0) {
       await host.displayFiles(spatialDataArray);
 
-      // Populate fileDepthData for newly added depth-derived files
+      // Populate fileDepthData for newly added depth-derived files.
+      // The key is the index addNewFiles() actually assigned, read back off the
+      // object - never `baseIndexStart + localIndex`. That sum was computed
+      // before the camera-parameter prompt, and anything loaded while the
+      // prompt was open (another drop, an example cloud) pushes this batch
+      // further down, so the guess would file the depth data under a different
+      // file and leave the real one with no cache to reproject from.
       for (const rec of depthMetaRecords) {
-        const fileIndex = baseIndexStart + rec.localIndex;
+        const fileIndex =
+          spatialDataArray[rec.localIndex]?.fileIndex ?? baseIndexStart + rec.localIndex;
         host.fileDepthData.set(fileIndex, {
           originalData: rec.buffer,
           fileName: rec.fileName,

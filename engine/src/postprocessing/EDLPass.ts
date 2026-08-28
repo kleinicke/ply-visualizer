@@ -43,6 +43,8 @@ const EDLFragmentShader = /* glsl */ `
 
 uniform sampler2D tDiffuse;     // Color buffer from scene render
 uniform sampler2D tDepth;       // Depth buffer from scene render
+uniform sampler2D tEdlDepth;    // Visible depth of Auto-mode eligible point clouds
+uniform bool selective;
 uniform float screenWidth;
 uniform float screenHeight;
 uniform float edlStrength;
@@ -52,7 +54,6 @@ uniform float cameraFar;
 uniform float responseScale;
 uniform float emptyPixelBoost;
 uniform float secondRingWeight;
-uniform float exposure;
 
 // 8-direction neighbor offsets
 uniform vec2 neighbours[8];
@@ -123,19 +124,33 @@ float edlResponse(float depth) {
 
 void main() {
   vec4 color = texture2D(tDiffuse, vUv);
+  float rawDepth = texture2D(tDepth, vUv).r;
   float depth = getLinearDepth(vUv);
+  float shade = 1.0;
 
-  // Skip EDL for background pixels (no geometry)
-  if (depth <= 0.0) {
-    gl_FragColor = color;
-    return;
+  if (depth > 0.0) {
+    bool shadePixel = true;
+    if (selective) {
+      float edlDepth = texture2D(tEdlDepth, vUv).r;
+      // Both depth textures render the same scene and camera. The small epsilon
+      // tolerates texture precision without allowing an eligible cloud hidden
+      // behind a coloured cloud to darken the foreground pixel.
+      shadePixel = edlDepth < 1.0 && abs(edlDepth - rawDepth) <= 0.000001;
+    }
+    if (shadePixel) {
+      float response = edlResponse(depth);
+      // Exponential falloff produces natural-looking shadows.
+      shade = exp(-response * responseScale * edlStrength);
+    }
   }
 
-  float response = edlResponse(depth);
-  // Exponential falloff produces natural-looking shadows
-  float shade = exp(-response * responseScale * edlStrength);
-
-  gl_FragColor = vec4(color.rgb * exposure * shade, color.a);
+  gl_FragColor = vec4(color.rgb * shade, color.a);
+  // The scene render target is linear and deliberately bypasses the renderer's
+  // output transform. Apply the same tone mapping and display colour conversion
+  // here that a direct renderer.render() performs. Without these chunks, even
+  // pixels excluded by Auto changed colour merely by passing through EDL.
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
 `;
 
@@ -165,6 +180,9 @@ export class EDLPass extends Pass {
   private edlMaterial: THREE.ShaderMaterial;
   private fsQuad: FullScreenQuad;
   private renderTarget: THREE.WebGLRenderTarget;
+  private edlDepthTarget: THREE.WebGLRenderTarget;
+  private selective = false;
+  private eligibleObjects = new Set<THREE.Object3D>();
   private _width: number;
   private _height: number;
 
@@ -195,6 +213,18 @@ export class EDLPass extends Pass {
     this.renderTarget.depthTexture = new THREE.DepthTexture(width, height);
     this.renderTarget.depthTexture.type = THREE.FloatType;
 
+    // Auto mode needs to know whether the frontmost pixel belongs to a
+    // uniformly coloured point cloud. Rendering only those clouds into a
+    // second depth texture preserves the full scene depth for edge detection
+    // while giving the composite shader a precise per-pixel eligibility mask.
+    this.edlDepthTarget = new THREE.WebGLRenderTarget(width, height, {
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      type: THREE.UnsignedByteType,
+    });
+    this.edlDepthTarget.depthTexture = new THREE.DepthTexture(width, height);
+    this.edlDepthTarget.depthTexture.type = THREE.FloatType;
+
     // Build uniform neighbor array
     const neighbourUniforms = NEIGHBOR_OFFSETS.map(([x, y]) => new THREE.Vector2(x, y));
 
@@ -203,6 +233,8 @@ export class EDLPass extends Pass {
       uniforms: {
         tDiffuse: { value: null },
         tDepth: { value: null },
+        tEdlDepth: { value: null },
+        selective: { value: false },
         screenWidth: { value: width },
         screenHeight: { value: height },
         edlStrength: { value: this.edlStrength },
@@ -210,9 +242,8 @@ export class EDLPass extends Pass {
         responseScale: { value: 300.0 },
         emptyPixelBoost: { value: 100.0 },
         secondRingWeight: { value: this.secondRingWeight },
-        exposure: { value: 1.0 },
         cameraNear: { value: 0.001 },
-        cameraFar: { value: 1000000 },
+        cameraFar: { value: 10000000 },
         neighbours: { value: neighbourUniforms },
       },
       vertexShader: EDLVertexShader,
@@ -222,6 +253,21 @@ export class EDLPass extends Pass {
     });
 
     this.fsQuad = new FullScreenQuad(this.edlMaterial);
+  }
+
+  /** Configure whether this frame shades all geometry or only these point clouds. */
+  setEligibleObjects(objects: Iterable<THREE.Object3D> | null): void {
+    this.selective = objects !== null;
+    this.eligibleObjects = new Set(objects ?? []);
+  }
+
+  /** Exposed for diagnostics and browser regressions without exposing the set itself. */
+  get eligibleObjectCount(): number {
+    return this.eligibleObjects.size;
+  }
+
+  get isSelective(): boolean {
+    return this.selective;
   }
 
   /**
@@ -239,16 +285,37 @@ export class EDLPass extends Pass {
     renderer.setRenderTarget(this.renderTarget);
     renderer.render(this.scene, this.camera);
 
+    if (this.selective) {
+      const visibility = new Map<THREE.Object3D, boolean>();
+      this.scene.traverse(object => {
+        const renderable =
+          object instanceof THREE.Points ||
+          object instanceof THREE.Mesh ||
+          object instanceof THREE.Line ||
+          object instanceof THREE.Sprite;
+        if (!renderable) {return;}
+        visibility.set(object, object.visible);
+        object.visible = object.visible && this.eligibleObjects.has(object);
+      });
+      try {
+        renderer.setRenderTarget(this.edlDepthTarget);
+        renderer.render(this.scene, this.camera);
+      } finally {
+        visibility.forEach((visible, object) => (object.visible = visible));
+      }
+    }
+
     // Step 2: Update EDL uniforms
     const cam = this.camera as THREE.PerspectiveCamera;
     this.edlMaterial.uniforms.tDiffuse.value = this.renderTarget.texture;
     this.edlMaterial.uniforms.tDepth.value = this.renderTarget.depthTexture;
+    this.edlMaterial.uniforms.tEdlDepth.value = this.edlDepthTarget.depthTexture;
+    this.edlMaterial.uniforms.selective.value = this.selective;
     this.edlMaterial.uniforms.edlStrength.value = this.edlStrength;
     this.edlMaterial.uniforms.radius.value = this.edlRadius;
     this.edlMaterial.uniforms.responseScale.value = 300.0;
     this.edlMaterial.uniforms.emptyPixelBoost.value = 100.0;
     this.edlMaterial.uniforms.secondRingWeight.value = this.secondRingWeight;
-    this.edlMaterial.uniforms.exposure.value = renderer.toneMappingExposure;
     this.edlMaterial.uniforms.screenWidth.value = this._width;
     this.edlMaterial.uniforms.screenHeight.value = this._height;
 
@@ -275,6 +342,7 @@ export class EDLPass extends Pass {
     this._width = width;
     this._height = height;
     this.renderTarget.setSize(width, height);
+    this.edlDepthTarget.setSize(width, height);
   }
 
   /**
@@ -282,6 +350,7 @@ export class EDLPass extends Pass {
    */
   dispose(): void {
     this.renderTarget.dispose();
+    this.edlDepthTarget.dispose();
     this.edlMaterial.dispose();
     this.fsQuad.dispose();
   }

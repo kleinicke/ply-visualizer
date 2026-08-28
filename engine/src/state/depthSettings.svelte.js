@@ -11,7 +11,13 @@
 // .svelte.js/.svelte.ts via Svelte's compileModule, which parses without
 // TypeScript support as of svelte@5.56).
 export const depthSettingsState = $state(
-  /** @type {{ liveUpdateFileIndices: number[] }} */ ({
+  /** @type {{ liveUpdateFileIndices: number[]; openPanelIndices: number[] }} */ ({
     liveUpdateFileIndices: [],
+    // Which files' Depth Settings panels are expanded. Reactive state rather
+    // than the DOM, because three different places used to open the panel by
+    // writing `style.display` and the arrow's `textContent` directly; the
+    // component then still believed it was closed, so the next click was
+    // swallowed and the arrow appeared stuck.
+    openPanelIndices: [],
   })
 );

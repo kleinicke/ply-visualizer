@@ -1,11 +1,16 @@
 <script lang="ts">
   import { isPngDerivedFile } from '../depth/commentSettings';
+  import {
+    CAMERA_MODEL_COEFFICIENT_GROUPS,
+    normalizeToOfferedCameraModel,
+  } from '../depth/cameraModels';
+  import type { CameraModel } from '../depth/types';
   import { depthSettingsState } from '../state/depthSettings.svelte';
   import CalibrationSection from './CalibrationSection.svelte';
 
   let { host, fileIndex, data }: { host: any; fileIndex: number; data: any } = $props();
 
-  let open = $state(false);
+  const open = $derived(depthSettingsState.openPanelIndices.includes(fileIndex));
   let principalPointOpen = $state(false);
   let distortionOpen = $state(false);
   let disparityOffsetOpen = $state(false);
@@ -17,7 +22,13 @@
   // Intentional: seed local UI state from the host once at mount; the change
   // handlers keep it in sync afterwards
   // svelte-ignore state_referenced_locally
-  let cameraModel = $state(host.getDepthSetting(data, 'camera'));
+  // Normalized on the way in: the setting can come from a `Camera:` comment
+  // saved before the picker was consolidated, and assigning the select a value
+  // it does not carry renders it blank — which is what "it starts up with an
+  // empty camera model" was.
+  let cameraModel = $state(
+    normalizeToOfferedCameraModel(host.getDepthSetting(data, 'camera') as CameraModel).model
+  );
   // svelte-ignore state_referenced_locally
   let depthType = $state(host.getDepthSetting(data, 'depth'));
 
@@ -36,12 +47,48 @@
           ? 'k0,k1,k2,k3'
           : 'k1,k2,k3,k4'
   );
+  // OpenCV's fisheye k1..k4 and Kannala-Brandt's k0..k3 are the same four
+  // numbers in the same four positions — only the counting differs — so a
+  // calibration from either goes into the first four slots unchanged.
+  const coefficientNote = $derived(
+    isFisheye624
+      ? 'OpenCV fisheye k1..k4 and Kannala-Brandt k0..k3 are these first four; leave the rest at 0.'
+      : isPinholeOpencv
+        ? 'All zero is an ideal pinhole. OpenCV calibrations paste in directly.'
+        : ''
+  );
   const coefficientDefaults = $derived(coefficientLayout.split(',').map(() => '0').join(','));
+  // One box per family of terms — all the radial k's together, the tangential
+  // p's together — rather than one ordered run to count positions in. Missing
+  // values are zero, so a calibration giving two radial terms is two numbers.
+  const coefficientGroups = $derived(
+    CAMERA_MODEL_COEFFICIENT_GROUPS[cameraModel as CameraModel] ?? []
+  );
 
   const liveUpdateEnabled = $derived(depthSettingsState.liveUpdateFileIndices.includes(fileIndex));
 
+  // Live update is how the panel is meant to be used - change a number, see the
+  // cloud move - so it starts on. `defaultedLiveUpdate` makes that a one-time
+  // decision per file: turning it off stays off, rather than being re-enabled
+  // every time the panel re-renders.
+  let defaultedLiveUpdate = false;
+  $effect(() => {
+    if (!defaultedLiveUpdate) {
+      defaultedLiveUpdate = true;
+      if (!depthSettingsState.liveUpdateFileIndices.includes(fileIndex)) {
+        host.setLiveDepthUpdateEnabled(fileIndex, true);
+      }
+    }
+  });
+
   function toggle() {
-    open = !open;
+    const indices = depthSettingsState.openPanelIndices;
+    const at = indices.indexOf(fileIndex);
+    if (at === -1) {
+      indices.push(fileIndex);
+    } else {
+      indices.splice(at, 1);
+    }
   }
 
   function blurOnWheel(e: WheelEvent) {
@@ -53,7 +100,7 @@
   }
 
   function onCameraModelChange(e: Event) {
-    cameraModel = (e.target as HTMLSelectElement).value;
+    cameraModel = (e.target as HTMLSelectElement).value as CameraModel;
     host.updateSingleDefaultButtonState(fileIndex);
   }
 
@@ -185,17 +232,21 @@
         value={cameraModel}
         onchange={onCameraModelChange}
       >
-        <option value="pinhole-ideal">Pinhole Ideal</option>
-        <option value="pinhole-opencv">Pinhole + OpenCV Distortion</option>
-        <option value="fisheye-equidistant">Fisheye Equidistant</option>
-        <option value="fisheye-opencv">OpenCV Fisheye</option>
-        <option value="fisheye-kb3">Kannala-Brandt KB3</option>
-        <option value="fisheye624">Project Aria Fisheye624</option>
+        <!-- Two general models, because every other one is a special case of
+             these with coefficients left at zero: an ideal pinhole is an
+             OpenCV pinhole with no distortion, and the equidistant, OpenCV and
+             Kannala-Brandt fisheyes are the general fisheye with its later
+             terms unused. Unused terms are free - `resolveCameraModel` reduces
+             a configuration to the cheapest exactly-equivalent model before it
+             reaches the kernel - so the short list costs nothing. -->
+        <option value="pinhole-opencv">Pinhole</option>
+        <option value="fisheye624">Fisheye</option>
       </select>
-      <label style="display: flex; align-items: center; gap: 5px; margin-top: 4px; font-size: 9px; color: var(--vscode-descriptionForeground);">
-        <input id={`image-rectified-${fileIndex}`} type="checkbox" onchange={onFieldInput} />
-        Input image is already rectified (ignore distortion coefficients)
-      </label>
+      <div style="margin-top: 4px; font-size: 9px; color: var(--vscode-descriptionForeground);">
+        Distortion applies only where a coefficient is non-zero. Leave them all
+        at zero for an ideal pinhole or an equidistant fisheye — that is the
+        same model, and it takes the faster closed-form path.
+      </div>
     </div>
     <div class="depth-group" style="margin-bottom: 8px;">
       <label for={`depth-type-${fileIndex}`} style="display: block; font-size: 10px; font-weight: bold; margin-bottom: 2px;"
@@ -317,20 +368,32 @@
         style="display: {distortionOpen ? 'block' : 'none'}; margin-top: 4px;"
       >
         <div id={`camera-coefficient-params-${fileIndex}`}>
-          <label for={`camera-coefficients-${fileIndex}`} style="display: block; font-size: 9px; margin-bottom: 2px; color: var(--vscode-descriptionForeground);">
-            {coefficientLayout}:
-          </label>
-          <input
-            type="text"
-            id={`camera-coefficients-${fileIndex}`}
-            value={coefficientDefaults}
-            style="width: 100%; padding: 2px; font-size: 11px;"
-            oninput={onFieldInput}
-          />
+          {#each coefficientGroups as group, index (group.label)}
+            <label
+              for={`coefficient-group-${fileIndex}-${index}`}
+              style="display: block; font-size: 9px; margin-bottom: 4px; color: var(--vscode-descriptionForeground);"
+            >
+              {group.label} ({group.terms.join(', ')}):
+              <input
+                type="text"
+                id={`coefficient-group-${fileIndex}-${index}`}
+                placeholder={group.terms.map(() => '0').join(',')}
+                style="width: 100%; padding: 2px; font-size: 11px;"
+                oninput={onFieldInput}
+              />
+            </label>
+          {/each}
+          {#if coefficientNote}
+            <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 4px;">
+              {coefficientNote}
+            </div>
+          {/if}
           <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 2px;">
+            Comma-separated within each box; empty is zero, so only the terms
+            the calibration gives need typing.
             {isPinholeOpencv
-              ? 'OpenCV layouts: radial/tangential (4/5), rational (8), thin prism (12), tilted sensor (14). Trailing zero groups use the fast basic path.'
-              : 'Exact ordered coefficient layout; coefficient count is validated.'}
+              ? ' OpenCV layouts: radial/tangential (4/5), rational (8), thin prism (12), tilted sensor (14); trailing zero groups take the fast path.'
+              : ''}
           </div>
         </div>
       </div>

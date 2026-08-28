@@ -9,14 +9,16 @@ One shared visualization engine with two thin hosts:
 
 1. **VS Code extension** (`src/`) — the primary product; wires the engine into a
    custom editor webview
-2. **Standalone page** (`engine/`, deployed at https://f-kleinicke.de) — public
-   demo and the fast test surface (Playwright against a browser page skips
-   booting VS Code/Electron). The usable extension is on the subpage
-   /3d-visualizer
+2. **Standalone page** (`engine/`, deployed at https://3d.f-kleinicke.de) —
+   public demo and the fast test surface (Playwright against a browser page
+   skips booting VS Code/Electron)
 
 **Core rule:** all shared functionality (parsers, rendering, controls, depth
 processing, webview UI) lives in `engine/src/`. `src/` stays thin and only does
 VS Code integration: commands, custom editor registration, message passing.
+Currently the extension uses ts whenever possible, but it should use rust by
+default for compute and decode and ts (or js) only if necessary. Whenever you
+see the option to transition code to rust do it.
 
 ## Commands
 
@@ -30,7 +32,21 @@ npm run test:ui          # UI tests (VS Code Extension Tester, ui-tests/)
 cd engine && npm test    # Playwright engine tests — fastest feedback loop
 cd engine && npm run dev # Standalone page dev server
 cd engine && npm run bench:backend -- <file>   # WebGL vs WebGPU on one file
+npm run benchmark:vscode # Real VS Code, scrapes the extension's own PERF lines
 ```
+
+The standalone engine is served at `/` in local browser tests and at the root of
+`3d.f-kleinicke.de` in production. The separate portfolio website is not part of
+this repository.
+
+- Performance work has a method, and it is not optional reading:
+  **docs/performance-method.md**. Short version: measure the PERF line the user
+  sees, discard the first (cold) run, check `uptime` before believing a number,
+  and verify the output as well as the speed. The benchmark scenario is
+  scriptable beyond loading —
+  `STEPS=open,alignAll,recolorAll FILES=testfiles/lidar/Abschnitt_A.x3a node scripts/benchmark-vscode.mjs`
+  opens an archive, aligns every scan to the first, and recolours from the
+  cameras, timing each step from the extension's own log.
 
 - **F5** launches the Extension Development Host for manual testing. Test data
   lives in `testfiles/`, organized by format (`ply/`, `stl/`, `obj/`, `np/`,
@@ -58,6 +74,7 @@ cd engine && npm run bench:backend -- <file>   # WebGL vs WebGPU on one file
 | File detection/handling     | `engine/src/fileHandler.ts`                                                                                              |
 | Webview UI                  | Svelte 5 component in `engine/src/components/` reading `engine/src/state/*.svelte.js` — never new HTML-string generators |
 | Rendering helpers           | `engine/src/visualization/`                                                                                              |
+| Scan alignment / solvers    | `engine/src/registration/` (pure math, no DOM); host glue in `engine/src/registrationFeature.ts`                         |
 | Themes                      | `engine/src/themes/`                                                                                                     |
 | Utilities                   | `engine/src/utils/`                                                                                                      |
 | `engine/src/main.ts`        | Last resort — core Three.js scene logic only                                                                             |
@@ -68,6 +85,38 @@ there; put code in the modules above.
 
 ## Conventions and gotchas
 
+- Aligning is a scene-wide operation, so its entry point is **Tools → Align
+  point clouds** beside "+ Add Point Cloud" (`GlobalAlignMenu.svelte`). Tools
+  appears once an object is loaded; Align becomes available once two clouds with
+  point data are loaded. The per-file panel (`RegistrationPanel.svelte`) keeps
+  the things that are genuinely about one file: manual pair picking, single-pair
+  ICP, capture-place scope, projection diagnostics. Both fire the archive
+  colouring pipeline through the shared `stationPipelineTrigger.ts` — never
+  re-implement the scope rules in a component. The split is by scope, not by
+  convenience: the Tools menu's Align workspace owns everything scene- or
+  archive-wide (align all, refine all, undo, colour all, capture-place scope,
+  projection diagnostics), and the per-file panel owns exactly one thing —
+  correcting a single pair (`RegistrationPanel.svelte`: choose the moving cloud,
+  then auto-align/ICP or pick three correspondences). Long-running work reports
+  progress as structured state, not as a spinner plus a string:
+  `registrationState.alignEntries` (one seeded row per cloud, queued → running →
+  aligned/failed) and `stationPipelineUi.scans` (one row per scan, ticked as the
+  host publishes it). Keep new long operations to that shape.
+- Visibility checkboxes use one consistent gesture everywhere: ordinary click
+  toggles one item; Shift-click isolates that item; Shift-clicking the already
+  isolated item restores the whole sibling group. This applies to files,
+  individual camera images, and any future grouped visibility list. Put the
+  behavior in the shared component/helper and add a browser regression test.
+- Every `input[type="range"]` must reset to its documented default on
+  double-click. The delegated handler in `main.ts` covers sliders whose initial
+  `value` is their default; controls with a computed or semantic default must
+  provide an explicit `ondblclick` handler. Give the slider a reset tooltip and
+  test the interaction when adding a new slider family.
+- Eye Dome Lighting defaults to **Auto** and `E` cycles Auto → All → Off. Auto
+  runs only when a visible point cloud uses a uniform material colour and masks
+  per-point RGB/projected/intensity/scalar-coloured pixels from darkening; all
+  visible geometry still contributes to the shared depth buffer. Keep this
+  eligibility tied to the active colour mode, not merely to source RGB data.
 - `engine/index.html` is the single source of truth for the UI shell.
   `src/pointCloudEditorProvider.ts` reads and rewrites it at runtime — never
   duplicate HTML between the two hosts.
@@ -87,15 +136,18 @@ there; put code in the modules above.
   per-file Spark splat-render toggle; SPZ/SPLAT/KSPLAT/SOG containers open
   through Spark with splat mode on by default
   (`engine/src/visualization/splatMode.ts`).
-- Known issues: (The old "rotation inverted vs CloudCompare" complaint is
-  resolved: the default Trackball scheme is now a CloudCompare-style virtual
-  ball; the old delta trackball is "Legacy Trackball" (`I`) — see the resolved
-  post-mortem in docs/BACKLOG.md.)
+- Control schemes: "Legacy Trackball" (`I`), the delta-based three.js
+  TrackballControls implementation, is the default. The CloudCompare-style
+  virtual-ball "Trackball" scheme remains available under `T`; see the resolved
+  rotation-direction post-mortem in docs/BACKLOG.md.
 - I've got a tiff/image viewing extension as well. Sometimes I add a prompt in
   the wrong window. Tell me.
 
 ## Dependency notes
 
+- Node 24 is the repository build and development toolchain, declared once in
+  `.nvmrc` and consumed by local nvm, GitHub Actions, and Netlify. This does not
+  change the Node runtime embedded in supported VS Code versions.
 - `@types/vscode` and `@types/node` are pinned deliberately, not stale.
   `@types/vscode` tracks `engines.vscode` (currently `^1.104.0`, a roughly
   12-month support window) and `@types/node` tracks the Node that the _minimum_
@@ -107,15 +159,12 @@ there; put code in the modules above.
   TS 7 support.
 - After bumping `@playwright/test`, run `npx playwright install chromium` in
   `engine/` or every spec fails with "Executable doesn't exist".
-- `7zip-bin` is transitive (via `7zip-min`), so `webpack.config.js` resolves it
-  through its parent rather than assuming `node_modules/7zip-bin` — that path
-  only exists when the package manager hoists it, which pnpm does not.
-- `engine/` is a pnpm workspace member (`pnpm-workspace.yaml`), so one
-  `pnpm install` at the root provisions both trees from the single committed
-  `pnpm-lock.yaml`. Do not run `npm install` inside `engine/` — that recreates
-  the split, unlocked tree this replaced. The extension bundle legitimately
-  resolves `@sparkjsdev/spark` out of `engine/`, which is why the engine has to
-  be installed for the root build to work.
+- `engine/` is an npm workspace declared by the root `package.json`. Run
+  `npm install` at the repository root so the extension and standalone engine
+  are provisioned from the single committed `package-lock.json`; do not create a
+  separate lockfile inside `engine/`. The extension bundle legitimately resolves
+  `@sparkjsdev/spark` from the engine workspace, which is why both packages are
+  installed together.
 - The engine Playwright suite is GPU- and memory-bound, so
   `engine/playwright.config.ts` caps workers rather than using Playwright's
   default of half the cores. Raising it makes the heavy file-loading specs time

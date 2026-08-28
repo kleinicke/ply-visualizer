@@ -16,7 +16,23 @@ use std::mem;
 use wasm_bindgen::prelude::*;
 
 mod lidar;
+mod npy;
+mod ply;
+mod registration;
+mod stonex;
+mod volume;
 pub use lidar::{parse_e57, parse_las, E57ImageResult, LidarCollectionResult, LidarScanResult};
+pub use npy::{npy_inspect, npy_read, NpyArrayResult};
+pub use ply::{parse_ply, parse_ply_at, parse_ply_native, PlyResult};
+pub use registration::bindings::{
+    coarse_align, fit_correspondences, icp_refine, register_pair, RegistrationResult,
+};
+pub use stonex::{
+    stonex_decode_frame, stonex_decode_scan, StonexRgbImage, StonexScanPoints, StonexStationSession,
+};
+pub use volume::{
+    build_volume_voxels, extract_isosurface, parse_nrrd, IsosurfaceMesh, NrrdVolume, VoxelMesh,
+};
 
 /// Parsed point cloud, returned to JS. Large buffers are moved out with the
 /// `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.
@@ -32,6 +48,10 @@ pub struct PointCloudResult {
     has_intensity: bool,
     min: [f32; 3],
     max: [f32; 3],
+    /// Format-specific header facts the viewer needs but the point buffers
+    /// cannot carry (currently the PCD header). Empty for formats that have
+    /// none, so JS can treat it as optional.
+    metadata: String,
 }
 
 #[wasm_bindgen]
@@ -63,6 +83,10 @@ impl PointCloudResult {
     }
     pub fn take_intensity(&mut self) -> Vec<f32> {
         mem::take(&mut self.intensity)
+    }
+    #[wasm_bindgen(getter)]
+    pub fn metadata_json(&self) -> String {
+        self.metadata.clone()
     }
     /// [min_x, min_y, min_z, max_x, max_y, max_z]
     pub fn bbox(&self) -> Vec<f32> {
@@ -111,7 +135,7 @@ pub fn parse_at(ptr: usize, len: usize, format: &str) -> Result<PointCloudResult
     match format {
         "xyz" | "xyzn" | "xyzrgb" => Ok(parse_xyz(data, format, "auto")),
         "ply" => parse_ascii_ply(data),
-        "pcd" => parse_pcd_ascii(data),
+        "pcd" => parse_pcd(data),
         other => Err(JsValue::from_str(&format!("unknown format: {other}"))),
     }
 }
@@ -233,6 +257,11 @@ struct Builder {
     min: [f32; 3],
     max: [f32; 3],
     color_mode: ColorMode,
+    /// PCL marks an invalid range pixel with NaN coordinates rather than
+    /// omitting the point, so PCD drops those rows instead of carrying a NaN
+    /// into the geometry. The text formats have no such convention.
+    skip_nan: bool,
+    metadata: String,
 }
 
 impl Builder {
@@ -271,6 +300,8 @@ impl Builder {
             min: [f32::INFINITY; 3],
             max: [f32::NEG_INFINITY; 3],
             color_mode,
+            skip_nan: false,
+            metadata: String::new(),
         }
     }
 
@@ -305,6 +336,9 @@ impl Builder {
                 Col::Intensity => inten = v as f32,
                 Col::Skip => {}
             }
+        }
+        if self.skip_nan && (x.is_nan() || y.is_nan() || z.is_nan()) {
+            return;
         }
         self.positions.push(x);
         self.positions.push(y);
@@ -382,6 +416,7 @@ impl Builder {
             has_intensity: self.has_intensity,
             min: self.min,
             max: self.max,
+            metadata: self.metadata,
         }
     }
 }
@@ -481,10 +516,11 @@ pub fn parse_xyz(data: &[u8], variant: &str, color_mode: &str) -> PointCloudResu
 /// (both have < 3 numeric columns, so `parse_rows` skips them automatically),
 /// then rows auto-detected from the first data row:
 ///   3 → x y z · 4 → x y z intensity · 6 → x y z r g b ·
-///   7 → x y z intensity r g b (Open3D default).
-/// Colors are 0-255 integers (the shared 0-1-vs-int heuristic in `Builder`
-/// handles the common case; a rare all-channels-≤1 row could be misread — see
-/// PERFORMANCE_PLAN raw-int colors note).
+///   7 → x y z intensity r g b (Open3D default) ·
+///   9 → x y z r g b nx ny nz.
+/// PTS colors are always 0-255 integers, so `ColorMode::Byte` is forced rather
+/// than left to the value heuristic — otherwise a dark row like `1 1 1` would
+/// be read as 0..1 floats and turn white.
 #[wasm_bindgen]
 pub fn parse_pts(data: &[u8]) -> PointCloudResult {
     let mut vals = [0f64; 16];
@@ -497,7 +533,18 @@ pub fn parse_pts(data: &[u8]) -> PointCloudResult {
         }
     }
     let layout = match n {
-        c if c >= 7 => vec![
+        c if c >= 9 => vec![
+            Col::X,
+            Col::Y,
+            Col::Z,
+            Col::R,
+            Col::G,
+            Col::B,
+            Col::Nx,
+            Col::Ny,
+            Col::Nz,
+        ],
+        7 => vec![
             Col::X,
             Col::Y,
             Col::Z,
@@ -506,12 +553,14 @@ pub fn parse_pts(data: &[u8]) -> PointCloudResult {
             Col::G,
             Col::B,
         ],
-        6 => vec![Col::X, Col::Y, Col::Z, Col::R, Col::G, Col::B],
+        // 6 and 8 both put r/g/b straight after x/y/z; only the canonical
+        // 7-column Open3D row carries intensity before them.
+        6 | 8 => vec![Col::X, Col::Y, Col::Z, Col::R, Col::G, Col::B],
         4 => vec![Col::X, Col::Y, Col::Z, Col::Intensity],
         _ => vec![Col::X, Col::Y, Col::Z],
     };
     let cap = data.len() / 40; // ~bytes per pts row
-    parse_rows(data, 0, &layout, cap, 0, ColorMode::Auto)
+    parse_rows(data, 0, &layout, cap, 0, ColorMode::Byte)
 }
 
 /// Parse an ASCII PLY: read the header to learn the vertex count + property
@@ -592,102 +641,231 @@ pub fn parse_ascii_ply(data: &[u8]) -> Result<PointCloudResult, JsValue> {
     ))
 }
 
-/// Parse an ASCII PCD point cloud. Reads the FIELDS/COUNT header to build a
-/// column layout (including PCD's packed-float `rgb`), then parses the rows.
-/// Returns an error (→ JS fallback) for binary PCD or anything unsupported.
-#[wasm_bindgen]
-pub fn parse_pcd_ascii(data: &[u8]) -> Result<PointCloudResult, JsValue> {
-    let data_kw =
-        find_subslice(data, b"DATA ").ok_or_else(|| JsValue::from_str("missing DATA line"))?;
-    // Header is everything up to the DATA line.
-    let header =
-        std::str::from_utf8(&data[..data_kw]).map_err(|_| JsValue::from_str("non-utf8 header"))?;
+/// The PCD header, parsed once and shared by all three data encodings.
+///
+/// Header interpretation used to be duplicated per encoding (and again in the
+/// TypeScript parser this replaces), which is how the encodings came to
+/// disagree about field aliases and about which points are real.
+struct PcdHeader {
+    /// Field names, lowercased — PCL writers are inconsistent about case.
+    fields: Vec<String>,
+    sizes: Vec<usize>,
+    types: Vec<u8>,
+    counts: Vec<usize>,
+    width: usize,
+    height: usize,
+    points: usize,
+    /// tx ty tz qw qx qy qz — a rigid transform the viewer applies on load.
+    viewpoint: Vec<f64>,
+    comments: Vec<String>,
+    /// "ascii", "binary" or "binary_compressed".
+    data_kind: String,
+    /// Byte offset of the first data byte, just past the DATA line.
+    data_start: usize,
+}
 
-    let mut fields: Vec<&str> = Vec::new();
-    let mut counts: Vec<usize> = Vec::new();
-    let mut types: Vec<u8> = Vec::new();
-    let mut vertex_count = 0usize;
+/// Extra scalar names PCL and lidar vendors use for what the viewer calls
+/// intensity. Matching the TypeScript parser, which accepted all four.
+const PCD_INTENSITY_ALIASES: [&str; 4] = ["intensity", "reflectivity", "reflectance", "remission"];
+
+fn parse_pcd_header(data: &[u8]) -> Result<PcdHeader, String> {
+    let data_kw = find_subslice(data, b"DATA ").ok_or("missing DATA line")?;
+    let header = std::str::from_utf8(&data[..data_kw]).map_err(|_| "non-utf8 header")?;
+
+    let mut h = PcdHeader {
+        fields: Vec::new(),
+        sizes: Vec::new(),
+        types: Vec::new(),
+        counts: Vec::new(),
+        width: 0,
+        height: 1,
+        points: 0,
+        viewpoint: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        comments: Vec::new(),
+        data_kind: String::new(),
+        data_start: 0,
+    };
+
     for line in header.lines() {
         let t = line.trim();
-        if let Some(rest) = t.strip_prefix("FIELDS ") {
-            fields = rest.split_whitespace().collect();
-        } else if let Some(rest) = t.strip_prefix("COUNT ") {
-            counts = rest
-                .split_whitespace()
-                .filter_map(|s| s.parse().ok())
-                .collect();
-        } else if let Some(rest) = t.strip_prefix("TYPE ") {
-            types = rest
-                .split_whitespace()
-                .map(|s| s.bytes().next().unwrap_or(b'F'))
-                .collect();
-        } else if let Some(rest) = t.strip_prefix("POINTS ") {
-            vertex_count = rest.trim().parse().unwrap_or(0);
+        if t.is_empty() {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix('#') {
+            h.comments.push(rest.trim().to_string());
+            continue;
+        }
+        let mut it = t.split_whitespace();
+        let keyword = it.next().unwrap_or("").to_ascii_uppercase();
+        let rest: Vec<&str> = it.collect();
+        match keyword.as_str() {
+            "FIELDS" => h.fields = rest.iter().map(|s| s.to_ascii_lowercase()).collect(),
+            "SIZE" => h.sizes = rest.iter().filter_map(|s| s.parse().ok()).collect(),
+            "TYPE" => {
+                h.types = rest
+                    .iter()
+                    .map(|s| s.bytes().next().unwrap_or(b'F').to_ascii_uppercase())
+                    .collect()
+            }
+            "COUNT" => h.counts = rest.iter().filter_map(|s| s.parse().ok()).collect(),
+            "WIDTH" => h.width = rest.first().and_then(|s| s.parse().ok()).unwrap_or(0),
+            "HEIGHT" => h.height = rest.first().and_then(|s| s.parse().ok()).unwrap_or(1),
+            "POINTS" => h.points = rest.first().and_then(|s| s.parse().ok()).unwrap_or(0),
+            "VIEWPOINT" => {
+                let v: Vec<f64> = rest.iter().filter_map(|s| s.parse().ok()).collect();
+                if v.len() >= 7 {
+                    h.viewpoint = v;
+                }
+            }
+            _ => {}
         }
     }
-    if fields.is_empty() {
-        return Err(JsValue::from_str("no FIELDS"));
+
+    // The DATA line itself sits past the header text, so it is read here.
+    let kind_start = data_kw + b"DATA ".len();
+    let mut line_end = kind_start;
+    while line_end < data.len() && data[line_end] != b'\n' {
+        line_end += 1;
     }
-    // Color mode from the declared TYPE of the first separate r/g/b field (packed
-    // rgb is always 8-bit and ignores this).
-    let mut color_mode = ColorMode::Auto;
-    for (i, &name) in fields.iter().enumerate() {
-        if matches!(name, "r" | "red" | "g" | "green" | "b" | "blue") {
-            color_mode = pcd_color_mode(types.get(i).copied().unwrap_or(b'F'));
+    h.data_kind = std::str::from_utf8(&data[kind_start..line_end])
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    h.data_start = (line_end + 1).min(data.len());
+
+    if h.fields.is_empty() {
+        return Err("no FIELDS".into());
+    }
+    Ok(h)
+}
+
+impl PcdHeader {
+    /// POINTS if declared, else WIDTH * HEIGHT — organised clouds omit POINTS.
+    fn vertex_count(&self) -> usize {
+        if self.points > 0 {
+            self.points
+        } else {
+            self.width * self.height
+        }
+    }
+
+    fn count_at(&self, i: usize) -> usize {
+        self.counts.get(i).copied().unwrap_or(1).max(1)
+    }
+
+    fn col_at(&self, i: usize) -> Col {
+        let name = self.fields[i].as_str();
+        if PCD_INTENSITY_ALIASES.contains(&name) {
+            return Col::Intensity;
+        }
+        pcd_col(name)
+    }
+
+    /// Colour interpretation from the declared TYPE of the first separate
+    /// r/g/b field. Packed `rgb` is always 8-bit per channel and ignores it.
+    fn color_mode(&self) -> ColorMode {
+        for i in 0..self.fields.len() {
+            if matches!(self.col_at(i), Col::R | Col::G | Col::B) {
+                return pcd_color_mode(self.types.get(i).copied().unwrap_or(b'F'));
+            }
+        }
+        ColorMode::Auto
+    }
+
+    /// One `Col` per whitespace-separated ASCII column: a COUNT > 1 field
+    /// occupies that many columns, of which only the first is meaningful here.
+    fn ascii_layout(&self) -> Vec<Col> {
+        let mut layout = Vec::new();
+        for i in 0..self.fields.len() {
+            layout.push(self.col_at(i));
+            for _ in 1..self.count_at(i) {
+                layout.push(Col::Skip);
+            }
+        }
+        layout
+    }
+
+    /// The facts the viewer reads off the header - the VIEWPOINT transform
+    /// above all, which is why the WASM path could not be used for every file
+    /// before this existed.
+    fn metadata_json(&self) -> String {
+        let list = |v: &[String]| -> String {
+            v.iter()
+                .map(|s| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        let nums = |v: &[usize]| -> String {
+            v.iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        format!(
+            "{{\"format\":\"{}\",\"width\":{},\"height\":{},\"fields\":[{}],\"size\":[{}],\"type\":[{}],\"count\":[{}],\"viewpoint\":[{}],\"comments\":[{}]}}",
+            self.data_kind,
+            self.width,
+            self.height,
+            list(&self.fields),
+            nums(&self.sizes),
+            self.types
+                .iter()
+                .map(|t| format!("\"{}\"", *t as char))
+                .collect::<Vec<_>>()
+                .join(","),
+            nums(&self.counts),
+            self.viewpoint
+                .iter()
+                .map(|v| format!("{v}"))
+                .collect::<Vec<_>>()
+                .join(","),
+            list(&self.comments),
+        )
+    }
+}
+
+/// Parse a PCD point cloud in any of its three encodings.
+///
+/// One entry point rather than one per encoding: the caller cannot know which
+/// it has without reading the header, and the header is read here.
+#[wasm_bindgen]
+pub fn parse_pcd(data: &[u8]) -> Result<PointCloudResult, JsValue> {
+    let header = parse_pcd_header(data).map_err(|e| JsValue::from_str(&e))?;
+    let mut result = match header.data_kind.as_str() {
+        "ascii" => parse_pcd_ascii_rows(data, &header),
+        "binary" => parse_pcd_binary_records(data, &header),
+        "binary_compressed" => parse_pcd_binary_compressed(data, &header),
+        other => Err(format!("unsupported PCD encoding: {other}")),
+    }
+    .map_err(|e| JsValue::from_str(&e))?;
+    result.metadata = header.metadata_json();
+    Ok(result)
+}
+
+fn parse_pcd_ascii_rows(data: &[u8], header: &PcdHeader) -> Result<PointCloudResult, String> {
+    let layout = header.ascii_layout();
+    if !layout.iter().any(|c| *c == Col::X) {
+        return Err("no x/y/z fields".into());
+    }
+    let expected = header.vertex_count();
+    let mut b = Builder::new(layout, expected.max(1024), header.color_mode());
+    b.skip_nan = true;
+    let mut vals = [0f64; 16];
+    let mut pos = header.data_start;
+    let mut rows = 0usize;
+    while pos < data.len() {
+        // Rows are counted, not points: NaN rows are dropped but still consume
+        // one of the declared POINTS.
+        if expected > 0 && rows >= expected {
             break;
         }
-    }
-
-    // Confirm DATA is ascii, and find the byte after that line's newline.
-    let mut p = data_kw + b"DATA ".len();
-    let line_end = {
-        let mut e = p;
-        while e < data.len() && data[e] != b'\n' {
-            e += 1;
-        }
-        e
-    };
-    let data_kind = std::str::from_utf8(&data[p..line_end]).unwrap_or("").trim();
-    if data_kind != "ascii" {
-        return Err(JsValue::from_str("not ascii pcd"));
-    }
-    p = line_end + 1;
-
-    // Build the column layout, expanding COUNT>1 fields (extra columns skipped).
-    let mut layout: Vec<Col> = Vec::new();
-    for (i, &name) in fields.iter().enumerate() {
-        let col = match name {
-            "x" => Col::X,
-            "y" => Col::Y,
-            "z" => Col::Z,
-            "rgb" | "rgba" => Col::PackedRgb,
-            "r" | "red" => Col::R,
-            "g" | "green" => Col::G,
-            "b" | "blue" => Col::B,
-            "normal_x" | "nx" => Col::Nx,
-            "normal_y" | "ny" => Col::Ny,
-            "normal_z" | "nz" => Col::Nz,
-            "intensity" => Col::Intensity,
-            _ => Col::Skip,
-        };
-        let c = counts.get(i).copied().unwrap_or(1).max(1);
-        layout.push(col);
-        for _ in 1..c {
-            layout.push(Col::Skip);
+        let n = parse_line(data, &mut pos, &mut vals);
+        if n >= 3 {
+            b.push_row(&vals, n);
+            rows += 1;
         }
     }
-    if !layout.iter().any(|c| *c == Col::X) {
-        return Err(JsValue::from_str("no x/y/z fields"));
-    }
-
-    Ok(parse_rows(
-        data,
-        p,
-        &layout,
-        vertex_count,
-        vertex_count,
-        color_mode,
-    ))
+    Ok(b.finish())
 }
 
 /// Read one numeric PCD field as f64. `ty`: b'F' float, b'U' unsigned, b'I'
@@ -736,134 +914,115 @@ fn pcd_read_num(d: &[u8], o: usize, size: usize, ty: u8) -> f64 {
     }
 }
 
-/// Parse a binary PCD point cloud (`DATA binary`; not `binary_compressed`). Reads
-/// the FIELDS/SIZE/TYPE/COUNT header to map each field to a byte offset + reader,
-/// then walks fixed-size records straight into the packed output arrays — no
-/// text parsing, so it's orders of magnitude faster than the JS binary path.
-/// Returns Err (→ JS fallback) for ascii/compressed PCD, missing x/y/z, or a
-/// header whose SIZE/TYPE don't line up with FIELDS.
-#[wasm_bindgen]
-pub fn parse_pcd_binary(data: &[u8]) -> Result<PointCloudResult, JsValue> {
-    let data_kw =
-        find_subslice(data, b"DATA ").ok_or_else(|| JsValue::from_str("missing DATA line"))?;
-    let header =
-        std::str::from_utf8(&data[..data_kw]).map_err(|_| JsValue::from_str("non-utf8 header"))?;
+/// One field's location and encoding inside a record.
+struct PcdFieldDesc {
+    col: Col,
+    /// Position in the header's FIELDS list, which is also the column order in
+    /// the `binary_compressed` layout.
+    index: usize,
+    off: usize,
+    size: usize,
+    ty: u8,
+}
 
-    let mut fields: Vec<&str> = Vec::new();
-    let mut sizes: Vec<usize> = Vec::new();
-    let mut types: Vec<u8> = Vec::new();
-    let mut counts: Vec<usize> = Vec::new();
-    let mut vertex_count = 0usize;
-    for line in header.lines() {
-        let t = line.trim();
-        if let Some(r) = t.strip_prefix("FIELDS ") {
-            fields = r.split_whitespace().collect();
-        } else if let Some(r) = t.strip_prefix("SIZE ") {
-            sizes = r
-                .split_whitespace()
-                .filter_map(|s| s.parse().ok())
-                .collect();
-        } else if let Some(r) = t.strip_prefix("TYPE ") {
-            types = r
-                .split_whitespace()
-                .map(|s| s.bytes().next().unwrap_or(b'F'))
-                .collect();
-        } else if let Some(r) = t.strip_prefix("COUNT ") {
-            counts = r
-                .split_whitespace()
-                .filter_map(|s| s.parse().ok())
-                .collect();
-        } else if let Some(r) = t.strip_prefix("POINTS ") {
-            vertex_count = r.trim().parse().unwrap_or(0);
-        }
+/// Field descriptors plus the per-point record stride.
+fn pcd_field_descs(header: &PcdHeader) -> Result<(Vec<PcdFieldDesc>, usize), String> {
+    let nf = header.fields.len();
+    if header.sizes.len() != nf || header.types.len() != nf {
+        return Err("incomplete pcd header".into());
     }
-    let nf = fields.len();
-    if nf == 0 || sizes.len() != nf || types.len() != nf {
-        return Err(JsValue::from_str("incomplete pcd header"));
-    }
-
-    // Only plain binary here; binary_compressed needs the JS path.
-    let mut p = data_kw + b"DATA ".len();
-    let line_end = {
-        let mut e = p;
-        while e < data.len() && data[e] != b'\n' {
-            e += 1;
-        }
-        e
-    };
-    let kind = std::str::from_utf8(&data[p..line_end]).unwrap_or("").trim();
-    if kind != "binary" {
-        return Err(JsValue::from_str("not plain binary pcd"));
-    }
-    p = line_end + 1;
-
-    // Field descriptors with byte offset within a record.
-    struct FieldDesc {
-        col: Col,
-        off: usize,
-        size: usize,
-        ty: u8,
-    }
-    let mut descs: Vec<FieldDesc> = Vec::with_capacity(nf);
+    let mut descs = Vec::with_capacity(nf);
     let mut stride = 0usize;
     for i in 0..nf {
-        let cnt = counts.get(i).copied().unwrap_or(1).max(1);
-        descs.push(FieldDesc {
-            col: pcd_col(fields[i]),
-            off: stride,
-            size: sizes[i],
-            ty: types[i],
-        });
-        stride += sizes[i] * cnt;
+        let col = header.col_at(i);
+        // Fields the viewer has no use for are dropped here rather than tested
+        // per point: a scan file can declare a dozen, and the read loop runs
+        // once per point per field.
+        if col != Col::Skip {
+            descs.push(PcdFieldDesc {
+                col,
+                index: i,
+                off: stride,
+                size: header.sizes[i],
+                ty: header.types[i],
+            });
+        }
+        stride += header.sizes[i] * header.count_at(i);
     }
     if stride == 0 {
-        return Err(JsValue::from_str("zero record stride"));
+        return Err("zero record stride".into());
     }
     if !descs.iter().any(|d| d.col == Col::X) {
-        return Err(JsValue::from_str("no x/y/z fields"));
+        return Err("no x/y/z fields".into());
+    }
+    Ok((descs, stride))
+}
+
+/// Accumulates points read field by field, shared by the two binary encodings,
+/// which differ only in where a given field's bytes live.
+struct PcdPointSink {
+    positions: Vec<f32>,
+    colors: Vec<u8>,
+    normals: Vec<f32>,
+    intensity: Vec<f32>,
+    has_colors: bool,
+    has_normals: bool,
+    has_intensity: bool,
+    min: [f32; 3],
+    max: [f32; 3],
+}
+
+impl PcdPointSink {
+    fn new(descs: &[PcdFieldDesc], capacity: usize) -> Self {
+        let has_colors = descs
+            .iter()
+            .any(|d| matches!(d.col, Col::PackedRgb | Col::R | Col::G | Col::B));
+        let has_normals = descs
+            .iter()
+            .any(|d| matches!(d.col, Col::Nx | Col::Ny | Col::Nz));
+        let has_intensity = descs.iter().any(|d| d.col == Col::Intensity);
+        PcdPointSink {
+            positions: Vec::with_capacity(capacity * 3),
+            colors: if has_colors {
+                Vec::with_capacity(capacity * 3)
+            } else {
+                Vec::new()
+            },
+            normals: if has_normals {
+                Vec::with_capacity(capacity * 3)
+            } else {
+                Vec::new()
+            },
+            intensity: if has_intensity {
+                Vec::with_capacity(capacity)
+            } else {
+                Vec::new()
+            },
+            has_colors,
+            has_normals,
+            has_intensity,
+            min: [f32::INFINITY; 3],
+            max: [f32::NEG_INFINITY; 3],
+        }
     }
 
-    let uses_packed = descs.iter().any(|d| d.col == Col::PackedRgb);
-    let has_colors = uses_packed
-        || descs
-            .iter()
-            .any(|d| matches!(d.col, Col::R | Col::G | Col::B));
-    let has_normals = descs
-        .iter()
-        .any(|d| matches!(d.col, Col::Nx | Col::Ny | Col::Nz));
-    let has_intensity = descs.iter().any(|d| d.col == Col::Intensity);
-
-    // Clamp to whole records actually present so every read stays in-bounds.
-    let avail = data.len().saturating_sub(p) / stride;
-    let n = vertex_count.min(avail);
-
-    let mut positions = Vec::with_capacity(n * 3);
-    let mut colors = if has_colors {
-        Vec::with_capacity(n * 3)
-    } else {
-        Vec::new()
-    };
-    let mut normals = if has_normals {
-        Vec::with_capacity(n * 3)
-    } else {
-        Vec::new()
-    };
-    let mut intensity = if has_intensity {
-        Vec::with_capacity(n)
-    } else {
-        Vec::new()
-    };
-    let mut min = [f32::INFINITY; 3];
-    let mut max = [f32::NEG_INFINITY; 3];
-
-    for i in 0..n {
-        let base = p + i * stride;
+    /// `at` gives the byte offset of a field for the point being read; that is
+    /// the only thing the record and column layouts disagree about.
+    fn push_point(
+        &mut self,
+        data: &[u8],
+        descs: &[PcdFieldDesc],
+        at: impl Fn(&PcdFieldDesc) -> usize,
+    ) {
         let (mut x, mut y, mut z) = (0f32, 0f32, 0f32);
         let (mut nx, mut ny, mut nz) = (0f32, 0f32, 0f32);
         let mut inten = 0f32;
         let (mut cr, mut cg, mut cb) = (0u8, 0u8, 0u8);
-        for d in &descs {
-            let o = base + d.off;
+        for d in descs {
+            let o = at(d);
+            if o + d.size > data.len() {
+                continue;
+            }
             match d.col {
                 Col::Skip => {}
                 Col::X => x = pcd_read_num(data, o, d.size, d.ty) as f32,
@@ -909,58 +1068,178 @@ pub fn parse_pcd_binary(data: &[u8]) -> Result<PointCloudResult, JsValue> {
                 }
             }
         }
-        positions.push(x);
-        positions.push(y);
-        positions.push(z);
-        if x < min[0] {
-            min[0] = x;
+        // PCL writes an invalid range pixel as NaN coordinates rather than
+        // leaving it out, so those points are dropped here.
+        if x.is_nan() || y.is_nan() || z.is_nan() {
+            return;
         }
-        if y < min[1] {
-            min[1] = y;
+        self.positions.push(x);
+        self.positions.push(y);
+        self.positions.push(z);
+        self.min[0] = self.min[0].min(x);
+        self.min[1] = self.min[1].min(y);
+        self.min[2] = self.min[2].min(z);
+        self.max[0] = self.max[0].max(x);
+        self.max[1] = self.max[1].max(y);
+        self.max[2] = self.max[2].max(z);
+        if self.has_colors {
+            self.colors.push(cr);
+            self.colors.push(cg);
+            self.colors.push(cb);
         }
-        if z < min[2] {
-            min[2] = z;
+        if self.has_normals {
+            self.normals.push(nx);
+            self.normals.push(ny);
+            self.normals.push(nz);
         }
-        if x > max[0] {
-            max[0] = x;
-        }
-        if y > max[1] {
-            max[1] = y;
-        }
-        if z > max[2] {
-            max[2] = z;
-        }
-        if has_colors {
-            colors.push(cr);
-            colors.push(cg);
-            colors.push(cb);
-        }
-        if has_normals {
-            normals.push(nx);
-            normals.push(ny);
-            normals.push(nz);
-        }
-        if has_intensity {
-            intensity.push(inten);
+        if self.has_intensity {
+            self.intensity.push(inten);
         }
     }
 
-    if n == 0 {
-        min = [0.0; 3];
-        max = [0.0; 3];
+    fn finish(mut self) -> PointCloudResult {
+        let vertex_count = (self.positions.len() / 3) as u32;
+        if vertex_count == 0 {
+            self.min = [0.0; 3];
+            self.max = [0.0; 3];
+        }
+        PointCloudResult {
+            vertex_count,
+            positions: self.positions,
+            colors: self.colors,
+            normals: self.normals,
+            intensity: self.intensity,
+            has_colors: self.has_colors,
+            has_normals: self.has_normals,
+            has_intensity: self.has_intensity,
+            min: self.min,
+            max: self.max,
+            metadata: String::new(),
+        }
     }
-    Ok(PointCloudResult {
-        vertex_count: n as u32,
-        positions,
-        colors,
-        normals,
-        intensity,
-        has_colors,
-        has_normals,
-        has_intensity,
-        min,
-        max,
-    })
+}
+
+/// `DATA binary`: records of packed fields, one after another.
+fn parse_pcd_binary_records(data: &[u8], header: &PcdHeader) -> Result<PointCloudResult, String> {
+    let (descs, stride) = pcd_field_descs(header)?;
+    let start = header.data_start;
+    // Clamp to whole records actually present so every read stays in-bounds.
+    let available = data.len().saturating_sub(start) / stride;
+    let n = header.vertex_count().min(available);
+
+    let mut sink = PcdPointSink::new(&descs, n);
+    for i in 0..n {
+        let base = start + i * stride;
+        sink.push_point(data, &descs, |d| base + d.off);
+    }
+    Ok(sink.finish())
+}
+
+/// `DATA binary_compressed`: an LZF-compressed, column-major payload behind two
+/// little-endian u32 lengths.
+fn parse_pcd_binary_compressed(
+    data: &[u8],
+    header: &PcdHeader,
+) -> Result<PointCloudResult, String> {
+    let (descs, _) = pcd_field_descs(header)?;
+    let start = header.data_start;
+    if data.len() < start + 8 {
+        return Err("binary_compressed: header too short".into());
+    }
+    let compressed_size = u32::from_le_bytes([
+        data[start],
+        data[start + 1],
+        data[start + 2],
+        data[start + 3],
+    ]) as usize;
+    let uncompressed_size = u32::from_le_bytes([
+        data[start + 4],
+        data[start + 5],
+        data[start + 6],
+        data[start + 7],
+    ]) as usize;
+    let body_start = start + 8;
+    let body_end = (body_start + compressed_size).min(data.len());
+    let block = lzf_decompress(&data[body_start..body_end], uncompressed_size)?;
+
+    let n = header.vertex_count();
+    // Column-major: every value of field 0, then every value of field 1, …
+    // One entry per declared field, not per read field: the block holds every
+    // column, including the ones nothing reads.
+    let mut column_start = Vec::with_capacity(header.fields.len());
+    let mut offset = 0usize;
+    for i in 0..header.fields.len() {
+        column_start.push(offset);
+        offset += header.sizes[i] * header.count_at(i) * n;
+    }
+    if offset > block.len() {
+        return Err("binary_compressed: block shorter than the declared columns".into());
+    }
+
+    let mut sink = PcdPointSink::new(&descs, n);
+    for i in 0..n {
+        sink.push_point(&block, &descs, |d| column_start[d.index] + i * d.size);
+    }
+    Ok(sink.finish())
+}
+
+/// LZF decompressor, the variant PCL uses for `binary_compressed`.
+///
+/// A control byte under 32 introduces a literal run of `ctrl + 1` bytes;
+/// anything else is a back-reference whose length is in the top three bits
+/// (extended by one more byte when they are all set) and whose distance is the
+/// low five bits plus the next byte.
+fn lzf_decompress(input: &[u8], expected_len: usize) -> Result<Vec<u8>, String> {
+    let mut output = vec![0u8; expected_len];
+    let mut ip = 0usize;
+    let mut op = 0usize;
+    while ip < input.len() {
+        let ctrl = input[ip] as usize;
+        ip += 1;
+        if ctrl < 32 {
+            let len = ctrl + 1;
+            if ip + len > input.len() || op + len > output.len() {
+                return Err("binary_compressed: literal run runs past the buffer".into());
+            }
+            output[op..op + len].copy_from_slice(&input[ip..ip + len]);
+            ip += len;
+            op += len;
+        } else {
+            let mut len = ctrl >> 5;
+            if len == 7 {
+                if ip >= input.len() {
+                    return Err("binary_compressed: truncated length byte".into());
+                }
+                len += input[ip] as usize;
+                ip += 1;
+            }
+            len += 2;
+            if ip >= input.len() {
+                return Err("binary_compressed: truncated distance byte".into());
+            }
+            let dist = ((ctrl & 0x1f) << 8) | input[ip] as usize;
+            ip += 1;
+            let mut r = op
+                .checked_sub(dist + 1)
+                .ok_or("binary_compressed: back-reference before the start")?;
+            if op + len > output.len() {
+                return Err("binary_compressed: back-reference runs past the buffer".into());
+            }
+            // Byte at a time on purpose: runs may overlap the write head, which
+            // is how LZF encodes repeats.
+            for _ in 0..len {
+                output[op] = output[r];
+                op += 1;
+                r += 1;
+            }
+        }
+    }
+    if op != expected_len {
+        return Err(format!(
+            "binary_compressed: decompressed {op} bytes, expected {expected_len}"
+        ));
+    }
+    Ok(output)
 }
 
 fn ply_col(name: &str) -> Col {
@@ -1291,4 +1570,199 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         return None;
     }
     haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The layouts the TypeScript PTS parser used to detect, kept here because
+    /// this crate is now the only implementation of them.
+    #[test]
+    fn pts_detects_its_column_layouts() {
+        let plain = parse_pts(b"0 0 0\n1 2 3\n");
+        assert_eq!(plain.vertex_count, 2);
+        assert!(!plain.has_colors && !plain.has_intensity && !plain.has_normals);
+
+        let intensity = parse_pts(b"0 0 0 0.25\n1 0 0 0.75\n");
+        assert!(intensity.has_intensity && !intensity.has_colors);
+        assert_eq!(intensity.intensity, vec![0.25, 0.75]);
+
+        let coloured = parse_pts(b"0 0 0 255 128 64\n");
+        assert!(coloured.has_colors && !coloured.has_intensity);
+        assert_eq!(coloured.colors, vec![255, 128, 64]);
+
+        // Open3D's default row: intensity comes *before* the colour triple.
+        let open3d = parse_pts(b"0 0 0 0.5 255 128 64\n");
+        assert!(open3d.has_colors && open3d.has_intensity);
+        assert_eq!(open3d.intensity, vec![0.5]);
+        assert_eq!(open3d.colors, vec![255, 128, 64]);
+
+        let with_normals = parse_pts(b"0 0 0 255 128 64 1 0 0\n");
+        assert!(with_normals.has_colors && with_normals.has_normals);
+        assert_eq!(with_normals.colors, vec![255, 128, 64]);
+        assert_eq!(with_normals.normals, vec![1.0, 0.0, 0.0]);
+    }
+
+    /// PTS colours are always 0-255 integers. Under the value heuristic a dark
+    /// row would be read as 0..1 floats and come out white.
+    #[test]
+    fn pts_treats_dark_colours_as_bytes() {
+        let dark = parse_pts(b"0 0 0 1 1 1\n");
+        assert_eq!(dark.colors, vec![1, 1, 1]);
+    }
+
+    /// A leading count line and comments carry fewer than three numbers, so the
+    /// row loop skips them without needing to recognise them.
+    #[test]
+    fn pts_skips_the_count_line_and_comments() {
+        let result = parse_pts(b"2\n# a comment\n0 0 0\n1 1 1\n");
+        assert_eq!(result.vertex_count, 2);
+    }
+
+    /// PCL marks an invalid range pixel with NaN coordinates instead of leaving
+    /// the point out, so a parser that keeps them puts NaN into the geometry.
+    #[test]
+    fn pcd_drops_nan_points_in_every_encoding() {
+        let ascii = b"FIELDS x y z intensity\nSIZE 4 4 4 4\nTYPE F F F F\nCOUNT 1 1 1 1\nWIDTH 3\nHEIGHT 1\nPOINTS 3\nDATA ascii\n0 0 0 0.1\nnan 1 1 0.9\n2 0 0 0.7\n";
+        let result = parse_pcd(ascii).unwrap();
+        assert_eq!(result.vertex_count, 2);
+        assert_eq!(result.positions, vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0]);
+        assert_eq!(result.intensity, vec![0.1, 0.7]);
+
+        let mut binary = b"FIELDS x y z intensity\nSIZE 4 4 4 4\nTYPE F F F F\nCOUNT 1 1 1 1\nWIDTH 3\nHEIGHT 1\nPOINTS 3\nDATA binary\n".to_vec();
+        for v in [
+            0.0f32,
+            0.0,
+            0.0,
+            0.1,
+            f32::NAN,
+            1.0,
+            1.0,
+            0.9,
+            2.0,
+            0.0,
+            0.0,
+            0.7,
+        ] {
+            binary.extend_from_slice(&v.to_le_bytes());
+        }
+        let result = parse_pcd(&binary).unwrap();
+        assert_eq!(result.vertex_count, 2);
+        assert_eq!(result.positions, vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0]);
+        assert_eq!(result.intensity, vec![0.1, 0.7]);
+    }
+
+    /// The header facts the point buffers cannot carry. VIEWPOINT is the one
+    /// that matters: a file with a non-identity viewpoint had to avoid the Rust
+    /// parser entirely before this was returned.
+    #[test]
+    fn pcd_reports_its_header() {
+        let src = b"# a comment\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\nWIDTH 2\nHEIGHT 1\nVIEWPOINT 1 2 3 0.5 0.5 0.5 0.5\nPOINTS 2\nDATA ascii\n0 0 0\n1 1 1\n";
+        let result = parse_pcd(src).unwrap();
+        let meta = result.metadata_json();
+        assert!(
+            meta.contains("\"viewpoint\":[1,2,3,0.5,0.5,0.5,0.5]"),
+            "{meta}"
+        );
+        assert!(meta.contains("\"fields\":[\"x\",\"y\",\"z\"]"), "{meta}");
+        assert!(meta.contains("\"format\":\"ascii\""), "{meta}");
+        assert!(meta.contains("\"comments\":[\"a comment\"]"), "{meta}");
+        assert_eq!(result.vertex_count, 2);
+    }
+
+    /// Field names are matched without case, and the vendor spellings of
+    /// intensity all land in the intensity slot.
+    #[test]
+    fn pcd_accepts_upper_case_fields_and_intensity_aliases() {
+        for alias in ["intensity", "reflectivity", "reflectance", "remission"] {
+            let src = format!(
+                "FIELDS X Y Z {}\nSIZE 4 4 4 4\nTYPE F F F F\nCOUNT 1 1 1 1\nWIDTH 1\nHEIGHT 1\nPOINTS 1\nDATA ascii\n1 2 3 0.5\n",
+                alias.to_ascii_uppercase()
+            );
+            let result = parse_pcd(src.as_bytes()).unwrap();
+            assert!(result.has_intensity, "{alias} should be read as intensity");
+            assert_eq!(result.intensity, vec![0.5]);
+            assert_eq!(result.positions, vec![1.0, 2.0, 3.0]);
+        }
+    }
+
+    /// A literal run and a back-reference, including the overlapping kind LZF
+    /// uses to encode a repeat.
+    #[test]
+    fn lzf_round_trips_literals_and_back_references() {
+        // ctrl 2 -> 3 literal bytes "abc"; then a back-reference of length 4
+        // starting 3 bytes back, which overlaps the write head.
+        let compressed = [0x02, b'a', b'b', b'c', 0x40, 0x02];
+        let out = lzf_decompress(&compressed, 7).unwrap();
+        assert_eq!(out, b"abcabca");
+
+        // A run that claims more than it can deliver is rejected rather than
+        // silently producing a short buffer.
+        assert!(lzf_decompress(&[0x05, b'a'], 6).is_err());
+    }
+
+    /// binary_compressed is column-major: every x, then every y, and so on.
+    #[test]
+    fn pcd_reads_a_binary_compressed_block() {
+        let mut columns: Vec<u8> = Vec::new();
+        for v in [0.0f32, 1.0] {
+            columns.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in [10.0f32, 11.0] {
+            columns.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in [20.0f32, 21.0] {
+            columns.extend_from_slice(&v.to_le_bytes());
+        }
+        // Store it as LZF literal runs (a valid, if useless, encoding).
+        let mut compressed: Vec<u8> = Vec::new();
+        for chunk in columns.chunks(32) {
+            compressed.push((chunk.len() - 1) as u8);
+            compressed.extend_from_slice(chunk);
+        }
+
+        let mut src = b"FIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\nWIDTH 2\nHEIGHT 1\nPOINTS 2\nDATA binary_compressed\n".to_vec();
+        src.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+        src.extend_from_slice(&(columns.len() as u32).to_le_bytes());
+        src.extend_from_slice(&compressed);
+
+        let result = parse_pcd(&src).unwrap();
+        assert_eq!(result.vertex_count, 2);
+        assert_eq!(result.positions, vec![0.0, 10.0, 20.0, 1.0, 11.0, 21.0]);
+    }
+
+    /// A field nothing reads still occupies a column in the compressed block,
+    /// so dropping it from the read list must not shift the ones that follow.
+    #[test]
+    fn pcd_binary_compressed_skips_an_unused_column() {
+        let n = 2usize;
+        let mut columns: Vec<u8> = Vec::new();
+        for v in [0.0f32, 1.0] {
+            columns.extend_from_slice(&v.to_le_bytes()); // x
+        }
+        for v in [7.0f32, 7.0] {
+            columns.extend_from_slice(&v.to_le_bytes()); // padding, unread
+        }
+        for v in [10.0f32, 11.0] {
+            columns.extend_from_slice(&v.to_le_bytes()); // y
+        }
+        for v in [20.0f32, 21.0] {
+            columns.extend_from_slice(&v.to_le_bytes()); // z
+        }
+        let mut compressed: Vec<u8> = Vec::new();
+        for chunk in columns.chunks(32) {
+            compressed.push((chunk.len() - 1) as u8);
+            compressed.extend_from_slice(chunk);
+        }
+
+        let mut src = b"FIELDS x padding y z\nSIZE 4 4 4 4\nTYPE F F F F\nCOUNT 1 1 1 1\nWIDTH 2\nHEIGHT 1\nPOINTS 2\nDATA binary_compressed\n".to_vec();
+        src.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+        src.extend_from_slice(&(columns.len() as u32).to_le_bytes());
+        src.extend_from_slice(&compressed);
+
+        let result = parse_pcd(&src).unwrap();
+        assert_eq!(result.vertex_count, n as u32);
+        assert_eq!(result.positions, vec![0.0, 10.0, 20.0, 1.0, 11.0, 21.0]);
+    }
 }

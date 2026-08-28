@@ -3,6 +3,11 @@ import { isColmapModelFile } from '../engine/src/formats/colmap/colmapFiles';
 import { PointCloudEditorProvider } from './pointCloudEditorProvider';
 import { DatasetManager } from './dataset/datasetManager';
 import { glob } from 'glob';
+import {
+  buildDicomSeriesNrrd,
+  dicomSeriesFileName,
+  scanDicomFolder,
+} from './providerHandlers/dicomFolderLoader';
 
 export function activate(context: vscode.ExtensionContext) {
   // Register the PLY editor provider
@@ -79,12 +84,40 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register command for opening multiple files
   context.subscriptions.push(
-    vscode.commands.registerCommand('plyViewer.openMultipleFiles', async () => {
-      // Avoid blocking tests by not awaiting the file picker
-      setImmediate(() => {
-        void handleOpenMultipleFiles();
-      });
+    vscode.commands.registerCommand(
+      'plyViewer.openMultipleFiles',
+      async (provided?: readonly vscode.Uri[]) => {
+        if (Array.isArray(provided) && provided.length > 0) {
+          await provider.openFilesTogether(provided);
+          return;
+        }
+        // Avoid blocking tests by not awaiting the file picker
+        setImmediate(() => {
+          void handleOpenMultipleFiles(provider);
+        });
+      }
+    )
+  );
+
+  // The timing channel is never revealed on its own (that would pull the
+  // Output view away from whatever the user was reading); this is how it is
+  // brought forward deliberately.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('plyViewer.showTimingOutput', () => {
+      PointCloudEditorProvider.showTimingOutput();
     })
+  );
+
+  // Benchmark harness hook, deliberately not contributed in package.json so it
+  // stays out of the command palette: scripts/benchmark-vscode.mjs drives the
+  // load -> align -> recolour scenario through it. See
+  // docs/performance-method.md.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'plyViewer.benchmarkScenario',
+      async (step: string, anchorIndex?: number) =>
+        provider.runBenchmarkScenario(step, anchorIndex ?? 0)
+    )
   );
 
   // Register command for playing a point cloud sequence via wildcard
@@ -154,6 +187,12 @@ export function activate(context: vscode.ExtensionContext) {
       setImmediate(() => {
         void handleOpenColmapReconstruction();
       });
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('plyViewer.openDicomFolder', async () => {
+      await handleOpenDicomFolder(context, provider);
     })
   );
 
@@ -244,7 +283,7 @@ async function handleDepthToPointCloudConversion(
   }
 }
 
-async function handleOpenMultipleFiles(): Promise<void> {
+async function handleOpenMultipleFiles(provider: PointCloudEditorProvider): Promise<void> {
   try {
     // Show file picker for multiple files
     const files = await vscode.window.showOpenDialog({
@@ -253,6 +292,7 @@ async function handleOpenMultipleFiles(): Promise<void> {
       canSelectFolders: false,
       filters: {
         'Point Cloud Files': ['ply', 'xyz', 'obj'],
+        'Volume Files': ['nrrd', 'nhdr'],
         'TIFF Files': ['tif', 'tiff'],
         'All Files': ['*'],
       },
@@ -270,15 +310,17 @@ async function handleOpenMultipleFiles(): Promise<void> {
     const tifFiles = files.filter(
       f => f.fsPath.toLowerCase().endsWith('.tif') || f.fsPath.toLowerCase().endsWith('.tiff')
     );
+    const volumeFiles = files.filter(
+      f => f.fsPath.toLowerCase().endsWith('.nrrd') || f.fsPath.toLowerCase().endsWith('.nhdr')
+    );
 
-    // Open the first file to create the main editor, then add others
-    const firstFile = files[0];
-    await vscode.commands.executeCommand('vscode.openWith', firstFile, 'plyViewer.plyEditor');
+    await provider.openFilesTogether(files);
 
     // If there are additional files, add them
     if (files.length > 1) {
       vscode.window.showInformationMessage(
-        `Opening ${files.length} files together: ${spatialFiles.length} PLY, ${xyzFiles.length} XYZ, ${objFiles.length} OBJ, ${tifFiles.length} TIF files`
+        `Opened ${files.length} files together: ${spatialFiles.length} PLY, ${xyzFiles.length} XYZ, ` +
+          `${objFiles.length} OBJ, ${tifFiles.length} TIF, ${volumeFiles.length} volume files`
       );
     }
   } catch (error) {
@@ -290,6 +332,100 @@ async function handleOpenMultipleFiles(): Promise<void> {
 
 export function deactivate() {
   console.log('3D Visualizer extension is now deactivated!');
+}
+
+async function handleOpenDicomFolder(
+  context: vscode.ExtensionContext,
+  provider: PointCloudEditorProvider
+): Promise<void> {
+  try {
+    const picked = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      title: 'Select a folder containing DICOM images',
+      openLabel: 'Scan DICOM Folder',
+    });
+    if (!picked?.length) {
+      return;
+    }
+
+    const series = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Scanning DICOM folder',
+        cancellable: true,
+      },
+      async (progress, token) =>
+        scanDicomFolder(
+          picked[0],
+          (done, total, name) =>
+            progress.report({
+              message: `${done} / ${total} · ${name}`,
+              increment: total ? 100 / total : undefined,
+            }),
+          () => token.isCancellationRequested
+        )
+    );
+    if (!series.length) {
+      vscode.window.showWarningMessage(
+        'No native, uncompressed grayscale DICOM image series was found in that folder.'
+      );
+      return;
+    }
+
+    let selected = series;
+    if (series.length > 1) {
+      const choices = series.map(item => ({ label: item.label, series: item, picked: true }));
+      const choice = await vscode.window.showQuickPick(choices, {
+        title: 'Select DICOM series to open as volumes',
+        canPickMany: true,
+        placeHolder: 'Each selected series becomes one volume',
+      });
+      if (!choice?.length) {
+        return;
+      }
+      selected = choice.map(item => item.series);
+    }
+
+    const handoffFolder = vscode.Uri.joinPath(
+      context.globalStorageUri,
+      `dicom-volume-${Date.now()}`
+    );
+    await vscode.workspace.fs.createDirectory(handoffFolder);
+    const targets: vscode.Uri[] = [];
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'Building DICOM volume',
+        cancellable: false,
+      },
+      async progress => {
+        const usedNames = new Set<string>();
+        for (let index = 0; index < selected.length; index++) {
+          progress.report({
+            message: `${index + 1} / ${selected.length} · ${selected[index].label}`,
+          });
+          const bytes = buildDicomSeriesNrrd(selected[index]);
+          const semanticName = dicomSeriesFileName(selected[index], index + 1);
+          let targetName = semanticName;
+          let duplicate = 2;
+          while (usedNames.has(targetName)) {
+            targetName = semanticName.replace(/\.nrrd$/i, `-${duplicate++}.nrrd`);
+          }
+          usedNames.add(targetName);
+          const target = vscode.Uri.joinPath(handoffFolder, targetName);
+          await vscode.workspace.fs.writeFile(target, bytes);
+          targets.push(target);
+        }
+      }
+    );
+    await provider.openFilesTogether(targets);
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Could not open the DICOM folder: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }
 
 /**

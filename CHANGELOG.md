@@ -1,22 +1,13 @@
 # Change Log
 
-## [1.8.0] - 2026-
+## [1.8.0] - 2026-08-28
 
 - Add Kitti's .bin file support
 - Add Gaussian Splatting support
 - Add unofficial Stonex x3r lidar scanner support, improve e57 support
-- Depth images are now decoded only by the Rust/WASM decoder; the geotiff.js
-  fallback is gone. TIFF support gains tiled and planar layouts, sub-byte bit
-  depths (10/12/14-bit), PackBits/CCITT/JPEG/WebP compression, CMYK, and the
-  Orientation tag
-- 16-bit depth PNGs keep their full precision instead of being quantised to
-  8 bits by the canvas
+- Depth images are now decoded only by the Rust/WASM decoder; the geotiff.js fallback is gone. TIFF support gains tiled and planar layouts, sub-byte bit depths (10/12/14-bit), ...
 - Add EXR depth images
-- Add an experimental, opt-in WebGPU renderer
-  (`plyViewer.experimentalWebGPU`, or `?webgpu=1` on the standalone page). Off
-  by default and roughly half the speed of WebGL on large clouds; EDL, gaussian
-  splats and point sizes above one pixel are unavailable on it. See
-  docs/WEBGPU_READINESS.md
+
 
 ## [1.7.0] - 2026-07-17
 

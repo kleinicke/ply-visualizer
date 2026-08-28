@@ -18,6 +18,7 @@ export interface TransformationMatrixHost {
   pointSizes: number[];
   /** Present on the full visualizer host; mirrors transforms onto splat meshes. */
   splatMode?: { applyMatrix(fileIndex: number, matrix: THREE.Matrix4 | undefined): void };
+  sectionPlanes?: { updateTransform(fileIndex: number, matrix: THREE.Matrix4): void };
   applyCameraScale(cameraProfileIndex: number, scale: number): void;
 }
 
@@ -86,6 +87,7 @@ export function applyTransformationMatrix(host: TransformationMatrixHost, fileIn
   }
 
   const matrix = host.transformationMatrices[fileIndex];
+  host.sectionPlanes?.updateTransform(fileIndex, matrix);
 
   // Handle PLY/mesh files
   if (fileIndex < host.meshes.length) {

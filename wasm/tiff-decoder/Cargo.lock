@@ -39,6 +39,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
+name = "camera-models"
+version = "0.1.0"
+
+[[package]]
 name = "cc"
 version = "1.0.99"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -268,6 +272,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "scientific-image-decoders"
+version = "0.1.0"
+dependencies = [
+ "exr",
+ "flate2",
+ "hayro-ccitt",
+ "js-sys",
+ "png",
+ "ruzstd",
+ "tiff",
+ "weezl",
+ "wide",
+ "zune-jpeg",
+]
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -309,20 +329,11 @@ dependencies = [
 name = "tiff-wasm"
 version = "0.1.0"
 dependencies = [
+ "camera-models",
  "console_error_panic_hook",
- "exr",
- "flate2",
- "hayro-ccitt",
- "js-sys",
- "png",
- "ruzstd",
- "tiff",
+ "scientific-image-decoders",
  "wasm-bindgen",
  "wasm-bindgen-test",
- "web-sys",
- "weezl",
- "wide",
- "zune-jpeg",
 ]
 
 [[package]]

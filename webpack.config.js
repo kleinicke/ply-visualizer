@@ -94,6 +94,13 @@ module.exports = [
         // so it lands in a separate chunk rather than the main bundle.
         'three/webgpu': path.resolve(__dirname, 'node_modules/three/build/three.webgpu.js'),
         three: path.resolve(__dirname, 'node_modules/three'),
+        // Webview: no Node `require`, so registration loads its wasm in the
+        // page (or, where it can, in a worker).
+        './wasmLoader$': path.resolve(__dirname, 'engine/src/registration/wasmLoader.browser.ts'),
+        '../registration/wasmLoader$': path.resolve(
+          __dirname,
+          'engine/src/registration/wasmLoader.browser.ts'
+        ),
       },
     },
     optimization: {

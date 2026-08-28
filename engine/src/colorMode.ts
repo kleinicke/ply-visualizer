@@ -18,7 +18,14 @@ export function pointColorsNeedSrgbDecode(
   data: SpatialData,
   colorMode: string
 ): boolean {
-  if (colorMode !== 'original' || !data.hasColors || !host.convertSrgbToLinear) {
+  // Both photographic modes carry sRGB bytes and both need the decode. The
+  // cross-station result is the same camera data as "Original", just sampled
+  // from another station's panorama, so leaving it out of this check rendered
+  // it without the decode and made it look washed out next to the original.
+  const photographic =
+    (colorMode === 'original' && data.hasColors) ||
+    (colorMode === RECOLORED_MODE && !!getRecoloredColors(data));
+  if (!photographic || !host.convertSrgbToLinear) {
     return false;
   }
   const depthDerived = isDepthDerivedFile(data) || (data as any).isDepthDerived;
@@ -152,6 +159,19 @@ export function applyColorModeToGeometry(
     }
   }
 
+  // Cross-station photographic colour lives in its own array rather than
+  // overwriting `colorsArray`: the whole point of the mode is that you can
+  // compare it against what the scan's own camera produced, and switch back.
+  if (colorMode === RECOLORED_MODE) {
+    const recolored = getRecoloredColors(data);
+    if (recolored) {
+      const colorAttribute = new THREE.BufferAttribute(recolored, 3, true);
+      geometry.setAttribute('color', colorAttribute);
+      colorAttribute.needsUpdate = true;
+      return;
+    }
+  }
+
   if (colorMode === 'original' && data.hasColors) {
     const colors = buildOriginalColorArray(host, data);
     if (colors) {
@@ -170,8 +190,23 @@ export function applyColorModeToGeometry(
   }
 }
 
+/** Colour mode id for the cross-station photographic result. */
+export const RECOLORED_MODE = 'recolored';
+
+/**
+ * The cross-station colour array, once the station pipeline has produced one.
+ *
+ * Starts as white for every point of a scan that is being coloured, so the mode
+ * can be selected before the result arrives and the points visibly fill in.
+ */
+export function getRecoloredColors(data: SpatialData): Uint8Array | null {
+  const colors = data.metadata?.stationRecoloredColors;
+  return colors instanceof Uint8Array ? colors : null;
+}
+
 export function shouldUseVertexColors(data: SpatialData, colorMode: string): boolean {
   return (
+    (colorMode === RECOLORED_MODE && !!getRecoloredColors(data)) ||
     (colorMode === 'original' && data.hasColors) ||
     (colorMode.startsWith('intensity') && hasIntensityData(data)) ||
     !!getScalarFieldForColorMode(data, colorMode)

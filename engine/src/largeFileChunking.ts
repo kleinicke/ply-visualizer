@@ -1,8 +1,12 @@
 import { SpatialData, SpatialFace, SpatialVertex } from './interfaces';
 import { noteContainerScanLoaded } from './utils/containerPerf';
+import { uiState } from './state/ui.svelte';
 
 export interface LargeFileChunkingHost {
   isFileLoading: boolean;
+  /** In VS Code, the extension host owns the lifetime of the complete load
+   * pipeline, including work that continues after geometry transfer. */
+  readonly runningInVSCode?: boolean;
   chunkedFileState: Map<
     string,
     {
@@ -48,6 +52,7 @@ export function handleStartLargeFile(host: LargeFileChunkingHost, message: any):
   );
 
   host.isFileLoading = true;
+  uiState.fileLoading = true;
   host.updateWelcomeMessageVisibility();
 
   // Show loading progress
@@ -163,6 +168,9 @@ export function handleCancelLargeFile(host: LargeFileChunkingHost, message: any)
   host.chunkedFileState.delete(message.transferId || message.fileName);
   if (host.chunkedFileState.size === 0) {
     host.isFileLoading = false;
+    if (!host.runningInVSCode) {
+      uiState.fileLoading = false;
+    }
     document.getElementById('loading')?.classList.add('hidden');
   }
 }
@@ -247,4 +255,14 @@ export async function handleLargeFileComplete(
 
   // Clean up chunked file state
   host.chunkedFileState.delete(stateKey);
+  if (host.chunkedFileState.size === 0) {
+    host.isFileLoading = false;
+    // Completing geometry is not the end of an extension load. X3A parsing
+    // deliberately exposes geometry first, then calculates and transfers the
+    // photographic colours. The matching backgroundOperationComplete message
+    // is the sole authority that clears activity in VS Code.
+    if (!host.runningInVSCode) {
+      uiState.fileLoading = false;
+    }
+  }
 }

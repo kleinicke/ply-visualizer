@@ -135,8 +135,7 @@ export function ensureTiffWasmGlueLoaded(glueUrl?: string): boolean {
   }
 
   const importScriptsFn = (globalThis as any).importScripts as
-    | ((...urls: string[]) => void)
-    | undefined;
+    ((...urls: string[]) => void) | undefined;
   const url = glueUrl || (globalThis as any).__TIFF_WASM_GLUE_URL__;
   if (!url || typeof importScriptsFn !== 'function') {
     return false;
@@ -225,6 +224,70 @@ export function projectDepthWasmSync(
     };
   } catch (error) {
     console.warn('[TiffWasm] depth projection failed, using JS fallback:', error);
+    return null;
+  } finally {
+    try {
+      result?.free?.();
+    } catch {
+      /* already freed */
+    }
+  }
+}
+
+/**
+ * One band of an image, with the whole image's depth range and its row offset.
+ *
+ * Same kernel as `projectDepthWasmSync`; the extra arguments are what make a
+ * band's output equal to the same rows of a whole-image projection. The caller
+ * must also pre-shift the principal point (`cy - rowOffset`), because the rays
+ * are computed from row indices within the slice it hands over.
+ */
+export function projectDepthBandWasmSync(
+  data: Float32Array,
+  width: number,
+  height: number,
+  rowOffset: number,
+  depthMin: number,
+  depthMax: number,
+  params: DepthProjectWasmParams
+): DepthProjectWasmResult | null {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.project_depth_band !== 'function') {
+    return null;
+  }
+
+  let result: any = null;
+  try {
+    result = wasmApi.project_depth_band(
+      data,
+      width,
+      height,
+      rowOffset,
+      depthMin,
+      depthMax,
+      params.kind || 'depth',
+      params.cameraModel,
+      params.convention || 'opengl',
+      params.fx,
+      params.fy,
+      params.cx,
+      params.cy,
+      new Float64Array(params.coefficients)
+    );
+
+    const hasPixelCoords = !!result.has_pixel_coords;
+    return {
+      vertices: new Float32Array(result.take_positions()),
+      colors: new Uint8Array(result.take_colors()),
+      pointCount: result.point_count,
+      width: result.width,
+      height: result.height,
+      pixelCoords: hasPixelCoords ? new Uint16Array(result.take_pixel_coords()) : undefined,
+      rejectedCount: result.rejected_count,
+      nonConvergedCount: result.non_converged_count,
+    };
+  } catch (error) {
+    console.warn('[TiffWasm] band projection failed:', error);
     return null;
   } finally {
     try {

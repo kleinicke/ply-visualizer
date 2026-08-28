@@ -84,7 +84,7 @@ self.onmessage = async (event: MessageEvent<DepthWorkerRequest>) => {
     const decodeMs = performance.now() - decodeStart;
 
     const projectStart = performance.now();
-    const result = converter.projectDecodedDepthImage(
+    const result = await converter.projectDecodedDepthImage(
       decoded,
       message.fileName,
       message.cameraParams

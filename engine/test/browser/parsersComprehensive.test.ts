@@ -1,7 +1,6 @@
 import * as assert from 'assert';
 import { GltfParser } from '../../src/parsers/gltfParser';
 import { OffParser } from '../../src/parsers/offParser';
-import { PtsParser } from '../../src/parsers/ptsParser';
 
 suite('Comprehensive Parser Test Suite', () => {
   suite('GLTF Parser Tests', () => {
@@ -273,130 +272,9 @@ suite('Comprehensive Parser Test Suite', () => {
     });
   });
 
-  suite('PTS Parser Tests', () => {
-    let parser: PtsParser;
-
-    setup(() => {
-      parser = new PtsParser();
-    });
-
-    test('Should handle standard PTS file format', async () => {
-      const ptsContent = `0.0 0.0 0.0
-1.0 1.0 1.0
-2.0 2.0 2.0
-`;
-
-      const data = new TextEncoder().encode(ptsContent);
-      const result = await parser.parse(data);
-
-      assert.strictEqual(result.format, 'pts');
-      assert.strictEqual(result.vertexCount, 3);
-      assert.strictEqual(result.vertices.length, 3);
-      assert.strictEqual(result.hasColors, false);
-    });
-
-    test('Should handle PTS files with colors', async () => {
-      const ptsContent = `0.0 0.0 0.0 255 128 64
-1.0 1.0 1.0 128 255 32
-2.0 2.0 2.0 64 64 255
-`;
-
-      const data = new TextEncoder().encode(ptsContent);
-      const result = await parser.parse(data);
-
-      assert.strictEqual(result.format, 'pts');
-      assert.strictEqual(result.hasColors, true);
-      assert.strictEqual(result.vertexCount, 3);
-    });
-
-    test('Should handle PTS files with intensity values', async () => {
-      const ptsContent = `0.0 0.0 0.0 0.8
-1.0 1.0 1.0 0.6
-2.0 2.0 2.0 0.9
-`;
-
-      const data = new TextEncoder().encode(ptsContent);
-      const result = await parser.parse(data);
-
-      assert.strictEqual(result.format, 'pts');
-      assert.strictEqual(result.vertexCount, 3);
-      // Intensity might be stored as additional property
-    });
-
-    test('Should handle PTS files with normals', async () => {
-      const ptsContent = `0.0 0.0 0.0 0.0 0.0 1.0
-1.0 1.0 1.0 0.0 0.0 1.0
-2.0 2.0 2.0 0.0 0.0 1.0
-`;
-
-      const data = new TextEncoder().encode(ptsContent);
-      const result = await parser.parse(data);
-
-      assert.strictEqual(result.format, 'pts');
-      // Normals may not be detected correctly in test
-      assert.ok(
-        result.hasNormals === true || result.hasNormals === false,
-        'hasNormals should be boolean'
-      );
-      assert.strictEqual(result.vertexCount, 3);
-    });
-
-    test('Should handle empty PTS files', async () => {
-      const emptyPts = '';
-      const data = new TextEncoder().encode(emptyPts);
-      const result = await parser.parse(data);
-
-      assert.strictEqual(result.format, 'pts');
-      assert.strictEqual(result.vertexCount, 0);
-      assert.strictEqual(result.vertices.length, 0);
-    });
-
-    test('Should handle PTS files with varying line formats', async () => {
-      const mixedPtsContent = `0.0 0.0 0.0
-1.0 1.0 1.0 255 128 64
-2.0 2.0 2.0 0.0 0.0 1.0 128 255 32
-`;
-
-      const data = new TextEncoder().encode(mixedPtsContent);
-
-      try {
-        const result = await parser.parse(data);
-        assert.strictEqual(result.format, 'pts');
-        assert.ok(result.vertexCount >= 0);
-      } catch (error) {
-        // Mixed formats might not be supported - acceptable
-        assert.ok(error instanceof Error);
-      }
-    });
-
-    test('Should handle PTS files with scientific notation', async () => {
-      const scientificPtsContent = `1.23e-3 4.56e+2 -7.89e-1
-2.34e+1 -5.67e-2 8.90e+0
-`;
-
-      const data = new TextEncoder().encode(scientificPtsContent);
-      const result = await parser.parse(data);
-
-      assert.strictEqual(result.format, 'pts');
-      assert.strictEqual(result.vertexCount, 2);
-    });
-
-    test('Should handle PTS files with extra whitespace', async () => {
-      const whitespacePtsContent = `  0.0   0.0   0.0  
-   1.0    1.0    1.0   
-  2.0  2.0  2.0  `;
-
-      const data = new TextEncoder().encode(whitespacePtsContent);
-      const result = await parser.parse(data);
-
-      assert.strictEqual(result.format, 'pts');
-      assert.strictEqual(result.vertexCount, 3);
-    });
-  });
-
   suite('Parser Error Handling Tests', () => {
     test('Should handle null or undefined input gracefully', async () => {
-      const parsers = [new GltfParser(), new OffParser(), new PtsParser()];
+      const parsers = [new GltfParser(), new OffParser()];
 
       for (const parser of parsers) {
         try {
@@ -422,10 +300,7 @@ suite('Comprehensive Parser Test Suite', () => {
     test('Should handle very large files gracefully', async function () {
       this.timeout(5000);
 
-      const parsers = [
-        { parser: new OffParser(), content: 'OFF\n100000 0 0\n' },
-        { parser: new PtsParser(), content: '' },
-      ];
+      const parsers = [{ parser: new OffParser(), content: 'OFF\n100000 0 0\n' }];
 
       for (const { parser, content } of parsers) {
         // Create large content
@@ -454,7 +329,6 @@ suite('Comprehensive Parser Test Suite', () => {
       const parsers = [
         { parser: new GltfParser(), data: '{"asset":{"version":"2.0"}}' },
         { parser: new OffParser(), data: 'OFF\n1 0 0\n0 0 0\n' },
-        { parser: new PtsParser(), data: '0 0 0\n' },
       ];
 
       for (const { parser, data } of parsers) {

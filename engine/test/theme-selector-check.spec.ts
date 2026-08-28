@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('Phase 6: theme selector still works after shell consolidation', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(1000);
 

@@ -307,7 +307,8 @@ function createFrameVisualization(
   frame: StonexCameraFrameMetadata,
   frameNumber: number,
   multipliers: Float32Array,
-  settings: StonexColorCorrection
+  settings: StonexColorCorrection,
+  station?: THREE.Matrix4 | null
 ): THREE.Group {
   const cameraToModel = cameraToViewer(frame);
   const origin = transformCameraPoint(new THREE.Vector3(), cameraToModel);
@@ -315,8 +316,11 @@ function createFrameVisualization(
 
   const group = new THREE.Group();
   group.name = `camera_${frame.name}`;
-  group.position.copy(origin);
-  (group as any).originalPosition = { x: origin.x, y: origin.y, z: origin.z };
+  // The frustum geometry is built in the station's own axes about `origin`, so
+  // the station's placement rides on the group: its rotation as the group's
+  // orientation, its translation folded into the position.
+  (group as any).stationLocalOrigin = { x: origin.x, y: origin.y, z: origin.z };
+  placeFrameGroup(group, station);
   group.userData.frame = frame;
   group.userData.geometries = { pinhole: geometries } as Record<string, FrameGeometries>;
   group.userData.view = frameView(frame, cameraToModel, origin);
@@ -410,9 +414,24 @@ export function addStonexCameraVisualization(host: StonexCameraHost, data: Spati
     ? computeStonexFrameMultipliers(calibration, settings)
     : new Float32Array(frames.length * 3).fill(1);
 
-  profile.add(createScannerMarker());
+  // One scanner marker per station, at the station's own origin, rather than a
+  // single one at the world origin that would claim every panorama was shot
+  // from the same tripod.
+  const stationOf = stationTransformLookup(host);
+  const markedStations = new Set<string>();
   frames.forEach((frame, frameNumber) => {
-    profile.add(createFrameVisualization(frame, frameNumber, multipliers, settings));
+    const station = stationOf(frame.scanStem);
+    if (!markedStations.has(frame.scanStem ?? '')) {
+      markedStations.add(frame.scanStem ?? '');
+      const marker = createScannerMarker();
+      marker.userData.stationStem = frame.scanStem ?? '';
+      if (station) {
+        marker.position.setFromMatrixPosition(station);
+        marker.quaternion.setFromRotationMatrix(station);
+      }
+      profile.add(marker);
+    }
+    profile.add(createFrameVisualization(frame, frameNumber, multipliers, settings, station));
   });
 
   host.scene.add(profile);
@@ -420,6 +439,77 @@ export function addStonexCameraVisualization(host: StonexCameraHost, data: Spati
   host.cameraNames.push(`${profileName} cameras`);
   registerCameraEntry(host);
   return true;
+}
+
+/** Places one frame group from its station-local origin and station pose. */
+function placeFrameGroup(group: THREE.Group, station?: THREE.Matrix4 | null): void {
+  const local = (group as any).stationLocalOrigin as { x: number; y: number; z: number };
+  const position = new THREE.Vector3(local.x, local.y, local.z);
+  if (station) {
+    position.applyMatrix4(station);
+    group.quaternion.setFromRotationMatrix(station);
+  } else {
+    group.quaternion.identity();
+  }
+  group.position.copy(position);
+  // The coordinate label reads this, and what a user wants to see there is
+  // where the camera actually stood, not where it sat before registration.
+  (group as any).originalPosition = { x: position.x, y: position.y, z: position.z };
+}
+
+interface StationTransformHost {
+  spatialFiles: { metadata?: Record<string, unknown> }[];
+  transformationMatrices: THREE.Matrix4[];
+}
+
+/**
+ * Looks a station's current placement up from the scan that belongs to it.
+ *
+ * Deliberately read from the viewer rather than from anything the parser
+ * emitted: cameras then follow whatever alignment is on screen, whether it came
+ * from "align all", the archive pipeline, or a matrix typed in by hand.
+ */
+function stationTransformLookup(
+  host: StationTransformHost
+): (scanStem: string | undefined) => THREE.Matrix4 | null {
+  const byStem = new Map<string, THREE.Matrix4>();
+  for (let index = 0; index < host.spatialFiles.length; index++) {
+    const name = host.spatialFiles[index]?.metadata?.embeddedScanName as string | undefined;
+    if (name) {
+      byStem.set(name.replace(/\.x3r$/i, ''), host.transformationMatrices[index]);
+    }
+  }
+  return stem => (stem ? (byStem.get(stem) ?? null) : null);
+}
+
+/**
+ * Re-places every panorama on its own station after the scans have moved.
+ *
+ * Called when registration changes a transform; without it the frustums stay
+ * where they were built, which for an unregistered archive means every station
+ * piled on the origin.
+ */
+export function updateStonexCameraStations(
+  host: StationTransformHost & { cameraGroups: THREE.Group[] }
+): void {
+  const stationOf = stationTransformLookup(host);
+  for (const profile of host.cameraGroups) {
+    for (const child of profile.children) {
+      if (child.name === 'stonexScannerMarker') {
+        const station = stationOf(child.userData.stationStem as string | undefined);
+        if (station) {
+          child.position.setFromMatrixPosition(station);
+          child.quaternion.setFromRotationMatrix(station);
+        }
+        continue;
+      }
+      if (!(child instanceof THREE.Group) || !child.name.startsWith('camera_')) {
+        continue;
+      }
+      const frame = child.userData.frame as StonexCameraFrameMetadata | undefined;
+      placeFrameGroup(child, stationOf(frame?.scanStem));
+    }
+  }
 }
 
 export function setStonexImagesVisible(group: THREE.Group, visible: boolean): void {

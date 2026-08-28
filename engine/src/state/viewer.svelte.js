@@ -13,6 +13,7 @@ export const viewerState = $state(
    *   controlScheme: string;
    *   cameraConvention: string;
    *   edlEnabled: boolean;
+   *   edlMode: 'auto' | 'all' | 'off';
    *   edlStrength: number;
    *   edlRadius: number;
    *   brightnessStops: number;
@@ -26,9 +27,10 @@ export const viewerState = $state(
    *   cameraTargetText: string;
    * }}
    */ ({
-    controlScheme: 'trackball',
+    controlScheme: 'legacy-trackball',
     cameraConvention: 'opengl',
-    edlEnabled: false,
+    edlEnabled: true,
+    edlMode: 'auto',
     edlStrength: 1.0,
     edlRadius: 1.4,
     brightnessStops: 0,
@@ -39,7 +41,7 @@ export const viewerState = $state(
     cameraFov: 75,
     // Must match the PerspectiveCamera constructor arguments in initThreeJS.
     cameraNear: 0.001,
-    cameraFar: 1000000,
+    cameraFar: 10000000,
     cameraPositionText: '(0.000, 0.000, 0.000)',
     cameraRotationText: '(0.0°, 0.0°, 0.0°)',
     cameraTargetText: '(0.000, 0.000, 0.000)',

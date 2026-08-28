@@ -4,25 +4,27 @@ import * as fs from 'fs';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
 import { ObjParser } from '../../engine/src/parsers/objParser';
 import { StlParser } from '../../engine/src/parsers/stlParser';
-import { PcdParser } from '../../engine/src/parsers/pcdParser';
-import { PtsParser } from '../../engine/src/parsers/ptsParser';
 import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
 import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
-import { XyzVariantParser } from '../../engine/src/parsers/xyzVariantParser';
+import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
+import { buildInitialVolumeData, decorateVolumeData, retainVolume } from './volumeSessions';
 import {
   parseXyzWasm,
   parseAsciiPlyWasm,
-  parsePcdAsciiWasm,
-  parsePcdBinaryWasm,
-  parsePtsWasm,
   streamParseFile,
   detectXyzColorMode,
   parseLidarWasm,
 } from '../wasmPointcloud';
+import {
+  parsePcdWasm,
+  parsePtsWasm,
+  toPcdPayload,
+  toPointCloudPayload,
+} from '../../engine/src/parsers/pointcloudWasm';
 import { isPlyBinary } from '../../engine/src/fileHandler';
 import {
   readFileFast,
@@ -61,6 +63,7 @@ export interface DocumentFileTypeFlags {
   isStonexX3aFile: boolean;
   isOffFile: boolean;
   isGltfFile: boolean;
+  isVolumeFile: boolean;
   isXyzVariant: boolean;
   isJsonFile: boolean;
   isLidarFile: boolean;
@@ -95,6 +98,142 @@ function tagContainer(scans: any[], kind: string, name: string, startedAt: numbe
  * `setImmediate` callback resolveCustomEditor schedules so the webview HTML
  * can paint before any file IO starts.
  */
+interface StonexPhaseReport {
+  totalMs: number;
+  points: number;
+  scans: number;
+  frames: number;
+  archiveBytes: number;
+  phases: Array<{ name: string; ms: number }>;
+  marshalMs?: number;
+  projectMs?: number;
+  sampleMs?: number;
+  candidateTotal?: number;
+  pixelsInFrame?: number;
+  samplesTaken?: number;
+}
+
+/**
+ * Prints the parse breakdown next to the existing PERF lines.
+ *
+ * Deliberately verbose while the colour path is being worked on. Timings alone
+ * proved too easy to misread - a phase can be slow because it did more work
+ * rather than because it is slow per unit of work - so the counts and the
+ * derived rates travel with them, and one run can be compared against another
+ * on a machine that is not perfectly quiet.
+ */
+/**
+ * Break a parse down into its phases in the Output channel.
+ *
+ * Exported because the recolour pipeline re-parses the whole archive and that
+ * re-parse was a black box: the pipeline line reported it as one `reload`
+ * number computed by subtraction, which is the least informative shape a
+ * measurement can have. Same report, different tag, so the two parses stay
+ * distinguishable in the log.
+ */
+export function logStonexPhases(
+  host: { logPerf(line: string): void },
+  scan: { metadata?: Record<string, unknown> } | undefined,
+  fileName: string,
+  tag = 'x3a/phases'
+): void {
+  const report = scan?.metadata?.stonexParsePhases as StonexPhaseReport | undefined;
+  if (!report) {
+    return;
+  }
+  const seconds = (ms: number) => (ms / 1000).toFixed(2);
+  const share = (ms: number) => `${((ms / report.totalMs) * 100).toFixed(0)}%`;
+  host.logPerf(
+    `⏱️ PERF[${tag}] ${fileName} · total ${seconds(report.totalMs)}s · ` +
+      `${(report.points / 1e6).toFixed(1)}M pts · ${report.scans} scans · ${report.frames} frames · ` +
+      `${(report.archiveBytes / 1e6).toFixed(0)} MB`
+  );
+  for (const phase of report.phases) {
+    if (phase.ms >= 1) {
+      host.logPerf(
+        `⏱️ PERF[${tag.replace(/s$/, '')}]   ${phase.name}: ${seconds(phase.ms)}s (${share(phase.ms)})`
+      );
+    }
+  }
+  if (report.projectMs !== undefined) {
+    const candidates = report.candidateTotal ?? 0;
+    const perMillion = (ms: number) =>
+      candidates > 0 ? `${((ms * 1e6) / candidates).toFixed(1)}ms/M` : 'n/a';
+    host.logPerf(
+      `⏱️ PERF[x3a/colour]   candidates ${(candidates / 1e6).toFixed(1)}M · ` +
+        `in-frame ${((report.pixelsInFrame ?? 0) / 1e6).toFixed(1)}M · ` +
+        `sampled ${((report.samplesTaken ?? 0) / 1e6).toFixed(1)}M`
+    );
+    host.logPerf(
+      `⏱️ PERF[x3a/colour]   marshal ${seconds(report.marshalMs ?? 0)}s (${perMillion(report.marshalMs ?? 0)}) · ` +
+        `rust-project ${seconds(report.projectMs)}s (${perMillion(report.projectMs)}) · ` +
+        `js-sample ${seconds(report.sampleMs ?? 0)}s (${perMillion(report.sampleMs ?? 0)})`
+    );
+  }
+}
+
+function decorateStonexScans(
+  host: DocumentLoaderHost,
+  scans: any[],
+  documentUri: vscode.Uri,
+  archiveBytes: number
+): void {
+  for (const scan of scans) {
+    scan.shortPath = host.getShortPath(documentUri.fsPath);
+    scan.fileSizeInBytes = (scan.metadata.embeddedMemberSize as number | undefined) ?? archiveBytes;
+  }
+}
+
+/** Sends colour separately after geometry is visible, bounded so Electron does
+ * not silently drop a single hundreds-of-megabytes structured clone. */
+async function sendStonexColors(
+  webviewPanel: vscode.WebviewPanel,
+  scans: any[],
+  container: Record<string, unknown>
+): Promise<void> {
+  // Raw RGB + u16 frame id is 5 MB per million points. Staying comfortably
+  // below Electron's unreliable huge-message range while avoiding hundreds of
+  // tiny sequential colour messages on large archives.
+  const pointsPerChunk = 1_000_000;
+  for (const scan of scans) {
+    const rawColors = scan.metadata.stonexRawColors as Uint8Array | null;
+    const frameIndices = scan.metadata.stonexFrameIndices as Uint16Array | null;
+    if (!rawColors) {
+      continue;
+    }
+    for (let pointOffset = 0; pointOffset < scan.vertexCount; pointOffset += pointsPerChunk) {
+      const pointEnd = Math.min(scan.vertexCount, pointOffset + pointsPerChunk);
+      const final = pointEnd === scan.vertexCount;
+      const delivered = await webviewPanel.webview.postMessage({
+        type: 'stonexColorReady',
+        updates: [
+          {
+            scanName: scan.metadata.embeddedScanName,
+            pointOffset,
+            totalPoints: scan.vertexCount,
+            final,
+            // Raw RGB is enough: the webview already owns the correction
+            // kernel and derives its display array on the closing chunk. This
+            // avoids shipping two three-byte colour arrays per point.
+            colors: rawColors.slice(pointOffset * 3, pointEnd * 3),
+            colorsAreRaw: true,
+            frameIndices: frameIndices?.slice(pointOffset, pointEnd) ?? null,
+            colorCalibration: final ? scan.metadata.stonexColorCalibration : undefined,
+            photographicallyColoredPoints: final
+              ? scan.metadata.photographicallyColoredPoints
+              : undefined,
+            cameraFrames: final ? scan.metadata.stonexCameraFrames : undefined,
+            container: final ? container : undefined,
+          },
+        ],
+      });
+      if (!delivered) {
+        throw new Error(`The webview rejected colour for ${scan.fileName}`);
+      }
+    }
+  }
+}
+
 export async function loadDocumentContent(
   host: DocumentLoaderHost,
   documentUri: vscode.Uri,
@@ -117,6 +256,7 @@ export async function loadDocumentContent(
     isStonexX3aFile,
     isOffFile,
     isGltfFile,
+    isVolumeFile,
     isXyzVariant,
     isJsonFile,
     isLidarFile,
@@ -148,9 +288,7 @@ export async function loadDocumentContent(
       const bytes = await readFileFast(documentUri);
       const readTime = performance.now();
       const extension = path.extname(documentUri.fsPath).slice(1).toLowerCase() as
-        | 'las'
-        | 'laz'
-        | 'e57';
+        'las' | 'laz' | 'e57';
       const decoded = parseLidarWasm(bytes, extension, path.basename(documentUri.fsPath));
       const parsedData = decoded.map((cloud, index) => ({
         vertices: [],
@@ -189,26 +327,51 @@ export async function loadDocumentContent(
       const bytes = await readFileFast(documentUri);
       const readTime = performance.now();
       const parser = new StonexX3aParser(stonexCameraProjector);
+      let geometrySent = false;
+      const archiveName = path.basename(documentUri.fsPath);
+      const colorContainer = {
+        id: `${loadStartedAtEpoch}-${archiveName}-colour`,
+        kind: 'x3a',
+        name: archiveName,
+        scanCount: 0,
+        startedAt: loadStartedAtEpoch,
+      };
       const parsed = await parser.parseAll(
         bytes,
-        path.basename(documentUri.fsPath),
+        archiveName,
         message =>
           void webviewPanel.webview.postMessage({
             type: 'timingUpdate',
             message,
             timestamp: performance.now(),
-          })
+          }),
+        undefined,
+        async geometry => {
+          decorateStonexScans(host, geometry, documentUri, bytes.byteLength);
+          tagContainer(geometry, 'x3a/geometry', archiveName, loadStartedAtEpoch);
+          colorContainer.scanCount = geometry.filter(scan => scan.hasColors === false).length;
+          geometrySent = true;
+          await sendSpatialDataToWebview(
+            webviewPanel,
+            geometry,
+            'multiSpatialData',
+            host.logPerf.bind(host)
+          );
+        }
       );
-      for (const scan of parsed) {
-        (scan as any).shortPath = host.getShortPath(documentUri.fsPath);
-        (scan as any).fileSizeInBytes =
-          (scan.metadata.embeddedMemberSize as number | undefined) ?? bytes.byteLength;
-      }
+      decorateStonexScans(host, parsed, documentUri, bytes.byteLength);
       host.logPerf(
         `⏱️ PERF[x3a/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsed.reduce((sum, scan) => sum + scan.vertexCount, 0)} pts in ${parsed.length} scans) for ${path.basename(documentUri.fsPath)}`
       );
-      tagContainer(parsed, 'x3a', path.basename(documentUri.fsPath), loadStartedAtEpoch);
-      await sendSpatialDataToWebview(webviewPanel, parsed, 'multiSpatialData');
+      logStonexPhases(host, parsed[0], path.basename(documentUri.fsPath));
+      if (geometrySent) {
+        // Every parsed scan with photographic colour sends one closing update.
+        colorContainer.scanCount = parsed.filter(scan => scan.colorsArray).length;
+        await sendStonexColors(webviewPanel, parsed, colorContainer);
+      } else {
+        tagContainer(parsed, 'x3a', path.basename(documentUri.fsPath), loadStartedAtEpoch);
+        await sendSpatialDataToWebview(webviewPanel, parsed, 'multiSpatialData');
+      }
       return;
     }
 
@@ -397,8 +560,9 @@ export async function loadDocumentContent(
       // Streaming overlap for ASCII PCD (same cold-cache win as XYZ: the next
       // chunk's disk read overlaps the current chunk's parse). Gate on the
       // HEADER only so we don't read the whole file first: require ASCII data
-      // and an identity VIEWPOINT (the WASM stream parser carries no viewpoint
-      // transform). Anything else falls through to the whole-file path below.
+      // and an identity VIEWPOINT — unlike `parse_pcd`, the streaming parser
+      // reads rows without the header, so it carries no viewpoint transform.
+      // Anything else falls through to the whole-file path below.
       if (documentUri.scheme === 'file') {
         try {
           const head = await readFileHead(documentUri, 65536);
@@ -441,43 +605,11 @@ export async function loadDocumentContent(
         timestamp: fileReadTime,
       });
 
-      // Fast path: Rust/WASM for ASCII PCD point clouds with an identity
-      // viewpoint. parse_pcd_ascii returns null for binary PCD; the
-      // viewpoint guard keeps clouds that need the VIEWPOINT transform on
-      // the JS path. Anything else falls through to the JS parser below.
-      if (pcdViewpointIsIdentity(pcdData)) {
-        // ASCII via WASM, then binary via WASM (binary PCD otherwise falls to
-        // the slow JS parser — ~11x slower). Both gated on identity viewpoint
-        // since the WASM parsers don't carry the VIEWPOINT transform.
-        const pcdWasm = parsePcdAsciiWasm(pcdData) || parsePcdBinaryWasm(pcdData);
-        if (pcdWasm) {
-          host.logPerf(
-            `⏱️ PERF[pcd/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${pcdWasm.vertexCount} pts, wasm) for ${path.basename(documentUri.fsPath)}`
-          );
-          webviewPanel.webview.postMessage({
-            type: 'xyzVariantData',
-            fileName: path.basename(documentUri.fsPath),
-            shortPath: host.getShortPath(documentUri.fsPath),
-            fileSizeInBytes: pcdData.byteLength,
-            data: pcdWasm,
-            variant: 'pcd',
-            parseMode: 'wasm',
-          });
-          return;
-        }
-      }
-
-      const pcdParser = new PcdParser();
-      const timingCallback = (message: string) => {
-        webviewPanel.webview.postMessage({
-          type: 'timingUpdate',
-          message: message,
-          timestamp: performance.now(),
-        });
-      };
-
-      const parsedData = await pcdParser.parse(pcdData, timingCallback);
+      const parsedData = toPcdPayload(await parsePcdWasm(pcdData));
       const parseTime = performance.now();
+      host.logPerf(
+        `⏱️ PERF[pcd/ext] parse ${(parseTime - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
+      );
       webviewPanel.webview.postMessage({
         type: 'timingUpdate',
         message: `🎯 Extension: PCD parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
@@ -512,31 +644,9 @@ export async function loadDocumentContent(
         timestamp: fileReadTime,
       });
 
-      // Try the Rust/WASM parser (~2.5-3x faster); fall back to JS.
-      let parsedData: any;
-      let ptsMode = 'js';
-      const ptsWasm = parsePtsWasm(ptsData);
-      if (ptsWasm) {
-        parsedData = {
-          vertexCount: ptsWasm.vertexCount,
-          positionsArray: ptsWasm.positionsArray,
-          colorsArray: ptsWasm.colorsArray,
-          normalsArray: ptsWasm.normalsArray,
-          intensityArray: ptsWasm.intensityArray,
-          hasColors: ptsWasm.hasColors,
-          hasNormals: ptsWasm.hasNormals,
-          hasIntensity: ptsWasm.hasIntensity,
-          scalarFields: ptsWasm.intensityArray ? { intensity: ptsWasm.intensityArray } : {},
-          detectedFormat: `x y z${ptsWasm.hasIntensity ? ' intensity' : ''}${ptsWasm.hasColors ? ' r g b' : ''}`,
-          comments: [],
-        };
-        ptsMode = 'wasm';
-      } else {
-        const ptsParser = new PtsParser();
-        parsedData = await ptsParser.parse(ptsData);
-      }
+      const parsedData = toPointCloudPayload(await parsePtsWasm(ptsData), 'pts');
       host.logPerf(
-        `⏱️ PERF[pts/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts, ${ptsMode}) for ${path.basename(documentUri.fsPath)}`
+        `⏱️ PERF[pts/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
       );
 
       // Send parsed PTS data to webview
@@ -546,10 +656,72 @@ export async function loadDocumentContent(
         shortPath: host.getShortPath(documentUri.fsPath),
         fileSizeInBytes: ptsData.byteLength,
         data: parsedData,
-        parseMode: ptsMode,
       });
 
       return; // Exit early for PTS files
+    }
+
+    if (isVolumeFile) {
+      // NRRD volume: retain the scalar samples and initially hand over one
+      // windowed-grey point per voxel. Optional threshold-driven mesh
+      // extraction still runs in the extension host so it cannot freeze the
+      // webview.
+      webviewPanel.webview.postMessage({
+        type: 'timingUpdate',
+        message: '🚀 Extension: Starting volume processing...',
+        timestamp: loadStartTime,
+      });
+
+      const volumeBytes = await readFileFast(documentUri);
+      const fileReadTime = performance.now();
+
+      const timingCallback = (message: string) => {
+        webviewPanel.webview.postMessage({
+          type: 'timingUpdate',
+          message,
+          timestamp: performance.now(),
+        });
+      };
+
+      // A detached `.nhdr` names its data file relative to the header, so the
+      // resolver reads siblings of the document rather than assuming the bytes
+      // are attached.
+      const directory = vscode.Uri.joinPath(documentUri, '..');
+      const volume = await new NrrdParser().parse(
+        volumeBytes,
+        path.basename(documentUri.fsPath),
+        timingCallback,
+        async relative =>
+          new Uint8Array(
+            await vscode.workspace.fs.readFile(vscode.Uri.joinPath(directory, relative))
+          )
+      );
+      const volumeDisplayName = volume.header['dicom series number']
+        ? volume.header['content'] || path.basename(documentUri.fsPath)
+        : path.basename(documentUri.fsPath);
+      volume.fileName = volumeDisplayName;
+
+      const volumeKey = documentUri.toString();
+      const session = retainVolume(volumeKey, volume);
+      const pointData = buildInitialVolumeData(session);
+      decorateVolumeData(pointData, volumeKey, session);
+      const parseTime = performance.now();
+      host.logPerf(
+        `⏱️ PERF[volume/ext] read ${(fileReadTime - loadStartTime).toFixed(1)}ms, ` +
+          `points ${(parseTime - fileReadTime).toFixed(1)}ms ` +
+          `(${volume.sizes.join('x')} → ${pointData.vertexCount} points @ ${session.options.threshold.toFixed(0)}) ` +
+          `for ${path.basename(documentUri.fsPath)}`
+      );
+
+      webviewPanel.webview.postMessage({
+        type: 'volumeData',
+        fileName: volumeDisplayName,
+        shortPath: host.getShortPath(documentUri.fsPath),
+        fileSizeInBytes: volumeBytes.byteLength,
+        data: pointData,
+      });
+
+      return;
     }
 
     if (isOffFile) {
@@ -732,8 +904,11 @@ export async function loadDocumentContent(
         const xyzData = await readFileFast(documentUri);
         xyzBytes = xyzData.byteLength;
         const wasmParsed = parseXyzWasm(xyzData, xyzVariant, xyzColorMode);
-        xyzParsed = wasmParsed ?? new XyzVariantParser().parse(xyzData, xyzVariant);
-        xyzMode = wasmParsed ? 'wasm' : 'js';
+        if (!wasmParsed) {
+          throw new Error('XYZ parse failed: the Rust point-cloud parser is unavailable');
+        }
+        xyzParsed = wasmParsed;
+        xyzMode = 'wasm';
       }
       host.logPerf(
         `⏱️ PERF[xyz/ext] load ${(performance.now() - loadStart).toFixed(1)}ms (${xyzParsed.vertexCount} pts, ${xyzMode}) for ${path.basename(documentUri.fsPath)}`
@@ -787,6 +962,29 @@ export async function loadDocumentContent(
         });
         return;
       }
+    }
+
+    // Everything below is the PLY path, which doubles as the catch-all. A file
+    // whose extension this build does not know reaches it and fails as
+    // "Invalid PLY/XYZ file: missing PLY header", which sends the reader
+    // looking for a corrupt file instead of a missing format.
+    //
+    // That is exactly what an older build does when handed a format a newer
+    // one added — `vscode.openWith` names this editor explicitly, so the
+    // custom-editor selector never gets to reject the file. Say what actually
+    // happened.
+    if (!fileType) {
+      const extension = path.extname(documentUri.fsPath).toLowerCase().replace(/^\./, '');
+      webviewPanel.webview.postMessage({
+        type: 'loadingError',
+        fileName: path.basename(documentUri.fsPath),
+        fileType: extension.toUpperCase() || 'unknown',
+        error:
+          `This build of the 3D Visualizer does not support .${extension} files. ` +
+          'If another extension opened this file, the two versions are out of step — ' +
+          'update or rebuild the 3D Visualizer.',
+      });
+      return;
     }
 
     // Send timing updates to webview for visibility
@@ -920,15 +1118,6 @@ export async function loadDocumentContent(
         timestamp: performance.now(),
       });
 
-      // Send raw binary data + header info
-      // Extra logging to aid debugging face offsets/types
-      // Log face types once for debugging
-      // concise header info for debugging (once)
-      webviewPanel.webview.postMessage({
-        type: 'timingUpdate',
-        message: `Header face types: count=${headerResult.faceCountType || 'n/a'}, index=${headerResult.faceIndexType || 'n/a'}`,
-        timestamp: performance.now(),
-      });
       // Transfer-via-fetch: send only header metadata + a webview URI for
       // the file. The webview fetches the bytes directly, avoiding the
       // multi-hundred-ms structured-clone of the full vertex buffer. On a
@@ -941,7 +1130,6 @@ export async function loadDocumentContent(
         loadStartedAt: host.getCurrentLoadStartedAt(),
         fileUri: webviewPanel.webview.asWebviewUri(documentUri).toString(),
         docUri: documentUri.toString(),
-        binaryDataStart: headerResult.binaryDataStart,
         fileName: parsedData.fileName,
         shortPath: parsedData.shortPath,
         fileSizeInBytes: fullBytes
@@ -954,11 +1142,7 @@ export async function loadDocumentContent(
         hasIntensity: parsedData.hasIntensity,
         format: parsedData.format,
         comments: parsedData.comments,
-        vertexStride: headerResult.vertexStride,
-        propertyOffsets: Array.from(headerResult.propertyOffsets.entries()),
         littleEndian: headerResult.headerInfo.format === 'binary_little_endian',
-        faceCountType: headerResult.faceCountType,
-        faceIndexType: headerResult.faceIndexType,
       });
     } else {
       // ASCII PLY. Try the Rust/WASM parser first — it handles point clouds

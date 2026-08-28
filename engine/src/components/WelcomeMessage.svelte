@@ -1,7 +1,26 @@
 <script lang="ts">
   import { uiState } from '../state/ui.svelte';
 
-  let { onAddCloud }: { onAddCloud: () => void } = $props();
+  let {
+    onAddCloud,
+    onLoadGuidedExample,
+    onLoadBasicExample,
+  }: {
+    onAddCloud: () => void;
+    onLoadGuidedExample: () => Promise<void>;
+    onLoadBasicExample: () => Promise<void>;
+  } = $props();
+
+  let loadingExample = $state<'guided' | 'basic' | null>(null);
+
+  async function loadExample(kind: 'guided' | 'basic'): Promise<void> {
+    loadingExample = kind;
+    try {
+      await (kind === 'guided' ? onLoadGuidedExample() : onLoadBasicExample());
+    } finally {
+      loadingExample = null;
+    }
+  }
 </script>
 
 <div id="welcome-message" class="welcome-message" class:hidden={!uiState.showWelcomeMessage}>
@@ -17,5 +36,28 @@
       >
       button to select a file you want to visualize.
     </p>
+    <p class="example-prompt">
+      No file at hand?
+    </p>
+    <div class="example-actions">
+      <button
+        id="welcome-load-guided-example"
+        class="example-button"
+        onclick={() => loadExample('guided')}
+        disabled={loadingExample !== null}
+        title="Load a measured point cloud with a looping camera preview"
+      >
+        {loadingExample === 'guided' ? 'Loading guided example…' : 'Guided example'}
+      </button>
+      <button
+        id="welcome-load-basic-example"
+        class="example-button"
+        onclick={() => loadExample('basic')}
+        disabled={loadingExample !== null}
+        title="Load the original static point-cloud example"
+      >
+        {loadingExample === 'basic' ? 'Loading basic example…' : 'Basic example'}
+      </button>
+    </div>
   </div>
 </div>

@@ -23,7 +23,7 @@ const cam = (page: any) =>
   });
 
 test('Z-up format opened first orients the camera to Z-up', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await load(page, e57);
   console.log('E57_FIRST', JSON.stringify(await cam(page)));
@@ -31,7 +31,7 @@ test('Z-up format opened first orients the camera to Z-up', async ({ page }) => 
 });
 
 test('Z-up format added second leaves the camera alone', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await load(page, ply);
   const first = await cam(page);
@@ -43,7 +43,7 @@ test('Z-up format added second leaves the camera alone', async ({ page }) => {
 });
 
 test('non Z-up format still opens Y-up', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await load(page, ply);
   console.log('PLY_FIRST', JSON.stringify(await cam(page)));
@@ -67,7 +67,7 @@ const camState = (page: any) =>
 
 test('E57 opens Z-up around its capture point and can rotate', async ({ page }) => {
   test.setTimeout(200000);
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page
     .locator('#hiddenFileInput')
@@ -99,7 +99,7 @@ test('E57 opens Z-up around its capture point and can rotate', async ({ page }) 
 
 test('Stonex X3R opens Z-up around its capture point', async ({ page }) => {
   test.setTimeout(200000);
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.locator('#hiddenFileInput').setInputFiles(x3r);
   await page.waitForTimeout(3000);

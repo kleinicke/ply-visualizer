@@ -1,11 +1,11 @@
 import { test, expect, Page } from '@playwright/test';
 import path from 'path';
 
-// Coverage for the default Trackball control scheme (VirtualBallControls in
-// controls.ts): a sphere-projected virtual-ball rotation model, promoted to
-// default in July 2026. The previous delta-based
-// three.js TrackballControls lives on as 'Legacy Trackball' and serves as the
-// comparison baseline here. The behaviors that define the ball:
+// Coverage for the optional Trackball control scheme (VirtualBallControls in
+// controls.ts): a sphere-projected virtual-ball rotation model. The
+// delta-based three.js TrackballControls remains the default as 'Legacy
+// Trackball' and serves as the comparison baseline here. The behaviors that
+// define the ball:
 //
 // 1. Straight drags through the canvas center orbit in the SAME direction as
 //    the legacy trackball (the scene front follows the mouse) — no mirroring.
@@ -19,7 +19,7 @@ import path from 'path';
 //    opposite sign, so the roll sign here must DIFFER from legacy trackball.
 
 async function setup(page: Page, mode: 'ball' | 'legacy') {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.waitForTimeout(1000);
 
@@ -255,7 +255,22 @@ async function rollAngle(page: Page, before: any, after: any): Promise<number> {
 
 async function canvasCenter(page: Page): Promise<{ cx: number; cy: number; box: any }> {
   const box = (await page.locator('#three-canvas').boundingBox())!;
-  return { cx: box.x + box.width / 2, cy: box.y + box.height / 2, box };
+  const safe = await page.evaluate(() => {
+    const viewer: any = (window as any).visualizer;
+    return (
+      viewer.screenAnchor?.getSafeRect() ?? {
+        x: 0,
+        y: 0,
+        width: viewer.renderer.domElement.clientWidth,
+        height: viewer.renderer.domElement.clientHeight,
+      }
+    );
+  });
+  return {
+    cx: box.x + safe.x + safe.width / 2,
+    cy: box.y + safe.y + safe.height / 2,
+    box: { ...box, safe },
+  };
 }
 
 // ---------------------------------------------------------------- straight
@@ -301,14 +316,41 @@ for (const { name, dirX, dirY, axis, sign } of straightCases) {
   });
 }
 
+test('Shift + left-drag pans the virtual-ball trackball on a trackpad-style gesture', async ({
+  page,
+}) => {
+  await setup(page, 'ball');
+  const { cx, cy } = await canvasCenter(page);
+  const before = await getCamState(page);
+
+  await page.keyboard.down('Shift');
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: 'left' });
+  await page.mouse.move(cx + 120, cy - 60, { steps: 12 });
+  await page.mouse.up({ button: 'left' });
+  await page.keyboard.up('Shift');
+  await page.waitForTimeout(100);
+
+  const after = await getCamState(page);
+  const positionMove = after.pos.map((value, i) => value - before.pos[i]);
+  const targetMove = after.target.map((value, i) => value - before.target[i]);
+
+  // Panning translates the camera and target by the same vector. Rotation
+  // would move the camera while leaving the target at the origin.
+  expect(Math.hypot(...targetMove)).toBeGreaterThan(0.05);
+  for (let i = 0; i < 3; i++) {
+    expect(positionMove[i]).toBeCloseTo(targetMove[i], 5);
+  }
+});
+
 // --------------------------------------------------------------- rim roll
 
 test('vertical drag at the left rim rolls the scene under the cursor', async ({ page }) => {
   await setup(page, 'ball');
-  const { cx, cy } = await canvasCenter(page);
+  const { cx, cy, box } = await canvasCenter(page);
   // Left rim (~0.78 of the half-width). The RIGHT side of the canvas is
   // covered by the main UI panel, which would swallow the pointer events.
-  const rimX = cx - 500;
+  const rimX = cx - box.safe.width * 0.39;
 
   // Drag UP at the left rim: the ball's left side follows the finger up, an
   // apparent clockwise scene roll, so the camera's swing-corrected roll about
@@ -441,10 +483,13 @@ test('ball trackball stays stable (no drift/NaN) over sustained rotation', async
 
   const state = await page.evaluate(() => {
     const v: any = (window as any).visualizer;
+    const projectedTarget = v.controls.target.clone().project(v.camera);
     return {
       up: v.camera.up.toArray() as number[],
       upLength: v.camera.up.length(),
       distToTarget: v.camera.position.distanceTo(v.controls.target),
+      target: v.controls.target.toArray() as number[],
+      projectedTarget: [projectedTarget.x, projectedTarget.y] as number[],
     };
   });
 
@@ -453,4 +498,17 @@ test('ball trackball stays stable (no drift/NaN) over sustained rotation', async
   expect(state.upLength).toBeLessThan(1.01);
   expect(Number.isFinite(state.distToTarget)).toBe(true);
   expect(Math.abs(state.distToTarget - 3)).toBeLessThan(0.01);
+  expect(state.target).toEqual([0, 0, 0]);
+
+  const safe = await page.evaluate(() => {
+    const v: any = (window as any).visualizer;
+    const rect = v.screenAnchor.getSafeRect();
+    const canvas = v.renderer.domElement.getBoundingClientRect();
+    return {
+      x: ((rect.x + rect.width / 2) / canvas.width) * 2 - 1,
+      y: 1 - ((rect.y + rect.height / 2) / canvas.height) * 2,
+    };
+  });
+  expect(state.projectedTarget[0]).toBeCloseTo(safe.x, 5);
+  expect(state.projectedTarget[1]).toBeCloseTo(safe.y, 5);
 });

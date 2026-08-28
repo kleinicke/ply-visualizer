@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('brightness sliders update their labels and reset on double-click', async ({ page }) => {
-  await page.goto('/3d-visualizer/');
+  await page.goto('/');
   await page.waitForSelector('#three-canvas');
   await page.click('[data-tab="controls"]');
 

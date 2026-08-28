@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import path from 'path';
+import { filenameTooltip } from '../src/ui/dialogs';
 
 /**
  * Pinning coverage for updateFileList() interactions, written before Svelte
@@ -10,7 +11,7 @@ import path from 'path';
  */
 test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/3d-visualizer/');
+    await page.goto('/');
     await page.waitForSelector('#three-canvas');
     await page.waitForTimeout(1000);
   });
@@ -88,6 +89,8 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await page.locator('#hiddenFileInput').setInputFiles(plyPath);
     await page.waitForTimeout(2000);
 
+    await expect(page.getByText('Cross section', { exact: true })).toHaveCount(0);
+
     const content = page.locator('#file-content-0');
     const toggle = page.locator('.collapse-toggle[data-file-index="0"]');
     await expect(content).toBeVisible();
@@ -95,6 +98,95 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await expect(content).toBeHidden();
     await toggle.click();
     await expect(content).toBeVisible();
+  });
+
+  test('shift-click collapses and expands every file item', async ({ page }) => {
+    await page
+      .locator('#hiddenFileInput')
+      .setInputFiles([
+        path.resolve('../testfiles/ply/test_small_mesh.ply'),
+        path.resolve('../testfiles/ply/test_small_mesh_binary.ply'),
+      ]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const firstToggle = page.locator('.collapse-toggle[data-file-index="0"]');
+    await firstToggle.click({ modifiers: ['Shift'] });
+    await expect(page.locator('.file-item-content:visible')).toHaveCount(0);
+
+    await firstToggle.click({ modifiers: ['Shift'] });
+    await expect(page.locator('.file-item-content:visible')).toHaveCount(2);
+  });
+
+  test('container rows reveal the displayed embedded filename in their tooltip', () => {
+    expect(filenameTooltip('survey/archive.x3a', 'very-long-embedded-scan-name.x3r')).toBe(
+      'survey/archive.x3a / very-long-embedded-scan-name.x3r'
+    );
+    expect(filenameTooltip('survey/ordinary-cloud.ply', 'ordinary-cloud.ply')).toBe(
+      'survey/ordinary-cloud.ply'
+    );
+  });
+
+  test('changing a mesh render mode preserves the file-list position', async ({ page }) => {
+    await page
+      .locator('#hiddenFileInput')
+      .setInputFiles([
+        path.resolve('../testfiles/ply/test_small_mesh.ply'),
+        path.resolve('../testfiles/ply/test_small_mesh_binary.ply'),
+      ]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const secondMeshButton = page.locator('.mesh-btn[data-file-index="1"]');
+    await expect(secondMeshButton).toBeVisible();
+    const scrollTopBefore = await page.locator('#file-list').evaluate(element => {
+      const list = element as HTMLElement;
+      list.style.height = '32px';
+      list.style.overflowY = 'auto';
+      list.scrollTop = list.scrollHeight;
+      return list.scrollTop;
+    });
+    expect(scrollTopBefore).toBeGreaterThan(0);
+
+    // Avoid Playwright scrolling the button into view: any movement after the
+    // event must come from a list remount in the application.
+    await secondMeshButton.dispatchEvent('click');
+    await expect(secondMeshButton).not.toHaveClass(/active/);
+    expect(await page.locator('#file-list').evaluate(element => element.scrollTop)).toBe(
+      scrollTopBefore
+    );
+
+    await secondMeshButton.dispatchEvent('click');
+    await expect(secondMeshButton).toHaveClass(/active/);
+    expect(await page.locator('#file-list').evaluate(element => element.scrollTop)).toBe(
+      scrollTopBefore
+    );
+  });
+
+  test('a full file-list refresh preserves scroll and stable row DOM', async ({ page }) => {
+    await page
+      .locator('#hiddenFileInput')
+      .setInputFiles([
+        path.resolve('../testfiles/ply/test_small_mesh.ply'),
+        path.resolve('../testfiles/ply/test_small_mesh_binary.ply'),
+      ]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    const before = await page.locator('#file-list').evaluate(element => {
+      const list = element as HTMLElement;
+      list.style.height = '32px';
+      list.style.overflowY = 'auto';
+      list.scrollTop = list.scrollHeight;
+      (list.querySelector('.file-item') as any).__stableRowMarker = 'preserved';
+      return list.scrollTop;
+    });
+    expect(before).toBeGreaterThan(0);
+
+    await page.evaluate(() => (window as any).visualizer.updateFileList());
+
+    const after = await page.locator('#file-list').evaluate(element => ({
+      scrollTop: (element as HTMLElement).scrollTop,
+      marker: ((element.querySelector('.file-item') as any).__stableRowMarker as string) || null,
+    }));
+    expect(after).toEqual({ scrollTop: before, marker: 'preserved' });
   });
 
   test('change color mode for a file', async ({ page }) => {
@@ -137,16 +229,68 @@ test.describe('File list interactions (pinned pre-Phase-3 behavior)', () => {
     await fxInput.fill('700');
     await expect(fxInput).toHaveValue('700');
 
+    // A model is always selected: the picker offers two general models, and a
+    // setting naming a retired one is mapped onto them rather than leaving the
+    // select blank.
+    await expect(page.locator('#camera-model-0')).not.toHaveValue('');
+
     await page.locator('#camera-model-0').selectOption('pinhole-opencv');
     await page.locator('[data-section="distortion-content-0"]').click();
-    await expect(page.locator('label[for="camera-coefficients-0"]')).toContainText(
-      'k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY'
+    // One box per family of terms, not one per term and not one long ordered
+    // run: the radial k's together, the tangential p's together.
+    await expect(page.locator('label[for="coefficient-group-0-0"]')).toContainText(
+      'Radial (k1, k2, k3, k4, k5, k6)'
     );
-    await expect(page.locator('#camera-coefficients-0')).toHaveValue('0,0,0,0,0,0,0,0,0,0,0,0,0,0');
+    await expect(page.locator('label[for="coefficient-group-0-1"]')).toContainText(
+      'Tangential (p1, p2)'
+    );
+    await expect(page.locator('label[for="coefficient-group-0-3"]')).toContainText(
+      'Tilted sensor (tauX, tauY)'
+    );
+    await expect(page.locator('#camera-coefficient-params-0 input')).toHaveCount(4);
 
+    // Two numbers in the radial box is a complete, valid calibration: the rest
+    // of that family is zero, and so is every other family.
+    await page.locator('#coefficient-group-0-0').fill('-0.28,0.07');
+    await expect(page.locator('#coefficient-group-0-0')).toHaveValue('-0.28,0.07');
+
+    // Live update starts on — changing a number and watching the cloud move is
+    // how the panel is meant to be used — and turning it off has to stick.
     const liveUpdateCheckbox = page.locator('.live-depth-update[data-file-index="0"]');
-    await expect(liveUpdateCheckbox).not.toBeChecked();
-    await liveUpdateCheckbox.click();
     await expect(liveUpdateCheckbox).toBeChecked();
+    await liveUpdateCheckbox.click();
+    await expect(liveUpdateCheckbox).not.toBeChecked();
   });
+});
+
+/**
+ * The renderer draws on demand. A control that changes what a cloud looks like
+ * and does not ask for a frame appears to do nothing until the camera happens
+ * to move, which is exactly how switching from projected colour to a flat one
+ * presented itself.
+ */
+test('changing a colour mode asks for a frame', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForSelector('#three-canvas');
+  await page.waitForTimeout(500);
+  await page
+    .locator('#hiddenFileInput')
+    .setInputFiles(path.resolve('../testfiles/ply/test_small_mesh.ply'));
+  await expect(page.locator('#file-list .file-item')).toHaveCount(1);
+
+  const renders = await page.evaluate(() => {
+    const visualizer = (window as any).visualizer;
+    let count = 0;
+    const original = visualizer.requestRender.bind(visualizer);
+    visualizer.requestRender = () => {
+      count++;
+      original();
+    };
+    (window as any).__renderCount = () => count;
+    return true;
+  });
+  expect(renders).toBe(true);
+
+  await page.locator('#color-0').selectOption('1');
+  await expect.poll(() => page.evaluate(() => (window as any).__renderCount())).toBeGreaterThan(0);
 });

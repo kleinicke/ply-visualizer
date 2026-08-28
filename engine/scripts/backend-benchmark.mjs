@@ -79,7 +79,7 @@ async function measure(filePath, query, seconds, headed) {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
 
-  await page.goto(`http://localhost:${PORT}/3d-visualizer/${query}`);
+  await page.goto(`http://localhost:${PORT}/${query}`);
   await page.waitForSelector('#three-canvas');
   await page.waitForFunction(() => window.visualizer?.renderer !== undefined);
 
