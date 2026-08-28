@@ -2,7 +2,7 @@
   "name": "ply-visualizer",
   "displayName": "3D Point Cloud and Mesh Visualizer (PLY, ...)",
   "description": "A fast 3D visualizer for point clouds and meshes, powered by Rust/WebAssembly decoding and Three.js rendering. Supports PLY, LAS/LAZ, E57, KITTI BIN, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth conversion.",
-  "version": "1.7.2",
+  "version": "1.8.0",
   "packageManager": "npm@11.17.0",
   "workspaces": [
     "engine"
