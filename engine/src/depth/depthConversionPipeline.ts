@@ -382,9 +382,12 @@ export async function processDepthWithParams(
   }
 
   // Cache the depth file data for later reprocessing BEFORE displaying
-  // This ensures dimensions are available when the UI is rendered
-  const fileIndex = spatialData.fileIndex || 0;
-  host.fileDepthData.set(fileIndex, {
+  // This ensures dimensions are available when the UI is rendered. The index
+  // is still provisional here - addNewFiles() assigns the real one - so the
+  // entry is re-keyed below once it is known.
+  const provisionalIndex = spatialData.fileIndex || 0;
+  const displacedEntry = host.fileDepthData.get(provisionalIndex);
+  host.fileDepthData.set(provisionalIndex, {
     originalData: depthFileData.data,
     fileName: depthFileData.fileName,
     cameraParams: cameraParams,
@@ -397,6 +400,24 @@ export async function processDepthWithParams(
   } else {
     await host.displayFiles([spatialData]);
   }
+  // addNewFiles() is what assigns the index every panel control addresses this
+  // file by, and it is not always the one guessed above (anything that loaded
+  // while the camera-parameter dialog was open shifts it). Move the cache entry
+  // onto the real index, or "Apply settings" reports no cached depth data.
+  const assignedIndex = spatialData.fileIndex ?? provisionalIndex;
+  if (assignedIndex !== provisionalIndex) {
+    const cached = host.fileDepthData.get(provisionalIndex);
+    // Put back whatever the provisional slot held; the guess borrowed another
+    // depth file's key and that file still needs its own data.
+    if (displacedEntry) {
+      host.fileDepthData.set(provisionalIndex, displacedEntry);
+    } else {
+      host.fileDepthData.delete(provisionalIndex);
+    }
+    if (cached) {
+      host.fileDepthData.set(assignedIndex, cached);
+    }
+  }
   perf.mark('geometry+display');
   perf.note('verts', result.pointCount);
   // The file name is already in the PERF[kind name] tag; no need to repeat it.
@@ -405,7 +426,7 @@ export async function processDepthWithParams(
   // A freshly converted depth file opens its settings: the numbers that
   // produced it are the ones most likely to need changing. Recorded as state
   // rather than poked into the DOM, so the panel's own toggle stays in step.
-  const openIndex = spatialData.fileIndex || 0;
+  const openIndex = assignedIndex;
   if (!depthSettingsState.openPanelIndices.includes(openIndex)) {
     depthSettingsState.openPanelIndices.push(openIndex);
   }

@@ -720,9 +720,16 @@ export async function handleBrowserFiles(
     if (spatialDataArray.length > 0) {
       await host.displayFiles(spatialDataArray);
 
-      // Populate fileDepthData for newly added depth-derived files
+      // Populate fileDepthData for newly added depth-derived files.
+      // The key is the index addNewFiles() actually assigned, read back off the
+      // object - never `baseIndexStart + localIndex`. That sum was computed
+      // before the camera-parameter prompt, and anything loaded while the
+      // prompt was open (another drop, an example cloud) pushes this batch
+      // further down, so the guess would file the depth data under a different
+      // file and leave the real one with no cache to reproject from.
       for (const rec of depthMetaRecords) {
-        const fileIndex = baseIndexStart + rec.localIndex;
+        const fileIndex =
+          spatialDataArray[rec.localIndex]?.fileIndex ?? baseIndexStart + rec.localIndex;
         host.fileDepthData.set(fileIndex, {
           originalData: rec.buffer,
           fileName: rec.fileName,

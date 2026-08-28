@@ -1,14 +1,11 @@
 # Change Log
 
-## [1.8.0] - 2026-08-27
+## [1.8.0] - 2026-08-28
 
 - Add Kitti's .bin file support
 - Add Gaussian Splatting support
 - Add unofficial Stonex x3r lidar scanner support, improve e57 support
-- Depth images are now decoded only by the Rust/WASM decoder; the geotiff.js
-  fallback is gone. TIFF support gains tiled and planar layouts, sub-byte bit
-  depths (10/12/14-bit), PackBits/CCITT/JPEG/WebP compression, CMYK, and the
-  Orientation tag
+- Depth images are now decoded only by the Rust/WASM decoder; the geotiff.js fallback is gone. TIFF support gains tiled and planar layouts, sub-byte bit depths (10/12/14-bit), ...
 - Add EXR depth images
 
 
