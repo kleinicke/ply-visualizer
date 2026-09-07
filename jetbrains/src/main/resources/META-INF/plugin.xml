@@ -1,0 +1,13 @@
+<idea-plugin>
+  <id>de.kleinicke.plyvisualizer</id>
+  <name>3D Visualizer</name>
+  <vendor url="https://f-kleinicke.de">Florian Kleinicke</vendor>
+  <description>Development preview: inspect local point clouds and meshes in editor tabs using the 3D Visualizer engine. File-family and platform validation is ongoing; see the JetBrains README for limitations.</description>
+  <depends>com.intellij.modules.platform</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <!-- generated file types -->
+    <fileType name="Scientific 3D" implementationClass="de.kleinicke.plyvisualizer.PlyFileType" fieldName="INSTANCE" extensions="e57;glb;gltf;ksplat;las;laz;nrrd;obj;off;pcd;ply;pts;sog;splat;spz;stl;x3a;x3r;xyz;xyzn;xyzrgb"/>
+    <!-- end generated file types -->
+    <fileEditorProvider implementation="de.kleinicke.plyvisualizer.VisualizerEditorProvider"/>
+  </extensions>
+</idea-plugin>

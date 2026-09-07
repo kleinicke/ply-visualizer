@@ -679,6 +679,10 @@ class PointCloudVisualizer {
         this.initializeBrowserFileHandler();
         console.log('🌐 Initializing standalone browser version...');
       }
+      // Hosts may deliver their first file only after the asynchronous renderer
+      // and file/message listeners are ready (construction alone is too early).
+      document.documentElement.dataset.visualizerReady = 'true';
+      window.dispatchEvent(new Event('visualizer-ready'));
     } catch (error) {
       this.showError(
         `Failed to initialize 3D Visualizer: ${error instanceof Error ? error.message : String(error)}`

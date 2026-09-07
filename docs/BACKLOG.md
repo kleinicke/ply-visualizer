@@ -18,6 +18,12 @@ lives under "Moving more TypeScript to Rust" below.
 
 ## Planned
 
+### Unified image and 3D product
+
+See the [unified product plan](UNIFIED_PRODUCT_PLAN.md) for TIFF's incremental
+Svelte migration, shared PLY-style UI, JetBrains host boundaries, monorepo
+consolidation, and the combined Tauri desktop app.
+
 ### Volume rendering for image stacks (tiff-visualizer bridge) — bridge shipped
 
 **Status (August 2026): the volume workflow is implemented and carries real

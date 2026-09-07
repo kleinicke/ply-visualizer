@@ -1,7 +1,7 @@
-# 3D Point Cloud and Mesh Visualizer for VS Code
+# 3D Point Cloud and Mesh Visualizer
 
 View, compare and inspect point clouds, meshes, gaussian splats, depth maps and
-disparity images directly inside VS Code — with Rust and WebAssembly doing the
+disparity images in your editor or browser — with Rust and WebAssembly doing the
 heavy decoding, so files with millions of points open in seconds.
 
 ![Depth image converted to a point cloud](https://github.com/kleinicke/ply-visualizer/releases/download/v1.0.0/disp2pc.gif)
@@ -17,8 +17,7 @@ heavy decoding, so files with millions of points open in seconds.
 - Inspect meshes as surfaces, wireframes, points and normals
 - Use Eye-Dome Lighting and brightness correction for clearer uncolored geometry
 - Measure distances and adjust camera, rotation center and view parameters
-- Use the same viewer outside VS Code on the static website:
-  https://3d.f-kleinicke.de
+- Use the shared viewer on the [website](https://3d.f-kleinicke.de)
 
 ## Supported formats
 
@@ -40,9 +39,9 @@ choose **Load JSON as 3D Pose**.
 
 ### Depth and Disparity to Point Cloud
 
-Convert depth or disparity images into point clouds directly from VS Code.
-Projection settings include `fx`, `fy`, `cx`, `cy`, camera distortion models,
-mono depth scale and bias, PNG int16 scale and disparity offset.
+Convert depth or disparity images into point clouds. Projection settings include
+`fx`, `fy`, `cx`, `cy`, camera distortion models, mono depth scale and bias, PNG
+int16 scale and disparity offset.
 
 ### Eye-Dome Lighting
 
@@ -114,17 +113,6 @@ more frames are generated, which helps reduce power usage.
 - As a depth image: `[X,Y]`
 - As a point cloud: `[...,3]` with the three values `X,Y,Z`
 
-## Quick start
-
-1. Open a supported file in VS Code.
-2. Use the default custom editor, or right-click the file and choose **Open with
-   3D Visualizer**.
-3. For depth and disparity images, use the conversion command for the file type
-   and adjust the camera parameters when prompted.
-
-The extension also adds commands for opening multiple point clouds, playing a
-point cloud sequence and converting depth files to point clouds.
-
 ## Feature requests and issues
 
 If you have a workflow that would benefit from new features or file formats,
@@ -139,3 +127,17 @@ files are especially helpful when adding support for new formats.
 - Use calibration files next to depth images automatically when available
   (example files needed)
 - Accept 3d body pose files (example files needed)
+
+## Links
+
+- **VS Code Marketplace:**
+  [Install extension](https://marketplace.visualstudio.com/items?itemName=kleinicke.ply-visualizer)
+- **Open VSX:**
+  [Install extension](https://open-vsx.org/extension/kleinicke/ply-visualizer)
+- **Jetbrains?:** ...
+- **Website:** [3d.f-kleinicke.de](https://3d.f-kleinicke.de/)
+- **Documentation:** [Features and usage](#features)
+- **Standalone app:** Coming soon
+- **More platforms:** Coming soon
+- **Blog:** Coming soon
+- **Videos:** Coming soon
