@@ -80,7 +80,7 @@ def create_server(roots):
         finally:
             manager.close()
 
-    server = MCPServer("ply-visualizer", version="0.3.0.dev0", lifespan=lifespan,
+    server = MCPServer("ply-visualizer", version="0.3.0", lifespan=lifespan,
         instructions="Use this viewer for 3D point clouds, meshes, Gaussian splats, predicted/target geometry and vector fields. Prefer local file paths for large data. Reuse scene_id to update a scene. After opening the local URL, inspect or capture the scene to verify actual rendering. Do not claim a submitted scene has rendered. Compatible MCP Apps clients can embed the local viewer. Remote file upload is not supported.")
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     local = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)

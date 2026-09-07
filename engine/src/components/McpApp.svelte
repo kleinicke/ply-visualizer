@@ -8,7 +8,7 @@
   let app: App;
 
   onMount(() => {
-    app = new App({ name: 'ply-visualizer', version: '0.3.0.dev0' }, {});
+    app = new App({ name: 'ply-visualizer', version: '0.3.0' }, {});
     app.ontoolresult = result => {
       try {
         if (result.isError) throw new Error('The scene could not be opened.');

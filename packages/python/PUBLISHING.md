@@ -1,7 +1,7 @@
 # Publishing ply-visualizer
 
-The current checkout is an unpublished `0.3.0.dev0` MCP Apps preview. Do not
-publish intermediate builds; the latest public release is `0.2.0`.
+Version `0.3.0` includes the MCP Apps preview. Publish releases only when
+requested; intermediate development builds stay local.
 
 The distribution name is `ply-visualizer`, the Python import is
 `ply_visualizer`, and the CLI is `ply-viewer`. The initial release was `0.1.0`;
@@ -49,21 +49,21 @@ Build and check the concrete artifacts first:
 ```sh
 npm run build:python-viewer
 uv build packages/python --out-dir packages/python/dist
-uvx twine check --strict packages/python/dist/ply_visualizer-0.2.0*
+uvx twine check --strict packages/python/dist/ply_visualizer-0.3.0*
 ```
 
 When publication is requested, run this from the repository root to publish only
 the checked, versioned artifacts:
 
 ```sh
-uvx twine upload --non-interactive --config-file .local/.pypirc --repository pypi packages/python/dist/ply_visualizer-0.2.0-py3-none-any.whl packages/python/dist/ply_visualizer-0.2.0.tar.gz
+uvx twine upload --non-interactive --config-file .local/.pypirc --repository pypi packages/python/dist/ply_visualizer-0.3.0-py3-none-any.whl packages/python/dist/ply_visualizer-0.3.0.tar.gz
 ```
 
 Never place the token in source control or documentation. Verify the project
 page after upload and install the published version into a clean environment:
 
 ```sh
-uvx --from ply-visualizer==0.2.0 ply-viewer --help
+uvx --from ply-visualizer==0.3.0 ply-viewer --help
 ```
 
 Publishing uses the configured PyPI account credentials. A missing project page

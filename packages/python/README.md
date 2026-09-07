@@ -42,10 +42,10 @@ uvx --from "ply-visualizer[mcp]" ply-viewer-mcp --root /absolute/path/to/workspa
 
 Configure your agent to launch this command. It can open 3D files or point
 arrays, update a scene, inspect rendered geometry, position the camera and
-receive PNG screenshots. See [MCP setup and agent instructions](MCP.md). The
-published MCP release uses a local browser tab. This checkout also includes an
-unpublished MCP Apps preview for hosts permitting local nested iframes. Inline
-local Jupyter output is already supported below.
+receive PNG screenshots. See [MCP setup and agent instructions](MCP.md). Version
+0.3.0 includes an MCP Apps preview for hosts permitting local nested iframes,
+with a browser-tab fallback. Inline local Jupyter output is already supported
+below.
 
 ### Developing from source
 

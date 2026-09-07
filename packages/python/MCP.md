@@ -1,8 +1,8 @@
 # Local MCP integration
 
-The current checkout includes an **unpublished MCP Apps preview**
-(`0.3.0.dev0`). The public `0.2.0` release provides browser-tab tools and
-screenshots.
+Version **0.3.0** includes an **MCP Apps preview**, browser-tab tools and
+screenshots. Inline display depends on the chat client allowing local nested
+iframes; use the browser fallback otherwise.
 
 The optional MCP server lets an agent use the shared 3D viewer and inspect its
 actual rendered output. Python 3.10+, uv, and a local WebGL browser are
@@ -20,7 +20,7 @@ accept the following shape; others have a server settings form):
       "command": "uvx",
       "args": [
         "--from",
-        "ply-visualizer[mcp]==0.2.0",
+        "ply-visualizer[mcp]==0.3.0",
         "ply-viewer-mcp",
         "--root",
         "/absolute/path/to/your/workspace"
@@ -92,11 +92,11 @@ revision.
 Files stay local. The server binds to loopback, checks request origin/host, and
 uses a random session URL. Treat that URL as access to the scene.
 
-The development version also supplies `ui://ply-visualizer/viewer.html` with MCP
-Apps tool metadata and a bundled HTML resource. Its Svelte shell uses the
-official MCP Apps SDK and embeds the existing local renderer with settings
-collapsed. Updates retain the view and camera. An **Open in browser** button
-asks the host to open the scene externally.
+The package also supplies `ui://ply-visualizer/viewer.html` with MCP Apps tool
+metadata and a bundled HTML resource. Its Svelte shell uses the official MCP
+Apps SDK and embeds the existing local renderer with settings collapsed. Updates
+retain the view and camera. An **Open in browser** button asks the host to open
+the scene externally.
 
 When a client advertises MCP Apps support, scene tools default to inline display
 without opening a second tab. Set `open_browser=true` to explicitly open a tab,
@@ -115,7 +115,7 @@ protocol test host; individual chat clients have not yet been verified. Local
 Jupyter already has an inline iframe with settings collapsed by default; see
 [notebook usage](README.md#inline-jupyter-notebooks).
 
-## Try the unpublished checkout
+## Develop from a local checkout
 
 ```sh
 npm run build:python-viewer
@@ -124,5 +124,5 @@ uv tool install --force "./packages/python[mcp]"
 
 Configure the client command as `ply-viewer-mcp` with arguments
 `["--root", "/absolute/workspace"]`. This uses the local development build; the
-pinned PyPI command above continues to install the published browser version.
+pinned PyPI command above installs version 0.3.0 including the MCP Apps preview.
 Nothing is uploaded by these commands.
