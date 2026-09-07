@@ -62,7 +62,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
     async def test_agent_workflow(self):
         async with Client(create_server([Path.cwd()])) as client:
             tools = (await client.list_tools()).tools
-            self.assertEqual(len(tools), 15)
+            self.assertEqual(len(tools), 18)
             app_resource = await client.read_resource('ui://ply-visualizer/viewer.html')
             content = app_resource.contents[0]
             self.assertEqual(content.mime_type, 'text/html;profile=mcp-app')
@@ -93,6 +93,26 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             missing = await client.call_tool('update_3d_scene', {'scene_id': scene['scene_id'], 'points': [[0,0,0]]})
             self.assertTrue(missing.is_error)
 
+    async def test_concurrent_geometry_chunks_and_region_validation(self):
+        import base64
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'chunks.pcd'
+            payload = bytes(range(256)) * 8193
+            path.write_bytes(payload)
+            async with Client(create_server([Path(folder)])) as client:
+                result = await client.call_tool('open_3d_files', {'paths': [str(path)], 'open_browser': False})
+                scene_id = result.structured_content['scene_id']
+                offsets = list(range(0, len(payload), 512 * 1024))
+                chunks = await asyncio.gather(*(client.call_tool('read_viewer_data', {'scene_id': scene_id, 'resource': f"files/{result.structured_content['revision']}/0", 'offset': offset}) for offset in offsets))
+                for offset, chunk in zip(offsets, chunks):
+                    self.assertFalse(chunk.is_error, chunk)
+                    self.assertEqual(chunk.structured_content['offset'], offset)
+                    self.assertEqual(chunk.structured_content['size'], len(payload))
+                self.assertEqual(b''.join(base64.b64decode(chunk.structured_content['data']) for chunk in chunks), payload)
+                for args in ({'field': 'label'}, {'field': 'label', 'values': []}, {'bounds': [1,0,0,0,1,1]}, {'plane': [0,0,0,1]}):
+                    invalid = await client.call_tool('select_3d_region', {'scene_id': scene_id, **args})
+                    self.assertTrue(invalid.is_error, invalid)
+
     async def test_real_stdio_transport(self):
         import os
         import sys
@@ -102,6 +122,6 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             args=['-m', 'ply_visualizer.mcp_server', '--root', str(Path.cwd())],
             env={**os.environ, 'PYTHONPATH': source})
         async with Client(process) as client:
-            self.assertEqual(len((await client.list_tools()).tools), 15)
+            self.assertEqual(len((await client.list_tools()).tools), 18)
             resource = await client.read_resource('viewer://capabilities')
             self.assertEqual(json.loads(resource.contents[0].text)['transport'], 'stdio')

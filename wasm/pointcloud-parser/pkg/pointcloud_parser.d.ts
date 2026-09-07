@@ -165,10 +165,12 @@ export class PointCloudResult {
     take_intensity(): Float32Array;
     take_normals(): Float32Array;
     take_positions(): Float32Array;
+    take_scalar_at(index: number): Float32Array;
     readonly has_colors: boolean;
     readonly has_intensity: boolean;
     readonly has_normals: boolean;
     readonly metadata_json: string;
+    readonly scalar_field_names: string[];
     readonly vertex_count: number;
 }
 
@@ -510,6 +512,13 @@ export function parse_xyz(data: Uint8Array, variant: string, color_mode: string)
  * `undefined` when nothing could be registered.
  */
 export function register_pair(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
+
+/**
+ * Bounded attribute discovery: continuous fields never produce huge tool replies.
+ */
+export function scalar_summary(values: Float32Array): string;
+
+export function select_point_indices(positions: Float32Array, values: Float32Array, accepted: Float32Array, matrix: Float64Array, bounds: Float64Array, plane: Float64Array): Uint32Array;
 
 /**
  * Demosaics one X3I frame.

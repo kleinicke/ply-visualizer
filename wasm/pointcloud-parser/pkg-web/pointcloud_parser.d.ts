@@ -165,10 +165,12 @@ export class PointCloudResult {
     take_intensity(): Float32Array;
     take_normals(): Float32Array;
     take_positions(): Float32Array;
+    take_scalar_at(index: number): Float32Array;
     readonly has_colors: boolean;
     readonly has_intensity: boolean;
     readonly has_normals: boolean;
     readonly metadata_json: string;
+    readonly scalar_field_names: string[];
     readonly vertex_count: number;
 }
 
@@ -512,6 +514,13 @@ export function parse_xyz(data: Uint8Array, variant: string, color_mode: string)
 export function register_pair(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
 
 /**
+ * Bounded attribute discovery: continuous fields never produce huge tool replies.
+ */
+export function scalar_summary(values: Float32Array): string;
+
+export function select_point_indices(positions: Float32Array, values: Float32Array, accepted: Float32Array, matrix: Float64Array, bounds: Float64Array, plane: Float64Array): Uint32Array;
+
+/**
  * Demosaics one X3I frame.
  *
  * `pixels` is the raw GRBG plane for this frame alone. Exposed while the port
@@ -632,9 +641,14 @@ export interface InitOutput {
     readonly pointcloudresult_has_intensity: (a: number) => number;
     readonly pointcloudresult_has_normals: (a: number) => number;
     readonly pointcloudresult_metadata_json: (a: number) => [number, number];
+    readonly pointcloudresult_scalar_field_names: (a: number) => [number, number];
+    readonly pointcloudresult_take_scalar_at: (a: number, b: number) => [number, number];
+    readonly pointcloudresult_vertex_count: (a: number) => number;
     readonly register_pair: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly registrationresult_matrix: (a: number) => [number, number];
     readonly registrationresult_stats: (a: number) => [number, number];
+    readonly scalar_summary: (a: number, b: number) => [number, number];
+    readonly select_point_indices: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number];
     readonly stonex_decode_frame: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly stonex_decode_scan: (a: number, b: number) => [number, number, number];
     readonly stonex_decode_scan_known_layout: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
@@ -667,7 +681,6 @@ export interface InitOutput {
     readonly streamparser_push: (a: number, b: number, c: number) => void;
     readonly voxelmesh_face_count: (a: number) => number;
     readonly voxelmesh_step: (a: number) => [number, number];
-    readonly voxelmesh_vertex_count: (a: number) => number;
     readonly voxelmesh_voxel_count: (a: number) => number;
     readonly voxelmesh_voxel_size: (a: number) => [number, number];
     readonly plyresult_take_colors: (a: number) => [number, number];
@@ -676,10 +689,10 @@ export interface InitOutput {
     readonly stonexrgbimage_take_data: (a: number) => [number, number];
     readonly voxelmesh_take_colors: (a: number) => [number, number];
     readonly alloc: (a: number) => number;
-    readonly pointcloudresult_vertex_count: (a: number) => number;
     readonly stonexrgbimage_height: (a: number) => number;
     readonly stonexrgbimage_width: (a: number) => number;
     readonly stonexstationsession_recolored: (a: number) => number;
+    readonly voxelmesh_vertex_count: (a: number) => number;
     readonly __wbg_stonexrgbimage_free: (a: number, b: number) => void;
     readonly npyarrayresult_take_values: (a: number) => [number, number];
     readonly nrrdvolume_take_samples: (a: number) => [number, number];

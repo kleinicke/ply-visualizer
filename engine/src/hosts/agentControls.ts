@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import type Viewer from '../main';
 import type { MeasurementManager } from '../MeasurementManager';
-import type { SelectionManager } from '../SelectionManager';
+import { agentPick, agentSelection, agentViews, rememberAgentCamera } from './agentInspection';
 import { viewerState } from '../state/viewer.svelte';
 import { setRotationCenter, setRotationCenterToOrigin } from '../rotationCenterFeature';
 import { updateMeshVisibilityAndMaterial, type RenderModeHost } from '../renderModeToggles';
@@ -15,14 +15,17 @@ export function fitAgentView(
     controls: { target: THREE.Vector3; update(): void };
     meshes: (THREE.Object3D | null)[];
   },
-  preset?: string
+  preset?: string,
+  bounds?: THREE.Box3
 ) {
-  const box = new THREE.Box3();
-  host.meshes.forEach(mesh => {
-    if (mesh?.visible) {
-      box.expandByObject(mesh);
-    }
-  });
+  const box = bounds?.clone() ?? new THREE.Box3();
+  if (!bounds) {
+    host.meshes.forEach(mesh => {
+      if (mesh?.visible) {
+        box.expandByObject(mesh);
+      }
+    });
+  }
   if (box.isEmpty()) {
     throw new Error('No visible geometry to fit');
   }
@@ -77,7 +80,17 @@ export async function applyAgentControl(
   operation: string,
   a: Record<string, any>
 ) {
+  if (operation === 'selection') {
+    return agentSelection(host, a);
+  }
+  if (operation === 'views') {
+    return agentViews(host, a);
+  }
+  if (operation === 'pick') {
+    return agentPick(host, a.screen);
+  }
   if (operation === 'navigate') {
+    rememberAgentCamera(host);
     if (a.action === 'fit' || a.action === 'preset') {
       fitAgentView(host, a.preset);
     } else if (a.action === 'orbit') {
@@ -103,21 +116,12 @@ export async function applyAgentControl(
     } else if (a.action === 'pivot') {
       setRotationCenter(host, new THREE.Vector3().fromArray(a.vector));
     } else if (a.action === 'pick') {
-      const picker = host as unknown as {
-        selectionManager: SelectionManager;
-        getSelectionContext(): any;
-      };
-      picker.selectionManager.updateContext(picker.getSelectionContext());
-      const canvas = host.renderer.domElement;
-      const point = await picker.selectionManager.selectPointWithLoggingAsync(
-        a.screen[0] * canvas.clientWidth,
-        a.screen[1] * canvas.clientHeight,
-        canvas
-      );
-      if (!point) {
-        throw new Error('No geometry at that screen position');
+      const picked = await agentPick(host, a.screen);
+      if (picked.hit) {
+        setRotationCenter(host, new THREE.Vector3().fromArray(picked.xyz!));
       }
-      setRotationCenter(host, point.point);
+      host.requestRender();
+      return picked;
     }
     host.controls.update();
   } else if (operation === 'appearance') {
@@ -166,6 +170,17 @@ export async function applyAgentControl(
       host.onFileColorModeChange(i, a.color_mode);
     }
     updateMeshVisibilityAndMaterial(host as unknown as RenderModeHost, i);
+    if (a.opacity !== undefined) {
+      host.meshes[i]?.traverse(object => {
+        const material = (object as THREE.Mesh).material;
+        for (const m of Array.isArray(material) ? material : material ? [material] : []) {
+          m.opacity = a.opacity;
+          m.transparent = a.opacity < 1;
+          m.depthWrite = a.opacity === 1;
+          m.needsUpdate = true;
+        }
+      });
+    }
     host.updateFileList();
   } else if (operation === 'measure') {
     const manager = (host as unknown as { measurementManager: MeasurementManager })

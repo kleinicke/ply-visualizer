@@ -19,6 +19,8 @@ mod lidar;
 mod npy;
 mod ply;
 mod registration;
+mod selection;
+pub use selection::{scalar_summary, select_point_indices};
 mod stonex;
 mod volume;
 pub use lidar::{parse_e57, parse_las, E57ImageResult, LidarCollectionResult, LidarScanResult};
@@ -52,6 +54,7 @@ pub struct PointCloudResult {
     /// cannot carry (currently the PCD header). Empty for formats that have
     /// none, so JS can treat it as optional.
     metadata: String,
+    scalars: Vec<(String, Vec<f32>)>,
 }
 
 #[wasm_bindgen]
@@ -71,6 +74,16 @@ impl PointCloudResult {
     #[wasm_bindgen(getter)]
     pub fn has_intensity(&self) -> bool {
         self.has_intensity
+    }
+    #[wasm_bindgen(getter)]
+    pub fn scalar_field_names(&self) -> Vec<String> {
+        self.scalars.iter().map(|(name, _)| name.clone()).collect()
+    }
+    pub fn take_scalar_at(&mut self, index: usize) -> Vec<f32> {
+        self.scalars
+            .get_mut(index)
+            .map(|(_, values)| mem::take(values))
+            .unwrap_or_default()
     }
     pub fn take_positions(&mut self) -> Vec<f32> {
         mem::take(&mut self.positions)
@@ -208,7 +221,7 @@ fn is_ws(c: u8) -> bool {
 /// Parse the numeric columns of the current line into `vals`, advancing `pos`
 /// past the trailing newline. Returns how many numbers were found.
 #[inline]
-fn parse_line(data: &[u8], pos: &mut usize, vals: &mut [f64; 16]) -> usize {
+fn parse_line(data: &[u8], pos: &mut usize, vals: &mut [f64]) -> usize {
     let len = data.len();
     let mut n = 0usize;
     while *pos < len {
@@ -224,7 +237,7 @@ fn parse_line(data: &[u8], pos: &mut usize, vals: &mut [f64; 16]) -> usize {
         // A numeric token (fast-float also accepts inf/nan).
         match fast_float::parse_partial::<f64, _>(&data[*pos..]) {
             Ok((val, consumed)) if consumed > 0 => {
-                if n < 16 {
+                if n < vals.len() {
                     vals[n] = val;
                 }
                 n += 1;
@@ -311,7 +324,7 @@ impl Builder {
     }
 
     #[inline]
-    fn push_row(&mut self, vals: &[f64; 16], n: usize) {
+    fn push_row(&mut self, vals: &[f64], n: usize) {
         let mut x = 0f32;
         let mut y = 0f32;
         let mut z = 0f32;
@@ -319,7 +332,7 @@ impl Builder {
         let mut packed: u32 = 0;
         let (mut nx, mut ny, mut nz) = (0f32, 0f32, 0f32);
         let mut inten = 0f32;
-        let take = self.ncol.min(n);
+        let take = self.ncol.min(n).min(vals.len());
         for i in 0..take {
             let v = vals[i];
             match self.layout[i] {
@@ -417,6 +430,7 @@ impl Builder {
             min: self.min,
             max: self.max,
             metadata: self.metadata,
+            scalars: Vec::new(),
         }
     }
 }
@@ -452,7 +466,7 @@ fn parse_rows(
 
 /// Parse all numeric tokens in a single line slice (no newline handling).
 #[inline]
-fn parse_numbers(line: &[u8], vals: &mut [f64; 16]) -> usize {
+fn parse_numbers(line: &[u8], vals: &mut [f64]) -> usize {
     let len = line.len();
     let mut n = 0usize;
     let mut i = 0usize;
@@ -464,7 +478,7 @@ fn parse_numbers(line: &[u8], vals: &mut [f64; 16]) -> usize {
         }
         match fast_float::parse_partial::<f64, _>(&line[i..]) {
             Ok((v, consumed)) if consumed > 0 => {
-                if n < 16 {
+                if n < vals.len() {
                     vals[n] = v;
                 }
                 n += 1;
@@ -850,7 +864,28 @@ fn parse_pcd_ascii_rows(data: &[u8], header: &PcdHeader) -> Result<PointCloudRes
     let expected = header.vertex_count();
     let mut b = Builder::new(layout, expected.max(1024), header.color_mode());
     b.skip_nan = true;
-    let mut vals = [0f64; 16];
+    let mut vals = vec![0f64; header.counts.iter().sum::<usize>().max(header.fields.len())];
+    let mut scalar_columns = Vec::new();
+    let mut column = 0;
+    for (i, name) in header.fields.iter().enumerate() {
+        for component in 0..header.count_at(i) {
+            if header.col_at(i) == Col::Skip && name != "_" {
+                scalar_columns.push((
+                    column + component,
+                    if header.count_at(i) == 1 {
+                        name.clone()
+                    } else {
+                        format!("{name}_{component}")
+                    },
+                ));
+            }
+        }
+        column += header.count_at(i);
+    }
+    let mut scalars: Vec<(String, Vec<f32>)> = scalar_columns
+        .iter()
+        .map(|(_, name)| (name.clone(), Vec::new()))
+        .collect();
     let mut pos = header.data_start;
     let mut rows = 0usize;
     while pos < data.len() {
@@ -861,11 +896,23 @@ fn parse_pcd_ascii_rows(data: &[u8], header: &PcdHeader) -> Result<PointCloudRes
         }
         let n = parse_line(data, &mut pos, &mut vals);
         if n >= 3 {
+            let before = b.count();
             b.push_row(&vals, n);
+            if b.count() > before {
+                for (j, (column, _)) in scalar_columns.iter().enumerate() {
+                    scalars[j].1.push(if *column < n {
+                        vals[*column] as f32
+                    } else {
+                        f32::NAN
+                    });
+                }
+            }
             rows += 1;
         }
     }
-    Ok(b.finish())
+    let mut result = b.finish();
+    result.scalars = scalars;
+    Ok(result)
 }
 
 /// Read one numeric PCD field as f64. `ty`: b'F' float, b'U' unsigned, b'I'
@@ -917,6 +964,8 @@ fn pcd_read_num(d: &[u8], o: usize, size: usize, ty: u8) -> f64 {
 /// One field's location and encoding inside a record.
 struct PcdFieldDesc {
     col: Col,
+    scalar: Option<String>,
+    component: usize,
     /// Position in the header's FIELDS list, which is also the column order in
     /// the `binary_compressed` layout.
     index: usize,
@@ -935,17 +984,27 @@ fn pcd_field_descs(header: &PcdHeader) -> Result<(Vec<PcdFieldDesc>, usize), Str
     let mut stride = 0usize;
     for i in 0..nf {
         let col = header.col_at(i);
-        // Fields the viewer has no use for are dropped here rather than tested
-        // per point: a scan file can declare a dozen, and the read loop runs
-        // once per point per field.
-        if col != Col::Skip {
-            descs.push(PcdFieldDesc {
-                col,
-                index: i,
-                off: stride,
-                size: header.sizes[i],
-                ty: header.types[i],
-            });
+        for component in 0..header.count_at(i) {
+            if (col != Col::Skip && component == 0) || (col == Col::Skip && header.fields[i] != "_")
+            {
+                descs.push(PcdFieldDesc {
+                    col,
+                    scalar: if col == Col::Skip {
+                        Some(if header.count_at(i) == 1 {
+                            header.fields[i].clone()
+                        } else {
+                            format!("{}_{component}", header.fields[i])
+                        })
+                    } else {
+                        None
+                    },
+                    component: component * header.sizes[i],
+                    index: i,
+                    off: stride + component * header.sizes[i],
+                    size: header.sizes[i],
+                    ty: header.types[i],
+                });
+            }
         }
         stride += header.sizes[i] * header.count_at(i);
     }
@@ -961,6 +1020,7 @@ fn pcd_field_descs(header: &PcdHeader) -> Result<(Vec<PcdFieldDesc>, usize), Str
 /// Accumulates points read field by field, shared by the two binary encodings,
 /// which differ only in where a given field's bytes live.
 struct PcdPointSink {
+    scalars: Vec<(String, Vec<f32>)>,
     positions: Vec<f32>,
     colors: Vec<u8>,
     normals: Vec<f32>,
@@ -982,6 +1042,14 @@ impl PcdPointSink {
             .any(|d| matches!(d.col, Col::Nx | Col::Ny | Col::Nz));
         let has_intensity = descs.iter().any(|d| d.col == Col::Intensity);
         PcdPointSink {
+            scalars: descs
+                .iter()
+                .filter_map(|d| {
+                    d.scalar
+                        .as_ref()
+                        .map(|name| (name.clone(), Vec::with_capacity(capacity)))
+                })
+                .collect(),
             positions: Vec::with_capacity(capacity * 3),
             colors: if has_colors {
                 Vec::with_capacity(capacity * 3)
@@ -1073,6 +1141,12 @@ impl PcdPointSink {
         if x.is_nan() || y.is_nan() || z.is_nan() {
             return;
         }
+        for (slot, d) in descs.iter().filter(|d| d.scalar.is_some()).enumerate() {
+            let o = at(d);
+            self.scalars[slot]
+                .1
+                .push(pcd_read_num(data, o, d.size, d.ty) as f32);
+        }
         self.positions.push(x);
         self.positions.push(y);
         self.positions.push(z);
@@ -1115,6 +1189,7 @@ impl PcdPointSink {
             min: self.min,
             max: self.max,
             metadata: String::new(),
+            scalars: self.scalars,
         }
     }
 }
@@ -1178,7 +1253,9 @@ fn parse_pcd_binary_compressed(
 
     let mut sink = PcdPointSink::new(&descs, n);
     for i in 0..n {
-        sink.push_point(&block, &descs, |d| column_start[d.index] + i * d.size);
+        sink.push_point(&block, &descs, |d| {
+            column_start[d.index] + i * d.size * header.count_at(d.index) + d.component
+        });
     }
     Ok(sink.finish())
 }
@@ -1764,5 +1841,69 @@ mod tests {
         let result = parse_pcd(&src).unwrap();
         assert_eq!(result.vertex_count, n as u32);
         assert_eq!(result.positions, vec![0.0, 10.0, 20.0, 1.0, 11.0, 21.0]);
+    }
+}
+
+#[cfg(test)]
+mod pcd_attribute_tests {
+    use super::*;
+    #[test]
+    fn attributes_align_after_nan_filter_in_all_encodings() {
+        let header = "FIELDS x y z label descriptor\nSIZE 4 4 4 4 4\nTYPE F F F U F\nCOUNT 1 1 1 1 2\nWIDTH 3\nHEIGHT 1\nPOINTS 3\n";
+        let rows: [[f32; 6]; 3] = [
+            [1., 2., 3., 7., 10., 11.],
+            [f32::NAN, 0., 0., 9., 20., 21.],
+            [4., 5., 6., 8., 30., 31.],
+        ];
+        for encoding in ["ascii", "binary", "binary_compressed"] {
+            let mut input = format!("{header}DATA {encoding}\n").into_bytes();
+            if encoding == "ascii" {
+                input.extend_from_slice(b"1 2 3 7 10 11\nnan 0 0 9 20 21\n4 5 6 8 30 31\n");
+            } else {
+                let field_bytes = |row: &[f32; 6], j: usize| {
+                    if j == 3 {
+                        (row[j] as u32).to_le_bytes()
+                    } else {
+                        row[j].to_le_bytes()
+                    }
+                };
+                let mut block = Vec::new();
+                if encoding == "binary" {
+                    for row in &rows {
+                        for j in 0..6 {
+                            block.extend_from_slice(&field_bytes(row, j));
+                        }
+                    }
+                    input.extend(block);
+                } else {
+                    for (start, count) in [(0, 1), (1, 1), (2, 1), (3, 1), (4, 2)] {
+                        for row in &rows {
+                            for j in start..start + count {
+                                block.extend_from_slice(&field_bytes(row, j));
+                            }
+                        }
+                    }
+                    let mut compressed = Vec::new();
+                    for chunk in block.chunks(32) {
+                        compressed.push((chunk.len() - 1) as u8);
+                        compressed.extend_from_slice(chunk);
+                    }
+                    input.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+                    input.extend_from_slice(&(block.len() as u32).to_le_bytes());
+                    input.extend(compressed);
+                }
+            }
+            let parsed = parse_pcd(&input).unwrap();
+            assert_eq!(parsed.vertex_count, 2, "{encoding}");
+            assert_eq!(
+                parsed.scalars,
+                vec![
+                    ("label".into(), vec![7., 8.]),
+                    ("descriptor_0".into(), vec![10., 30.]),
+                    ("descriptor_1".into(), vec![11., 31.])
+                ],
+                "{encoding}"
+            );
+        }
     }
 }

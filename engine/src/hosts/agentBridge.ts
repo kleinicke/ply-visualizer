@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/naming-convention -- Python MCP wire-format keys */
 import * as THREE from 'three';
 import { applyAgentControl, fitAgentView, type ControlHost } from './agentControls';
+import { agentAttributes, rememberAgentCamera } from './agentInspection';
 import type { SpatialData } from '../interfaces';
 
 export interface AgentViewerHost {
@@ -13,14 +14,14 @@ export interface AgentViewerHost {
   performRender(): void;
 }
 
-export async function handleAgentCommand(host: AgentViewerHost): Promise<void> {
+export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean> {
   const response = await fetch('agent/command');
   if (!response.ok) {
-    return;
+    return false;
   }
   const command = await response.json();
   if (!command) {
-    return;
+    return false;
   }
   let reply: { id: string; result?: unknown; error?: string } = { id: command.id };
   try {
@@ -28,6 +29,7 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<void> {
       throw new Error('The scene has not loaded successfully yet.');
     }
     if (command.operation === 'camera') {
+      rememberAgentCamera(host as unknown as ControlHost);
       const args = command.arguments;
       if (args.fit) {
         fitAgentView(host);
@@ -54,6 +56,7 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<void> {
         bounds.expandByObject(mesh);
       }
     }
+    const attributes = await agentAttributes(host.spatialFiles);
     reply.result = {
       rendered_revision: Number(document.documentElement.dataset.sessionRevision),
       objects: host.spatialFiles.map(file => ({
@@ -63,6 +66,7 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<void> {
         filtered_points:
           file.sourcePointCount === undefined ? null : file.sourcePointCount - file.vertexCount,
         scalar_fields: Object.keys(file.scalarFields ?? {}),
+        attributes: attributes[host.spatialFiles.indexOf(file)],
         vertices: file.vertexCount,
         faces: file.faceCount,
         has_colors: file.hasColors,
@@ -85,7 +89,10 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<void> {
     if (controlResult !== undefined) {
       reply.result = controlResult;
     }
-    if (command.operation === 'capture') {
+    if (
+      command.operation === 'capture' ||
+      (command.operation === 'selection' && command.arguments.preview)
+    ) {
       const source = host.renderer.domElement;
       const canvas = document.createElement('canvas');
       const scale = Math.min(1, 1024 / Math.max(source.width, source.height));
@@ -96,6 +103,7 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<void> {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
       reply.result = {
+        ...(command.operation === 'selection' ? (controlResult as object) : {}),
         png: canvas.toDataURL('image/png').split(',')[1],
         width: canvas.width,
         height: canvas.height,
@@ -109,4 +117,5 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(reply),
   });
+  return true;
 }

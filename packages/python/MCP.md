@@ -1,12 +1,13 @@
 # Local MCP integration
 
-The current checkout is an **unpublished 0.4.0.dev0 preview**. It replaces
+The current checkout is an **unpublished 0.4.0.dev1 preview**. It replaces
 0.3.0's nested localhost iframe with the shared renderer running directly in the
 MCP widget. PyPI still serves 0.3.0 until the next requested release.
 
 The optional MCP server lets an agent use the shared 3D viewer and inspect its
-actual rendered output. Python 3.10+, uv, and a local WebGL browser are
-required. The package bundles its renderer; users need no Node.js installation.
+actual rendered output. Python 3.10+ and a WebGL-capable MCP Apps host (or an
+explicit browser fallback) are required. The recommended installer is uv. The
+package bundles its renderer; users need no Node.js installation.
 
 ## Connect an agent
 
@@ -58,7 +59,7 @@ its scenes and local servers.
 | `close_3d_scene`   | Release the scene's server and temporary data                       |
 
 `viewer://capabilities` lists supported formats, allowed roots and the workflow.
-There are 13 agent-facing tools and two app-only transport tools. Up to eight
+There are 16 agent-facing tools and two app-only transport tools. Up to eight
 scenes are retained. Inline arrays are limited to 20,000 XYZ rows per argument;
 use local files for larger scenes. RGB values are integers 0–255. PyTorch/NumPy
 data in an agent's Python environment can use the Python API directly; MCP JSON
@@ -87,20 +88,66 @@ every AI use it.
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `navigate_3d_view`  | Tight fit; front/back/top/bottom/left/right/isometric presets; orbit, pan, zoom; pivot XYZ, reset pivot to origin, pick visible geometry at normalized screen XY |
 | `set_3d_appearance` | Exposure in stops and background `#RRGGBB`                                                                                                                       |
-| `set_3d_object`     | Visibility, world-unit point size, points/mesh mode, fixed RGB, original/intensity/available scalar coloring                                                     |
+| `set_3d_object`     | Overlay opacity (0–1), visibility, world-unit point size, points/mesh mode, fixed RGB, original/intensity/available scalar coloring                              |
 | `measure_3d_scene`  | Distances and paths in scene units, list, undo, close path, clear                                                                                                |
 | `control_3d_video`  | Add/remove/update/visit keyframes, loop, start/stop preview, list reusable camera poses                                                                          |
 
+| `select_3d_region` | Select by object, scalar values, world box and/or plane;
+highlight, isolate, focus and return a PNG in one call; clear restores prior
+visibility | | `pick_3d_point` | Hit/miss, world XYZ, object/decoded point
+indices and scalar attributes without moving the camera | | `manage_3d_views` |
+Save, restore, list or delete named camera views; undo up to 50 agent camera
+changes |
+
 `inspect_3d_scene` returns object indices, current presentation state, bounds,
 valid vertex counts and available scalar names. Source/filtered counts are null
-when the parser does not supply them. Additional PCD fields such as labels are
-not yet decoded into scalar arrays; inspection does not invent label counts.
-Video controls preview the existing camera timeline; video export is not part of
-these tools. Camera snapshots/keyframes can reproduce a viewpoint.
+when the parser does not supply them. PCD numeric attributes (including
+segmentation labels) are decoded for ASCII, binary and compressed binary,
+aligned with the valid points. Multi-component fields appear as `field_0`,
+`field_1`, etc. Attribute summaries include finite ranges and counts for up to
+64 values, with an explicit truncation flag. Attributes use the viewer's float32
+storage; large integer IDs above 2²⁴ may lose precision. Numeric labels do not
+supply semantic names such as “box”. Video controls preview the existing camera
+timeline; video export is not part of these tools. Camera snapshots/keyframes
+can reproduce a viewpoint.
 
 The first view uses the viewer's OpenGL convention (Y-up, looking along -Z) and
 a tight bounding-box fit. Coordinates are not transformed. Settings are
 collapsed by default and all listed operations work without opening the panel.
+
+## Select the labeled box and hide the table
+
+1. Inspect the cloud's `attributes.label.value_counts`, or call `pick_3d_point`
+   on a visible point of the box and read `attributes.label`. Verify visually:
+   labels identify regions only if the source was segmented that way.
+2. Call
+   `select_3d_region(scene_id=..., object_index=0, field="label", values=[2])`
+   using the actual discovered label. The defaults highlight and isolate that
+   region, center the orbit target, tightly frame it and return a PNG preview.
+3. Call `select_3d_region(scene_id=..., action="clear")` to remove the derived
+   subset and restore the previous visibility. Source files are never modified.
+
+Optional `bounds=[minX,minY,minZ,maxX,maxY,maxZ]` and `plane=[a,b,c,d]`
+intersect the label selection in world coordinates; the plane keeps
+`a*x+b*y+c*z+d >= 0`. Reissue the selection with a new plane to inspect
+successive slices. With no predicate, the entire point-cloud object is selected.
+A zero-match request leaves the prior selection intact. Only one derived
+selection is retained; it is cleared automatically when switching batches or
+replacing geometry. This is explicit selection, not automatic object detection.
+Region subsets currently support point clouds; use object visibility for mesh
+objects.
+
+Set `highlight=false` to keep source RGB; color the subset by an available
+scalar through `set_3d_object`. For comparisons, keep both clouds visible and
+set their colors and `opacity` individually. This supports an overlay in one
+camera; synchronized side-by-side viewports are not implemented.
+
+Named views last for the renderer session and restore the camera only. Undo
+covers agent camera commands, not manual mouse gestures. Picking indices refer
+to the decoded cloud after invalid rows have been removed; they are not raw PCD
+record numbers. A subset pick also reports its source object and decoded index.
+Mesh/splat picks may report null indices when their existing picker only returns
+an intersection position.
 
 ## Display, connection and lifetime
 
@@ -155,3 +202,12 @@ Configure the client command as `ply-viewer-mcp` with arguments
 `["--root", "/absolute/workspace"]`. This uses the local development build; the
 pinned PyPI command above installs version 0.3.0 including the MCP Apps preview.
 Nothing is uploaded by these commands.
+
+### Transport behavior
+
+Geometry and renderer assets use bounded 512 KiB base64 chunks. After the first
+chunk establishes the size, up to four chunks are fetched concurrently into one
+output buffer. This reduces serial round trips; base64 overhead and MCP-client
+traffic still apply. It is not a streaming decoder. Scene/command polling backs
+off from 500 ms to 4 seconds when idle and resets after an update or command; an
+idle command can therefore take up to about 4 seconds to be noticed.

@@ -796,6 +796,15 @@ export class PointCloudResult {
     }
   }
   /**
+   * @returns {string[]}
+   */
+  get scalar_field_names() {
+    const ret = wasm.pointcloudresult_scalar_field_names(this.__wbg_ptr);
+    var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
    * @returns {Uint8Array}
    */
   take_colors() {
@@ -827,6 +836,16 @@ export class PointCloudResult {
    */
   take_positions() {
     const ret = wasm.pointcloudresult_take_positions(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @param {number} index
+   * @returns {Float32Array}
+   */
+  take_scalar_at(index) {
+    const ret = wasm.pointcloudresult_take_scalar_at(this.__wbg_ptr, index);
     var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v1;
@@ -2009,6 +2028,67 @@ export function register_pair(source, target, settings_json) {
   const len2 = WASM_VECTOR_LEN;
   const ret = wasm.register_pair(ptr0, len0, ptr1, len1, ptr2, len2);
   return ret === 0 ? undefined : RegistrationResult.__wrap(ret);
+}
+
+/**
+ * Bounded attribute discovery: continuous fields never produce huge tool replies.
+ * @param {Float32Array} values
+ * @returns {string}
+ */
+export function scalar_summary(values) {
+  let deferred2_0;
+  let deferred2_1;
+  try {
+    const ptr0 = passArrayF32ToWasm0(values, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.scalar_summary(ptr0, len0);
+    deferred2_0 = ret[0];
+    deferred2_1 = ret[1];
+    return getStringFromWasm0(ret[0], ret[1]);
+  } finally {
+    wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+  }
+}
+
+/**
+ * @param {Float32Array} positions
+ * @param {Float32Array} values
+ * @param {Float32Array} accepted
+ * @param {Float64Array} matrix
+ * @param {Float64Array} bounds
+ * @param {Float64Array} plane
+ * @returns {Uint32Array}
+ */
+export function select_point_indices(positions, values, accepted, matrix, bounds, plane) {
+  const ptr0 = passArrayF32ToWasm0(positions, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArrayF32ToWasm0(values, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passArrayF32ToWasm0(accepted, wasm.__wbindgen_malloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ptr3 = passArrayF64ToWasm0(matrix, wasm.__wbindgen_malloc);
+  const len3 = WASM_VECTOR_LEN;
+  const ptr4 = passArrayF64ToWasm0(bounds, wasm.__wbindgen_malloc);
+  const len4 = WASM_VECTOR_LEN;
+  const ptr5 = passArrayF64ToWasm0(plane, wasm.__wbindgen_malloc);
+  const len5 = WASM_VECTOR_LEN;
+  const ret = wasm.select_point_indices(
+    ptr0,
+    len0,
+    ptr1,
+    len1,
+    ptr2,
+    len2,
+    ptr3,
+    len3,
+    ptr4,
+    len4,
+    ptr5,
+    len5
+  );
+  var v7 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+  return v7;
 }
 
 /**

@@ -31,11 +31,14 @@ export interface WasmPointCloudResult {
   bbox: Float32Array;
   /** Raw JSON from the parser; empty for formats with no header facts. */
   metadataJson: string;
+  scalarFields?: Record<string, Float32Array>;
 }
 
 /* eslint-disable @typescript-eslint/naming-convention -- the names below are
    the wasm-bindgen surface; they are what the compiled module exports. */
 interface RawResult {
+  scalar_field_names?: string[];
+  take_scalar_at?(index: number): Float32Array;
   vertex_count: number;
   has_colors: boolean;
   has_normals: boolean;
@@ -111,6 +114,9 @@ export function marshalWasmPointCloud(r: RawResult): WasmPointCloudResult {
     intensityArray: r.has_intensity ? r.take_intensity() : null,
     bbox: r.bbox(),
     metadataJson: r.metadata_json,
+    scalarFields: Object.fromEntries(
+      (r.scalar_field_names ?? []).map((name, i) => [name, r.take_scalar_at!(i)])
+    ),
   };
   // The result owns wasm memory; the takes above have already copied it out.
   r.free?.();
@@ -359,7 +365,10 @@ export function toPointCloudPayload(
     hasColors: result.hasColors,
     hasNormals: result.hasNormals,
     hasIntensity: result.hasIntensity,
-    scalarFields: result.intensityArray ? { intensity: result.intensityArray } : {},
+    scalarFields: {
+      ...result.scalarFields,
+      ...(result.intensityArray ? { intensity: result.intensityArray } : {}),
+    },
     detectedFormat: describeLayout(result),
     comments,
     format,

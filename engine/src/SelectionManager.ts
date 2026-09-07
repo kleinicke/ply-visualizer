@@ -7,6 +7,8 @@ import { FileEntryRegistry } from './state/fileEntries';
 export interface SelectionResult {
   point: THREE.Vector3;
   info: string;
+  objectIndex?: number;
+  pointIndex?: number;
 }
 
 /**
@@ -125,7 +127,9 @@ export class SelectionManager {
     }
 
     const clouds = this.getVisiblePointClouds();
-    if (clouds.length === 0) {return null;}
+    if (clouds.length === 0) {
+      return null;
+    }
     if (this.pointPickingImplementation === 'webgpu' && this.webgpuPicker) {
       try {
         const hit = await this.webgpuPicker.pick(
@@ -1029,6 +1033,6 @@ export class SelectionManager {
       `materialSize=${material.size.toFixed(1)}px, renderedSize=${hit.renderedSize.toFixed(1)}px, ` +
       `sizeAttenuation=${material.sizeAttenuation}${adjusted}`;
 
-    return { point: worldPoint, info };
+    return { point: worldPoint, info, objectIndex: fileIndex, pointIndex: hit.pointIndex };
   }
 }

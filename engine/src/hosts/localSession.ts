@@ -4,7 +4,8 @@ import * as THREE from 'three';
 import { mount } from 'svelte';
 import { handleBrowserFiles, type BrowserFileDragDropHost } from '../browserFileDragDrop';
 import { localSessionState as state } from '../state/localSession.svelte';
-import { fitAgentView } from './agentControls';
+import { fitAgentView, type ControlHost } from './agentControls';
+import { clearAgentSelection } from './agentInspection';
 import { viewerState } from '../state/viewer.svelte';
 import Toolbar from '../components/LocalSessionToolbar.svelte';
 import { handleAgentCommand, type AgentViewerHost } from './agentBridge';
@@ -85,6 +86,7 @@ async function start(): Promise<void> {
       }
       files.push(new File([await data.blob()], source.name));
     }
+    clearAgentSelection(host as unknown as ControlHost);
     const camera = host.camera.clone();
     const target = host.controls.target.clone();
     while (host.spatialFiles.length) {
@@ -130,23 +132,27 @@ async function start(): Promise<void> {
     state.error = '';
     document.documentElement.dataset.localSession = 'loaded';
     document.documentElement.dataset.sessionRevision = String(revision);
+    return true;
   }
 
+  let delay = 500;
   async function poll() {
+    let active = false;
     try {
-      await refresh();
+      active = !!(await refresh());
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
       document.documentElement.dataset.localSession = 'error';
     }
     try {
-      await handleAgentCommand(host);
+      active = (await handleAgentCommand(host)) || active;
     } catch {
       /* Retry after a transient disconnect. */
     }
+    delay = active ? 500 : Math.min(4000, delay * 1.5);
     window.setTimeout((): void => {
       void poll();
-    }, 500);
+    }, delay);
   }
   void poll();
 }

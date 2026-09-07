@@ -60,7 +60,7 @@ for (const name of ['localStorage', 'sessionStorage'] as const) {
     Object.defineProperty(window, name, { value: storage });
   }
 }
-const app = new App({ name: 'ply-visualizer', version: '0.4.0.dev0' }, {});
+const app = new App({ name: 'ply-visualizer', version: '0.4.0.dev1' }, {});
 let sceneId = '';
 let ready: () => void;
 const sceneReady = new Promise<void>(resolve => {
@@ -127,26 +127,38 @@ window.fetch = async (input, init) => {
 
 async function readBytes(resource: string): Promise<Uint8Array> {
   await sceneReady;
-  const parts: Uint8Array[] = [];
-  let offset = 0;
-  while (true) {
-    const chunk = await call('read_viewer_data', { scene_id: sceneId, resource, offset });
+  const first = await call('read_viewer_data', { scene_id: sceneId, resource, offset: 0 });
+  const chunkSize = 512 * 1024;
+  if (!Number.isSafeInteger(first.size) || first.size < 0) {
+    throw new Error('Invalid viewer data size');
+  }
+  const result = new Uint8Array(first.size);
+  function copy(chunk: any, offset: number) {
     const bytes = Uint8Array.from(atob(chunk.data), char => char.charCodeAt(0));
-    parts.push(bytes);
-    offset += bytes.length;
-    if (offset >= chunk.size) {
-      break;
+    if (
+      chunk.size !== result.length ||
+      chunk.offset !== offset ||
+      bytes.length !== Math.min(chunkSize, result.length - offset)
+    ) {
+      throw new Error('Incomplete or inconsistent viewer data transfer');
     }
-    if (!bytes.length) {
-      throw new Error('Incomplete viewer data transfer');
-    }
+    result.set(bytes, offset);
   }
-  const result = new Uint8Array(offset);
-  let start = 0;
-  for (const part of parts) {
-    result.set(part, start);
-    start += part.length;
-  }
+  copy(first, 0);
+  let next = chunkSize;
+  // Four bounded workers; one final allocation, no retained base64 chunk list.
+  await Promise.all(
+    Array.from(
+      { length: Math.max(0, Math.min(4, Math.ceil(result.length / chunkSize) - 1)) },
+      async () => {
+        while (next < result.length) {
+          const offset = next;
+          next += chunkSize;
+          copy(await call('read_viewer_data', { scene_id: sceneId, resource, offset }), offset);
+        }
+      }
+    )
+  );
   return result;
 }
 

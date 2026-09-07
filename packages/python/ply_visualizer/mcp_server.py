@@ -1,5 +1,6 @@
 """Local stdio MCP tools. Stdout is reserved for MCP protocol messages."""
 import argparse
+import json
 import base64
 from contextlib import asynccontextmanager
 import math
@@ -76,7 +77,7 @@ def create_server(roots):
         finally:
             manager.close()
 
-    server = MCPServer("ply-visualizer", version="0.4.0.dev0", lifespan=lifespan,
+    server = MCPServer("ply-visualizer", version="0.4.0.dev1", lifespan=lifespan,
         instructions="Use this viewer for 3D point clouds, meshes, Gaussian splats, predicted/target geometry and vector fields. Prefer local file paths for large data. Reuse scene_id to update a scene. After opening the local URL, inspect or capture the scene to verify actual rendering. Do not claim a submitted scene has rendered. The MCP widget renders directly and transfers geometry through app-only tools. No browser opens by default. Remote file upload is not supported.")
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     local = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
@@ -107,7 +108,7 @@ def create_server(roots):
     def update_3d_scene(scene_id: str, points: points_type, colors: points_type | None = None,
                         target: points_type | None = None, vectors: points_type | None = None,
                         vector_scale: float = 1.0) -> dict[str, Any]:
-        """Replace the existing scene's geometry while preserving its camera. Omitted overlays/vectors are removed. Reuses the same browser tab."""
+        """Replace the existing scene's geometry while preserving its camera. Omitted overlays/vectors are removed. Reuses the active inline viewer or explicit browser fallback."""
         manager.get(scene_id).update(points, colors=colors, target=target, vectors=vectors, vector_scale=vector_scale)
         return manager.describe(scene_id)
 
@@ -118,13 +119,13 @@ def create_server(roots):
 
     @server.tool(annotations=readonly)
     def inspect_3d_scene(scene_id: str) -> dict[str, Any]:
-        """Read rendered geometry counts, world bounds and camera from the open browser. Times out if no local viewer tab responds. Compare rendered_revision with the submitted revision."""
+        """Read rendered geometry counts, world bounds and camera from the active inline viewer or explicit browser fallback. Times out if no renderer responds. Compare rendered_revision with the submitted revision."""
         return manager.get(scene_id)._bridge.request("inspect")
 
     @server.tool(annotations=local)
     def set_3d_camera(scene_id: str, fit: bool = False, position: tuple[float, float, float] | None = None,
                       target: tuple[float, float, float] | None = None, up: tuple[float, float, float] | None = None) -> dict[str, Any]:
-        """Fit geometry into view, or set camera position and look-at target. The local browser must be open. Returns the applied camera and rendered scene information."""
+        """Fit geometry into view, or set camera position and look-at target. Requires an active inline viewer or explicit browser fallback. Returns the applied camera and rendered scene information."""
         if fit:
             if any(value is not None for value in (position, target, up)):
                 raise ValueError("Use fit or explicit camera vectors, not both")
@@ -139,13 +140,13 @@ def create_server(roots):
 
     @server.tool(annotations=readonly)
     def capture_3d_view(scene_id: str) -> Image:
-        """Return an actual PNG of the rendered 3D canvas (maximum 1024 pixels per side) so the agent can visually inspect the result. Requires the local viewer tab to be open."""
+        """Return an actual PNG of the rendered 3D canvas (maximum 1024 pixels per side) so the agent can visually inspect the result. Requires an active inline viewer or explicit browser fallback."""
         result = manager.get(scene_id)._bridge.request("capture")
         return Image(data=base64.b64decode(result["png"], validate=True), format="png")
 
     @server.tool(annotations=local)
     def close_3d_scene(scene_id: str) -> dict[str, Any]:
-        """Release a viewer's local server and temporary data. Does not delete the user's source files. The browser tab remains open but disconnects."""
+        """Release a viewer's local server and temporary data. Does not delete the user's source files. Any active viewer disconnects."""
         manager.get(scene_id).close()
         del manager.scenes[scene_id]
         return {"closed": scene_id}
@@ -178,12 +179,13 @@ def create_server(roots):
     @server.tool(annotations=local, structured_output=True)
     def set_3d_object(scene_id: str, object_index: Annotated[int, Field(ge=0)],
         point_size: Annotated[float, Field(gt=0, le=1000)] | None = None,
+        opacity: Annotated[float, Field(ge=0, le=1)] | None = None,
         visible: bool | None = None, mode: Literal["points", "mesh"] | None = None,
         color: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None,
         color_mode: Annotated[str, Field(pattern=r"^(original|assigned|intensity|intensity-grayscale|scalar:[^:]+:(viridis|grayscale|colors))$")] | None = None) -> dict[str, Any]:
-        """Set object visibility, world-unit point size, points/mesh representation, fixed RGB color or original/intensity/scalar coloring. Get object_index and scalar_fields from inspection. Mesh requires faces. Fixed color and color_mode are mutually exclusive."""
+        """Set overlay opacity (0..1), object visibility, world-unit point size, points/mesh representation, fixed RGB color or original/intensity/scalar coloring. Get object_index and scalar_fields from inspection. Mesh requires faces. Fixed color and color_mode are mutually exclusive."""
         if color is not None and color_mode is not None: raise ValueError("Provide color or color_mode")
-        return command(scene_id, "object", dict(object_index=object_index, point_size=point_size, visible=visible, mode=mode, color=color, color_mode=color_mode))
+        return command(scene_id, "object", dict(object_index=object_index, opacity=opacity, point_size=point_size, visible=visible, mode=mode, color=color, color_mode=color_mode))
 
     @server.tool(annotations=local, structured_output=True)
     def measure_3d_scene(scene_id: str, action: Literal["list", "distance", "path_point", "undo", "close_path", "clear"],
@@ -203,6 +205,35 @@ def create_server(roots):
         if action in ("remove", "goto", "update") and index is None: raise ValueError("index is required")
         if action == "loop" and enabled is None: raise ValueError("enabled is required")
         return command(scene_id, "video", dict(action=action, index=index, enabled=enabled, duration=duration, dwell=dwell))
+
+    @server.tool(annotations=readonly, structured_output=True)
+    def pick_3d_point(scene_id: str, screen: tuple[Annotated[float, Field(ge=0, le=1)], Annotated[float, Field(ge=0, le=1)]]) -> dict[str, Any]:
+        """Pick normalized canvas XY without moving the camera. Returns hit/miss, world XYZ, object and decoded point indices and scalar attributes. Mesh/splat picks may have null indices; never infer object identity from those."""
+        return command(scene_id, "pick", dict(screen=screen))
+
+    @server.tool(annotations=local, structured_output=True)
+    def manage_3d_views(scene_id: str, action: Literal["save", "restore", "list", "delete", "undo"],
+                        name: Annotated[str, Field(min_length=1, max_length=100)] | None = None) -> dict[str, Any]:
+        """Save/restore named camera views for this renderer session; undo the last agent camera change (up to 50). Names are not persisted after closing/reloading the widget. Does not restore geometry or filters."""
+        if action in ("save", "restore", "delete") and name is None: raise ValueError("name is required")
+        return command(scene_id, "views", dict(action=action, name=name))
+
+    @server.tool(annotations=local)
+    def select_3d_region(scene_id: str, action: Literal["select", "clear"] = "select",
+        object_index: Annotated[int, Field(ge=0)] = 0,
+        field: str | None = None, values: list[float] | None = None,
+        bounds: tuple[float, float, float, float, float, float] | None = None,
+        plane: tuple[float, float, float, float] | None = None,
+        isolate: bool = True, focus: bool = True, highlight: bool = True, preview: bool = True) -> list[Image | str]:
+        """One-step select/isolate/focus with PNG preview. Select all points in an object, or intersect scalar field values, world box [minX,minY,minZ,maxX,maxY,maxZ], and plane halfspace ax+by+cz+d>=0. Creates a reversible highlighted point subset; clear restores prior visibility. Label IDs are numeric, not semantic object names: inspect attributes/pick first. No automatic segmentation; point clouds only. Replaces the previous selection. Disable highlight to preserve original colors. Moving the plane requires another select call."""
+        if (field is None) != (values is None): raise ValueError("field and values must be supplied together")
+        if values is not None and not 0 < len(values) <= 1024: raise ValueError("Provide 1..1024 values")
+        if not all(math.isfinite(v) for v in (*(values or ()), *(bounds or ()), *(plane or ()))): raise ValueError("Region values must be finite")
+        if bounds and any(bounds[i] > bounds[i+3] for i in range(3)): raise ValueError("Box min must not exceed max")
+        if plane and not any(plane[:3]): raise ValueError("Plane normal must be nonzero")
+        result = command(scene_id, "selection", dict(action=action, object_index=object_index, field=field, values=values, bounds=bounds, plane=plane, isolate=isolate, focus=focus, highlight=highlight, preview=preview))
+        png = result.pop("png", None)
+        return [json.dumps(result)] + ([Image(data=base64.b64decode(png, validate=True), format="png")] if png else [])
 
     @server.tool(annotations=readonly, meta={"ui": {"visibility": ["app"]}}, structured_output=True)
     def read_viewer_data(scene_id: str, resource: str, offset: Annotated[int, Field(ge=0)] = 0) -> dict[str, Any]:
@@ -233,7 +264,7 @@ def create_server(roots):
                 if offset > size:
                     raise ValueError("Offset beyond end of file")
                 source.seek(offset)
-                return {"data": base64.b64encode(source.read(512 * 1024)).decode(), "size": size}
+                return {"data": base64.b64encode(source.read(512 * 1024)).decode(), "size": size, "offset": offset}
 
     @server.tool(annotations=local, meta={"ui": {"visibility": ["app"]}}, structured_output=True)
     def submit_viewer_reply(scene_id: str, reply: dict[str, Any]) -> dict[str, Any]:
