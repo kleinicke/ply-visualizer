@@ -130,7 +130,9 @@ async function start(): Promise<void> {
       state.error = error instanceof Error ? error.message : String(error);
       document.documentElement.dataset.localSession = 'error';
     }
-    window.setTimeout(() => void poll(), 500);
+    window.setTimeout((): void => {
+      void poll();
+    }, 500);
   }
   void poll();
 }

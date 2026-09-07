@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { sceneGuidesState } from '../state/sceneGuides.svelte';
   import { viewerState } from '../state/viewer.svelte';
   import { measurementState } from '../state/measurement.svelte';
   import { formatDistance } from '../MeasurementManager';
@@ -414,6 +415,8 @@
 <div class="panel-section">
   <h4>View Controls</h4>
   <div class="control-buttons">
+    <button id="toggle-coordinate-grid" class="control-button" class:active={sceneGuidesState.grid} aria-pressed={sceneGuidesState.grid} onclick={() => { sceneGuidesState.grid = !sceneGuidesState.grid; }}>Coordinate Grid</button>
+    <button id="toggle-legend" class="control-button" class:active={sceneGuidesState.legend} aria-pressed={sceneGuidesState.legend} onclick={() => { sceneGuidesState.legend = !sceneGuidesState.legend; }}>Legend</button>
     <button id="fit-camera" class="control-button" onclick={onFitCamera}>
       Fit to View <span class="button-shortcut">F</span>
     </button>

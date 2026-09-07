@@ -1,0 +1,73 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { sceneGuidesState } from '../state/sceneGuides.svelte';
+  import { filesState } from '../state/files.svelte';
+  import { getPointCloudColorOptions } from '../colorOptions';
+  import { projectCoordinateGrid, registerSceneGuides, type GridProjection } from '../visualization/coordinateGrid';
+
+  let { host }: { host: any } = $props();
+  let grid = $state<GridProjection>({ lines: [], labels: [] });
+  let width = $state(1);
+  let height = $state(1);
+  function update() {
+    if (!sceneGuidesState.grid) return;
+    const canvas = host.renderer.domElement;
+    width = canvas.clientWidth;
+    height = canvas.clientHeight;
+    grid = projectCoordinateGrid(host, width, height);
+  }
+  onMount(() => registerSceneGuides(host, update));
+  $effect(() => {
+    sceneGuidesState.grid;
+    host.requestRender();
+  });
+  const entries = $derived.by(() => {
+    if (!sceneGuidesState.legend) return [];
+    filesState.renderTick;
+    filesState.renderModeTick;
+    return host.spatialFiles.flatMap((data: any, index: number) => {
+      if (!data || filesState.visibility[index] === false) return [];
+      const mode = filesState.colorModes[index] ?? host.individualColorModes[index] ?? 'assigned';
+      const flat = mode === 'assigned' || /^\d+$/.test(mode);
+      const colorIndex = mode === 'assigned' ? index % host.fileColors.length : Number(mode);
+      const color = flat ? host.fileColors[colorIndex] : null;
+      const label = getPointCloudColorOptions(host, data, index).find(option => option.value === mode)?.label ?? mode;
+      return [{ name: data.fileName ?? `Object ${index + 1}`, label,
+        color: color ? `rgb(${color.map((v: number) => Math.round(v * 255)).join(',')})` : null }];
+    });
+  });
+</script>
+
+{#if sceneGuidesState.grid}
+  <svg class="coordinate-grid" data-testid="coordinate-grid" viewBox={`0 0 ${width} ${height}`} aria-label="Coordinate grid in scene units">
+    {#each grid.lines as line}<line {...line} />{/each}
+    {#each grid.labels as label}
+      <text x={label.x + 5} y={label.y - 6} fill={['#ff9292', '#9ee4aa', '#98c9ff'][label.axis]}>{label.text}</text>
+    {/each}
+  </svg>
+  {#if grid.lines.length}<div class="grid-caption">Scene coordinates · X / Y / Z</div>{/if}
+{/if}
+{#if sceneGuidesState.legend && entries.length}
+  <aside class="scene-legend" aria-label="Legend">
+    <strong>Legend</strong>
+    {#each entries as entry}
+      <div class="legend-entry">
+        <span class="swatch" style:background={entry.color ?? 'linear-gradient(135deg, #e38181, #8fd29c, #8faee2)'}></span>
+        <div><div class="name" title={entry.name}>{entry.name}</div><small>{entry.label}</small></div>
+      </div>
+    {/each}
+  </aside>
+{/if}
+
+<style>
+  .coordinate-grid { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  line { stroke: #a8b5c5; stroke-opacity: 0.28; stroke-width: 1; }
+  text { font: 11px system-ui, sans-serif; paint-order: stroke; stroke: #20252c; stroke-width: 3px; stroke-linejoin: round; }
+  .grid-caption { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); color: #dbe2ec; background: #20252cdd; padding: 4px 8px; border-radius: 4px; font-size: 11px; pointer-events: none; }
+  .scene-legend { position: absolute; left: 16px; top: 16px; max-width: min(260px, 40vw); max-height: 45%; overflow: auto; pointer-events: auto; background: var(--vscode-editor-background, #20252c); color: var(--vscode-foreground, #eee); border: 1px solid var(--vscode-panel-border, #555); border-radius: 6px; padding: 12px; font-size: 12px; box-shadow: 0 2px 8px #0003; }
+  .legend-entry { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  .legend-entry > div { min-width: 0; }
+  .swatch { width: 12px; height: 12px; flex-shrink: 0; border: 1px solid #888; border-radius: 3px; }
+  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  small { opacity: 0.75; }
+</style>

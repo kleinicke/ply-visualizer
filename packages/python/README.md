@@ -85,9 +85,9 @@ uv add /path/to/ply_visualizer-0.1.0-py3-none-any.whl
 
 ### Public PyPI installation
 
-The chosen public package name is **`ply-visualizer`**. Publication is pending
-PyPI authentication; until it is available on PyPI, use the local source/wheel
-commands above. Once published:
+The chosen public package name is **`ply-visualizer`**. Publication is deferred
+for now; until it is available on PyPI, use the local source/wheel commands
+above. Once published:
 
 ```sh
 uv add ply-visualizer            # Python project

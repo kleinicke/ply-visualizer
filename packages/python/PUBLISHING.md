@@ -29,7 +29,18 @@ token needs to be stored in the repository. For subsequent releases, increment
 
 [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
 
-## Local publishing with an existing token
+## Local publishing with the configured token
+
+Publication is deferred by choice. Local credentials are configured in the
+repository's `.local/.pypirc`, outside the Python package directory. This file
+is Git-ignored and excluded from the VS Code package, and has owner-only `0600`
+permissions. It uses the standard `.pypirc` format with repository `pypi`,
+username `__token__`, and the token as `password`. Do not copy its contents into
+documentation or source control.
+
+Twine normally looks in `~/.pypirc`; pass `--config-file .local/.pypirc` to use
+these project-local credentials. uv's own publishing command does not read this
+file, so use Twine through `uvx` for this configuration.
 
 Build and check the concrete artifacts first:
 
@@ -39,11 +50,11 @@ uv build packages/python --out-dir packages/python/dist
 uvx twine check --strict packages/python/dist/ply_visualizer-0.1.0*
 ```
 
-With a PyPI token already configured as `UV_PUBLISH_TOKEN` in the publishing
-process, publish only these versioned artifacts:
+When publication is requested, run this from the repository root to publish only
+the checked, versioned artifacts:
 
 ```sh
-uv publish packages/python/dist/ply_visualizer-0.1.0-py3-none-any.whl packages/python/dist/ply_visualizer-0.1.0.tar.gz
+uvx twine upload --non-interactive --config-file .local/.pypirc --repository pypi packages/python/dist/ply_visualizer-0.1.0-py3-none-any.whl packages/python/dist/ply_visualizer-0.1.0.tar.gz
 ```
 
 Never place the token in source control or documentation. Verify the project
@@ -53,6 +64,13 @@ page after upload and install the published version into a clean environment:
 uvx --from ply-visualizer==0.1.0 ply-viewer --help
 ```
 
-The first upload still requires authorization through a PyPI token or a
-configured trusted publisher. A missing project page alone does not guarantee
-that PyPI will accept a particular name.
+Credential structure has been checked locally; token validity and account
+permissions have not been tested by uploading. A missing project page alone does
+not guarantee that PyPI will accept a particular name.
+
+## Agent integrations before publication
+
+PyPI publication is optional for MCP and other agent integrations. Local agents
+can use an installed local wheel or checkout, and a remote MCP service can run
+from a private deployment. A public package makes installation and distribution
+easier, but it does not itself expose MCP tools or install them into an agent.

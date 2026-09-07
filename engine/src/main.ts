@@ -157,6 +157,8 @@ import { mountGlobalAlignMenu } from './globalAlignMenuMount';
 import { runBenchmarkScenario } from './benchmarkScenario';
 import { mountStats } from './statsMount';
 import { mountControlsTab } from './controlsTabMount';
+import { mountSceneGuides } from './sceneGuidesMount';
+import { updateSceneGuides } from './visualization/coordinateGrid';
 import { AdaptivePointRenderer } from './visualization/AdaptivePointRenderer';
 import { filesState } from './state/files.svelte';
 import { GpuTimer, NULL_GPU_TIMER, createGpuTimer } from './rendering/gpuTimer';
@@ -1381,6 +1383,7 @@ class PointCloudVisualizer {
     }
     this.adaptivePointRenderer.beforeRender();
     this.smallViewAffordance.update();
+    updateSceneGuides(this);
     const visibilityContext = this.getVisibilityRenderContext();
     const useEDL = edl.prepareEDLFrame(this);
     const useVisibilityRenderer =
@@ -1832,6 +1835,7 @@ class PointCloudVisualizer {
     mountGlobalAlignMenu(this);
     mountStats(this);
     mountControlsTab(this);
+    mountSceneGuides(this);
     mountFilmPanel(this);
     mountMeasurementQuickActions(this);
     mountSmallViewAffordance(this);
