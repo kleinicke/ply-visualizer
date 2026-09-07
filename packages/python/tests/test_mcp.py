@@ -32,6 +32,28 @@ class BridgeTests(unittest.TestCase):
             bridge.request('inspect', timeout=.01)
         self.assertIsNone(bridge.pending())
 
+    def test_renderer_ownership_and_expected_errors(self):
+        from unittest.mock import patch
+        from ply_visualizer.agent_bridge import RendererError
+        bridge = BrowserBridge()
+        with patch('ply_visualizer.agent_bridge.time.monotonic', return_value=100):
+            bridge.pending('original')
+            self.assertIsNone(bridge.pending('duplicate'))
+            self.assertEqual(bridge.renderer_id(), 'original')
+            with ThreadPoolExecutor() as pool:
+                future = pool.submit(bridge.request, 'inspect')
+                for _ in range(2000):
+                    command = bridge.pending('original')
+                    if command: break
+                    time.sleep(.001)
+                self.assertIsNone(bridge.pending('duplicate'))
+                self.assertFalse(bridge.receive({'id': command['id'], 'renderer_id': 'duplicate', 'result': {}}))
+                self.assertTrue(bridge.receive({'id': command['id'], 'renderer_id': 'original', 'error': 'No points matched'}))
+                with self.assertRaisesRegex(RendererError, 'No points matched'): future.result()
+        with patch('ply_visualizer.agent_bridge.time.monotonic', return_value=111):
+            bridge.pending('replacement')
+            self.assertEqual(bridge.renderer_id(), 'replacement')
+
     def test_browser_default_respects_host_and_override(self):
         from types import SimpleNamespace
         class Capabilities:
@@ -63,6 +85,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         async with Client(create_server([Path.cwd()])) as client:
             tools = (await client.list_tools()).tools
             self.assertEqual(len(tools), 18)
+            self.assertFalse(next(t for t in tools if t.name == 'update_3d_scene').meta)
             app_resource = await client.read_resource('ui://ply-visualizer/viewer.html')
             content = app_resource.contents[0]
             self.assertEqual(content.mime_type, 'text/html;profile=mcp-app')
@@ -112,6 +135,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 for args in ({'field': 'label'}, {'field': 'label', 'values': []}, {'bounds': [1,0,0,0,1,1]}, {'plane': [0,0,0,1]}):
                     invalid = await client.call_tool('select_3d_region', {'scene_id': scene_id, **args})
                     self.assertTrue(invalid.is_error, invalid)
+                    self.assertNotEqual(invalid.content[0].text, 'Error executing tool select_3d_region')
 
     async def test_real_stdio_transport(self):
         import os

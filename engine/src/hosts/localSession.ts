@@ -86,9 +86,9 @@ async function start(): Promise<void> {
       }
       files.push(new File([await data.blob()], source.name));
     }
-    clearAgentSelection(host as unknown as ControlHost);
     const camera = host.camera.clone();
     const target = host.controls.target.clone();
+    clearAgentSelection(host as unknown as ControlHost);
     while (host.spatialFiles.length) {
       host.removeFileByIndex(host.spatialFiles.length - 1);
     }

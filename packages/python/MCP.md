@@ -1,6 +1,6 @@
 # Local MCP integration
 
-The current checkout is an **unpublished 0.4.0.dev1 preview**. It replaces
+The current checkout is an **unpublished 0.4.0.dev2 preview**. It replaces
 0.3.0's nested localhost iframe with the shared renderer running directly in the
 MCP widget. PyPI still serves 0.3.0 until the next requested release.
 
@@ -115,6 +115,49 @@ The first view uses the viewer's OpenGL convention (Y-up, looking along -Z) and
 a tight bounding-box fit. Coordinates are not transformed. Settings are
 collapsed by default and all listed operations work without opening the panel.
 
+## Coordinate and presentation inspection
+
+Call `inspect_3d_scene` before spatial edits. It returns:
+
+- `coordinate_system`: handedness, default axes, matrix layout, normalized
+  screen-coordinate convention and units. The default is right-handed,
+  OpenGL-style **Y-up**, camera forward **-Z**. Blender's world convention is
+  **Z-up**. The viewer does not convert source coordinates or infer metres.
+- `camera`: world position, `rotation_center` (the controls' `target`), unit
+  `view_direction`, actual `screen_right`/`screen_up`, reference `up`, distance
+  to the center, perspective field of view, clipping distances, zoom and
+  viewport dimensions. `target_direction` is separate from the actual optical
+  direction. World-to-camera and projection matrices are column-major.
+- Each object's `local_to_world`, `source_origin` if known, opacity, material
+  colors and the existing scalar/color mode. Mixed-material opacity returns
+  `opacity=null` plus `material_opacities`, rather than guessing one value.
+- `presentation`: background color (CSS RGB or hex), background kind, exposure
+  multiplier, brightness stops and settings-panel visibility.
+- `selection`: the current subset's source object, point count and label/box/
+  plane criteria, or null. `visible_bounds` excludes hidden objects; `bounds`
+  still describes all loaded geometry.
+
+Use the actual camera vectors after navigation; the default world axes do not
+say which way the camera currently faces. Physical scale remains unspecified
+unless the source supplies it; measurements use scene units.
+
+### Reliable updates and actionable errors
+
+`update_3d_scene` has no widget resource metadata: it updates the original view
+instead of asking the client to create another widget. Camera position, target
+and up are preserved while replacing geometry, including clearing a selection.
+Every responding renderer reports a `renderer_id`. The first active renderer
+owns command delivery while its heartbeat is current; duplicate widgets cannot
+answer its commands. After ten seconds without its heartbeat, a replacement can
+take over. Compare IDs after an update: a changed ID indicates a different
+renderer, not proof that the original camera was preserved. Camera bookmarks and
+presentation state are not persisted across renderer restarts.
+
+Expected renderer and argument errors retain their explanation in MCP's error
+response. A zero-match label selection reports that the previous selection is
+unchanged and lists available source label values (up to 64). Unexpected Python
+exceptions remain generic and are logged on the server.
+
 ## Select the labeled box and hide the table
 
 1. Inspect the cloud's `attributes.label.value_counts`, or call `pick_3d_point`
@@ -211,3 +254,11 @@ output buffer. This reduces serial round trips; base64 overhead and MCP-client
 traffic still apply. It is not a streaming decoder. Scene/command polling backs
 off from 500 ms to 4 seconds when idle and resets after an update or command; an
 idle command can therefore take up to about 4 seconds to be noticed.
+
+### Remaining inspection work
+
+Camera bookmarks still do not restore selection or presentation, and source-row
+provenance after invalid-point filtering is not available. Full scene-state
+save/export/import, subset export with provenance, multiple named selections
+with set operations, adaptive point sizing, multi-view previews, linked
+comparisons with error coloring, and screenshot legends remain follow-up work.

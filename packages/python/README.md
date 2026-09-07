@@ -48,8 +48,10 @@ with a browser-tab fallback. The unpublished 0.4 development version replaces
 the nested iframe with direct in-widget rendering and adds agent controls for
 navigation, appearance, measurements, video keyframes, label/region selection
 with focus previews, richer picking, named views and overlay opacity. PCD labels
-are available for coloring and filtering. Inline local Jupyter output is already
-supported below.
+are available for coloring and filtering. Inspection reports coordinate
+conventions, camera position/direction/pivot, object transforms and presentation
+state; updates reuse the original widget and preserve its camera. Inline local
+Jupyter output is already supported below.
 
 ### Developing from source
 

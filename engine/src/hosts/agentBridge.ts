@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { applyAgentControl, fitAgentView, type ControlHost } from './agentControls';
 import { agentAttributes, rememberAgentCamera } from './agentInspection';
+import { agentViewState, objectPresentation } from './agentViewState';
 import type { SpatialData } from '../interfaces';
 
 export interface AgentViewerHost {
@@ -14,8 +15,12 @@ export interface AgentViewerHost {
   performRender(): void;
 }
 
+const rendererId = Array.from(crypto.getRandomValues(new Uint8Array(16)), n =>
+  n.toString(16).padStart(2, '0')
+).join('');
+
 export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean> {
-  const response = await fetch('agent/command');
+  const response = await fetch(`agent/command?renderer_id=${rendererId}`);
   if (!response.ok) {
     return false;
   }
@@ -58,8 +63,10 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
     }
     const attributes = await agentAttributes(host.spatialFiles);
     reply.result = {
+      renderer_id: rendererId,
       rendered_revision: Number(document.documentElement.dataset.sessionRevision),
       objects: host.spatialFiles.map(file => ({
+        ...objectPresentation(host as unknown as ControlHost, host.spatialFiles.indexOf(file)),
         object_index: host.spatialFiles.indexOf(file),
         name: file.fileName,
         source_points: file.sourcePointCount ?? null,
@@ -80,14 +87,17 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
         mesh: (host as unknown as ControlHost).solidVisible[host.spatialFiles.indexOf(file)],
       })),
       bounds: bounds.isEmpty() ? null : { min: bounds.min.toArray(), max: bounds.max.toArray() },
-      camera: {
-        position: host.camera.position.toArray(),
-        target: host.controls.target.toArray(),
-        up: host.camera.up.toArray(),
-      },
+      ...agentViewState(host as unknown as ControlHost),
     };
     if (controlResult !== undefined) {
-      reply.result = controlResult;
+      reply.result = {
+        ...(reply.result as object),
+        ...(controlResult as object),
+        camera: {
+          ...agentViewState(host as unknown as ControlHost).camera,
+          ...(controlResult as { camera?: object }).camera,
+        },
+      };
     }
     if (
       command.operation === 'capture' ||
@@ -103,7 +113,7 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
       reply.result = {
-        ...(command.operation === 'selection' ? (controlResult as object) : {}),
+        ...(command.operation === 'selection' ? (reply.result as object) : {}),
         png: canvas.toDataURL('image/png').split(',')[1],
         width: canvas.width,
         height: canvas.height,
@@ -115,7 +125,7 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
   await fetch('agent/result', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(reply),
+    body: JSON.stringify({ ...reply, renderer_id: rendererId }),
   });
   return true;
 }

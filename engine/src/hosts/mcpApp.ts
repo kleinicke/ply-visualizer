@@ -60,7 +60,7 @@ for (const name of ['localStorage', 'sessionStorage'] as const) {
     Object.defineProperty(window, name, { value: storage });
   }
 }
-const app = new App({ name: 'ply-visualizer', version: '0.4.0.dev1' }, {});
+const app = new App({ name: 'ply-visualizer', version: '0.4.0.dev2' }, {});
 let sceneId = '';
 let ready: () => void;
 const sceneReady = new Promise<void>(resolve => {
@@ -102,7 +102,7 @@ window.fetch = async (input, init) => {
       },
     });
   }
-  const path = address.replace(/^\.\//, '');
+  const [path, query = ''] = address.replace(/^\.\//, '').split('?', 2);
   if (
     !['session.json', 'agent/command', 'agent/result'].includes(path) &&
     !path.startsWith('files/')
@@ -119,7 +119,13 @@ window.fetch = async (input, init) => {
     );
   }
   if (!path.startsWith('files/')) {
-    const value = await call('read_viewer_data', { scene_id: sceneId, resource: path });
+    const value = await call('read_viewer_data', {
+      scene_id: sceneId,
+      resource: path,
+      ...(path === 'agent/command'
+        ? { renderer_id: new URLSearchParams(query).get('renderer_id') }
+        : {}),
+    });
     return Response.json(path === 'agent/command' ? value.command : value);
   }
   return new Response(new Blob([(await readBytes(path)).buffer as ArrayBuffer]));

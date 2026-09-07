@@ -1,5 +1,7 @@
 """Local stdio MCP tools. Stdout is reserved for MCP protocol messages."""
 import argparse
+from functools import wraps
+from .agent_bridge import RendererError
 import json
 import base64
 from contextlib import asynccontextmanager
@@ -47,7 +49,7 @@ class SceneManager:
             manifest = viewer._manifest()
         return {"scene_id": scene_id, "url": viewer.url, "revision": manifest["revision"],
                 "files": [entry["name"] for entry in manifest["files"]],
-                "status": "submitted", "connection": viewer._bridge.connection(), "note": "Use inspect_3d_scene to verify rendering. Inline MCP App renders via MCP. No browser tab is opened unless explicitly requested."}
+                "status": "submitted", "connection": viewer._bridge.connection(), "renderer_id": viewer._bridge.renderer_id(), "note": "Use inspect_3d_scene to verify rendering. Inline MCP App renders via MCP. No browser tab is opened unless explicitly requested."}
 
     def close(self):
         for viewer in self.scenes.values():
@@ -63,9 +65,19 @@ def browser_default(ctx, requested):
 def create_server(roots):
     from mcp.server import MCPServer
     from mcp.server.mcpserver import Image, Context
+    from mcp.server.mcpserver.exceptions import ToolError
     from mcp_types import ToolAnnotations
     from pydantic import Field
     from typing import Annotated
+
+    def explain_errors(fn):
+        @wraps(fn)
+        def run(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except (RendererError, TimeoutError, ValueError, FileNotFoundError, PermissionError) as error:
+                raise ToolError(str(error)) from error
+        return run
 
     points_type = Annotated[list[tuple[float, float, float]], Field(min_length=1, max_length=20000)]
     manager = SceneManager(roots)
@@ -77,8 +89,8 @@ def create_server(roots):
         finally:
             manager.close()
 
-    server = MCPServer("ply-visualizer", version="0.4.0.dev1", lifespan=lifespan,
-        instructions="Use this viewer for 3D point clouds, meshes, Gaussian splats, predicted/target geometry and vector fields. Prefer local file paths for large data. Reuse scene_id to update a scene. After opening the local URL, inspect or capture the scene to verify actual rendering. Do not claim a submitted scene has rendered. The MCP widget renders directly and transfers geometry through app-only tools. No browser opens by default. Remote file upload is not supported.")
+    server = MCPServer("ply-visualizer", version="0.4.0.dev2", lifespan=lifespan,
+        instructions="Use this viewer for 3D point clouds, meshes, Gaussian splats, predicted/target geometry and vector fields. Prefer local file paths for large data. Reuse scene_id to update a scene. After creating a scene, inspect its coordinate_system, camera, presentation and selection, then capture to verify actual rendering. Use reported world axes and units; do not assume meters or Blender Z-up. After updates compare renderer_id and rendered_revision. Do not claim a submitted scene has rendered. The MCP widget renders directly and transfers geometry through app-only tools. No browser opens by default. Remote file upload is not supported.")
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     local = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 
@@ -91,12 +103,14 @@ def create_server(roots):
         return (Path(__file__).parent / "_mcp_app" / "viewer.html").read_text(encoding="utf-8")
 
     @server.tool(annotations=local, meta=ui_meta, structured_output=True)
+    @explain_errors
     def open_3d_files(paths: Annotated[list[str], Field(min_length=1, max_length=32)], ctx: Context, open_browser: bool | None = None) -> dict[str, Any]:
         """Open local point clouds/meshes/splats together. Paths must be under configured roots. Returns a persistent scene_id and local URL; inspect to verify loading."""
         files = [manager.path(path) for path in paths]
         return manager.add(lambda: show(*files, open_browser=browser_default(ctx, open_browser)))
 
     @server.tool(annotations=local, meta=ui_meta, structured_output=True)
+    @explain_errors
     def visualize_points(points: points_type, ctx: Context, colors: points_type | None = None,
                          target: points_type | None = None, vectors: points_type | None = None,
                          vector_scale: float = 1.0, open_browser: bool | None = None) -> dict[str, Any]:
@@ -104,7 +118,8 @@ def create_server(roots):
         return manager.add(lambda: show(points, colors=colors, target=target, vectors=vectors,
                                       vector_scale=vector_scale, open_browser=browser_default(ctx, open_browser)))
 
-    @server.tool(annotations=local, meta=ui_meta, structured_output=True)
+    @server.tool(annotations=local, structured_output=True)
+    @explain_errors
     def update_3d_scene(scene_id: str, points: points_type, colors: points_type | None = None,
                         target: points_type | None = None, vectors: points_type | None = None,
                         vector_scale: float = 1.0) -> dict[str, Any]:
@@ -113,16 +128,19 @@ def create_server(roots):
         return manager.describe(scene_id)
 
     @server.tool(annotations=readonly)
+    @explain_errors
     def list_3d_scenes() -> list[dict]:
         """List scenes owned by this MCP process and their local viewer URLs."""
         return [manager.describe(scene_id) for scene_id in manager.scenes]
 
     @server.tool(annotations=readonly)
+    @explain_errors
     def inspect_3d_scene(scene_id: str) -> dict[str, Any]:
-        """Read rendered geometry counts, world bounds and camera from the active inline viewer or explicit browser fallback. Times out if no renderer responds. Compare rendered_revision with the submitted revision."""
+        """Read coordinate conventions/units, camera position/direction/rotation center, projection and viewport, object transforms, opacity/color, exposure/background, selection criteria, geometry counts and bounds from the active inline viewer or explicit browser fallback. Times out if no renderer responds. Compare rendered_revision with the submitted revision."""
         return manager.get(scene_id)._bridge.request("inspect")
 
     @server.tool(annotations=local)
+    @explain_errors
     def set_3d_camera(scene_id: str, fit: bool = False, position: tuple[float, float, float] | None = None,
                       target: tuple[float, float, float] | None = None, up: tuple[float, float, float] | None = None) -> dict[str, Any]:
         """Fit geometry into view, or set camera position and look-at target. Requires an active inline viewer or explicit browser fallback. Returns the applied camera and rendered scene information."""
@@ -139,12 +157,14 @@ def create_server(roots):
         return manager.get(scene_id)._bridge.request("camera", {"fit": fit, "position": position, "target": target, "up": up})
 
     @server.tool(annotations=readonly)
+    @explain_errors
     def capture_3d_view(scene_id: str) -> Image:
         """Return an actual PNG of the rendered 3D canvas (maximum 1024 pixels per side) so the agent can visually inspect the result. Requires an active inline viewer or explicit browser fallback."""
         result = manager.get(scene_id)._bridge.request("capture")
         return Image(data=base64.b64decode(result["png"], validate=True), format="png")
 
     @server.tool(annotations=local)
+    @explain_errors
     def close_3d_scene(scene_id: str) -> dict[str, Any]:
         """Release a viewer's local server and temporary data. Does not delete the user's source files. Any active viewer disconnects."""
         manager.get(scene_id).close()
@@ -155,6 +175,7 @@ def create_server(roots):
         return manager.get(scene_id)._bridge.request(operation, {k: v for k, v in arguments.items() if v is not None})
 
     @server.tool(annotations=local, structured_output=True)
+    @explain_errors
     def navigate_3d_view(scene_id: str,
         action: Literal["fit", "preset", "orbit", "pan", "zoom", "origin", "pivot", "pick"],
         preset: Literal["front", "back", "top", "bottom", "left", "right", "isometric"] | None = None,
@@ -171,12 +192,14 @@ def create_server(roots):
         return command(scene_id, "navigate", dict(action=action, preset=preset, vector=vector, screen=screen, yaw=yaw, pitch=pitch, factor=factor))
 
     @server.tool(annotations=local, structured_output=True)
+    @explain_errors
     def set_3d_appearance(scene_id: str, brightness: Annotated[float, Field(ge=-10, le=10)] | None = None,
                           background: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None) -> dict[str, Any]:
         """Set geometry exposure in stops (0 normal, +1 twice as bright) and background #RRGGBB. Capture includes this background."""
         return command(scene_id, "appearance", dict(brightness=brightness, background=background))
 
     @server.tool(annotations=local, structured_output=True)
+    @explain_errors
     def set_3d_object(scene_id: str, object_index: Annotated[int, Field(ge=0)],
         point_size: Annotated[float, Field(gt=0, le=1000)] | None = None,
         opacity: Annotated[float, Field(ge=0, le=1)] | None = None,
@@ -188,6 +211,7 @@ def create_server(roots):
         return command(scene_id, "object", dict(object_index=object_index, opacity=opacity, point_size=point_size, visible=visible, mode=mode, color=color, color_mode=color_mode))
 
     @server.tool(annotations=local, structured_output=True)
+    @explain_errors
     def measure_3d_scene(scene_id: str, action: Literal["list", "distance", "path_point", "undo", "close_path", "clear"],
         start: tuple[float, float, float] | None = None, end: tuple[float, float, float] | None = None) -> dict[str, Any]:
         """Add/list/clear visible measurements in scene units. Distance uses start/end XYZ; path_point appends end to the active path; undo removes its last point; close_path toggles closure."""
@@ -197,6 +221,7 @@ def create_server(roots):
         return command(scene_id, "measure", dict(action=action, start=start, end=end))
 
     @server.tool(annotations=local, structured_output=True)
+    @explain_errors
     def control_3d_video(scene_id: str, action: Literal["list", "add", "remove", "goto", "update", "loop", "play", "stop"],
         index: Annotated[int, Field(ge=0)] | None = None, enabled: bool | None = None,
         duration: Annotated[float, Field(gt=0, le=3600)] | None = None,
@@ -207,11 +232,13 @@ def create_server(roots):
         return command(scene_id, "video", dict(action=action, index=index, enabled=enabled, duration=duration, dwell=dwell))
 
     @server.tool(annotations=readonly, structured_output=True)
+    @explain_errors
     def pick_3d_point(scene_id: str, screen: tuple[Annotated[float, Field(ge=0, le=1)], Annotated[float, Field(ge=0, le=1)]]) -> dict[str, Any]:
         """Pick normalized canvas XY without moving the camera. Returns hit/miss, world XYZ, object and decoded point indices and scalar attributes. Mesh/splat picks may have null indices; never infer object identity from those."""
         return command(scene_id, "pick", dict(screen=screen))
 
     @server.tool(annotations=local, structured_output=True)
+    @explain_errors
     def manage_3d_views(scene_id: str, action: Literal["save", "restore", "list", "delete", "undo"],
                         name: Annotated[str, Field(min_length=1, max_length=100)] | None = None) -> dict[str, Any]:
         """Save/restore named camera views for this renderer session; undo the last agent camera change (up to 50). Names are not persisted after closing/reloading the widget. Does not restore geometry or filters."""
@@ -219,6 +246,7 @@ def create_server(roots):
         return command(scene_id, "views", dict(action=action, name=name))
 
     @server.tool(annotations=local)
+    @explain_errors
     def select_3d_region(scene_id: str, action: Literal["select", "clear"] = "select",
         object_index: Annotated[int, Field(ge=0)] = 0,
         field: str | None = None, values: list[float] | None = None,
@@ -236,14 +264,15 @@ def create_server(roots):
         return [json.dumps(result)] + ([Image(data=base64.b64decode(png, validate=True), format="png")] if png else [])
 
     @server.tool(annotations=readonly, meta={"ui": {"visibility": ["app"]}}, structured_output=True)
-    def read_viewer_data(scene_id: str, resource: str, offset: Annotated[int, Field(ge=0)] = 0) -> dict[str, Any]:
+    @explain_errors
+    def read_viewer_data(scene_id: str, resource: str, offset: Annotated[int, Field(ge=0)] = 0, renderer_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None) -> dict[str, Any]:
         """App-only transport: session metadata, pending commands or bounded geometry chunks."""
         viewer = manager.get(scene_id)
         with viewer._lock:
             if resource == "session.json":
                 return viewer._manifest()
             if resource == "agent/command":
-                return {"command": viewer._bridge.pending()}
+                return {"command": viewer._bridge.pending(renderer_id)}
             if resource.startswith("assets/"):
                 name = resource[len("assets/"):]
                 if not re.fullmatch(r"[a-zA-Z0-9_.-]+\.(js|wasm)", name):
@@ -267,6 +296,7 @@ def create_server(roots):
                 return {"data": base64.b64encode(source.read(512 * 1024)).decode(), "size": size, "offset": offset}
 
     @server.tool(annotations=local, meta={"ui": {"visibility": ["app"]}}, structured_output=True)
+    @explain_errors
     def submit_viewer_reply(scene_id: str, reply: dict[str, Any]) -> dict[str, Any]:
         """App-only transport: acknowledge a rendered command result."""
         return {"accepted": manager.get(scene_id)._bridge.receive(reply)}

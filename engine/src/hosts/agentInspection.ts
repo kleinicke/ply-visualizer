@@ -17,6 +17,7 @@ type InspectionState = {
   views: Map<string, Pose>;
   undo: Pose[];
   selection?: SpatialData;
+  criteria?: Record<string, unknown>;
   source?: SpatialData;
   indices?: Uint32Array;
   visibility?: Map<SpatialData, boolean>;
@@ -135,6 +136,7 @@ export function clearAgentSelection(host: ControlHost) {
     }
   });
   s.selection = undefined;
+  s.criteria = undefined;
   s.visibility = undefined;
   s.source = undefined;
   s.indices = undefined;
@@ -189,7 +191,16 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
     new Float64Array(a.plane ?? [])
   );
   if (!indices.length) {
-    throw new Error('Selection matched no points; previous selection is unchanged');
+    const summary = a.field
+      ? ((await agentAttributes([source]))[0][a.field] as {
+          value_counts: Record<string, number>;
+          values_truncated: boolean;
+        })
+      : null;
+    const available = summary
+      ? ` Available ${a.field} values${summary.values_truncated ? ' (first 64)' : ''}: ${Object.keys(summary.value_counts).join(', ')}.`
+      : '';
+    throw new Error('Selection matched no points; previous selection is unchanged.' + available);
   }
   const subset = <T extends Float32Array | Uint8Array>(
     array: T | null | undefined,
@@ -235,6 +246,14 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
   host.setTransformationMatrix(i, matrix);
   selected.updateMatrixWorld(true);
   s.selection = data;
+  s.criteria = {
+    field: a.field ?? null,
+    values: a.values ?? null,
+    bounds: a.bounds ?? null,
+    plane: a.plane ?? null,
+    isolate: !!a.isolate,
+    highlight: a.highlight !== false,
+  };
   s.source = source;
   s.indices = indices;
   if (a.isolate) {
@@ -279,4 +298,18 @@ export async function agentAttributes(files: SpatialData[]) {
     }
     return summary;
   });
+}
+
+export function currentAgentSelection(host: ControlHost) {
+  const s = state(host);
+  const index = s.selection ? host.spatialFiles.indexOf(s.selection) : -1;
+  if (index < 0) {
+    return null;
+  }
+  return {
+    object_index: index,
+    source_object_index: host.spatialFiles.indexOf(s.source!),
+    selected_points: s.selection!.vertexCount,
+    criteria: s.criteria,
+  };
 }

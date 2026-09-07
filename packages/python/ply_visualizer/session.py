@@ -17,7 +17,7 @@ import shutil
 import struct
 import tempfile
 import threading
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlsplit, parse_qs
 import webbrowser
 
 from .arrays import point_rows
@@ -92,7 +92,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         resource = path[len(prefix):] or "index.html"
         if resource == "agent/command":
-            self._send(json.dumps(session._bridge.pending()).encode(), "application/json")
+            self._send(json.dumps(session._bridge.pending(parse_qs(urlsplit(self.path).query).get("renderer_id", [None])[0])).encode(), "application/json")
             return
         if resource == "session.json":
             with session._lock:

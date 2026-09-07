@@ -138,6 +138,14 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
       const info = await control('inspect_3d_scene');
       expect(info.objects[0].vertices).toBeGreaterThan(0);
       expect(info.camera.up).toEqual([0, 1, 0]);
+      expect(info.renderer_id).toMatch(/^[a-f0-9]{32}$/);
+      expect(info.coordinate_system.handedness).toBe('right-handed');
+      expect(info.coordinate_system.meters_per_unit).toBeNull();
+      expect(info.camera.rotation_center).toEqual(info.camera.target);
+      expect(info.camera.view_direction).toEqual([0, 0, -1]);
+      expect(info.camera.screen_right).toEqual([1, 0, 0]);
+      expect(info.camera.distance_to_rotation_center).toBeGreaterThan(0);
+      expect(info.camera.viewport.css_width).toBeGreaterThan(0);
       await control('navigate_3d_view', { action: 'preset', preset: 'isometric' });
       const frame = page.frames().find(frame => frame.parentFrame() === page.mainFrame())!;
       const screen = await frame.evaluate(() => {
@@ -211,6 +219,10 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
         const isolated = await control('inspect_3d_scene');
         expect(isolated.objects[0].visible).toBe(false);
         expect(isolated.objects[1].visible).toBe(true);
+        expect(isolated.selection.criteria.field).toBe('label');
+        expect(isolated.selection.criteria.values).toEqual([label]);
+        expect(isolated.presentation.brightness_stops).toBe(1);
+        expect(isolated.presentation.background).toBe('rgb(18, 52, 86)');
         const pickScreen = await frame.evaluate(() => {
           const v = (window as any).visualizer,
             mesh = v.meshes[1];
@@ -234,6 +246,7 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
         expect(
           await frame.evaluate(() => (window as any).visualizer.meshes[1].material.opacity)
         ).toBe(0.35);
+        expect((await control('inspect_3d_scene')).objects[1].opacity).toBe(0.35);
         const failed = await call('select_3d_region', {
           scene_id: sceneId,
           object_index: 0,
@@ -241,9 +254,14 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
           values: [-999],
         });
         expect(failed.isError).toBe(true);
+        expect(failed.content[0].text).toContain(
+          'Selection matched no points; previous selection is unchanged'
+        );
+        expect(failed.content[0].text).toContain('Available label values');
         expect((await control('inspect_3d_scene')).objects).toHaveLength(2);
         await control('select_3d_region', { action: 'clear', preview: false });
         const restored = await control('inspect_3d_scene');
+        expect(restored.selection).toBeNull();
         expect(restored.objects).toHaveLength(1);
         expect(restored.objects[0].visible).toBe(true);
         if (!process.env.PLY_AGENT_TEST_FILE) {
@@ -256,6 +274,36 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
           await control('select_3d_region', { action: 'clear', preview: false });
         }
       }
+      if (info.objects[0].scalar_fields.includes('label')) {
+        await control('select_3d_region', {
+          field: 'label',
+          values: [Number(Object.keys(info.objects[0].attributes.label.value_counts)[0])],
+          preview: false,
+        });
+      }
+      const fixed = await control('set_3d_camera', {
+        position: [3, 2, 4],
+        target: [0.5, 0.5, 0.1],
+        up: [0, 1, 0],
+      });
+      const updated = await control('update_3d_scene', {
+        points: [
+          [0, 0, 0],
+          [2, 0, 0],
+          [0, 2, 0],
+        ],
+      });
+      await expect(viewer.locator('html')).toHaveAttribute(
+        'data-session-revision',
+        String(updated.revision)
+      );
+      const afterUpdate = await control('inspect_3d_scene');
+      expect(afterUpdate.renderer_id).toBe(info.renderer_id);
+      expect(afterUpdate.camera.position).toEqual(fixed.camera.position);
+      expect(afterUpdate.camera.target).toEqual([0.5, 0.5, 0.1]);
+      expect(afterUpdate.camera.up).toEqual(fixed.camera.up);
+      expect(afterUpdate.objects).toHaveLength(1);
+      expect(afterUpdate.selection).toBeNull();
       const capture = await call('capture_3d_view', { scene_id: sceneId });
       expect(capture.content.some((c: any) => c.type === 'image')).toBe(true);
       await page.screenshot({ path: test.info().outputPath('direct-mcp.png') });
