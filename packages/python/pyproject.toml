@@ -11,6 +11,14 @@ requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Florian Kleinicke" }]
 
+[project.optional-dependencies]
+notebook = ["ipython>=8"]
+
+[project.urls]
+Homepage = "https://3d.f-kleinicke.de"
+Repository = "https://github.com/kleinicke/ply-visualizer"
+Issues = "https://github.com/kleinicke/ply-visualizer/issues"
+
 [project.scripts]
 ply-viewer = "ply_visualizer.__main__:main"
 

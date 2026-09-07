@@ -83,30 +83,22 @@ uv tool install /path/to/ply_visualizer-0.1.0-py3-none-any.whl
 uv add /path/to/ply_visualizer-0.1.0-py3-none-any.whl
 ```
 
-### Public package direction
+### Public PyPI installation
 
-The intended distribution is a public PyPI package with the browser assets
-bundled. uv installs from PyPI; no separate uv marketplace is needed. The
-current distribution name is `ply-visualizer`, its Python import is
-`ply_visualizer`, and its command is `ply-viewer`.
-
-If the project is released under the proposed PyPI name **`3d-visualizer`**, the
-installation commands would be:
+The chosen public package name is **`ply-visualizer`**. Publication is pending
+PyPI authentication; until it is available on PyPI, use the local source/wheel
+commands above. Once published:
 
 ```sh
-# Future release examples, not installation commands for the current preview:
-uv add 3d-visualizer           # Dependency in a uv-managed Python project
-uv pip install 3d-visualizer   # Into an existing virtual environment
-uv tool install 3d-visualizer # Isolated CLI installation
-uvx --from 3d-visualizer ply-viewer scan.ply # One-off CLI use
+uv add ply-visualizer            # Python project
+uv add "ply-visualizer[notebook]" # Notebook display support
+uv pip install ply-visualizer    # Existing virtual environment
+uv tool install ply-visualizer   # Isolated CLI installation
+uvx --from ply-visualizer ply-viewer scan.ply
 ```
 
-That name has not been reserved or configured in this package. A public release
-requires choosing an available PyPI name and publishing the built distribution.
-The installation name can differ from the Python import name; imports cannot use
-`3d-visualizer` as a Python identifier. The existing `ply_visualizer` import can
-remain compatible even if the distribution is renamed.
-[Python packaging names](https://packaging.python.org/en/latest/discussions/distribution-package-vs-import-package/).
+The Python import remains `from ply_visualizer import show`. See
+[publishing setup](PUBLISHING.md) for the release workflow.
 
 ## Alternative: install with pip from this repository
 
@@ -207,68 +199,140 @@ viewer = show(points, colors=rgb)
   with an error. RGB retains the integer-valued 0..255 convention, including
   floating-point tensors; normalized RGB can be passed as `(rgb * 255).round()`.
 
-### Inspect a model output using a forward hook
+## Training previews
 
-For a module producing `(B, N, 3)`, this opens its first batch once. The hook
-returns `None`, so it does not replace the model output. Remove the hook when
-done and keep the session alive as long as you need the browser:
+All updates reuse the same browser tab/inline view and preserve its camera. The
+viewer polls for the newest revision every 500 ms; intermediate revisions can be
+skipped. Publish at a useful training interval, not every forward pass.
+Serialization and GPU transfer are synchronous. Updates replace the scene;
+manual files added to that scene are also replaced on the next update.
 
 ```python
-session = None
+viewer = show(initial_points)
 
-def inspect_once(module, inputs, output):
-    global session
-    if session is None:
-        session = show(output[0])
-
-handle = model.register_forward_hook(inspect_once)
-try:
-    prediction = model(batch)
-finally:
-    handle.remove()
-
-# Continue training normally; later call session.close().
+# In your training loop, e.g. every 100 steps:
+if step % 100 == 0:
+    viewer.update(prediction[0], target=target[0], step=step)
 ```
 
-For tuple/dict outputs, select the tensor explicitly, such as
-`show(output["points"][0])`. Run visualization in the main process and, in
-distributed training, on one rank only. Keep browser/server operations outside
-compiled model code.
-[PyTorch forward hook documentation](https://docs.pytorch.org/docs/stable/generated/torch.nn.Module.html#torch.nn.Module.register_forward_hook).
+Prediction is orange and target cyan. Supply `colors=` to override prediction
+RGB. Targets may have a different number of points. This is a geometric overlay,
+not a computed nearest-neighbor error metric. Visibility can be toggled in the
+standard file panel. Use **Pause updates** to inspect one revision and **Fit
+scene** to reset the framing explicitly.
 
-Useful future additions (not implemented yet): a persistent
-`session.update(...)` that preserves the camera; a batch selector;
-prediction/target overlays; scalar coloring for labels, confidence or per-point
-error; and gradient/displacement arrows anchored at point positions. A training
-callback could publish these at a configurable interval instead of opening tabs
-from every forward pass.
+### Batch and augmentation inspection
+
+```python
+from ply_visualizer import show_batch
+
+viewer = show_batch(batch, target=target_batch)
+viewer.update_batch(next_batch, target=next_targets, step=step)
+
+# A list of differently sized point arrays also works:
+viewer = show_batch([original, augmented], labels=["Original", "Augmented"])
+```
+
+The sample selector switches batches in one scene and retains the camera.
+Colors, targets, and vectors (when supplied) must match the batch size. Batch
+snapshots serialize every sample; select a small inspection subset for large
+training batches. Only the chosen sample is loaded by the browser.
+
+### Gradient and displacement arrows
+
+```python
+# After loss.backward(); non-leaf predictions need retain_grad() beforehand.
+viewer.update(
+    points,
+    vectors=points.grad,
+    vector_scale=-learning_rate,
+    max_vectors=256,
+    step=step,
+)
+```
+
+Arrows are anchored at the corresponding input points. Negative learning-rate
+scaling shows a plain gradient-descent direction; it is not an exact Adam or
+momentum optimizer step. To inspect the actual update, pass measured coordinate
+displacements instead. Nonzero arrows are magenta. Up to `max_vectors` evenly
+spaced vectors are displayed (default 256, maximum 2000). All supplied vector
+rows are validated; no autograd hooks or gradient computation are installed by
+this operation.
+
+### Layer inspection with a removable forward hook
+
+```python
+viewer = show(initial_points)
+with viewer.inspect_layer(model, select=lambda output: output[0], every=100):
+    train(model)
+```
+
+For dictionary outputs use a selector such as
+`lambda output: output["points"][0]`. The selector must return `(N, 3)`
+coordinates, not arbitrary feature channels. The hook captures the first forward
+call and then every `every` calls. It returns `None`, preserving the model's
+output. A visualization error disables the hook, emits a warning and is
+accessible as `inspection.error`; it does not invalidate training. The context
+manager removes the hook, while the caller owns the viewer session's lifetime.
+`inspection.close()` also removes it explicitly.
+
+Run viewer updates in the main process, on one rank in distributed training, and
+outside compiled model code. GPU-to-CPU transfer introduces synchronization.
+[PyTorch forward hooks](https://docs.pytorch.org/docs/stable/generated/torch.nn.Module.html#torch.nn.Module.register_forward_hook).
 
 The server binds only to `127.0.0.1`, uses a random session URL, and serves only
 the explicitly supplied files and bundled viewer assets. Source files remain on
 your machine; the package does not upload them. Keep file paths available for
 the life of the session. Do not share the session URL with untrusted code.
 
-## Current scope
+## Inline Jupyter notebooks
 
-In a **local Jupyter notebook**, use `viewer = show(points)` in a cell and keep
-the kernel running. It opens a separate browser tab; `viewer.close()` releases
-the session when you are done. To open the link yourself, use
-`viewer = show(points, open_browser=False)` and inspect `viewer.url`. Do not
-call `viewer.wait()` in a notebook cell, since it blocks that cell. Use the
-notebook kernel's Python environment when installing the package. Remote
-notebooks (including Colab) need a separate proxy/transport integration and are
-not supported by this loopback-only preview.
+In a **local** Jupyter notebook, return the viewer as the last expression in a
+cell. Browser auto-opening is disabled when a notebook kernel is detected:
+
+```python
+viewer = show(points)
+viewer  # Interactive viewer appears in the output cell.
+```
+
+Or display explicitly, using the notebook extra:
+
+```python
+viewer.display(height=480, ui="collapsed")
+```
+
+Settings are collapsed by default. A compact toolbar keeps **Settings**, **Fit
+scene**, **Pause updates**, and the batch selector accessible. Choose
+`ui="full"` to show settings immediately or `ui="none"` for a presentation-only
+canvas with mouse controls. In UI-free mode, batch selection is unavailable;
+choose the sample in Python before displaying it.
+
+`viewer.update(...)` updates every open view, including notebook output. Keep
+the kernel running, call `viewer.close()` when done, and do not call
+`viewer.wait()` in a cell. Notebook output contains a live local iframe, not an
+offline saved scene. Reopen the session after restarting the kernel.
+
+This initial inline transport requires the browser and kernel on the same
+machine and a notebook host that permits local iframes. Remote Jupyter, Colab,
+and notebook environments that block local iframe URLs need a widget/proxy
+transport; they are not supported by this transport yet.
+
+For a mature widget-based alternative, [K3D](https://k3d-jupyter.org/) supports
+notebook point clouds and other 3D primitives.
+[Rerun](https://rerun.io/examples/feature-showcase/notebook_viewer) is worth
+considering for recorded, time-based diagnostics. This package embeds the
+existing 3D viewer to retain its file formats and interaction controls.
+
+## Current scope
 
 - Supported inputs: PLY, XYZ, XYZN, XYZRGB, PCD, PTS, OBJ, STL, OFF, GLB,
   LAS/LAZ, E57, SPZ, SPLAT, KSPLAT, and SOG.
 - Multiple files appear together in one scene.
 - OBJ input currently provides geometry; automatic sidecar material/texture
   resolution and external-resource glTF are outside this preview.
-- Opens a browser tab, including when called from a notebook. Inline notebook
-  widgets and remote notebook servers are not implemented yet.
-- No separate image-viewer integration, MCP tools, scene editing API, headless
-  capture, or desktop launch integration yet. The shared 3D viewer retains its
-  existing manual controls and depth-conversion features.
+- No separate image-viewer integration, MCP tools, headless capture, or desktop
+  launch integration yet. The shared 3D viewer retains its existing manual
+  controls and depth-conversion features.
 
 ## Build a distributable wheel
 

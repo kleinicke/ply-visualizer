@@ -35,8 +35,8 @@ class SessionTests(unittest.TestCase):
         (self.root / "secret.txt").write_text("secret")
         with show(file, open_browser=False) as viewer:
             manifest = json.loads(self.fetch(viewer.url + "session.json"))
-            self.assertEqual(manifest, {"version": 1, "files": [{"name": file.name, "url": "files/0"}]})
-            self.assertEqual(self.fetch(viewer.url + "files/0"), b"ply data")
+            self.assertEqual(manifest["files"], [{"name": file.name, "url": "files/0/0", "batch": 0}])
+            self.assertEqual(self.fetch(viewer.url + "files/0/0"), b"ply data")
             self.assertNotIn(b"analytics.re4vive.com", self.fetch(viewer.url))
             for resource in ("../secret.txt", "%2e%2e/secret.txt", "files/1", "files/-1", "files/0/extra"):
                 with self.assertRaises(HTTPError) as error:
@@ -55,7 +55,7 @@ class SessionTests(unittest.TestCase):
 
     def test_points_and_colors_binary_payload_and_cleanup(self):
         with show([[1, 2, 3], [4, 5, 6]], colors=[[255, 0, 1], [2, 3, 4]], open_browser=False) as viewer:
-            payload = self.fetch(viewer.url + "files/0")
+            payload = self.fetch(viewer.url + "files/0/0")
             header, data = payload.split(b"end_header\n", 1)
             self.assertIn(b"element vertex 2", header)
             self.assertEqual(data, struct.pack("<fffBBBfffBBB", 1, 2, 3, 255, 0, 1, 4, 5, 6, 2, 3, 4))

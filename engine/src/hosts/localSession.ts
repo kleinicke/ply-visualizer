@@ -1,40 +1,142 @@
-/** Browser host for the Python/CLI package; decoding stays in the shared engine. */
+/** Local Python/CLI and notebook host; rendering stays in the shared engine. */
 import '../main';
+import * as THREE from 'three';
+import { mount } from 'svelte';
 import { handleBrowserFiles, type BrowserFileDragDropHost } from '../browserFileDragDrop';
+import { localSessionState as state } from '../state/localSession.svelte';
+import Toolbar from '../components/LocalSessionToolbar.svelte';
 
-async function openSession(): Promise<void> {
-  const host = (window as Window & { visualizer?: BrowserFileDragDropHost }).visualizer!;
-  try {
+interface Session {
+  version: number;
+  revision: number;
+  files: { name: string; url: string; batch: number }[];
+  batches: string[];
+  vectors: number[][][];
+  step: number | null;
+}
+type Host = BrowserFileDragDropHost & {
+  camera: THREE.PerspectiveCamera;
+  controls: { target: THREE.Vector3; update(): void };
+  scene: THREE.Scene;
+  fitCameraToAllObjects(): void;
+  requestRender(): void;
+};
+
+async function start(): Promise<void> {
+  const host = (window as Window & { visualizer?: Host }).visualizer!;
+  const ui = new URLSearchParams(location.search).get('ui') ?? 'full';
+  state.ui = ['full', 'collapsed', 'none'].includes(ui) ? ui : 'full';
+  document.documentElement.dataset.sessionUi = state.ui;
+  const toolbar = document.createElement('div');
+  document.body.append(toolbar);
+  mount(Toolbar, {
+    target: toolbar,
+    props: {
+      fit: () => {
+        host.fitCameraToAllObjects();
+        host.requestRender();
+      },
+    },
+  });
+  const arrows = new THREE.Group();
+  arrows.name = 'training-vectors';
+  host.scene.add(arrows);
+  let revision = -1;
+  let selected = -1;
+
+  function clearArrows() {
+    for (const arrow of [...arrows.children]) {
+      (arrow as THREE.ArrowHelper).dispose();
+      arrows.remove(arrow);
+    }
+  }
+
+  async function refresh() {
+    if (state.paused) {
+      return;
+    }
     const response = await fetch('session.json');
     if (!response.ok) {
-      throw new Error(`Session unavailable (${response.status})`);
+      throw new Error('Session unavailable; keep the Python kernel running.');
     }
-    const session: { version: number; files: { name: string; url: string }[] } =
-      await response.json();
+    const session: Session = await response.json();
     if (session.version !== 1) {
       throw new Error('Unsupported viewer session version');
     }
-    // Load sequentially to avoid fetching every large cloud into memory at once.
-    for (const source of session.files) {
-      const response = await fetch(source.url);
-      if (!response.ok) {
-        throw new Error(`Cannot read ${source.name} (${response.status})`);
-      }
-      const before = host.spatialFiles.length;
-      await handleBrowserFiles(host, [new File([await response.blob()], source.name)]);
-      if (host.spatialFiles.length === before) {
-        throw new Error(`Could not load ${source.name}`);
-      }
+    state.batches = session.batches;
+    state.selected = Math.min(state.selected, state.batches.length - 1);
+    const batch = state.selected;
+    if (session.revision === revision && selected === batch) {
+      return;
     }
+    const files: File[] = [];
+    // Fetch before replacing the old scene so expired revisions can be retried.
+    for (const source of session.files.filter(file => file.batch === batch)) {
+      const data = await fetch(source.url);
+      if (data.status === 404) {
+        return;
+      }
+      if (!data.ok) {
+        throw new Error(`Cannot read ${source.name} (${data.status})`);
+      }
+      files.push(new File([await data.blob()], source.name));
+    }
+    const camera = host.camera.clone();
+    const target = host.controls.target.clone();
+    while (host.spatialFiles.length) {
+      host.removeFileByIndex(host.spatialFiles.length - 1);
+    }
+    clearArrows();
+    try {
+      await handleBrowserFiles(host, files);
+      if (host.spatialFiles.length < files.length) {
+        throw new Error('Could not load the complete scene');
+      }
+      for (const [x, y, z, dx, dy, dz] of session.vectors[batch] ?? []) {
+        const direction = new THREE.Vector3(dx, dy, dz);
+        const length = direction.length();
+        if (length > 0) {
+          arrows.add(
+            new THREE.ArrowHelper(
+              direction.normalize(),
+              new THREE.Vector3(x, y, z),
+              length,
+              0xff55cc
+            )
+          );
+        }
+      }
+    } finally {
+      if (revision !== -1) {
+        host.camera.copy(camera);
+        host.controls.target.copy(target);
+        host.controls.update();
+        host.camera.updateProjectionMatrix();
+      }
+      host.requestRender();
+    }
+    revision = session.revision;
+    selected = batch;
+    state.step = session.step;
+    state.error = '';
     document.documentElement.dataset.localSession = 'loaded';
-  } catch (error) {
-    document.documentElement.dataset.localSession = 'error';
-    host.showError(error instanceof Error ? error.message : String(error));
+    document.documentElement.dataset.sessionRevision = String(revision);
   }
+
+  async function poll() {
+    try {
+      await refresh();
+    } catch (error) {
+      state.error = error instanceof Error ? error.message : String(error);
+      document.documentElement.dataset.localSession = 'error';
+    }
+    window.setTimeout(() => void poll(), 500);
+  }
+  void poll();
 }
 
 if (document.documentElement.dataset.visualizerReady === 'true') {
-  void openSession();
+  void start();
 } else {
-  window.addEventListener('visualizer-ready', () => void openSession(), { once: true });
+  window.addEventListener('visualizer-ready', () => void start(), { once: true });
 }

@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from itertools import zip_longest
 import json
 import math
+import html
 import mimetypes
 import os
 from pathlib import Path
@@ -90,19 +91,30 @@ class _Handler(BaseHTTPRequestHandler):
             return
         resource = path[len(prefix):] or "index.html"
         if resource == "session.json":
-            data = json.dumps({"version": 1, "files": [
-                {"name": file.name, "url": f"files/{index}"}
-                for index, file in enumerate(session._files)
-            ]}).encode()
+            with session._lock:
+                data = json.dumps(session._manifest()).encode()
             self._send(data, "application/json")
             return
         if resource.startswith("files/"):
-            index = resource.removeprefix("files/")
-            if not index.isdecimal() or len(index) > 9 or int(index) >= len(session._files):
+            parts = resource.split("/")
+            if len(parts) != 3 or any(not part.isdecimal() or len(part) > 9 for part in parts[1:]):
                 self.send_error(404)
                 return
-            file = session._files[int(index)]
-            content_type = "application/octet-stream"
+            revision, index = map(int, parts[1:])
+            with session._lock:
+                snapshot = session._history.get(revision)
+                if snapshot is None or index >= len(snapshot[0]):
+                    self.send_error(404)
+                    return
+                try:
+                    with snapshot[0][index].open("rb") as source:
+                        self._headers(os.fstat(source.fileno()).st_size, "application/octet-stream")
+                        shutil.copyfileobj(source, self.wfile)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                except (FileNotFoundError, IsADirectoryError, PermissionError):
+                    self.send_error(404)
+            return
         else:
             file = (ASSETS / resource).resolve()
             if not file.is_relative_to(ASSETS.resolve()):
@@ -145,6 +157,11 @@ class ViewerSession:
 
     def __init__(self, files, temporary=None):
         self._files = files
+        self._lock = threading.RLock()
+        self._update_lock = threading.Lock()
+        self._revision = 0
+        self._frames = tempfile.TemporaryDirectory(prefix="ply-scenes-")
+        self._history = {0: (files, {"files": [{"name": file.name, "batch": 0} for file in files], "batches": ["Sample 0"], "vectors": [[]], "step": None}, None)}
         self._temporary = temporary
         self._token = secrets.token_urlsafe(32)
         self._closed = threading.Event()
@@ -156,14 +173,95 @@ class ViewerSession:
         atexit.register(self.close)
 
     def close(self):
+        with self._update_lock:
+            self._close()
+
+    def _close(self):
         if not self._closed.is_set():
             self._server.shutdown()
             self._server.server_close()
             self._thread.join()
+            self._frames.cleanup()
             if self._temporary:
                 self._temporary.cleanup()
             self._closed.set()
             atexit.unregister(self.close)
+
+    def _manifest(self):
+        _, scene, _ = self._history[self._revision]
+        return {**scene, "version": 1, "revision": self._revision,
+                "files": [{**file, "url": f"files/{self._revision}/{index}"}
+                          for index, file in enumerate(scene["files"])]}
+
+    def update(self, points, *, colors=None, target=None, vectors=None,
+               vector_scale=1.0, max_vectors=256, step=None):
+        """Replace the scene; connected viewers preserve their camera.
+
+        Prediction is orange and target cyan unless prediction RGB is supplied.
+        Vectors are arrows anchored at points; pass -learning_rate * gradients
+        to display a proposed gradient-descent step.
+        """
+        return self._update(points, colors=colors, target=target, vectors=vectors,
+                            vector_scale=vector_scale, max_vectors=max_vectors, step=step)
+
+    def update_batch(self, points, *, colors=None, target=None, vectors=None,
+                     vector_scale=1.0, max_vectors=256, labels=None, step=None):
+        """Publish (B, N, 3) arrays or a list of variable-length (N, 3) samples."""
+        return self._update(points, colors=colors, target=target, vectors=vectors,
+                            vector_scale=vector_scale, max_vectors=max_vectors,
+                            labels=labels, step=step, batched=True)
+
+    def _update(self, points, **options):
+        from .scenes import build_scene
+        with self._update_lock:
+            if self._closed.is_set():
+                raise RuntimeError("Viewer session is closed")
+            folder = Path(tempfile.mkdtemp(dir=self._frames.name))
+            try:
+                files, scene = build_scene(folder, points, **options)
+            except BaseException:
+                shutil.rmtree(folder)
+                raise
+            with self._lock:
+                self._revision += 1
+                self._files = files
+                self._history[self._revision] = (files, scene, folder)
+                # Retain a small overlap for browsers fetching the previous frame.
+                for revision in list(self._history):
+                    if revision < self._revision - 2:
+                        _, _, old = self._history.pop(revision)
+                        if old is not None:
+                            shutil.rmtree(old)
+        return self
+
+    def inspect_layer(self, module, *, select=lambda output: output, every=100):
+        from .training import LayerInspection
+        return LayerInspection(module, self, select=select, every=every)
+
+    def iframe(self, *, height=480, ui="collapsed"):
+        """HTML embedding for local Jupyter kernels. No notebook dependency."""
+        if not isinstance(height, int) or not 160 <= height <= 2000:
+            raise ValueError("height must be an integer in 160..2000")
+        if ui not in ("collapsed", "full", "none"):
+            raise ValueError("ui must be collapsed, full, or none")
+        if self._closed.is_set():
+            raise RuntimeError("Viewer session is closed")
+        return (f'<iframe src="{html.escape(self.url, quote=True)}?ui={ui}" '
+                f'title="3D point cloud viewer" width="100%" height="{height}" '
+                'style="border:0;border-radius:8px" allow="fullscreen" '
+                'referrerpolicy="no-referrer"></iframe>')
+
+    def _repr_html_(self):
+        return self.iframe()
+
+    def display(self, *, height=480, ui="collapsed"):
+        """Display inline in a local notebook. Requires the notebook extra."""
+        try:
+            from IPython.display import HTML, display
+        except ImportError as error:
+            raise RuntimeError('Install notebook support: uv pip install "ply-visualizer[notebook]"') from error
+        display(HTML(self.iframe(height=height, ui=ui)))
+        return None
 
     def wait(self):
         """Keep a script alive until close() or Ctrl+C."""
@@ -176,7 +274,7 @@ class ViewerSession:
         self.close()
 
 
-def show(*sources, colors=None, open_browser=True) -> ViewerSession:
+def show(*sources, colors=None, target=None, vectors=None, vector_scale=1.0, max_vectors=256, inline=False, open_browser=None) -> ViewerSession:
     """Show 3D paths or Nx3 points (NumPy, PyTorch, or Python iterables).
 
     Optional colors are Nx3 integer RGB values (0..255). The viewer opens in
@@ -184,6 +282,13 @@ def show(*sources, colors=None, open_browser=True) -> ViewerSession:
     PyTorch tensors are detached internally and transferred to CPU, including
     GPU tensors and tensors requiring gradients. The input is never modified.
     """
+    if open_browser is None:
+        try:
+            from IPython import get_ipython
+            notebook = getattr(get_ipython(), "kernel", None) is not None
+        except ImportError:
+            notebook = False
+        open_browser = not (inline or notebook)
     if not sources:
         raise ValueError("Provide 3D file paths or an (N, 3) point array")
     if not (ASSETS / "bundle.js").is_file():
@@ -204,10 +309,21 @@ def show(*sources, colors=None, open_browser=True) -> ViewerSession:
                 raise ValueError("Pass either file paths or one (N, 3) point array")
             temporary = tempfile.TemporaryDirectory(prefix="ply-viewer-")
             try:
-                files = [_points_file(sources[0], colors, Path(temporary.name))]
+                # Rich scenes are serialized once by update(), before opening.
+                files = [] if target is not None or vectors is not None else [_points_file(sources[0], colors, Path(temporary.name))]
             except (TypeError, OverflowError) as error:
                 raise ValueError("Expected an (N, 3) point array and optional (N, 3) RGB colors") from error
         session = ViewerSession(files, temporary)
+        if target is not None or vectors is not None:
+            if len(sources) != 1 or isinstance(sources[0], (str, os.PathLike)):
+                session.close()
+                raise ValueError("target and vectors require point arrays")
+            try:
+                session.update(sources[0], colors=colors, target=target, vectors=vectors,
+                               vector_scale=vector_scale, max_vectors=max_vectors)
+            except BaseException:
+                session.close()
+                raise
     except BaseException:
         if temporary:
             temporary.cleanup()
@@ -218,3 +334,27 @@ def show(*sources, colors=None, open_browser=True) -> ViewerSession:
         except webbrowser.Error:
             pass  # The caller can still use session.url.
     return session
+
+
+def show_batch(points, *, colors=None, target=None, vectors=None, labels=None,
+               vector_scale=1.0, max_vectors=256, inline=False, open_browser=None):
+    """Open a batch with a sample selector, using one persistent viewer."""
+    if len(points) == 0:
+        raise ValueError("batch must not be empty")
+    viewer = show(points[0], inline=True, open_browser=False)
+    try:
+        viewer.update_batch(points, colors=colors, target=target, vectors=vectors,
+                            labels=labels, vector_scale=vector_scale, max_vectors=max_vectors)
+    except BaseException:
+        viewer.close()
+        raise
+    if open_browser is None:
+        try:
+            from IPython import get_ipython
+            notebook = getattr(get_ipython(), "kernel", None) is not None
+        except ImportError:
+            notebook = False
+        open_browser = not (inline or notebook)
+    if open_browser:
+        webbrowser.open(viewer.url)
+    return viewer

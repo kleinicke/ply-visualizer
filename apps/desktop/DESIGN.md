@@ -78,6 +78,10 @@ rules, while preserving their different semantics:
   layers nor slices simply because they were selected together.
 - Dataset: one logical acquisition with axes such as page, channel, Z, time,
   frame or series, backed by one or many files.
+- Temporal content: an optional playback capability on an image, scene or
+  dataset, sourced from ordered files or an animation-bearing container. A
+  collection can explicitly become a sequence; ordering alone does not imply
+  time.
 
 The UI may show a one-item Contents list for a single image or point cloud, but
 must not invent blend modes for point clouds or treat a DICOM slice as a layer.
@@ -101,6 +105,58 @@ not assemble a volume by lexicographic filename order. Extensionless DICOM needs
 format detection; unknown extension must not automatically mean text. OME
 companion files resolve within the granted workspace; missing sources or
 ambiguous groups are reported instead of silently producing an incomplete stack.
+
+## Sequences, video and animation
+
+Keep temporal compatibility open for image sequences, GIF/other animated image
+formats, ordinary video, PLY point-cloud sequences, and animated 3D containers
+such as FBX. These are future adapter targets, not claims of current decoder or
+animation support. Static support for a container does not imply playback
+support.
+
+Model source layout (one file or many), spatial presentation (image or scene),
+and temporal capabilities independently. Do not add a separate top-level viewer
+mode for every extension. In particular, the current single-File document model
+must evolve to reference a source set plus a logical document, without requiring
+all files or frames to be read into memory when opening it.
+
+One compact timeline appears only for temporal content: play/pause, scrub,
+previous/next frame where supported, loop and speed. Scene clips can
+additionally offer an animation selector. Contents, Appearance and Tools stay in
+the same places; image pan/zoom and 3D camera controls remain specific to their
+views.
+
+The adapter reports duration, timestamps/frame durations, seek capability,
+available clips, and buffering state. Distinguish discrete frame loading from
+continuous scene evaluation: replacing a point cloud each frame is not the same
+operation as animating transforms, a skeleton or mesh deformation. Keep the
+viewer's camera independent of content playback unless the user explicitly
+chooses an authored camera track. Frame point counts/topology may change; do not
+invent point correspondence or interpolation between independent PLY files.
+
+For file sequences, show a preview of the proposed natural numeric order and
+allow correction. Prefer supplied timestamps; otherwise ask for or clearly show
+an editable playback rate. Never label an inferred rate as acquisition timing.
+Preserve encoded frame delays for animated images rather than imposing a fixed
+rate. Decoding/compositing rules belong to the format adapter, not the timeline.
+Only animate a dataset's temporal axis automatically; paging through Z slices is
+explicit stack browsing, not evidence that those slices are a video.
+
+Use bounded frame/GPU caches, nearby-frame prefetch and cancellation of obsolete
+seeks. Offer distinct real-time playback (frames may be skipped, with feedback)
+and inspect-every-frame playback (may run slower). A failed frame keeps its
+identity and error visible instead of silently relabeling the previous frame.
+Pause hidden playback by default and release resources when the document closes.
+
+Seeking, exact frame stepping and export depend on codec/provider capabilities.
+Enable controls accordingly, and explain unavailable operations. Native codec
+availability may differ by platform; selecting a filename extension alone must
+not advertise working support. Container dependencies use the same scoped
+companion-file resolver as static scenes and scientific datasets.
+
+Temporal acceptance checks: variable frame delays, nontrivial filename order,
+missing frames, changing point counts, repeated seeking/cancellation, loop/end
+behavior, stable camera/display settings, bounded memory and unsupported codecs.
 
 ## Depth and text
 
@@ -168,7 +224,11 @@ the design.
 4. Collections and datasets: comparison/thumbnail navigation, glob selection,
    TIFF pages, array axes, then multi-file DICOM and OME. Verify ordering,
    incomplete companions, linked vs independent display settings and memory use.
-5. Advanced feature migration: maintain a feature-by-feature ledger covering
+5. Temporal adapters: start with explicit file sequences, then animated images
+   and container animation as decoder support permits. Share timeline behavior
+   while retaining each adapter's timing and seek guarantees. This can follow
+   collection work without redesigning the document model.
+6. Advanced feature migration: maintain a feature-by-feature ledger covering
    measurements, ROIs, layered formats, blend modes, processing, calibration,
    export and shortcuts. Do not claim image-extension parity until verified.
 
