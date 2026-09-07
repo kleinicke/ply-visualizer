@@ -9,6 +9,11 @@ Progress: this repository now contains a
 separate document routing, image-preview providers and an embedded 3D adapter.
 Full TIFF integration and repository consolidation remain future work.
 
+The latest [desktop workspace design](../apps/desktop/DESIGN.md) specifies the
+image integration and a new Tauri-only UI. For this work, existing extension,
+JetBrains and website interfaces must remain unchanged. The desktop can consume
+both engines before any repository consolidation.
+
 ## Product direction
 
 Build one coherent product for scientific images, point clouds, meshes, and

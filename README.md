@@ -18,6 +18,9 @@ heavy decoding, so files with millions of points open in seconds.
 - Use Eye-Dome Lighting and brightness correction for clearer uncolored geometry
 - Measure distances and adjust camera, rotation center and view parameters
 - Use the shared viewer on the [website](https://3d.f-kleinicke.de)
+- Try the local
+  [Python package and command-line viewer](packages/python/README.md) for 3D
+  files and point arrays (source preview; not yet published)
 
 ## Supported formats
 

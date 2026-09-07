@@ -1,0 +1,6 @@
+ply_visualizer/_assets/
+__pycache__/
+*.egg-info/
+build/
+dist/
+.venv/
