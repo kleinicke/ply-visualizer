@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import { mount } from 'svelte';
 import { handleBrowserFiles, type BrowserFileDragDropHost } from '../browserFileDragDrop';
 import { localSessionState as state } from '../state/localSession.svelte';
+import { fitAgentView } from './agentControls';
+import { viewerState } from '../state/viewer.svelte';
 import Toolbar from '../components/LocalSessionToolbar.svelte';
 import { handleAgentCommand, type AgentViewerHost } from './agentBridge';
 
@@ -26,7 +28,7 @@ type Host = BrowserFileDragDropHost &
 
 async function start(): Promise<void> {
   const host = (window as Window & { visualizer?: Host }).visualizer!;
-  const ui = new URLSearchParams(location.search).get('ui') ?? 'full';
+  const ui = new URLSearchParams(location.search).get('ui') ?? 'collapsed';
   state.ui = ['full', 'collapsed', 'none'].includes(ui) ? ui : 'full';
   document.documentElement.dataset.sessionUi = state.ui;
   const toolbar = document.createElement('div');
@@ -35,7 +37,7 @@ async function start(): Promise<void> {
     target: toolbar,
     props: {
       fit: () => {
-        host.fitCameraToAllObjects();
+        fitAgentView(host);
         host.requestRender();
       },
     },
@@ -109,6 +111,11 @@ async function start(): Promise<void> {
         }
       }
     } finally {
+      if (revision === -1 && host.spatialFiles.length) {
+        host.camera.up.set(0, 1, 0);
+        viewerState.cameraConvention = 'opengl';
+        fitAgentView(host, 'front');
+      }
       if (revision !== -1) {
         host.camera.copy(camera);
         host.controls.target.copy(target);

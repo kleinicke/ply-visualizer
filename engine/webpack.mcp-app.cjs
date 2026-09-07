@@ -1,4 +1,5 @@
 const path = require('node:path');
+const fs = require('node:fs');
 const webpack = require('webpack');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 const base = require('./webpack.config.js');
@@ -15,13 +16,29 @@ class InlineAppPlugin {
             .source.source()
             .toString()
             .replace(/<\/script/gi, '<\\/script');
-          const css = compilation.getAsset('app.css')?.source.source().toString() || '';
-          compilation.emitAsset(
-            'viewer.html',
-            new webpack.sources.RawSource(
-              `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body><script>${script}</script></body></html>`
-            )
+          const resources = Object.fromEntries(
+            compilation
+              .getAssets()
+              .filter(
+                a => a.name !== 'app.js' && a.name !== 'app.css' && a.source.size() < 128 * 1024
+              )
+              .map(a => [a.name, Buffer.from(a.source.source()).toString('base64')])
           );
+          const bootstrap = `window.__PLY_ASSETS__=${JSON.stringify(resources)};`;
+          const css =
+            fs.readFileSync(path.join(__dirname, 'media/style.css'), 'utf8') +
+            compilation
+              .getAssets()
+              .filter(a => a.name.endsWith('.css'))
+              .map(a => a.source.source().toString())
+              .join('\n');
+          const shell = fs
+            .readFileSync(path.join(__dirname, 'index.html'), 'utf8')
+            .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+            .replace(/<link\b[^>]*>/gi, '')
+            .replace('</head>', () => `<style>${css}</style></head>`)
+            .replace('</body>', () => `<script>${bootstrap}${script}</script></body>`);
+          compilation.emitAsset('viewer.html', new webpack.sources.RawSource(shell));
         }
       );
     });
@@ -33,14 +50,14 @@ module.exports = {
   entry: './src/hosts/mcpApp.ts',
   output: {
     filename: 'app.js',
-    publicPath: '',
+    publicPath: '/__ply_assets__/',
     path: path.resolve(__dirname, '../packages/python/ply_visualizer/_mcp_app'),
     clean: true,
   },
   devtool: false,
+  module: { rules: [...base.module.rules, { test: /\.wasm$/, type: 'asset/inline' }] },
   plugins: [
-    new MiniCssExtractPlugin({ filename: 'app.css' }),
+    new MiniCssExtractPlugin({ filename: 'app.css', runtime: false }),
     new InlineAppPlugin(),
-    new webpack.optimize.LimitChunkCountPlugin({ maxChunks: 1 }),
   ],
 };

@@ -1,8 +1,8 @@
 # Local MCP integration
 
-Version **0.3.0** includes an **MCP Apps preview**, browser-tab tools and
-screenshots. Inline display depends on the chat client allowing local nested
-iframes; use the browser fallback otherwise.
+The current checkout is an **unpublished 0.4.0.dev0 preview**. It replaces
+0.3.0's nested localhost iframe with the shared renderer running directly in the
+MCP widget. PyPI still serves 0.3.0 until the next requested release.
 
 The optional MCP server lets an agent use the shared 3D viewer and inspect its
 actual rendered output. Python 3.10+, uv, and a local WebGL browser are
@@ -58,10 +58,11 @@ its scenes and local servers.
 | `close_3d_scene`   | Release the scene's server and temporary data                       |
 
 `viewer://capabilities` lists supported formats, allowed roots and the workflow.
-Up to eight scenes are retained. Inline arrays are limited to 20,000 XYZ rows
-per argument; use local files for larger scenes. RGB values are integers 0–255.
-PyTorch/NumPy data in an agent's Python environment can use the Python API
-directly; MCP JSON does not carry live tensor objects.
+There are 13 agent-facing tools and two app-only transport tools. Up to eight
+scenes are retained. Inline arrays are limited to 20,000 XYZ rows per argument;
+use local files for larger scenes. RGB values are integers 0–255. PyTorch/NumPy
+data in an agent's Python environment can use the Python API directly; MCP JSON
+does not carry live tensor objects.
 
 ## Suggested agent instructions
 
@@ -80,40 +81,68 @@ screenshot. Describe any visible holes.” Tool availability and these
 instructions help an agent choose the viewer; installation alone does not make
 every AI use it.
 
-## Display and lifetime
+## Agent controls (development preview)
 
-The viewer opens a browser on the MCP server's machine. `open_browser=false`
-returns a URL for the client/user to open. Inspection, camera and capture calls
-wait up to 15 seconds for that browser tab. Keep it active if your browser
-throttles background tabs. Multiple tabs can show a scene; the first responding
-tab supplies each tool result. Paused views may report an older rendered
-revision.
+| Tool                | Operations                                                                                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigate_3d_view`  | Tight fit; front/back/top/bottom/left/right/isometric presets; orbit, pan, zoom; pivot XYZ, reset pivot to origin, pick visible geometry at normalized screen XY |
+| `set_3d_appearance` | Exposure in stops and background `#RRGGBB`                                                                                                                       |
+| `set_3d_object`     | Visibility, world-unit point size, points/mesh mode, fixed RGB, original/intensity/available scalar coloring                                                     |
+| `measure_3d_scene`  | Distances and paths in scene units, list, undo, close path, clear                                                                                                |
+| `control_3d_video`  | Add/remove/update/visit keyframes, loop, start/stop preview, list reusable camera poses                                                                          |
 
-Files stay local. The server binds to loopback, checks request origin/host, and
-uses a random session URL. Treat that URL as access to the scene.
+`inspect_3d_scene` returns object indices, current presentation state, bounds,
+valid vertex counts and available scalar names. Source/filtered counts are null
+when the parser does not supply them. Additional PCD fields such as labels are
+not yet decoded into scalar arrays; inspection does not invent label counts.
+Video controls preview the existing camera timeline; video export is not part of
+these tools. Camera snapshots/keyframes can reproduce a viewpoint.
 
-The package also supplies `ui://ply-visualizer/viewer.html` with MCP Apps tool
-metadata and a bundled HTML resource. Its Svelte shell uses the official MCP
-Apps SDK and embeds the existing local renderer with settings collapsed. Updates
-retain the view and camera. An **Open in browser** button asks the host to open
-the scene externally.
+The first view uses the viewer's OpenGL convention (Y-up, looking along -Z) and
+a tight bounding-box fit. Coordinates are not transformed. Settings are
+collapsed by default and all listed operations work without opening the panel.
 
-When a client advertises MCP Apps support, scene tools default to inline display
-without opening a second tab. Set `open_browser=true` to explicitly open a tab,
-or `false` to suppress it. Clients without Apps support keep the browser
-default.
+## Display, connection and lifetime
 
-This local preview requests `frameDomains: ["http://127.0.0.1:*"]` because each
-scene has a different loopback port. The shell validates loopback URLs and
-session paths before embedding them. Hosts may reject nested frames, loopback
-access, or HTTP content; the browser fallback is needed in those cases. Closing
-the chat panel does not close the scene; use `close_3d_scene` when finished.
+**No separate window opens by default**, including in clients without MCP Apps.
+Use `open_browser=true` only when you explicitly want a browser fallback. An
+agent should open a scene, inspect its rendered revision, then capture it.
+Opening returns before rendering because the host needs that result to create
+the widget. Do not claim a submitted scene has rendered. Inspection waits for an
+actual renderer response; it reports a clear error if none arrives.
 
-The browser and server must run on the same computer. A remote agent needs a
-separate transport/display solution. Compatibility is verified with an MCP Apps
-protocol test host; individual chat clients have not yet been verified. Local
-Jupyter already has an inline iframe with settings collapsed by default; see
-[notebook usage](README.md#inline-jupyter-notebooks).
+The widget uses app-to-server calls to transfer geometry and lazy engine assets
+in bounded chunks. There is no nested iframe, localhost fetch or external CDN.
+Settings and themes tolerate sandboxed widgets with no persistent storage. The
+renderer still requires **WebGL and WebAssembly compilation**; the host must
+permit these and MCP Apps tool calls. Hosts may also impose resource/message
+size limits. Tested with a protocol host using `connect-src 'none'`,
+`frame-src 'none'`, and `script-src 'unsafe-inline' 'wasm-unsafe-eval'`.
+Individual chat clients still need verification; this does not override their
+security policy or grant permissions automatically.
+
+`read_viewer_data` and `submit_viewer_reply` are app-only transport tools, not
+model-facing data APIs. They expose only the scene's files and bundled assets.
+Local file reads remain restricted by `--root`. Data travels through your MCP
+client when displayed inline, rather than staying solely in a localhost page.
+
+`list_3d_scenes` reports `awaiting_renderer`, `connected`, or `disconnected`.
+Keep the inline view active while inspecting or capturing it. Closing a card
+does not destroy its scene; use `close_3d_scene`. Restarting the server loses
+scene IDs; reopen files to create a new scene. Browser URLs are available only
+while the local server runs.
+
+## Installation and reloads
+
+Install a server once in your MCP client's settings, with only the directories
+you want to allow. Package installation alone does not register its tools. After
+changing the command or package version, use the client's server reload control;
+some clients require a new conversation or app restart to refresh their tool
+catalog. Those permissions and reload requirements belong to the client and
+cannot be removed by the viewer.
+
+The public pinned configuration above installs 0.3.0. To test these fixes now,
+use the local checkout below and point the client at the installed command.
 
 ## Develop from a local checkout
 

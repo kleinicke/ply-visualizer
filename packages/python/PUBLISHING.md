@@ -1,7 +1,8 @@
 # Publishing ply-visualizer
 
-Version `0.3.0` includes the MCP Apps preview. Publish releases only when
-requested; intermediate development builds stay local.
+The current checkout is `0.4.0.dev0` (unpublished); PyPI remains at `0.3.0`.
+Publish releases only when requested; intermediate development builds stay
+local.
 
 The distribution name is `ply-visualizer`, the Python import is
 `ply_visualizer`, and the CLI is `ply-viewer`. The initial release was `0.1.0`;

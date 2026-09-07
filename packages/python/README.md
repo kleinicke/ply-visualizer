@@ -44,8 +44,10 @@ Configure your agent to launch this command. It can open 3D files or point
 arrays, update a scene, inspect rendered geometry, position the camera and
 receive PNG screenshots. See [MCP setup and agent instructions](MCP.md). Version
 0.3.0 includes an MCP Apps preview for hosts permitting local nested iframes,
-with a browser-tab fallback. Inline local Jupyter output is already supported
-below.
+with a browser-tab fallback. The unpublished 0.4 development version replaces
+the nested iframe with direct in-widget rendering and adds agent controls for
+navigation, appearance, measurements and video keyframes. Inline local Jupyter
+output is already supported below.
 
 ### Developing from source
 

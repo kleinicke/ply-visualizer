@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ply-visualizer"
-version = "0.3.0"
+version = "0.4.0.dev0"
 description = "Local 3D point cloud and mesh viewer for Python and the command line"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,4 +28,4 @@ ply-viewer-mcp = "ply_visualizer.mcp_server:main"
 include = ["ply_visualizer*"]
 
 [tool.setuptools.package-data]
-ply_visualizer = ["_assets/**/*", "_assets/*", "_mcp_app/viewer.html"]
+ply_visualizer = ["_assets/**/*", "_assets/*", "_mcp_app/*"]

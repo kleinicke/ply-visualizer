@@ -1,6 +1,7 @@
 """Bounded request/reply bridge to a running browser viewer."""
 import threading
 import uuid
+import time
 
 
 class BrowserBridge:
@@ -9,6 +10,7 @@ class BrowserBridge:
         self._condition = threading.Condition()
         self._pending = None
         self._result = None
+        self._last_seen = None
 
     def request(self, operation, arguments=None, timeout=15):
         with self._serial:
@@ -17,7 +19,7 @@ class BrowserBridge:
                 self._result = None
                 try:
                     if not self._condition.wait_for(lambda: self._result is not None, timeout):
-                        raise TimeoutError("No browser response. Open the scene URL in a local browser, keep the tab active, and retry.")
+                        raise TimeoutError("No renderer response. Keep the inline MCP viewer active and check client support for app-to-server tools and WebAssembly. A browser can be opened explicitly as a fallback.")
                     result = self._result
                     if "error" in result:
                         raise RuntimeError(result["error"])
@@ -28,7 +30,14 @@ class BrowserBridge:
 
     def pending(self):
         with self._condition:
+            self._last_seen = time.monotonic()
             return self._pending
+
+    def connection(self):
+        with self._condition:
+            if self._last_seen is None:
+                return "awaiting_renderer"
+            return "connected" if time.monotonic() - self._last_seen < 10 else "disconnected"
 
     def receive(self, value):
         with self._condition:

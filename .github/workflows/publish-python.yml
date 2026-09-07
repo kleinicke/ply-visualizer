@@ -26,7 +26,7 @@ jobs:
       - run: npm run build --workspace=engine
       - run: npx playwright install --with-deps chromium
         working-directory: engine
-      - run: npx playwright test local-session.spec.ts --reporter=line
+      - run: npx playwright test local-session.spec.ts mcp-app.spec.ts --reporter=line
         working-directory: engine
       - run: python -m build packages/python --outdir dist
       - run: python -m twine check --strict dist/*

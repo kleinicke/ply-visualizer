@@ -41,7 +41,7 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(browser_default(host, None))
         self.assertTrue(browser_default(host, True))
         plain = SimpleNamespace(client_capabilities=None)
-        self.assertTrue(browser_default(plain, None))
+        self.assertFalse(browser_default(plain, None))
         self.assertFalse(browser_default(plain, False))
 
     def test_file_roots_reject_symlinks(self):
@@ -62,12 +62,12 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
     async def test_agent_workflow(self):
         async with Client(create_server([Path.cwd()])) as client:
             tools = (await client.list_tools()).tools
-            self.assertEqual(len(tools), 8)
+            self.assertEqual(len(tools), 15)
             app_resource = await client.read_resource('ui://ply-visualizer/viewer.html')
             content = app_resource.contents[0]
             self.assertEqual(content.mime_type, 'text/html;profile=mcp-app')
             self.assertIn('<!doctype html>', content.text)
-            self.assertEqual(content.meta['ui']['csp']['frameDomains'], ['http://127.0.0.1:*'])
+            self.assertEqual(content.meta['ui']['csp']['connectDomains'], [])
             self.assertEqual(next(t for t in tools if t.name == 'open_3d_files').meta['ui']['resourceUri'], 'ui://ply-visualizer/viewer.html')
             points = next(t for t in tools if t.name == 'visualize_points')
             self.assertEqual(points.input_schema['properties']['points']['maxItems'], 20000)
@@ -76,6 +76,14 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(result.is_error, result)
                 return json.loads(result.content[0].text)
             scene = await call('visualize_points', {'points': [[0, 0, 0]], 'open_browser': False})
+            pending = await call('read_viewer_data', {'scene_id': scene['scene_id'], 'resource': 'agent/command'})
+            self.assertIsNone(pending['command'])
+            chunk = await call('read_viewer_data', {'scene_id': scene['scene_id'], 'resource': f"files/{scene['revision']}/0"})
+            import base64
+            self.assertTrue(base64.b64decode(chunk['data']).startswith(b'ply'))
+            for resource in ('../.local/.pypirc', 'assets/../../.local/.pypirc', 'files/999/0'):
+                invalid_resource = await client.call_tool('read_viewer_data', {'scene_id': scene['scene_id'], 'resource': resource})
+                self.assertTrue(invalid_resource.is_error)
             updated = await call('update_3d_scene', {'scene_id': scene['scene_id'], 'points': [[1, 2, 3]]})
             self.assertEqual(updated['url'], scene['url'])
             self.assertGreater(updated['revision'], scene['revision'])
@@ -94,6 +102,6 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             args=['-m', 'ply_visualizer.mcp_server', '--root', str(Path.cwd())],
             env={**os.environ, 'PYTHONPATH': source})
         async with Client(process) as client:
-            self.assertEqual(len((await client.list_tools()).tools), 8)
+            self.assertEqual(len((await client.list_tools()).tools), 15)
             resource = await client.read_resource('viewer://capabilities')
             self.assertEqual(json.loads(resource.contents[0].text)['transport'], 'stdio')
