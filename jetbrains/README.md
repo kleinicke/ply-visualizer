@@ -4,6 +4,11 @@ Unpublished development preview, version 0.1.0. This builds a standalone 3D
 plugin from this repository's engine. It does not need the TIFF repository or
 bundle an image viewer. The VS Code extension and website retain their builds.
 
+The plugin logo in `src/main/resources/META-INF/pluginIcon.svg` is a vector
+adaptation of the repository's `icon.png`: the same blue/turquoise dotted logo
+used by VS Code. Keep this branding aligned when updating either asset. Gradle
+includes it automatically in future plugin distributions.
+
 ## Build and try
 
 Requirements: Node 24, root npm dependencies (`npm ci`), and JDK 21.
@@ -50,9 +55,13 @@ No image-specific status widgets or Mac image pan/pinch adapters are included.
 
 ## Checks
 
+See [current release-candidate validation](VALIDATION.md) for completed checks,
+the restricted IDE build range, and remaining publication gates.
+
 ```sh
 node scripts/register-formats.mjs --check
 ./gradlew test buildPlugin
+./gradlew verifyPlugin
 JAVA_HOME=/path/to/jdk-21 node scripts/smoke-viewer.mjs /path/to/points.ply /path/to/mesh.stl
 ```
 

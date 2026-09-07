@@ -5,7 +5,8 @@
   "version": "1.8.0",
   "packageManager": "npm@11.17.0",
   "workspaces": [
-    "engine"
+    "engine",
+    "apps/desktop"
   ],
   "publisher": "kleinicke",
   "icon": "icon.png",
@@ -329,9 +330,14 @@
     "benchmark:vscode": "npm run compile && node ./scripts/benchmark-vscode.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "desktop:dev": "npm run dev --workspace=visualizer-desktop --",
+    "desktop:build": "npm run build --workspace=visualizer-desktop --",
+    "desktop:check": "npm run check --workspace=visualizer-desktop",
+    "desktop:test": "npm run test --workspace=visualizer-desktop"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "@types/mocha": "^10.0.1",
     "@types/node": "20.19.43",
     "@types/pako": "^2.0.4",

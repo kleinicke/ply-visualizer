@@ -4,6 +4,7 @@
  */
 
 import { PerfTimer } from './utils/perfLog';
+import { exportWithStatus } from './hosts/exportFile';
 import { formats } from './formats/formatRegistry';
 import { registerBuiltinFormats, createStonexParser } from './formats/builtinFormats';
 
@@ -564,15 +565,7 @@ export function createBrowserFileHandler(
 
     savePlyFile: (message: any) => {
       const blob = new Blob([message.plyContent], { type: 'application/octet-stream' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = message.fileName || 'pointcloud.ply';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      console.log(`💾 Downloaded PLY file: ${message.fileName}`);
+      exportWithStatus(message.fileName || 'pointcloud.ply', blob, status => console.log(status));
     },
   };
 }

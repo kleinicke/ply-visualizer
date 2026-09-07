@@ -34,3 +34,7 @@ benchmark-vscode-result.json
 
 # Local Netlify folder
 .netlify
+
+# Local publishing credentials (never source or release assets).
+/jetbrains_token.md
+/.local/

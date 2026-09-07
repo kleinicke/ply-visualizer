@@ -5,6 +5,10 @@
 .claude/**
 src/**
 temp/
+apps/**
+jetbrains/**
+.local/**
+jetbrains_token.md
 
 # Engine files (only include necessary runtime files)
 engine/**

@@ -1,7 +1,13 @@
 # Unified image and 3D visualizer plan
 
-Recorded: 2026-09-07. Status: agreed direction; implementation remains future
-work.
+Recorded: 2026-09-07. Status: initial platform hosts implemented; full
+unification remains future work.
+
+Progress: this repository now contains a
+[JetBrains signed preview](../jetbrains/README.md) and a
+[Tauri desktop preview](../apps/desktop/README.md). The desktop host has
+separate document routing, image-preview providers and an embedded 3D adapter.
+Full TIFF integration and repository consolidation remain future work.
 
 ## Product direction
 

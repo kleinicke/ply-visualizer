@@ -1,0 +1,9 @@
+{
+  "main": {
+    "identifier": "main",
+    "description": "Local desktop workspace events; file access is mediated by native document handles.",
+    "local": true,
+    "windows": ["main"],
+    "permissions": ["core:default"]
+  }
+}

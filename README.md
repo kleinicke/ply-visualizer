@@ -134,10 +134,10 @@ files are especially helpful when adding support for new formats.
   [Install extension](https://marketplace.visualstudio.com/items?itemName=kleinicke.ply-visualizer)
 - **Open VSX:**
   [Install extension](https://open-vsx.org/extension/kleinicke/ply-visualizer)
-- **Jetbrains?:** ...
+- **JetBrains:** [Signed preview and installation](jetbrains/README.md)
 - **Website:** [3d.f-kleinicke.de](https://3d.f-kleinicke.de/)
 - **Documentation:** [Features and usage](#features)
-- **Standalone app:** Coming soon
+- **Standalone app:** [Tauri desktop preview](apps/desktop/README.md)
 - **More platforms:** Coming soon
 - **Blog:** Coming soon
 - **Videos:** Coming soon

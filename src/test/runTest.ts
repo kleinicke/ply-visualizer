@@ -1,5 +1,6 @@
 import * as path from 'path';
-import { runTests } from '@vscode/test-electron';
+import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
+import { execFileSync } from 'child_process';
 
 async function main() {
   try {
@@ -15,8 +16,22 @@ async function main() {
     // Passed to --extensionTestsPath
     const extensionTestsPath = path.resolve(__dirname, './suite/index');
 
-    // Download VS Code, unzip it and run the integration test
+    const vscodeExecutablePath = await downloadAndUnzipVSCode({
+      cachePath: path.join(extensionDevelopmentPath, '.vscode-test'),
+      extensionDevelopmentPath,
+    });
+    execFileSync(
+      process.execPath,
+      [
+        path.join(extensionDevelopmentPath, 'scripts/prune-vscode-test-cache.cjs'),
+        vscodeExecutablePath,
+      ],
+      { stdio: 'inherit' }
+    );
+
+    // Run against the downloaded runtime retained by cache cleanup.
     await runTests({
+      vscodeExecutablePath,
       extensionDevelopmentPath,
       extensionTestsPath,
       // Do not disable extensions; we want our extension under development to load

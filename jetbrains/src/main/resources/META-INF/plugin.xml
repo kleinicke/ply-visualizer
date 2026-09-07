@@ -2,7 +2,24 @@
   <id>de.kleinicke.plyvisualizer</id>
   <name>3D Visualizer</name>
   <vendor url="https://f-kleinicke.de">Florian Kleinicke</vendor>
-  <description>Development preview: inspect local point clouds and meshes in editor tabs using the 3D Visualizer engine. File-family and platform validation is ongoing; see the JetBrains README for limitations.</description>
+  <description><![CDATA[
+    <p>Inspect local point clouds, meshes and scan data directly in editor tabs.</p>
+    <p>3D Visualizer provides interactive camera controls, multiple objects,
+    visibility controls, measurements, point appearance settings and export tools
+    using the same visualization engine as the VS Code extension.</p>
+    <p>This first preview targets the 2024.3 IntelliJ Platform and requires the
+    JetBrains Runtime with JCEF. Tested on PyCharm Community 2024.3.5 on macOS ARM64.</p>
+    <p>Use self-contained assets: external glTF/OBJ companion files are not resolved.
+    Closing an editor resets its scene and camera state. This plugin does not
+    include the separate scientific image viewer.</p>
+    <p><a href="https://github.com/kleinicke/ply-visualizer/tree/main/jetbrains">Documentation and limitations</a>
+    · <a href="https://github.com/kleinicke/ply-visualizer/issues">Report an issue</a></p>
+  ]]></description>
+  <change-notes><![CDATA[
+    <p>0.1.0 — First standalone 3D preview for JetBrains IDEs: local point clouds,
+    meshes and scan data, shared viewer controls, native download handling and
+    isolated per-editor file delivery.</p>
+  ]]></change-notes>
   <depends>com.intellij.modules.platform</depends>
   <extensions defaultExtensionNs="com.intellij">
     <!-- generated file types -->

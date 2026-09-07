@@ -18,4 +18,5 @@ html = html.replace(/<link\b[^>]*rel="(?:manifest|canonical)"[^>]*>/gi, '');
 html = html.replace(/<div class="bottom-right-nav">[\s\S]*?<\/div>/, '');
 html = html.replace('</body>', '<script src="../bridge.js" defer></script></body>');
 await writeFile(index, html);
+await import('./collect-notices.mjs');
 console.log('Bundled the local 3D engine for JetBrains; no TIFF repository required.');

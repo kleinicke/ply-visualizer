@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { ViewerRenderer } from '../rendering/viewerRenderer';
+import { exportWithStatus } from '../hosts/exportFile';
 
 declare const acquireVsCodeApi: () => any;
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
@@ -37,11 +38,12 @@ export function captureScreenshot(host: ViewCaptureHost): void {
     return;
   }
 
-  const link = document.createElement('a');
-  link.href = dataUrl;
-  link.download = fileName;
-  link.click();
-  host.showStatus(`Screenshot saved: ${fileName}`);
+  const bytes = Uint8Array.from(atob(dataUrl.slice(dataUrl.indexOf(',') + 1)), char =>
+    char.charCodeAt(0)
+  );
+  exportWithStatus(fileName, new Blob([bytes], { type: 'image/png' }), message =>
+    host.showStatus(message)
+  );
 }
 
 /**

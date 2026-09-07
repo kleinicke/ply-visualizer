@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { exportWithStatus } from '../hosts/exportFile';
 import {
   CameraKeyframe,
   parseKeyframeProject,
@@ -442,13 +443,7 @@ export class FilmManager {
       return;
     }
 
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    this.host.showStatus(`Video saved: ${fileName}`);
+    exportWithStatus(fileName, blob, message => this.host.showStatus(message));
   }
 
   // ------------------------------------------------------------- persistence
@@ -475,13 +470,9 @@ export class FilmManager {
       return;
     }
 
-    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    this.host.showStatus(`Camera path saved: ${fileName}`);
+    exportWithStatus(fileName, new Blob([json], { type: 'application/json' }), message =>
+      this.host.showStatus(message)
+    );
   }
 
   loadProject(jsonText: string): boolean {

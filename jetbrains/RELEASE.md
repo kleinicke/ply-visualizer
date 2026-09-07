@@ -1,5 +1,7 @@
 # 3D JetBrains release plan
 
+Progress and remaining gates are recorded in [VALIDATION.md](VALIDATION.md).
+
 The shared 3D viewer UI is a suitable basis for a first release. A standalone 3D
 development plugin now lives in this repository. Its ZIP is an unpublished
 preview; the release gates below remain open.

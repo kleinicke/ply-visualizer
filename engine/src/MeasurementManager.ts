@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { exportWithStatus } from './hosts/exportFile';
 import { measurementState } from './state/measurement.svelte';
 import type { ViewerRenderer } from './rendering/viewerRenderer';
 
@@ -346,13 +347,9 @@ export class MeasurementManager {
       return;
     }
 
-    const url = URL.createObjectURL(new Blob([content], { type: 'application/json' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    this.persistenceHost.showStatus(`Measurement paths saved: ${fileName}`);
+    exportWithStatus(fileName, new Blob([content], { type: 'application/json' }), message =>
+      this.persistenceHost.showStatus(message)
+    );
   }
 
   clearAllPaths(): void {

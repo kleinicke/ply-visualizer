@@ -9,7 +9,11 @@ repositories {
     intellijPlatform { defaultRepositories() }
 }
 dependencies {
-    intellijPlatform { pycharmCommunity("2024.3.5") }
+    intellijPlatform {
+        pycharmCommunity("2024.3.5")
+        pluginVerifier()
+        zipSigner()
+    }
     testImplementation("junit:junit:4.13.2")
 }
 java { toolchain { languageVersion.set(JavaLanguageVersion.of(21)) } }
@@ -17,8 +21,23 @@ intellijPlatform {
     buildSearchableOptions = false
     pluginConfiguration {
         name = "3D Visualizer"
-        ideaVersion { sinceBuild = "243" }
+        ideaVersion {
+            sinceBuild = "243"
+            untilBuild = "243.*"
+        }
     }
+    pluginVerification { ides { create("PC", "2024.3.5") } }
+    signing {
+        certificateChain = providers.environmentVariable("JETBRAINS_CERTIFICATE_CHAIN")
+        privateKey = providers.environmentVariable("JETBRAINS_PRIVATE_KEY")
+        password = providers.environmentVariable("JETBRAINS_PRIVATE_KEY_PASSWORD")
+        val localSigning = rootDir.resolve("../.local/jetbrains-signing")
+        if (localSigning.resolve("chain.crt").isFile && localSigning.resolve("private.pem").isFile) {
+            certificateChainFile = localSigning.resolve("chain.crt")
+            privateKeyFile = localSigning.resolve("private.pem")
+        }
+    }
+    publishing { token = providers.environmentVariable("JETBRAINS_PUBLISH_TOKEN") }
 }
 tasks.runIde {
     // Rebuilds must not dispose editors while native input checks are running.
@@ -42,3 +61,4 @@ val checkFormats by tasks.registering(Exec::class) {
     commandLine("node", "scripts/register-formats.mjs", "--check")
 }
 tasks.compileJava { dependsOn(checkFormats) }
+tasks.named("verifyPluginSignature") { dependsOn("signPlugin") }

@@ -63,6 +63,11 @@ this repository.
   `extensionAdvanced`, `integration`, `pointCloudEditorProviderAdvanced`). Keep
   the `--ignore` list in the `test:node` script in sync if a new test file
   imports `vscode`.
+- Integration tests and VS Code benchmarks prune old completed downloads from
+  `.vscode-test/` after selecting their runtime. They retain that runtime, any
+  version still running, incomplete downloads, and test profiles. The shared
+  helper is `scripts/prune-vscode-test-cache.cjs`; if process inspection is
+  unavailable, cleanup is skipped rather than risking an active test instance.
 
 ## Where code goes
 

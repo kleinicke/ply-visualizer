@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -117,7 +118,7 @@ async function main() {
     delete process.env[key];
   }
 
-  let executable = await downloadAndUnzipVSCode();
+  let executable = await downloadAndUnzipVSCode({ cachePath: path.join(root, '.vscode-test') });
   if (!fs.existsSync(executable)) {
     // @vscode/test-electron expects an `Electron` binary; current VS Code
     // builds ship it as `Code`.
@@ -127,6 +128,14 @@ async function main() {
     }
     executable = alternative;
   }
+
+  execFileSync(
+    process.execPath,
+    [path.join(root, 'scripts/prune-vscode-test-cache.cjs'), executable],
+    {
+      stdio: 'inherit',
+    }
+  );
 
   try {
     await runTests({
