@@ -1,7 +1,7 @@
 {
   "name": "3D Point Cloud and Mesh Visualizer",
   "short_name": "3D Visualizer",
-  "description": "View point clouds, meshes and depth images directly in the browser.",
+  "description": "Inspect point clouds, meshes, Gaussian splats and depth images locally in your browser.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -9,10 +9,18 @@
   "theme_color": "#1e1e1e",
   "icons": [
     {
+      "src": "media/ply-icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "apple-touch-icon.png",
       "sizes": "1024x1024",
       "type": "image/png",
       "purpose": "any"
     }
-  ]
+  ],
+  "id": "/",
+  "lang": "en"
 }

@@ -658,6 +658,81 @@ Remaining ideas, roughly by expected value:
 
 Per the general bar: reliable wins ≥ ~50 ms are worth shipping.
 
+### Depth-image loading speedups from tiff-visualizer after v1.10.0
+
+The sibling image viewer made five performance commits after its `v1.10.0` tag.
+The useful parts do **not** arrive here through a dependency-version bump: this
+repository currently vendors `scientific-image-decoders` under
+`crates/image-decoders` and `wasm/tiff-decoder` consumes it by `path`. The first
+step is therefore to sync the shared crate (or finish the planned move to a git
+dependency pinned by `rev`), but that only supplies decoding primitives. The
+worker scheduling, WASM bindings, cancellation and depth-specific pipeline
+remain application code in this repository.
+
+What changed upstream, and what applies here:
+
+| Post-1.10 change                                                                                                    | Applicability to depth-to-point-cloud loading                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Guarded parallel EXR ZIP16 decoding                                                                                 | **High.** Import the new single-channel Float32 ZIP16 plan and block decoder plus `zune-inflate`. This is a common depth-map shape. Keep `decode_exr_fast` as the authoritative fallback for tiled, multipart, deep, multi-channel, half/uint, subsampled and other compression layouts.                                      |
+| Parallel TIFF strip decoding                                                                                        | **High, but not a crate update.** The vendored core already contains `tiff_float_strip_plan`, `decode_tiff_float_strip_range` and the raw-strip variant from the v1.10 work; this repository does not expose or orchestrate them in `wasm/tiff-decoder`. Add the bindings and a small pool before expecting a speed-up.       |
+| Fetch, compile WASM and start/adopt the decode worker during webview bootstrap; speculatively decode simple formats | **High.** Start source transfer, `WebAssembly.compile` and `depthWorker` initialization as soon as a depth file is known. Mono TIFF/EXR/PFM/NPY decode can overlap the camera-parameter dialog; PNG/RGB-packed depth must include its packing/scale configuration in the cache key and be invalidated if the user changes it. |
+| Move PFM/NPY and other cheap raw decodes off the UI thread without loading the full general decoder bundle          | **Medium.** This extension already uses one depth worker, so the UI-thread win exists. Measure whether a smaller raw worker improves cold start enough to justify another bundle and lifecycle.                                                                                                                               |
+| Lazy-load large vendor libraries and split the application bundle                                                   | **Medium/low.** The depth WASM is already feature-limited to TIFF/EXR/PNG/PFM and about 1.4 MiB, while the whole engine bundle is shared with the 3D viewer. Inspect the initial chunk graph before copying the image viewer's more elaborate lazy-loader design.                                                             |
+| Native `<img>` first paint and deferred EXIF/metadata                                                               | **Not directly applicable.** A depth image is not useful here until it is unprojected into geometry. The transferable lesson is to defer nonessential metadata and UI work until the first point-cloud frame, not to paint the encoded PNG as the result.                                                                     |
+| Remove an unconditional first-open `requestAnimationFrame` yield                                                    | **Audit only.** Do not add a loading-paint wait in front of first decode. Existing deliberate yields for replacing a visible scene or coalescing rapid sequence navigation may remain.                                                                                                                                        |
+| Faster FITS decoding                                                                                                | **Not applicable to the current advertised depth formats.** The local WASM build does not enable FITS. Revisit only if FITS becomes a depth/volume input.                                                                                                                                                                     |
+
+Implementation order:
+
+1. **Pin a baseline and benchmark the result users see.** Add representative
+   compressed Float32 TIFF, EXR ZIP16, PFM, NPY/NPZ and 16-bit PNG depth files
+   to the real VS Code benchmark. Report `read+parse`, `transfer`, `decode`,
+   `project`, `worker-io`, `build` and first-painted geometry; discard the cold
+   run as required by `docs/performance-method.md`. Record peak memory for the
+   large cases.
+2. **Refresh the decoder core without overwriting local semantics.** Import the
+   post-v1.10 EXR changes and dependency, run the crate's native tests, then
+   build with only `tiff`, `exr`, `png` and `pfm`. The sibling's FITS and
+   image-viewer presentation changes do not belong in this build. Once the
+   separate shared repository is authoritative, replace the vendored copy with a
+   pinned git revision so the two copies cannot drift again.
+3. **Extend the thin WASM adapter.** Bind the existing TIFF strip-plan/range
+   APIs and the new EXR ZIP plan/block APIs, regenerate every shipped
+   wasm-bindgen target, and add TypeScript declarations in
+   `engine/src/depth/readers/tiffWasm.ts`. A crate refresh without this step
+   leaves the new entry points unreachable.
+4. **Add one bounded block-decode pool.** Compile the WASM module once and
+   instantiate it in 2–8 small workers. Partition TIFF strips and EXR blocks by
+   compressed byte count, not merely by block count; transfer only each worker's
+   compressed range; write results into their final row offsets; cap queued
+   bytes; support cancellation; retire workers after exceptionally large jobs.
+   Small images and unsupported layouts stay on the current one-worker path.
+5. **Pipeline decode into projection deliberately.** The current flow joins all
+   decoded samples and then `depthProjectionPool` slices/copies them into bands.
+   First implement the simple decode-only pool and measure it. Then test a fused
+   worker job that decodes a row range and projects that same range, returning
+   only positions/colors/pixel coordinates. A global min/max reduction is still
+   required for the current logarithmic grey ramp. Keep the fused version only
+   if it reduces total time and peak memory rather than moving time between
+   phases.
+6. **Prewarm and cache with correct ownership.** Let `DepthWorkerClient` adopt a
+   bootstrapped worker/module instead of starting a second one. Decode during
+   parameter collection where interpretation is independent of the parameters.
+   Keep one authoritative owner for encoded bytes and decoded samples: today the
+   main thread retains the original, copies it with `slice(0)`, and the worker
+   retains up to four decoded images. Changing ownership must preserve live
+   reprocessing and recover cleanly after cache eviction.
+7. **Prove the guarded paths.** Compare complete sample buffers and projected
+   arrays between serial and 1/2/4/8-worker paths, including last partial
+   strips/blocks, NaN/Infinity, non-zero EXR data windows, cancellation and a
+   forced worker failure. A fallback is valid only if it produces the same depth
+   semantics and the PERF line identifies which path ran.
+
+The likely first useful slice is therefore **crate sync + WASM bindings + EXR
+ZIP16 pool**, followed by exposing the TIFF strip APIs that are already present.
+Updating the crate alone is necessary for EXR, but insufficient for either EXR
+or TIFF parallel speed-ups.
+
 ### LingBot-Map multi-array NPZ prediction import
 
 **Reference: [Robbyant/lingbot-map](https://github.com/Robbyant/lingbot-map)** —
@@ -702,7 +777,167 @@ its own `.npy` is a working path right now.
 
 ### Other new file formats
 
-PTX Static FBX 3MF VTK/VTP COPC/EPT FBX
+The advertised single-file point-cloud set is already strong: PLY, XYZ variants,
+PTS, all three PCD encodings, NPY, LAS/LAZ, E57, KITTI BIN and Stonex X3A/X3R.
+It covers the usual interchange families, but it does **not** cover the two most
+useful compressed/streamed additions, COPC and Draco, or every common scanner
+export. Prioritise actual workflows rather than trying to collect extensions.
+
+#### Compressed and streamed point clouds
+
+**What already exists, but is not advertised as one feature:** LAZ is compressed
+LAS; E57 point data uses compressed vectors; PCD `DATA binary_compressed` uses
+LZF; and SPZ/SOG/other splat containers are compact delivery formats. Add a
+short compressed-format note to the README when the next format work ships.
+
+**Priority 1 — COPC (`.copc.laz`).** [COPC 1.0](https://copc.io/) is LAZ 1.4
+whose independently compressed chunks are arranged in an octree and addressable
+by byte range. The current `.laz` path will likely decode a COPC file as
+ordinary LAZ, but it reads the whole file and therefore discards COPC's central
+benefit. Treat this as a progressive rendering feature, not another filename
+alias:
+
+1. Detect the COPC info/hierarchy VLR while retaining ordinary full-file LAZ as
+   the compatibility fallback.
+2. Introduce a range source usable by local files (`File.slice` in the browser;
+   explicit offset reads in the extension host) and HTTP `Range` sources. Do not
+   require a complete `ArrayBuffer` before parsing the hierarchy.
+3. Select nodes from camera frustum plus screen-space error, request coarse
+   nodes first, and put the first meaningful cloud on screen before deeper
+   levels arrive.
+4. Decode independent LAZ chunks through a bounded worker pool. Limit both
+   in-flight compressed bytes and decoded point bytes; cancellation and
+   generation IDs must prevent stale nodes attaching after another file opens.
+5. Let the renderer add/remove node geometries incrementally and evict least
+   useful nodes under a configurable CPU/GPU memory budget. Preserve scalar
+   attributes consistently when a node is replaced by its children.
+6. Benchmark `first visible`, `settled current view`, bytes fetched and peak
+   memory, not only full decode. Verify a fixed camera path at 1/2/4/8 workers
+   against a full-LAZ reference cloud.
+
+This is the best place to transfer the image-viewer's strip/block architecture:
+COPC nodes are independent work units, but unlike image strips they need not all
+be decoded at all.
+
+**Priority 2 — Draco.** [Draco](https://google.github.io/draco/) defines
+compressed point-cloud and mesh bitstreams. Support both forms that users will
+actually encounter:
+
+1. Standalone `.drc`, detecting whether the bitstream contains a point cloud or
+   mesh and mapping every usable numeric attribute rather than only XYZ/RGB.
+2. `KHR_draco_mesh_compression` inside GLB/glTF. Prefer replacing the custom
+   glTF geometry extractor with Three.js `GLTFLoader` plus `DRACOLoader` over
+   growing a second glTF implementation; the decoder assets already arrive via
+   Three.js dependencies.
+3. Surface position quantization and other lossy choices in metadata. Do not
+   present a quantized DRC conversion as an exact archival replacement for
+   LAS/LAZ/E57.
+4. Run decode off the main thread, transfer final attribute buffers, retain a
+   non-Draco glTF path, and test point clouds, indexed meshes, custom
+   attributes, malformed streams and compressed/uncompressed equivalents.
+
+**Priority 3 — PTX.** Add Leica-style PTX as the next conventional scanner
+exchange format if representative fixtures are available. It carries multiple
+organized scans, scanner transforms, intensity and RGB. Preserve scan
+boundaries/transforms and row/column organization instead of flattening the file
+into anonymous XYZ points.
+
+**Later, dataset rather than file support:** EPT/Potree and
+[3D Tiles](https://github.com/CesiumGS/3d-tiles/blob/main/specification/README.adoc)
+are spatial hierarchies composed of multiple resources. 3D Tiles 1.1 uses glTF
+as its primary tile content and deprecates the old `.pnts` container. They need
+URL/directory ownership, hierarchy traversal, LOD, caching and eviction, so the
+COPC work should establish those abstractions first. EPT is useful where an
+existing service demands it; COPC is the better first fit for a single-file
+editor.
+
+**Low priority:** transparent `.ply.gz`/`.xyz.gz` or zstd wrappers are
+convenient but still require whole-stream expansion and give no spatial LOD. Do
+not invent a private `.plyz` format. Proprietary scanner formats such as
+RCP/RCS, FLS and vendor project databases should normally use vendor/PDAL
+conversion to E57/LAS/COPC unless a redistributable SDK and real user fixtures
+justify native support.
+
+#### Where the image-viewer performance patterns apply here
+
+| Pattern                                       | Concrete targets in this extension                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Independent strips/blocks/chunks              | **Now:** TIFF strips and EXR ZIP16 blocks in the depth decoder. **Next:** COPC octree nodes/LAZ chunks. **Conditional:** E57 compressed packets only if the Rust reader exposes safe random packet ranges; do not split a stateful stream by guessed byte offsets. X3A scans are independent at the archive level and can already be scheduled scan-by-scan.                                                                                                                                                                                 |
+| Worker pools                                  | Reuse one small decode pool for TIFF/EXR and create a separate bounded LiDAR pool for COPC nodes. Keep the existing `depthProjectionPool` for expensive unprojection and the registration pool for matching. Do not share one global pool across these jobs: their WASM modules, memory pressure and cancellation domains differ.                                                                                                                                                                                                            |
+| WASM prewarming                               | Start depth WASM/worker when a depth extension is detected, while the camera dialog is open. Start LiDAR WASM when LAS/LAZ/E57/COPC is dispatched; start the generic point-cloud WASM for PLY/PCD/XYZ/NPY; start registration only once two eligible clouds exist or the user opens Align. Compile on demand, not all modules at viewer startup.                                                                                                                                                                                             |
+| Transferable ownership and fewer copies       | Preserve the existing worker-to-main transfers for depth and LiDAR output. Investigate an `alloc`/`parse_*_at` input path for LAS/E57 like the streamed PLY path, because `parse_las(data: Vec<u8>)` currently makes another whole-file copy into WASM. For depth, avoid concatenating decoded bands only to slice them again for projection; measure fused decode/project jobs. VS Code extension-host → webview messages cannot use browser transferables, so compare that hop with webview-resource fetch rather than assuming zero-copy. |
+| Bounded queues, cancellation and cleanup      | Essential for COPC view changes, E57 embedded-image decoding, COLMAP photograph loading, point-cloud sequences and huge depth images. Bound bytes as well as job count, attach a load generation to every result, stop stale work, revoke blob URLs and retire large-memory worker instances. The persistent depth projection workers also need an explicit teardown/reset hook for webview disposal and catastrophic WASM growth.                                                                                                           |
+| Guarded fast path plus compatibility fallback | EXR ZIP16 → normal EXR decoder; eligible TIFF strips → whole-image TIFF decoder; COPC-aware range load → existing full LAZ decoder; Draco/meshopt glTF → standards loader with the matching decoder configured. Log the chosen path and its rejection reason. Never silently retry a malformed file through a semantically different parser.                                                                                                                                                                                                 |
+| Phase timing and golden validation            | Extend the existing `PerfTimer` load line rather than adding isolated microbenchmarks: first-visible, fetch/read, decode, projection, worker I/O, build/upload and settled view. Compare complete attributes and transforms, not only point counts. Parallel tests must cover 1/2/4/8 workers and partial final ranges; COPC tests also pin the selected node set for a deterministic camera.                                                                                                                                                |
+
+Other concrete applications are less direct. Binary PLY already streams a
+response into WASM memory, so it benefits more from avoiding input copies than
+from a worker pool. Gaussian splat containers are owned by Spark; improve their
+startup/lifecycle around that library rather than duplicating its decoder.
+Registration and Stonex colouring have already been profiled separately, so
+image-decoder patterns apply only where their PERF phases show startup,
+scheduling or copying as the bottleneck.
+
+#### Advertised-format conformance audit
+
+“Supports an extension” currently has three different meanings: broad standard
+support, a useful subset, or delegation to another renderer. Keep the marketing
+table, but add capability notes/tests so it does not imply more than the parser
+does.
+
+| Advertised family     | Current reality                                                                                                                                                                                                                                                                                                                                                                                                                              | Backlog consequence                                                                                                                                                                                                                                                                                                 |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PLY / XYZ / PTS / NPY | Core point positions, colour/normals where defined, and useful numeric PLY vertex properties are supported. PLY faces are supported; arbitrary non-vertex element kinds are not a general scene graph.                                                                                                                                                                                                                                       | Claim point-cloud/mesh import, not complete preservation of every custom PLY element. Add round-trip/export tests before promising preservation.                                                                                                                                                                    |
+| PCD                   | ASCII, binary and `binary_compressed` are implemented. Header width/height, fields and viewpoint are retained, but the viewer does not expose organized-cloud operations.                                                                                                                                                                                                                                                                    | The format claim is fulfilled. Later use organized topology for image-like neighbour tools or explicitly describe it as metadata only.                                                                                                                                                                              |
+| LAS/LAZ               | Positions, RGB, CRS/VLR metadata and common scalar fields are implemented. LAS waveform packets and arbitrary Extra Bytes are not exposed.                                                                                                                                                                                                                                                                                                   | The advertised common LiDAR subset is real; warn/report ignored waveform/extra dimensions and add selective attribute decoding before claiming full LAS 1.4 preservation.                                                                                                                                           |
+| E57                   | Multiple scans, poses, RGB, intensity, row/column indices and embedded JPEG/PNG camera representations are implemented, including image masks and camera display.                                                                                                                                                                                                                                                                            | This is more complete than the README suggests. Add fixtures/capability documentation; report unsupported custom E57 tree fields rather than silently implying lossless import.                                                                                                                                     |
+| Gaussian splats       | 3DGS PLY plus SPZ/SPLAT/KSPLAT/SOG are delegated to Spark and backed by a point-centre representation.                                                                                                                                                                                                                                                                                                                                       | The advertised feature is fulfilled for viewing; exact editable/exportable preservation is a separate promise.                                                                                                                                                                                                      |
+| OBJ/STL/OFF           | Useful static geometry subsets work. OBJ material colours exist, but texture maps and much of MTL are ignored; STL is triangles by design; OFF support is focused on OFF/COFF/NOFF/CNOFF.                                                                                                                                                                                                                                                    | Describe these as static geometry import. Add texture/resource handling only with a real workflow.                                                                                                                                                                                                                  |
+| GLTF/GLB              | The current custom parser extracts POSITION, optional COLOR_0/NORMAL and triangle indices from the embedded buffer. It ignores node hierarchy/transforms, `byteStride`, normalized/sparse accessors, external buffers/images, primitive mode, non-indexed topology, materials/textures, morph targets, skins, animation, cameras, lights and compression extensions. It even groups every indexed primitive in triples regardless of `mode`. | The extension opens a narrow subset, but the unqualified “GLTF/GLB” mesh claim is not standards-complete. Replace it with Three.js `GLTFLoader` and explicitly decide which scene content enters this viewer; Draco/meshopt support should land through that loader. Until then label it “basic embedded geometry”. |
+
+The most urgent truthfulness fix is glTF. The
+[glTF 2.0 specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html)
+defines POINTS, line and triangle topology, node transforms, external resources,
+materials/textures, cameras, skins, morph targets and keyframe animation. A
+loader may intentionally ignore some of those, but it must not silently turn a
+POINTS or line primitive into groups of triangle indices.
+
+#### Other content carried by 3D formats
+
+Yes, several “3D files” contain more than one static point type. Track these as
+capabilities rather than treating the extension match as sufficient:
+
+- **Embedded photographs and camera calibration:** E57 and X3A carry these and
+  this extension already displays them. COLMAP directory imports also load
+  cameras and source photographs progressively.
+- **Point-cloud sensor structure:** PCD can be organized as width × height and
+  carry an acquisition viewpoint; E57 can carry row/column indices; LAS 1.3+ can
+  carry full-waveform packet references. Organized PCD/E57 metadata is retained
+  but not used for neighbourhood/image tools; LAS waveform samples are
+  unsupported.
+- **Static scene content:** glTF/GLB can carry points, lines, triangle variants,
+  instancing, node hierarchies, materials, textures, cameras and lights. Most of
+  this is currently ignored by the custom parser. OBJ can also contain points
+  and lines, while PLY can define arbitrary element kinds; the renderer chiefly
+  targets points and triangle surfaces.
+- **Animation/time-varying geometry:** glTF carries node, skeletal and morph
+  animation; USD/USDZ and Alembic can carry time-sampled geometry. None is
+  imported into the viewer's timeline today. The existing camera “Video Mode”
+  records this viewer and is unrelated to animation embedded in a source file.
+- **Actual video:** core glTF uses still images for textures, not standard video
+  tracks. Video textures appear through ecosystem/vendor extensions and are not
+  a typical point-cloud requirement. Do not prioritize them ahead of ordinary
+  glTF scenes and animation.
+- **Heterogeneous streamed scenes:** 3D Tiles can combine point clouds, meshes,
+  instances and structured metadata at several LODs. Supporting it means scene
+  streaming, not merely adding `.pnts`; legacy PNTS is deprecated in 3D Tiles
+  1.1 in favour of glTF tile content.
+
+After COPC and Draco, remaining broad format candidates are FBX, USD/USDZ, 3MF,
+VTK/VTP and AmiraMesh. FBX/USD are valuable chiefly for scene and animation
+workflows, 3MF for manufacturing meshes, and VTK/VTP/AmiraMesh for scientific
+attributes. None should be advertised until fixtures prove the specific data
+types the viewer preserves.
 
 **AmiraMesh (`.am`).** Worth calling out separately because of where it came
 from: surveying what arivis reads (a ~40-format imaging list — DICOM, CZI, ND2,
