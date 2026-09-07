@@ -187,3 +187,173 @@ finally:
     child.kill('SIGINT');
   }
 });
+
+test('agent bridge inspects geometry, applies camera and captures rendered pixels', async ({
+  page,
+}) => {
+  const child = spawn(
+    'python3',
+    [
+      '-u',
+      '-c',
+      `
+import json, sys
+from ply_visualizer import show
+s = show([[0,0,0],[1,0,0],[0,1,0]], open_browser=False)
+print(json.dumps({'url': s.url}), flush=True)
+try:
+    for line in sys.stdin:
+        command = json.loads(line)
+        print(json.dumps(s._bridge.request(**command)), flush=True)
+finally:
+    s.close()
+`,
+    ],
+    {
+      // eslint-disable-next-line @typescript-eslint/naming-convention -- Python environment
+      env: { ...process.env, PYTHONPATH: path.resolve('../packages/python') },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }
+  );
+  const { createInterface } = await import('node:readline');
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  async function command(operation: string, args = {}) {
+    child.stdin.write(JSON.stringify({ operation, arguments: args }) + '\n');
+    return JSON.parse((await lines.next()).value!);
+  }
+  try {
+    const { url } = JSON.parse((await lines.next()).value!);
+    await page.goto(url);
+    await expect(page.locator('html')).toHaveAttribute('data-local-session', 'loaded');
+    const info = await command('inspect');
+    expect(info.objects[0].vertices).toBe(3);
+    expect(info.bounds).not.toBeNull();
+    const camera = await command('camera', { position: [4, 5, 6], target: [0, 0, 0] });
+    expect(camera.camera.position).toEqual([4, 5, 6]);
+    const capture = await command('capture');
+    expect(capture.width).toBeLessThanOrEqual(1024);
+    expect(Buffer.from(capture.png, 'base64').subarray(1, 4).toString()).toBe('PNG');
+    const colors = await page.evaluate(async png => {
+      const img = new Image();
+      img.src = 'data:image/png;base64,' + png;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      const pixels = ctx.getImageData(0, 0, img.width, img.height).data;
+      return new Set(new Uint32Array(pixels.buffer)).size;
+    }, capture.png);
+    expect(colors).toBeGreaterThan(1);
+  } finally {
+    child.stdin.end();
+    child.kill('SIGINT');
+  }
+});
+
+test('MCP App embeds the shared viewer and rejects non-local scene URLs', async ({ page }) => {
+  const { readFile } = await import('node:fs/promises');
+  const { createInterface } = await import('node:readline');
+  const html = await readFile(
+    path.resolve('../packages/python/ply_visualizer/_mcp_app/viewer.html'),
+    'utf8'
+  );
+  const child = spawn(
+    'python3',
+    [
+      '-u',
+      '-c',
+      `
+import json
+from ply_visualizer import show
+s = show([[0,0,0],[1,0,0],[0,1,0]], open_browser=False)
+print(json.dumps({'url': s.url}), flush=True)
+s.wait()
+`,
+    ],
+    {
+      // eslint-disable-next-line @typescript-eslint/naming-convention -- Python environment
+      env: { ...process.env, PYTHONPATH: path.resolve('../packages/python') },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  );
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  try {
+    const scene = JSON.parse((await lines.next()).value!);
+    await page.setContent(
+      '<iframe id="app" title="MCP App" sandbox="allow-scripts allow-same-origin" style="width:900px;height:600px"></iframe>'
+    );
+    await page.evaluate(html => {
+      (window as any).appReady = false;
+      window.addEventListener('message', event => {
+        const frame = document.querySelector('iframe')!;
+        if (event.source !== frame.contentWindow) {
+          return;
+        }
+        const msg = event.data;
+        if (msg.method === 'ui/initialize') {
+          frame.contentWindow!.postMessage(
+            {
+              jsonrpc: '2.0',
+              id: msg.id,
+              result: {
+                protocolVersion: '2026-01-26',
+                hostInfo: { name: 'test-host', version: '1' },
+                hostCapabilities: { openLinks: {} },
+                hostContext: { displayMode: 'inline' },
+              },
+            },
+            '*'
+          );
+        }
+        if (msg.method === 'ui/notifications/initialized') {
+          (window as any).appReady = true;
+        }
+        if (msg.method === 'ui/open-link') {
+          (window as any).openedUrl = msg.params.url;
+          frame.contentWindow!.postMessage({ jsonrpc: '2.0', id: msg.id, result: {} }, '*');
+        }
+      });
+      document.querySelector('iframe')!.srcdoc = html.replace(
+        '<head>',
+        "<head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-src http://127.0.0.1:*\">"
+      );
+    }, html);
+    await expect.poll(() => page.evaluate(() => (window as any).appReady)).toBe(true);
+    async function result(url: string) {
+      await page.evaluate(url => {
+        const host = document.querySelector('iframe')!.contentWindow!;
+        host.postMessage(
+          { jsonrpc: '2.0', method: 'ui/notifications/tool-input', params: { arguments: {} } },
+          '*'
+        );
+        host.postMessage(
+          {
+            jsonrpc: '2.0',
+            method: 'ui/notifications/tool-result',
+            params: { content: [], structuredContent: { url } },
+          },
+          '*'
+        );
+      }, url);
+    }
+    await result('https://example.com/');
+    const app = page.frameLocator('#app');
+    await expect(app.getByRole('alert')).toContainText('invalid local viewer URL');
+    await expect(app.locator('iframe')).toHaveCount(0);
+    await result(scene.url);
+    const viewer = app.frameLocator('iframe');
+    await expect(viewer.locator('html')).toHaveAttribute('data-local-session', 'loaded');
+    await expect(viewer.locator('#main-ui-panel')).toBeHidden();
+    await viewer.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(viewer.locator('#main-ui-panel')).toBeVisible();
+    await app.getByRole('button', { name: 'Open in browser' }).click();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).openedUrl))
+      .toBe(scene.url + '?ui=collapsed');
+    await page.screenshot({ path: test.info().outputPath('mcp-inline.png') });
+  } finally {
+    child.kill('SIGINT');
+  }
+});

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ply-visualizer"
-version = "0.1.0"
+version = "0.3.0.dev0"
 description = "Local 3D point cloud and mesh viewer for Python and the command line"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,7 @@ authors = [{ name = "Florian Kleinicke" }]
 
 [project.optional-dependencies]
 notebook = ["ipython>=8"]
+mcp = ["mcp>=2.2,<3"]
 
 [project.urls]
 Homepage = "https://3d.f-kleinicke.de"
@@ -21,9 +22,10 @@ Issues = "https://github.com/kleinicke/ply-visualizer/issues"
 
 [project.scripts]
 ply-viewer = "ply_visualizer.__main__:main"
+ply-viewer-mcp = "ply_visualizer.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["ply_visualizer*"]
 
 [tool.setuptools.package-data]
-ply_visualizer = ["_assets/**/*", "_assets/*"]
+ply_visualizer = ["_assets/**/*", "_assets/*", "_mcp_app/viewer.html"]

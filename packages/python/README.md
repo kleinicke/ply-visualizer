@@ -1,4 +1,6 @@
-# Python and CLI preview — 3D viewer
+# Python, CLI and MCP — 3D viewer
+
+![Point cloud displayed in the 3D viewer](https://raw.githubusercontent.com/kleinicke/ply-visualizer/main/assets/example.png)
 
 One Python package provides a browser viewer for local 3D files and point
 arrays, plus the `ply-viewer` command. Python 3.10+ and a WebGL-capable browser
@@ -6,99 +8,58 @@ are required. There are no Python runtime dependencies; NumPy arrays work
 without requiring NumPy for users who only open files. Node.js is needed only to
 build the bundled viewer from this repository, not to use an installed wheel.
 
-This is a local preview, **not yet published on PyPI or npm**.
+Install the Python package from PyPI as **`ply-visualizer`**. The npm package is
+not published.
 
 ## Install with uv (recommended)
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) first.
-Until there is a public release, use this repository or a locally built wheel.
-From the repository root, build the browser assets using Node 24:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then
+choose:
+
+```sh
+uv add ply-visualizer            # Add to a Python project
+uv add "ply-visualizer[notebook]" # Local notebook display support
+uv pip install ply-visualizer    # Install into an existing virtual environment
+uv tool install ply-visualizer   # Install the CLI independently
+uvx --from ply-visualizer ply-viewer scan.ply  # Run without persistent installation
+```
+
+The Python import is `from ply_visualizer import show`. Tool installation does
+not add the library to a Python project or notebook kernel; use `uv add` or
+`uv pip install` in that environment. No Node.js build is needed for PyPI
+installs.
+
+For local Jupyter, run `uv run --with jupyter jupyter lab` from your project and
+select its Python kernel. Keep that kernel alive while using the viewer.
+
+### AI agents through MCP
+
+Version 0.2.0 adds an optional local MCP server:
+
+```sh
+uvx --from "ply-visualizer[mcp]" ply-viewer-mcp --root /absolute/path/to/workspace
+```
+
+Configure your agent to launch this command. It can open 3D files or point
+arrays, update a scene, inspect rendered geometry, position the camera and
+receive PNG screenshots. See [MCP setup and agent instructions](MCP.md). The
+published MCP release uses a local browser tab. This checkout also includes an
+unpublished MCP Apps preview for hosts permitting local nested iframes. Inline
+local Jupyter output is already supported below.
+
+### Developing from source
+
+From the repository root, build the bundled engine with Node 24:
 
 ```sh
 npm ci
 npm run build:python-viewer
-```
-
-### CLI only
-
-For occasional use, run the local package in an isolated tool environment:
-
-```sh
-uvx --from ./packages/python ply-viewer engine/examples/example-point-cloud.ply
-```
-
-For regular use, install its command persistently:
-
-```sh
 uv tool install ./packages/python
-ply-viewer scan.ply
-```
-
-If uv reports that its executable directory is missing from PATH, run
-`uv tool update-shell` and restart your shell. Tool installation makes the CLI
-available, but does not add `ply_visualizer` to your Python project or notebook
-kernel. [uv tools guide](https://docs.astral.sh/uv/guides/tools/).
-
-### Python and local Jupyter notebooks
-
-For an existing uv-managed Python project, add the built local package from that
-project's directory (replace the path with your checkout location):
-
-```sh
+# Or add the local library to your Python project:
 uv add /absolute/path/to/ply-visualizer/packages/python
-uv run --with jupyter jupyter lab
 ```
 
-Choose the kernel using that project's environment. Then a notebook cell can run
-`from ply_visualizer import show`. The viewer opens in a separate browser tab;
-keep the kernel running. NumPy and PyTorch stay optional: use the versions
-already installed in your project, or add them as needed.
-[uv Jupyter guide](https://docs.astral.sh/uv/guides/integration/jupyter/).
-
-For a virtual environment without uv project management, from this repository:
-
-```sh
-# Create this environment only if it does not already exist.
-uv venv packages/python/.venv
-uv pip install --python packages/python/.venv ./packages/python
-packages/python/.venv/bin/ply-viewer engine/examples/example-point-cloud.ply
-```
-
-For notebooks in that environment, install JupyterLab into the same environment
-and launch it directly:
-
-```sh
-uv pip install --python packages/python/.venv jupyterlab
-packages/python/.venv/bin/jupyter lab
-```
-
-### Installing a wheel
-
-A wheel already contains the viewer assets and needs no Node.js build:
-
-```sh
-# CLI only:
-uv tool install /path/to/ply_visualizer-0.1.0-py3-none-any.whl
-# Or, from a uv-managed Python project:
-uv add /path/to/ply_visualizer-0.1.0-py3-none-any.whl
-```
-
-### Public PyPI installation
-
-The chosen public package name is **`ply-visualizer`**. Publication is deferred
-for now; until it is available on PyPI, use the local source/wheel commands
-above. Once published:
-
-```sh
-uv add ply-visualizer            # Python project
-uv add "ply-visualizer[notebook]" # Notebook display support
-uv pip install ply-visualizer    # Existing virtual environment
-uv tool install ply-visualizer   # Isolated CLI installation
-uvx --from ply-visualizer ply-viewer scan.ply
-```
-
-The Python import remains `from ply_visualizer import show`. See
-[publishing setup](PUBLISHING.md) for the release workflow.
+See [publishing setup](PUBLISHING.md) for releases.
 
 ## Alternative: install with pip from this repository
 
@@ -330,9 +291,9 @@ existing 3D viewer to retain its file formats and interaction controls.
 - Multiple files appear together in one scene.
 - OBJ input currently provides geometry; automatic sidecar material/texture
   resolution and external-resource glTF are outside this preview.
-- No separate image-viewer integration, MCP tools, headless capture, or desktop
-  launch integration yet. The shared 3D viewer retains its existing manual
-  controls and depth-conversion features.
+- No separate image-viewer integration, headless rendering, or desktop launch
+  integration yet. The shared 3D viewer retains its existing manual controls and
+  depth-conversion features.
 
 ## Build a distributable wheel
 
@@ -359,3 +320,21 @@ npx playwright test local-session.spec.ts --reporter=line
 The browser test requires `npm run build:python-viewer` and the existing engine
 test server assets in `engine/dist` (`npm run build --workspace=engine`). Array
 tests skip optional libraries and GPU backends that are unavailable.
+
+## Available platforms
+
+- **VS Code Marketplace:**
+  [Install extension](https://marketplace.visualstudio.com/items?itemName=kleinicke.ply-visualizer)
+- **Open VSX:**
+  [Install extension](https://open-vsx.org/extension/kleinicke/ply-visualizer)
+- **Website:** [3d.f-kleinicke.de](https://3d.f-kleinicke.de/)
+- **PyPI (Python and CLI):**
+  [ply-visualizer](https://pypi.org/project/ply-visualizer/)
+- **JetBrains:**
+  [Signed preview and installation](https://github.com/kleinicke/ply-visualizer/blob/main/jetbrains/README.md)
+- **Standalone app:**
+  [Tauri desktop preview](https://github.com/kleinicke/ply-visualizer/blob/main/apps/desktop/README.md)
+
+**MCP is supported:** agents can open and update 3D scenes, control the camera,
+and inspect rendered screenshots. See the
+[MCP setup guide](https://github.com/kleinicke/ply-visualizer/blob/main/packages/python/MCP.md).

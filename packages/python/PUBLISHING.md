@@ -1,9 +1,12 @@
 # Publishing ply-visualizer
 
+The current checkout is an unpublished `0.3.0.dev0` MCP Apps preview. Do not
+publish intermediate builds; the latest public release is `0.2.0`.
+
 The distribution name is `ply-visualizer`, the Python import is
-`ply_visualizer`, and the CLI is `ply-viewer`. The initial version is `0.1.0`.
-Release artifacts include the browser engine, WASM decoders and styles; users do
-not need Node.js.
+`ply_visualizer`, and the CLI is `ply-viewer`. The initial release was `0.1.0`;
+MCP support starts in `0.2.0`. Release artifacts include the browser engine,
+WASM decoders and styles; users do not need Node.js.
 
 ## GitHub trusted publishing
 
@@ -31,12 +34,11 @@ token needs to be stored in the repository. For subsequent releases, increment
 
 ## Local publishing with the configured token
 
-Publication is deferred by choice. Local credentials are configured in the
-repository's `.local/.pypirc`, outside the Python package directory. This file
-is Git-ignored and excluded from the VS Code package, and has owner-only `0600`
-permissions. It uses the standard `.pypirc` format with repository `pypi`,
-username `__token__`, and the token as `password`. Do not copy its contents into
-documentation or source control.
+Local credentials are configured in the repository's `.local/.pypirc`, outside
+the Python package directory. This file is Git-ignored and excluded from the VS
+Code package, and has owner-only `0600` permissions. It uses the standard
+`.pypirc` format with repository `pypi`, username `__token__`, and the token as
+`password`. Do not copy its contents into documentation or source control.
 
 Twine normally looks in `~/.pypirc`; pass `--config-file .local/.pypirc` to use
 these project-local credentials. uv's own publishing command does not read this
@@ -47,26 +49,25 @@ Build and check the concrete artifacts first:
 ```sh
 npm run build:python-viewer
 uv build packages/python --out-dir packages/python/dist
-uvx twine check --strict packages/python/dist/ply_visualizer-0.1.0*
+uvx twine check --strict packages/python/dist/ply_visualizer-0.2.0*
 ```
 
 When publication is requested, run this from the repository root to publish only
 the checked, versioned artifacts:
 
 ```sh
-uvx twine upload --non-interactive --config-file .local/.pypirc --repository pypi packages/python/dist/ply_visualizer-0.1.0-py3-none-any.whl packages/python/dist/ply_visualizer-0.1.0.tar.gz
+uvx twine upload --non-interactive --config-file .local/.pypirc --repository pypi packages/python/dist/ply_visualizer-0.2.0-py3-none-any.whl packages/python/dist/ply_visualizer-0.2.0.tar.gz
 ```
 
 Never place the token in source control or documentation. Verify the project
 page after upload and install the published version into a clean environment:
 
 ```sh
-uvx --from ply-visualizer==0.1.0 ply-viewer --help
+uvx --from ply-visualizer==0.2.0 ply-viewer --help
 ```
 
-Credential structure has been checked locally; token validity and account
-permissions have not been tested by uploading. A missing project page alone does
-not guarantee that PyPI will accept a particular name.
+Publishing uses the configured PyPI account credentials. A missing project page
+alone does not guarantee that PyPI will accept a particular name.
 
 ## Agent integrations before publication
 

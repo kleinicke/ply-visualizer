@@ -5,6 +5,7 @@ import { mount } from 'svelte';
 import { handleBrowserFiles, type BrowserFileDragDropHost } from '../browserFileDragDrop';
 import { localSessionState as state } from '../state/localSession.svelte';
 import Toolbar from '../components/LocalSessionToolbar.svelte';
+import { handleAgentCommand, type AgentViewerHost } from './agentBridge';
 
 interface Session {
   version: number;
@@ -14,13 +15,14 @@ interface Session {
   vectors: number[][][];
   step: number | null;
 }
-type Host = BrowserFileDragDropHost & {
-  camera: THREE.PerspectiveCamera;
-  controls: { target: THREE.Vector3; update(): void };
-  scene: THREE.Scene;
-  fitCameraToAllObjects(): void;
-  requestRender(): void;
-};
+type Host = BrowserFileDragDropHost &
+  AgentViewerHost & {
+    camera: THREE.PerspectiveCamera;
+    controls: { target: THREE.Vector3; update(): void };
+    scene: THREE.Scene;
+    fitCameraToAllObjects(): void;
+    requestRender(): void;
+  };
 
 async function start(): Promise<void> {
   const host = (window as Window & { visualizer?: Host }).visualizer!;
@@ -129,6 +131,11 @@ async function start(): Promise<void> {
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
       document.documentElement.dataset.localSession = 'error';
+    }
+    try {
+      await handleAgentCommand(host);
+    } catch {
+      /* Retry after a transient disconnect. */
     }
     window.setTimeout((): void => {
       void poll();

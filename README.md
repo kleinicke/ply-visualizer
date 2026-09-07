@@ -20,7 +20,10 @@ heavy decoding, so files with millions of points open in seconds.
 - Use the shared viewer on the [website](https://3d.f-kleinicke.de)
 - Try the local
   [Python package and command-line viewer](packages/python/README.md) for 3D
-  files and point arrays (source preview; not yet published)
+  files, NumPy/PyTorch arrays and inline local notebooks
+  (`uv add ply-visualizer`)
+- Connect AI agents through the [local MCP server](packages/python/MCP.md) to
+  open scenes, control the camera and inspect rendered screenshots
 
 ## Supported formats
 
@@ -141,6 +144,9 @@ files are especially helpful when adding support for new formats.
 - **Website:** [3d.f-kleinicke.de](https://3d.f-kleinicke.de/)
 - **Documentation:** [Features and usage](#features)
 - **Standalone app:** [Tauri desktop preview](apps/desktop/README.md)
+- **PyPI (Python and CLI):**
+  [ply-visualizer](https://pypi.org/project/ply-visualizer/)
+- **MCP:** Supported — [Agent setup and usage](packages/python/MCP.md)
 - **More platforms:** Coming soon
 - **Blog:** Coming soon
 - **Videos:** Coming soon

@@ -1,0 +1,99 @@
+"""Exercise the public MCP protocol, including failures and session reuse."""
+import asyncio
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+import time
+
+from ply_visualizer.agent_bridge import BrowserBridge
+from ply_visualizer.mcp_server import SceneManager, create_server, browser_default
+try:
+    from mcp import Client
+except ImportError:
+    Client = None
+
+
+class BridgeTests(unittest.TestCase):
+    def test_reply_and_timeout(self):
+        bridge = BrowserBridge()
+        with ThreadPoolExecutor() as pool:
+            future = pool.submit(bridge.request, 'inspect')
+            deadline = time.monotonic() + 2
+            while bridge.pending() is None and time.monotonic() < deadline:
+                time.sleep(.001)
+            command = bridge.pending()
+            self.assertFalse(bridge.receive({'id': 'wrong', 'result': {}}))
+            self.assertTrue(bridge.receive({'id': command['id'], 'result': {'vertices': 3}}))
+            self.assertEqual(future.result(), {'vertices': 3})
+            self.assertFalse(bridge.receive({'id': command['id'], 'result': {}}))
+        with self.assertRaises(TimeoutError):
+            bridge.request('inspect', timeout=.01)
+        self.assertIsNone(bridge.pending())
+
+    def test_browser_default_respects_host_and_override(self):
+        from types import SimpleNamespace
+        class Capabilities:
+            def model_dump(self, **kwargs):
+                return {'extensions': {'io.modelcontextprotocol/ui': {'mimeTypes': ['text/html;profile=mcp-app']}}}
+        host = SimpleNamespace(client_capabilities=Capabilities())
+        self.assertFalse(browser_default(host, None))
+        self.assertTrue(browser_default(host, True))
+        plain = SimpleNamespace(client_capabilities=None)
+        self.assertTrue(browser_default(plain, None))
+        self.assertFalse(browser_default(plain, False))
+
+    def test_file_roots_reject_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'allowed'
+            root.mkdir()
+            outside = Path(directory) / 'outside.ply'
+            outside.write_text('ply')
+            (root / 'link.ply').symlink_to(outside)
+            manager = SceneManager([root])
+            for name in ('../outside.ply', 'link.ply'):
+                with self.assertRaises(ValueError):
+                    manager.path(name)
+
+
+@unittest.skipIf(Client is None, 'Install the mcp extra')
+class MCPTests(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_workflow(self):
+        async with Client(create_server([Path.cwd()])) as client:
+            tools = (await client.list_tools()).tools
+            self.assertEqual(len(tools), 8)
+            app_resource = await client.read_resource('ui://ply-visualizer/viewer.html')
+            content = app_resource.contents[0]
+            self.assertEqual(content.mime_type, 'text/html;profile=mcp-app')
+            self.assertIn('<!doctype html>', content.text)
+            self.assertEqual(content.meta['ui']['csp']['frameDomains'], ['http://127.0.0.1:*'])
+            self.assertEqual(next(t for t in tools if t.name == 'open_3d_files').meta['ui']['resourceUri'], 'ui://ply-visualizer/viewer.html')
+            points = next(t for t in tools if t.name == 'visualize_points')
+            self.assertEqual(points.input_schema['properties']['points']['maxItems'], 20000)
+            async def call(name, args):
+                result = await client.call_tool(name, args)
+                self.assertFalse(result.is_error, result)
+                return json.loads(result.content[0].text)
+            scene = await call('visualize_points', {'points': [[0, 0, 0]], 'open_browser': False})
+            updated = await call('update_3d_scene', {'scene_id': scene['scene_id'], 'points': [[1, 2, 3]]})
+            self.assertEqual(updated['url'], scene['url'])
+            self.assertGreater(updated['revision'], scene['revision'])
+            invalid = await client.call_tool('set_3d_camera', {'scene_id': scene['scene_id'], 'position': [0,0,0], 'target': [0,0,0]})
+            self.assertTrue(invalid.is_error)
+            await call('close_3d_scene', {'scene_id': scene['scene_id']})
+            missing = await client.call_tool('update_3d_scene', {'scene_id': scene['scene_id'], 'points': [[0,0,0]]})
+            self.assertTrue(missing.is_error)
+
+    async def test_real_stdio_transport(self):
+        import os
+        import sys
+        from mcp import StdioServerParameters
+        source = str(Path(__file__).resolve().parents[1])
+        process = StdioServerParameters(command=sys.executable,
+            args=['-m', 'ply_visualizer.mcp_server', '--root', str(Path.cwd())],
+            env={**os.environ, 'PYTHONPATH': source})
+        async with Client(process) as client:
+            self.assertEqual(len((await client.list_tools()).tools), 8)
+            resource = await client.read_resource('viewer://capabilities')
+            self.assertEqual(json.loads(resource.contents[0].text)['transport'], 'stdio')

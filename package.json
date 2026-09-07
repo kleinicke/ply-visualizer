@@ -309,7 +309,7 @@
     }
   },
   "scripts": {
-    "build:python-viewer": "webpack --config engine/webpack.local.cjs --mode=production",
+    "build:python-viewer": "webpack --config engine/webpack.local.cjs --mode=production && webpack --config engine/webpack.mcp-app.cjs --mode=production",
     "test:python-viewer": "python3 -m unittest discover -s packages/python/tests -v",
     "vscode:prepublish": "npm run clean && npm run compile",
     "compile": "webpack",

@@ -21,6 +21,7 @@ from urllib.parse import unquote, urlsplit
 import webbrowser
 
 from .arrays import point_rows
+from .agent_bridge import BrowserBridge
 
 
 FORMATS = frozenset(".ply .xyz .xyzn .xyzrgb .pcd .pts .obj .stl .off .glb .las .laz .e57 .spz .splat .ksplat .sog".split())
@@ -90,6 +91,9 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         resource = path[len(prefix):] or "index.html"
+        if resource == "agent/command":
+            self._send(json.dumps(session._bridge.pending()).encode(), "application/json")
+            return
         if resource == "session.json":
             with session._lock:
                 data = json.dumps(session._manifest()).encode()
@@ -138,6 +142,26 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def do_POST(self):
+        session = self.session
+        if (self.headers.get("Host") != session.authority
+                or self.headers.get("Origin") not in (None, f"http://{session.authority}")
+                or self.path != f"/{session._token}/agent/result"):
+            self.send_error(403)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 8 * 1024 * 1024:
+                self.send_error(413)
+                return
+            self.connection.settimeout(10)
+            value = json.loads(self.rfile.read(length))
+        except (ValueError, OSError):
+            self.send_error(400)
+            return
+        accepted = session._bridge.receive(value)
+        self._send(json.dumps({"accepted": accepted}).encode(), "application/json")
+
     def _headers(self, length, content_type):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
@@ -157,6 +181,7 @@ class ViewerSession:
 
     def __init__(self, files, temporary=None):
         self._files = files
+        self._bridge = BrowserBridge()
         self._lock = threading.RLock()
         self._update_lock = threading.Lock()
         self._revision = 0

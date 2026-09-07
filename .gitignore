@@ -38,3 +38,6 @@ benchmark-vscode-result.json
 # Local publishing credentials (never source or release assets).
 /jetbrains_token.md
 /.local/
+
+# Generated inline MCP App resource
+packages/python/ply_visualizer/_mcp_app/

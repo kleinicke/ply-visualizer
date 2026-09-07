@@ -30,6 +30,7 @@
     "webpack-dev-server": "^6.0.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@sparkjsdev/spark": "^2.1.0",
     "js-yaml": "^5.2.3",
     "three": "^0.185.1"
