@@ -85,8 +85,17 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         async with Client(create_server([Path.cwd()])) as client:
             tools = (await client.list_tools()).tools
             self.assertEqual(len(tools), 26)
+            self.assertTrue(all(not t.description.startswith("Use this viewer") for t in tools))
+            named = next(t for t in tools if t.name == "manage_3d_selections").input_schema["properties"]
+            self.assertFalse(named["isolate"]["default"])
+            self.assertFalse(named["focus"]["default"])
+            transform = next(t for t in tools if t.name == "transform_3d_object").input_schema["properties"]
+            self.assertIn("undo", transform["action"]["enum"])
+            self.assertIn("pivot", transform)
             self.assertTrue(next(t for t in tools if t.name == "open_3d_url").annotations.open_world_hint)
             self.assertFalse(next(t for t in tools if t.name == 'update_3d_scene').meta)
+            recipes = await client.read_resource("viewer://workflows")
+            self.assertIn("select_export_labeled_object", json.loads(recipes.contents[0].text))
             app_resource = await client.read_resource('ui://ply-visualizer/viewer.html')
             content = app_resource.contents[0]
             self.assertEqual(content.mime_type, 'text/html;profile=mcp-app')
@@ -116,6 +125,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             await call('close_3d_scene', {'scene_id': scene['scene_id']})
             missing = await client.call_tool('update_3d_scene', {'scene_id': scene['scene_id'], 'points': [[0,0,0]]})
             self.assertTrue(missing.is_error)
+            self.assertEqual(missing.structured_content["error"]["code"], "invalid_argument")
 
     async def test_concurrent_geometry_chunks_and_region_validation(self):
         import base64

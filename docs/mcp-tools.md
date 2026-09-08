@@ -40,13 +40,17 @@ functions to import into a Python script. The MCP client supplies context.
 
 Tool: `open_3d_files`
 
-Open local point clouds/meshes/splats together. Paths must be under configured
-roots. Returns a persistent scene_id and local URL; inspect to verify loading.
+Open local point clouds/meshes/splats/animated models together. Pass scene_id to
+append while preserving camera and existing objects. Include explicit supporting
+.bin/textures for GLTF/DAE/FBX; no implicit disk or network reads. Paths must be
+under configured roots. Returns a persistent scene_id and local URL; inspect to
+verify loading.
 
 ```python
 open_3d_files(
     paths: Annotated[list[str], Field(min_length=1, max_length=32)],
     open_browser: bool | None = None,
+    scene_id: str | None = None,
 )
 ```
 
@@ -73,7 +77,9 @@ visualize_points(
 
 Tool: `open_3d_url`
 
-Explicitly download a direct HTTP(S) 3D file on the local MCP server and open it
+Download one URL or a list of direct HTTP(S) 3D files into one scene; pass
+scene_id to append. Self-contained models recommended; external resources are
+not fetched implicitly. Download each file on the local MCP server and open it
 inline. This makes a network request to the supplied URL and redirects; no
 browser CORS is needed. Supports the same formats as local files plus gzip.
 Supply filename for extensionless/signed URLs. Defaults to a 256 MiB
@@ -83,8 +89,9 @@ deleted when the scene closes.
 
 ```python
 open_3d_url(
-    url: str,
+    url: str | list[str],
     filename: str | None = None,
+    scene_id: str | None = None,
     max_bytes: Annotated[int, Field(ge=1, le=1024 * 1024 * 1024)] = 256 * 1024 * 1024,
 )
 ```
@@ -123,11 +130,13 @@ list_3d_scenes(
 
 Tool: `inspect_3d_scene`
 
-Read coordinate conventions/units, camera position/direction/rotation center,
-projection and viewport, object transforms, opacity/color, exposure/background,
-selection criteria, geometry counts and bounds from the active inline viewer or
-explicit browser fallback. Times out if no renderer responds. Compare
-rendered_revision with the submitted revision.
+Inspect loaded geometry and build IDs (Python package/server and actual
+renderer; renderer_matches_bundle detects an old widget). Read coordinate
+conventions/units, camera position/direction/rotation center, projection and
+viewport, object transforms, opacity/color, exposure/background, selection
+criteria, geometry counts and bounds from the active inline viewer or explicit
+browser fallback. Times out if no renderer responds. Compare rendered_revision
+with the submitted revision.
 
 ```python
 inspect_3d_scene(
@@ -237,11 +246,13 @@ set_3d_appearance(
 Tool: `set_3d_object`
 
 Set overlay opacity (0..1), visibility, world-unit point size (or
-point_size_mode=adaptive for a camera-dependent 2/4/8 pixel target), points/mesh
-representation, fixed RGB color or original/intensity/scalar coloring. Get
-object_index, scalar_fields and available_color_modes from inspection; these
-include palette indices and projected colors when available. Mesh requires
-faces. Fixed color and color_mode are mutually exclusive.
+point_size_mode=adaptive for a camera-dependent 2/4/8 pixel target;
+point_size_pixels=1..64 explicitly sets that target and enables adaptive
+sizing), points/mesh representation, fixed RGB color or
+original/intensity/scalar coloring. Get object_index, scalar_fields and
+available_color_modes from inspection; these include palette indices and
+projected colors when available. Mesh requires faces. Fixed color and color_mode
+are mutually exclusive.
 
 ```python
 set_3d_object(
@@ -249,6 +260,7 @@ set_3d_object(
     object_index: Annotated[int, Field(ge=0)],
     point_size: Annotated[float, Field(gt=0, le=1000)] | None = None,
     point_size_mode: Literal['adaptive', 'fixed'] | None = None,
+    point_size_pixels: Annotated[float, Field(ge=1, le=64)] | None = None,
     opacity: Annotated[float, Field(ge=0, le=1)] | None = None,
     visible: bool | None = None,
     mode: Literal['points', 'mesh'] | None = None,
@@ -266,22 +278,25 @@ Transform one cloud/mesh without changing source files or camera.
 Translate/scale use vector XYZ; rotate uses vector axis plus angle degrees (90
 for quarter turns); quaternion uses XYZW, normalized. Matrix is affine 4x4
 COLUMN-MAJOR, matching inspection (transpose row-major UI input). Default
-composes current*delta in local space; world uses delta*current around world
-origin. replace=True sets an absolute transform. Invert/reset act on the current
-matrix. Inspect local_to_world to verify. Visibility, point size and coloring
-use set_3d_object.
+composes current*delta in local space; world uses delta*current. pivot=center
+rotates/scales around the current bounding-box center; explicit XYZ pivot uses
+the chosen space; omitted pivot is the coordinate origin. Undo restores the last
+of up to 50 agent edits per object. replace=True sets an absolute transform.
+Invert/reset act on the current matrix. Inspect local_to_world to verify.
+Visibility, point size and coloring use set_3d_object.
 
 ```python
 transform_3d_object(
     scene_id: str,
     object_index: Annotated[int, Field(ge=0)],
-    action: Literal['matrix', 'translate', 'rotate', 'quaternion', 'scale', 'invert', 'reset'],
+    action: Literal['matrix', 'translate', 'rotate', 'quaternion', 'scale', 'invert', 'reset', 'undo'],
     vector: tuple[float, float, float] | None = None,
     angle: float | None = None,
     quaternion: tuple[float, float, float, float] | None = None,
     matrix: Annotated[list[float], Field(min_length=16, max_length=16)] | None = None,
     space: Literal['local', 'world'] = 'local',
     replace: bool = False,
+    pivot: Literal['center'] | tuple[float, float, float] | None = None,
     detail: Literal['summary', 'full'] = 'summary',
 )
 ```
@@ -308,14 +323,21 @@ measure_3d_scene(
 
 Tool: `control_3d_video`
 
-Manage camera keyframes and preview playback without UI. Add captures current
-camera. Update sets segment duration/dwell in seconds. Loop requires enabled;
-play needs two keyframes; stop restores camera. Returns reusable keyframe poses.
+Control camera keyframes, or model animation when object_index is supplied.
+Model: list clips, update(index/speed), play, stop (pause), loop(enabled),
+goto(time in seconds, pauses). GLB/GLTF/FBX/DAE retain supported embedded
+animation; 3DS is static. With no object_index, manage camera keyframes: Add
+captures current camera. Update sets segment duration/dwell in seconds. Loop
+requires enabled; play needs two keyframes; stop restores camera. Returns
+reusable keyframe poses.
 
 ```python
 control_3d_video(
     scene_id: str,
     action: Literal['list', 'add', 'remove', 'goto', 'update', 'loop', 'play', 'stop'],
+    object_index: Annotated[int, Field(ge=0)] | None = None,
+    time: Annotated[float, Field(ge=0)] | None = None,
+    speed: Annotated[float, Field(gt=0, le=100)] | None = None,
     index: Annotated[int, Field(ge=0)] | None = None,
     enabled: bool | None = None,
     duration: Annotated[float, Field(gt=0, le=3600)] | None = None,
@@ -425,8 +447,10 @@ Tool: `manage_3d_selections`
 Name the active selection; retain up to 20 independent subsets. Toggle each
 name's visibility or activate/focus it. Union/intersection/subtract combine two
 names from the same source into a new active selection; save it to retain it.
-Empty results preserve the previous selection. Geometry updates expire
-selections; scene-state export persists them.
+Defaults isolate=False and focus=False preserve existing visibility and camera.
+Empty set results return status=empty, clear the active selection, and cannot
+export the previous result. Geometry updates expire selections; scene-state
+export persists them.
 
 ```python
 manage_3d_selections(
@@ -435,8 +459,8 @@ manage_3d_selections(
     name: Annotated[str, Field(min_length=1, max_length=100)] | None = None,
     other: Annotated[str, Field(min_length=1, max_length=100)] | None = None,
     visible: bool | None = None,
-    isolate: bool = True,
-    focus: bool = True,
+    isolate: bool = False,
+    focus: bool = False,
     detail: Literal['summary', 'full'] = 'summary',
 )
 ```
@@ -448,16 +472,20 @@ Tool: `manage_3d_scene_states`
 Save/restore complete camera, transforms, selection/named subsets, visibility,
 color, opacity and presentation. Export/import a .json under configured roots to
 persist after restarting. Reopen identical geometry in the same order before
-import; import stores a state, restore applies it. Existing files are never
-overwritten. Maximum 20 states, 4 MiB each. Does not embed geometry or video
-playback.
+import; import stores a state; restore=True imports and applies it in one call.
+Existing files are never overwritten. Maximum 20 states, 4 MiB each. JSON does
+not embed geometry or playback. action=export_models writes all visible models
+as a new .glb (no name required), including supported native animation clips.
+GLB excludes Gaussian splats, grid/UI, source-row attributes and point-size
+settings; use subset PLY for analysis attributes. Export limit 256 MiB.
 
 ```python
 manage_3d_scene_states(
     scene_id: str,
-    action: Literal['save', 'restore', 'list', 'delete', 'export', 'import'],
+    action: Literal['save', 'restore', 'list', 'delete', 'export', 'import', 'export_models'],
     name: Annotated[str, Field(min_length=1, max_length=100)] | None = None,
     path: str | None = None,
+    restore: bool = False,
     detail: Literal['summary', 'full'] = 'summary',
 )
 ```
@@ -489,13 +517,14 @@ Enable linked side-by-side WebGL views with the same camera (EDL off in split
 mode); disable restores ordinary rendering. Distance colors left by world-space
 distance to right: nearest within max_distance, unmatched=NaN; paired uses
 corresponding decoded order and requires equal counts. Distance limit: one
-million combined points. Recompute distances after moving/updating geometry. No
-alignment is run.
+million combined points. Changes mark distances stale; recompute with
+action=recompute,left=<source> reuses recorded settings. Restored distance
+fields require an explicit distance computation. No alignment is run.
 
 ```python
 compare_3d_clouds(
     scene_id: str,
-    action: Literal['enable', 'disable', 'status', 'distance'],
+    action: Literal['enable', 'disable', 'status', 'distance', 'recompute'],
     left: Annotated[int, Field(ge=0)] = 0,
     right: Annotated[int, Field(ge=0)] = 1,
     method: Literal['nearest', 'paired'] = 'nearest',

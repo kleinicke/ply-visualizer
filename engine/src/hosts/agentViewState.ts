@@ -1,5 +1,6 @@
-import { agentPointSizeMode } from './agentPointSizing';
-import { comparisonState } from './agentComparison';
+import { agentPointSizeMode, agentPointSizePixels } from './agentPointSizing';
+import { transformUndoCount } from './agentTransforms';
+import { comparisonState, distanceState } from './agentComparison';
 import { getPointCloudColorOptions, type PointCloudColorOptionsHost } from '../colorOptions';
 import { sceneGuidesState } from '../state/sceneGuides.svelte';
 import { getCurrentThemeName } from '../themes';
@@ -29,6 +30,20 @@ export function objectPresentation(host: ControlHost, index: number) {
   ];
   host.meshes[index]?.updateWorldMatrix(true, false);
   return {
+    distance: distanceState(host, index),
+    transform_undo_available: transformUndoCount(host.spatialFiles[index]),
+    animation: host.spatialFiles[index].sceneModel
+      ? {
+          ...host.spatialFiles[index].sceneModel!.ui,
+          clips: host.spatialFiles[index].sceneModel!.clips.map((clip, index) => ({
+            index,
+            name: clip.name,
+            duration: clip.duration,
+          })),
+          warnings: host.spatialFiles[index].sceneModel!.warnings,
+        }
+      : null,
+    point_size_pixels: agentPointSizePixels(host.spatialFiles[index]),
     point_size_mode: agentPointSizeMode(host.spatialFiles[index]),
     original_rows_available: !!host.spatialFiles[index].sourcePointIndices?.length,
     opacity: opacities.length === 1 ? opacities[0] : null,

@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention -- Python MCP wire-format keys */
 /** Install the MCP transport before starting the ordinary shared viewer host. */
+import { agentBuild } from './agentBuild';
 import darkTheme from '../themes/dark-modern.json';
 import lightTheme from '../themes/light-modern.json';
 import { App } from '@modelcontextprotocol/ext-apps';
@@ -60,13 +61,29 @@ for (const name of ['localStorage', 'sessionStorage'] as const) {
     Object.defineProperty(window, name, { value: storage });
   }
 }
-const app = new App({ name: 'ply-visualizer', version: '0.4.0.dev3' }, {});
+const app = new App({ name: 'ply-visualizer', version: agentBuild.package_version }, {});
 let sceneId = '';
 let ready: () => void;
 const sceneReady = new Promise<void>(resolve => {
   ready = resolve;
 });
 const nativeFetch = window.fetch.bind(window);
+// Explicitly supplied model buffers already live in this widget. Serve loader
+// blob fetches from memory even when the host CSP forbids network connections.
+const localBlobs = new Map<string, Blob>();
+const createBlobUrl = URL.createObjectURL.bind(URL);
+const revokeBlobUrl = URL.revokeObjectURL.bind(URL);
+URL.createObjectURL = object => {
+  const url = createBlobUrl(object);
+  if (object instanceof Blob) {
+    localBlobs.set(url, object);
+  }
+  return url;
+};
+URL.revokeObjectURL = url => {
+  localBlobs.delete(url);
+  revokeBlobUrl(url);
+};
 
 async function call(name: string, args: Record<string, unknown>) {
   const result = await app.callServerTool({ name, arguments: args });
@@ -82,6 +99,10 @@ async function call(name: string, args: Record<string, unknown>) {
 
 window.fetch = async (input, init) => {
   const address = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  const localBlob = localBlobs.get(address);
+  if (localBlob) {
+    return new Response(localBlob);
+  }
   // WebAssembly bytes bundled into the resource must not need network/CSP fetch access.
   if (address.startsWith('data:')) {
     const [header, body] = address.split(',', 2);

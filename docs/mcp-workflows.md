@@ -38,8 +38,9 @@ manage_3d_views(scene_id=scene_id, action="save", name="overview")
 ```
 
 The preview returns a labeled multi-view image and preserves the original
-camera. Disable split comparison before using it. Standard views assume Y-up;
-inspection reports actual coordinate conventions and camera vectors.
+camera. Four views use a 2×2 layout with square, independently fitted viewports.
+Disable split comparison before using it. Standard views assume Y-up; inspection
+reports actual coordinate conventions and camera vectors.
 
 Use `navigate_3d_view` to orbit, pan, zoom, or change the pivot. Use
 `set_3d_camera` when you know an explicit position, target, or FOV. Camera
@@ -138,8 +139,11 @@ Distance computation colors the left cloud by its world-space distance to the
 right. Nearest-neighbor matches beyond `max_distance` are unmatched (`NaN`).
 `paired` compares corresponding decoded rows and requires equal counts; use it
 only when row correspondence is meaningful. Distance computation is limited to
-one million combined points, and must be repeated after moving or updating
-geometry. Comparison does not perform alignment.
+one million combined points. Inspection reports distance.stale immediately after
+relevant transforms or removals, and the viewer/capture shows a warning. Use
+action="recompute", left=0 to reuse the previous settings; verify stale=False
+and the new range before interpreting colors. Comparison does not perform
+alignment.
 
 ## Save an inspection and export a subset
 
@@ -163,12 +167,12 @@ After restarting, reopen identical geometry in the same order, then import and
 restore the state:
 
 ```python
-manage_3d_scene_states(scene_id=scene_id, action="import", name="review", path="review.json")
-manage_3d_scene_states(scene_id=scene_id, action="restore", name="review")
+manage_3d_scene_states(scene_id=scene_id, action="import", name="review", path="review.json", restore=True)
 ```
 
-Import stores the state; restore applies it. State files do not embed the model
-geometry or video playback. The renderer retains up to 20 named states.
+Import with restore=True also applies the validated state. State files do not
+embed the model geometry or video playback. The renderer retains up to 20 named
+states.
 
 ## Update data or preview a camera path
 
@@ -180,5 +184,86 @@ revision before capturing it. For frequent NumPy/PyTorch updates, use the
 For a camera path, use `control_3d_video(action="add")` at the current view,
 move the camera and add another keyframe, then call `action="play"`. At least
 two keyframes are required. Use `update` for segment duration/dwell, `loop` for
-looping, and `stop` to stop preview and restore the camera. These tools manage
-camera playback, not video export or embedded model animations.
+looping, and `stop` to stop preview and restore the camera. Without object_index
+these calls control the camera path. Model animation uses the same grouped tool
+as described below.
+
+## Verify the code actually loaded
+
+Call `inspect_3d_scene` and check `renderer_matches_bundle=True`. The response
+separately reports the running Python `build.package_version` and
+`server_build_id`, bundled renderer commit/content ID, and the actual widget's
+`renderer_build`. `viewer://capabilities` reports server/bundle IDs without
+requiring a widget. Different renderer IDs indicate different widget instances;
+different build IDs indicate different code. A matching source checkout alone
+does not prove that a client refreshed its cached tool schemas.
+
+## Predictable selection chaining
+
+`select_3d_region` defaults to isolate/focus/highlight/preview=True. A
+zero-match region request is an error with an explanation and preserves the
+prior selection. Check `isError` before chaining any export.
+
+Named selection algebra defaults to isolate=False and focus=False: existing
+objects retain their visibility and the camera stays put. A valid empty
+intersection/subtraction succeeds with `status="empty"`, zero points, and
+`active_selection=null`; exporting the prior active selection is then
+impossible. Saved named selections remain available. Explicit isolation/focus is
+still supported.
+
+Selection previews return `structuredContent` alongside PNG content. Expected
+execution failures return `isError=True` and
+`structuredContent.error={code,message}`; invalid schema arguments remain MCP
+validation errors. Never infer success from the absence of an image.
+
+## Append and inspect animated models
+
+```python
+open_3d_files(scene_id=scene_id, paths=["horse.glb"])
+open_3d_url(scene_id=scene_id, url=["https://…/prediction.pcd", "https://…/target.pcd"])
+inspect_3d_scene(scene_id=scene_id, detail="full")
+transform_3d_object(scene_id=scene_id, object_index=2, action="rotate",
+                    vector=[0, 1, 0], angle=180, pivot="center", space="world")
+transform_3d_object(scene_id=scene_id, object_index=2, action="undo")
+control_3d_video(scene_id=scene_id, object_index=2, action="list")
+control_3d_video(scene_id=scene_id, object_index=2, action="goto", time=0.5)
+```
+
+Inspect indices after appending; existing selections/transforms/camera are
+retained. Check the new rendered revision, object counts, animation clips and
+resource warnings. GLB, GLTF, FBX and Collada use the shared animation loader;
+3DS is static. Pass a local model together with explicit supporting
+buffers/textures, for example `paths=["model.gltf", "model.bin"]`. Dependencies
+are not silently fetched. Self-contained GLB is the easiest portable option. The
+MCP host must permit blob images for textures, in addition to script/WebAssembly
+execution.
+
+With object_index supplied, `update(index=..., speed=...)` chooses a clip/speed,
+`play` advances it, `stop` pauses, `loop(enabled=...)` sets looping, and
+`goto(time=...)` pauses at a specific second. Inspect and capture the pose.
+Animation clips supported by the source loader are retained; no video encoding
+occurs.
+
+For rotation/scaling, an explicit XYZ pivot uses the selected local/world space;
+`pivot="center"` uses the current object's world bounding-box center. Omitted
+pivot retains origin-based composition. Undo retains up to 50 agent transforms
+per object, independently of camera undo and alignment undo.
+
+## Export models for another viewer
+
+```python
+manage_3d_scene_states(scene_id=scene_id, action="export_models", path="models.glb")
+```
+
+Exports visible models together with their transforms and supported native
+animation clips to a new GLB (maximum 256 MiB). Reopen the result and inspect
+counts/clips before sharing. GLB does not preserve point-size settings, analytic
+scalar fields, original point rows, grid/UI, Gaussian splats, or sheared
+animated transforms. Use subset PLY for analytical point attributes and scene
+JSON for reproducible presentation settings. Export never overwrites existing
+files.
+
+To control tiny clouds explicitly, set `point_size_pixels=6` with
+`set_3d_object`; this enables adaptive sizing. The default adaptive target is 8
+pixels below 100 points, 4 below 10,000, otherwise 2. Inspection and saved scene
+states include the chosen pixel target.

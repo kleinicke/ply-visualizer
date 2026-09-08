@@ -1,4 +1,8 @@
-import { agentPointSizeMode, setAgentPointSizeMode } from './agentPointSizing';
+import {
+  agentPointSizePixels,
+  agentPointSizeMode,
+  setAgentPointSizeMode,
+} from './agentPointSizing';
 import { comparisonState, agentComparison } from './agentComparison';
 import {
   setSelectionCriteria,
@@ -36,6 +40,7 @@ type SubsetState = {
 };
 type ObjectState = {
   point_size_mode?: string;
+  point_size_pixels?: number;
   distance?: (number | null)[];
   signature: string;
   matrix: number[];
@@ -86,6 +91,7 @@ async function object(host: ControlHost, file: SpatialData): Promise<ObjectState
   const i = host.spatialFiles.indexOf(file);
   return {
     point_size_mode: agentPointSizeMode(file),
+    point_size_pixels: agentPointSizePixels(file),
     distance: file.metadata?.agentDistance
       ? Array.from(file.scalarFields!.agent_distance, v => (Number.isFinite(v) ? v : null))
       : undefined,
@@ -213,6 +219,12 @@ async function validate(host: ControlHost, value: Snapshot) {
     ) {
       throw new Error('Invalid saved distances');
     }
+    if (
+      o.point_size_pixels !== undefined &&
+      (!Number.isFinite(o.point_size_pixels) || o.point_size_pixels < 1 || o.point_size_pixels > 64)
+    ) {
+      throw new Error('Invalid adaptive pixel target');
+    }
     if (o.point_size_mode && !['adaptive', 'fixed'].includes(o.point_size_mode)) {
       throw new Error('Invalid point size mode');
     }
@@ -327,7 +339,7 @@ async function apply(host: ControlHost, value: Snapshot) {
       visible: o.visible,
       mode: o.mesh ? 'mesh' : 'points',
     });
-    setAgentPointSizeMode(host, i, o.point_size_mode === 'adaptive');
+    setAgentPointSizeMode(host, i, o.point_size_mode === 'adaptive', o.point_size_pixels);
   };
   for (const [i, file] of base.entries()) {
     await applyObject(file, value.objects[i]);

@@ -5,6 +5,7 @@ import { agentExport } from './agentExport';
 import { agentComparison, comparisonState } from './agentComparison';
 import { agentMultiView } from './agentCapture';
 import { getPointCloudColorOptions, type PointCloudColorOptionsHost } from '../colorOptions';
+import { agentModelAnimation } from './agentModelAnimation';
 import { transformAgentObject } from './agentTransforms';
 import { sceneGuidesState } from '../state/sceneGuides.svelte';
 import { toggleAxesVisibility } from '../axesFeature';
@@ -223,8 +224,17 @@ export async function applyAgentControl(
         throw new Error('Color mode is unavailable for this object; inspect available_color_modes');
       }
     }
-    if (a.point_size_mode !== undefined || a.point_size !== undefined) {
-      setAgentPointSizeMode(host, i, a.point_size_mode === 'adaptive');
+    if (
+      a.point_size_mode !== undefined ||
+      a.point_size !== undefined ||
+      a.point_size_pixels !== undefined
+    ) {
+      setAgentPointSizeMode(
+        host,
+        i,
+        a.point_size_mode === 'adaptive' || a.point_size_pixels !== undefined,
+        a.point_size_pixels
+      );
     }
     if (a.point_size !== undefined) {
       host.updatePointSize(i, a.point_size);
@@ -290,6 +300,9 @@ export async function applyAgentControl(
       units: 'scene units',
     };
   } else if (operation === 'video') {
+    if (a.object_index !== undefined) {
+      return agentModelAnimation(host, a);
+    }
     const film = host.filmManager;
     if (!film) {
       throw new Error('Video manager unavailable');

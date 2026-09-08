@@ -1,6 +1,6 @@
 # Local MCP integration
 
-The current checkout is an **unpublished 0.4.0.dev4 preview**. It replaces
+The current checkout is an **unpublished 0.4.0.dev5 preview**. It replaces
 0.3.0's nested localhost iframe with the shared renderer running directly in the
 MCP widget. PyPI still serves 0.3.0 until the next requested release.
 
@@ -72,9 +72,9 @@ aligned with the valid points. Multi-component fields appear as `field_0`,
 `field_1`, etc. Attribute summaries include finite ranges and counts for up to
 64 values, with an explicit truncation flag. Attributes use the viewer's float32
 storage; large integer IDs above 2²⁴ may lose precision. Numeric labels do not
-supply semantic names such as “box”. Video controls preview the existing camera
-timeline; video export is not part of these tools. Camera snapshots/keyframes
-can reproduce a viewpoint.
+supply semantic names such as “box”. Video controls preview the camera timeline
+or, with object_index, supported embedded model animations; video export is not
+part of these tools. Camera snapshots/keyframes can reproduce a viewpoint.
 
 The first view uses the viewer's OpenGL convention (Y-up, looking along -Z) and
 a tight bounding-box fit. Coordinates are not transformed. Settings are
@@ -254,16 +254,17 @@ expire named selections; stored states can still be restored if matching sources
 are loaded.
 
 Named set operations require the same source cloud and preserve exact decoded
-indices. Empty results preserve the prior selection. Every retained subset has
-an object index for independent visibility/color/opacity. Export writes a NEW
-binary `.ply`, never overwrites a file, and returns only its path and summary.
-Coordinates and normals are object-local; the header records `local_to_world`
-and source origin. Decoded RGB, normals, numeric scalar attributes,
-`decoded_index` and available PCD `source_row` are retained. Unusual/reserved
-scalar names are mapped in header comments. This preserves the viewer's decoded
-values, not every original file datatype (scalar storage remains float32).
-Maximum export: 256 MiB. Export chunks travel inside the server/widget
-transport, not model-facing output.
+indices. Defaults preserve visibility and camera. Empty set results clear the
+active selection and return status=empty, so a later export cannot silently use
+the prior result. Every retained subset has an object index for independent
+visibility/color/opacity. Export writes a NEW binary `.ply`, never overwrites a
+file, and returns only its path and summary. Coordinates and normals are
+object-local; the header records `local_to_world` and source origin. Decoded
+RGB, normals, numeric scalar attributes, `decoded_index` and available PCD
+`source_row` are retained. Unusual/reserved scalar names are mapped in header
+comments. This preserves the viewer's decoded values, not every original file
+datatype (scalar storage remains float32). Maximum export: 256 MiB. Export
+chunks travel inside the server/widget transport, not model-facing output.
 
 PCD ASCII, binary and compressed binary now retain original zero-based record
 indices after non-finite coordinates are filtered. Picking returns `source_row`;
@@ -277,8 +278,9 @@ not supported in split mode. Disable comparison to return to the regular render
 path. Distance coloring supports up to one million combined points: `paired`
 uses corresponding decoded point order; `nearest` searches within the explicit
 `max_distance` in world scene units. Unmatched points are NaN, not zero.
-Distances must be recomputed after transformations or geometry updates; no
-alignment runs.
+Distances become visibly stale after relevant transforms; use
+compare_3d_clouds(action="recompute") before interpreting them. No alignment
+runs.
 
 `set_3d_object(point_size_mode="adaptive")` targets 8 pixels for <100 points, 4
 for <10,000, and 2 for larger clouds at the cloud center, updating as the camera
@@ -374,3 +376,16 @@ opacity, points/mesh mode, fixed color or original/intensity/scalar color
 options. Inspect objects first to discover IDs, scalar fields and
 `available_color_modes` (the actual UI choices, including palette indices,
 intensity palettes and camera-projected colors when available).
+
+### Reliability and native models in dev5
+
+See the
+[workflow recipes](../../docs/mcp-workflows.md#verify-the-code-actually-loaded)
+for build diagnostics, object-center pivots and transform undo, explicit
+adaptive pixel targets, append loading, model animation and visible-model GLB
+export. Named set operations now preserve visibility/camera by default and
+return a valid empty result without leaving the old active selection exportable.
+Selection PNG responses include structured content, and expected errors include
+codes/messages. Four-view captures use square 2×2 viewports; legends use the
+renderer's constant and unmatched scalar colors. No additional agent-facing
+tools were added.

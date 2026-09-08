@@ -1,9 +1,20 @@
 /* eslint-disable @typescript-eslint/naming-convention -- MCP wire keys */
+import { exportAgentModels } from './agentModelExport';
 import type { ControlHost } from './agentControls';
 import { selectionData } from './agentInspection';
 import { loadRegistrationWasm } from '../registration/wasmLoader';
 const exports = new WeakMap<ControlHost, { id: string; bytes: Uint8Array; created: number }>();
 export async function agentExport(host: ControlHost, a: Record<string, any>) {
+  if (a.action === 'start' && a.scope === 'models') {
+    const result = await exportAgentModels(host);
+    return {
+      export_id: storeExport(host, result.bytes),
+      size: result.bytes.length,
+      models: result.models,
+      animations: result.animations,
+      format: 'glb',
+    };
+  }
   if (a.action === 'start') {
     const item = selectionData(host, a.name);
     const data = item.data;
@@ -43,13 +54,7 @@ export async function agentExport(host: ControlHost, a: Record<string, any>) {
       data.sourcePointIndices ?? new Uint32Array(),
       JSON.stringify(metadata)
     );
-    if (!bytes.length || bytes.length > 256 * 1024 * 1024) {
-      throw new Error('Export is empty or exceeds 256 MiB');
-    }
-    const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), v =>
-      v.toString(16).padStart(2, '0')
-    ).join('');
-    exports.set(host, { id, bytes, created: Date.now() });
+    const id = storeExport(host, bytes);
     return {
       export_id: id,
       size: bytes.length,
@@ -76,4 +81,15 @@ export async function agentExport(host: ControlHost, a: Record<string, any>) {
     binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
   }
   return { data: btoa(binary), offset: a.offset, size: pending.bytes.length };
+}
+
+function storeExport(host: ControlHost, bytes: Uint8Array) {
+  if (!bytes.length || bytes.length > 256 * 1024 * 1024) {
+    throw new Error('Export is empty or exceeds 256 MiB');
+  }
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), v =>
+    v.toString(16).padStart(2, '0')
+  ).join('');
+  exports.set(host, { id, bytes, created: Date.now() });
+  return id;
 }

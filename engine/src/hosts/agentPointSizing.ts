@@ -1,14 +1,26 @@
 import * as THREE from 'three';
 import type { ControlHost } from './agentControls';
 import type { SpatialData } from '../interfaces';
+const targets = new WeakMap<SpatialData, number>();
+export function agentPointSizePixels(file: SpatialData) {
+  return targets.get(file) ?? (file.vertexCount < 100 ? 8 : file.vertexCount < 10000 ? 4 : 2);
+}
 const adaptive = new WeakSet<SpatialData>();
 export function agentPointSizeMode(file: SpatialData) {
   return adaptive.has(file) ? 'adaptive' : 'fixed';
 }
-export function setAgentPointSizeMode(host: ControlHost, index: number, enabled: boolean) {
+export function setAgentPointSizeMode(
+  host: ControlHost,
+  index: number,
+  enabled: boolean,
+  pixels?: number
+) {
   const file = host.spatialFiles[index];
   if (enabled && file.faceCount) {
     throw new Error('Adaptive point sizing requires a point cloud');
+  }
+  if (pixels !== undefined) {
+    targets.set(file, pixels);
   }
   if (enabled) {
     adaptive.add(file);
@@ -29,7 +41,7 @@ export function updateAgentPointSizes(host: ControlHost) {
       -center.applyMatrix4(host.camera.matrixWorldInverse).z,
       host.camera.near
     );
-    const pixels = file.vertexCount < 100 ? 8 : file.vertexCount < 10000 ? 4 : 2;
+    const pixels = agentPointSizePixels(file);
     // Three.js PointsMaterial uses viewport height / 2, independent of camera FOV.
     const size = Math.max(
       1e-8,

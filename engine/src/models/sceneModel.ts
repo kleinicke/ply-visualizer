@@ -115,7 +115,7 @@ export function modelSpatialData(model: SceneModel, fileName: string, size: numb
   const point = new THREE.Vector3();
   model.root.updateMatrixWorld(true);
   model.root.traverse(object => {
-    if (!(object instanceof THREE.Mesh)) {
+    if (!(object instanceof THREE.Mesh) && !(object instanceof THREE.Points)) {
       return;
     }
     const attribute = object.geometry.getAttribute('position');
@@ -123,14 +123,21 @@ export function modelSpatialData(model: SceneModel, fileName: string, size: numb
       return;
     }
     for (let i = 0; i < attribute.count; i++) {
-      object.getVertexPosition(i, point).applyMatrix4(object.matrixWorld);
+      if (object instanceof THREE.Mesh) {
+        object.getVertexPosition(i, point);
+      } else {
+        point.fromBufferAttribute(attribute, i);
+      }
+      point.applyMatrix4(object.matrixWorld);
       positions.push(point.x, point.y, point.z);
     }
-    faces += (object.geometry.index?.count || attribute.count) / 3;
+    if (object instanceof THREE.Mesh) {
+      faces += (object.geometry.index?.count || attribute.count) / 3;
+    }
   });
   if (!positions.length) {
     model.dispose();
-    throw new Error('The model contains no mesh geometry.');
+    throw new Error('The model contains no mesh or point geometry.');
   }
   return {
     vertices: [],

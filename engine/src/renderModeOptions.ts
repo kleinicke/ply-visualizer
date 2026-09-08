@@ -16,6 +16,9 @@ export function getRenderModeOptions(
   data: SpatialData
 ): RenderModeOption[] {
   if (data.sceneModel) {
+    if (!data.faceCount) {
+      return [{ mode: 'mesh', label: '🔷 Model', cls: 'mesh-btn' }];
+    }
     return [
       { mode: 'mesh', label: '🔷 Mesh', cls: 'mesh-btn' },
       { mode: 'wireframe', label: '📐 Wireframe', cls: 'wireframe-btn' },

@@ -15,7 +15,7 @@ import { handleAgentCommand, type AgentViewerHost } from './agentBridge';
 interface Session {
   version: number;
   revision: number;
-  files: { name: string; url: string; batch: number }[];
+  files: { id: string; name: string; url: string; batch: number }[];
   batches: string[];
   vectors: number[][][];
   step: number | null;
@@ -50,6 +50,7 @@ async function start(): Promise<void> {
   host.scene.add(arrows);
   let revision = -1;
   let selected = -1;
+  let loadedIds: string[] = [];
 
   function clearArrows() {
     for (const arrow of [...arrows.children]) {
@@ -76,9 +77,16 @@ async function start(): Promise<void> {
     if (session.revision === revision && selected === batch) {
       return;
     }
+    const entries = session.files.filter(file => file.batch === batch);
+    const append =
+      revision >= 0 &&
+      selected === batch &&
+      entries.length > loadedIds.length &&
+      loadedIds.every((id, i) => entries[i].id === id);
+    const pending = append ? entries.slice(loadedIds.length) : entries;
     const files: File[] = [];
     // Fetch before replacing the old scene so expired revisions can be retried.
-    for (const source of session.files.filter(file => file.batch === batch)) {
+    for (const source of pending) {
       const data = await fetch(source.url);
       if (data.status === 404) {
         return;
@@ -90,31 +98,51 @@ async function start(): Promise<void> {
     }
     const camera = host.camera.clone();
     const target = host.controls.target.clone();
-    resetAgentSelections(host as unknown as ControlHost);
-    resetAgentAlignment(host as unknown as ControlHost);
-    while (host.spatialFiles.length) {
-      host.removeFileByIndex(host.spatialFiles.length - 1);
+    if (!append) {
+      resetAgentSelections(host as unknown as ControlHost);
+      resetAgentAlignment(host as unknown as ControlHost);
+      while (host.spatialFiles.length) {
+        host.removeFileByIndex(host.spatialFiles.length - 1);
+      }
+      clearArrows();
     }
-    clearArrows();
+    const previousCount = host.spatialFiles.length;
     try {
       await handleBrowserFiles(host, files);
-      if (host.spatialFiles.length < files.length) {
+      if (
+        host.spatialFiles.length <
+        previousCount +
+          files.filter(file =>
+            /\.(ply|xyz|xyzn|xyzrgb|pcd|pts|obj|stl|off|gltf|glb|fbx|dae|3ds|las|laz|e57|spz|splat|ksplat|sog)$/i.test(
+              file.name
+            )
+          ).length
+      ) {
         throw new Error('Could not load the complete scene');
       }
-      for (const [x, y, z, dx, dy, dz] of session.vectors[batch] ?? []) {
-        const direction = new THREE.Vector3(dx, dy, dz);
-        const length = direction.length();
-        if (length > 0) {
-          arrows.add(
-            new THREE.ArrowHelper(
-              direction.normalize(),
-              new THREE.Vector3(x, y, z),
-              length,
-              0xff55cc
-            )
-          );
+      if (!append) {
+        for (const [x, y, z, dx, dy, dz] of session.vectors[batch] ?? []) {
+          const direction = new THREE.Vector3(dx, dy, dz);
+          const length = direction.length();
+          if (length > 0) {
+            arrows.add(
+              new THREE.ArrowHelper(
+                direction.normalize(),
+                new THREE.Vector3(x, y, z),
+                length,
+                0xff55cc
+              )
+            );
+          }
         }
       }
+    } catch (error) {
+      if (append) {
+        while (host.spatialFiles.length > previousCount) {
+          host.removeFileByIndex(host.spatialFiles.length - 1);
+        }
+      }
+      throw error;
     } finally {
       if (revision === -1 && host.spatialFiles.length) {
         host.camera.up.set(0, 1, 0);
@@ -128,12 +156,13 @@ async function start(): Promise<void> {
         host.camera.updateProjectionMatrix();
       }
       host.spatialFiles.forEach((file, i) => {
-        if (!file.faceCount && file.vertexCount <= 100) {
+        if (i >= previousCount && !file.faceCount && file.vertexCount <= 100) {
           setAgentPointSizeMode(host as unknown as ControlHost, i, true);
         }
       });
       host.requestRender();
     }
+    loadedIds = entries.map(entry => entry.id);
     revision = session.revision;
     selected = batch;
     state.step = session.step;

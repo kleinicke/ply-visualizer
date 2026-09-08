@@ -1,3 +1,4 @@
+import { agentBuild } from './agentBuild';
 import { updateAgentLegend } from './agentLegend';
 import { captureAgentCanvas } from './agentCapture';
 import { compactAgentReply } from './agentReplies';
@@ -67,6 +68,7 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
     const attributes = await agentAttributes(host.spatialFiles);
     reply.result = {
       alignment: alignmentStatus(host as unknown as ControlHost),
+      renderer_build: agentBuild,
       renderer_id: rendererId,
       rendered_revision: Number(document.documentElement.dataset.sessionRevision),
       objects: host.spatialFiles.map(file => ({

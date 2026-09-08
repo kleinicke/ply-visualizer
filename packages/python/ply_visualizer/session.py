@@ -24,9 +24,11 @@ from .arrays import point_rows
 from .agent_bridge import BrowserBridge
 
 
-FORMATS = frozenset(".ply .xyz .xyzn .xyzrgb .pcd .pts .obj .stl .off .glb .las .laz .e57 .spz .splat .ksplat .sog".split())
+FORMATS = frozenset(".ply .xyz .xyzn .xyzrgb .pcd .pts .obj .stl .off .gltf .glb .fbx .dae .3ds .las .laz .e57 .spz .splat .ksplat .sog".split())
 ASSETS = Path(__file__).parent / "_assets"
 
+
+MODEL_ASSETS = frozenset(".bin .png .jpg .jpeg .webp .bmp .tga .ktx2 .dds .mtl".split())
 
 def _points_file(points, colors, directory: Path) -> Path:
     """Serialize, without a NumPy dependency or converting arrays into JSON."""
@@ -186,8 +188,10 @@ class ViewerSession:
         self._update_lock = threading.Lock()
         self._revision = 0
         self._frames = tempfile.TemporaryDirectory(prefix="ply-scenes-")
-        self._history = {0: (files, {"files": [{"name": file.name, "batch": 0} for file in files], "batches": ["Sample 0"], "vectors": [[]], "step": None}, None)}
+        self._frame_folders = set()
+        self._history = {0: (files, {"files": [{"name": file.name, "batch": 0, "id": secrets.token_hex(12)} for file in files], "batches": ["Sample 0"], "vectors": [[]], "step": None}, None)}
         self._temporary = temporary
+        self._downloads = []
         self._token = secrets.token_urlsafe(32)
         self._closed = threading.Event()
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), partial(_Handler, session=self))
@@ -207,6 +211,7 @@ class ViewerSession:
             self._server.server_close()
             self._thread.join()
             self._frames.cleanup()
+            for temporary in self._downloads: temporary.cleanup()
             if self._temporary:
                 self._temporary.cleanup()
             self._closed.set()
@@ -217,6 +222,35 @@ class ViewerSession:
         return {**scene, "version": 1, "revision": self._revision,
                 "files": [{**file, "url": f"files/{self._revision}/{index}"}
                           for index, file in enumerate(scene["files"])]}
+
+    def add_files(self, files, temporary=None):
+        """Append explicitly provided models/assets without replacing existing objects."""
+        files = [Path(file).resolve(strict=True) for file in files]
+        if not files or any(not file.is_file() or file.suffix.lower() not in FORMATS | MODEL_ASSETS for file in files):
+            raise ValueError("Provide supported model files and optional supporting assets")
+        with self._update_lock, self._lock:
+            if self._closed.is_set(): raise ValueError("Viewer session is closed")
+            old_files, old_scene, _ = self._history[self._revision]
+            if len(old_scene["batches"]) != 1: raise ValueError("Append requires a single-sample scene")
+            scene = {**old_scene, "files": [*old_scene["files"],
+                *({"name": file.name, "batch": 0, "id": secrets.token_hex(12)} for file in files)]}
+            self._revision += 1
+            self._files = [*old_files, *files]
+            self._history[self._revision] = (self._files, scene, None)
+            if temporary is not None: self._downloads.append(temporary)
+            self._prune_history()
+        return self
+
+    def _prune_history(self):
+        for revision in list(self._history):
+            if revision < self._revision - 2:
+                self._history.pop(revision)
+        # Track retained folders independently: their creating revision may have
+        # expired while appended scenes still reference the generated files.
+        for folder in list(self._frame_folders):
+            if not any(file.is_relative_to(folder) for files, _, _ in self._history.values() for file in files):
+                shutil.rmtree(folder, ignore_errors=True)
+                self._frame_folders.remove(folder)
 
     def update(self, points, *, colors=None, target=None, vectors=None,
                vector_scale=1.0, max_vectors=256, step=None):
@@ -248,15 +282,12 @@ class ViewerSession:
                 shutil.rmtree(folder)
                 raise
             with self._lock:
+                self._frame_folders.add(folder)
+                for entry in scene["files"]: entry["id"] = secrets.token_hex(12)
                 self._revision += 1
                 self._files = files
                 self._history[self._revision] = (files, scene, folder)
-                # Retain a small overlap for browsers fetching the previous frame.
-                for revision in list(self._history):
-                    if revision < self._revision - 2:
-                        _, _, old = self._history.pop(revision)
-                        if old is not None:
-                            shutil.rmtree(old)
+                self._prune_history()
         return self
 
     def inspect_layer(self, module, *, select=lambda output: output, every=100):
@@ -327,8 +358,10 @@ def show(*sources, colors=None, target=None, vectors=None, vector_scale=1.0, max
             for file in files:
                 if not file.is_file():
                     raise ValueError(f"Not a file: {file}")
-                if file.suffix.lower() not in FORMATS:
+                if file.suffix.lower() not in FORMATS | MODEL_ASSETS:
                     raise ValueError(f"Unsupported 3D file: {file.name}. Supported: {', '.join(sorted(FORMATS))}")
+            if not any(file.suffix.lower() in FORMATS for file in files):
+                raise ValueError("Unsupported 3D input: include at least one model with supporting assets")
         else:
             if len(sources) != 1:
                 raise ValueError("Pass either file paths or one (N, 3) point array")

@@ -35,7 +35,8 @@ class SessionTests(unittest.TestCase):
         (self.root / "secret.txt").write_text("secret")
         with show(file, open_browser=False) as viewer:
             manifest = json.loads(self.fetch(viewer.url + "session.json"))
-            self.assertEqual(manifest["files"], [{"name": file.name, "url": "files/0/0", "batch": 0}])
+            self.assertEqual([{k:v for k,v in entry.items() if k != "id"} for entry in manifest["files"]], [{"name": file.name, "url": "files/0/0", "batch": 0}])
+            self.assertEqual(len(manifest["files"][0]["id"]), 24)
             self.assertEqual(self.fetch(viewer.url + "files/0/0"), b"ply data")
             self.assertNotIn(b"analytics.re4vive.com", self.fetch(viewer.url))
             for resource in ("../secret.txt", "%2e%2e/secret.txt", "files/1", "files/-1", "files/0/extra"):
@@ -62,6 +63,28 @@ class SessionTests(unittest.TestCase):
             temporary_file = viewer._files[0]
             self.assertTrue(temporary_file.exists())
         self.assertFalse(temporary_file.exists())
+
+    def test_append_retains_ids_files_and_bounded_history(self):
+        model = self.root / "model.gltf"
+        model.write_text("{}")
+        asset = self.root / "model.bin"
+        asset.write_bytes(b"buffer")
+        with show([[0,0,0]], open_browser=False) as viewer:
+            viewer.update([[1,2,3]])
+            original = viewer._manifest()["files"][0]["id"]
+            original_file = viewer._files[0]
+            for _ in range(4):
+                viewer.add_files([model, asset])
+            self.assertEqual(viewer._manifest()["files"][0]["id"], original)
+            self.assertTrue(original_file.is_file())
+            self.assertEqual(len(viewer._history), 3)
+            self.assertEqual(len(viewer._files), 9)
+            self.assertEqual(self.fetch(viewer.url + viewer._manifest()["files"][0]["url"]), original_file.read_bytes())
+            viewer.update([[4,5,6]])
+            self.assertNotEqual(viewer._manifest()["files"][0]["id"], original)
+            viewer.update([[7,8,9]])
+            viewer.update([[10,11,12]])
+            self.assertFalse(original_file.exists())
 
     def test_invalid_arrays(self):
         for points, colors in (([], None), ([[1, 2]], None), ([[float("nan"), 0, 0]], None),

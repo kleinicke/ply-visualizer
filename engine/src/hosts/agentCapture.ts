@@ -1,4 +1,4 @@
-import { Color } from 'three';
+import { Color, Vector2, WebGLRenderer } from 'three';
 import { agentPresentation } from '../state/agentPresentation.svelte';
 /* eslint-disable @typescript-eslint/naming-convention -- MCP wire keys */
 import type { ControlHost } from './agentControls';
@@ -95,6 +95,13 @@ export function captureAgentCanvas(host: ControlHost, maxSize = 1024): HTMLCanva
       ctx.fillText(line, label ? 30 : 16, 27 + i * 18, width - (label ? 30 : 16));
     });
   }
+  if (agentPresentation.warning) {
+    ctx.fillStyle = '#20252cee';
+    ctx.fillRect(0, canvas.height - 28, canvas.width, 28);
+    ctx.fillStyle = '#ffbb44';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(agentPresentation.warning, 8, canvas.height - 9, canvas.width - 16);
+  }
   return canvas;
 }
 export async function agentMultiView(host: ControlHost, a: Record<string, any>) {
@@ -103,22 +110,37 @@ export async function agentMultiView(host: ControlHost, a: Record<string, any>) 
   }
   const before = pose(host),
     canvas = document.createElement('canvas');
-  canvas.width = 512 * a.presets.length;
-  canvas.height = 536;
+  const columns = Math.min(2, a.presets.length),
+    rows = Math.ceil(a.presets.length / columns);
+  canvas.width = 512 * columns;
+  canvas.height = 536 * rows;
+  const renderer = host.renderer as unknown as WebGLRenderer;
+  const size = renderer.getSize(new Vector2()),
+    aspect = host.camera.aspect;
+  const pixelRatio = renderer.getPixelRatio();
   const ctx = canvas.getContext('2d')!;
   try {
+    renderer.setPixelRatio(1);
+    renderer.setSize(512, 512, false);
+    host.camera.aspect = 1;
+    host.camera.updateProjectionMatrix();
     for (const [i, preset] of a.presets.entries()) {
       fitAgentView(host, preset);
       host.performRender();
       const image = captureAgentCanvas(host, 512);
       ctx.fillStyle = '#20252c';
-      ctx.fillRect(i * 512, 0, 512, 536);
-      ctx.drawImage(image, i * 512 + (512 - image.width) / 2, (512 - image.height) / 2);
+      const x = (i % columns) * 512,
+        y = Math.floor(i / columns) * 536;
+      ctx.fillRect(x, y, 512, 536);
+      ctx.drawImage(image, x, y, 512, 512);
       ctx.fillStyle = 'white';
       ctx.font = '14px sans-serif';
-      ctx.fillText(preset, i * 512 + 12, 528);
+      ctx.fillText(preset, x + 12, y + 528);
     }
   } finally {
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setSize(size.x, size.y, false);
+    host.camera.aspect = aspect;
     restore(host, before);
     host.performRender();
   }

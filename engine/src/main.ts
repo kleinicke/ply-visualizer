@@ -3255,8 +3255,8 @@ class PointCloudVisualizer {
       const isMultiMaterial =
         isObjFile && objData && objData.materialGroups && objData.materialGroups.length > 1;
 
-      if (data.faceCount > 0) {
-        // Mesh file (STL, PLY with faces, OBJ)
+      if (data.faceCount > 0 || data.sceneModel) {
+        // Native scenes can contain point primitives as well as meshes.
         this.solidVisible.push(true);
 
         if (isMultiMaterial) {

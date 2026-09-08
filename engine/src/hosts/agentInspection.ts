@@ -203,7 +203,7 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
     throw new Error('Select a source object_index from inspect_3d_scene');
   }
   const mesh = host.meshes[a.object_index];
-  if (!mesh || source.faceCount) {
+  if (!mesh || source.faceCount || source.sceneModel) {
     throw new Error(
       'Region selection currently requires a point cloud; use object visibility for meshes'
     );
@@ -443,6 +443,23 @@ export async function agentNamedSelections(host: ControlHost, a: Record<string, 
       };
       indices = wasm.combine_point_indices(left.indices, right.indices, a.action);
     }
+    const visibility = new Map(host.spatialFiles.map((file, i) => [file, host.fileVisibility[i]]));
+    if (!indices.length) {
+      clearAgentSelection(host);
+      visibility.forEach((visible, file) => {
+        const i = host.spatialFiles.indexOf(file);
+        if (i >= 0) {
+          host.setFileEntryVisibility(i, visible);
+        }
+      });
+      return {
+        status: 'empty',
+        selected_points: 0,
+        active_selection: null,
+        operation: a.action,
+        exportable: false,
+      };
+    }
     await agentSelection(host, {
       object_index: host.spatialFiles.indexOf(left.source),
       indices,
@@ -450,6 +467,14 @@ export async function agentNamedSelections(host: ControlHost, a: Record<string, 
       focus: a.focus,
       highlight: true,
     });
+    if (!a.isolate) {
+      visibility.forEach((visible, file) => {
+        const i = host.spatialFiles.indexOf(file);
+        if (i >= 0) {
+          host.setFileEntryVisibility(i, visible);
+        }
+      });
+    }
     s.criteria = {
       named_operation: a.action,
       name: a.name,

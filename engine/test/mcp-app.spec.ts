@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention -- Python MCP wire-format keys */
+import { Color } from 'three';
+import { mapIntensityValue } from '../src/utils/intensity';
 import { test, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -10,7 +12,7 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
   test(`direct MCP ${fixture} widget loads geometry and supports agent controls without network or nested frames`, async ({
     page,
   }) => {
-    test.setTimeout(180000);
+    test.setTimeout(240000);
     page.on('pageerror', error => console.log('APP ERROR', error.message));
     const python = path.resolve('../packages/python/.venv/bin/python');
     const child = spawn(
@@ -153,6 +155,10 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
         JSON.stringify(info).length / 3
       );
       expect(info.objects[0].vertices).toBeGreaterThan(0);
+      expect(info.renderer_matches_bundle).toBe(true);
+      expect(info.build.server_build_id).toHaveLength(20);
+      expect(info.renderer_build.renderer_build_id).toHaveLength(20);
+      await expect(viewer.getByText('Scene coordinates · X / Y / Z')).toHaveCount(0);
       expect(info.objects[0].available_color_modes).toContainEqual({
         value: 'assigned',
         label: expect.any(String),
@@ -406,10 +412,12 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
         await expect(viewer.locator('.scene-legend')).toContainText('#ffcc00');
         const multi = await call('preview_3d_views', {
           scene_id: sceneId,
-          presets: ['front', 'top', 'isometric'],
+          presets: ['front', 'top', 'left', 'isometric'],
         });
         expect(multi.isError, JSON.stringify(multi.content)).toBeFalsy();
         expect(multi.content.some((c: any) => c.type === 'image')).toBe(true);
+        expect(multi.structuredContent.width).toBe(1024);
+        expect(multi.structuredContent.height).toBe(1072);
         await writeFile(
           test.info().outputPath('multiview.png'),
           Buffer.from(multi.content.find((c: any) => c.type === 'image').data, 'base64')
@@ -456,8 +464,15 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
             name: 'box',
             other: 'table',
           });
-          expect(empty.isError).toBe(true);
-          expect((await control('inspect_3d_scene')).selection.selected_points).toBe(33);
+          expect(empty.isError).toBeFalsy();
+          expect(empty.structuredContent.status).toBe('empty');
+          expect((await control('inspect_3d_scene')).selection).toBeNull();
+          const emptyExport = await call('export_3d_selection', {
+            scene_id: sceneId,
+            path: test.info().outputPath('must-not-export-old.ply'),
+          });
+          expect(emptyExport.isError).toBe(true);
+          expect(emptyExport.structuredContent.error.code).toBe('renderer_error');
           const subtract = await control('manage_3d_selections', {
             action: 'subtract',
             name: 'box',
@@ -684,6 +699,56 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
         method: 'paired',
       });
       expect(errorColors.summary.min).toBeCloseTo(0.1);
+      expect(errorColors.distance.stale).toBe(false);
+      await control('set_3d_appearance', { legend: true });
+      const constantLegend = viewer
+        .locator('.legend-entry')
+        .filter({ hasText: /agent_distance 0\.1/ })
+        .first()
+        .locator('.swatch');
+      expect(
+        (await constantLegend.evaluate(el => (el as HTMLElement).style.background)).replace(
+          /\s/g,
+          ''
+        )
+      ).toBe(new Color(...mapIntensityValue(0.75, 'viridis')).getStyle().replace(/\s/g, ''));
+      const unmatched = await control('compare_3d_clouds', {
+        action: 'distance',
+        method: 'nearest',
+        max_distance: 0.01,
+      });
+      expect(unmatched.summary.nonfinite_count).toBe(3);
+      await expect(viewer.locator('.scene-legend')).toContainText('3 unmatched/nonfinite');
+      await control('compare_3d_clouds', { action: 'distance', method: 'paired' });
+      await control('transform_3d_object', {
+        object_index: 1,
+        action: 'translate',
+        vector: [0, 0, 0.1],
+      });
+      expect((await control('inspect_3d_scene')).objects[0].distance.stale).toBe(true);
+      await expect(viewer.locator('.distance-warning')).toContainText('stale');
+      const recomputed = await control('compare_3d_clouds', { action: 'recompute', left: 0 });
+      expect(recomputed.summary.min).toBeCloseTo(0.2);
+      expect(recomputed.distance.stale).toBe(false);
+      await control('transform_3d_object', { object_index: 1, action: 'undo' });
+      await control('compare_3d_clouds', { action: 'recompute', left: 0 });
+      const originalTransform = (await control('inspect_3d_scene')).objects[0].local_to_world;
+      const centered = await control('transform_3d_object', {
+        object_index: 0,
+        action: 'rotate',
+        vector: [0, 1, 0],
+        angle: 90,
+        pivot: 'center',
+        space: 'world',
+      });
+      expect(centered.objects[0].local_to_world).not.toEqual(originalTransform);
+      const cm = centered.objects[0].local_to_world;
+      expect(cm[0] * 0.5 + cm[4] * 0.5 + cm[12]).toBeCloseTo(0.5);
+      expect(cm[1] * 0.5 + cm[5] * 0.5 + cm[13]).toBeCloseTo(0.5);
+      expect(cm[2] * 0.5 + cm[6] * 0.5 + cm[14]).toBeCloseTo(0);
+      const undone = await control('transform_3d_object', { object_index: 0, action: 'undo' });
+      expect(undone.objects[0].local_to_world).toEqual(originalTransform);
+      await control('compare_3d_clouds', { action: 'recompute', left: 0 });
       const split = await control('compare_3d_clouds', { action: 'enable', left: 0, right: 1 });
       expect(split.comparison.linked_camera).toBe(true);
       await expect(viewer.locator('.comparison-labels')).toBeVisible();
@@ -694,13 +759,108 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
         Buffer.from(comparisonPng.content[0].data, 'base64')
       );
       await control('compare_3d_clouds', { action: 'disable' });
-      await control('set_3d_object', { object_index: 0, point_size_mode: 'adaptive' });
+      await control('set_3d_object', {
+        object_index: 0,
+        point_size_mode: 'adaptive',
+        point_size_pixels: 6,
+      });
       const adaptiveBefore = await control('inspect_3d_scene');
       expect(adaptiveBefore.objects[0].point_size_mode).toBe('adaptive');
+      expect(adaptiveBefore.objects[0].point_size_pixels).toBe(6);
       await control('navigate_3d_view', { action: 'zoom', factor: 0.5 });
       expect((await control('inspect_3d_scene')).objects[0].point_size).toBeLessThan(
         adaptiveBefore.objects[0].point_size
       );
+      if (fixture === 'agent-mesh.ply' && !process.env.PLY_AGENT_TEST_FILE) {
+        const pointsExport = await control('manage_3d_scene_states', {
+          action: 'export_models',
+          path: test.info().outputPath('points-only.glb'),
+        });
+        const beforeAppend = await control('inspect_3d_scene');
+        const modelPath = path.resolve(
+          '../testfiles/scene-models/gltf/RobotExpressive/RobotExpressive.glb'
+        );
+        const appended = await call('open_3d_files', { scene_id: sceneId, paths: [modelPath] });
+        expect(appended.isError, JSON.stringify(appended.content)).toBeFalsy();
+        await expect(viewer.locator('html')).toHaveAttribute(
+          'data-session-revision',
+          String(appended.structuredContent.revision)
+        );
+        const modelInfo = await control('inspect_3d_scene');
+        expect(modelInfo.renderer_id).toBe(beforeAppend.renderer_id);
+        expect(modelInfo.objects).toHaveLength(3);
+        expect(modelInfo.camera.position).toEqual(beforeAppend.camera.position);
+        expect(modelInfo.objects[0].local_to_world).toEqual(beforeAppend.objects[0].local_to_world);
+        expect(modelInfo.objects[2].animation.clips.length).toBeGreaterThan(0);
+        const modelPose = (index: number) =>
+          viewer.locator('html').evaluate((_, i) => {
+            const values: number[] = [];
+            (window as any).visualizer.spatialFiles[i].sceneModel.root.traverse((node: any) =>
+              values.push(...node.matrixWorld.elements, ...(node.morphTargetInfluences ?? []))
+            );
+            return values;
+          }, index);
+        const restPose = await modelPose(2);
+        const sought = await control('control_3d_video', {
+          object_index: 2,
+          action: 'goto',
+          time: 0.2,
+        });
+        expect(sought.animation.time).toBeCloseTo(0.2);
+        expect(sought.animation.playing).toBe(false);
+        expect(await modelPose(2)).not.toEqual(restPose);
+        await control('control_3d_video', { object_index: 2, action: 'play' });
+        await control('control_3d_video', { object_index: 2, action: 'stop' });
+        const modelExport = await control('manage_3d_scene_states', {
+          action: 'export_models',
+          path: test.info().outputPath('models.glb'),
+        });
+        const glb = await readFile(modelExport.path);
+        expect(glb.toString('ascii', 0, 4)).toBe('glTF');
+        expect(modelExport.models).toHaveLength(3);
+        expect(modelExport.animations).toBeGreaterThan(0);
+        const roundtrip = await call('open_3d_files', {
+          scene_id: sceneId,
+          paths: [modelExport.path],
+        });
+        await expect(viewer.locator('html')).toHaveAttribute(
+          'data-session-revision',
+          String(roundtrip.structuredContent.revision)
+        );
+        expect((await control('inspect_3d_scene')).objects[3].animation.clips.length).toBe(
+          modelExport.animations
+        );
+        await control('control_3d_video', { object_index: 3, action: 'goto', time: 0 });
+        const exportedRest = await modelPose(3);
+        await control('control_3d_video', { object_index: 3, action: 'goto', time: 0.2 });
+        expect(await modelPose(3)).not.toEqual(exportedRest);
+        const pointsRoundtrip = await call('open_3d_files', {
+          scene_id: sceneId,
+          paths: [pointsExport.path],
+        });
+        await expect(viewer.locator('html')).toHaveAttribute(
+          'data-session-revision',
+          String(pointsRoundtrip.structuredContent.revision)
+        );
+        const pointModel = (await control('inspect_3d_scene')).objects[4];
+        expect(pointModel.vertices).toBe(6);
+        expect(pointModel.visible).toBe(true);
+        const morphFolder = path.resolve('../testfiles/scene-models/gltf/AnimatedMorphSphere/glTF');
+        const withBuffer = await call('open_3d_files', {
+          scene_id: sceneId,
+          paths: [
+            path.join(morphFolder, 'AnimatedMorphSphere.gltf'),
+            path.join(morphFolder, 'AnimatedMorphSphere.bin'),
+          ],
+        });
+        await expect(viewer.locator('html')).toHaveAttribute(
+          'data-session-revision',
+          String(withBuffer.structuredContent.revision)
+        );
+        expect(
+          (await control('inspect_3d_scene')).objects[5].animation.clips.length
+        ).toBeGreaterThan(0);
+      }
       const capture = await call('capture_3d_view', { scene_id: sceneId });
       expect(capture.content.some((c: any) => c.type === 'image')).toBe(true);
       await page.screenshot({ path: test.info().outputPath('direct-mcp.png') });

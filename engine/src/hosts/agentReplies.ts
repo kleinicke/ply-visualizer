@@ -22,6 +22,7 @@ export function compactAgentReply(
     return {
       ...base,
       camera,
+      renderer_build: result.renderer_build,
       presentation: result.presentation,
       selection: result.selection,
       objects: result.objects.map((o: Record<string, any>) => ({
@@ -31,6 +32,8 @@ export function compactAgentReply(
         visible: o.visible,
         color_mode: o.color_mode,
         scalar_fields: o.scalar_fields,
+        distance: o.distance,
+        animation: o.animation,
       })),
       detail_hint: 'Use detail=full for attributes, matrices, bounds and coordinate conventions.',
     };
@@ -51,12 +54,18 @@ export function compactAgentReply(
       ...base,
       object:
         operation === 'transform'
-          ? { object_index: o.object_index, local_to_world: o.local_to_world }
+          ? {
+              object_index: o.object_index,
+              local_to_world: o.local_to_world,
+              undo_available: o.transform_undo_available,
+              distance: o.distance,
+            }
           : {
               object_index: o.object_index,
               visible: o.visible,
               point_size: o.point_size,
               point_size_mode: o.point_size_mode,
+              point_size_pixels: o.point_size_pixels,
               opacity: o.opacity,
               color_mode: o.color_mode,
               material_colors: o.material_colors,
@@ -80,6 +89,7 @@ export function compactAgentReply(
   const common = new Set([
     'alignment',
     'renderer_id',
+    'renderer_build',
     'rendered_revision',
     'objects',
     'bounds',

@@ -57,6 +57,7 @@ module.exports = {
   devtool: false,
   module: { rules: [...base.module.rules, { test: /\.wasm$/, type: 'asset/inline' }] },
   plugins: [
+    ...require('./agentBuild.cjs'),
     new MiniCssExtractPlugin({ filename: 'app.css', runtime: false }),
     new InlineAppPlugin(),
   ],

@@ -43,3 +43,23 @@ class RemoteTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'exceeds max_bytes'): open_remote(self.url + path, max_bytes=limit)
         viewer = open_remote(self.url + '/download', filename='../../cloud.pcd')
         self.assertEqual(viewer._files[0].name, 'cloud.pcd'); viewer.close()
+
+    def test_mcp_multiple_urls_and_append_keep_downloads_alive(self):
+        import asyncio
+        import base64
+        from mcp import Client
+        from ply_visualizer.mcp_server import create_server
+        async def check():
+            async with Client(create_server([Path.cwd()])) as client:
+                first = await client.call_tool("open_3d_url", {"url": [self.url + "/cloud.pcd", self.url + "/redirect"]})
+                self.assertFalse(first.is_error, first)
+                scene = first.structured_content
+                self.assertEqual(len(scene["files"]), 2)
+                appended = await client.call_tool("open_3d_url", {"scene_id":scene["scene_id"], "url":self.url + "/cloud.pcd.gz"})
+                self.assertFalse(appended.is_error, appended)
+                self.assertEqual(len(appended.structured_content["files"]), 3)
+                for index in range(3):
+                    data = await client.call_tool("read_viewer_data", {"scene_id":scene["scene_id"],
+                        "resource":f'files/{appended.structured_content["revision"]}/{index}'})
+                    self.assertEqual(base64.b64decode(data.structured_content["data"]), DATA)
+        asyncio.run(check())
