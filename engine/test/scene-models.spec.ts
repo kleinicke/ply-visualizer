@@ -126,6 +126,42 @@ for (const fixture of cases) {
         await page.evaluate(() => (window as any).visualizer.spatialFiles[0].sceneModel.ui.time)
       ).toBe(0);
     }
+    if (summary.meshes > 0) {
+      const meshButton = page.locator('[data-file-index="0"][data-mode="mesh"]');
+      const wireButton = page.locator('[data-file-index="0"][data-mode="wireframe"]');
+      for (const wireframe of [true, true, false, false]) {
+        await (wireframe ? wireButton : meshButton).click();
+        await expect(wireframe ? wireButton : meshButton).toHaveClass(/active/);
+        await expect(wireframe ? meshButton : wireButton).not.toHaveClass(/active/);
+        const modes = await page.evaluate(() => {
+          const host = (window as any).visualizer;
+          const values: boolean[] = [];
+          host.spatialFiles[0].sceneModel.root.traverse((object: any) => {
+            if (!object.isMesh) {
+              return;
+            }
+            for (const material of Array.isArray(object.material)
+              ? object.material
+              : [object.material]) {
+              if ('wireframe' in material) {
+                values.push(material.wireframe);
+              }
+            }
+          });
+          return {
+            visible: host.meshes[0].visible,
+            solid: host.solidVisible[0],
+            wire: host.wireframeVisible[0],
+            values,
+          };
+        });
+        expect(modes.visible).toBe(true);
+        expect(modes.solid).toBe(!wireframe);
+        expect(modes.wire).toBe(wireframe);
+        expect(modes.values.length).toBeGreaterThan(0);
+        expect(modes.values.every(value => value === wireframe)).toBe(true);
+      }
+    }
     await page.locator('#file-0').uncheck();
     expect(await page.evaluate(() => (window as any).visualizer.meshes[0].visible)).toBe(false);
     await page.locator('#file-0').check();

@@ -109,8 +109,14 @@ export function toggleSolidRendering(host: RenderModeHost, fileIndex: number): v
     host.solidVisible.push(defaultValue);
   }
 
-  // Toggle solid visibility state
-  host.solidVisible[fileIndex] = !host.solidVisible[fileIndex];
+  // Native model materials switch representation; they do not render a
+  // separate wire overlay. Keep their two buttons an exclusive selector.
+  if (host.spatialFiles[fileIndex].sceneModel) {
+    host.solidVisible[fileIndex] = true;
+    host.wireframeVisible[fileIndex] = false;
+  } else {
+    host.solidVisible[fileIndex] = !host.solidVisible[fileIndex];
+  }
 
   updateMeshVisibilityAndMaterial(host, fileIndex);
   host.requestRender();
@@ -126,8 +132,12 @@ export function toggleWireframeRendering(host: RenderModeHost, fileIndex: number
     host.wireframeVisible.push(false); // Wireframe always defaults to false
   }
 
-  // Toggle wireframe visibility state
-  host.wireframeVisible[fileIndex] = !host.wireframeVisible[fileIndex];
+  if (host.spatialFiles[fileIndex].sceneModel) {
+    host.wireframeVisible[fileIndex] = true;
+    host.solidVisible[fileIndex] = false;
+  } else {
+    host.wireframeVisible[fileIndex] = !host.wireframeVisible[fileIndex];
+  }
 
   updateMeshVisibilityAndMaterial(host, fileIndex);
   host.requestRender();
