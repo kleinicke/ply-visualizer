@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/ply-visualizer/
+      url: https://pypi.org/project/3d-visualizer/
     permissions:
       id-token: write
     steps:

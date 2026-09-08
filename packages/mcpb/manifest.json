@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "3d-visualizer",
   "display_name": "3D Visualizer",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Inspect, compare and export point clouds, meshes and calibrated depth data with inline 3D previews.",
   "author": {
     "name": "Florian Kleinicke",

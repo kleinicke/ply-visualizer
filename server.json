@@ -3,7 +3,7 @@
   "name": "io.github.kleinicke/3d-visualizer",
   "title": "3D Visualizer",
   "description": "Inspect, compare and export point clouds, meshes and calibrated depth data with inline 3D previews.",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "repository": {
     "url": "https://github.com/kleinicke/ply-visualizer",
     "source": "github",
@@ -19,8 +19,8 @@
   "packages": [
     {
       "registryType": "pypi",
-      "identifier": "ply-visualizer",
-      "version": "0.4.1",
+      "identifier": "3d-visualizer",
+      "version": "0.4.2",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
@@ -30,6 +30,10 @@
         }
       ],
       "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
         {
           "type": "named",
           "name": "--root",

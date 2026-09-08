@@ -1,15 +1,17 @@
 # 3D Visualizer distribution
 
-The public product name is **3D Visualizer** and the MCP identifier is
-`io.github.kleinicke/3d-visualizer`. The existing GitHub repository,
-`ply-visualizer` PyPI distribution, `ply_visualizer` import, resource URIs and
-`ply-viewer*` commands remain compatible. New CLI aliases are `3d-visualizer`,
-`3d-visualizer-mcp` and `3d-visualizer-api`.
+The public product name is **3D Visualizer**, the PyPI distribution is
+`3d-visualizer` and the MCP identifier is `io.github.kleinicke/3d-visualizer`.
+The GitHub repository remains `kleinicke/ply-visualizer` and the Python import
+is `ply_visualizer` (Python identifiers cannot begin with a digit). Releases
+through 0.4.1 used the old `ply-visualizer` distribution. The CLI commands are
+`3d-visualizer`, `3d-visualizer-mcp` and `3d-visualizer-api`; legacy
+`ply-viewer*` aliases remain available.
 
 ## Installation
 
 ```sh
-uvx --from 'ply-visualizer[mcp]==0.4.1' 3d-visualizer-mcp --root /absolute/data/directory
+uvx --from '3d-visualizer[mcp]==0.4.2' 3d-visualizer-mcp --root /absolute/data/directory
 ```
 
 Local MCP needs Python 3.10+ (uv can manage Python). Inline interactive previews
@@ -22,14 +24,14 @@ directory until it is actually deployed and tested.
 
 - `server.json`: official registry entry, PyPI package, icon and required data
   directory. Registry runners use
-  `uvx --with 'mcp>=2.2,<3' ply-visualizer==0.4.1 --root /absolute/data/directory`.
-  The matching `ply-visualizer` executable starts MCP, while `ply-viewer` opens
-  the CLI viewer.
+  `uvx --with 'mcp>=2.2,<3' 3d-visualizer==0.4.2 mcp --root /absolute/data/directory`.
+  The matching `3d-visualizer mcp` subcommand starts MCP, while `ply-viewer`
+  opens the CLI viewer.
 - `packages/python/README.md`: ownership marker required in the published PyPI
   description. Changing this marker requires a new package release.
 - `glama.json`: maintainer claim using Glama's published schema.
 - `packages/mcpb`: MCPB 0.4 UV bundle for local desktop distribution. Build with
-  `python3 scripts/build-mcp-bundle.py --out /tmp/3d-visualizer-0.4.1.mcpb`. The
+  `python3 scripts/build-mcp-bundle.py --out /tmp/3d-visualizer-0.4.2.mcpb`. The
   builder uses an explicit file allowlist and checks release versions.
 
 Before each release, synchronize the Python version, diagnostics version,
@@ -49,7 +51,7 @@ calibrated depth data with inline 3D previews.
 **Docs:**
 https://github.com/kleinicke/ply-visualizer/blob/main/packages/python/MCP.md
 
-**Package:** https://pypi.org/project/ply-visualizer/
+**Package:** https://pypi.org/project/3d-visualizer/
 
 **Suggested categories:** Data Visualization; Developer Tools; AI & Machine
 Learning.
@@ -70,7 +72,7 @@ files. Calibration is explicit, never inferred from image pixels alone.
   the repository URL and listing copy above.
 - [Smithery](https://smithery.ai/docs/build/publish): publish the local bundle
   with
-  `smithery mcp publish /tmp/3d-visualizer-0.4.1.mcpb -n kleinicke/3d-visualizer`.
+  `smithery mcp publish /tmp/3d-visualizer-0.4.2.mcpb -n kleinicke/3d-visualizer`.
 - [Awesome MCP Servers](https://github.com/punkpeye/awesome-mcp-servers): submit
   one alphabetical entry in Data Visualization via a pull request.
 - [MCP.so](https://mcp.so/submit): submit via its form or a server-submission

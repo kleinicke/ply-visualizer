@@ -3,7 +3,7 @@
 Install the Python package's HTTP extras, then start one server process:
 
 ```sh
-uv pip install 'ply-visualizer[http]'
+uv pip install '3d-visualizer[http]'
 ply-viewer-api --root /path/to/data --state-dir /path/to/private/server-state
 ```
 

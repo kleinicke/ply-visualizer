@@ -315,7 +315,7 @@ class ViewerSession:
         try:
             from IPython.display import HTML, display
         except ImportError as error:
-            raise RuntimeError('Install notebook support: uv pip install "ply-visualizer[notebook]"') from error
+            raise RuntimeError('Install notebook support: uv pip install "3d-visualizer[notebook]"') from error
         display(HTML(self.iframe(height=height, ui=ui)))
         return None
 

@@ -10,11 +10,11 @@ are required. There are no Python runtime dependencies; NumPy arrays work
 without requiring NumPy for users who only open files. Node.js is needed only to
 build the bundled viewer from this repository, not to use an installed wheel.
 
-Install the Python package from PyPI as **`ply-visualizer`**. The npm package is
-not published. **3D Visualizer** is the product name; the existing package and
-Python import retain their names for compatibility. The commands
-`3d-visualizer`, `3d-visualizer-mcp` and `3d-visualizer-api` are also available.
-`ply-visualizer` is an MCP entry point for registry launchers.
+Install the Python package from PyPI as **`3d-visualizer`**. The Python import
+remains `ply_visualizer`. Releases through 0.4.1 used the distribution name
+`ply-visualizer`; new releases use `3d-visualizer`. The npm package is not
+published. The commands `3d-visualizer`, `3d-visualizer-mcp` and
+`3d-visualizer-api` are available alongside the legacy `ply-viewer*` aliases.
 
 ## Install with uv (recommended)
 
@@ -22,11 +22,11 @@ Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then
 choose:
 
 ```sh
-uv add ply-visualizer            # Add to a Python project
-uv add "ply-visualizer[notebook]" # Local notebook display support
-uv pip install ply-visualizer    # Install into an existing virtual environment
-uv tool install ply-visualizer   # Install the CLI independently
-uvx --from ply-visualizer ply-viewer scan.ply  # Run without persistent installation
+uv add 3d-visualizer            # Add to a Python project
+uv add "3d-visualizer[notebook]" # Local notebook display support
+uv pip install 3d-visualizer    # Install into an existing virtual environment
+uv tool install 3d-visualizer   # Install the CLI independently
+uvx --from 3d-visualizer ply-viewer scan.ply  # Run without persistent installation
 ```
 
 The Python import is `from ply_visualizer import show`. Tool installation does
@@ -42,7 +42,7 @@ select its Python kernel. Keep that kernel alive while using the viewer.
 Version 0.2.0 adds an optional local MCP server:
 
 ```sh
-uvx --from "ply-visualizer[mcp]" ply-viewer-mcp --root /absolute/path/to/workspace
+uvx --from "3d-visualizer[mcp]" ply-viewer-mcp --root /absolute/path/to/workspace
 ```
 
 Configure your agent to launch this command. It can open 3D files or point
@@ -342,7 +342,7 @@ tests skip optional libraries and GPU backends that are unavailable.
   [Install extension](https://open-vsx.org/extension/kleinicke/ply-visualizer)
 - **Website:** [3d.f-kleinicke.de](https://3d.f-kleinicke.de/)
 - **PyPI (Python and CLI):**
-  [ply-visualizer](https://pypi.org/project/ply-visualizer/)
+  [3d-visualizer](https://pypi.org/project/3d-visualizer/)
 - **JetBrains:**
   [Signed preview and installation](https://github.com/kleinicke/ply-visualizer/blob/main/jetbrains/README.md)
 - **Standalone app:**

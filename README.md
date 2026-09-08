@@ -21,7 +21,7 @@ heavy decoding, so files with millions of points open in seconds.
 - Try the local
   [Python package and command-line viewer](packages/python/README.md) for 3D
   files, NumPy/PyTorch arrays and inline local notebooks
-  (`uv add ply-visualizer`)
+  (`uv add 3d-visualizer`)
 - Connect AI agents through the [local MCP server](packages/python/MCP.md) to
   open scenes, control the camera and inspect rendered screenshots
 
@@ -149,7 +149,7 @@ files are especially helpful when adding support for new formats.
 - **Documentation:** [User guides and MCP reference](docs/README.md)
 - **Standalone app:** [Tauri desktop preview](apps/desktop/README.md)
 - **PyPI (Python and CLI):**
-  [ply-visualizer](https://pypi.org/project/ply-visualizer/)
+  [3d-visualizer](https://pypi.org/project/3d-visualizer/)
 - **MCP:** Supported — [Agent setup and usage](packages/python/MCP.md)
 - **More platforms:** Coming soon
 - **Blog:** Coming soon

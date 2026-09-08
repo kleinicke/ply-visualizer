@@ -5,7 +5,11 @@ from .session import show
 
 
 def main():
-    parser = argparse.ArgumentParser(description="View local 3D files in your browser.")
+    # Registry runners infer the executable from the distribution name.
+    if sys.argv[1:2] == ["mcp"]:
+        from .mcp_server import main as mcp_main
+        return mcp_main(sys.argv[2:])
+    parser = argparse.ArgumentParser(description="View local 3D files in your browser. Use the mcp subcommand for agents.")
     parser.add_argument("files", nargs="+", help="3D files to display together")
     parser.add_argument("--no-browser", action="store_true", help="Print the local URL without opening it")
     args = parser.parse_args()

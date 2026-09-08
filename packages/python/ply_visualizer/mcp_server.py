@@ -551,11 +551,11 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
     return server
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Local 3D viewer MCP server (stdio).")
     parser.add_argument("--root", action="append", help="Allowed 3D file directory; repeat for multiple roots. Defaults to current directory.")
     parser.add_argument("--task-state-dir", help="Enable persisted MCP Tasks in this single-process state directory")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         task_store = None
         if args.task_state_dir:
@@ -565,7 +565,7 @@ def main():
             task_store = TaskStore(directory / 'tasks.sqlite')
         server = create_server(args.root or [str(Path.cwd())], task_store=task_store)
     except ImportError:
-        parser.exit(1, 'Install MCP support: uv tool install "ply-visualizer[mcp]"\n')
+        parser.exit(1, 'Install MCP support: uv tool install "3d-visualizer[mcp]"\n')
     except (ValueError, OSError) as error:
         parser.exit(1, f"ply-viewer-mcp: {error}\n")
     server.run(transport="stdio")

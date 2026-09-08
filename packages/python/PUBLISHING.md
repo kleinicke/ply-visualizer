@@ -1,12 +1,12 @@
 # Publishing 3D Visualizer
 
-The current release version is `0.4.1`. Publish releases only when requested;
+The current release version is `0.4.2`. Publish releases only when requested;
 intermediate development builds stay local.
 
-The distribution name is `ply-visualizer`, the Python import is
-`ply_visualizer`, and the CLI is `ply-viewer`. The initial release was `0.1.0`;
-MCP support starts in `0.2.0`. Release artifacts include the browser engine,
-WASM decoders and styles; users do not need Node.js.
+The distribution name is `3d-visualizer`, the Python import is `ply_visualizer`,
+and the CLI is `3d-visualizer`. The initial release was `0.1.0`; MCP support
+starts in `0.2.0`. Release artifacts include the browser engine, WASM decoders
+and styles; users do not need Node.js.
 
 ## GitHub trusted publishing
 
@@ -19,7 +19,7 @@ https://pypi.org/manage/account/publishing/ with:
 
 | Field             | Value                |
 | ----------------- | -------------------- |
-| PyPI project name | `ply-visualizer`     |
+| PyPI project name | `3d-visualizer`      |
 | GitHub owner      | `kleinicke`          |
 | Repository        | `ply-visualizer`     |
 | Workflow filename | `publish-python.yml` |
@@ -49,21 +49,21 @@ Build and check the concrete artifacts first:
 ```sh
 npm run build:python-viewer
 uv build packages/python --out-dir packages/python/dist
-uvx twine check --strict packages/python/dist/ply_visualizer-0.4.1*
+uvx twine check --strict packages/python/dist/3d_visualizer-0.4.2*
 ```
 
 When publication is requested, run this from the repository root to publish only
 the checked, versioned artifacts:
 
 ```sh
-uvx twine upload --non-interactive --config-file .local/.pypirc --repository pypi packages/python/dist/ply_visualizer-0.4.1-py3-none-any.whl packages/python/dist/ply_visualizer-0.4.1.tar.gz
+uvx twine upload --non-interactive --config-file .local/.pypirc --repository pypi packages/python/dist/3d_visualizer-0.4.2-py3-none-any.whl packages/python/dist/3d_visualizer-0.4.2.tar.gz
 ```
 
 Never place the token in source control or documentation. Verify the project
 page after upload and install the published version into a clean environment:
 
 ```sh
-uvx --from ply-visualizer==0.4.1 ply-viewer --help
+uvx --from 3d-visualizer==0.4.2 ply-viewer --help
 ```
 
 Publishing uses the configured PyPI account credentials. A missing project page

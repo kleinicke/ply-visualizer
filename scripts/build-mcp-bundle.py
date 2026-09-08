@@ -13,7 +13,7 @@ args = parser.parse_args()
 version = tomllib.loads((root / "packages/python/pyproject.toml").read_text())["project"]["version"]
 manifest = json.loads((bundle / "manifest.json").read_text())
 project = tomllib.loads((bundle / "pyproject.toml").read_text())["project"]
-if manifest["version"] != version or project["dependencies"] != [f"ply-visualizer[mcp]=={version}"]:
+if manifest["version"] != version or project["dependencies"] != [f"3d-visualizer[mcp]=={version}"]:
     raise SystemExit("MCPB metadata must match the Python release version")
 args.out.parent.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(args.out, "w", zipfile.ZIP_DEFLATED) as archive:

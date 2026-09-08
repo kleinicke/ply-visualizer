@@ -34,11 +34,11 @@ accept the following shape; others have a server settings form):
 ```json
 {
   "mcpServers": {
-    "ply-visualizer": {
+    "3d-visualizer": {
       "command": "uvx",
       "args": [
         "--from",
-        "ply-visualizer[mcp]==0.3.0",
+        "3d-visualizer[mcp]==0.3.0",
         "ply-viewer-mcp",
         "--root",
         "/absolute/path/to/your/workspace"
@@ -53,7 +53,7 @@ Relative file paths resolve against the first root. Symlinks resolving outside
 these roots are rejected. Without `--root`, the current directory is allowed. Do
 not configure the filesystem root unless you intend to allow all files.
 
-For a persistent installation, use `uv tool install "ply-visualizer[mcp]"`, then
+For a persistent installation, use `uv tool install "3d-visualizer[mcp]"`, then
 configure `ply-viewer-mcp` directly. For development, replace the `--from` value
 with `/absolute/path/to/checkout/packages/python` and use uv's
 `--with "mcp>=2.2,<3"` option after building the viewer assets.

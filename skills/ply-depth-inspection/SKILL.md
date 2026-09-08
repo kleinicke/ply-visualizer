@@ -2,13 +2,13 @@
 name: ply-depth-inspection
 description:
   Show depth or disparity rasters, stereo-network outputs, and COLMAP dense
-  reconstructions as inspectable point clouds using ply-visualizer MCP or
-  Python. Use when the user asks to visualize depth in 3D, including finding
-  calibration in accompanying files or context.
+  reconstructions as inspectable point clouds using 3D Visualizer MCP or Python.
+  Use when the user asks to visualize depth in 3D, including finding calibration
+  in accompanying files or context.
 ---
 
 Translate the user's depth data and accompanying calibration into an explicit
-`ply-visualizer` depth job. Prefer the inline MCP viewer when its tools are
+`3d-visualizer` depth job. Prefer the inline MCP viewer when its tools are
 available. Otherwise use the Python API in the user's existing environment.
 
 ## Calibration discovery
