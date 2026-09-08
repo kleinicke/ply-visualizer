@@ -1,4 +1,4 @@
-import { gzipSync, deflateSync, deflateRawSync } from 'zlib';
+import { gzipSync, deflateSync, deflateRawSync, brotliCompressSync } from 'zlib';
 import { test, expect } from '@playwright/test';
 const ply =
   'ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 0 0\n0 1 0\n';
@@ -42,13 +42,32 @@ test('gzip source links decompress before visualization and preserve the source 
 });
 
 for (const [suffix, compress] of [
+  ['br', brotliCompressSync],
   ['zlib', deflateSync],
   ['deflate-raw', deflateRawSync],
 ] as const) {
-  test(`loads ${suffix} with built-in decompression`, async ({ page }) => {
+  test(`handles ${suffix} with built-in decompression`, async ({ page }) => {
     const url = `https://files.example.test/cloud.ply.${suffix}`;
     await page.route(url, route => route.fulfill({ body: compress(ply) }));
     await page.goto(`/?source=${encodeURIComponent(url)}`);
-    await expect(page.locator('#file-list')).toContainText('cloud.ply');
+    const supported =
+      suffix !== 'br' ||
+      (await page.evaluate(() => {
+        try {
+          const Stream = DecompressionStream as new (format: string) => DecompressionStream;
+          new Stream('brotli');
+          return true;
+        } catch {
+          return false;
+        }
+      }));
+    if (supported) {
+      await expect(page.locator('#file-list')).toContainText('cloud.ply');
+    } else {
+      await expect(page.locator('body')).toContainText(
+        'This runtime does not support brotli decompression'
+      );
+      await expect(page.locator('#file-list')).toBeEmpty();
+    }
   });
 }

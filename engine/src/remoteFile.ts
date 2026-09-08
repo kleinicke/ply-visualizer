@@ -37,7 +37,7 @@ export function remoteFileName(response: Response, source: URL, bytes: Uint8Arra
   }
   // Fetch may already have decoded Content-Encoding: gzip. Strip the wrapper
   // suffix regardless, and detect the inner format from the decoded bytes.
-  name = safeName(name).replace(/\.(?:gz|zlib|zz|deflate|deflate-raw)$/i, '');
+  name = safeName(name).replace(/\.(?:gz|zlib|zz|deflate|deflate-raw|br|brotli)$/i, '');
   if (!/\.[a-z0-9]+$/i.test(name)) {
     const header = new TextDecoder().decode(bytes.subarray(0, 128));
     const extension = /^ply\r?\n/.test(header)
@@ -85,12 +85,36 @@ export async function downloadRemoteFile(value: string, signal?: AbortSignal) {
   // Do not decode it twice when the server used HTTP Content-Encoding.
   const raw =
     /\.deflate-raw(?:[";]|$)/i.test(compressedName) && !response.headers.get('content-encoding');
-  const compression = gzip ? 'gzip' : zlib ? 'deflate' : raw ? 'deflate-raw' : null;
+  // Brotli also has no reliable signature; require a suffix and account for
+  // HTTP-level Brotli that fetch has already decoded.
+  const brotli =
+    /\.(?:br|brotli)(?:[";]|$)/i.test(compressedName) &&
+    !/\bbr\b/i.test(response.headers.get('content-encoding') || '');
+  const compression = gzip
+    ? 'gzip'
+    : zlib
+      ? 'deflate'
+      : raw
+        ? 'deflate-raw'
+        : brotli
+          ? 'brotli'
+          : null;
   if (compression) {
+    let decompressor: DecompressionStream;
     try {
-      const decoded = new Blob([bytes])
-        .stream()
-        .pipeThrough(new DecompressionStream(compression), { signal });
+      // TypeScript's DOM declarations lag native Brotli support. Construction
+      // still checks support at runtime for website visitors on older browsers.
+      const NativeDecompressionStream = DecompressionStream as new (
+        format: string
+      ) => DecompressionStream;
+      decompressor = new NativeDecompressionStream(compression);
+    } catch {
+      throw new Error(
+        `This runtime does not support ${compression} decompression. Update your browser or use VS Code 1.106 or later.`
+      );
+    }
+    try {
+      const decoded = new Blob([bytes]).stream().pipeThrough(decompressor, { signal });
       bytes = new Uint8Array(await new Response(decoded).arrayBuffer());
     } catch (error) {
       if (signal?.aborted) {

@@ -1,4 +1,4 @@
-import { gzipSync, deflateSync, deflateRawSync } from 'zlib';
+import { gzipSync, deflateSync, deflateRawSync, brotliCompressSync } from 'zlib';
 import * as assert from 'assert';
 import { createServer, type Server } from 'http';
 import { downloadRemoteFile, parseRemoteUrl, remoteFileName } from '../../../engine/src/remoteFile';
@@ -20,6 +20,15 @@ suite('Remote file downloads', () => {
         res.end(deflateSync('ply\nformat ascii 1.0\nend_header\n'));
       } else if (req.url === '/cloud.ply.deflate-raw') {
         res.end(deflateRawSync('ply\nformat ascii 1.0\nend_header\n'));
+      } else if (
+        req.url === '/cloud.ply.br' ||
+        req.url === '/cloud.ply.brotli' ||
+        req.url === '/encoded.ply.br'
+      ) {
+        if (req.url === '/encoded.ply.br') {
+          res.setHeader('Content-Encoding', 'br');
+        }
+        res.end(brotliCompressSync('ply\nformat ascii 1.0\nend_header\n'));
       } else if (req.url === '/corrupt.ply.gz') {
         res.end(Buffer.from([0x1f, 0x8b, 0x08, 0]));
       } else if (req.url === '/empty.ply.gz') {
@@ -90,6 +99,20 @@ suite('Remote file downloads', () => {
       ['/cloud.ply.zlib', 'cloud.ply'],
       ['/zlib', 'zlib.ply'],
       ['/cloud.ply.deflate-raw', 'cloud.ply'],
+    ]) {
+      const file = await downloadRemoteFile(`${base}${path}`);
+      assert.strictEqual(file.name, name);
+      assert.strictEqual(
+        new TextDecoder().decode(file.bytes),
+        'ply\nformat ascii 1.0\nend_header\n'
+      );
+    }
+  });
+  test('decompresses Brotli files without double-decoding HTTP Brotli', async () => {
+    for (const [path, name] of [
+      ['/cloud.ply.br', 'cloud.ply'],
+      ['/cloud.ply.brotli', 'cloud.ply'],
+      ['/encoded.ply.br', 'encoded.ply'],
     ]) {
       const file = await downloadRemoteFile(`${base}${path}`);
       assert.strictEqual(file.name, name);

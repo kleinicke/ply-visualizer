@@ -154,10 +154,11 @@ there; put code in the modules above.
   `.nvmrc` and consumed by local nvm, GitHub Actions, and Netlify. This does not
   change the Node runtime embedded in supported VS Code versions.
 - `@types/vscode` and `@types/node` are pinned deliberately, not stale.
-  `@types/vscode` tracks `engines.vscode` (currently `^1.104.0`, a roughly
-  12-month support window) and `@types/node` tracks the Node that the _minimum_
-  VS Code ships. Raising either alone lets code compile against APIs absent at
-  runtime, so move them together with `engines`.
+  `@types/vscode` tracks `engines.vscode` (currently `^1.106.0`, which ships
+  Node 22.20.0 with native Brotli DecompressionStream support) and `@types/node`
+  tracks the Node that the _minimum_ VS Code ships. Raising either alone lets
+  code compile against APIs absent at runtime, so move them together with
+  `engines`.
 - **TypeScript stays on 6.x.** TS 7 (the native compiler rewrite) breaks
   `ts-loader` with `Cannot read properties of undefined (reading 'fileExists')`,
   and `svelte-preprocess` declares `typescript: ^5 || ^6`. Retry once both ship

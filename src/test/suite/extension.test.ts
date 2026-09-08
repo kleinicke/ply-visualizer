@@ -1,4 +1,4 @@
-import { gzipSync } from 'zlib';
+import { brotliCompressSync } from 'zlib';
 import { createServer } from 'http';
 import * as assert from 'assert';
 import * as vscode from 'vscode';
@@ -31,7 +31,7 @@ suite('PLY Viewer Extension Test Suite', () => {
     const server = createServer((_req, res) => {
       requests++;
       res.end(
-        gzipSync(
+        brotliCompressSync(
           'ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n'
         )
       );
@@ -41,7 +41,7 @@ suite('PLY Viewer Extension Test Suite', () => {
       const port = (server.address() as { port: number }).port;
       await vscode.commands.executeCommand(
         'plyViewer.openRemoteUrl',
-        `http://127.0.0.1:${port}/remote-command-test.ply.gz`
+        `http://127.0.0.1:${port}/remote-command-test.ply.br`
       );
       const recalled = vscode.commands.executeCommand('plyViewer.openRemoteUrl');
       await new Promise(resolve => setTimeout(resolve, 300));
