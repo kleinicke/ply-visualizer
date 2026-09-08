@@ -98,3 +98,12 @@ The old `ply-visualizer` 0.4.1 release remains on PyPI. New releases use
 `3d-visualizer`. The GitHub Actions trusted publisher must be configured for the
 new PyPI project before using the automated publish job; local publication used
 the existing configured token.
+
+## Awesome MCP Servers review requirement
+
+PR #14040 requires a passing Glama listing and its score badge after the server
+description. See [Glama Dockerfile and setup](../packages/glama/README.md). The
+Dockerfile must be pasted into Glama itself. It has not yet been built locally
+because Docker Desktop was unavailable; the released package was verified to
+initialize and expose 27 tools without data or a renderer. The badge remains
+pending until the actual Glama listing path and checks are verified.
