@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 import math
 from pathlib import Path
 import uuid
+import threading
 from typing import Any, Literal
 import re
 
@@ -23,6 +24,7 @@ class SceneManager:
             raise ValueError("Provide at least one existing workspace directory")
         self.max_scenes = max_scenes
         self.scenes = {}
+        self._lock = threading.RLock()
 
     def path(self, name):
         file = Path(name).expanduser()
@@ -39,11 +41,12 @@ class SceneManager:
         return self.scenes[scene_id]
 
     def add(self, factory):
-        if len(self.scenes) >= self.max_scenes:
-            raise ValueError("Close an existing scene before opening another (limit 8)")
-        scene_id = uuid.uuid4().hex
-        self.scenes[scene_id] = factory()
-        return self.describe(scene_id)
+        with self._lock:
+            if len(self.scenes) >= self.max_scenes:
+                raise ValueError("Close an existing scene before opening another (limit 8)")
+            scene_id = uuid.uuid4().hex
+            self.scenes[scene_id] = factory()
+            return self.describe(scene_id)
 
     def describe(self, scene_id):
         viewer = self.get(scene_id)
@@ -64,7 +67,7 @@ def browser_default(ctx, requested):
         return requested
     return False
 
-def create_server(roots):
+def create_server(roots, *, extensions=None, transport="stdio", task_store=None):
     from mcp.server import MCPServer
     from mcp.server.mcpserver import Image, Context
     from mcp_types import ToolAnnotations, CallToolResult, TextContent, ImageContent
@@ -95,15 +98,21 @@ def create_server(roots):
 
     points_type = Annotated[list[tuple[float, float, float]], Field(min_length=1, max_length=20000)]
     manager = SceneManager(roots)
+    task_extension = None
+    if task_store is not None:
+        from .tasks import ViewerTasks, invoke_complete
+        task_extension = ViewerTasks(task_store)
+        extensions = [*(extensions or []), task_extension]
 
     @asynccontextmanager
     async def lifespan(server):
         try:
             yield {}
         finally:
+            if task_store is not None: await task_store.close()
             manager.close()
 
-    server = MCPServer("ply-visualizer", version=VERSION, lifespan=lifespan,
+    server = MCPServer("ply-visualizer", version=VERSION, lifespan=lifespan, extensions=extensions,
         instructions="Inspect 3D data inline. Reuse scene_id; replies are compact by default, detail=full adds attributes and coordinate conventions. Inspect after loading and capture to verify. Compare build IDs and rendered_revision; submitted is not rendered. Use source units, never assume meters. Browser opening and URL downloads must be explicit. Alignment is asynchronous: poll status; complex align-all is opt-in. See viewer://capabilities and viewer://workflows for supported formats.")
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     local = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
@@ -217,7 +226,8 @@ def create_server(roots):
     @explain_errors
     def list_3d_scenes() -> list[dict]:
         """List scenes owned by this MCP process and their local viewer URLs."""
-        return [manager.describe(scene_id) for scene_id in manager.scenes]
+        with manager._lock:
+            return [manager.describe(scene_id) for scene_id in manager.scenes]
 
     @server.tool(annotations=readonly)
     @explain_errors
@@ -256,8 +266,9 @@ def create_server(roots):
     @explain_errors
     def close_3d_scene(scene_id: str) -> dict[str, Any]:
         """Release a viewer's local server and temporary data. Does not delete the user's source files. Any active viewer disconnects."""
-        manager.get(scene_id).close()
-        del manager.scenes[scene_id]
+        with manager._lock:
+            manager.get(scene_id).close()
+            del manager.scenes[scene_id]
         return {"closed": scene_id}
 
     def command(scene_id, operation, arguments):
@@ -531,19 +542,28 @@ def create_server(roots):
         """Supported formats, file roots, transport and rendering workflow."""
         import json
         return json.dumps({"build": build_info(), "formats": sorted(FORMATS), "roots": [str(root) for root in manager.roots],
-                           "transport": "stdio", "workflows": "viewer://workflows", "inline_mcp_app": True, "inline_requires": "MCP Apps host with app-to-server tools and WebGL",
+                           "transport": transport, "tasks_extension": task_store is not None, "http_api": "/api/v1" if transport == "streamable-http" else None, "workflows": "viewer://workflows", "inline_mcp_app": True, "inline_requires": "MCP Apps host with app-to-server tools and WebGL",
                            "depth": {"tool": "open_depth_image", "calibration": "viewer://depth-calibration", "formats": ["npy", "npz", "tif", "tiff", "png8/16", "exr", "pfm", "COLMAP dense bin"], "discovery": "agent reads accompanying context and supplies explicit calibration"},
                            "workflow": ["open_3d_files, visualize_points or open_depth_image", "inspect_3d_scene", "set_3d_camera", "capture_3d_view", "close_3d_scene"]})
 
+    if task_extension is not None:
+        task_extension.invoke = lambda name, args: invoke_complete(server, name, args)
     return server
 
 
 def main():
     parser = argparse.ArgumentParser(description="Local 3D viewer MCP server (stdio).")
     parser.add_argument("--root", action="append", help="Allowed 3D file directory; repeat for multiple roots. Defaults to current directory.")
+    parser.add_argument("--task-state-dir", help="Enable persisted MCP Tasks in this single-process state directory")
     args = parser.parse_args()
     try:
-        server = create_server(args.root or [str(Path.cwd())])
+        task_store = None
+        if args.task_state_dir:
+            from .tasks import TaskStore
+            directory = Path(args.task_state_dir)
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            task_store = TaskStore(directory / 'tasks.sqlite')
+        server = create_server(args.root or [str(Path.cwd())], task_store=task_store)
     except ImportError:
         parser.exit(1, 'Install MCP support: uv tool install "ply-visualizer[mcp]"\n')
     except (ValueError, OSError) as error:

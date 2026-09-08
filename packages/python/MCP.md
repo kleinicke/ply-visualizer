@@ -1,8 +1,7 @@
 # Local MCP integration
 
-The current checkout is an **unpublished 0.4.0.dev6 preview**. It replaces
-0.3.0's nested localhost iframe with the shared renderer running directly in the
-MCP widget. PyPI still serves 0.3.0 until the next requested release.
+Version **0.4.0** replaces 0.3.0's nested localhost iframe with the shared
+renderer running directly in the MCP widget.
 
 The optional MCP server lets an agent use the shared 3D viewer and inspect its
 actual rendered output. Python 3.10+ and a WebGL-capable MCP Apps host (or an
@@ -17,6 +16,15 @@ workspace. Read `viewer://depth-calibration` for camera models and encoding
 conventions. See [depth workflows](../../docs/depth-agent-workflows.md) for
 Python, tensor, notebook and MCP examples, and the distributable companion
 skill.
+
+## HTTP, REST and Tasks
+
+Use `ply-viewer-api --root /path/to/data --state-dir /private/server-state` with
+the `http` package extra for authenticated Streamable HTTP (`/mcp`) and REST
+(`/api/v1`). They share scenes and tool schemas. HTTP enables the MCP Tasks
+extension; stdio can enable it with `--task-state-dir`. See the
+[HTTP API guide](../../docs/http-agent-api.md) for credentials, uploads,
+OpenAPI, task persistence and renderer requirements.
 
 ## Connect an agent
 

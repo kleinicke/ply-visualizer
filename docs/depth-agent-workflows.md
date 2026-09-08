@@ -1,9 +1,9 @@
 # Depth images for Python and agents
 
-The unpublished 0.4.0.dev6 API accepts explicit calibration derived from nearby
-files, model output metadata, or user context. Agents can translate unfamiliar
-camera formats into one schema; the viewer does not estimate calibration from
-image pixels or recursively scan a directory.
+The 0.4.0 API accepts explicit calibration derived from nearby files, model
+output metadata, or user context. Agents can translate unfamiliar camera formats
+into one schema; the viewer does not estimate calibration from image pixels or
+recursively scan a directory.
 
 ```python
 from ply_visualizer import DepthCalibration, show_depth
@@ -20,7 +20,7 @@ view
 Replace these illustrative values with the input's calibration. `depth` can be
 an HxW NumPy array, a real dense PyTorch tensor (CPU/GPU, attached/detached), or
 a file. The library copies tensors without modifying them. Standard pip and uv
-installation use the same package; to try this unpublished checkout:
+installation use the same package; to install a development checkout:
 
 ```sh
 npm run build:python-viewer
