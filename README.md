@@ -25,6 +25,22 @@ heavy decoding, so files with millions of points open in seconds.
 - Connect AI agents through the [local MCP server](packages/python/MCP.md) to
   open scenes, control the camera and inspect rendered screenshots
 
+## Remote files
+
+Use **Load Remote URL** beside **+ Add Point Cloud**, or run **3D Visualizer:
+Load Remote URL** from the VS Code command palette. Paste an HTTP(S) link to a
+supported file. The entire file downloads before visualization; VS Code keeps
+downloads in its extension storage. Gzip files such as `.ply.gz` are
+decompressed automatically using built-in APIs, with no additional library. For
+URLs without a recognizable filename, supply a filename with the correct
+extension.
+
+The website records the remote source in `?source=<encoded-file-url>` so copying
+the address or reloading reopens that file. An optional `filename` parameter
+preserves your format override. The source server must allow browser CORS
+requests. Use self-contained files (for example GLB); separate mesh textures and
+sidecar files are not downloaded automatically.
+
 ## Supported formats
 
 | Type                   | Formats                                                                                        |

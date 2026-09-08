@@ -1,3 +1,4 @@
+import { setupRemoteFileLoader } from './remoteFileLoader';
 import { CameraParams, SpatialData } from './interfaces';
 import {
   BrowserMessageHandler,
@@ -218,6 +219,7 @@ export function setupPanelResizeAndDrag(): void {
 }
 
 export function setupBrowserFileHandlers(host: BrowserFileDragDropHost): void {
+  setupRemoteFileLoader(host, isVSCode);
   const fileInput = document.getElementById('hiddenFileInput') as HTMLInputElement;
   const addFileButton = document.getElementById('add-file');
   const mainPanel = document.getElementById('main-ui-panel');

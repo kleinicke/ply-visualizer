@@ -322,6 +322,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             message.options ?? {}
           );
           break;
+        case 'openRemoteUrl':
+          await vscode.commands.executeCommand('plyViewer.openRemoteUrl');
+          break;
         case 'addFile':
           await handleAddFile(this.addFileHost, webviewPanel, this.panelToPath.get(webviewPanel));
           break;

@@ -166,6 +166,11 @@
     ],
     "commands": [
       {
+        "command": "plyViewer.openRemoteUrl",
+        "title": "Load Remote URL",
+        "category": "3D Visualizer"
+      },
+      {
         "command": "plyViewer.openFile",
         "title": "Open with 3D Visualizer",
         "category": "3D Visualizer"

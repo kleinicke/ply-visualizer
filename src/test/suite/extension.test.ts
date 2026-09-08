@@ -1,3 +1,5 @@
+import { gzipSync } from 'zlib';
+import { createServer } from 'http';
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -21,6 +23,35 @@ suite('PLY Viewer Extension Test Suite', () => {
   test('PLY command should be registered', async () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes('plyViewer.openFile'));
+  });
+
+  test('Remote URL command downloads and opens a custom editor', async function () {
+    this.timeout(30000);
+    const server = createServer((_req, res) => {
+      res.end(
+        gzipSync(
+          'ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n'
+        )
+      );
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const port = (server.address() as { port: number }).port;
+      await vscode.commands.executeCommand(
+        'plyViewer.openRemoteUrl',
+        `http://127.0.0.1:${port}/remote-command-test.ply.gz`
+      );
+      const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs);
+      assert.ok(
+        tabs.some(
+          tab =>
+            tab.input instanceof vscode.TabInputCustom &&
+            tab.input.uri.path.endsWith('/remote-command-test.ply')
+        )
+      );
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
   });
 
   test('Multiple PLY commands should be registered', async () => {

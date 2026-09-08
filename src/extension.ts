@@ -1,3 +1,4 @@
+import { registerRemoteFileCommand } from './remoteFileCommand';
 import * as vscode from 'vscode';
 import { isColmapModelFile } from '../engine/src/formats/colmap/colmapFiles';
 import { PointCloudEditorProvider } from './pointCloudEditorProvider';
@@ -10,6 +11,7 @@ import {
 } from './providerHandlers/dicomFolderLoader';
 
 export function activate(context: vscode.ExtensionContext) {
+  context.subscriptions.push(registerRemoteFileCommand(context));
   // Register the PLY editor provider
   const provider = new PointCloudEditorProvider(context);
   context.subscriptions.push(

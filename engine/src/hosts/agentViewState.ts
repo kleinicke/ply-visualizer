@@ -60,7 +60,7 @@ export function agentViewState(host: ControlHost) {
       world_origin: [0, 0, 0],
       world_axes: { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] },
       units: 'source scene units; physical scale is unspecified',
-      meters_per_unit: null,
+      meters_per_unit: null as number | null,
       matrix_layout: 'column-major; matrices multiply column vectors',
       screen_coordinates: 'normalized canvas XY: top-left [0,0], bottom-right [1,1]',
       note: 'The OpenGL default is Y-up, unlike Blender world Z-up. Source data is not automatically reoriented or scaled. Camera axes below are in world coordinates; object local_to_world includes applied transforms.',

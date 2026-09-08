@@ -97,7 +97,13 @@ export async function agentPick(host: ControlHost, screen: number[]) {
     canvas
   );
   if (!hit) {
-    return { hit: false, xyz: null, object_index: null, point_index: null, attributes: {} };
+    return {
+      hit: false,
+      xyz: null as number[] | null,
+      object_index: null as number | null,
+      point_index: null as number | null,
+      attributes: {},
+    };
   }
   const file = hit.objectIndex === undefined ? undefined : host.spatialFiles[hit.objectIndex];
   const s = state(host);
