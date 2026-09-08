@@ -108,7 +108,7 @@ def create_http_app(roots, *, token, state_dir, allowed_hosts=None):
                 'parameters': [{'name': 'async', 'in': 'query', 'schema': {'type': 'boolean', 'default': False}}],
                 'requestBody': {'required': True, 'content': {'application/json': {'schema': schema}}},
                 'responses': {'200': {'description': 'MCP result envelope (structuredContent plus optional image content)'}, '202': {'description': 'Asynchronous task handle'}, '422': {'description': 'Tool error'}}}}
-        return JSONResponse({'openapi': '3.1.0', 'info': {'title': 'ply-visualizer', 'version': '1'}, 'paths': entries,
+        return JSONResponse({'openapi': '3.1.0', 'info': {'title': '3D Visualizer', 'version': '1'}, 'paths': entries,
                              'security': [{'bearerAuth': []}], 'components': {'schemas': schemas, 'securitySchemes': {'bearerAuth': {'type': 'http', 'scheme': 'bearer'}}}})
 
     @asynccontextmanager

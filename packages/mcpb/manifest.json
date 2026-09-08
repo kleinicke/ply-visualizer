@@ -1,0 +1,58 @@
+{
+  "manifest_version": "0.4",
+  "name": "3d-visualizer",
+  "display_name": "3D Visualizer",
+  "version": "0.4.1",
+  "description": "Inspect, compare and export point clouds, meshes and calibrated depth data with inline 3D previews.",
+  "author": {
+    "name": "Florian Kleinicke",
+    "url": "https://github.com/kleinicke"
+  },
+  "homepage": "https://3d.f-kleinicke.de",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kleinicke/ply-visualizer"
+  },
+  "license": "MIT",
+  "icon": "icon.png",
+  "server": {
+    "type": "uv",
+    "entry_point": "src/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "src/server.py",
+        "--root",
+        "${user_config.root}"
+      ]
+    }
+  },
+  "user_config": {
+    "root": {
+      "type": "directory",
+      "title": "3D data directory",
+      "description": "Choose the directory containing the files the agent may read and export.",
+      "required": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "linux", "win32"],
+    "runtimes": {
+      "python": ">=3.10"
+    }
+  },
+  "keywords": [
+    "3d",
+    "point-cloud",
+    "mesh",
+    "depth",
+    "disparity",
+    "colmap",
+    "numpy",
+    "pytorch",
+    "mcp-apps"
+  ]
+}

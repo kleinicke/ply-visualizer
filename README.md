@@ -1,4 +1,4 @@
-# 3D Point Cloud and Mesh Visualizer
+# 3D Visualizer
 
 View, compare and inspect point clouds, meshes, gaussian splats, depth maps and
 disparity images in your editor or browser — with Rust and WebAssembly doing the

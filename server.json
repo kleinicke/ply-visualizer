@@ -1,0 +1,46 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kleinicke/3d-visualizer",
+  "title": "3D Visualizer",
+  "description": "Inspect, compare and export point clouds, meshes and calibrated depth data with inline 3D previews.",
+  "version": "0.4.1",
+  "repository": {
+    "url": "https://github.com/kleinicke/ply-visualizer",
+    "source": "github",
+    "subfolder": "packages/python"
+  },
+  "websiteUrl": "https://3d.f-kleinicke.de",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/kleinicke/ply-visualizer/main/icon.png",
+      "mimeType": "image/png"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "ply-visualizer",
+      "version": "0.4.1",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--with",
+          "value": "mcp>=2.2,<3"
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "named",
+          "name": "--root",
+          "description": "Absolute directory containing the 3D files this server may access.",
+          "format": "filepath",
+          "isRequired": true
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

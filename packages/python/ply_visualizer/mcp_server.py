@@ -112,7 +112,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
             if task_store is not None: await task_store.close()
             manager.close()
 
-    server = MCPServer("ply-visualizer", version=VERSION, lifespan=lifespan, extensions=extensions,
+    server = MCPServer("3d-visualizer", version=VERSION, lifespan=lifespan, extensions=extensions,
         instructions="Inspect 3D data inline. Reuse scene_id; replies are compact by default, detail=full adds attributes and coordinate conventions. Inspect after loading and capture to verify. Compare build IDs and rendered_revision; submitted is not rendered. Use source units, never assume meters. Browser opening and URL downloads must be explicit. Alignment is asynchronous: poll status; complex align-all is opt-in. See viewer://capabilities and viewer://workflows for supported formats.")
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     local = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)

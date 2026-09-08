@@ -1,4 +1,6 @@
-# Python, CLI and MCP — 3D viewer
+# 3D Visualizer — Python, CLI and MCP
+
+<!-- mcp-name: io.github.kleinicke/3d-visualizer -->
 
 ![Point cloud displayed in the 3D viewer](https://raw.githubusercontent.com/kleinicke/ply-visualizer/main/assets/example.png)
 
@@ -9,7 +11,10 @@ without requiring NumPy for users who only open files. Node.js is needed only to
 build the bundled viewer from this repository, not to use an installed wheel.
 
 Install the Python package from PyPI as **`ply-visualizer`**. The npm package is
-not published.
+not published. **3D Visualizer** is the product name; the existing package and
+Python import retain their names for compatibility. The commands
+`3d-visualizer`, `3d-visualizer-mcp` and `3d-visualizer-api` are also available.
+`ply-visualizer` is an MCP entry point for registry launchers.
 
 ## Install with uv (recommended)
 

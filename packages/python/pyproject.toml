@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ply-visualizer"
-version = "0.4.0"
-description = "Local 3D point cloud and mesh viewer for Python and the command line"
+version = "0.4.1"
+description = "3D Visualizer: inspect point clouds, meshes and depth data with Python, CLI and MCP"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -22,6 +22,11 @@ Repository = "https://github.com/kleinicke/ply-visualizer"
 Issues = "https://github.com/kleinicke/ply-visualizer/issues"
 
 [project.scripts]
+3d-visualizer = "ply_visualizer.__main__:main"
+3d-visualizer-mcp = "ply_visualizer.mcp_server:main"
+3d-visualizer-api = "ply_visualizer.http_api:main"
+# Registry runners infer this MCP executable from the PyPI distribution name.
+ply-visualizer = "ply_visualizer.mcp_server:main"
 ply-viewer = "ply_visualizer.__main__:main"
 ply-viewer-api = "ply_visualizer.http_api:main"
 ply-viewer-mcp = "ply_visualizer.mcp_server:main"

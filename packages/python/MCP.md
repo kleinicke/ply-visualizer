@@ -1,4 +1,4 @@
-# Local MCP integration
+# 3D Visualizer — MCP integration
 
 Version **0.4.0** replaces 0.3.0's nested localhost iframe with the shared
 renderer running directly in the MCP widget.

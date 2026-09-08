@@ -1,0 +1,5 @@
+[project]
+name = "3d-visualizer-mcp-bundle"
+version = "0.4.1"
+requires-python = ">=3.10"
+dependencies = ["ply-visualizer[mcp]==0.4.1"]
