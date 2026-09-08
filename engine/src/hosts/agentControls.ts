@@ -1,5 +1,6 @@
 /** Agent operations call the same renderer/managers as the interactive UI. */
 import * as THREE from 'three';
+import { startAgentAlignment, agentAlignmentBusy } from './agentAlignment';
 import type Viewer from '../main';
 import type { MeasurementManager } from '../MeasurementManager';
 import { agentPick, agentSelection, agentViews, rememberAgentCamera } from './agentInspection';
@@ -80,6 +81,12 @@ export async function applyAgentControl(
   operation: string,
   a: Record<string, any>
 ) {
+  if (operation === 'alignment') {
+    return startAgentAlignment(host, a);
+  }
+  if (agentAlignmentBusy(host)) {
+    throw new Error('Alignment is running; inspect its status before editing the scene');
+  }
   if (operation === 'selection') {
     return agentSelection(host, a);
   }

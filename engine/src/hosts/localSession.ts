@@ -1,5 +1,6 @@
 /** Local Python/CLI and notebook host; rendering stays in the shared engine. */
 import '../main';
+import { agentAlignmentBusy, resetAgentAlignment } from './agentAlignment';
 import * as THREE from 'three';
 import { mount } from 'svelte';
 import { handleBrowserFiles, type BrowserFileDragDropHost } from '../browserFileDragDrop';
@@ -57,7 +58,7 @@ async function start(): Promise<void> {
   }
 
   async function refresh() {
-    if (state.paused) {
+    if (state.paused || agentAlignmentBusy(host as unknown as ControlHost)) {
       return;
     }
     const response = await fetch('session.json');
@@ -89,6 +90,7 @@ async function start(): Promise<void> {
     const camera = host.camera.clone();
     const target = host.controls.target.clone();
     clearAgentSelection(host as unknown as ControlHost);
+    resetAgentAlignment(host as unknown as ControlHost);
     while (host.spatialFiles.length) {
       host.removeFileByIndex(host.spatialFiles.length - 1);
     }

@@ -60,7 +60,7 @@ for (const name of ['localStorage', 'sessionStorage'] as const) {
     Object.defineProperty(window, name, { value: storage });
   }
 }
-const app = new App({ name: 'ply-visualizer', version: '0.4.0.dev2' }, {});
+const app = new App({ name: 'ply-visualizer', version: '0.4.0.dev3' }, {});
 let sceneId = '';
 let ready: () => void;
 const sceneReady = new Promise<void>(resolve => {

@@ -1,6 +1,6 @@
 # Publishing ply-visualizer
 
-The current checkout is `0.4.0.dev2` (unpublished); PyPI remains at `0.3.0`.
+The current checkout is `0.4.0.dev3` (unpublished); PyPI remains at `0.3.0`.
 Publish releases only when requested; intermediate development builds stay
 local.
 

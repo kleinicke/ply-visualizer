@@ -50,8 +50,10 @@ navigation, appearance, measurements, video keyframes, label/region selection
 with focus previews, richer picking, named views and overlay opacity. PCD labels
 are available for coloring and filtering. Inspection reports coordinate
 conventions, camera position/direction/pivot, object transforms and presentation
-state; updates reuse the original widget and preserve its camera. Inline local
-Jupyter output is already supported below.
+state; updates reuse the original widget and preserve its camera. Agents can
+also download direct HTTP(S) 3D URLs and run automatic alignment, ICP, landmark
+fitting and align-all strategies with job status and undo. Inline local Jupyter
+output is already supported below.
 
 ### Developing from source
 

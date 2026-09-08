@@ -89,8 +89,8 @@ def create_server(roots):
         finally:
             manager.close()
 
-    server = MCPServer("ply-visualizer", version="0.4.0.dev2", lifespan=lifespan,
-        instructions="Use this viewer for 3D point clouds, meshes, Gaussian splats, predicted/target geometry and vector fields. Prefer local file paths for large data. Reuse scene_id to update a scene. After creating a scene, inspect its coordinate_system, camera, presentation and selection, then capture to verify actual rendering. Use reported world axes and units; do not assume meters or Blender Z-up. After updates compare renderer_id and rendered_revision. Do not claim a submitted scene has rendered. The MCP widget renders directly and transfers geometry through app-only tools. No browser opens by default. Remote file upload is not supported.")
+    server = MCPServer("ply-visualizer", version="0.4.0.dev3", lifespan=lifespan,
+        instructions="Use this viewer for 3D point clouds, meshes, Gaussian splats, predicted/target geometry and vector fields. Prefer local file paths for large data. Reuse scene_id to update a scene. After creating a scene, inspect its coordinate_system, camera, presentation and selection, then capture to verify actual rendering. Use reported world axes and units; do not assume meters or Blender Z-up. After updates compare renderer_id and rendered_revision. Do not claim a submitted scene has rendered. The MCP widget renders directly and transfers geometry through app-only tools. No browser opens by default. Use open_3d_url only for explicitly requested HTTP(S) downloads. Start align_3d_clouds jobs and poll status; do not claim a queued job has aligned geometry.")
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     local = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 
@@ -117,6 +117,14 @@ def create_server(roots):
         """Visualize up to 20,000 XYZ points, optional RGB (integer 0..255), target overlay, or anchored vector arrows. Use files for larger data; coordinates are not automatically normalized."""
         return manager.add(lambda: show(points, colors=colors, target=target, vectors=vectors,
                                       vector_scale=vector_scale, open_browser=browser_default(ctx, open_browser)))
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True), meta=ui_meta, structured_output=True)
+    @explain_errors
+    def open_3d_url(url: str, filename: str | None = None,
+                    max_bytes: Annotated[int, Field(ge=1, le=1024 * 1024 * 1024)] = 256 * 1024 * 1024) -> dict[str, Any]:
+        """Explicitly download a direct HTTP(S) 3D file on the local MCP server and open it inline. This makes a network request to the supplied URL and redirects; no browser CORS is needed. Supports the same formats as local files plus gzip. Supply filename for extensionless/signed URLs. Defaults to a 256 MiB transfer/decompressed limit, at most 1 GiB; 30-second socket and 120-second transfer limits. No login/cookies or webpage extraction. Temporary files are deleted when the scene closes."""
+        from .remote import open_remote
+        return manager.add(lambda: open_remote(url, filename, max_bytes))
 
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
@@ -230,6 +238,27 @@ def create_server(roots):
         if action in ("remove", "goto", "update") and index is None: raise ValueError("index is required")
         if action == "loop" and enabled is None: raise ValueError("enabled is required")
         return command(scene_id, "video", dict(action=action, index=index, enabled=enabled, duration=duration, dwell=dwell))
+
+    @server.tool(annotations=local, structured_output=True)
+    @explain_errors
+    def align_3d_clouds(scene_id: str,
+        action: Literal["auto", "icp", "correspondences", "align_all", "refine_all", "status", "undo"],
+        source_index: Annotated[int, Field(ge=0)] | None = None,
+        target_index: Annotated[int, Field(ge=0)] = 0,
+        strategy: Literal["anchor", "nested", "complex"] = "anchor",
+        up_axis: Literal["x", "y", "z"] = "y",
+        against_all_others: bool = False,
+        source_points: Annotated[list[tuple[float, float, float]], Field(min_length=3, max_length=256)] | None = None,
+        target_points: Annotated[list[tuple[float, float, float]], Field(min_length=3, max_length=256)] | None = None) -> dict[str, Any]:
+        """Start a registration job, then poll action=status until job.state is completed/failed; submitted is not aligned. Reuses the viewer's Rust solvers. auto: level/up-axis yaw sweep then ICP; icp: refine an already close pair; correspondences: fit >=3 non-collinear paired world XYZ landmarks. source_index moves, target_index stays fixed. align_all/refine_all hold target fixed; strategies anchor (each to anchor), nested (grow aligned union), complex (grow with extra hypotheses). For auto/icp, against_all_others matches the moving cloud to the union of all other clouds. No scale/nonrigid estimation. up_axis describes the DATA, not the camera (default y); use z for Z-up scans. Clear temporary selections first. Undo restores transforms from the last accepted agent job. Inspection/capture remain available; geometry refresh waits for alignment. Partial align-all failures are reported per object."""
+        if action in ("auto", "icp", "correspondences") and source_index is None: raise ValueError("source_index is required")
+        if action == "correspondences":
+            if source_points is None or target_points is None or len(source_points) != len(target_points): raise ValueError("Provide equal-length source_points and target_points, at least 3 pairs")
+            if not all(math.isfinite(v) and abs(v) <= 3.4028234663852886e38 for p in source_points + target_points for v in p): raise ValueError("Landmarks must be finite float32 world coordinates")
+        elif source_points is not None or target_points is not None: raise ValueError("Landmarks are only used by correspondences")
+        if against_all_others and action not in ("auto", "icp"): raise ValueError("against_all_others is only used by auto/icp")
+        if action != "align_all" and strategy != "anchor": raise ValueError("nested/complex strategies apply to align_all only")
+        return command(scene_id, "alignment", dict(action=action, source_index=source_index, target_index=target_index, strategy=strategy, up_axis=up_axis, against_all_others=against_all_others, source_points=source_points, target_points=target_points))
 
     @server.tool(annotations=readonly, structured_output=True)
     @explain_errors

@@ -1,6 +1,6 @@
 # Local MCP integration
 
-The current checkout is an **unpublished 0.4.0.dev2 preview**. It replaces
+The current checkout is an **unpublished 0.4.0.dev3 preview**. It replaces
 0.3.0's nested localhost iframe with the shared renderer running directly in the
 MCP widget. PyPI still serves 0.3.0 until the next requested release.
 
@@ -59,7 +59,7 @@ its scenes and local servers.
 | `close_3d_scene`   | Release the scene's server and temporary data                       |
 
 `viewer://capabilities` lists supported formats, allowed roots and the workflow.
-There are 16 agent-facing tools and two app-only transport tools. Up to eight
+There are 18 agent-facing tools and two app-only transport tools. Up to eight
 scenes are retained. Inline arrays are limited to 20,000 XYZ rows per argument;
 use local files for larger scenes. RGB values are integers 0–255. PyTorch/NumPy
 data in an agent's Python environment can use the Python API directly; MCP JSON
@@ -262,3 +262,54 @@ provenance after invalid-point filtering is not available. Full scene-state
 save/export/import, subset export with provenance, multiple named selections
 with set operations, adaptive point sizing, multi-view previews, linked
 comparisons with error coloring, and screenshot legends remain follow-up work.
+
+## Alignment from an agent
+
+`align_3d_clouds` starts a job and returns `job.state="queued"`. Poll the same
+tool with `action="status"` until it reports `completed` or `failed`. A
+completed align-all job can contain failed clouds: inspect `progress.entries`
+and the resulting transforms, then capture to verify the fit visually.
+
+| Action            | Behavior                                                                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `auto`            | Move `source_index` onto fixed `target_index` using coarse yaw search, then ICP                                                         |
+| `icp`             | Refine a pair already close to the correct rigid pose                                                                                   |
+| `correspondences` | Fit at least three non-collinear paired world XYZ landmarks using `source_points` / `target_points`                                     |
+| `align_all`       | Keep `target_index` fixed; choose `strategy="anchor"`, `"nested"` (grow the aligned union), or `"complex"` (grow with extra hypotheses) |
+| `refine_all`      | Refine each cloud against the anchor                                                                                                    |
+| `status`          | Job outcome, shared workflow messages, per-cloud progress, undo availability and column-major transforms                                |
+| `undo`            | Restore transforms from before the last accepted agent alignment                                                                        |
+
+`up_axis` describes the source scans, not the current camera. It defaults to
+`"y"`; use `"z"` for Z-up scans. Automatic yaw search assumes level scans about
+that axis. These are rigid fits, without scale estimation or nonrigid warping.
+For pair `auto`/`icp`, `against_all_others=true` matches the moving cloud
+against the union of every other loaded cloud. Clear an active temporary region
+selection first. Load subsets as separate files to register them independently.
+The camera is preserved. Geometry refresh waits until alignment finishes, and
+other agent edits are rejected while busy.
+
+These tools reuse the existing registration workflows and Rust solvers.
+Sandboxed widgets may use the in-page WASM fallback when workers are blocked;
+during that calculation the canvas and status calls can pause. Jobs have no
+mid-solve cancellation. A renderer restart loses the running job and undo state.
+
+## Remote 3D files
+
+`open_3d_url(url="https://example.org/scan.pcd")` downloads a file on the local
+MCP server and opens the regular inline widget. This is an explicit outbound
+HTTP(S) request, including redirects. It does not require the remote server to
+allow browser CORS. The viewer still receives geometry through MCP transport.
+
+Use a direct file URL, not a repository page, login page or HTML preview.
+Supported formats are the same as `open_3d_files`; gzip files are decompressed.
+For extensionless or signed URLs, supply `filename="scan.pcd"`. Cookies, login
+flows and credentials embedded in URLs are not supported; signed links work
+while valid. Downloads default to a 256 MiB limit for both transferred and
+uncompressed bytes (configurable up to 1 GiB), with socket/transfer time limits.
+Temporary downloads are deleted when the scene closes. A successful download is
+not proof of successful parsing: inspect the rendered revision afterward.
+
+The native URL-input/history UI is maintained separately. Its website loading
+path runs in the browser and therefore still depends on CORS; the MCP tool uses
+the local server instead of duplicating or controlling that UI.

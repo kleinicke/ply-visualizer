@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention -- Python MCP wire-format keys */
 import * as THREE from 'three';
+import { alignmentStatus, agentAlignmentBusy } from './agentAlignment';
 import { applyAgentControl, fitAgentView, type ControlHost } from './agentControls';
 import { agentAttributes, rememberAgentCamera } from './agentInspection';
 import { agentViewState, objectPresentation } from './agentViewState';
@@ -33,6 +34,9 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
     if (document.documentElement.dataset.localSession !== 'loaded') {
       throw new Error('The scene has not loaded successfully yet.');
     }
+    if (command.operation === 'camera' && agentAlignmentBusy(host as unknown as ControlHost)) {
+      throw new Error('Alignment is running; wait before changing the camera');
+    }
     if (command.operation === 'camera') {
       rememberAgentCamera(host as unknown as ControlHost);
       const args = command.arguments;
@@ -63,6 +67,7 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
     }
     const attributes = await agentAttributes(host.spatialFiles);
     reply.result = {
+      alignment: alignmentStatus(host as unknown as ControlHost),
       renderer_id: rendererId,
       rendered_revision: Number(document.documentElement.dataset.sessionRevision),
       objects: host.spatialFiles.map(file => ({

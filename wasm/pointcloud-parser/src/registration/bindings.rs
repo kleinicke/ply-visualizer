@@ -308,6 +308,12 @@ pub fn icp_refine(
 /// Closed-form fit from matched correspondences.
 #[wasm_bindgen]
 pub fn fit_correspondences(source: &[f32], target: &[f32]) -> Option<RegistrationResult> {
+    // A collinear landmark set cannot determine rotation about its own line.
+    // Keep this guard on the public landmark API; ICP's internal least-squares
+    // steps have their own conditioning and may intentionally use such patches.
+    if !landmarks_span_plane(source) || !landmarks_span_plane(target) {
+        return None;
+    }
     let fit = fit_rigid_transform(source, target)?;
     let stats = RegisterStats {
         candidate_index: -1,
@@ -329,4 +335,44 @@ pub fn fit_correspondences(source: &[f32], target: &[f32]) -> Option<Registratio
 #[wasm_bindgen]
 pub fn cloud_position_conditioning(points: &[f32], cell: f64) -> f64 {
     position_conditioning(points, cell)
+}
+
+fn landmarks_span_plane(points: &[f32]) -> bool {
+    if points.len() < 9 || points.len() % 3 != 0 || points.iter().any(|v| !v.is_finite()) {
+        return false;
+    }
+    let vectors: Vec<[f64; 3]> = points
+        .chunks_exact(3)
+        .map(|p| std::array::from_fn(|i| p[i] as f64 - points[i] as f64))
+        .collect();
+    let norm = |v: &[f64; 3]| v.iter().map(|x| x * x).sum::<f64>();
+    let axis = vectors
+        .iter()
+        .max_by(|a, b| norm(a).total_cmp(&norm(b)))
+        .unwrap();
+    let scale = norm(axis);
+    if scale == 0.0 {
+        return false;
+    }
+    vectors.iter().any(|v| {
+        let cross = [
+            axis[1] * v[2] - axis[2] * v[1],
+            axis[2] * v[0] - axis[0] * v[2],
+            axis[0] * v[1] - axis[1] * v[0],
+        ];
+        norm(&cross) > scale * scale * 1e-12
+    })
+}
+
+#[cfg(test)]
+mod landmark_validation_tests {
+    use super::*;
+    #[test]
+    fn rejects_ambiguous_landmark_rotation() {
+        let line = [0., 0., 0., 1., 0., 0., 2., 0., 0.];
+        let plane = [0., 0., 0., 1., 0., 0., 0., 1., 0.];
+        assert!(fit_correspondences(&line, &plane).is_none());
+        assert!(fit_correspondences(&plane, &line).is_none());
+        assert!(fit_correspondences(&plane, &plane).is_some());
+    }
 }

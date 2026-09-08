@@ -10,7 +10,7 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
   test(`direct MCP ${fixture} widget loads geometry and supports agent controls without network or nested frames`, async ({
     page,
   }) => {
-    test.setTimeout(90000);
+    test.setTimeout(180000);
     page.on('pageerror', error => console.log('APP ERROR', error.message));
     const python = path.resolve('../packages/python/.venv/bin/python');
     const child = spawn(
@@ -22,6 +22,7 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
           PLY_AGENT_TEST_FILE:
             process.env.PLY_AGENT_TEST_FILE ?? path.resolve('test/fixtures', fixture),
           PYTHONPATH: path.resolve('../packages/python'),
+          PLY_AGENT_TEST_REMOTE: fixture === 'agent-labels.pcd' ? '1' : '',
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       }
@@ -304,6 +305,124 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
       expect(afterUpdate.camera.up).toEqual(fixed.camera.up);
       expect(afterUpdate.objects).toHaveLength(1);
       expect(afterUpdate.selection).toBeNull();
+      if (fixture === 'agent-labels.pcd' && !process.env.PLY_AGENT_TEST_FILE) {
+        // Same asymmetric Z-up room construction used by the native Rust tests.
+        let seed = 7;
+        const random = () => {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          return seed / 4294967296;
+        };
+        const target = Array.from({ length: 20000 }, (_, i) => {
+          const u = random(),
+            v = random();
+          if (i % 11 === 0) {
+            return [5.5 + u * 0.4, 1 + v * 0.4, random() * 3];
+          }
+          return [
+            [0, u * 6, v * 3],
+            [8, u * 6, v * 3],
+            [u * 8, 0, v * 3],
+            [u * 8, 6, v * 3],
+            [u * 8, v * 6, 0],
+            [u * 8, v * 6, 3],
+          ][i % 6];
+        });
+        const offset = [0.05, -0.04, 0.03];
+        const source = target.map(p => p.map((v, k) => v + offset[k]));
+        const replaced = await control('update_3d_scene', { points: source, target });
+        await expect(viewer.locator('html')).toHaveAttribute(
+          'data-session-revision',
+          String(replaced.revision)
+        );
+        async function align(args: any, success: boolean | null = true) {
+          const started = await control('align_3d_clouds', { up_axis: 'z', ...args });
+          expect(started.job.state).toBe('queued');
+          let status: any;
+          await expect
+            .poll(
+              async () => {
+                status = await control('align_3d_clouds', { action: 'status' });
+                return status.job.state;
+              },
+              { timeout: 60000, intervals: [500, 1000] }
+            )
+            .toMatch(/completed|failed/);
+          if (success !== null) {
+            expect(status.job.state, JSON.stringify(status)).toBe(success ? 'completed' : 'failed');
+          }
+          return status;
+        }
+        const correspondences = {
+          action: 'correspondences',
+          source_index: 0,
+          target_index: 1,
+          source_points: source.slice(0, 4),
+          target_points: target.slice(0, 4),
+        };
+        const fitted = await align(correspondences);
+        expect(fitted.job.metrics.rmse).toBeLessThan(0.00001);
+        const matrix = fitted.transforms[0].matrix;
+        offset.forEach((v, i) => expect(matrix[12 + i]).toBeCloseTo(-v, 5));
+        await control('align_3d_clouds', { action: 'undo' });
+        expect((await control('inspect_3d_scene')).objects[0].local_to_world[12]).toBe(0);
+        await align(
+          {
+            ...correspondences,
+            source_points: [
+              [0, 0, 0],
+              [1, 0, 0],
+              [2, 0, 0],
+            ],
+            target_points: [
+              [0, 1, 0],
+              [1, 1, 0],
+              [2, 1, 0],
+            ],
+          },
+          false
+        );
+        const refined = await align({
+          action: 'icp',
+          source_index: 0,
+          target_index: 1,
+          against_all_others: true,
+        });
+        offset.forEach((v, i) => expect(refined.transforms[0].matrix[12 + i]).toBeCloseTo(-v, 2));
+        expect(refined.can_undo).toBe(true);
+        await control('align_3d_clouds', { action: 'undo' });
+        await align({ action: 'auto', source_index: 0, target_index: 1, up_axis: 'z' });
+        await control('align_3d_clouds', { action: 'undo' });
+        for (const strategy of ['anchor', 'nested', 'complex']) {
+          const result = await align(
+            { action: 'align_all', target_index: 1, strategy },
+            strategy === 'complex' ? null : true
+          );
+          expect(result.progress.entries).toHaveLength(1);
+          if (result.job.state === 'completed') {
+            expect(result.progress.entries[0].state).toBe('aligned');
+            await control('align_3d_clouds', { action: 'undo' });
+          } else {
+            // Complex mode has stricter overlap gates: rejection must be honest and reversible.
+            expect(result.progress.entries[0].state).toBe('failed');
+            expect(result.progress.entries[0].detail).toContain('overlap');
+            expect(result.transforms[0].matrix[12]).toBe(0);
+            expect(result.can_undo).toBe(false);
+          }
+        }
+        await align({ action: 'refine_all', target_index: 1 });
+        const revision = await control('update_3d_scene', {
+          points: [
+            [0, 0, 0],
+            [1, 0, 0],
+            [0, 1, 0],
+          ],
+        });
+        await expect(viewer.locator('html')).toHaveAttribute(
+          'data-session-revision',
+          String(revision.revision)
+        );
+        expect((await control('align_3d_clouds', { action: 'status' })).can_undo).toBe(false);
+      }
       const capture = await call('capture_3d_view', { scene_id: sceneId });
       expect(capture.content.some((c: any) => c.type === 'image')).toBe(true);
       await page.screenshot({ path: test.info().outputPath('direct-mcp.png') });
