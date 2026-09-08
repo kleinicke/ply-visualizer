@@ -189,3 +189,9 @@ pub fn decode_png16_fast(data: &[u8]) -> Result<PngResult, JsValue> {
     prepare();
     core::decode_png16_fast(data).map(|inner| PngResult { inner }).map_err(js_error)
 }
+
+#[wasm_bindgen]
+pub fn decode_png_samples_fast(data: &[u8]) -> Result<PngResult, JsValue> {
+    prepare();
+    core::decode_png_samples_fast(data).map(|inner| PngResult { inner }).map_err(js_error)
+}

@@ -84,7 +84,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
     async def test_agent_workflow(self):
         async with Client(create_server([Path.cwd()])) as client:
             tools = (await client.list_tools()).tools
-            self.assertEqual(len(tools), 26)
+            self.assertEqual(len(tools), 27)
             self.assertTrue(all(not t.description.startswith("Use this viewer") for t in tools))
             named = next(t for t in tools if t.name == "manage_3d_selections").input_schema["properties"]
             self.assertFalse(named["isolate"]["default"])
@@ -157,6 +157,6 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             args=['-m', 'ply_visualizer.mcp_server', '--root', str(Path.cwd())],
             env={**os.environ, 'PYTHONPATH': source})
         async with Client(process) as client:
-            self.assertEqual(len((await client.list_tools()).tools), 26)
+            self.assertEqual(len((await client.list_tools()).tools), 27)
             resource = await client.read_resource('viewer://capabilities')
             self.assertEqual(json.loads(resource.contents[0].text)['transport'], 'stdio')

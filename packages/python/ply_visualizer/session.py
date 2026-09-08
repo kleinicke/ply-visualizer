@@ -24,11 +24,11 @@ from .arrays import point_rows
 from .agent_bridge import BrowserBridge
 
 
-FORMATS = frozenset(".ply .xyz .xyzn .xyzrgb .pcd .pts .obj .stl .off .gltf .glb .fbx .dae .3ds .las .laz .e57 .spz .splat .ksplat .sog".split())
+FORMATS = frozenset(".plydepth .ply .xyz .xyzn .xyzrgb .pcd .pts .obj .stl .off .gltf .glb .fbx .dae .3ds .las .laz .e57 .spz .splat .ksplat .sog".split())
 ASSETS = Path(__file__).parent / "_assets"
 
 
-MODEL_ASSETS = frozenset(".bin .png .jpg .jpeg .webp .bmp .tga .ktx2 .dds .mtl".split())
+MODEL_ASSETS = frozenset(".npy .npz .tif .tiff .pfm .exr .txt .bin .png .jpg .jpeg .webp .bmp .tga .ktx2 .dds .mtl".split())
 
 def _points_file(points, colors, directory: Path) -> Path:
     """Serialize, without a NumPy dependency or converting arrays into JSON."""

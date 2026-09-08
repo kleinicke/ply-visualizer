@@ -1,6 +1,7 @@
 import { setAgentPointSizeMode } from './agentPointSizing';
 /** Local Python/CLI and notebook host; rendering stays in the shared engine. */
 import '../main';
+import { projectAgentDepth, type DepthJob } from '../depth/agentDepth';
 import { agentAlignmentBusy, resetAgentAlignment } from './agentAlignment';
 import * as THREE from 'three';
 import { mount } from 'svelte';
@@ -108,7 +109,27 @@ async function start(): Promise<void> {
     }
     const previousCount = host.spatialFiles.length;
     try {
-      await handleBrowserFiles(host, files);
+      const ordinary: File[] = [];
+      for (let i = 0; i < files.length; i++) {
+        if (files[i].name.endsWith('.plydepth')) {
+          const job: DepthJob = JSON.parse(await files[i].text());
+          if (
+            !Number.isInteger(job.asset_count) ||
+            job.asset_count < 1 ||
+            i + job.asset_count >= files.length
+          ) {
+            throw new Error('Invalid depth job asset count');
+          }
+          const cloud = await projectAgentDepth(job, files.slice(i + 1, i + 1 + job.asset_count));
+          await host.displayFiles([cloud]);
+          i += job.asset_count;
+        } else {
+          ordinary.push(files[i]);
+        }
+      }
+      if (ordinary.length) {
+        await handleBrowserFiles(host, ordinary);
+      }
       if (
         host.spatialFiles.length <
         previousCount +

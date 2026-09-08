@@ -11,6 +11,7 @@ pub struct DepthProjectResult {
     positions: Vec<f32>,
     colors: Vec<u8>,
     pixel_coords: Vec<u16>,
+    source_indices: Vec<u32>,
     point_count: u32,
     width: u32,
     height: u32,
@@ -86,6 +87,11 @@ impl DepthProjectResult {
     #[wasm_bindgen(getter)]
     pub fn non_converged_count(&self) -> u32 {
         self.non_converged_count
+    }
+
+    #[wasm_bindgen]
+    pub fn take_source_indices(&mut self) -> Vec<u32> {
+        mem::take(&mut self.source_indices)
     }
 
     #[wasm_bindgen]
@@ -249,6 +255,7 @@ pub fn project_depth_band(
         cx,
         cy,
         coefficients,
+        false,
     )
 }
 
@@ -280,6 +287,7 @@ pub fn project_depth_fast(
         cx,
         cy,
         coefficients,
+        false,
     )
 }
 
@@ -298,6 +306,7 @@ fn project_depth_impl(
     cx: f32,
     cy: f32,
     coefficients: &[f64],
+    retain_indices: bool,
 ) -> Result<DepthProjectResult, JsValue> {
     let expected = (width as usize)
         .checked_mul(height as usize)
@@ -337,6 +346,11 @@ fn project_depth_impl(
         }
     }
 
+    let mut source_indices = if retain_indices {
+        Vec::with_capacity(valid_count)
+    } else {
+        Vec::new()
+    };
     let mut positions = Vec::with_capacity(valid_count * 3);
     let mut colors = Vec::with_capacity(valid_count * 3);
     let needs_pixel_coords = matches!(
@@ -421,6 +435,9 @@ fn project_depth_impl(
                 pixel_coords.push(u.min(u16::MAX as usize) as u16);
                 pixel_coords.push((v + row_offset as usize).min(u16::MAX as usize) as u16);
             }
+            if retain_indices {
+                source_indices.push((v * width as usize + u) as u32);
+            }
             point_index += 1;
         }
     }
@@ -429,6 +446,7 @@ fn project_depth_impl(
         positions,
         colors,
         pixel_coords,
+        source_indices,
         point_count: point_index as u32,
         width,
         height,
@@ -436,6 +454,38 @@ fn project_depth_impl(
         rejected_count,
         non_converged_count,
     })
+}
+
+#[wasm_bindgen]
+pub fn project_depth_inspection(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    kind: &str,
+    camera_model: &str,
+    convention: &str,
+    fx: f32,
+    fy: f32,
+    cx: f32,
+    cy: f32,
+    coefficients: &[f64],
+) -> Result<DepthProjectResult, JsValue> {
+    project_depth_impl(
+        data,
+        width,
+        height,
+        0,
+        None,
+        kind,
+        camera_model,
+        convention,
+        fx,
+        fy,
+        cx,
+        cy,
+        coefficients,
+        true,
+    )
 }
 
 /// Project one OpenCV-coordinate ray. Returns
@@ -595,4 +645,3 @@ pub fn camera_unproject(
         result.value[2],
     ])
 }
-

@@ -22,11 +22,13 @@ export interface DepthProjectWasmResult {
   width: number;
   height: number;
   pixelCoords?: Uint16Array;
+  sourceIndices?: Uint32Array;
   rejectedCount: number;
   nonConvergedCount: number;
 }
 
 export interface DepthProjectWasmParams {
+  retainIndices?: boolean;
   kind?: string;
   cameraModel: string;
   convention?: string;
@@ -197,7 +199,10 @@ export function projectDepthWasmSync(
 
   let result: any = null;
   try {
-    result = wasmApi.project_depth_fast(
+    const project = params.retainIndices
+      ? wasmApi.project_depth_inspection
+      : wasmApi.project_depth_fast;
+    result = project(
       data,
       width,
       height,
@@ -213,6 +218,9 @@ export function projectDepthWasmSync(
 
     const hasPixelCoords = !!result.has_pixel_coords;
     return {
+      sourceIndices: params.retainIndices
+        ? new Uint32Array(result.take_source_indices())
+        : undefined,
       vertices: new Float32Array(result.take_positions()),
       colors: new Uint8Array(result.take_colors()),
       pointCount: result.point_count,
@@ -223,7 +231,10 @@ export function projectDepthWasmSync(
       nonConvergedCount: result.non_converged_count,
     };
   } catch (error) {
-    console.warn('[TiffWasm] depth projection failed, using JS fallback:', error);
+    if (params.retainIndices) {
+      throw error;
+    }
+    console.warn('[TiffWasm] depth projection failed:', error);
     return null;
   } finally {
     try {
@@ -433,7 +444,10 @@ export function normalizeDepthWasmSync(
  * Decode a 16-bit PNG at full precision. Returns null when WASM is
  * unavailable; throws when the buffer is not a PNG the decoder accepts.
  */
-export async function decodePng16Wasm(buffer: ArrayBuffer): Promise<Png16WasmResult | null> {
+export async function decodePng16Wasm(
+  buffer: ArrayBuffer,
+  allowEight = false
+): Promise<Png16WasmResult | null> {
   const ok = await initTiffWasm();
   const wasmApi = getWasmBindgen();
   if (!ok || typeof wasmApi?.decode_png16_fast !== 'function') {
@@ -441,7 +455,9 @@ export async function decodePng16Wasm(buffer: ArrayBuffer): Promise<Png16WasmRes
   }
   let result: any = null;
   try {
-    result = wasmApi.decode_png16_fast(new Uint8Array(buffer));
+    result = (allowEight ? wasmApi.decode_png_samples_fast : wasmApi.decode_png16_fast)(
+      new Uint8Array(buffer)
+    );
     return {
       width: result.width,
       height: result.height,
@@ -530,5 +546,30 @@ export async function decodeTiffWasm(buffer: ArrayBuffer): Promise<TiffWasmResul
     } catch {
       /* already freed */
     }
+  }
+}
+
+/** Decode COLMAP dense samples using the shared Rust decoder. */
+export async function decodeColmapDepthWasm(bytes: Uint8Array): Promise<Float32Array> {
+  if (!(await initTiffWasm())) {
+    throw new Error('Depth WASM unavailable');
+  }
+  return new Float32Array(getWasmBindgen().decode_colmap_depth(bytes));
+}
+
+export async function decodeDepthPfmWasm(bytes: Uint8Array) {
+  if (!(await initTiffWasm())) {
+    throw new Error('Depth WASM unavailable');
+  }
+  const result = getWasmBindgen().decode_depth_pfm(bytes);
+  try {
+    return {
+      width: result.width as number,
+      height: result.height as number,
+      channels: result.channels as number,
+      data: new Float32Array(result.take_data()),
+    };
+  } finally {
+    result.free();
   }
 }

@@ -164,7 +164,7 @@ async function pickSingleView(host: ControlHost, screen: number[]) {
         ? null
         : ((selected?.source ?? file)?.sourcePointIndices?.[sourceIndex] ?? null),
     index_space:
-      'source_point_index is decoded; source_row is original zero-based PCD record, null when unavailable',
+      'source_point_index is decoded; source_row is original zero-based source record (depth raster: v*width+u), null when unavailable',
     attributes: Object.fromEntries(
       Object.entries(file?.scalarFields ?? {}).map(([key, values]) => [
         key,
@@ -287,7 +287,7 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
     scalarFields: Object.fromEntries(
       Object.entries(source.scalarFields ?? {}).map(([name, array]) => [name, subset(array, 1)!])
     ),
-    metadata: { agentSelection: true },
+    metadata: { ...source.metadata, agentSelection: true },
     useTypedArrays: true,
   };
   clearAgentSelection(host);

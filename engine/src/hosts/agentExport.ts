@@ -38,6 +38,7 @@ export async function agentExport(host: ControlHost, a: Record<string, any>) {
       ): Uint8Array;
     };
     const metadata = {
+      ...(data.metadata?.depth ? { depth: data.metadata.depth } : {}),
       coordinates: 'object-local; apply local_to_world for the rendered pose',
       local_to_world: host.transformationMatrices[host.spatialFiles.indexOf(data)].toArray(),
       source_origin: data.sourceOrigin ?? null,

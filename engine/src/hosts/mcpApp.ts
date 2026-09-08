@@ -123,6 +123,15 @@ window.fetch = async (input, init) => {
       },
     });
   }
+  if (address.includes('/__ply_assets__/')) {
+    await sceneReady;
+    const bytes = await readBytes('assets/' + address.split('/__ply_assets__/')[1]);
+    return new Response(bytes, {
+      headers: {
+        'Content-Type': address.endsWith('.wasm') ? 'application/wasm' : 'application/octet-stream',
+      },
+    });
+  }
   const [path, query = ''] = address.replace(/^\.\//, '').split('?', 2);
   if (
     !['session.json', 'agent/command', 'agent/result'].includes(path) &&
@@ -152,7 +161,7 @@ window.fetch = async (input, init) => {
   return new Response(new Blob([(await readBytes(path)).buffer as ArrayBuffer]));
 };
 
-async function readBytes(resource: string): Promise<Uint8Array> {
+async function readBytes(resource: string): Promise<Uint8Array<ArrayBuffer>> {
   await sceneReady;
   const first = await call('read_viewer_data', { scene_id: sceneId, resource, offset: 0 });
   const chunkSize = 512 * 1024;

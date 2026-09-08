@@ -1,3 +1,4 @@
+import { localSessionState } from '../state/localSession.svelte';
 import { agentBuild } from './agentBuild';
 import { updateAgentLegend } from './agentLegend';
 import { captureAgentCanvas } from './agentCapture';
@@ -37,7 +38,11 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
   let reply: { id: string; result?: unknown; error?: string } = { id: command.id };
   try {
     if (document.documentElement.dataset.localSession !== 'loaded') {
-      throw new Error('The scene has not loaded successfully yet.');
+      throw new Error(
+        localSessionState.error
+          ? `Scene loading failed: ${localSessionState.error}`
+          : 'The scene has not loaded successfully yet.'
+      );
     }
     if (command.operation === 'camera' && agentAlignmentBusy(host as unknown as ControlHost)) {
       throw new Error('Alignment is running; wait before changing the camera');

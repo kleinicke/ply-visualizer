@@ -3,6 +3,13 @@ use crate::PngResult;
 use std::io::Cursor;
 
 pub(crate) fn decode_png16_impl(data: &[u8]) -> Result<PngResult, DecodeError> {
+    decode_png_samples_impl(data, false)
+}
+
+pub(crate) fn decode_png_samples_impl(
+    data: &[u8],
+    allow_eight: bool,
+) -> Result<PngResult, DecodeError> {
     let start_time = crate::time::now_ms();
     let cursor = Cursor::new(data);
     let mut limits = png::Limits::default();
@@ -21,7 +28,9 @@ pub(crate) fn decode_png16_impl(data: &[u8]) -> Result<PngResult, DecodeError> {
     raw.truncate(info.buffer_size());
     let decode_time = crate::time::now_ms() - decode_start;
 
-    if info.bit_depth != png::BitDepth::Sixteen {
+    if info.bit_depth != png::BitDepth::Sixteen
+        && !(allow_eight && info.bit_depth == png::BitDepth::Eight)
+    {
         return Err(DecodeError::new(
             "Rust PNG fast path only supports 16-bit PNG output",
         ));
@@ -42,7 +51,12 @@ pub(crate) fn decode_png16_impl(data: &[u8]) -> Result<PngResult, DecodeError> {
         .checked_mul(info.height as usize)
         .and_then(|v| v.checked_mul(channels as usize))
         .ok_or_else(|| DecodeError::new("PNG dimensions overflow"))?;
-    if raw.len() < expected_values * 2 {
+    let sample_bytes = if info.bit_depth == png::BitDepth::Eight {
+        1
+    } else {
+        2
+    };
+    if raw.len() < expected_values * sample_bytes {
         return Err(DecodeError::new(
             "PNG decoded byte count is smaller than expected",
         ));
@@ -52,16 +66,20 @@ pub(crate) fn decode_png16_impl(data: &[u8]) -> Result<PngResult, DecodeError> {
     let mut values: Vec<u16> = Vec::with_capacity(expected_values);
     let src_ptr = raw.as_ptr();
     let dst = values.as_mut_ptr();
-    for i in 0..expected_values {
-        // SAFETY: `raw` was checked to contain at least `expected_values * 2`
-        // bytes, and `values` has capacity for every output sample.
-        unsafe {
-            let be = (src_ptr.add(i * 2) as *const u16).read_unaligned();
-            dst.add(i).write(u16::from_be(be));
+    if sample_bytes == 1 {
+        values.extend(raw.iter().take(expected_values).map(|&v| v as u16));
+    } else {
+        for i in 0..expected_values {
+            // SAFETY: `raw` was checked to contain at least `expected_values * 2`
+            // bytes, and `values` has capacity for every output sample.
+            unsafe {
+                let be = (src_ptr.add(i * 2) as *const u16).read_unaligned();
+                dst.add(i).write(u16::from_be(be));
+            }
         }
-    }
-    unsafe {
-        values.set_len(expected_values);
+        unsafe {
+            values.set_len(expected_values);
+        }
     }
     let convert_time = crate::time::now_ms() - convert_start;
     let total_time = crate::time::now_ms() - start_time;
@@ -70,7 +88,7 @@ pub(crate) fn decode_png16_impl(data: &[u8]) -> Result<PngResult, DecodeError> {
         width: info.width,
         height: info.height,
         channels,
-        bit_depth: 16,
+        bit_depth: (sample_bytes * 8) as u32,
         color_type: png_color_type_to_u32(info.color_type),
         data_u16: values,
         timing_read_info_ms: read_info_time,
@@ -89,4 +107,3 @@ fn png_color_type_to_u32(color_type: png::ColorType) -> u32 {
         png::ColorType::Rgba => 6,
     }
 }
-

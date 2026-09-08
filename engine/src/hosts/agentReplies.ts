@@ -34,6 +34,13 @@ export function compactAgentReply(
         scalar_fields: o.scalar_fields,
         distance: o.distance,
         animation: o.animation,
+        depth: o.depth
+          ? {
+              source_pixels: o.depth.source_pixels,
+              output_points: o.depth.output_points,
+              units: o.depth.units,
+            }
+          : undefined,
       })),
       detail_hint: 'Use detail=full for attributes, matrices, bounds and coordinate conventions.',
     };

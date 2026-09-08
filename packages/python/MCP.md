@@ -1,6 +1,6 @@
 # Local MCP integration
 
-The current checkout is an **unpublished 0.4.0.dev5 preview**. It replaces
+The current checkout is an **unpublished 0.4.0.dev6 preview**. It replaces
 0.3.0's nested localhost iframe with the shared renderer running directly in the
 MCP widget. PyPI still serves 0.3.0 until the next requested release.
 
@@ -8,6 +8,15 @@ The optional MCP server lets an agent use the shared 3D viewer and inspect its
 actual rendered output. Python 3.10+ and a WebGL-capable MCP Apps host (or an
 explicit browser fallback) are required. The recommended installer is uv. The
 package bundles its renderer; users need no Node.js installation.
+
+## Depth and disparity inputs
+
+`open_depth_image` accepts explicit calibration translated from accompanying
+files or context, aligned RGB/mask/confidence rasters, or a COLMAP dense
+workspace. Read `viewer://depth-calibration` for camera models and encoding
+conventions. See [depth workflows](../../docs/depth-agent-workflows.md) for
+Python, tensor, notebook and MCP examples, and the distributable companion
+skill.
 
 ## Connect an agent
 
@@ -233,7 +242,7 @@ presentation. Full detail can also be requested on individual controls. PNG and
 artifact tools do not return raw geometry to the model. Error messages stay
 informative in both modes.
 
-There are 24 agent-facing tools and two app-only transport tools. The additional
+There are 25 agent-facing tools and two app-only transport tools. The additional
 inspection tools are:
 
 | Tool                     | Use                                                                          |

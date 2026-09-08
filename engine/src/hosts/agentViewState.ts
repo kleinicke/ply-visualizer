@@ -30,6 +30,7 @@ export function objectPresentation(host: ControlHost, index: number) {
   ];
   host.meshes[index]?.updateWorldMatrix(true, false);
   return {
+    depth: host.spatialFiles[index].metadata?.depth ?? null,
     distance: distanceState(host, index),
     transform_undo_available: transformUndoCount(host.spatialFiles[index]),
     animation: host.spatialFiles[index].sceneModel

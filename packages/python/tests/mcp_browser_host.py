@@ -32,7 +32,9 @@ async def main():
     path = Path(extra) if extra else root / 'engine/test/fixtures/agent-mesh.ply'
     with remote_fixture(path) as url:
         async with Client(create_server(roots)) as client:
-            if url:
+            if os.environ.get('PLY_AGENT_TEST_DEPTH'):
+                initial = await client.call_tool('open_depth_image', json.loads(os.environ['PLY_AGENT_TEST_DEPTH']))
+            elif url:
                 initial = await client.call_tool('open_3d_url', {'url': url})
             else:
                 initial = await client.call_tool('open_3d_files', {'paths': [str(path)], 'open_browser': False})

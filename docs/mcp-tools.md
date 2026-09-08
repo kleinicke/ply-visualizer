@@ -12,6 +12,7 @@ functions to import into a Python script. The MCP client supplies context.
 ## Tool index
 
 - [open_3d_files](#open-3d-files)
+- [open_depth_image](#open-depth-image)
 - [visualize_points](#visualize-points)
 - [open_3d_url](#open-3d-url)
 - [update_3d_scene](#update-3d-scene)
@@ -51,6 +52,34 @@ open_3d_files(
     paths: Annotated[list[str], Field(min_length=1, max_length=32)],
     open_browser: bool | None = None,
     scene_id: str | None = None,
+)
+```
+
+## open depth image
+
+Tool: `open_depth_image`
+
+Project a depth/disparity raster inline using explicit calibration from
+surrounding files/context. Read viewer://depth-calibration for coefficient
+ordering and encoding. Calibration dimensions must match the raster; no
+parameter guessing. Supports NPY/NPZ, TIFF, PNG8/16, EXR, PFM and COLMAP dense
+.bin. Optional aligned RGB (HxWx3, 0..255), confidence and mask files. Pass
+scene_id to append without moving the camera. For a COLMAP dense workspace, set
+path=workspace and colmap_image=exact image name; calibration comes from its
+undistorted sparse model. Inspect after loading for pixel counts, provenance and
+projection diagnostics; picks/exports retain original pixel coordinates and raw
+values.
+
+```python
+open_depth_image(
+    path: str,
+    calibration: DepthCalibration | None = None,
+    rgb: str | None = None,
+    confidence: str | None = None,
+    mask: str | None = None,
+    scene_id: str | None = None,
+    colmap_image: str | None = None,
+    colmap_variant: Literal['geometric', 'photometric'] = 'geometric',
 )
 ```
 
@@ -496,10 +525,10 @@ Tool: `export_3d_selection`
 
 Write the active or named subset to a NEW binary .ply under configured roots
 (maximum 256 MiB). Preserve decoded RGB, normals, scalar attributes, decoded
-indices, and original PCD source_row when available. Coordinates are object-
-local; header stores local_to_world and source origin. Returns a path, never
-point data/base64. No overwrite; not a lossless copy of the original file's
-numeric types.
+indices, and original source_row when available (depth raster:
+pixel_v*width+pixel_u). Coordinates are object-local; header stores
+local_to_world and source origin. Returns a path, never point data/base64. No
+overwrite; not a lossless copy of the original file's numeric types.
 
 ```python
 export_3d_selection(

@@ -1281,3 +1281,9 @@ pub fn decode_tiff_strip_range_raw(
     Ok(raster)
 }
 
+
+/// Raw 8/16-bit PNG samples, without display color or gamma conversion.
+#[cfg(feature = "png")]
+pub fn decode_png_samples_fast(data: &[u8]) -> Result<PngResult, DecodeError> {
+    formats::png::decode_png_samples_impl(data, true)
+}

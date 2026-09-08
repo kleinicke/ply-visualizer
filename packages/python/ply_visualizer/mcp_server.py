@@ -13,6 +13,7 @@ import re
 
 from .session import FORMATS, MODEL_ASSETS, show
 from .diagnostics import VERSION, build_info
+from .depth import DepthCalibration, show_depth, show_colmap
 
 
 class SceneManager:
@@ -124,6 +125,48 @@ def create_server(roots):
             manager.get(scene_id).add_files(files)
             return manager.describe(scene_id)
         return manager.add(lambda: show(*files, open_browser=browser_default(ctx, open_browser)))
+
+    @server.tool(annotations=local, meta=ui_meta, structured_output=True)
+    @explain_errors
+    def open_depth_image(path: str, ctx: Context, calibration: DepthCalibration | None = None,
+                         rgb: str | None = None, confidence: str | None = None, mask: str | None = None,
+                         scene_id: str | None = None, colmap_image: str | None = None,
+                         colmap_variant: Literal["geometric", "photometric"] = "geometric") -> dict[str, Any]:
+        """Project a depth/disparity raster inline using explicit calibration from surrounding files/context. Read viewer://depth-calibration for coefficient ordering and encoding. Calibration dimensions must match the raster; no parameter guessing. Supports NPY/NPZ, TIFF, PNG8/16, EXR, PFM and COLMAP dense .bin. Optional aligned RGB (HxWx3, 0..255), confidence and mask files. Pass scene_id to append without moving the camera. For a COLMAP dense workspace, set path=workspace and colmap_image=exact image name; calibration comes from its undistorted sparse model. Inspect after loading for pixel counts, provenance and projection diagnostics; picks/exports retain original pixel coordinates and raw values."""
+        existing = manager.get(scene_id) if scene_id else None
+        if colmap_image is not None:
+            if calibration is not None or any(v is not None for v in (rgb, confidence, mask)):
+                raise ValueError("COLMAP workspace mode derives calibration; use raster mode for explicit calibration/companions")
+            root = Path(path).expanduser()
+            root = (root if root.is_absolute() else manager.roots[0] / root).resolve(strict=True)
+            if not root.is_dir() or not any(root.is_relative_to(allowed) for allowed in manager.roots):
+                raise ValueError("COLMAP workspace must be a directory inside configured roots")
+            factory = lambda: show_colmap(root, image=colmap_image, variant=colmap_variant, session=existing, open_browser=False)
+        else:
+            if calibration is None: raise ValueError("Explicit calibration is required; read parameter files/context and provide width,height,fx,fy,cx,cy,kind. No calibration is inferred from image pixels.")
+            inputs = {key: manager.path(value) if value is not None else None for key, value in (("rgb", rgb), ("confidence", confidence), ("mask", mask))}
+            depth_path = manager.path(path)
+            factory = lambda: show_depth(depth_path, calibration=calibration, session=existing, open_browser=False, **inputs)
+        if scene_id:
+            factory()
+            return manager.describe(scene_id)
+        return manager.add(factory)
+
+    @server.resource("viewer://depth-calibration")
+    def depth_calibration_schema() -> str:
+        """Explicit depth encoding, camera model coefficients, and provenance conventions."""
+        return json.dumps({
+            "required": ["width", "height", "fx", "fy", "cx", "cy", "kind"],
+            "intrinsics": "Pixel coordinates at the exact raster resolution. Adjust for crop/resize explicitly; never infer focal length or metric scale from pixels.",
+            "kind": {"z": "axial meters", "depth": "ray range meters", "disparity": "rectified horizontal pixel disparity; Z=fx*baseline/(raw*value_scale+value_offset+disparity_offset)", "inverse_depth": "inverse axial meters; Z=1/(raw*value_scale+value_offset)"},
+            "raw_values": "For depth/z: meters=raw*value_scale+value_offset. invalid_values (default [0]), nonfinite values, mask=0 and low confidence are removed before conversion; nonpositive depth is removed. min/max_depth are in output depth units.",
+            "models": {"pinhole-ideal": [], "pinhole-opencv": ["k1", "k2", "p1", "p2", "k3", "k4", "k5", "k6", "s1", "s2", "s3", "s4", "tauX", "tauY"], "fisheye-opencv": ["k1", "k2", "k3", "k4"], "fisheye-kb3": ["k0", "k1", "k2", "k3"], "fisheye624": ["k0", "k1", "k2", "k3", "k4", "k5", "p0", "p1", "s0", "s1", "s2", "s3"], "fisheye-equidistant": [], "e57-pinhole": [], "e57-spherical": [], "e57-cylindrical": []},
+            "coefficients": "pinhole-opencv accepts 4,5,8,12,14 in listed order; other models require exactly the listed count. See the shared camera model documentation for model equations. Rectified input must use rectified intrinsics and zero distortion; disparity requires image_rectified=true and pinhole-ideal.",
+            "coordinates": "convention defaults opencv: +X right,+Y down,+Z forward. opengl: +X right,+Y up,-Z forward. camera_to_world: optional column-major affine 4x4, operating in chosen camera convention. Input pixel (0,0) is top left.",
+            "sources": "Map each parameter/group to the source calibration file and key, or explicit user assumption. Agent reads context; server never scans arbitrary directories.",
+            "selection": "array_key required for ambiguous NPZ; channel required for multi-channel depth. Picks and subset exports include pixel_u,pixel_v,raw_depth_value,depth_value,confidence when supplied, and source_row=v*width+u.",
+            "colmap": "Use path=dense workspace, colmap_image=exact name, colmap_variant=geometric(default) or photometric. Uses sparse undistorted camera, rescales its intrinsics to depth resolution, and inverts the stored world-to-camera pose. Units remain reconstruction units, not assumed meters."
+        })
 
     @server.tool(annotations=local, meta=ui_meta, structured_output=True)
     @explain_errors
@@ -396,7 +439,7 @@ def create_server(roots):
     @explain_errors
     def export_3d_selection(scene_id: str, path: str,
         name: Annotated[str, Field(min_length=1, max_length=100)] | None = None) -> dict[str, Any]:
-        """Write the active or named subset to a NEW binary .ply under configured roots (maximum 256 MiB). Preserve decoded RGB, normals, scalar attributes, decoded indices, and original PCD source_row when available. Coordinates are object-local; header stores local_to_world and source origin. Returns a path, never point data/base64. No overwrite; not a lossless copy of the original file's numeric types."""
+        """Write the active or named subset to a NEW binary .ply under configured roots (maximum 256 MiB). Preserve decoded RGB, normals, scalar attributes, decoded indices, and original source_row when available (depth raster: pixel_v*width+pixel_u). Coordinates are object-local; header stores local_to_world and source origin. Returns a path, never point data/base64. No overwrite; not a lossless copy of the original file's numeric types."""
         from .inspection_files import export_subset
         return export_subset(manager,scene_id,path,name)
 
@@ -489,7 +532,8 @@ def create_server(roots):
         import json
         return json.dumps({"build": build_info(), "formats": sorted(FORMATS), "roots": [str(root) for root in manager.roots],
                            "transport": "stdio", "workflows": "viewer://workflows", "inline_mcp_app": True, "inline_requires": "MCP Apps host with app-to-server tools and WebGL",
-                           "workflow": ["open_3d_files or visualize_points", "inspect_3d_scene", "set_3d_camera", "capture_3d_view", "close_3d_scene"]})
+                           "depth": {"tool": "open_depth_image", "calibration": "viewer://depth-calibration", "formats": ["npy", "npz", "tif", "tiff", "png8/16", "exr", "pfm", "COLMAP dense bin"], "discovery": "agent reads accompanying context and supplies explicit calibration"},
+                           "workflow": ["open_3d_files, visualize_points or open_depth_image", "inspect_3d_scene", "set_3d_camera", "capture_3d_view", "close_3d_scene"]})
 
     return server
 
