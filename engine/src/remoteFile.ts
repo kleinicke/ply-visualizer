@@ -37,7 +37,7 @@ export function remoteFileName(response: Response, source: URL, bytes: Uint8Arra
   }
   // Fetch may already have decoded Content-Encoding: gzip. Strip the wrapper
   // suffix regardless, and detect the inner format from the decoded bytes.
-  name = safeName(name).replace(/\.gz$/i, '');
+  name = safeName(name).replace(/\.(?:gz|zlib|zz|deflate|deflate-raw)$/i, '');
   if (!/\.[a-z0-9]+$/i.test(name)) {
     const header = new TextDecoder().decode(bytes.subarray(0, 128));
     const extension = /^ply\r?\n/.test(header)
@@ -73,18 +73,31 @@ export async function downloadRemoteFile(value: string, signal?: AbortSignal) {
   let bytes = new Uint8Array(await response.arrayBuffer());
   // Inspect bytes, not the suffix or Content-Encoding: fetch transparently
   // decompresses HTTP encoding, while a .gz file usually arrives still wrapped.
-  if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+  const compressedName =
+    response.headers.get('content-disposition') || new URL(response.url || url.href).pathname;
+  const gzip = bytes[0] === 0x1f && bytes[1] === 0x8b;
+  const zlib =
+    bytes.length >= 2 &&
+    (bytes[0] & 0x0f) === 8 &&
+    bytes[0] >> 4 <= 7 &&
+    ((bytes[0] << 8) + bytes[1]) % 31 === 0;
+  // Raw DEFLATE has no signature, so it requires an explicit filename suffix.
+  // Do not decode it twice when the server used HTTP Content-Encoding.
+  const raw =
+    /\.deflate-raw(?:[";]|$)/i.test(compressedName) && !response.headers.get('content-encoding');
+  const compression = gzip ? 'gzip' : zlib ? 'deflate' : raw ? 'deflate-raw' : null;
+  if (compression) {
     try {
       const decoded = new Blob([bytes])
         .stream()
-        .pipeThrough(new DecompressionStream('gzip'), { signal });
+        .pipeThrough(new DecompressionStream(compression), { signal });
       bytes = new Uint8Array(await new Response(decoded).arrayBuffer());
     } catch (error) {
       if (signal?.aborted) {
         throw error;
       }
       throw new Error(
-        `Unable to decompress gzip file: ${error instanceof Error ? error.message : String(error)}`
+        `Unable to decompress ${compression} file: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

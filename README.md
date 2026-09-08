@@ -27,19 +27,23 @@ heavy decoding, so files with millions of points open in seconds.
 
 ## Remote files
 
-Use **Load Remote URL** beside **+ Add Point Cloud**, or run **3D Visualizer:
-Load Remote URL** from the VS Code command palette. Paste an HTTP(S) link to a
-supported file. The entire file downloads before visualization; VS Code keeps
-downloads in its extension storage. Gzip files such as `.ply.gz` are
-decompressed automatically using built-in APIs, with no additional library. For
-URLs without a recognizable filename, supply a filename with the correct
-extension.
+Run **3D Visualizer: Load Remote URL** from the VS Code command palette. Paste
+an HTTP(S) link to a supported file. Press Up/Down or click the arrow buttons to
+recall previously loaded URLs. The latest 50 distinct URLs are saved across
+sessions. The entire file downloads before visualization; VS Code keeps
+downloads in its extension storage.
 
-The website records the remote source in `?source=<encoded-file-url>` so copying
-the address or reloading reopens that file. An optional `filename` parameter
-preserves your format override. The source server must allow browser CORS
-requests. Use self-contained files (for example GLB); separate mesh textures and
-sidecar files are not downloaded automatically.
+Gzip (`.gz`), zlib (`.zlib`, `.zz`, `.deflate`), and raw DEFLATE
+(`.deflate-raw`) files are decompressed using built-in APIs, with no additional
+library. Gzip and zlib are also recognized by their headers. For URLs without a
+recognizable filename, supply a filename with the correct extension when
+prompted.
+
+Website links use `?source=<encoded-file-url>` to reopen a remote file; an
+optional `filename` parameter selects its format. There is no remote URL button
+in the viewer. The source server must allow browser CORS requests. Use
+self-contained files (for example GLB); separate mesh textures and sidecar files
+are not downloaded automatically.
 
 ## Supported formats
 

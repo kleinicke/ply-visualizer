@@ -246,6 +246,18 @@
         "category": "3D Visualizer"
       }
     ],
+    "keybindings": [
+      {
+        "command": "plyViewer.urlHistoryPrevious",
+        "key": "up",
+        "when": "plyViewer.urlInputActive && inQuickOpen"
+      },
+      {
+        "command": "plyViewer.urlHistoryNext",
+        "key": "down",
+        "when": "plyViewer.urlInputActive && inQuickOpen"
+      }
+    ],
     "menus": {
       "explorer/context": [
         {

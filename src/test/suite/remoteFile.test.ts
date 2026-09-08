@@ -1,4 +1,4 @@
-import { gzipSync } from 'zlib';
+import { gzipSync, deflateSync, deflateRawSync } from 'zlib';
 import * as assert from 'assert';
 import { createServer, type Server } from 'http';
 import { downloadRemoteFile, parseRemoteUrl, remoteFileName } from '../../../engine/src/remoteFile';
@@ -16,6 +16,10 @@ suite('Remote file downloads', () => {
       } else if (req.url === '/encoded.ply.gz') {
         res.setHeader('Content-Encoding', 'gzip');
         res.end(gzipSync('ply\nformat ascii 1.0\nend_header\n'));
+      } else if (req.url === '/cloud.ply.zlib' || req.url === '/zlib') {
+        res.end(deflateSync('ply\nformat ascii 1.0\nend_header\n'));
+      } else if (req.url === '/cloud.ply.deflate-raw') {
+        res.end(deflateRawSync('ply\nformat ascii 1.0\nend_header\n'));
       } else if (req.url === '/corrupt.ply.gz') {
         res.end(Buffer.from([0x1f, 0x8b, 0x08, 0]));
       } else if (req.url === '/empty.ply.gz') {
@@ -80,6 +84,20 @@ suite('Remote file downloads', () => {
     }
     await assert.rejects(downloadRemoteFile(`${base}/corrupt.ply.gz`), /decompress gzip/);
     await assert.rejects(downloadRemoteFile(`${base}/empty.ply.gz`), /empty/);
+  });
+  test('decompresses zlib and explicitly named raw DEFLATE', async () => {
+    for (const [path, name] of [
+      ['/cloud.ply.zlib', 'cloud.ply'],
+      ['/zlib', 'zlib.ply'],
+      ['/cloud.ply.deflate-raw', 'cloud.ply'],
+    ]) {
+      const file = await downloadRemoteFile(`${base}${path}`);
+      assert.strictEqual(file.name, name);
+      assert.strictEqual(
+        new TextDecoder().decode(file.bytes),
+        'ply\nformat ascii 1.0\nend_header\n'
+      );
+    }
   });
   test('rejects HTTP errors, empty files, and cancellation', async () => {
     await assert.rejects(downloadRemoteFile(`${base}/missing`), /404/);

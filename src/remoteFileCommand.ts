@@ -1,27 +1,18 @@
+import {
+  registerUrlHistoryCommands,
+  showUrlInputWithHistory,
+  URL_HISTORY_STORAGE_KEY,
+} from './remoteUrlInput';
+import { normalizeUrlHistory, rememberUrl } from './urlHistory';
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
-import { downloadRemoteFile, parseRemoteUrl } from '../engine/src/remoteFile';
+import { downloadRemoteFile } from '../engine/src/remoteFile';
 import { detectFileType } from '../engine/src/fileHandler';
 
 export function registerRemoteFileCommand(context: vscode.ExtensionContext): vscode.Disposable {
+  context.subscriptions.push(registerUrlHistoryCommands());
   return vscode.commands.registerCommand('plyViewer.openRemoteUrl', async (preset?: string) => {
-    const value =
-      typeof preset === 'string'
-        ? preset
-        : await vscode.window.showInputBox({
-            title: 'Load Remote URL',
-            prompt: 'URL of a point cloud, mesh, or depth image',
-            placeHolder: 'https://example.com/cloud.ply',
-            ignoreFocusOut: true,
-            validateInput: text => {
-              try {
-                parseRemoteUrl(text);
-                return undefined;
-              } catch {
-                return 'Enter an http:// or https:// URL.';
-              }
-            },
-          });
+    const value = typeof preset === 'string' ? preset : await showUrlInputWithHistory(context);
     if (!value) {
       return;
     }
@@ -61,6 +52,10 @@ export function registerRemoteFileCommand(context: vscode.ExtensionContext): vsc
       const target = vscode.Uri.joinPath(folder, file.name.split(/[\\/]/).pop()!);
       await vscode.workspace.fs.writeFile(target, file.bytes);
       await vscode.commands.executeCommand('vscode.openWith', target, 'plyViewer.plyEditor');
+      await context.globalState.update(
+        URL_HISTORY_STORAGE_KEY,
+        rememberUrl(normalizeUrlHistory(context.globalState.get(URL_HISTORY_STORAGE_KEY)), file.url)
+      );
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         return;

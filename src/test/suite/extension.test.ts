@@ -27,7 +27,9 @@ suite('PLY Viewer Extension Test Suite', () => {
 
   test('Remote URL command downloads and opens a custom editor', async function () {
     this.timeout(30000);
+    let requests = 0;
     const server = createServer((_req, res) => {
+      requests++;
       res.end(
         gzipSync(
           'ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n'
@@ -41,6 +43,12 @@ suite('PLY Viewer Extension Test Suite', () => {
         'plyViewer.openRemoteUrl',
         `http://127.0.0.1:${port}/remote-command-test.ply.gz`
       );
+      const recalled = vscode.commands.executeCommand('plyViewer.openRemoteUrl');
+      await new Promise(resolve => setTimeout(resolve, 300));
+      await vscode.commands.executeCommand('plyViewer.urlHistoryPrevious');
+      await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+      await recalled;
+      assert.strictEqual(requests, 2, 'Up recalls the URL just loaded and Enter loads it again');
       const tabs = vscode.window.tabGroups.all.flatMap(group => group.tabs);
       assert.ok(
         tabs.some(
