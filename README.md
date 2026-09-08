@@ -146,7 +146,7 @@ files are especially helpful when adding support for new formats.
   [Install extension](https://open-vsx.org/extension/kleinicke/ply-visualizer)
 - **JetBrains:** [Signed preview and installation](jetbrains/README.md)
 - **Website:** [3d.f-kleinicke.de](https://3d.f-kleinicke.de/)
-- **Documentation:** [Features and usage](#features)
+- **Documentation:** [User guides and MCP reference](docs/README.md)
 - **Standalone app:** [Tauri desktop preview](apps/desktop/README.md)
 - **PyPI (Python and CLI):**
   [ply-visualizer](https://pypi.org/project/ply-visualizer/)

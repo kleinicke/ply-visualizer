@@ -47,18 +47,22 @@ its scenes and local servers.
 
 ## Available tools
 
-| Tool                  | Operations                                                                       |
-| --------------------- | -------------------------------------------------------------------------------- |
-| `set_3d_camera`       | Partial position, rotation-center target, up, XYZ rotation and vertical FOV; fit |
-| `navigate_3d_view`    | Fit, standard viewpoints, orbit, pan, zoom, pivot and visible-point picking      |
-| `set_3d_appearance`   | Exposure, background, axes, grid, legend, gamma and UI theme                     |
-| `set_3d_object`       | Visibility, opacity, point size, points/mesh mode and available color modes      |
-| `transform_3d_object` | Translation, axis-angle, quaternion, scale, affine matrix, invert and reset      |
-| `measure_3d_scene`    | Distances and paths in scene units; list, undo, close and clear                  |
-| `control_3d_video`    | Camera keyframes, loop and preview playback                                      |
-| `select_3d_region`    | Select by attributes, box or plane; highlight, isolate, focus and preview        |
-| `pick_3d_point`       | Hit/miss, world XYZ, object/decoded indices and attributes                       |
-| `manage_3d_views`     | Named camera bookmarks and camera undo                                           |
+Start with the [MCP task walkthroughs](../../docs/mcp-workflows.md) for opening,
+inspecting, selecting, aligning, comparing, and exporting data. The complete
+[tool reference](../../docs/mcp-tools.md) includes every public tool and its
+arguments, generated from the current server definitions.
+
+| Task                                      | Tools                                                                      |
+| ----------------------------------------- | -------------------------------------------------------------------------- |
+| Open and update data                      | `open_3d_files`, `open_3d_url`, `visualize_points`, `update_3d_scene`      |
+| Manage scene lifetime                     | `list_3d_scenes`, `close_3d_scene`                                         |
+| Inspect and capture                       | `inspect_3d_scene`, `pick_3d_point`, `capture_3d_view`, `preview_3d_views` |
+| Navigate and present                      | `set_3d_camera`, `navigate_3d_view`, `set_3d_appearance`, `set_3d_object`  |
+| Transform and align                       | `transform_3d_object`, `align_3d_clouds`                                   |
+| Measure and preview camera paths          | `measure_3d_scene`, `control_3d_video`                                     |
+| Select, retain, and export subsets        | `select_3d_region`, `manage_3d_selections`, `export_3d_selection`          |
+| Save views and complete inspection states | `manage_3d_views`, `manage_3d_scene_states`                                |
+| Compare clouds                            | `compare_3d_clouds`                                                        |
 
 `inspect_3d_scene` returns object indices, current presentation state, bounds,
 valid vertex counts and available scalar names. Source/filtered counts are null
@@ -135,16 +139,18 @@ Optional `bounds=[minX,minY,minZ,maxX,maxY,maxZ]` and `plane=[a,b,c,d]`
 intersect the label selection in world coordinates; the plane keeps
 `a*x+b*y+c*z+d >= 0`. Reissue the selection with a new plane to inspect
 successive slices. With no predicate, the entire point-cloud object is selected.
-A zero-match request leaves the prior selection intact. Only one derived
-selection is retained; it is cleared automatically when switching batches or
-replacing geometry. This is explicit selection, not automatic object detection.
+A zero-match request leaves the prior selection intact. One active derived
+selection is replaced by each new selection. Save it with `manage_3d_selections`
+to retain a named subset (up to 20). Geometry replacement or batch switching
+clears selections. This is explicit selection, not automatic object detection.
 Region subsets currently support point clouds; use object visibility for mesh
 objects.
 
 Set `highlight=false` to keep source RGB; color the subset by an available
 scalar through `set_3d_object`. For comparisons, keep both clouds visible and
-set their colors and `opacity` individually. This supports an overlay in one
-camera; synchronized side-by-side viewports are not implemented.
+set their colors and `opacity` individually. For synchronized side-by-side
+viewports and distance coloring, use `compare_3d_clouds`; see the
+[comparison workflow](../../docs/mcp-workflows.md#align-and-compare-clouds).
 
 Named views last for the renderer session and restore the camera only. Undo
 covers agent camera commands, not manual mouse gestures. Picking indices refer
