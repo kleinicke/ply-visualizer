@@ -1,3 +1,5 @@
+import { isSceneModel } from '../../engine/src/models/modelFormats';
+import { sendSceneModel } from './sceneModels';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
@@ -155,6 +157,10 @@ export async function handleAddFile(
         host.setLoadStartedAt(Date.now());
         webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
+        if (isSceneModel(fileName)) {
+          await sendSceneModel(webviewPanel, files[i]);
+          continue;
+        }
         // Handle different file types
         if (fileExtension === '.las' || fileExtension === '.laz' || fileExtension === '.e57') {
           const bytes = await vscode.workspace.fs.readFile(files[i]);
@@ -470,6 +476,10 @@ export async function handleAddFileFromPath(
     host.setLoadStartedAt(Date.now());
     webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
+    if (isSceneModel(fileName)) {
+      await sendSceneModel(webviewPanel, fileUri);
+      return;
+    }
     if (ext === '.las' || ext === '.laz' || ext === '.e57') {
       const bytes = await vscode.workspace.fs.readFile(fileUri);
       const data = decodeLidarData(
@@ -713,7 +723,12 @@ export async function handleDroppedFilesFromWebview(
       }),
     });
   }
-  const remaining = files.filter(file => !colmapFiles.includes(file));
+  const hasModels = files.some(file => isSceneModel(file.name || ''));
+  const remaining = files.filter(
+    file =>
+      !colmapFiles.includes(file) &&
+      !(hasModels && /\.(png|jpe?g|bmp|tga|bin|mtl|webp)$/i.test(file.name || ''))
+  );
 
   for (let i = 0; i < remaining.length; i++) {
     const droppedFile = remaining[i];
@@ -727,6 +742,17 @@ export async function handleDroppedFilesFromWebview(
       const fileData = toUint8Array(droppedFile.data);
       const shortPath = fileName;
       const ext = path.extname(fileName).toLowerCase();
+      if (isSceneModel(fileName)) {
+        await webviewPanel.webview.postMessage({
+          type: 'sceneModelData',
+          fileName,
+          data: toArrayBuffer(fileData),
+          resources: files
+            .filter(entry => entry.name && entry.data)
+            .map(entry => ({ name: entry.name, data: entry.data })),
+        });
+        continue;
+      }
       const fileType = await detectFileTypeWithContent(fileName, fileData);
 
       if (!fileType) {

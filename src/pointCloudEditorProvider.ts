@@ -1,3 +1,4 @@
+import { handleModelResourceRequest } from './providerHandlers/sceneModels';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -310,6 +311,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'plyFetchFailed':
           await this.handlePlyFetchFallback(message);
+          break;
+        case 'modelResourceRequest':
+          await handleModelResourceRequest(webviewPanel, message);
           break;
         case 'splatContainerFetchFailed':
           await resendSplatContainerBytes(webviewPanel, message);

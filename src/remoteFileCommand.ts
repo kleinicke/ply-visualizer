@@ -51,6 +51,10 @@ export function registerRemoteFileCommand(context: vscode.ExtensionContext): vsc
       await vscode.workspace.fs.createDirectory(folder);
       const target = vscode.Uri.joinPath(folder, file.name.split(/[\\/]/).pop()!);
       await vscode.workspace.fs.writeFile(target, file.bytes);
+      await vscode.workspace.fs.writeFile(
+        vscode.Uri.joinPath(folder, '.remote-source.json'),
+        new TextEncoder().encode(JSON.stringify({ url: file.resourceUrl }))
+      );
       await vscode.commands.executeCommand('vscode.openWith', target, 'plyViewer.plyEditor');
       await context.globalState.update(
         URL_HISTORY_STORAGE_KEY,

@@ -1,3 +1,21 @@
+export interface SceneModelData {
+  root: import('three').Object3D;
+  clips: import('three').AnimationClip[];
+  warnings: string[];
+  ui: {
+    clip: number;
+    playing: boolean;
+    loop: boolean;
+    speed: number;
+    time: number;
+    duration: number;
+  };
+  selectClip(index: number): void;
+  seek(time: number): void;
+  update(delta: number): boolean;
+  dispose(): void;
+}
+
 // Shared interfaces for the visualizer
 export interface SpatialVertex {
   x: number;
@@ -18,6 +36,8 @@ export interface SpatialFace {
 }
 
 export interface SpatialData {
+  /** Browser-owned full scene; never serialized through postMessage. */
+  sceneModel?: SceneModelData;
   vertices: SpatialVertex[];
   faces: SpatialFace[];
   format: 'ascii' | 'binary_little_endian' | 'binary_big_endian';

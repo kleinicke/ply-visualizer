@@ -1,3 +1,5 @@
+import { isSceneModel } from './models/modelFormats';
+import { loadSceneModel } from './models/loadSceneModel';
 import { detectFileType } from './fileHandler';
 import { downloadRemoteFile } from './remoteFile';
 import { handleBrowserFiles, type BrowserFileDragDropHost } from './browserFileDragDrop';
@@ -21,7 +23,17 @@ export function setupRemoteFileLoader(host: BrowserFileDragDropHost, extension: 
           'Cannot determine the format. Supply a filename query parameter with a supported extension.'
         );
       }
-      await handleBrowserFiles(host, [new File([downloaded.bytes], fileName)]);
+      if (isSceneModel(fileName)) {
+        await host.displayFiles([
+          await loadSceneModel({
+            bytes: downloaded.bytes,
+            fileName,
+            baseUrl: downloaded.resourceUrl,
+          }),
+        ]);
+      } else {
+        await handleBrowserFiles(host, [new File([downloaded.bytes], fileName)]);
+      }
     } catch (error) {
       host.showError(
         `Unable to load remote file: ${error instanceof Error ? error.message : String(error)}. The server must allow cross-origin requests (CORS).`

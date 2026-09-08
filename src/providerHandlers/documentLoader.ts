@@ -1,3 +1,5 @@
+import { isSceneModel } from '../../engine/src/models/modelFormats';
+import { sendSceneModel } from './sceneModels';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -264,6 +266,10 @@ export async function loadDocumentContent(
   } = flags;
 
   try {
+    if (isSceneModel(documentUri.path)) {
+      await sendSceneModel(webviewPanel, documentUri);
+      return;
+    }
     const loadStartTime = performance.now();
     // Wall-clock twin of loadStartTime. Container formats (E57, X3A) fan out into
     // many scans that finish in the webview at different times, so the honest

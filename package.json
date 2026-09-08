@@ -113,6 +113,15 @@
             "filenamePattern": "*.off"
           },
           {
+            "filenamePattern": "*.fbx"
+          },
+          {
+            "filenamePattern": "*.dae"
+          },
+          {
+            "filenamePattern": "*.3ds"
+          },
+          {
             "filenamePattern": "*.gltf"
           },
           {
@@ -262,7 +271,7 @@
       "explorer/context": [
         {
           "command": "plyViewer.openFile",
-          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .xyzn || resourceExtname == .xyzrgb || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl || resourceExtname == .pcd || resourceExtname == .pts || resourceExtname == .off || resourceExtname == .gltf || resourceExtname == .glb || resourceExtname == .las || resourceExtname == .laz || resourceExtname == .e57 || resourceExtname == .x3a || resourceExtname == .x3r || resourceExtname == .bin",
+          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .xyzn || resourceExtname == .xyzrgb || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl || resourceExtname == .pcd || resourceExtname == .pts || resourceExtname == .off || resourceExtname == .gltf || resourceExtname == .glb || resourceExtname == .fbx || resourceExtname == .dae || resourceExtname == .3ds || resourceExtname == .las || resourceExtname == .laz || resourceExtname == .e57 || resourceExtname == .x3a || resourceExtname == .x3r || resourceExtname == .bin",
           "group": "navigation"
         },
         {

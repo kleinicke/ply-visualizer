@@ -129,5 +129,10 @@ export async function downloadRemoteFile(value: string, signal?: AbortSignal) {
   if (!bytes.length) {
     throw new Error('The downloaded file is empty.');
   }
-  return { bytes, name: remoteFileName(response, url, bytes), url: url.href };
+  return {
+    bytes,
+    name: remoteFileName(response, url, bytes),
+    url: url.href,
+    resourceUrl: response.url || url.href,
+  };
 }

@@ -45,15 +45,16 @@ filename with the correct extension when prompted.
 Website links use `?source=<encoded-file-url>` to reopen a remote file; an
 optional `filename` parameter selects its format. There is no remote URL button
 in the viewer. The source server must allow browser CORS requests. Use
-self-contained files (for example GLB); separate mesh textures and sidecar files
-are not downloaded automatically.
+self-contained files (for example GLB) for easy sharing. GLTF/GLB, FBX, Collada
+and 3DS supporting buffers and textures are resolved relative to the model URL;
+each resource must also allow CORS.
 
 ## Supported formats
 
 | Type                   | Formats                                                                                        |
 | ---------------------- | ---------------------------------------------------------------------------------------------- |
 | Point clouds           | PLY, XYZ, XYZN, XYZRGB, PCD, PTS, NPY, LAS, LAZ, E57, KITTI BIN, Stonex X3A/X3R (experimental) |
-| Meshes                 | PLY, OBJ, STL, OFF, GLTF, GLB                                                                  |
+| Meshes                 | PLY, OBJ, STL, OFF, GLTF, GLB, FBX, DAE (Collada), 3DS                                         |
 | Gaussian splats        | 3DGS PLY, SPZ, SPLAT, KSPLAT, SOG                                                              |
 | Depth/disparity images | TIFF, PNG, PFM, NPY, NPZ                                                                       |
 | 3D Body Poses          | JSON pose data (experimental)                                                                  |
@@ -65,6 +66,25 @@ choose **Open with 3D Visualizer**. For a supported JSON pose, right-click and
 choose **Load JSON as 3D Pose**.
 
 ## Features
+
+### Models and animations
+
+GLTF/GLB, FBX, Collada (`.dae`) and 3DS retain their scene hierarchy and
+original materials. GLTF/GLB, FBX and Collada animation clips have play/pause,
+clip selection, looping, speed and timeline controls. Double-click the timeline
+to return to the start. Mesh visibility, wireframe and file transforms apply to
+the whole model. STL and OBJ retain their existing mesh workflows.
+
+In VS Code, keep supporting buffers and textures beside the model or in its
+subdirectories. In the website file picker, select the model and its supporting
+files together. Missing optional textures appear as resource warnings; missing
+required buffers prevent loading. Exporter-specific features may be unsupported
+by the Three.js loaders (including some Collada skin/morph controller
+combinations); Draco/KTX2/Meshopt decoders are not configured. 3DS is loaded as
+a static scene. This supports model animations, not MP4/WebM playback.
+
+Real upstream samples and reproducible download/test instructions are documented
+in [model fixtures](docs/model-fixtures.md).
 
 ### Depth and Disparity to Point Cloud
 
@@ -151,7 +171,7 @@ files are especially helpful when adding support for new formats.
 
 ## Roadmap
 
-- Add support for more file formats, including FBX
+- Add support for more file formats
 - Improve dataset support with example images from Middlebury stereo and ETH3D
 - Use calibration files next to depth images automatically when available
   (example files needed)

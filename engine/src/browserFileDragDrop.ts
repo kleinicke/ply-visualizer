@@ -1,3 +1,5 @@
+import { isSceneModel } from './models/modelFormats';
+import { loadSceneModel } from './models/loadSceneModel';
 import { setupRemoteFileLoader } from './remoteFileLoader';
 import { CameraParams, SpatialData } from './interfaces';
 import {
@@ -531,6 +533,23 @@ export async function handleBrowserFiles(
   host.showImmediateLoading({ fileName: `${files.length} files`, pointCount: 0 });
 
   try {
+    const modelFiles = files.filter(file => isSceneModel(file.name));
+    for (const file of modelFiles) {
+      const model = await loadSceneModel({
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        fileName: file.name,
+        files,
+      });
+      await host.displayFiles([model]);
+    }
+    if (modelFiles.length) {
+      files = files.filter(
+        file => !isSceneModel(file.name) && !/\.(bin|png|jpe?g|tga|bmp|webp|mtl)$/i.test(file.name)
+      );
+      if (!files.length) {
+        return;
+      }
+    }
     // Convert File objects to data format expected by shared function
     const fileData = await Promise.all(
       files.map(async file => ({

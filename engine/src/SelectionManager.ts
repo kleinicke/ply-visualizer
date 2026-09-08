@@ -571,6 +571,9 @@ export class SelectionManager {
       (mesh, index) => this.context.fileVisibility[index]
     );
     const triangleMeshes = visibleMeshes.filter(mesh => {
+      if (mesh.userData.sceneModel) {
+        return true;
+      }
       const geometry = (mesh as THREE.Mesh).geometry;
       if (!geometry) {
         return false;
@@ -591,7 +594,7 @@ export class SelectionManager {
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(mouse, this.context.camera);
 
-    const intersects = raycaster.intersectObjects(triangleMeshes, false);
+    const intersects = raycaster.intersectObjects(triangleMeshes, true);
 
     const visibleIntersection = intersects.find(
       intersection => !this.isClipped(intersection.point)

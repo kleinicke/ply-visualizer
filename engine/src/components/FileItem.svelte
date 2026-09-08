@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ModelAnimationPanel from './ModelAnimationPanel.svelte';
   import { filesState } from '../state/files.svelte';
   import { runWithFileActivity } from '../fileActivity';
   import { getPointCloudColorOptions } from '../colorOptions';
@@ -192,7 +193,7 @@
 
   // Volume voxels are solid boxes sized from the voxel spacing, so there is no
   // point sprite whose size could be tuned.
-  const hasPointSize = $derived(data?.metadata?.volumeRenderMode !== 'voxels');
+  const hasPointSize = $derived(!data?.sceneModel && data?.metadata?.volumeRenderMode !== 'voxels');
 
   function onRenderModeClick(event: MouseEvent, mode: string) {
     if (!event.shiftKey) {
@@ -577,6 +578,7 @@
         <VolumePanel {host} {data} fileIndex={index} />
       {/if}
 
+      {#if data.sceneModel}<ModelAnimationPanel model={data.sceneModel} {host} />{/if}
       <TransformSection {host} fileIndex={index} {matrixText} />
 
       <div class="rendering-controls" style="margin-top: 4px; margin-bottom: 6px;">
@@ -675,7 +677,7 @@
         </div>
       {/if}
 
-      {#if !splatActive}
+      {#if !splatActive && !data.sceneModel}
         <div class="color-control">
           <label for={`color-${index}`}>Color:</label>
           <select

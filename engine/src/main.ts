@@ -1,3 +1,5 @@
+import { createModelObject, updateModelPlayback } from './models/sceneModel';
+import { handleSceneModelMessage } from './models/modelMessages';
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -38,6 +40,7 @@ const BACKGROUND_CHANGE_MESSAGES = new Set([
   'stonexColorReady',
   'spatialData',
   'multiSpatialData',
+  'sceneModelData',
   'splatContainerUri',
   'ultimateRawBinaryData',
   'ultimateRawBinaryUri',
@@ -1094,6 +1097,9 @@ class PointCloudVisualizer {
   }
 
   private dispose(): void {
+    for (const data of this.spatialFiles) {
+      data.sceneModel?.dispose();
+    }
     // Clean up ResizeObserver
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
@@ -1236,7 +1242,12 @@ class PointCloudVisualizer {
     this.trackRender();
   }
 
+  private modelLastFrameTime = performance.now();
+
   private animate(): void {
+    const modelNow = performance.now();
+    updateModelPlayback(this, Math.min((modelNow - this.modelLastFrameTime) / 1000, 0.1));
+    this.modelLastFrameTime = modelNow;
     this.animationId = requestAnimationFrame(this.animate.bind(this));
 
     // Update FPS calculation (always, to decay to 0 when no renders)
@@ -2097,7 +2108,7 @@ class PointCloudVisualizer {
     for (let i = 0; i < this.meshes.length && i < this.spatialFiles.length; i++) {
       const data = this.spatialFiles[i];
       const mesh = this.meshes[i];
-      if (!data || !mesh) {
+      if (!data || !mesh || data.sceneModel) {
         continue;
       }
       // Only update triangle meshes, not points or line segments
@@ -2340,6 +2351,11 @@ class PointCloudVisualizer {
                   (error instanceof Error ? error.message : String(error))
               );
             }
+            break;
+          case 'sceneModelData':
+            await this.loadWithPerf('model', message, () => handleSceneModelMessage(this, message));
+            break;
+          case 'modelResourceResult':
             break;
           case 'splatContainerUri':
             await handleSplatContainerUri(this, message);
@@ -2910,6 +2926,9 @@ class PointCloudVisualizer {
 
   /** Also the entry point for code that switches a mode, not just the picker. */
   onFileColorModeChange(fileIndex: number, value: string): void {
+    if (this.spatialFiles[fileIndex]?.sceneModel) {
+      return;
+    }
     this.individualColorModes[fileIndex] = value;
     filesState.colorModes[fileIndex] = value;
     const isPose = fileIndex >= this.spatialFiles.length;
@@ -3291,7 +3310,12 @@ class PointCloudVisualizer {
       const isObjFile2 = (data as any).isObjFile;
       const objRenderType = (data as any).objRenderType;
 
-      if (isObjFile2) {
+      if (data.sceneModel) {
+        const modelObject = createModelObject(data, geometry, material);
+        this.scene.add(modelObject);
+        this.meshes.push(modelObject);
+        this.requestRender();
+      } else if (isObjFile2) {
         if (objRenderType === 'wireframe' && (data as any).objLines) {
           // Create wireframe using LineSegments
           const lines = (data as any).objLines;
@@ -3750,6 +3774,7 @@ class PointCloudVisualizer {
       return;
     }
 
+    this.spatialFiles[fileIndex]?.sceneModel?.dispose();
     // Remove mesh from scene
     const mesh = this.meshes[fileIndex];
     this.scene.remove(mesh);

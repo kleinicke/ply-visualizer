@@ -153,6 +153,29 @@ export function togglePointsRendering(host: RenderModeHost, fileIndex: number): 
 }
 
 export function updateMeshVisibilityAndMaterial(host: RenderModeHost, fileIndex: number): void {
+  const model = host.spatialFiles[fileIndex]?.sceneModel;
+  if (model) {
+    const visible =
+      (host.fileVisibility[fileIndex] ?? true) &&
+      ((host.solidVisible[fileIndex] ?? true) || host.wireframeVisible[fileIndex]);
+    const modelMesh = host.meshes[fileIndex];
+    if (modelMesh) {
+      modelMesh.visible = !!visible;
+    }
+    model.root.traverse(object => {
+      if (object instanceof THREE.Mesh) {
+        for (const material of Array.isArray(object.material)
+          ? object.material
+          : [object.material]) {
+          if ('wireframe' in material) {
+            material.wireframe = !!host.wireframeVisible[fileIndex];
+          }
+        }
+      }
+    });
+    return;
+  }
+
   const mesh = host.meshes[fileIndex];
   const multiMaterialGroup = host.multiMaterialGroups[fileIndex];
 

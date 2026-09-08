@@ -15,6 +15,12 @@ export function getRenderModeOptions(
   host: RenderModeOptionsHost,
   data: SpatialData
 ): RenderModeOption[] {
+  if (data.sceneModel) {
+    return [
+      { mode: 'mesh', label: '🔷 Mesh', cls: 'mesh-btn' },
+      { mode: 'wireframe', label: '📐 Wireframe', cls: 'wireframe-btn' },
+    ];
+  }
   const hasFaces = data.faceCount > 0;
   const hasLines = !!(data as any).objData && (data as any).objData.lineCount > 0;
   const hasGeometry = hasFaces || hasLines;

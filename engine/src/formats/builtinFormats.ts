@@ -196,6 +196,8 @@ export function registerBuiltinFormats(
     },
   });
 
+  registry.register({ extensions: ['fbx', 'dae', '3ds'], category: 'mesh' });
+
   registry.register({
     extensions: ['gltf', 'glb'],
     category: 'mesh',
