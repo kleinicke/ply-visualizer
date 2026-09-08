@@ -25,30 +25,6 @@ heavy decoding, so files with millions of points open in seconds.
 - Connect AI agents through the [local MCP server](packages/python/MCP.md) to
   open scenes, control the camera and inspect rendered screenshots
 
-## Remote files
-
-Requires **VS Code 1.106.0 or later** (Node 22.20.0).
-
-Run **3D Visualizer: Load Remote URL** from the VS Code command palette. Paste
-an HTTP(S) link to a supported file. Press Up/Down or click the arrow buttons to
-recall previously loaded URLs. The latest 50 distinct URLs are saved across
-sessions. The entire file downloads before visualization; VS Code keeps
-downloads in its extension storage.
-
-Gzip (`.gz`), zlib (`.zlib`, `.zz`, `.deflate`), raw DEFLATE (`.deflate-raw`),
-and Brotli (`.br`, `.brotli`) files are decompressed using built-in APIs, with
-no additional library. Gzip and zlib are also recognized by their headers.
-Website Brotli loading requires a browser with Brotli support in
-`DecompressionStream`. For URLs without a recognizable filename, supply a
-filename with the correct extension when prompted.
-
-Website links use `?source=<encoded-file-url>` to reopen a remote file; an
-optional `filename` parameter selects its format. There is no remote URL button
-in the viewer. The source server must allow browser CORS requests. Use
-self-contained files (for example GLB) for easy sharing. GLTF/GLB, FBX, Collada
-and 3DS supporting buffers and textures are resolved relative to the model URL;
-each resource must also allow CORS.
-
 ## Supported formats
 
 | Type                   | Formats                                                                                        |
@@ -60,31 +36,16 @@ each resource must also allow CORS.
 | 3D Body Poses          | JSON pose data (experimental)                                                                  |
 | Camera Profiles        | JSON pose data (experimental)                                                                  |
 
+Model animation playback and remote URL loading are supported; see
+[model details](docs/models-and-animations.md) and
+[remote files](docs/remote-files.md).
+
 Because `.bin` and `.json` are generic extensions, neither is opened with the 3D
 Visualizer by default. For KITTI BIN, use **Open With...** or right-click and
 choose **Open with 3D Visualizer**. For a supported JSON pose, right-click and
 choose **Load JSON as 3D Pose**.
 
 ## Features
-
-### Models and animations
-
-GLTF/GLB, FBX, Collada (`.dae`) and 3DS retain their scene hierarchy and
-original materials. GLTF/GLB, FBX and Collada animation clips have play/pause,
-clip selection, looping, speed and timeline controls. Double-click the timeline
-to return to the start. Mesh visibility, wireframe and file transforms apply to
-the whole model. STL and OBJ retain their existing mesh workflows.
-
-In VS Code, keep supporting buffers and textures beside the model or in its
-subdirectories. In the website file picker, select the model and its supporting
-files together. Missing optional textures appear as resource warnings; missing
-required buffers prevent loading. Exporter-specific features may be unsupported
-by the Three.js loaders (including some Collada skin/morph controller
-combinations); Draco/KTX2/Meshopt decoders are not configured. 3DS is loaded as
-a static scene. This supports model animations, not MP4/WebM playback.
-
-Real upstream samples and reproducible download/test instructions are documented
-in [model fixtures](docs/model-fixtures.md).
 
 ### Depth and Disparity to Point Cloud
 
