@@ -1,3 +1,9 @@
+import { getPointCloudColorOptions, type PointCloudColorOptionsHost } from '../colorOptions';
+import { transformAgentObject } from './agentTransforms';
+import { sceneGuidesState } from '../state/sceneGuides.svelte';
+import { toggleAxesVisibility } from '../axesFeature';
+import { toggleGammaCorrection, type SceneBrightnessHost } from '../sceneBrightness';
+import { getThemeByName, applyTheme } from '../themes';
 /** Agent operations call the same renderer/managers as the interactive UI. */
 import * as THREE from 'three';
 import { startAgentAlignment, agentAlignmentBusy } from './agentAlignment';
@@ -87,6 +93,9 @@ export async function applyAgentControl(
   if (agentAlignmentBusy(host)) {
     throw new Error('Alignment is running; inspect its status before editing the scene');
   }
+  if (operation === 'transform') {
+    return transformAgentObject(host, a);
+  }
   if (operation === 'selection') {
     return agentSelection(host, a);
   }
@@ -132,6 +141,26 @@ export async function applyAgentControl(
     }
     host.controls.update();
   } else if (operation === 'appearance') {
+    if (a.theme !== undefined) {
+      const theme = await getThemeByName(a.theme);
+      if (!theme) {
+        throw new Error('Theme could not be loaded');
+      }
+      applyTheme(theme);
+    }
+    if (a.axes !== undefined && a.axes !== host.axesPermanentlyVisible) {
+      toggleAxesVisibility(host);
+    }
+    if (a.grid !== undefined) {
+      sceneGuidesState.grid = a.grid;
+    }
+    if (a.legend !== undefined) {
+      sceneGuidesState.legend = a.legend;
+    }
+    if (a.gamma_correction !== undefined && a.gamma_correction !== !host.convertSrgbToLinear) {
+      toggleGammaCorrection(host as unknown as SceneBrightnessHost);
+    }
+
     if (a.brightness !== undefined) {
       host.brightnessStops = a.brightness;
       viewerState.brightnessStops = a.brightness;
@@ -157,6 +186,20 @@ export async function applyAgentControl(
     }
     if (a.color_mode?.startsWith('scalar:') && !data.scalarFields?.[a.color_mode.split(':')[1]]) {
       throw new Error('Unknown scalar field');
+    }
+    if (
+      a.color_mode !== undefined &&
+      !a.color_mode.startsWith('scalar:') &&
+      a.color_mode !== 'intensity-grayscale'
+    ) {
+      const options = getPointCloudColorOptions(
+        host as unknown as PointCloudColorOptionsHost,
+        data,
+        i
+      );
+      if (!options.some(option => option.value === a.color_mode)) {
+        throw new Error('Color mode is unavailable for this object; inspect available_color_modes');
+      }
     }
     if (a.point_size !== undefined) {
       host.updatePointSize(i, a.point_size);

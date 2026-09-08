@@ -47,57 +47,18 @@ its scenes and local servers.
 
 ## Available tools
 
-| Tool               | Purpose                                                             |
-| ------------------ | ------------------------------------------------------------------- |
-| `open_3d_files`    | Open local point clouds, meshes or splats together                  |
-| `visualize_points` | Show XYZ arrays, RGB, prediction/target overlays and vectors        |
-| `update_3d_scene`  | Replace geometry in the same view, preserving its camera            |
-| `list_3d_scenes`   | Find this process's scene IDs and URLs                              |
-| `inspect_3d_scene` | Read rendered counts, bounds, camera and revision                   |
-| `set_3d_camera`    | Fit the scene or apply position, target and optional up vector      |
-| `capture_3d_view`  | Return the actual canvas as a PNG image, up to 1024 pixels per side |
-| `close_3d_scene`   | Release the scene's server and temporary data                       |
-
-`viewer://capabilities` lists supported formats, allowed roots and the workflow.
-There are 18 agent-facing tools and two app-only transport tools. Up to eight
-scenes are retained. Inline arrays are limited to 20,000 XYZ rows per argument;
-use local files for larger scenes. RGB values are integers 0–255. PyTorch/NumPy
-data in an agent's Python environment can use the Python API directly; MCP JSON
-does not carry live tensor objects.
-
-## Suggested agent instructions
-
-Copy into your agent's project instructions:
-
-> Use ply-visualizer when interactive 3D inspection would help explain or verify
-> point clouds, meshes, splats, predictions or vector fields. Prefer file paths
-> for large geometry. Reuse scene IDs for iterative updates. After opening a
-> scene, inspect it and compare rendered_revision with the submitted revision;
-> capture the view to assess the actual output. Adjust the camera as needed. A
-> submitted scene is not proof that it rendered successfully. Close scenes when
-> they are no longer needed.
-
-For example: “Open scan.ply with ply-visualizer, fit the camera, and show me a
-screenshot. Describe any visible holes.” Tool availability and these
-instructions help an agent choose the viewer; installation alone does not make
-every AI use it.
-
-## Agent controls (development preview)
-
-| Tool                | Operations                                                                                                                                                       |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `navigate_3d_view`  | Tight fit; front/back/top/bottom/left/right/isometric presets; orbit, pan, zoom; pivot XYZ, reset pivot to origin, pick visible geometry at normalized screen XY |
-| `set_3d_appearance` | Exposure in stops and background `#RRGGBB`                                                                                                                       |
-| `set_3d_object`     | Overlay opacity (0–1), visibility, world-unit point size, points/mesh mode, fixed RGB, original/intensity/available scalar coloring                              |
-| `measure_3d_scene`  | Distances and paths in scene units, list, undo, close path, clear                                                                                                |
-| `control_3d_video`  | Add/remove/update/visit keyframes, loop, start/stop preview, list reusable camera poses                                                                          |
-
-| `select_3d_region` | Select by object, scalar values, world box and/or plane;
-highlight, isolate, focus and return a PNG in one call; clear restores prior
-visibility | | `pick_3d_point` | Hit/miss, world XYZ, object/decoded point
-indices and scalar attributes without moving the camera | | `manage_3d_views` |
-Save, restore, list or delete named camera views; undo up to 50 agent camera
-changes |
+| Tool                  | Operations                                                                       |
+| --------------------- | -------------------------------------------------------------------------------- |
+| `set_3d_camera`       | Partial position, rotation-center target, up, XYZ rotation and vertical FOV; fit |
+| `navigate_3d_view`    | Fit, standard viewpoints, orbit, pan, zoom, pivot and visible-point picking      |
+| `set_3d_appearance`   | Exposure, background, axes, grid, legend, gamma and UI theme                     |
+| `set_3d_object`       | Visibility, opacity, point size, points/mesh mode and available color modes      |
+| `transform_3d_object` | Translation, axis-angle, quaternion, scale, affine matrix, invert and reset      |
+| `measure_3d_scene`    | Distances and paths in scene units; list, undo, close and clear                  |
+| `control_3d_video`    | Camera keyframes, loop and preview playback                                      |
+| `select_3d_region`    | Select by attributes, box or plane; highlight, isolate, focus and preview        |
+| `pick_3d_point`       | Hit/miss, world XYZ, object/decoded indices and attributes                       |
+| `manage_3d_views`     | Named camera bookmarks and camera undo                                           |
 
 `inspect_3d_scene` returns object indices, current presentation state, bounds,
 valid vertex counts and available scalar names. Source/filtered counts are null
@@ -313,3 +274,35 @@ not proof of successful parsing: inspect the rendered revision afterward.
 The native URL-input/history UI is maintained separately. Its website loading
 path runs in the browser and therefore still depends on CORS; the MCP tool uses
 the local server instead of duplicating or controlling that UI.
+
+### Camera, presentation and object transforms
+
+These controls are grouped by scope; agents can change only the fields needed.
+`set_3d_camera` accepts partial position, target (rotation center), up and
+vertical `fov` updates. Absolute `rotation` is XYZ Euler degrees, preserving
+camera position and moving the target along camera -Z at the previous pivot
+distance. Use `navigate_3d_view` for orbiting around a fixed center.
+
+`set_3d_appearance` adds `axes`, `grid`, `legend`, `gamma_correction` and
+`theme` (`dark-modern` / `light-modern`). Gamma matches the UI button: true
+treats RGB as linear for the extra-gamma appearance; false decodes source sRGB
+before shading. Axes mark the rotation center; disabled persistent axes can
+still appear during interaction. Grid and legend are DOM overlays visible
+inline, excluded from canvas PNG captures. The theme changes the UI; background
+and object colors remain explicit. All these settings are returned by
+inspection.
+
+`transform_3d_object` supports translation, axis-angle rotation (including
+90-degree turns), XYZW quaternions, scale, affine matrices, inversion and reset.
+It changes one object's transform without rewriting its source file or moving
+the camera. Matrix values are column-major, matching `local_to_world` in
+inspection; transpose a row-major matrix copied from the settings UI. Local
+composition is current × delta; world composition is delta × current, around the
+world origin. `replace=True` sets an absolute transform. Zero-scale transforms
+cannot subsequently be inverted.
+
+Use `set_3d_object` to activate/deactivate (`visible`), change `point_size`,
+opacity, points/mesh mode, fixed color or original/intensity/scalar color
+options. Inspect objects first to discover IDs, scalar fields and
+`available_color_modes` (the actual UI choices, including palette indices,
+intensity palettes and camera-projected colors when available).

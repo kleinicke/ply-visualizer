@@ -138,6 +138,24 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
       }
       const info = await control('inspect_3d_scene');
       expect(info.objects[0].vertices).toBeGreaterThan(0);
+      expect(info.objects[0].available_color_modes).toContainEqual({
+        value: 'assigned',
+        label: expect.any(String),
+      });
+      const palette = await control('set_3d_object', {
+        object_index: 0,
+        color_mode: '0',
+        point_size: 0.03,
+      });
+      expect(palette.objects[0].color_mode).toBe('0');
+      expect(palette.objects[0].point_size).toBeCloseTo(0.03);
+      const missingColor = await call('set_3d_object', {
+        scene_id: sceneId,
+        object_index: 0,
+        color_mode: 'recolored',
+      });
+      expect(missingColor.isError).toBe(true);
+
       expect(info.camera.up).toEqual([0, 1, 0]);
       expect(info.renderer_id).toMatch(/^[a-f0-9]{32}$/);
       expect(info.coordinate_system.handedness).toBe('right-handed');
@@ -147,6 +165,87 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
       expect(info.camera.screen_right).toEqual([1, 0, 0]);
       expect(info.camera.distance_to_rotation_center).toBeGreaterThan(0);
       expect(info.camera.viewport.css_width).toBeGreaterThan(0);
+      const appearance = await control('set_3d_appearance', {
+        axes: true,
+        grid: true,
+        legend: true,
+        gamma_correction: true,
+        theme: 'light-modern',
+      });
+      expect(appearance.presentation).toMatchObject({
+        axes: true,
+        grid: true,
+        legend: true,
+        gamma_correction: true,
+        theme: 'light-modern',
+      });
+      await expect(viewer.locator('[data-testid="coordinate-grid"]')).toBeVisible();
+      await expect(viewer.locator('.scene-legend')).toBeVisible();
+      await control('set_3d_appearance', {
+        axes: false,
+        grid: false,
+        legend: false,
+        gamma_correction: false,
+        theme: 'dark-modern',
+      });
+      const fov = await control('set_3d_camera', { fov: 50 });
+      expect(fov.camera.vertical_fov_degrees).toBe(50);
+      expect(fov.camera.position).toEqual(info.camera.position);
+      const rotated = await control('set_3d_camera', { rotation: [0, 90, 0] });
+      expect(rotated.camera.view_direction[0]).toBeCloseTo(-1);
+      const invalidCamera = await call('set_3d_camera', {
+        scene_id: sceneId,
+        position: rotated.camera.target,
+      });
+      expect(invalidCamera.isError).toBe(true);
+      await control('set_3d_camera', {
+        position: info.camera.position,
+        target: info.camera.target,
+        up: info.camera.up,
+        fov: info.camera.vertical_fov_degrees,
+      });
+      const translated = await control('transform_3d_object', {
+        object_index: 0,
+        action: 'translate',
+        vector: [1, 2, 3],
+      });
+      expect(translated.objects[0].local_to_world.slice(12, 15)).toEqual([1, 2, 3]);
+      expect(translated.camera.position).toEqual(info.camera.position);
+      const rotation = await control('transform_3d_object', {
+        object_index: 0,
+        action: 'rotate',
+        vector: [0, 0, 1],
+        angle: 90,
+        space: 'world',
+      });
+      expect(rotation.objects[0].local_to_world[12]).toBeCloseTo(-2);
+      expect(rotation.objects[0].local_to_world[13]).toBeCloseTo(1);
+      const inverted = await control('transform_3d_object', { object_index: 0, action: 'invert' });
+      expect(inverted.objects[0].local_to_world[12]).toBeCloseTo(-1);
+      await control('transform_3d_object', {
+        object_index: 0,
+        action: 'quaternion',
+        quaternion: [0, 0, 0, 2],
+        replace: true,
+      });
+      const scaled = await control('transform_3d_object', {
+        object_index: 0,
+        action: 'scale',
+        vector: [2, 3, 4],
+      });
+      expect([0, 5, 10].map(i => scaled.objects[0].local_to_world[i])).toEqual([2, 3, 4]);
+      const matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 4, 5, 6, 1];
+      const replaced = await control('transform_3d_object', {
+        object_index: 0,
+        action: 'matrix',
+        matrix,
+        replace: true,
+      });
+      expect(replaced.objects[0].local_to_world).toEqual(matrix);
+      await control('transform_3d_object', { object_index: 0, action: 'reset' });
+      const hidden = await control('set_3d_object', { object_index: 0, visible: false });
+      expect(hidden.objects[0].visible).toBe(false);
+      await control('set_3d_object', { object_index: 0, visible: true });
       await control('navigate_3d_view', { action: 'preset', preset: 'isometric' });
       const frame = page.frames().find(frame => frame.parentFrame() === page.mainFrame())!;
       const screen = await frame.evaluate(() => {

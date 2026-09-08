@@ -1,3 +1,6 @@
+import { getPointCloudColorOptions, type PointCloudColorOptionsHost } from '../colorOptions';
+import { sceneGuidesState } from '../state/sceneGuides.svelte';
+import { getCurrentThemeName } from '../themes';
 /* eslint-disable @typescript-eslint/naming-convention -- MCP wire keys */
 /** Explicit view conventions and reproducible presentation facts for agents. */
 import * as THREE from 'three';
@@ -25,6 +28,11 @@ export function objectPresentation(host: ControlHost, index: number) {
   host.meshes[index]?.updateWorldMatrix(true, false);
   return {
     opacity: opacities.length === 1 ? opacities[0] : null,
+    available_color_modes: getPointCloudColorOptions(
+      host as unknown as PointCloudColorOptionsHost,
+      host.spatialFiles[index],
+      index
+    ),
     material_opacities: opacities,
     material_colors: colors,
     local_to_world: host.meshes[index]?.matrixWorld.toArray() ?? null,
@@ -66,6 +74,11 @@ export function agentViewState(host: ControlHost) {
       note: 'The OpenGL default is Y-up, unlike Blender world Z-up. Source data is not automatically reoriented or scaled. Camera axes below are in world coordinates; object local_to_world includes applied transforms.',
     },
     camera: {
+      rotation_degrees_xyz: [
+        host.camera.rotation.x,
+        host.camera.rotation.y,
+        host.camera.rotation.z,
+      ].map(THREE.MathUtils.radToDeg),
       position: host.camera.position.toArray(),
       target: target.toArray(),
       rotation_center: target.toArray(),
@@ -91,6 +104,12 @@ export function agentViewState(host: ControlHost) {
       },
     },
     presentation: {
+      axes: host.axesPermanentlyVisible,
+      grid: sceneGuidesState.grid,
+      legend: sceneGuidesState.legend,
+      gamma_correction: !host.convertSrgbToLinear,
+      source_srgb_decode: host.convertSrgbToLinear,
+      theme: getCurrentThemeName(),
       background,
       background_kind:
         sceneBackground && !(sceneBackground instanceof THREE.Color) ? 'texture' : 'color',

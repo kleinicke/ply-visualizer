@@ -1,3 +1,4 @@
+import { setAgentCamera } from './agentTransforms';
 /* eslint-disable @typescript-eslint/naming-convention -- Python MCP wire-format keys */
 import * as THREE from 'three';
 import { alignmentStatus, agentAlignmentBusy } from './agentAlignment';
@@ -40,15 +41,9 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
     if (command.operation === 'camera') {
       rememberAgentCamera(host as unknown as ControlHost);
       const args = command.arguments;
+      setAgentCamera(host as unknown as ControlHost, args);
       if (args.fit) {
         fitAgentView(host);
-      } else {
-        host.camera.position.fromArray(args.position);
-        host.controls.target.fromArray(args.target);
-        if (args.up) {
-          host.camera.up.fromArray(args.up);
-        }
-        host.controls.update();
       }
     }
     const controlResult = !['camera', 'inspect', 'capture'].includes(command.operation)

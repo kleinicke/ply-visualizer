@@ -84,7 +84,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
     async def test_agent_workflow(self):
         async with Client(create_server([Path.cwd()])) as client:
             tools = (await client.list_tools()).tools
-            self.assertEqual(len(tools), 20)
+            self.assertEqual(len(tools), 21)
             self.assertTrue(next(t for t in tools if t.name == "open_3d_url").annotations.open_world_hint)
             self.assertFalse(next(t for t in tools if t.name == 'update_3d_scene').meta)
             app_resource = await client.read_resource('ui://ply-visualizer/viewer.html')
@@ -147,6 +147,6 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
             args=['-m', 'ply_visualizer.mcp_server', '--root', str(Path.cwd())],
             env={**os.environ, 'PYTHONPATH': source})
         async with Client(process) as client:
-            self.assertEqual(len((await client.list_tools()).tools), 20)
+            self.assertEqual(len((await client.list_tools()).tools), 21)
             resource = await client.read_resource('viewer://capabilities')
             self.assertEqual(json.loads(resource.contents[0].text)['transport'], 'stdio')

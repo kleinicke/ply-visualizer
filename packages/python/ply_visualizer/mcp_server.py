@@ -150,19 +150,18 @@ def create_server(roots):
     @server.tool(annotations=local)
     @explain_errors
     def set_3d_camera(scene_id: str, fit: bool = False, position: tuple[float, float, float] | None = None,
-                      target: tuple[float, float, float] | None = None, up: tuple[float, float, float] | None = None) -> dict[str, Any]:
-        """Fit geometry into view, or set camera position and look-at target. Requires an active inline viewer or explicit browser fallback. Returns the applied camera and rendered scene information."""
-        if fit:
-            if any(value is not None for value in (position, target, up)):
-                raise ValueError("Use fit or explicit camera vectors, not both")
-        else:
-            if position is None or target is None or position == target:
-                raise ValueError("Provide different camera position and target vectors")
-            if not all(math.isfinite(v) for vector in (position, target, up or (0, 1, 0)) for v in vector):
-                raise ValueError("Camera vectors must be finite")
-            if up is not None and not any(up):
-                raise ValueError("up must be nonzero")
-        return manager.get(scene_id)._bridge.request("camera", {"fit": fit, "position": position, "target": target, "up": up})
+        target: tuple[float, float, float] | None = None, up: tuple[float, float, float] | None = None,
+        rotation: tuple[float, float, float] | None = None,
+        fov: Annotated[float, Field(gt=0, lt=180)] | None = None) -> dict[str, Any]:
+        """Partially update camera position, target (rotation center), up or vertical FOV in degrees. Rotation is absolute XYZ Euler degrees; it moves target along camera -Z at the previous pivot distance. Rotation cannot combine with target/up. Fit frames visible geometry, optionally at the new FOV. Returns applied view state."""
+        if fit and any(v is not None for v in (position, target, up, rotation)):
+            raise ValueError("Use fit or explicit camera vectors, not both")
+        if rotation is not None and (target is not None or up is not None):
+            raise ValueError("Use rotation or target/up, not both")
+        if not all(math.isfinite(v) for vector in (position, target, up, rotation) if vector is not None for v in vector):
+            raise ValueError("Camera vectors must be finite")
+        if up is not None and not any(up): raise ValueError("up must be nonzero")
+        return command(scene_id, "camera", dict(fit=fit, position=position, target=target, up=up, rotation=rotation, fov=fov))
 
     @server.tool(annotations=readonly)
     @explain_errors
@@ -202,9 +201,12 @@ def create_server(roots):
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
     def set_3d_appearance(scene_id: str, brightness: Annotated[float, Field(ge=-10, le=10)] | None = None,
-                          background: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None) -> dict[str, Any]:
-        """Set geometry exposure in stops (0 normal, +1 twice as bright) and background #RRGGBB. Capture includes this background."""
-        return command(scene_id, "appearance", dict(brightness=brightness, background=background))
+                          background: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None,
+        axes: bool | None = None, grid: bool | None = None, legend: bool | None = None,
+        gamma_correction: bool | None = None,
+        theme: Literal["dark-modern", "light-modern"] | None = None) -> dict[str, Any]:
+        """Set exposure stops, background #RRGGBB, persistent pivot axes, coordinate grid, object/color legend and UI theme. gamma_correction matches the UI toggle: true treats source RGB as linear (extra gamma appearance); false decodes sRGB before shading. Grid/legend are inline UI overlays, not included in canvas PNG captures. Axes may briefly appear during interaction when persistent axes are off."""
+        return command(scene_id, "appearance", dict(brightness=brightness, background=background, axes=axes, grid=grid, legend=legend, gamma_correction=gamma_correction, theme=theme))
 
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
@@ -213,10 +215,29 @@ def create_server(roots):
         opacity: Annotated[float, Field(ge=0, le=1)] | None = None,
         visible: bool | None = None, mode: Literal["points", "mesh"] | None = None,
         color: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None,
-        color_mode: Annotated[str, Field(pattern=r"^(original|assigned|intensity|intensity-grayscale|scalar:[^:]+:(viridis|grayscale|colors))$")] | None = None) -> dict[str, Any]:
-        """Set overlay opacity (0..1), object visibility, world-unit point size, points/mesh representation, fixed RGB color or original/intensity/scalar coloring. Get object_index and scalar_fields from inspection. Mesh requires faces. Fixed color and color_mode are mutually exclusive."""
+        color_mode: Annotated[str, Field(pattern=r"^(original|recolored|assigned|[0-9]+|intensity|intensity-grayscale|intensity-viridis|intensity-colors|scalar:[^:]+:(viridis|grayscale|colors))$")] | None = None) -> dict[str, Any]:
+        """Set overlay opacity (0..1), object visibility, world-unit point size, points/mesh representation, fixed RGB color or original/intensity/scalar coloring. Get object_index, scalar_fields and available_color_modes from inspection; these include palette indices and projected colors when available. Mesh requires faces. Fixed color and color_mode are mutually exclusive."""
         if color is not None and color_mode is not None: raise ValueError("Provide color or color_mode")
         return command(scene_id, "object", dict(object_index=object_index, opacity=opacity, point_size=point_size, visible=visible, mode=mode, color=color, color_mode=color_mode))
+
+    @server.tool(annotations=local, structured_output=True)
+    @explain_errors
+    def transform_3d_object(scene_id: str, object_index: Annotated[int, Field(ge=0)],
+        action: Literal["matrix", "translate", "rotate", "quaternion", "scale", "invert", "reset"],
+        vector: tuple[float, float, float] | None = None,
+        angle: float | None = None, quaternion: tuple[float, float, float, float] | None = None,
+        matrix: Annotated[list[float], Field(min_length=16, max_length=16)] | None = None,
+        space: Literal["local", "world"] = "local", replace: bool = False) -> dict[str, Any]:
+        """Transform one cloud/mesh without changing source files or camera. Translate/scale use vector XYZ; rotate uses vector axis plus angle degrees (90 for quarter turns); quaternion uses XYZW, normalized. Matrix is affine 4x4 COLUMN-MAJOR, matching inspection (transpose row-major UI input). Default composes current*delta in local space; world uses delta*current around world origin. replace=True sets an absolute transform. Invert/reset act on the current matrix. Inspect local_to_world to verify. Visibility, point size and coloring use set_3d_object."""
+        if action in ("translate", "scale", "rotate") and vector is None: raise ValueError("vector is required")
+        if action == "rotate" and (angle is None or not any(vector)): raise ValueError("Nonzero rotation axis and angle are required")
+        if action == "quaternion" and (quaternion is None or not any(quaternion)): raise ValueError("Nonzero XYZW quaternion is required")
+        if action == "matrix" and matrix is None: raise ValueError("16 column-major matrix values are required")
+        if not all(math.isfinite(v) for v in (*(vector or ()), *(quaternion or ()), *(matrix or ()), angle or 0)):
+            raise ValueError("Transform values must be finite")
+        if action == "matrix" and [matrix[i] for i in (3, 7, 11, 15)] != [0, 0, 0, 1]:
+            raise ValueError("Matrix must be affine: last row 0,0,0,1")
+        return command(scene_id, "transform", dict(object_index=object_index, action=action, vector=vector, angle=angle, quaternion=quaternion, matrix=matrix, space=space, replace=replace))
 
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
