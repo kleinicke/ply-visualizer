@@ -80,3 +80,21 @@ files. Calibration is explicit, never inferred from image pixels alone.
 
 Directory submissions pending moderation are not confirmed published listings.
 Registry discovery does not automatically install the server into every client.
+
+## Submission status (2026-09-09)
+
+| Destination                                                                                              | Status                                                                    |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.kleinicke%2F3d-visualizer) | Active, latest version 0.4.2; installs `3d-visualizer` from PyPI.         |
+| [PyPI](https://pypi.org/project/3d-visualizer/0.4.2/)                                                    | Published; wheel and sdist hashes verified against the release artifacts. |
+| [GitHub MCP bundle](https://github.com/kleinicke/ply-visualizer/releases/tag/python-v0.4.2)              | Published, with the validated MCPB 0.4 UV bundle attached.                |
+| [Awesome MCP Servers](https://github.com/punkpeye/awesome-mcp-servers/pull/14040)                        | Submitted; awaiting maintainer review.                                    |
+| [MCP.so](https://github.com/chatmcp/mcpso/issues/4009)                                                   | Submitted; awaiting directory review.                                     |
+| Glama                                                                                                    | Metadata prepared; submission requires browser sign-in.                   |
+| Smithery                                                                                                 | Bundle published on GitHub; directory submission requires sign-in.        |
+| [MCPServers.org](https://mcpservers.org/submit)                                                          | Free listing form prepared; requires a contact email.                     |
+
+The old `ply-visualizer` 0.4.1 release remains on PyPI. New releases use
+`3d-visualizer`. The GitHub Actions trusted publisher must be configured for the
+new PyPI project before using the automated publish job; local publication used
+the existing configured token.
