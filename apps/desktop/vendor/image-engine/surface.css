@@ -1,0 +1,31 @@
+:root {
+  color-scheme: dark;
+  --vscode-editor-background: #202020;
+  --vscode-editor-foreground: #ccc;
+  --vscode-descriptionForeground: #999;
+  --vscode-imagePreview-border: transparent;
+  --vscode-focusBorder: #2694df;
+}
+html,
+body {
+  margin: 0;
+  background: #202020;
+  color: #ccc;
+  font:
+    12px -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+}
+#image-ui-root,
+.layers-panel,
+.histogram-overlay,
+.metadata-overlay,
+.channels-panel,
+.measure-panel,
+.filename-badge,
+.dataset-overlay,
+.image-collection-overlay,
+.layered-preview-overlay,
+.custom-context-menu {
+  display: none !important;
+}

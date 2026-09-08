@@ -1,0 +1,2993 @@
+html,
+body {
+  width: 100%;
+  height: 100%;
+  text-align: center;
+}
+
+body img {
+  max-width: none;
+  max-height: none;
+}
+
+.container:focus {
+  outline: none !important;
+}
+
+.container {
+  padding: 5px 0 0 10px;
+  box-sizing: border-box;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.container.image {
+  padding: 0;
+  display: flex;
+  box-sizing: border-box;
+}
+
+.container.image img {
+  padding: 0;
+  background-position:
+    0 0,
+    8px 8px;
+  background-size: 16px 16px;
+  border: 1px solid var(--vscode-imagePreview-border);
+}
+
+/* The sharp patch over the visible part of a large pyramidal image. Absolutely
+   positioned in document coordinates so it scrolls with the image beneath it,
+   and inert: every interaction belongs to the image, which is still the whole
+   picture as far as the rest of the viewer is concerned. */
+.detail-patch {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+  image-rendering: auto;
+}
+
+/* Large pyramids use one stable full-resolution scene element. The overview
+   and every retained tile are children, so zooming can never transform them at
+   different times. */
+.pyramid-scene {
+  position: relative;
+  /* Tile z-indices are meaningful only inside the scene. Without an isolated
+	   stacking context, fine tiles can paint above fixed navigation controls. */
+  isolation: isolate;
+  z-index: 0;
+  flex: none;
+  overflow: hidden;
+}
+
+.pyramid-scene.scale-to-fit {
+  margin: auto;
+}
+
+.pyramid-scene > canvas {
+  position: absolute;
+  pointer-events: none;
+  margin: 0;
+  max-width: none;
+  max-height: none;
+}
+
+.pyramid-scene > .pyramid-base {
+  left: 0;
+  top: 0;
+  z-index: 0;
+}
+
+.pyramid-scene.pixelated > canvas {
+  image-rendering: pixelated;
+}
+
+/* When pixels with no value are drawn as holes, put a checkerboard behind the
+   canvas so a hole reads as "nothing here" rather than as a dark pixel. Only
+   in that mode, and never over an explicit Layers background. */
+.container.image[data-no-value-transparent]:not([data-layer-background-override]) > canvas {
+  background-position:
+    0 0,
+    8px 8px;
+  background-size: 16px 16px;
+  background-image:
+    linear-gradient(
+      45deg,
+      rgb(230, 230, 230) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgb(230, 230, 230) 75%,
+      rgb(230, 230, 230)
+    ),
+    linear-gradient(
+      45deg,
+      rgb(230, 230, 230) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgb(230, 230, 230) 75%,
+      rgb(230, 230, 230)
+    );
+}
+
+.vscode-dark.container.image[data-no-value-transparent]:not([data-layer-background-override])
+  > canvas {
+  background-image:
+    linear-gradient(
+      45deg,
+      rgb(20, 20, 20) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgb(20, 20, 20) 75%,
+      rgb(20, 20, 20)
+    ),
+    linear-gradient(
+      45deg,
+      rgb(20, 20, 20) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgb(20, 20, 20) 75%,
+      rgb(20, 20, 20)
+    );
+}
+
+/* Optional viewing background for alpha. The canvas pixels remain unchanged. */
+.container.image[data-layer-background-override] > img,
+.container.image[data-layer-background-override] > canvas {
+  background-color: var(--layer-preview-background);
+  background-image: none;
+}
+
+.container.image img {
+  background-image:
+    linear-gradient(
+      45deg,
+      rgb(230, 230, 230) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgb(230, 230, 230) 75%,
+      rgb(230, 230, 230)
+    ),
+    linear-gradient(
+      45deg,
+      rgb(230, 230, 230) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgb(230, 230, 230) 75%,
+      rgb(230, 230, 230)
+    );
+}
+
+.vscode-dark.container.image img {
+  background-image:
+    linear-gradient(
+      45deg,
+      rgb(20, 20, 20) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgb(20, 20, 20) 75%,
+      rgb(20, 20, 20)
+    ),
+    linear-gradient(
+      45deg,
+      rgb(20, 20, 20) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgb(20, 20, 20) 75%,
+      rgb(20, 20, 20)
+    );
+}
+
+.container img.pixelated,
+.container canvas.pixelated {
+  image-rendering: pixelated;
+}
+
+.container img.scale-to-fit,
+.container canvas.scale-to-fit {
+  max-width: calc(100% - 20px);
+  max-height: calc(100% - 20px);
+  object-fit: contain;
+}
+
+/* Center only in fit mode so top-left is reachable in zoomed states */
+.container img.scale-to-fit,
+.container canvas.scale-to-fit {
+  margin: auto;
+}
+
+.container img:not(.scale-to-fit),
+.container canvas:not(.scale-to-fit) {
+  margin: 0;
+}
+
+.container.ready.zoom-in {
+  cursor: zoom-in;
+}
+
+.container.ready.zoom-out {
+  cursor: zoom-out;
+}
+
+.container .embedded-link,
+.container .embedded-link:hover {
+  cursor: pointer;
+  text-decoration: underline;
+  margin-left: 5px;
+}
+
+.container.loading,
+.container.error {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.loading-indicator {
+  width: 30px;
+  height: 30px;
+  background-image: url('./loading.svg');
+  background-size: cover;
+}
+
+.loading-indicator,
+.image-load-error {
+  display: none;
+}
+
+.loading .loading-indicator,
+.error .image-load-error {
+  display: block;
+}
+
+/* Never cover an outgoing frame with the global spinner during an in-place switch. */
+.container.image-transition-pending .loading-indicator {
+  display: none;
+}
+
+.image-load-error {
+  margin: 1em;
+}
+
+.vscode-dark .loading-indicator {
+  background-image: url('./loading-dark.svg');
+}
+
+.vscode-high-contrast .loading-indicator {
+  background-image: url('./loading-hc.svg');
+}
+
+/* Image Collection Overlay */
+.image-collection-overlay {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px;
+  padding: 8px 12px;
+  z-index: 1000;
+  font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  font-size: var(--vscode-editor-font-size, 12px);
+  color: var(--vscode-editor-foreground, #cccccc);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.image-collection-overlay .overlay-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Navigation for pages (top-level IFDs) inside one TIFF file. */
+.tiff-page-overlay {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 7px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px;
+  padding: 5px 8px;
+  z-index: 1000;
+  font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  font-size: var(--vscode-editor-font-size, 12px);
+  color: var(--vscode-editor-foreground, #cccccc);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  user-select: none;
+}
+
+.tiff-page-basic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.tiff-page-basic--ome .tiff-page-counter {
+  font-weight: 400;
+  color: var(--vscode-descriptionForeground, #999);
+}
+
+.ome-axis-controls {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  min-width: min(310px, 70vw);
+  padding-top: 4px;
+  border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.ome-axis {
+  display: grid;
+  grid-template-columns: 1.4em minmax(90px, 1fr) minmax(7em, auto);
+  align-items: center;
+  gap: 6px;
+}
+
+.ome-axis-label {
+  font-weight: 700;
+  color: var(--ome-channel-color, var(--vscode-editor-foreground, #ccc));
+}
+
+.ome-axis input[type='range'] {
+  min-width: 0;
+  accent-color: var(--ome-channel-color, var(--vscode-focusBorder, #007acc));
+}
+
+.ome-axis-value {
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tiff-page-overlay button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  font-size: 20px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.tiff-page-overlay button:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+}
+
+.tiff-page-counter {
+  min-width: 7em;
+  text-align: center;
+  font-weight: 600;
+}
+
+/*
+ * Loading dots sit outside the text's layout box.
+ *
+ * A dot that takes part in inline layout widens the line, which re-centres the
+ * text beside it: the label visibly jumps sideways the moment loading starts.
+ * A negative margin equal to the dot's own width plus its gap makes the total
+ * inline advance zero, so the dot is drawn to the left of the text while the
+ * text stays exactly where it was. The overlays do not clip their content, so
+ * drawing outside the flow is safe.
+ */
+.tiff-page-overlay--loading .tiff-page-counter::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  /* -12px = -(6px width + 6px gap): zero net advance. */
+  margin-left: -12px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--vscode-textLink-foreground, #3794ff);
+  animation: raw-badge-pulse 1.2s ease-in-out infinite;
+}
+
+.dataset-overlay {
+  /* Draggable by its body; interactive children opt out in JS. */
+  cursor: grab;
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  min-width: min(360px, 80vw);
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  color: var(--vscode-editor-foreground, #ccc);
+  font-family: var(--vscode-editor-font-family, 'Segoe UI', sans-serif);
+  font-size: var(--vscode-editor-font-size, 12px);
+  z-index: 1001;
+  user-select: none;
+}
+
+.dataset-heading {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 7px;
+}
+
+.dataset-title {
+  overflow: hidden;
+  font-weight: 600;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* A click on the title reduces the floating navigator to unobtrusive chrome.
+   Its position and loading state remain intact, so expanding it is lossless. */
+.dataset-overlay--collapsed {
+  min-width: 0;
+  gap: 0;
+  padding: 5px 12px;
+}
+
+.dataset-overlay--collapsed .dataset-axis-controls,
+.dataset-overlay--collapsed .dataset-note {
+  display: none !important;
+}
+
+.dataset-overlay--dragging .dataset-title {
+  cursor: grabbing;
+}
+
+.nav-overlay .dataset-title-label::before {
+  content: '▾ ';
+}
+.nav-overlay.dataset-overlay--collapsed .dataset-title-label::before {
+  content: '▸ ';
+}
+.nav-overlay .dataset-title:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 2px;
+}
+
+.dataset-resolution:not([hidden]) {
+  display: grid;
+  grid-template-columns: 13ch 12ch;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground, #aaa);
+}
+
+.dataset-resolution b {
+  font-weight: 500;
+  color: var(--vscode-editor-foreground, #ccc);
+}
+
+/* Reserve detail space even before finer pixels arrive; loading never recentres it. */
+.dataset-detail--empty {
+  visibility: hidden;
+}
+.dataset-axis-controls:empty {
+  display: none;
+}
+.dataset-overlay--resolution {
+  grid-template-columns: max-content max-content;
+  min-width: 0;
+  align-items: center;
+  column-gap: 12px;
+}
+.dataset-overlay--resolution .dataset-axis-controls,
+.dataset-overlay--resolution .dataset-note {
+  grid-column: 1 / -1;
+}
+.dataset-overlay--readonly .dataset-title-label::before {
+  content: none;
+}
+.dataset-overlay--readonly .dataset-title {
+  cursor: grab;
+}
+
+.dataset-overlay button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  font-size: 20px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.dataset-overlay button:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+}
+
+.layered-preview-overlay {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.45));
+  border-radius: 5px;
+  background: var(--vscode-editorWidget-background, rgba(32, 32, 32, 0.94));
+  color: var(--vscode-editorWidget-foreground, #ddd);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  font-size: 11px;
+}
+
+.layered-preview-overlay[hidden] {
+  display: none;
+}
+
+.layered-preview-overlay button {
+  border: 0;
+  border-radius: 3px;
+  padding: 3px 7px;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #ddd);
+  cursor: pointer;
+}
+
+.layered-preview-overlay button:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+.layered-preview-overlay button.active {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+}
+.layered-preview-label {
+  opacity: 0.78;
+  margin-right: 2px;
+}
+.layered-preview-fidelity {
+  opacity: 0.72;
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dataset-series-row,
+.dataset-axis {
+  display: grid;
+  /* label | slider | reading | shortcut. The shortcut column is sized to the
+	   widest hint ("← →") and no more — it is a hint, not a control, so it
+	   should not push the slider around. */
+  grid-template-columns: minmax(4em, auto) minmax(120px, 1fr) minmax(4.5em, auto) 2.1em;
+  align-items: center;
+  gap: 7px;
+}
+
+.dataset-axis > .dataset-axis-hint {
+  /* Sits tight against the reading rather than a full gap away. */
+  margin-left: -3px;
+}
+
+.dataset-series-row {
+  /* label | dropdown | shortcut. The third column matches `.dataset-axis` so a
+	   dropdown row and a slider row line up in the same overlay. */
+  grid-template-columns: minmax(4em, auto) minmax(120px, 1fr) 2.1em;
+}
+
+.dataset-series {
+  min-width: 0;
+  color: var(--vscode-dropdown-foreground);
+  background: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border, transparent);
+}
+
+.dataset-axis-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 5px;
+  border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+/* Read-only full-image and patch resolution beneath the controls. Quieter than
+   the controls: it is there to be glanced at, not operated. */
+.dataset-note {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+  color: var(--vscode-descriptionForeground, rgba(190, 190, 190, 0.8));
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-line;
+}
+
+.dataset-axis input[type='range'] {
+  min-width: 0;
+  accent-color: var(--vscode-focusBorder, #007acc);
+}
+
+.dataset-axis-label {
+  font-weight: 600;
+}
+
+.dataset-axis-value {
+  white-space: nowrap;
+}
+
+.dataset-axis-hint {
+  white-space: nowrap;
+  text-align: left;
+  font-size: 0.85em;
+  letter-spacing: 0.02em;
+  color: var(--vscode-descriptionForeground, #aaa);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.czi-key-hints {
+  padding-top: 2px;
+  font-size: 0.85em;
+  letter-spacing: 0.02em;
+  color: var(--vscode-descriptionForeground, #aaa);
+  opacity: 0.75;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.netcdf-view-info,
+.czi-view-info {
+  padding-top: 4px;
+  border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+  color: var(--vscode-descriptionForeground, #aaa);
+  text-align: center;
+}
+
+.dataset-overlay--dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.dataset-overlay input,
+.dataset-overlay select,
+.dataset-overlay button {
+  cursor: default;
+}
+
+/* A navigation control must never LOOK focused. It still takes focus while it
+   is being operated — a native dropdown needs focus to keep its popup open —
+   but the ring implies keyboard ownership the control does not have: the
+   shortcuts are handled globally in capture and keep working regardless. */
+.dataset-overlay input:focus,
+.dataset-overlay input:focus-visible,
+.dataset-overlay select:focus,
+.dataset-overlay select:focus-visible,
+.dataset-overlay button:focus,
+.dataset-overlay button:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.dataset-overlay input[type='range'] {
+  cursor: pointer;
+}
+
+.dataset-title::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  /* Always reserve the dot's slot before the disclosure arrow. */
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--vscode-textLink-foreground, #3794ff);
+  visibility: hidden;
+}
+
+.dataset-overlay--loading .dataset-title::before {
+  visibility: visible;
+  animation: raw-badge-pulse 1.2s ease-in-out infinite;
+}
+
+/* Filename badge — bottom-left, always visible */
+.filename-badge {
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 4px;
+  padding: 3px 8px;
+  z-index: 1000;
+  font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #cccccc99);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  cursor: default;
+  user-select: none;
+  max-width: 50vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vscode-light .filename-badge {
+  background: var(--vscode-editor-background, #ffffff);
+  border: 1px solid var(--vscode-panel-border, #e5e5e5);
+  color: var(--vscode-descriptionForeground, #666666);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.filename-badge--loading::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--vscode-textLink-foreground, #3794ff);
+  border-radius: 50%;
+  margin-left: 5px;
+  vertical-align: middle;
+  flex-shrink: 0;
+  animation: collection-dot-pulse 0.9s ease-in-out infinite;
+}
+
+/* Tooltip for filename badge — appended to body by JS to avoid overflow clipping */
+.filename-tooltip {
+  position: fixed;
+  background: var(--vscode-editorHoverWidget-background, #252526);
+  border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
+  color: var(--vscode-editorHoverWidget-foreground, #cccccc);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  white-space: pre;
+  pointer-events: none;
+  z-index: 2000;
+}
+
+.image-collection-overlay .overlay-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.image-collection-overlay .image-counter {
+  font-weight: 600;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  min-width: 3em;
+  text-align: center;
+  cursor: pointer;
+}
+
+.image-collection-overlay .image-counter:hover {
+  text-decoration: underline;
+}
+
+.collection-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  cursor: pointer;
+  font: inherit;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.collection-nav-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+}
+
+.collection-nav-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #3794ff);
+  outline-offset: -1px;
+}
+
+.image-counter-input {
+  width: 3em;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #cccccc);
+  border: 1px solid var(--vscode-focusBorder, #3794ff);
+  border-radius: 3px;
+  font-size: inherit;
+  font-weight: 600;
+  text-align: center;
+  padding: 0 2px;
+  /* hide spinner arrows */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.image-counter-input::-webkit-outer-spin-button,
+.image-counter-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}
+
+.image-collection-overlay .toggle-hint {
+  font-size: 10px;
+  opacity: 0.7;
+  color: var(--vscode-descriptionForeground, #cccccc99);
+}
+
+.collection-remove-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--vscode-editor-foreground, #cccccc);
+  opacity: 0.5;
+  padding: 1px 3px;
+  border-radius: 3px;
+  font-size: 10px;
+  line-height: 1;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+}
+
+.collection-remove-btn:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+}
+
+.collection-remove-btn--confirm {
+  opacity: 1;
+  color: var(--vscode-charts-red, #f48771);
+  position: relative;
+  overflow: hidden;
+}
+
+.collection-remove-btn--confirm::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--vscode-charts-red, #f48771);
+  animation: remove-countdown 1.5s linear forwards;
+}
+
+@keyframes remove-countdown {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+.vscode-light .collection-remove-btn {
+  color: var(--vscode-editor-foreground, #333333);
+}
+
+.vscode-light .collection-remove-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(0, 0, 0, 0.07));
+}
+
+/*
+ * Loading dot for the collection overlay.
+ *
+ * It sits ahead of the ‹ button rather than beside the counter, and like the
+ * other loading dots it is laid out to take no space: the row keeps its exact
+ * position while switching. The controls row is a flex container with a 4px
+ * gap, and a ::before becomes a flex item, so the gap counts toward the advance
+ * and has to be cancelled along with the dot's own width.
+ */
+.image-collection-overlay--loading .overlay-controls::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--vscode-textLink-foreground, #3794ff);
+  border-radius: 50%;
+  /* -11px = -(7px width + 4px flex gap): zero net advance. */
+  margin-left: -11px;
+  animation: collection-dot-pulse 0.9s ease-in-out infinite;
+}
+
+.image-collection-overlay--loading .image-counter {
+  cursor: progress;
+  text-decoration: none;
+}
+
+@keyframes collection-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.7);
+  }
+}
+
+/* Light theme adjustments */
+.vscode-light .image-collection-overlay {
+  background: var(--vscode-editor-background, #ffffff);
+  border: 1px solid var(--vscode-panel-border, #e5e5e5);
+  color: var(--vscode-editor-foreground, #333333);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.vscode-light .image-collection-overlay .image-counter {
+  color: var(--vscode-textLink-foreground, #006ab1);
+}
+
+.vscode-light .image-collection-overlay .toggle-hint {
+  color: var(--vscode-descriptionForeground, #666666);
+}
+
+/* Histogram Overlay */
+.histogram-overlay {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px;
+  padding: 0;
+  z-index: 1000;
+  font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  font-size: var(--vscode-editor-font-size, 12px);
+  color: var(--vscode-editor-foreground, #cccccc);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  width: 326px;
+  min-width: 326px;
+  max-width: 326px;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.histogram-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--vscode-sideBarSectionHeader-background, #252526);
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px 6px 0 0;
+  gap: 8px;
+}
+
+.histogram-title {
+  font-weight: 600;
+  font-size: 13px;
+  flex: 1;
+}
+
+.histogram-button {
+  background: var(--vscode-button-secondaryBackground, #3a3a3a);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  min-width: 40px;
+  text-align: center;
+}
+
+.histogram-button:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #454545);
+}
+
+.histogram-button:active {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.histogram-close {
+  background: transparent;
+  border: none;
+  color: var(--vscode-icon-foreground, #cccccc);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+}
+
+.histogram-close:hover {
+  background: var(--vscode-toolbar-hoverBackground, #3a3a3a);
+}
+
+.histogram-canvas {
+  display: block;
+  margin: 12px;
+  border-radius: 3px;
+  width: 300px;
+  height: 150px;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+}
+
+.histogram-labels {
+  width: 300px;
+  margin: 0 12px 8px;
+  box-sizing: border-box;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+.histogram-labels span {
+  display: inline-block;
+  max-width: 48%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.histogram-labels span:last-child {
+  text-align: right;
+}
+
+.histogram-stats {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 8px 12px;
+  font-size: 11px;
+  line-height: 1.35;
+  gap: 4px;
+  border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+  background: var(--vscode-sideBarSectionHeader-background, #252526);
+  border-radius: 0 0 6px 6px;
+  width: 100%;
+  min-height: 50px;
+  box-sizing: border-box;
+  overflow: hidden;
+  font-family: var(--vscode-editor-font-family, 'Consolas', 'Monaco', monospace);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+.histogram-stat-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.histogram-stat-item {
+  flex: 1 1 0;
+  text-align: center;
+}
+
+.histogram-stat-item:first-child {
+  text-align: left;
+}
+
+.histogram-stat-item:last-child {
+  text-align: right;
+}
+
+.histogram-stat-nan {
+  color: #ffcc00;
+  text-align: center;
+}
+
+.histogram-stats span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Metadata Panel */
+.metadata-panel {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px;
+  z-index: 1000;
+  font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  font-size: var(--vscode-editor-font-size, 12px);
+  color: var(--vscode-editor-foreground, #cccccc);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-width: 340px;
+  max-height: 70vh;
+  box-sizing: border-box;
+}
+
+.metadata-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--vscode-sideBarSectionHeader-background, #252526);
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px 6px 0 0;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.metadata-panel-title {
+  font-weight: 600;
+  font-size: 13px;
+  flex: 1;
+}
+
+.metadata-panel-button {
+  background: var(--vscode-button-secondaryBackground, #3a3a3a);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.metadata-panel-button:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #454545);
+}
+
+.metadata-panel-close {
+  background: transparent;
+  border: none;
+  color: var(--vscode-icon-foreground, #cccccc);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.metadata-panel-close:hover {
+  background: var(--vscode-toolbar-hoverBackground, #3a3a3a);
+}
+
+.metadata-panel-body {
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.metadata-panel-empty {
+  padding: 12px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #999999);
+}
+
+.metadata-panel-section {
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.metadata-panel-section:last-child {
+  border-bottom: none;
+}
+
+.metadata-panel-section > summary {
+  padding: 6px 12px;
+  font-weight: 600;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.metadata-panel-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.metadata-panel-section > summary::before {
+  content: '▶';
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 9px;
+  transition: transform 0.1s ease;
+}
+
+.metadata-panel-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.metadata-panel-section-content {
+  padding: 0 12px 8px;
+  font-family: var(--vscode-editor-font-family, 'Consolas', 'Monaco', monospace);
+  font-size: 11px;
+}
+
+.metadata-panel-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+}
+
+.metadata-panel-row-name {
+  color: var(--vscode-descriptionForeground, #999999);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.metadata-panel-row-value {
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.vscode-light .metadata-panel {
+  background: var(--vscode-editor-background, #ffffff);
+  border: 1px solid var(--vscode-panel-border, #e5e5e5);
+  color: var(--vscode-editor-foreground, #333333);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+.vscode-light .metadata-panel-header {
+  background: var(--vscode-sideBarSectionHeader-background, #f3f3f3);
+  border-color: var(--vscode-panel-border, #e5e5e5);
+}
+
+.vscode-light .metadata-panel-button {
+  background: var(--vscode-button-secondaryBackground, #e8e8e8);
+  color: var(--vscode-button-secondaryForeground, #333333);
+  border-color: var(--vscode-panel-border, #d0d0d0);
+}
+
+.vscode-light .metadata-panel-button:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #d8d8d8);
+}
+
+.vscode-light .metadata-panel-close:hover {
+  background: var(--vscode-toolbar-hoverBackground, #e8e8e8);
+}
+
+.vscode-light .metadata-panel-section {
+  border-color: var(--vscode-panel-border, #e5e5e5);
+}
+
+/* Light theme adjustments for histogram */
+.vscode-light .histogram-overlay {
+  background: var(--vscode-editor-background, #ffffff);
+  border: 1px solid var(--vscode-panel-border, #e5e5e5);
+  color: var(--vscode-editor-foreground, #333333);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+.vscode-light .histogram-header,
+.vscode-light .histogram-stats {
+  background: var(--vscode-sideBarSectionHeader-background, #f3f3f3);
+  border-color: var(--vscode-panel-border, #e5e5e5);
+}
+
+.vscode-light .histogram-button {
+  background: var(--vscode-button-secondaryBackground, #e8e8e8);
+  color: var(--vscode-button-secondaryForeground, #333333);
+  border-color: var(--vscode-panel-border, #d0d0d0);
+}
+
+.vscode-light .histogram-button:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #d8d8d8);
+}
+
+.vscode-light .histogram-close:hover {
+  background: var(--vscode-toolbar-hoverBackground, #e8e8e8);
+}
+
+/* Copy Notification */
+.copy-notification {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--vscode-notifications-background, #252526);
+  border: 1px solid var(--vscode-notifications-border, #454545);
+  border-radius: 6px;
+  padding: 12px 20px;
+  z-index: 2000;
+  font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  font-size: var(--vscode-editor-font-size, 13px);
+  color: var(--vscode-notifications-foreground, #cccccc);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  user-select: none;
+  min-width: 200px;
+  text-align: center;
+  opacity: 1;
+  transition: opacity 0.3s ease-in-out;
+}
+
+.copy-notification-success {
+  border-left: 4px solid var(--vscode-notificationsInfoIcon-foreground, #3794ff);
+}
+
+.copy-notification-error {
+  border-left: 4px solid var(--vscode-notificationsErrorIcon-foreground, #f48771);
+}
+
+.copy-notification-fadeout {
+  opacity: 0;
+}
+
+/* Light theme adjustments for notification */
+.vscode-light .copy-notification {
+  background: var(--vscode-notifications-background, #ffffff);
+  border: 1px solid var(--vscode-notifications-border, #d4d4d4);
+  color: var(--vscode-notifications-foreground, #333333);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light .copy-notification-success {
+  border-left-color: var(--vscode-notificationsInfoIcon-foreground, #1976d2);
+}
+
+.vscode-light .copy-notification-error {
+  border-left-color: var(--vscode-notificationsErrorIcon-foreground, #e51400);
+}
+
+/* Custom Context Menu */
+.custom-context-menu {
+  position: fixed;
+  background: var(--vscode-menu-background, #252526);
+  border: 1px solid var(--vscode-menu-border, #454545);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  padding: 4px 0;
+  z-index: 3000;
+  min-width: 120px;
+  user-select: none;
+  /* Never let the menu exceed the viewport: scroll if it is too tall. */
+  max-height: calc(100vh - 16px - var(--context-menu-bottom-inset, 0px));
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.context-menu-item {
+  padding: 6px 16px;
+  cursor: pointer;
+  color: var(--vscode-menu-foreground, #cccccc);
+  font-family: var(--vscode-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+}
+
+.context-menu-item:hover {
+  background: var(--vscode-menu-selectionBackground, #094771);
+  color: var(--vscode-menu-selectionForeground, #ffffff);
+}
+
+.layer-filter-copy-menu .context-menu-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.layer-filter-copy-menu .context-menu-item:hover,
+.layer-filter-copy-menu .context-menu-item:focus-visible {
+  background: var(--vscode-menu-selectionBackground, #094771);
+  color: var(--vscode-menu-selectionForeground, #ffffff);
+  outline: none;
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: var(--vscode-menu-separatorBackground, #454545);
+  margin: 4px 0;
+}
+
+/* Light theme adjustments for context menu */
+.vscode-light .custom-context-menu {
+  background: var(--vscode-menu-background, #ffffff);
+  border: 1px solid var(--vscode-menu-border, #d4d4d4);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light .context-menu-item {
+  color: var(--vscode-menu-foreground, #333333);
+}
+
+.vscode-light .context-menu-item:hover {
+  background: var(--vscode-menu-selectionBackground, #e8e8e8);
+  color: var(--vscode-menu-selectionForeground, #333333);
+}
+
+.vscode-light .context-menu-separator {
+  background: var(--vscode-menu-separatorBackground, #d4d4d4);
+}
+
+/* ===================== Layers panel ===================== */
+.layers-panel {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 352px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-editorWidget-foreground, #ccc);
+  border: 1px solid var(--vscode-editorWidget-border, #454545);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+  font-size: 12px;
+  user-select: none;
+}
+
+.layers-panel[hidden] {
+  display: none;
+}
+
+/* Collapsed: show only the header bar. */
+.layers-panel--collapsed {
+  width: auto;
+}
+
+.layers-panel--collapsed .layers-list {
+  display: none;
+}
+
+.layers-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
+}
+
+.layers-panel-title {
+  flex: 1;
+  font-weight: 600;
+}
+
+.layers-compositor-select {
+  width: 58px;
+  min-width: 58px;
+  padding: 1px 2px;
+  font: inherit;
+  color: var(--vscode-dropdown-foreground, inherit);
+  background: var(--vscode-dropdown-background, transparent);
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-editorWidget-border, #454545));
+  border-radius: 3px;
+}
+
+.layers-btn {
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #ccc);
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 2px 7px;
+  line-height: 1.4;
+  font-size: 12px;
+}
+
+.layers-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.layers-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.layers-btn.active {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+}
+
+.layers-list {
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.layers-background {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 8px;
+  border-top: 1px solid var(--vscode-editorWidget-border, #454545);
+  font-size: 11px;
+}
+
+.layers-background-slider {
+  min-width: 0;
+  width: 100%;
+  accent-color: var(--vscode-focusBorder, #007acc);
+}
+
+.layer-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-gap: 4px 6px;
+  align-items: center;
+  padding: 6px;
+  margin-bottom: 4px;
+  background: var(--vscode-list-inactiveSelectionBackground, #2a2d2e);
+  border-radius: 4px;
+  margin-left: calc(var(--layer-depth, 0) * 14px);
+  border-left: 2px solid transparent;
+}
+
+.layer-row:hover {
+  background: var(--vscode-list-hoverBackground, #2a2d2e);
+  border-left-color: var(--vscode-focusBorder, #007acc);
+}
+
+.layer-row-base {
+  opacity: 0.9;
+}
+
+.layer-row-adjustment {
+  border-left-color: var(--vscode-symbolIcon-functionForeground, #b180d7);
+  background: color-mix(
+    in srgb,
+    var(--vscode-list-inactiveSelectionBackground, #2a2d2e) 88%,
+    var(--vscode-symbolIcon-functionForeground, #b180d7)
+  );
+}
+
+.layer-row-adjustment.layer-row-clipped {
+  margin-left: calc(var(--layer-depth, 0) * 14px + 10px);
+  position: relative;
+}
+
+.layer-row-filter-child {
+  margin-top: -2px;
+  margin-bottom: 3px;
+  border-top-left-radius: 2px;
+}
+
+.layer-row-adjustment.layer-row-clipped::before {
+  content: '';
+  position: absolute;
+  left: -9px;
+  top: -7px;
+  width: 7px;
+  height: 21px;
+  border-left: 1px solid var(--vscode-symbolIcon-functionForeground, #b180d7);
+  border-bottom: 1px solid var(--vscode-symbolIcon-functionForeground, #b180d7);
+  border-bottom-left-radius: 4px;
+  opacity: 0.8;
+}
+
+.layer-name {
+  min-width: 0;
+  flex: 1;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-thumbnail {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--vscode-editorWidget-border, #454545);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 70%, transparent);
+  image-rendering: auto;
+}
+
+.layer-title-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.layer-dimensions {
+  flex: none;
+  opacity: 0.58;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.layer-name-input {
+  min-width: 0;
+  width: 100%;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #ccc);
+  border: 1px solid var(--vscode-focusBorder, #007acc);
+  border-radius: 2px;
+  padding: 1px 3px;
+}
+
+.layer-support-badge {
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 8px;
+  font-size: 9px;
+  line-height: 1.25;
+  text-transform: uppercase;
+  background: var(--vscode-badge-background, #4d4d4d);
+  color: var(--vscode-badge-foreground, #fff);
+}
+
+.layer-support-native {
+  opacity: 0.58;
+}
+.layer-support-approximate {
+  background: var(--vscode-editorWarning-foreground, #cca700);
+  color: #111;
+}
+.layer-support-unsupported {
+  background: var(--vscode-editorError-foreground, #f14c4c);
+}
+
+.layer-adjustment-badge {
+  min-width: 0;
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid
+    color-mix(in srgb, var(--vscode-symbolIcon-functionForeground, #b180d7) 65%, transparent);
+  border-radius: 8px;
+  color: var(--vscode-symbolIcon-functionForeground, #d0a8ee);
+  font-size: 9px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.layer-filter-shelf {
+  display: grid;
+  gap: 5px;
+  margin: -4px 0 4px calc(var(--layer-depth, 0) * 14px);
+  padding: 0 6px 5px;
+  border: 1px solid var(--vscode-editorWidget-border, #454545);
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+  background: color-mix(
+    in srgb,
+    var(--vscode-list-inactiveSelectionBackground, #2a2d2e) 82%,
+    transparent
+  );
+}
+
+.layer-filter-shelf.expanded {
+  padding-bottom: 7px;
+  border-color: color-mix(
+    in srgb,
+    var(--vscode-symbolIcon-functionForeground, #b180d7) 45%,
+    var(--vscode-editorWidget-border, #454545)
+  );
+}
+
+.layer-filter-shelf-toggle {
+  width: 100%;
+  padding: 4px 2px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #aaa);
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.layer-filter-shelf-toggle:hover {
+  color: var(--vscode-foreground, #ddd);
+}
+
+.layer-group-row {
+  display: grid;
+  grid-template-columns: 18px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  margin: 2px 0 3px calc(var(--layer-depth, 0) * 14px);
+  padding: 2px 6px 2px 3px;
+  border-radius: 3px;
+  background: var(--vscode-sideBarSectionHeader-background, #333);
+  background: color-mix(
+    in srgb,
+    var(--vscode-sideBarSectionHeader-background, #333) 76%,
+    transparent
+  );
+}
+
+.layer-group-toggle {
+  width: 18px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.layer-group-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.layer-group-count {
+  min-width: 18px;
+  padding: 0 4px;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 10px;
+  background: var(--vscode-badge-background, #4d4d4d);
+  color: var(--vscode-badge-foreground, #fff);
+}
+
+.layer-group-controls {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.layer-clipping {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.layer-adjustment-scope {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: color-mix(
+    in srgb,
+    var(--vscode-symbolIcon-functionForeground, #b180d7) 10%,
+    transparent
+  );
+  font-size: 10px;
+}
+
+.layer-adjustment-target {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground, #aaa);
+}
+
+.layer-adjustment-editor {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--vscode-editorWidget-border, #454545) 72%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 54%, transparent);
+}
+
+.layer-adjustment-summary {
+  padding: 4px 6px;
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground, #aaa);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.layer-adjustment-summary:hover {
+  color: var(--vscode-foreground, #ddd);
+}
+
+.layer-adjustment-controls {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  padding: 3px 28px 7px 6px;
+  border-top: 1px solid
+    color-mix(in srgb, var(--vscode-editorWidget-border, #454545) 60%, transparent);
+}
+
+.layer-adjustment-channel-controls {
+  display: grid;
+  gap: 4px;
+}
+
+.layer-adjustment-field,
+.layer-adjustment-range {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.layer-adjustment-range {
+  grid-template-columns: 62px minmax(0, 1fr) 36px;
+}
+
+.layer-adjustment-range input[type='range'] {
+  min-width: 0;
+  width: 100%;
+  accent-color: var(--vscode-symbolIcon-functionForeground, #b180d7);
+}
+
+.layer-adjustment-range output {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground, #aaa);
+}
+
+.layer-adjustment-channel,
+.layer-adjustment-points-input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #ccc);
+  border: 1px solid var(--vscode-input-border, #555);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 10px;
+}
+
+.layer-adjustment-points-input.invalid {
+  border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
+.layer-curve-graph {
+  display: block;
+  width: min(100%, 248px);
+  aspect-ratio: 1;
+  justify-self: center;
+  border: 1px solid var(--vscode-input-border, #555);
+  border-radius: 3px;
+  background: var(--vscode-input-background, #242424);
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.layer-curve-background {
+  fill: transparent;
+}
+
+.layer-curve-grid {
+  stroke: var(--vscode-editorRuler-foreground, #5a5a5a);
+  stroke-width: 0.75;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.layer-curve-identity {
+  stroke: var(--vscode-descriptionForeground, #999);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.layer-curve-path {
+  fill: none;
+  stroke: var(--layer-curve-color, var(--vscode-focusBorder, #4daafc));
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.layer-curve-point {
+  fill: var(--vscode-editorWidget-background, #252526);
+  stroke: var(--layer-curve-color, var(--vscode-focusBorder, #4daafc));
+  stroke-width: 2;
+  cursor: grab;
+}
+
+.layer-curve-point:hover,
+.layer-curve-point:focus {
+  fill: var(--layer-curve-color, var(--vscode-focusBorder, #4daafc));
+  outline: none;
+}
+
+.layer-curve-red {
+  --layer-curve-color: #f05b5b;
+}
+.layer-curve-green {
+  --layer-curve-color: #55c878;
+}
+.layer-curve-blue {
+  --layer-curve-color: #5c8ff0;
+}
+.layer-curve-rgb {
+  --layer-curve-color: var(--vscode-focusBorder, #4daafc);
+}
+
+.layer-adjustment-colorize {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+
+.layer-adjustment-note {
+  padding: 4px 2px;
+  color: var(--vscode-descriptionForeground, #aaa);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.layer-filter-remove {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-errorForeground);
+  font-size: 16px;
+  line-height: 16px;
+}
+
+.layer-filter-remove:hover,
+.layer-filter-remove:focus-visible {
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.18));
+}
+
+.layer-gradient-colors {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.layer-gradient-colors .layer-adjustment-field {
+  grid-template-columns: auto minmax(28px, 1fr);
+}
+
+.layer-gradient-colors input[type='color'] {
+  width: 100%;
+  height: 24px;
+  padding: 1px;
+  border: 1px solid var(--vscode-input-border, #555);
+  border-radius: 3px;
+  background: var(--vscode-input-background, #3c3c3c);
+}
+
+.layer-mask-badge {
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-size: 9px;
+  background: var(--vscode-badge-background, #4d4d4d);
+  color: var(--vscode-badge-foreground, #fff);
+}
+
+.layer-base-tag {
+  grid-column: 2;
+  justify-self: start;
+  font-size: 10px;
+  opacity: 0.6;
+  text-transform: uppercase;
+}
+
+.layer-controls,
+.layer-position,
+.layer-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.layer-blend {
+  flex: 1;
+  background: var(--vscode-dropdown-background, #3c3c3c);
+  color: var(--vscode-dropdown-foreground, #ccc);
+  border: 1px solid var(--vscode-dropdown-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 2px;
+}
+
+.layer-opacity {
+  flex: 1;
+}
+
+.layer-opacity-value {
+  width: 31px;
+  text-align: right;
+  opacity: 0.72;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.layer-adjustment-strength-label {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground, #aaa);
+}
+
+.layer-pos-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0.8;
+}
+
+.layer-offset-input {
+  width: 54px;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #ccc);
+  border: 1px solid var(--vscode-input-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+
+.layer-actions {
+  justify-content: flex-end;
+}
+
+.layer-filter-toggle-inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+
+.layer-add-filter {
+  width: 100%;
+  max-width: none;
+  background: var(--vscode-dropdown-background, #3c3c3c);
+  color: var(--vscode-dropdown-foreground, #ccc);
+  border: 1px solid var(--vscode-dropdown-border, #555);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 10px;
+}
+
+.layer-mask {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.layer-mask-label {
+  opacity: 0.8;
+}
+
+.layer-mask-op {
+  background: var(--vscode-dropdown-background, #3c3c3c);
+  color: var(--vscode-dropdown-foreground, #ccc);
+  border: 1px solid var(--vscode-dropdown-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 2px;
+}
+
+.layer-mask-threshold {
+  width: 70px;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #ccc);
+  border: 1px solid var(--vscode-input-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+
+/* --- Debayer control panel --------------------------------------------- */
+
+.debayer-panel {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px;
+  z-index: 1000;
+  font-family: var(--vscode-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  font-size: 12px;
+  color: var(--vscode-editor-foreground, #cccccc);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.debayer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--vscode-sideBarSectionHeader-background, #252526);
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px 6px 0 0;
+  gap: 8px;
+}
+
+.debayer-title {
+  font-weight: 600;
+  font-size: 13px;
+  flex: 1;
+}
+
+.debayer-enable {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.debayer-close {
+  background: transparent;
+  color: var(--vscode-editor-foreground, #cccccc);
+  border: none;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.debayer-close:hover {
+  background: var(--vscode-toolbar-hoverBackground, #3a3a3a);
+}
+
+.debayer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.debayer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.debayer-label {
+  flex: 0 0 88px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.debayer-select {
+  flex: 1;
+  background: var(--vscode-dropdown-background, #3c3c3c);
+  color: var(--vscode-dropdown-foreground, #cccccc);
+  border: 1px solid var(--vscode-dropdown-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+.debayer-button {
+  background: var(--vscode-button-secondaryBackground, #3a3a3a);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.debayer-button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, #454545);
+}
+
+.debayer-button.active {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  border-color: var(--vscode-button-background, #0e639c);
+}
+
+.debayer-button:disabled {
+  cursor: default;
+}
+
+.debayer-views,
+.debayer-offset,
+.debayer-levels,
+.debayer-gains,
+.debayer-wb {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.debayer-view-button {
+  flex: 1;
+  min-width: 34px;
+  padding: 2px 4px;
+}
+
+.debayer-gain-label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  flex: 1;
+}
+
+.debayer-number {
+  width: 100%;
+  min-width: 0;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #cccccc);
+  border: 1px solid var(--vscode-input-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
+.debayer-status {
+  font-size: 10px;
+  opacity: 0.7;
+  padding-top: 2px;
+  min-height: 13px;
+}
+
+/* Light theme adjustments for the debayer panel */
+.vscode-light .debayer-panel {
+  background: var(--vscode-editor-background, #ffffff);
+  border: 1px solid var(--vscode-panel-border, #e5e5e5);
+  color: var(--vscode-editor-foreground, #333333);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+.vscode-light .debayer-header {
+  background: var(--vscode-sideBarSectionHeader-background, #f3f3f3);
+  border-color: var(--vscode-panel-border, #e5e5e5);
+}
+
+.vscode-light .debayer-button {
+  background: var(--vscode-button-secondaryBackground, #e8e8e8);
+  color: var(--vscode-button-secondaryForeground, #333333);
+  border-color: var(--vscode-panel-border, #d0d0d0);
+}
+
+.vscode-light .debayer-button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, #d8d8d8);
+}
+
+.vscode-light .debayer-close:hover {
+  background: var(--vscode-toolbar-hoverBackground, #e8e8e8);
+}
+
+/* ---------------------------------------------------------------------------
+   Measurement subsystem
+   ---------------------------------------------------------------------------
+   The overlay canvas spans the viewport and maps image coordinates through
+   getBoundingClientRect() at draw time, so it needs no geometry of its own —
+   see roi-overlay.ts for why that is simpler than mirroring the image element.
+   The panel follows the debayer/metadata panel conventions: theme variables,
+   fixed positioning, dragged by its header.
+--------------------------------------------------------------------------- */
+
+.measure-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  /* Above the image (which has no stacking context of its own) but below every
+	   piece of chrome: the collection/dataset indicators sit at 18, the floating
+	   panels at 50 and 1000+. The overlay spans the whole viewport, so anything
+	   it covered would also stop receiving clicks. */
+  z-index: 17;
+  cursor: crosshair;
+}
+
+.measure-scale-bar-handle {
+  position: fixed;
+  display: none;
+  z-index: 18;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+
+.measure-panel {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 340px;
+  max-height: calc(100vh - 40px);
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px;
+  z-index: 1000;
+  font-family: var(--vscode-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+  font-size: 12px;
+  color: var(--vscode-editor-foreground, #cccccc);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.measure-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--vscode-sideBarSectionHeader-background, #252526);
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px 6px 0 0;
+  gap: 8px;
+}
+
+.measure-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.measure-spacer {
+  flex: 1;
+}
+
+.measure-close {
+  background: transparent;
+  border: none;
+  color: var(--vscode-editor-foreground, #cccccc);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  opacity: 0.7;
+}
+
+.measure-close:hover {
+  opacity: 1;
+}
+
+.measure-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+  background: var(--vscode-sideBarSectionHeader-background, #252526);
+}
+
+.measure-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  cursor: pointer;
+  padding: 6px 4px;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.measure-tab:hover {
+  color: var(--vscode-editor-foreground, #cccccc);
+}
+
+.measure-tab.active {
+  color: var(--vscode-editor-foreground, #cccccc);
+  border-bottom-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.measure-body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.measure-hint {
+  padding: 6px 12px;
+  border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 10.5px;
+  line-height: 1.4;
+  min-height: 14px;
+}
+
+.measure-section {
+  margin-bottom: 12px;
+}
+
+.measure-section-title {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  margin-bottom: 5px;
+}
+
+.measure-note {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 10.5px;
+  line-height: 1.45;
+  margin: 4px 0;
+}
+
+.measure-error {
+  color: var(--vscode-errorForeground, #f48771);
+  font-size: 10.5px;
+  margin: 2px 0 6px;
+}
+
+.measure-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.measure-label {
+  flex: 0 0 118px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.measure-input,
+.measure-select {
+  flex: 1;
+  min-width: 0;
+  background: var(--vscode-input-background, #3c3c3c);
+  color: var(--vscode-input-foreground, #cccccc);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  padding: 3px 5px;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.measure-input.invalid {
+  border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
+.measure-unit-input {
+  max-width: 64px;
+}
+
+.measure-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 5px 0;
+  cursor: pointer;
+  line-height: 1.35;
+}
+
+.measure-button,
+.measure-tool,
+.measure-method {
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+}
+
+.measure-button:hover:not(:disabled),
+.measure-tool:hover:not(:disabled),
+.measure-method:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.measure-button:disabled,
+.measure-tool:disabled,
+.measure-method:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.measure-tool.active,
+.measure-method.active {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.measure-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 5px 0;
+}
+
+.measure-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.measure-method-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.measure-method {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px;
+  text-align: left;
+}
+
+.measure-method-label {
+  font-weight: 600;
+}
+
+.measure-method-value {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.measure-method.active .measure-method-value {
+  color: inherit;
+}
+
+.measure-spark {
+  width: 100%;
+  height: 24px;
+  display: block;
+}
+
+.measure-stability,
+.measure-profile {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 4px 0;
+  border-radius: 3px;
+  background: var(--vscode-editorWidget-background, #252526);
+}
+
+.measure-roi-list {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 3px;
+}
+
+.measure-roi-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--vscode-panel-border, #33333380);
+}
+
+.measure-roi-row:last-child {
+  border-bottom: none;
+}
+
+.measure-roi-row:hover {
+  background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+.measure-roi-row.selected {
+  background: var(--vscode-list-activeSelectionBackground, #094771);
+  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+
+.measure-roi-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.measure-roi-name {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  color: inherit;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 1px 3px;
+}
+
+.measure-roi-name:focus {
+  background: var(--vscode-input-background, #3c3c3c);
+  border-color: var(--vscode-focusBorder, #007fd4);
+  outline: none;
+}
+
+.measure-roi-kind {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  flex: 0 0 auto;
+}
+
+.measure-roi-row.selected .measure-roi-kind {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.measure-roi-remove {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.5;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  flex: 0 0 auto;
+}
+
+.measure-roi-remove:hover {
+  opacity: 1;
+}
+
+.measure-table-wrapper {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 3px;
+}
+
+.measure-table {
+  border-collapse: collapse;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10.5px;
+  width: 100%;
+}
+
+.measure-table th {
+  position: sticky;
+  top: 0;
+  background: var(--vscode-sideBarSectionHeader-background, #252526);
+  text-align: right;
+  padding: 3px 6px;
+  white-space: nowrap;
+  font-weight: 600;
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.measure-table th:first-child,
+.measure-table td:first-child {
+  text-align: left;
+}
+
+.measure-table td {
+  padding: 2px 6px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.measure-table tbody tr {
+  cursor: pointer;
+}
+
+.measure-table tbody tr:hover {
+  background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+.measure-table tbody tr.selected {
+  background: var(--vscode-list-activeSelectionBackground, #094771);
+  color: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+
+.measure-quick-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  font-size: 11px;
+}
+
+.measure-quick-label {
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.measure-quick-value {
+  font-family: var(--vscode-editor-font-family, monospace);
+  text-align: right;
+}
+
+.measure-derived-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.measure-derived-name {
+  flex: 0 0 88px;
+}
+
+.measure-derived-expression {
+  flex: 1;
+  font-family: var(--vscode-editor-font-family, monospace);
+}
+
+/* Header chips: overlay visibility, reachable from every tab. */
+.measure-chip {
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.measure-chip:hover {
+  color: var(--vscode-editor-foreground, #cccccc);
+}
+
+.measure-chip.active {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.measure-histogram {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 4px 0;
+  border-radius: 3px;
+  background: var(--vscode-editorWidget-background, #252526);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.measure-stability {
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* The Segment tab's call to action. Deliberately heavier than the surrounding
+   controls: it is the step the tab exists for, and it sits after a list of
+   filters that all look alike. */
+.measure-cta {
+  margin: 14px 0 4px;
+  padding: 10px;
+  border: 1px solid var(--vscode-focusBorder, #007fd4);
+  border-radius: 4px;
+  /* A plain translucent wash rather than color-mix(): if the function is
+	   unsupported the declaration is dropped and the block loses its fill
+	   silently, which is exactly the emphasis this element exists for. */
+  background: rgba(14, 99, 156, 0.14);
+}
+
+.measure-cta-button {
+  display: block;
+  width: 100%;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  border: none;
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.measure-cta-button:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.measure-cta-button:disabled {
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  cursor: default;
+}
+
+.measure-cta-caption {
+  margin-top: 6px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+/* The range handles do nothing while an adaptive method computes its own
+   threshold per pixel; saying so visually beats a control that silently
+   ignores input. */
+.measure-histogram-inactive {
+  opacity: 0.5;
+  cursor: pointer;
+}
+
+/* Legend for the segmentation overlay colours. */
+.measure-legend {
+  margin: 6px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.measure-legend-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.measure-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  /* The overlay is drawn semi-transparent over the image; a solid swatch would
+	   not match what is on screen. */
+  opacity: 0.75;
+}
+
+.measure-column-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0 10px;
+}
+
+/* ---------------------------------------------------------------------------
+   Channels panel
+   ---------------------------------------------------------------------------
+   Scientific "Composite" / "Display Adjustment": one row per channel with its
+   own tint, range and opacity. Same construction as the other floating panels.
+--------------------------------------------------------------------------- */
+
+.channels-panel {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  width: 300px;
+  max-height: calc(100vh - 40px);
+  background: var(--vscode-editor-background, #1e1e1e);
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px;
+  z-index: 1000;
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: 12px;
+  color: var(--vscode-editor-foreground, #cccccc);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.channels-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--vscode-sideBarSectionHeader-background, #252526);
+  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 6px 6px 0 0;
+}
+
+.channels-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.channels-spacer {
+  flex: 1;
+}
+
+.channels-body {
+  overflow-y: auto;
+  padding: 8px 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.channel-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--vscode-panel-border, #33333380);
+}
+
+.channel-row:last-of-type {
+  border-bottom: none;
+}
+
+/* Solo dims the others rather than hiding them, so the row layout does not
+   jump and it stays obvious that they are still configured. */
+.channel-row.dimmed {
+  opacity: 0.45;
+}
+
+.channel-row-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.channel-swatch {
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--vscode-panel-border, #3c3c3c);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.channel-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-solo {
+  flex: 0 0 auto;
+}
+
+.channel-range,
+.channel-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.channel-slider {
+  flex: 1;
+  min-width: 0;
+  height: 14px;
+}
+
+.channel-colormap {
+  flex: 0 0 88px;
+  font-size: 10px;
+}
+
+.channel-readout {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground, #9d9d9d);
+  text-align: right;
+  margin-top: 2px;
+}
+
+.channel-auto {
+  margin-top: 4px;
+  font-size: 10px;
+  padding: 2px 6px;
+}

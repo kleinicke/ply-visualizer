@@ -16,12 +16,12 @@
         "title": "Visualizer",
         "width": 1280,
         "height": 850,
-        "minWidth": 760,
+        "minWidth": 960,
         "minHeight": 500
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' asset: http://asset.localhost blob: data:; connect-src 'self' ipc: http://ipc.localhost blob: data:; worker-src 'self' blob:; frame-src 'self'; object-src 'none'"
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; style-src-attr 'unsafe-inline'; img-src 'self' asset: http://asset.localhost blob: data:; connect-src 'self' ipc: http://ipc.localhost blob: data:; worker-src 'self' blob:; frame-src 'self'; object-src 'none'; media-src 'self' blob: data:"
     }
   },
   "bundle": {

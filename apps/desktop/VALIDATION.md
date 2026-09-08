@@ -1,43 +1,49 @@
-# Desktop preview validation
+# Unified desktop validation
 
-Date: 2026-09-07. Platform: macOS ARM64. Build: Tauri 2, version 0.1.0 debug
-app.
+Date: 2026-09-08. Platform: macOS ARM64. Tauri 2, version 0.1.0 debug app.
 
-## Passed
+## Automated checks
 
-- Svelte/TypeScript check: no errors or warnings.
-- Document routing/provider unit tests: 2 passed.
-- Rust document-handle authorization and deduplication test: passed.
-- Desktop Playwright checks: 4 passed, covering PLY rendering, normal image
-  preview, scene retention across views, scalar depth preview, original-file
-  handoff, cancelled depth conversion retry, actual depth-to-3D conversion,
-  screenshot export and unsupported-file feedback.
-- Native `.app` bundle built and launched directly in macOS WKWebView.
-- Native PLY file load displayed the 40,256-point example; visually inspected
-  the actual native window, not only a browser test screenshot.
-- Native NumPy depth load opened in the image pane while retaining the 3D scene.
-- Native Open dialog opened; a PNG selected through it displayed as an image.
-- Native screenshot export wrote a 199,526-byte PNG to a temporary test
-  location; inspected the exported image and confirmed the point cloud was
-  rendered.
-- Native Save cancellation exercised through the dialog's Cancel button.
-- Corrected native CSP handling of inline style attributes. Rebuilt and visually
-  checked the native window: FPS now sits beside File Management, matching the
-  shared viewer. The targeted browser regression also passes with a
-  nonce-bearing style policy, covering the difference missed by the original
-  browser smoke test.
-- Existing VS Code suite: 178 tests passed in the real extension host. Its
-  pretest build, TypeScript checks, lint and engine Svelte checks also passed.
+- Svelte/TypeScript: zero errors and warnings.
+- Document routing/filter/text unit tests: 3 passed.
+- Rust native file handles and workspace grants: 2 passed, including parent
+  traversal, ungranted roots and escaping symlinks.
+- Playwright desktop suite: 11 scenarios covering scientific NPY rendering and
+  original samples, image display range/histogram, replacement versus explicit
+  scene composition, escaped text and binary feedback, collection navigation,
+  raw image layers and PNG export, independent comparison panes and sequence
+  playback, nested folder browsing/filtering/pinning, original-file depth
+  conversion with cancel/retry, pinned scene appearance, TIFF page controls, and
+  synthetic DICOM decoding.
+- PNG checks verify original 16-bit values exceed 255, OpenRaster embedded
+  layers decode natively, and no UPNG asset is requested or global installed.
+- Composition controls exercise opacity reset and Shift-click isolation/restore.
+- Production frontend bundles and native debug app compile. The existing 4.84
+  MiB optional 3D chunk still produces Webpack's asset-size warning.
 
-## Limits of these results
+## Native checks
 
-This is a local desktop preview, not a published or notarized desktop release.
-Native overwrite confirmation, OS drag/drop, companion assets, very large files,
-and Windows/Linux runtime checks are not established by the browser tests.
-Scientific image preview is deliberately limited; see [README.md](README.md).
-The macOS embedded webview still schedules animation near 60 FPS. This
-validation does not claim 120 FPS support or apply private WebKit preferences.
+- Launched the actual bundled app in macOS WKWebView and visually checked the
+  40,256-point example with the new 3D inspector.
+- Opened a scientific NumPy file from an executable argument; visually checked
+  its rendered image and the new Contents/Appearance/Tools inspector.
+- Opened a native folder picker with Command-Shift-O and selected the NumPy
+  fixture folder. Confirmed the granted folder's files appear in the browser.
+- Captured the native window, not just a Chromium screenshot. The native
+  style-attribute CSP and the image worker/WASM loading were exercised.
 
-The final app is at `src-tauri/target/debug/bundle/macos/Visualizer.app`.
-Browser screenshots are under `test-results/`. Native test evidence was captured
-from the app and its PNG export during the validation run.
+Browser checks establish functional UI behavior, not complete native/platform
+coverage. Earlier native export and VS Code validation in repository history
+predate this unified UI; they are not counted as a fresh extension test run.
+
+## Scope
+
+This is a local review build, not a published/notarized release. Full format
+parity, multi-file DICOM/OME grouping, external companion assets, very large
+file stress tests, native drag/drop/overwrite combinations and Windows/Linux
+runtime behavior are not established by these checks. See [README.md](README.md)
+for the feature ledger. The macOS webview still runs near 60 FPS on this
+machine.
+
+Artifact: `src-tauri/target/debug/bundle/macos/Visualizer.app`. Browser
+screenshots: `test-results/unified-image.png` and `unified-scene.png`.

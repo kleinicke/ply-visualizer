@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/kleinicke/tiff-visualizer",
+  "revision": "f8bf0dccdf0303b9a468afc928c9a847ea2c8e24",
+  "version": "1.11.1",
+  "hookSha256": "38186609fc501c5e43a66d2a39644e472b036637f32f9dc3be5f0936cf9742d9",
+  "note": "Pinned desktop-only build. Rebuild explicitly with scripts/build-image.mjs; upstream UI entry is replaced."
+}

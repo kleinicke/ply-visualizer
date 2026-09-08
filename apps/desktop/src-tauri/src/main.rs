@@ -4,6 +4,7 @@ use serde::Serialize;
 use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
+mod workspace;
 
 #[derive(Clone, Serialize)]
 struct Document {
@@ -39,6 +40,15 @@ impl Documents {
         paths.insert(id, path);
         Ok(doc)
     }
+}
+
+// A granted file must not turn into a link to a different source after listing.
+fn validated_path(path: &std::path::Path) -> Result<PathBuf, String> {
+    let current = path.canonicalize().map_err(|e| e.to_string())?;
+    if current != path {
+        return Err("The file target changed; reopen it to grant access".into());
+    }
+    Ok(current)
 }
 
 #[tauri::command]
@@ -78,7 +88,7 @@ async fn read_document(id: String, app: tauri::AppHandle) -> Result<tauri::ipc::
         .cloned()
         .ok_or("This document has not been opened")?;
     tauri::async_runtime::spawn_blocking(move || {
-        std::fs::read(path)
+        std::fs::read(validated_path(&path)?)
             .map(tauri::ipc::Response::new)
             .map_err(|e| e.to_string())
     })
@@ -136,12 +146,16 @@ fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Documents::default())
+        .manage(workspace::Workspaces::default())
         .invoke_handler(tauri::generate_handler![
             open_files,
             pending_files,
             read_document,
             save_export,
-            diagnostic
+            diagnostic,
+            workspace::open_workspace,
+            workspace::list_directory,
+            workspace::read_text
         ])
         .setup(|app| {
             // Command-line paths are explicitly supplied by the user (also useful for native smoke tests).

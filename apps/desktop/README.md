@@ -1,109 +1,125 @@
-# Visualizer desktop preview
+# Visualizer desktop workspace
 
-Tauri 2 host for this repository's PLY engine, with a Svelte workspace and a
-replaceable image preview. No TIFF repository dependency is required.
+Tauri 2 and Svelte 5 workspace combining the PLY rendering engine and the real
+scientific image engine from `tiff-visualizer`. The desktop owns its browser,
+document tabs and inspector. These changes do not alter either extension or the
+public website UI.
 
-## Build and run
+## Try the review build
 
-Use Node 24, root npm dependencies, Rust, and the platform's Tauri prerequisites
-(Xcode command-line tools on macOS).
+Open `src-tauri/target/debug/bundle/macos/Visualizer.app`. Choose **Open
+folder…**, expand folders and click a file to preview it. Double-click a file or
+choose **Keep open** to pin the document. Select file checkboxes to use
+**Compare**, **Combine**, **Collection**, or **Sequence**.
+
+- Images and point clouds use the same **Contents / Appearance / Tools** panel.
+  Technical metadata is collapsed under Details.
+- Contents contains scene objects or image layers. Appearance exposes point size
+  and colour, or image range, gamma/exposure, colormap, channels and a sampled
+  histogram. Image compositions support visibility, opacity and blend modes.
+- Supported depth sources open as images. **Tools → Create 3D view…** hands the
+  original samples to the PLY engine's camera/interpretation dialog.
+- Compare shows up to four independent image/3D panes. Select a pane's heading
+  to direct the inspector to it. Collections navigate separate sources; Combine
+  explicitly puts sources in one scene or image composition.
+- Sequence provides ordered frames, scrubbing, looping and a playback rate. It
+  waits for decoding, so slow sources play below the requested rate. PLY
+  sequences retain the camera. GIF animates through the system image element;
+  ordinary videos use the system webview's available codecs.
+- Text uses an escaped, read-only preview, limited to 2 MiB. Binary content
+  produces an explanation. JSON is text by default.
+- Files open through native picking, drag/drop, macOS open events or executable
+  arguments. Export uses a native save dialog for rendered PNGs.
+
+## Build and validate
+
+Use Node 24, the root npm dependencies, Rust, and the platform's Tauri
+prerequisites.
 
 ```sh
 npm install
 npm run desktop:dev
-# Local macOS app bundle, without a distribution installer:
-npm run build --workspace=visualizer-desktop -- --debug --bundles app
-```
-
-The macOS debug app is
-`apps/desktop/src-tauri/target/debug/bundle/macos/Visualizer.app`. Open it
-directly, or pass absolute file paths to its executable:
-
-```sh
-apps/desktop/src-tauri/target/debug/bundle/macos/Visualizer.app/Contents/MacOS/visualizer-desktop /absolute/path/cloud.ply
-```
-
-`npm run desktop:build` produces a release build and platform bundles. Public
-desktop distribution still needs platform signing/notarization and platform
-validation. The tested local artifact is a macOS ARM64 debug app.
-
-## Behavior
-
-- PLY and other supported geometry open in the shared 3D scene.
-- Browser images open in an image pane with fit/zoom controls.
-- TIFF, EXR, PFM and NumPy have a basic normalized image preview using the
-  existing PLY-side readers. They open in 2D first and offer **View in 3D**.
-- PNG also offers explicit depth interpretation; a filename alone cannot
-  distinguish an ordinary photograph from encoded depth.
-- Depth-to-3D uses the original source bytes and the engine's
-  camera/interpretation dialog. Cancelling can be retried. Display normalization
-  never changes source data.
-- The shared 3D scene stays mounted when switching to an image. Document buttons
-  return to that scene; they are not separate isolated 3D scenes.
-- Native file picking, native drag/drop, command-line paths and macOS open-file
-  events enter the same document routing flow.
-- Screenshot, measurement-path, camera-path, video and PLY exports use a host
-  saving interface. Native input/output buffers use binary IPC; a native Save
-  dialog chooses the destination and owns cancellation/overwrite confirmation.
-
-## Extension boundary for the image viewer
-
-`src/documents.ts` owns the document model, view choices and routing providers.
-`src/imageProvider.ts` owns replaceable image preview providers. The Svelte
-shell composes these with the image pane and the persistent embedded 3D view.
-
-`engine/src/hosts/embeddedViewer.ts` exposes the existing engine through a
-framework-neutral embedding API. It imports no Tauri API. The iframe preserves
-the existing engine's DOM/CSS isolation and avoids duplicating
-`engine/index.html`. `engine/src/hosts/exportFile.ts` supplies an optional host
-export service while keeping browser/JCEF downloads and existing VS Code message
-paths working.
-
-`src/host.ts` and `src-tauri/` own native integration. Native reads accept
-opaque handles for files previously selected by the user, not arbitrary frontend
-paths.
-
-When the image repository is ready, bring its shared viewer package into the
-workspace, replace the basic image provider/pane with its Svelte viewer, and
-extend the routing provider. Keep the document's source and identity shared
-between image and 3D views. Do not move TIFF decoding or image tools into the
-Tauri host. A later monorepo move can extract these boundaries into the packages
-described in [the unified product plan](../../docs/UNIFIED_PRODUCT_PLAN.md).
-
-## Current limits
-
-- macOS WKWebView currently schedules script animation near 60 FPS, including on
-  a 120 Hz display. The engine follows `requestAnimationFrame`; it does not
-  impose a 60 FPS cap. Higher refresh rates currently require a private WebKit
-  preference, which this preview does not use. Track the
-  [WebKit public-API request](https://bugs.webkit.org/show_bug.cgi?id=294338).
-- This is a desktop preview, not the full scientific image viewer. Scientific
-  previews show a single plane (channel 0 for scalar arrays); TIFF RGB previews
-  normalize sample values and currently ignore alpha. There are no histogram,
-  layer, channel-selection, measurement or full-resolution scientific image
-  tools.
-- Files are read into memory. Streaming/range reads and bounded document caches
-  remain future work; large native transfers are binary but not zero-copy.
-- Companion-file resolution for external glTF/OBJ resources is not provided.
-- Documents/view state are session-only. There is no session restoration or
-  desktop updater yet. The current document strip has no close control.
-- Windows and Linux runtime behavior has not been validated.
-
-## Checks
-
-The native CSP explicitly permits style attributes through `style-src-attr`.
-Tauri adds nonces to `style-src`, which otherwise disables `unsafe-inline` for
-the shared engine's layout attributes (including the heading/FPS row).
-
-```sh
 npm run desktop:check
 npm run desktop:test
 npm run build:web --workspace=visualizer-desktop
 npm run test:ui --workspace=visualizer-desktop
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+npm run build --workspace=visualizer-desktop -- --debug --bundles app
 ```
 
-Browser tests cover geometry/image routing, retained scenes, scalar preview,
-cancel/retry of depth conversion, original-file handoff, screenshot export and
-unsupported-file feedback. They complement the actual macOS app checks recorded
-in [validation](VALIDATION.md), rather than establishing native compatibility.
+The tested artifact is a local macOS ARM64 debug app, not a notarized public
+release. `npm run desktop:build` creates release bundles; public distribution
+still needs signing/notarization and platform validation.
+
+## Integration boundaries
+
+`src/documents.ts` contains provider routing and the source/document model. A
+source can have both an image and a 3D interpretation. Composition, collection,
+comparison and sequence are document modes, independent of filename extensions.
+This keeps future temporal decoders (including FBX) and grouped scientific
+datasets possible without adding another application shell.
+
+`src/components/ViewerPane.svelte` hosts isolated rendering surfaces and owns
+loading, cancellation and exports. `src/adapters/scene-entry.ts` connects the
+new inspector to existing PLY operations and is bundled only in the desktop
+build. The shared engine's floating panel is hidden only in that artifact.
+
+`vendor/image-engine/` is a pinned, self-contained build of the sibling image
+repository's decoder, renderer and operations. Its original Svelte inspector
+entry is replaced with an empty mount; our inspector is entirely new.
+`image-engine/hook.ts` provides the scoped adapter inside that engine. Runtime
+workers, WASM, license, third-party notices and source provenance are included.
+Regular builds do **not** require a sibling checkout.
+
+UPNG is excluded from the desktop artifact, with a build guard against importing
+it. Precise 16-bit PNGs use the existing Rust decoder; ordinary PNGs and
+embedded RGBA8 layered-document previews use native decoding. A failed precise
+decode reports an error rather than silently reducing sample precision.
+Layered-document writing is not bundled yet; the exposed rendered-PNG export
+uses canvas encoding.
+
+Refresh the pinned artifact explicitly after changing the adapter or updating
+the image engine (the source checkout must have its build dependencies/assets):
+
+```sh
+node apps/desktop/scripts/build-image.mjs
+# Or specify a different checkout:
+IMAGE_ENGINE_SOURCE=/path/to/tiff-visualizer node apps/desktop/scripts/build-image.mjs
+```
+
+The script checks the upstream injection boundary and records its commit and
+adapter hash. A future monorepo extraction can replace this artifact with a
+workspace package; do not copy image decoding into the Tauri host.
+
+`src/host.ts` and `src-tauri/` handle native integration. The frontend reads
+opaque handles for user-selected files, and folder enumeration stays inside
+granted roots. Directory loading is lazy. Native source bytes use a 128 MiB LRU
+cache; replaced geometry is removed instead of accumulating in the embedding
+cache.
+
+## Current scope and remaining work
+
+This is the first unified UI review build, not full parity with every tool in
+the feature-rich image extension. See [DESIGN.md](DESIGN.md) for the target.
+
+| Area              | Review build                                                                                                        | Follow-up                                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Scientific images | Original engine decoding/rendering; range, colour, channels, histogram; TIFF page/axis and supported plane controls | Broader format matrix and specialized interpretation controls                                  |
+| Layers            | Combine sources, visibility, opacity, blend, undo/redo; expose decoded layered-file pixels                          | Reorder, masks, filters, registration and complete layered-file editing                        |
+| Datasets          | Single-file decoder and plane/frame navigation                                                                      | Multi-file DICOM/OME discovery, grouping and companion-file resolution                         |
+| Collections       | Natural source order, wildcard selection, filmstrip navigation, comparison                                          | Thumbnails, linked views, recursive search and richer collection layout                        |
+| Time              | Image/PLY file sequences, GIF, system video                                                                         | Embedded 3D animation/FBX decoder, timestamps and realtime playback policy                     |
+| State             | Session document tabs, saved image display settings, basic pinned object/layer appearance and scene camera          | Disk session restore; complete measurements, transforms, image zoom and edit-history retention |
+| Image tools       | Original-value pixel reporting and sampled histogram                                                                | ROI/annotation editing, profiles, calibration, debayer and remaining advanced tools            |
+
+Folder filtering applies to the loaded tree, not a background recursive disk
+index. Source caching is bounded but full decoder/GPU allocations are not yet a
+strict application-wide memory budget. Name-based restoration of object/layer
+appearance is provisional when a document contains duplicate names. No desktop
+updater is provided. External glTF/OBJ companion assets need a resolver.
+
+macOS WKWebView still schedules animation around 60 FPS on this machine; the
+engine follows requestAnimationFrame. This build does not use private WebKit
+preferences. Windows and Linux runtime behavior remains unvalidated.
+
+See [VALIDATION.md](VALIDATION.md) for checks performed on this build.
