@@ -17,10 +17,18 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 }
 java { toolchain { languageVersion.set(JavaLanguageVersion.of(21)) } }
+val marketplaceDescription = layout.buildDirectory.file("marketplace-description.html")
+val prepareDescription by tasks.registering(Exec::class) {
+    workingDir(rootDir)
+    commandLine("node", "scripts/prepare-description.mjs")
+    inputs.files("../README.md", "scripts/prepare-description.mjs", "../package-lock.json")
+    outputs.file(marketplaceDescription)
+}
 intellijPlatform {
     buildSearchableOptions = false
     pluginConfiguration {
         name = "3D Visualizer"
+        description = providers.fileContents(marketplaceDescription).asText
         ideaVersion {
             sinceBuild = "243"
             untilBuild = "243.*"
@@ -39,6 +47,7 @@ intellijPlatform {
     }
     publishing { token = providers.environmentVariable("JETBRAINS_PUBLISH_TOKEN") }
 }
+tasks.named("patchPluginXml") { dependsOn(prepareDescription) }
 tasks.runIde {
     // Rebuilds must not dispose editors while native input checks are running.
     systemProperty("idea.auto.reload.plugins", "false")

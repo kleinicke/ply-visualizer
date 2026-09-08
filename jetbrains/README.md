@@ -9,6 +9,13 @@ adaptation of the repository's `icon.png`: the same blue/turquoise dotted logo
 used by VS Code. Keep this branding aligned when updating either asset. Gradle
 includes it automatically in future plugin distributions.
 
+The Marketplace description is generated from the repository's root `README.md`,
+the same source used by the VS Code listing. The Gradle `prepareDescription`
+task renders Markdown to HTML and resolves relative links to GitHub before
+`patchPluginXml` embeds it. Edit the root README to update both listings;
+`build/marketplace-description.html` can also be copied into the Marketplace
+description editor for an existing release.
+
 ## Build and try
 
 Requirements: Node 24, root npm dependencies (`npm ci`), and JDK 21.

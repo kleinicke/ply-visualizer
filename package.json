@@ -373,6 +373,7 @@
     "glob": "^13.0.6",
     "husky": "^9.1.7",
     "lint-staged": "^17.3.0",
+    "markdown-it": "^14.3.0",
     "mini-css-extract-plugin": "^2.10.2",
     "mocha": "^11.8.0",
     "prettier": "^3.9.6",
