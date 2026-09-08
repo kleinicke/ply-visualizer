@@ -1,3 +1,5 @@
+import { setAgentPointSizeMode } from './agentPointSizing';
+import { comparisonState } from './agentComparison';
 /* eslint-disable @typescript-eslint/naming-convention -- MCP wire keys */
 import * as THREE from 'three';
 import type { SpatialData } from '../interfaces';
@@ -5,7 +7,7 @@ import type { SelectionManager } from '../SelectionManager';
 import { loadRegistrationWasm } from '../registration/wasmLoader';
 import { fitAgentView, type ControlHost } from './agentControls';
 
-type Pose = {
+export type Pose = {
   position: number[];
   target: number[];
   up: number[];
@@ -13,7 +15,14 @@ type Pose = {
   far: number;
   fov: number;
 };
+export type NamedSelection = {
+  source: SpatialData;
+  indices: Uint32Array;
+  data: SpatialData;
+  criteria: Record<string, unknown>;
+};
 type InspectionState = {
+  named: Map<string, NamedSelection>;
   views: Map<string, Pose>;
   undo: Pose[];
   selection?: SpatialData;
@@ -26,12 +35,12 @@ const states = new WeakMap<ControlHost, InspectionState>();
 function state(host: ControlHost) {
   let value = states.get(host);
   if (!value) {
-    value = { views: new Map(), undo: [] };
+    value = { views: new Map(), undo: [], named: new Map() };
     states.set(host, value);
   }
   return value;
 }
-function pose(host: ControlHost): Pose {
+export function pose(host: ControlHost): Pose {
   return {
     position: host.camera.position.toArray(),
     target: host.controls.target.toArray(),
@@ -48,7 +57,7 @@ export function rememberAgentCamera(host: ControlHost) {
     s.undo.shift();
   }
 }
-function restore(host: ControlHost, p: Pose) {
+export function restore(host: ControlHost, p: Pose) {
   host.camera.position.fromArray(p.position);
   host.controls.target.fromArray(p.target);
   host.camera.up.fromArray(p.up);
@@ -85,6 +94,36 @@ export function agentViews(host: ControlHost, a: Record<string, any>) {
   return { views: Object.fromEntries(s.views), undo_available: s.undo.length, camera: pose(host) };
 }
 export async function agentPick(host: ControlHost, screen: number[]) {
+  const split = comparisonState(host);
+  if (!split) {
+    return pickSingleView(host, screen);
+  }
+  const side = screen[0] < 0.5 ? split.left : split.right;
+  const visible = host.fileVisibility.slice();
+  const meshVisible = host.meshes.map(mesh => mesh?.visible);
+  const aspect = host.camera.aspect;
+  try {
+    host.fileVisibility.forEach((_, i) => {
+      host.fileVisibility[i] = i === side;
+      if (host.meshes[i]) {
+        host.meshes[i]!.visible = i === side;
+      }
+    });
+    host.camera.aspect = aspect / 2;
+    host.camera.updateProjectionMatrix();
+    return await pickSingleView(host, [screen[0] * 2 - (screen[0] < 0.5 ? 0 : 1), screen[1]]);
+  } finally {
+    host.fileVisibility.splice(0, host.fileVisibility.length, ...visible);
+    host.meshes.forEach((mesh, i) => {
+      if (mesh) {
+        mesh.visible = meshVisible[i]!;
+      }
+    });
+    host.camera.aspect = aspect;
+    host.camera.updateProjectionMatrix();
+  }
+}
+async function pickSingleView(host: ControlHost, screen: number[]) {
   const picker = host as unknown as {
     selectionManager: SelectionManager;
     getSelectionContext(): any;
@@ -107,19 +146,25 @@ export async function agentPick(host: ControlHost, screen: number[]) {
   }
   const file = hit.objectIndex === undefined ? undefined : host.spatialFiles[hit.objectIndex];
   const s = state(host);
+  const saved = [...s.named.values()].find(item => item.data === file);
+  const selected = file === s.selection ? { source: s.source!, indices: s.indices! } : saved;
   const sourceIndex =
-    file === s.selection && hit.pointIndex !== undefined
-      ? s.indices?.[hit.pointIndex]
-      : hit.pointIndex;
+    selected && hit.pointIndex !== undefined ? selected.indices[hit.pointIndex] : hit.pointIndex;
   return {
     hit: true,
     xyz: hit.point.toArray(),
     object_index: hit.objectIndex ?? null,
     point_index: hit.pointIndex ?? null,
-    source_object_index:
-      file === s.selection ? host.spatialFiles.indexOf(s.source!) : (hit.objectIndex ?? null),
+    source_object_index: selected
+      ? host.spatialFiles.indexOf(selected.source)
+      : (hit.objectIndex ?? null),
     source_point_index: sourceIndex ?? null,
-    index_space: 'decoded cloud (invalid source rows removed)',
+    source_row:
+      sourceIndex === undefined
+        ? null
+        : ((selected?.source ?? file)?.sourcePointIndices?.[sourceIndex] ?? null),
+    index_space:
+      'source_point_index is decoded; source_row is original zero-based PCD record, null when unavailable',
     attributes: Object.fromEntries(
       Object.entries(file?.scalarFields ?? {}).map(([key, values]) => [
         key,
@@ -132,7 +177,7 @@ export async function agentPick(host: ControlHost, screen: number[]) {
 export function clearAgentSelection(host: ControlHost) {
   const s = state(host);
   const index = s.selection ? host.spatialFiles.indexOf(s.selection) : -1;
-  if (index >= 0) {
+  if (index >= 0 && ![...s.named.values()].some(item => item.data === s.selection)) {
     host.removeFileByIndex(index);
   }
   s.visibility?.forEach((visible, file) => {
@@ -154,7 +199,7 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
     return { selected_points: 0, restored: true };
   }
   const source = host.spatialFiles[a.object_index];
-  if (!source || source === state(host).selection) {
+  if (!source || source.metadata?.agentSelection) {
     throw new Error('Select a source object_index from inspect_3d_scene');
   }
   const mesh = host.meshes[a.object_index];
@@ -188,14 +233,16 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
   if (!wasm) {
     throw new Error('Selection WebAssembly unavailable');
   }
-  const indices = wasm.select_point_indices(
-    positions,
-    values ?? new Float32Array(),
-    new Float32Array(a.values ?? []),
-    new Float64Array(matrix.elements),
-    new Float64Array(a.bounds ?? []),
-    new Float64Array(a.plane ?? [])
-  );
+  const indices: Uint32Array =
+    a.indices ??
+    wasm.select_point_indices(
+      positions,
+      values ?? new Float32Array(),
+      new Float32Array(a.values ?? []),
+      new Float64Array(matrix.elements),
+      new Float64Array(a.bounds ?? []),
+      new Float64Array(a.plane ?? [])
+    );
   if (!indices.length) {
     const summary = a.field
       ? ((await agentAttributes([source]))[0][a.field] as {
@@ -229,7 +276,10 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
     faces: [],
     faceCount: 0,
     vertexCount: indices.length,
-    sourcePointCount: undefined,
+    sourcePointCount: indices.length,
+    sourcePointIndices: source.sourcePointIndices?.length
+      ? Uint32Array.from(indices, index => source.sourcePointIndices![index])
+      : undefined,
     positionsArray: subset(positions, 3)!,
     colorsArray: subset(source.colorsArray, 3),
     normalsArray: subset(source.normalsArray, 3),
@@ -251,6 +301,9 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
   // Preserve the source's complete world transform, including its PCD VIEWPOINT.
   host.setTransformationMatrix(i, matrix);
   selected.updateMatrixWorld(true);
+  if (data.vertexCount <= 100) {
+    setAgentPointSizeMode(host, i, true);
+  }
   s.selection = data;
   s.criteria = {
     field: a.field ?? null,
@@ -318,4 +371,138 @@ export function currentAgentSelection(host: ControlHost) {
     selected_points: s.selection!.vertexCount,
     criteria: s.criteria,
   };
+}
+
+export function selectionData(host: ControlHost, name?: string) {
+  const s = state(host);
+  if (name) {
+    const item = s.named.get(name);
+    if (
+      !item ||
+      !host.spatialFiles.includes(item.source) ||
+      !host.spatialFiles.includes(item.data)
+    ) {
+      throw new Error('Unknown or expired selection name');
+    }
+    return item;
+  }
+  if (!s.selection || !s.source || !s.indices) {
+    throw new Error('Select some points first');
+  }
+  return { source: s.source, indices: s.indices, data: s.selection, criteria: s.criteria ?? {} };
+}
+
+export function namedSelectionEntries(host: ControlHost) {
+  const s = state(host);
+  for (const [name, item] of s.named) {
+    if (!host.spatialFiles.includes(item.source) || !host.spatialFiles.includes(item.data)) {
+      s.named.delete(name);
+    }
+  }
+  return [...s.named.entries()];
+}
+
+export async function agentNamedSelections(host: ControlHost, a: Record<string, any>) {
+  const s = state(host);
+  namedSelectionEntries(host);
+  if (a.action === 'save') {
+    if (s.named.has(a.name)) {
+      throw new Error('Selection name already exists; delete it first');
+    }
+    if (s.named.size >= 20) {
+      throw new Error('At most 20 named selections');
+    }
+    const item = selectionData(host);
+    if ([...s.named.values()].some(value => value.data === item.data)) {
+      throw new Error('This selection is already named');
+    }
+    item.data.fileName = a.name;
+    s.named.set(a.name, { ...item, indices: item.indices.slice() });
+    host.updateFileList();
+  } else if (a.action === 'delete') {
+    const item = selectionData(host, a.name);
+    s.named.delete(a.name);
+    if (item.data === s.selection) {
+      clearAgentSelection(host);
+    } else {
+      host.removeFileByIndex(host.spatialFiles.indexOf(item.data));
+    }
+  } else if (a.action === 'visible') {
+    const item = selectionData(host, a.name);
+    host.setFileEntryVisibility(host.spatialFiles.indexOf(item.data), a.visible);
+  } else if (a.action === 'activate' || ['union', 'intersection', 'subtract'].includes(a.action)) {
+    const left = selectionData(host, a.name);
+    let indices = left.indices;
+    if (a.action !== 'activate') {
+      const right = selectionData(host, a.other);
+      if (left.source !== right.source) {
+        throw new Error('Set operations require selections from the same source cloud');
+      }
+      const wasm = (await loadRegistrationWasm()) as unknown as {
+        combine_point_indices(a: Uint32Array, b: Uint32Array, op: string): Uint32Array;
+      };
+      indices = wasm.combine_point_indices(left.indices, right.indices, a.action);
+    }
+    await agentSelection(host, {
+      object_index: host.spatialFiles.indexOf(left.source),
+      indices,
+      isolate: a.isolate,
+      focus: a.focus,
+      highlight: true,
+    });
+    s.criteria = {
+      named_operation: a.action,
+      name: a.name,
+      other: a.other ?? null,
+      isolate: !!a.isolate,
+    };
+  }
+  host.requestRender();
+  return {
+    named_selections: namedSelectionEntries(host).map(([name, item]) => ({
+      name,
+      selected_points: item.indices.length,
+      object_index: host.spatialFiles.indexOf(item.data),
+      source_object_index: host.spatialFiles.indexOf(item.source),
+      visible: host.fileVisibility[host.spatialFiles.indexOf(item.data)],
+    })),
+    active_selection: currentAgentSelection(host),
+  };
+}
+
+export function resetAgentSelections(host: ControlHost) {
+  const s = state(host);
+  clearAgentSelection(host);
+  for (const item of s.named.values()) {
+    const i = host.spatialFiles.indexOf(item.data);
+    if (i >= 0) {
+      host.removeFileByIndex(i);
+    }
+  }
+  s.named.clear();
+}
+
+export function invalidateAgentAttributes(file: SpatialData) {
+  summaries.delete(file);
+}
+
+export function setSelectionCriteria(host: ControlHost, criteria: Record<string, unknown>) {
+  state(host).criteria = structuredClone(criteria);
+}
+export function selectionRestoreVisibility(host: ControlHost) {
+  return state(host).visibility;
+}
+export function setSelectionRestoreVisibility(
+  host: ControlHost,
+  entries: [SpatialData, boolean][]
+) {
+  state(host).visibility = new Map(entries);
+}
+export function makeNamedSelectionActive(host: ControlHost, name: string) {
+  const item = selectionData(host, name),
+    s = state(host);
+  s.selection = item.data;
+  s.source = item.source;
+  s.indices = item.indices;
+  s.criteria = item.criteria;
 }

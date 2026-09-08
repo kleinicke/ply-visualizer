@@ -812,6 +812,13 @@ class PointCloudResult {
     return v1;
   }
   /**
+   * @returns {number}
+   */
+  get source_count() {
+    const ret = wasm.pointcloudresult_source_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
    * @returns {Uint8Array}
    */
   take_colors() {
@@ -854,6 +861,15 @@ class PointCloudResult {
   take_scalar_at(index) {
     const ret = wasm.pointcloudresult_take_scalar_at(this.__wbg_ptr, index);
     var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {Uint32Array}
+   */
+  take_source_indices() {
+    const ret = wasm.pointcloudresult_take_source_indices(this.__wbg_ptr);
+    var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v1;
   }
@@ -1719,6 +1735,26 @@ function coarse_align(source, target, settings_json) {
 exports.coarse_align = coarse_align;
 
 /**
+ * @param {Uint32Array} a
+ * @param {Uint32Array} b
+ * @param {string} operation
+ * @returns {Uint32Array}
+ */
+function combine_point_indices(a, b, operation) {
+  const ptr0 = passArray32ToWasm0(a, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(b, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passStringToWasm0(operation, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.combine_point_indices(ptr0, len0, ptr1, len1, ptr2, len2);
+  var v4 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+  return v4;
+}
+exports.combine_point_indices = combine_point_indices;
+
+/**
  * Free a buffer previously returned by `alloc`.
  * @param {number} ptr
  * @param {number} len
@@ -1727,6 +1763,67 @@ function dealloc(ptr, len) {
   wasm.dealloc(ptr, len);
 }
 exports.dealloc = dealloc;
+
+/**
+ * @param {Float32Array} positions
+ * @param {Uint8Array} colors
+ * @param {Float32Array} normals
+ * @param {Float32Array} scalars
+ * @param {string} names_json
+ * @param {Uint32Array} decoded
+ * @param {Uint32Array} original
+ * @param {string} metadata
+ * @returns {Uint8Array}
+ */
+function export_inspection_ply(
+  positions,
+  colors,
+  normals,
+  scalars,
+  names_json,
+  decoded,
+  original,
+  metadata
+) {
+  const ptr0 = passArrayF32ToWasm0(positions, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray8ToWasm0(colors, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passArrayF32ToWasm0(normals, wasm.__wbindgen_malloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ptr3 = passArrayF32ToWasm0(scalars, wasm.__wbindgen_malloc);
+  const len3 = WASM_VECTOR_LEN;
+  const ptr4 = passStringToWasm0(names_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len4 = WASM_VECTOR_LEN;
+  const ptr5 = passArray32ToWasm0(decoded, wasm.__wbindgen_malloc);
+  const len5 = WASM_VECTOR_LEN;
+  const ptr6 = passArray32ToWasm0(original, wasm.__wbindgen_malloc);
+  const len6 = WASM_VECTOR_LEN;
+  const ptr7 = passStringToWasm0(metadata, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len7 = WASM_VECTOR_LEN;
+  const ret = wasm.export_inspection_ply(
+    ptr0,
+    len0,
+    ptr1,
+    len1,
+    ptr2,
+    len2,
+    ptr3,
+    len3,
+    ptr4,
+    len4,
+    ptr5,
+    len5,
+    ptr6,
+    len6,
+    ptr7,
+    len7
+  );
+  var v9 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+  return v9;
+}
+exports.export_inspection_ply = export_inspection_ply;
 
 /**
  * Extract an isosurface at `threshold`.
@@ -1803,6 +1900,26 @@ function icp_refine(source, target, settings_json) {
   return ret === 0 ? undefined : RegistrationResult.__wrap(ret);
 }
 exports.icp_refine = icp_refine;
+
+/**
+ * @param {Float32Array} points
+ * @returns {string}
+ */
+function inspection_fingerprint(points) {
+  let deferred2_0;
+  let deferred2_1;
+  try {
+    const ptr0 = passArrayF32ToWasm0(points, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.inspection_fingerprint(ptr0, len0);
+    deferred2_0 = ret[0];
+    deferred2_1 = ret[1];
+    return getStringFromWasm0(ret[0], ret[1]);
+  } finally {
+    wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+  }
+}
+exports.inspection_fingerprint = inspection_fingerprint;
 
 /**
  * What a `.npy` or `.npz` holds, without decoding any of it: a JSON array of
@@ -2045,6 +2162,25 @@ function parse_xyz(data, variant, color_mode) {
   return PointCloudResult.__wrap(ret);
 }
 exports.parse_xyz = parse_xyz;
+
+/**
+ * @param {Float32Array} source
+ * @param {Float32Array} target
+ * @param {number} radius
+ * @param {boolean} paired
+ * @returns {Float32Array}
+ */
+function point_distances(source, target, radius, paired) {
+  const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArrayF32ToWasm0(target, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.point_distances(ptr0, len0, ptr1, len1, radius, paired);
+  var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+  return v3;
+}
+exports.point_distances = point_distances;
 
 /**
  * Coarse sweep and/or ICP refinement, per `settings_json`.

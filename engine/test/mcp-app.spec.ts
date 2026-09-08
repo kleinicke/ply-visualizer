@@ -132,11 +132,26 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
       await expect(viewer.locator('iframe')).toHaveCount(0);
       await expect(viewer.locator('#main-ui-panel')).toBeHidden();
       async function control(name: string, args = {}) {
-        const result = await call(name, { scene_id: sceneId, ...args });
+        const result = await call(name, {
+          scene_id: sceneId,
+          ...(!['update_3d_scene', 'export_3d_selection', 'preview_3d_views'].includes(name)
+            ? { detail: 'full' }
+            : {}),
+          ...args,
+        });
         expect(result.isError, JSON.stringify(result.content)).toBeFalsy();
         return result.structuredContent ?? JSON.parse(result.content[0].text);
       }
+      const compact = await call('inspect_3d_scene', { scene_id: sceneId });
+      expect(compact.structuredContent.coordinate_system).toBeUndefined();
+      expect(compact.structuredContent.objects[0].attributes).toBeUndefined();
+      const ack = await call('set_3d_appearance', { scene_id: sceneId, brightness: 0 });
+      expect(ack.structuredContent.ok).toBe(true);
+      expect(ack.structuredContent.objects).toBeUndefined();
       const info = await control('inspect_3d_scene');
+      expect(JSON.stringify(ack.structuredContent).length).toBeLessThan(
+        JSON.stringify(info).length / 3
+      );
       expect(info.objects[0].vertices).toBeGreaterThan(0);
       expect(info.objects[0].available_color_modes).toContainEqual({
         value: 'assigned',
@@ -297,6 +312,7 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
       expect(
         (await control('manage_3d_views', { action: 'restore', name: 'overview' })).camera
       ).toEqual(before);
+      await control('manage_3d_scene_states', { action: 'save', name: 'overview-state' });
       if (info.objects[0].scalar_fields.includes('label')) {
         const counts = info.objects[0].attributes.label.value_counts;
         const label = process.env.PLY_AGENT_TEST_FILE
@@ -338,6 +354,11 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
         expect(picked.object_index).toBe(1);
         expect(picked.attributes.label).toBe(label);
         expect(picked.source_point_index).toBeGreaterThanOrEqual(0);
+        if (!process.env.PLY_AGENT_TEST_FILE) {
+          expect(info.objects[0].source_points).toBe(34);
+          expect(info.objects[0].filtered_points).toBe(1);
+          expect(picked.source_row).toBe(picked.source_point_index + 1);
+        }
         await control('set_3d_object', {
           object_index: 1,
           opacity: 0.35,
@@ -359,6 +380,107 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
         );
         expect(failed.content[0].text).toContain('Available label values');
         expect((await control('inspect_3d_scene')).objects).toHaveLength(2);
+        await control('manage_3d_scene_states', { action: 'save', name: 'detail-state' });
+        const stateFile = test.info().outputPath('inspection-state.json');
+        await control('manage_3d_scene_states', {
+          action: 'export',
+          name: 'detail-state',
+          path: stateFile,
+        });
+        await control('manage_3d_scene_states', { action: 'restore', name: 'overview-state' });
+        expect((await control('inspect_3d_scene')).objects).toHaveLength(1);
+        await control('manage_3d_scene_states', { action: 'delete', name: 'detail-state' });
+        await control('manage_3d_scene_states', {
+          action: 'import',
+          name: 'detail-state',
+          path: stateFile,
+        });
+        await control('manage_3d_scene_states', { action: 'restore', name: 'detail-state' });
+        const detailRestored = await control('inspect_3d_scene');
+        expect(detailRestored.objects[0].visible).toBe(false);
+        expect(detailRestored.objects[1].opacity).toBe(0.35);
+        expect(detailRestored.selection.criteria.values).toEqual([label]);
+        await control('set_3d_appearance', { legend: true, grid: true });
+        await expect(viewer.locator('.selection-summary')).toContainText('points');
+        await control('set_3d_object', { object_index: 1, color: '#ffcc00', opacity: 1 });
+        await expect(viewer.locator('.scene-legend')).toContainText('#ffcc00');
+        const multi = await call('preview_3d_views', {
+          scene_id: sceneId,
+          presets: ['front', 'top', 'isometric'],
+        });
+        expect(multi.isError, JSON.stringify(multi.content)).toBeFalsy();
+        expect(multi.content.some((c: any) => c.type === 'image')).toBe(true);
+        await writeFile(
+          test.info().outputPath('multiview.png'),
+          Buffer.from(multi.content.find((c: any) => c.type === 'image').data, 'base64')
+        );
+        expect((await control('inspect_3d_scene')).camera.position).toEqual(
+          detailRestored.camera.position
+        );
+        await control('manage_3d_selections', { action: 'save', name: 'box' });
+        const subsetPath = test.info().outputPath('selected-box.ply');
+        const exported = await control('export_3d_selection', { path: subsetPath, name: 'box' });
+        expect(exported.points).toBe(counts[String(label)]);
+        expect(exported.original_rows_available).toBe(true);
+        const bytes = await readFile(subsetPath);
+        expect(bytes.toString('utf8', 0, bytes.indexOf('end_header'))).toContain(
+          'property uint source_row'
+        );
+        if (!process.env.PLY_AGENT_TEST_FILE) {
+          const headerEnd = bytes.indexOf('end_header\n') + 'end_header\n'.length;
+          const stride = (bytes.length - headerEnd) / exported.points;
+          for (let i = 0; i < exported.points; i++) {
+            expect(bytes.readUInt32LE(headerEnd + (i + 1) * stride - 4)).toBe(
+              bytes.readUInt32LE(headerEnd + (i + 1) * stride - 8) + 1
+            );
+          }
+        }
+        const cannotOverwrite = await call('export_3d_selection', {
+          scene_id: sceneId,
+          path: subsetPath,
+          name: 'box',
+        });
+        expect(cannotOverwrite.isError).toBe(true);
+        if (!process.env.PLY_AGENT_TEST_FILE) {
+          await control('select_3d_region', { field: 'label', values: [1], preview: false });
+          await control('manage_3d_selections', { action: 'save', name: 'table' });
+          const union = await control('manage_3d_selections', {
+            action: 'union',
+            name: 'box',
+            other: 'table',
+          });
+          expect(union.active_selection.selected_points).toBe(33);
+          const empty = await call('manage_3d_selections', {
+            scene_id: sceneId,
+            action: 'intersection',
+            name: 'box',
+            other: 'table',
+          });
+          expect(empty.isError).toBe(true);
+          expect((await control('inspect_3d_scene')).selection.selected_points).toBe(33);
+          const subtract = await control('manage_3d_selections', {
+            action: 'subtract',
+            name: 'box',
+            other: 'table',
+          });
+          expect(subtract.active_selection.selected_points).toBe(8);
+          await control('manage_3d_selections', { action: 'visible', name: 'box', visible: false });
+          const savedNamed = await control('manage_3d_selections', { action: 'list' });
+          expect(savedNamed.named_selections.find((s: any) => s.name === 'box').visible).toBe(
+            false
+          );
+          await control('compare_3d_clouds', { action: 'enable', left: 1, right: 2 });
+          await control('manage_3d_scene_states', { action: 'save', name: 'named-state' });
+          await control('manage_3d_scene_states', { action: 'restore', name: 'overview-state' });
+          await control('manage_3d_scene_states', { action: 'restore', name: 'named-state' });
+          expect(
+            (await control('manage_3d_selections', { action: 'list' })).named_selections
+          ).toHaveLength(2);
+          expect(
+            (await control('compare_3d_clouds', { action: 'status' })).comparison
+          ).toMatchObject({ left: 1, right: 2, linked_camera: true });
+        }
+        await control('manage_3d_scene_states', { action: 'restore', name: 'overview-state' });
         await control('select_3d_region', { action: 'clear', preview: false });
         const restored = await control('inspect_3d_scene');
         expect(restored.selection).toBeNull();
@@ -404,7 +526,20 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
       expect(afterUpdate.camera.up).toEqual(fixed.camera.up);
       expect(afterUpdate.objects).toHaveLength(1);
       expect(afterUpdate.selection).toBeNull();
-      if (fixture === 'agent-labels.pcd' && !process.env.PLY_AGENT_TEST_FILE) {
+      const staleRestore = await call('manage_3d_scene_states', {
+        scene_id: sceneId,
+        action: 'restore',
+        name: 'overview-state',
+      });
+      expect(staleRestore.isError).toBe(true);
+      expect((await control('inspect_3d_scene')).camera.position).toEqual(
+        afterUpdate.camera.position
+      );
+      if (
+        fixture === 'agent-labels.pcd' &&
+        !process.env.PLY_AGENT_TEST_FILE &&
+        !process.env.PLY_AGENT_SKIP_ALIGNMENT
+      ) {
         // Same asymmetric Z-up room construction used by the native Rust tests.
         let seed = 7;
         const random = () => {
@@ -491,7 +626,11 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
         await control('align_3d_clouds', { action: 'undo' });
         await align({ action: 'auto', source_index: 0, target_index: 1, up_axis: 'z' });
         await control('align_3d_clouds', { action: 'undo' });
-        for (const strategy of ['anchor', 'nested', 'complex']) {
+        for (const strategy of [
+          'anchor',
+          'nested',
+          ...(process.env.PLY_AGENT_TEST_COMPLEX_ALIGNMENT ? ['complex'] : []),
+        ]) {
           const result = await align(
             { action: 'align_all', target_index: 1, strategy },
             strategy === 'complex' ? null : true
@@ -522,6 +661,46 @@ for (const fixture of ['agent-mesh.ply', 'agent-labels.pcd']) {
         );
         expect((await control('align_3d_clouds', { action: 'status' })).can_undo).toBe(false);
       }
+      const comparisonUpdate = await control('update_3d_scene', {
+        points: [
+          [0, 0, 0],
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+        target: [
+          [0, 0, 0.1],
+          [1, 0, 0.1],
+          [0, 1, 0.1],
+        ],
+      });
+      await expect(viewer.locator('html')).toHaveAttribute(
+        'data-session-revision',
+        String(comparisonUpdate.revision)
+      );
+      const errorColors = await control('compare_3d_clouds', {
+        action: 'distance',
+        left: 0,
+        right: 1,
+        method: 'paired',
+      });
+      expect(errorColors.summary.min).toBeCloseTo(0.1);
+      const split = await control('compare_3d_clouds', { action: 'enable', left: 0, right: 1 });
+      expect(split.comparison.linked_camera).toBe(true);
+      await expect(viewer.locator('.comparison-labels')).toBeVisible();
+      await control('navigate_3d_view', { action: 'orbit', yaw: 15 });
+      const comparisonPng = await call('capture_3d_view', { scene_id: sceneId });
+      await writeFile(
+        test.info().outputPath('comparison.png'),
+        Buffer.from(comparisonPng.content[0].data, 'base64')
+      );
+      await control('compare_3d_clouds', { action: 'disable' });
+      await control('set_3d_object', { object_index: 0, point_size_mode: 'adaptive' });
+      const adaptiveBefore = await control('inspect_3d_scene');
+      expect(adaptiveBefore.objects[0].point_size_mode).toBe('adaptive');
+      await control('navigate_3d_view', { action: 'zoom', factor: 0.5 });
+      expect((await control('inspect_3d_scene')).objects[0].point_size).toBeLessThan(
+        adaptiveBefore.objects[0].point_size
+      );
       const capture = await call('capture_3d_view', { scene_id: sceneId });
       expect(capture.content.some((c: any) => c.type === 'image')).toBe(true);
       await page.screenshot({ path: test.info().outputPath('direct-mcp.png') });

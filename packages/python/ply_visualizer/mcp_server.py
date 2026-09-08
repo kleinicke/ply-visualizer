@@ -89,8 +89,8 @@ def create_server(roots):
         finally:
             manager.close()
 
-    server = MCPServer("ply-visualizer", version="0.4.0.dev3", lifespan=lifespan,
-        instructions="Use this viewer for 3D point clouds, meshes, Gaussian splats, predicted/target geometry and vector fields. Prefer local file paths for large data. Reuse scene_id to update a scene. After creating a scene, inspect its coordinate_system, camera, presentation and selection, then capture to verify actual rendering. Use reported world axes and units; do not assume meters or Blender Z-up. After updates compare renderer_id and rendered_revision. Do not claim a submitted scene has rendered. The MCP widget renders directly and transfers geometry through app-only tools. No browser opens by default. Use open_3d_url only for explicitly requested HTTP(S) downloads. Start align_3d_clouds jobs and poll status; do not claim a queued job has aligned geometry.")
+    server = MCPServer("ply-visualizer", version="0.4.0.dev4", lifespan=lifespan,
+        instructions="Use this viewer for 3D point clouds, meshes, Gaussian splats, predicted/target geometry and vector fields. Prefer local file paths for large data. Reuse scene_id to update a scene. Replies default to compact summaries. Use inspect_3d_scene(detail=full) once for coordinate conventions, attributes and matrices; request detail=full only when needed. Capture to verify actual rendering. Keep explanations concise and do not repeat unchanged scene state. Use reported world axes and units; do not assume meters or Blender Z-up. After updates compare renderer_id and rendered_revision. Do not claim a submitted scene has rendered. The MCP widget renders directly and transfers geometry through app-only tools. No browser opens by default. Use open_3d_url only for explicitly requested HTTP(S) downloads. Start align_3d_clouds jobs and poll status; do not claim a queued job has aligned geometry.")
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     local = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 
@@ -143,16 +143,16 @@ def create_server(roots):
 
     @server.tool(annotations=readonly)
     @explain_errors
-    def inspect_3d_scene(scene_id: str) -> dict[str, Any]:
+    def inspect_3d_scene(scene_id: str, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Read coordinate conventions/units, camera position/direction/rotation center, projection and viewport, object transforms, opacity/color, exposure/background, selection criteria, geometry counts and bounds from the active inline viewer or explicit browser fallback. Times out if no renderer responds. Compare rendered_revision with the submitted revision."""
-        return manager.get(scene_id)._bridge.request("inspect")
+        return manager.get(scene_id)._bridge.request("inspect", {"detail": detail})
 
     @server.tool(annotations=local)
     @explain_errors
     def set_3d_camera(scene_id: str, fit: bool = False, position: tuple[float, float, float] | None = None,
         target: tuple[float, float, float] | None = None, up: tuple[float, float, float] | None = None,
         rotation: tuple[float, float, float] | None = None,
-        fov: Annotated[float, Field(gt=0, lt=180)] | None = None) -> dict[str, Any]:
+        fov: Annotated[float, Field(gt=0, lt=180)] | None = None, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Partially update camera position, target (rotation center), up or vertical FOV in degrees. Rotation is absolute XYZ Euler degrees; it moves target along camera -Z at the previous pivot distance. Rotation cannot combine with target/up. Fit frames visible geometry, optionally at the new FOV. Returns applied view state."""
         if fit and any(v is not None for v in (position, target, up, rotation)):
             raise ValueError("Use fit or explicit camera vectors, not both")
@@ -161,7 +161,7 @@ def create_server(roots):
         if not all(math.isfinite(v) for vector in (position, target, up, rotation) if vector is not None for v in vector):
             raise ValueError("Camera vectors must be finite")
         if up is not None and not any(up): raise ValueError("up must be nonzero")
-        return command(scene_id, "camera", dict(fit=fit, position=position, target=target, up=up, rotation=rotation, fov=fov))
+        return command(scene_id, "camera", dict(detail=detail, fit=fit, position=position, target=target, up=up, rotation=rotation, fov=fov))
 
     @server.tool(annotations=readonly)
     @explain_errors
@@ -189,14 +189,14 @@ def create_server(roots):
         vector: tuple[float, float, float] | None = None,
         screen: tuple[Annotated[float, Field(ge=0, le=1)], Annotated[float, Field(ge=0, le=1)]] | None = None,
         yaw: float = 0, pitch: float = 0,
-        factor: Annotated[float, Field(gt=0, le=100)] = 1) -> dict[str, Any]:
+        factor: Annotated[float, Field(gt=0, le=100)] = 1, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Navigate without UI. Fit tightly; presets use Y-up OpenGL. Orbit angles are degrees. Pan/pivot use world XYZ. Zoom <1 moves closer. Pick uses normalized canvas XY (top-left=0,0) and sets rotation center on visible geometry, like double-click. Origin resets pivot to 0,0,0."""
         if action == "preset" and preset is None: raise ValueError("preset is required")
         if action in ("pan", "pivot") and vector is None: raise ValueError("vector is required")
         if action == "pick" and screen is None: raise ValueError("screen is required")
         if not all(math.isfinite(v) for v in (* (vector or ()), yaw, pitch, factor)):
             raise ValueError("Coordinates and angles must be finite")
-        return command(scene_id, "navigate", dict(action=action, preset=preset, vector=vector, screen=screen, yaw=yaw, pitch=pitch, factor=factor))
+        return command(scene_id, "navigate", dict(detail=detail, action=action, preset=preset, vector=vector, screen=screen, yaw=yaw, pitch=pitch, factor=factor))
 
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
@@ -204,21 +204,23 @@ def create_server(roots):
                           background: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None,
         axes: bool | None = None, grid: bool | None = None, legend: bool | None = None,
         gamma_correction: bool | None = None,
-        theme: Literal["dark-modern", "light-modern"] | None = None) -> dict[str, Any]:
-        """Set exposure stops, background #RRGGBB, persistent pivot axes, coordinate grid, object/color legend and UI theme. gamma_correction matches the UI toggle: true treats source RGB as linear (extra gamma appearance); false decodes sRGB before shading. Grid/legend are inline UI overlays, not included in canvas PNG captures. Axes may briefly appear during interaction when persistent axes are off."""
-        return command(scene_id, "appearance", dict(brightness=brightness, background=background, axes=axes, grid=grid, legend=legend, gamma_correction=gamma_correction, theme=theme))
+        theme: Literal["dark-modern", "light-modern"] | None = None, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
+        """Set exposure stops, background #RRGGBB, persistent pivot axes, coordinate grid, object/color legend and UI theme. gamma_correction matches the UI toggle: true treats source RGB as linear (extra gamma appearance); false decodes sRGB before shading. Enabled grid/legend are also included in agent PNG captures. Axes may briefly appear during interaction when persistent axes are off."""
+        return command(scene_id, "appearance", dict(detail=detail, brightness=brightness, background=background, axes=axes, grid=grid, legend=legend, gamma_correction=gamma_correction, theme=theme))
 
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
     def set_3d_object(scene_id: str, object_index: Annotated[int, Field(ge=0)],
         point_size: Annotated[float, Field(gt=0, le=1000)] | None = None,
+        point_size_mode: Literal["adaptive", "fixed"] | None = None,
         opacity: Annotated[float, Field(ge=0, le=1)] | None = None,
         visible: bool | None = None, mode: Literal["points", "mesh"] | None = None,
         color: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None,
-        color_mode: Annotated[str, Field(pattern=r"^(original|recolored|assigned|[0-9]+|intensity|intensity-grayscale|intensity-viridis|intensity-colors|scalar:[^:]+:(viridis|grayscale|colors))$")] | None = None) -> dict[str, Any]:
-        """Set overlay opacity (0..1), object visibility, world-unit point size, points/mesh representation, fixed RGB color or original/intensity/scalar coloring. Get object_index, scalar_fields and available_color_modes from inspection; these include palette indices and projected colors when available. Mesh requires faces. Fixed color and color_mode are mutually exclusive."""
+        color_mode: Annotated[str, Field(pattern=r"^(original|recolored|assigned|[0-9]+|intensity|intensity-grayscale|intensity-viridis|intensity-colors|scalar:[^:]+:(viridis|grayscale|colors))$")] | None = None, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
+        """Set overlay opacity (0..1), visibility, world-unit point size (or point_size_mode=adaptive for a camera-dependent 2/4/8 pixel target), points/mesh representation, fixed RGB color or original/intensity/scalar coloring. Get object_index, scalar_fields and available_color_modes from inspection; these include palette indices and projected colors when available. Mesh requires faces. Fixed color and color_mode are mutually exclusive."""
+        if point_size is not None and point_size_mode == "adaptive": raise ValueError("Choose point_size or adaptive sizing")
         if color is not None and color_mode is not None: raise ValueError("Provide color or color_mode")
-        return command(scene_id, "object", dict(object_index=object_index, opacity=opacity, point_size=point_size, visible=visible, mode=mode, color=color, color_mode=color_mode))
+        return command(scene_id, "object", dict(detail=detail, object_index=object_index, point_size_mode=point_size_mode, opacity=opacity, point_size=point_size, visible=visible, mode=mode, color=color, color_mode=color_mode))
 
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
@@ -227,7 +229,7 @@ def create_server(roots):
         vector: tuple[float, float, float] | None = None,
         angle: float | None = None, quaternion: tuple[float, float, float, float] | None = None,
         matrix: Annotated[list[float], Field(min_length=16, max_length=16)] | None = None,
-        space: Literal["local", "world"] = "local", replace: bool = False) -> dict[str, Any]:
+        space: Literal["local", "world"] = "local", replace: bool = False, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Transform one cloud/mesh without changing source files or camera. Translate/scale use vector XYZ; rotate uses vector axis plus angle degrees (90 for quarter turns); quaternion uses XYZW, normalized. Matrix is affine 4x4 COLUMN-MAJOR, matching inspection (transpose row-major UI input). Default composes current*delta in local space; world uses delta*current around world origin. replace=True sets an absolute transform. Invert/reset act on the current matrix. Inspect local_to_world to verify. Visibility, point size and coloring use set_3d_object."""
         if action in ("translate", "scale", "rotate") and vector is None: raise ValueError("vector is required")
         if action == "rotate" and (angle is None or not any(vector)): raise ValueError("Nonzero rotation axis and angle are required")
@@ -237,28 +239,28 @@ def create_server(roots):
             raise ValueError("Transform values must be finite")
         if action == "matrix" and [matrix[i] for i in (3, 7, 11, 15)] != [0, 0, 0, 1]:
             raise ValueError("Matrix must be affine: last row 0,0,0,1")
-        return command(scene_id, "transform", dict(object_index=object_index, action=action, vector=vector, angle=angle, quaternion=quaternion, matrix=matrix, space=space, replace=replace))
+        return command(scene_id, "transform", dict(detail=detail, object_index=object_index, action=action, vector=vector, angle=angle, quaternion=quaternion, matrix=matrix, space=space, replace=replace))
 
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
     def measure_3d_scene(scene_id: str, action: Literal["list", "distance", "path_point", "undo", "close_path", "clear"],
-        start: tuple[float, float, float] | None = None, end: tuple[float, float, float] | None = None) -> dict[str, Any]:
+        start: tuple[float, float, float] | None = None, end: tuple[float, float, float] | None = None, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Add/list/clear visible measurements in scene units. Distance uses start/end XYZ; path_point appends end to the active path; undo removes its last point; close_path toggles closure."""
         if action == "distance" and (start is None or end is None): raise ValueError("start and end are required")
         if action == "path_point" and end is None: raise ValueError("end is required")
         if not all(math.isfinite(v) for v in (*(start or ()), *(end or ()))): raise ValueError("Coordinates must be finite")
-        return command(scene_id, "measure", dict(action=action, start=start, end=end))
+        return command(scene_id, "measure", dict(detail=detail, action=action, start=start, end=end))
 
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
     def control_3d_video(scene_id: str, action: Literal["list", "add", "remove", "goto", "update", "loop", "play", "stop"],
         index: Annotated[int, Field(ge=0)] | None = None, enabled: bool | None = None,
         duration: Annotated[float, Field(gt=0, le=3600)] | None = None,
-        dwell: Annotated[float, Field(ge=0, le=3600)] | None = None) -> dict[str, Any]:
+        dwell: Annotated[float, Field(ge=0, le=3600)] | None = None, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Manage camera keyframes and preview playback without UI. Add captures current camera. Update sets segment duration/dwell in seconds. Loop requires enabled; play needs two keyframes; stop restores camera. Returns reusable keyframe poses."""
         if action in ("remove", "goto", "update") and index is None: raise ValueError("index is required")
         if action == "loop" and enabled is None: raise ValueError("enabled is required")
-        return command(scene_id, "video", dict(action=action, index=index, enabled=enabled, duration=duration, dwell=dwell))
+        return command(scene_id, "video", dict(detail=detail, action=action, index=index, enabled=enabled, duration=duration, dwell=dwell))
 
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
@@ -270,7 +272,7 @@ def create_server(roots):
         up_axis: Literal["x", "y", "z"] = "y",
         against_all_others: bool = False,
         source_points: Annotated[list[tuple[float, float, float]], Field(min_length=3, max_length=256)] | None = None,
-        target_points: Annotated[list[tuple[float, float, float]], Field(min_length=3, max_length=256)] | None = None) -> dict[str, Any]:
+        target_points: Annotated[list[tuple[float, float, float]], Field(min_length=3, max_length=256)] | None = None, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Start a registration job, then poll action=status until job.state is completed/failed; submitted is not aligned. Reuses the viewer's Rust solvers. auto: level/up-axis yaw sweep then ICP; icp: refine an already close pair; correspondences: fit >=3 non-collinear paired world XYZ landmarks. source_index moves, target_index stays fixed. align_all/refine_all hold target fixed; strategies anchor (each to anchor), nested (grow aligned union), complex (grow with extra hypotheses). For auto/icp, against_all_others matches the moving cloud to the union of all other clouds. No scale/nonrigid estimation. up_axis describes the DATA, not the camera (default y); use z for Z-up scans. Clear temporary selections first. Undo restores transforms from the last accepted agent job. Inspection/capture remain available; geometry refresh waits for alignment. Partial align-all failures are reported per object."""
         if action in ("auto", "icp", "correspondences") and source_index is None: raise ValueError("source_index is required")
         if action == "correspondences":
@@ -279,21 +281,21 @@ def create_server(roots):
         elif source_points is not None or target_points is not None: raise ValueError("Landmarks are only used by correspondences")
         if against_all_others and action not in ("auto", "icp"): raise ValueError("against_all_others is only used by auto/icp")
         if action != "align_all" and strategy != "anchor": raise ValueError("nested/complex strategies apply to align_all only")
-        return command(scene_id, "alignment", dict(action=action, source_index=source_index, target_index=target_index, strategy=strategy, up_axis=up_axis, against_all_others=against_all_others, source_points=source_points, target_points=target_points))
+        return command(scene_id, "alignment", dict(detail=detail, action=action, source_index=source_index, target_index=target_index, strategy=strategy, up_axis=up_axis, against_all_others=against_all_others, source_points=source_points, target_points=target_points))
 
     @server.tool(annotations=readonly, structured_output=True)
     @explain_errors
-    def pick_3d_point(scene_id: str, screen: tuple[Annotated[float, Field(ge=0, le=1)], Annotated[float, Field(ge=0, le=1)]]) -> dict[str, Any]:
+    def pick_3d_point(scene_id: str, screen: tuple[Annotated[float, Field(ge=0, le=1)], Annotated[float, Field(ge=0, le=1)]], detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Pick normalized canvas XY without moving the camera. Returns hit/miss, world XYZ, object and decoded point indices and scalar attributes. Mesh/splat picks may have null indices; never infer object identity from those."""
-        return command(scene_id, "pick", dict(screen=screen))
+        return command(scene_id, "pick", dict(detail=detail, screen=screen))
 
     @server.tool(annotations=local, structured_output=True)
     @explain_errors
     def manage_3d_views(scene_id: str, action: Literal["save", "restore", "list", "delete", "undo"],
-                        name: Annotated[str, Field(min_length=1, max_length=100)] | None = None) -> dict[str, Any]:
+                        name: Annotated[str, Field(min_length=1, max_length=100)] | None = None, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Save/restore named camera views for this renderer session; undo the last agent camera change (up to 50). Names are not persisted after closing/reloading the widget. Does not restore geometry or filters."""
         if action in ("save", "restore", "delete") and name is None: raise ValueError("name is required")
-        return command(scene_id, "views", dict(action=action, name=name))
+        return command(scene_id, "views", dict(detail=detail, action=action, name=name))
 
     @server.tool(annotations=local)
     @explain_errors
@@ -302,16 +304,69 @@ def create_server(roots):
         field: str | None = None, values: list[float] | None = None,
         bounds: tuple[float, float, float, float, float, float] | None = None,
         plane: tuple[float, float, float, float] | None = None,
-        isolate: bool = True, focus: bool = True, highlight: bool = True, preview: bool = True) -> list[Image | str]:
+        isolate: bool = True, focus: bool = True, highlight: bool = True, preview: bool = True, detail: Literal["summary", "full"] = "summary") -> list[Image | str]:
         """One-step select/isolate/focus with PNG preview. Select all points in an object, or intersect scalar field values, world box [minX,minY,minZ,maxX,maxY,maxZ], and plane halfspace ax+by+cz+d>=0. Creates a reversible highlighted point subset; clear restores prior visibility. Label IDs are numeric, not semantic object names: inspect attributes/pick first. No automatic segmentation; point clouds only. Replaces the previous selection. Disable highlight to preserve original colors. Moving the plane requires another select call."""
         if (field is None) != (values is None): raise ValueError("field and values must be supplied together")
         if values is not None and not 0 < len(values) <= 1024: raise ValueError("Provide 1..1024 values")
         if not all(math.isfinite(v) for v in (*(values or ()), *(bounds or ()), *(plane or ()))): raise ValueError("Region values must be finite")
         if bounds and any(bounds[i] > bounds[i+3] for i in range(3)): raise ValueError("Box min must not exceed max")
         if plane and not any(plane[:3]): raise ValueError("Plane normal must be nonzero")
-        result = command(scene_id, "selection", dict(action=action, object_index=object_index, field=field, values=values, bounds=bounds, plane=plane, isolate=isolate, focus=focus, highlight=highlight, preview=preview))
+        result = command(scene_id, "selection", dict(detail=detail, action=action, object_index=object_index, field=field, values=values, bounds=bounds, plane=plane, isolate=isolate, focus=focus, highlight=highlight, preview=preview))
         png = result.pop("png", None)
         return [json.dumps(result)] + ([Image(data=base64.b64decode(png, validate=True), format="png")] if png else [])
+
+    @server.tool(annotations=local, structured_output=True)
+    @explain_errors
+    def manage_3d_selections(scene_id: str, action: Literal["save", "list", "delete", "activate", "visible", "union", "intersection", "subtract"],
+        name: Annotated[str, Field(min_length=1, max_length=100)] | None = None,
+        other: Annotated[str, Field(min_length=1, max_length=100)] | None = None,
+        visible: bool | None = None, isolate: bool = True, focus: bool = True,
+        detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
+        """Name the active selection; retain up to 20 independent subsets. Toggle each name's visibility or activate/focus it. Union/intersection/subtract combine two names from the same source into a new active selection; save it to retain it. Empty results preserve the previous selection. Geometry updates expire selections; scene-state export persists them."""
+        if action != "list" and name is None: raise ValueError("name is required")
+        if action in ("union", "intersection", "subtract") and other is None: raise ValueError("other is required")
+        if action == "visible" and visible is None: raise ValueError("visible is required")
+        return command(scene_id, "named_selections", dict(action=action,name=name,other=other,visible=visible,isolate=isolate,focus=focus,detail=detail))
+
+    @server.tool(annotations=local, structured_output=True)
+    @explain_errors
+    def manage_3d_scene_states(scene_id: str, action: Literal["save", "restore", "list", "delete", "export", "import"],
+        name: Annotated[str, Field(min_length=1, max_length=100)] | None = None,
+        path: str | None = None, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
+        """Save/restore complete camera, transforms, selection/named subsets, visibility, color, opacity and presentation. Export/import a .json under configured roots to persist after restarting. Reopen identical geometry in the same order before import; import stores a state, restore applies it. Existing files are never overwritten. Maximum 20 states, 4 MiB each. Does not embed geometry or video playback."""
+        if action != "list" and name is None: raise ValueError("name is required")
+        if action in ("export", "import"):
+            if path is None: raise ValueError("path is required")
+            from .inspection_files import scene_state_file
+            return scene_state_file(manager,scene_id,action,name,path)
+        return command(scene_id,"scene_states",dict(action=action,name=name,detail=detail))
+
+    @server.tool(annotations=local, structured_output=True)
+    @explain_errors
+    def export_3d_selection(scene_id: str, path: str,
+        name: Annotated[str, Field(min_length=1, max_length=100)] | None = None) -> dict[str, Any]:
+        """Write the active or named subset to a NEW binary .ply under configured roots (maximum 256 MiB). Preserve decoded RGB, normals, scalar attributes, decoded indices, and original PCD source_row when available. Coordinates are object-local; header stores local_to_world and source origin. Returns a path, never point data/base64. No overwrite; not a lossless copy of the original file's numeric types."""
+        from .inspection_files import export_subset
+        return export_subset(manager,scene_id,path,name)
+
+    @server.tool(annotations=local, structured_output=True)
+    @explain_errors
+    def compare_3d_clouds(scene_id: str, action: Literal["enable", "disable", "status", "distance"],
+        left: Annotated[int, Field(ge=0)] = 0, right: Annotated[int, Field(ge=0)] = 1,
+        method: Literal["nearest", "paired"] = "nearest",
+        max_distance: Annotated[float, Field(gt=0)] = 0.1,
+        detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
+        """Enable linked side-by-side WebGL views with the same camera (EDL off in split mode); disable restores ordinary rendering. Distance colors left by world-space distance to right: nearest within max_distance, unmatched=NaN; paired uses corresponding decoded order and requires equal counts. Distance limit: one million combined points. Recompute distances after moving/updating geometry. No alignment is run."""
+        return command(scene_id,"comparison",dict(action=action,left=left,right=right,method=method,max_distance=max_distance,detail=detail))
+
+    @server.tool(annotations=readonly)
+    @explain_errors
+    def preview_3d_views(scene_id: str,
+        presets: Annotated[list[Literal["front", "back", "top", "bottom", "left", "right", "isometric"]], Field(min_length=1,max_length=4)] = ["front", "top", "isometric"]) -> list[Image | str]:
+        """Return one labeled multi-view PNG to choose a useful angle, preserving the original camera. Disable split comparison first. Includes enabled grid, legend and selection summary."""
+        result=command(scene_id,"multi_view",dict(presets=presets))
+        png=result.pop("png")
+        return [json.dumps(result),Image(data=base64.b64decode(png,validate=True),format="png")]
 
     @server.tool(annotations=readonly, meta={"ui": {"visibility": ["app"]}}, structured_output=True)
     @explain_errors

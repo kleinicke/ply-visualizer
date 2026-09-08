@@ -1,3 +1,5 @@
+import { updateAgentPointSizes } from './hosts/agentPointSizing';
+import { renderAgentComparison } from './hosts/agentComparison';
 import { createModelObject, updateModelPlayback } from './models/sceneModel';
 import { handleSceneModelMessage } from './models/modelMessages';
 import * as THREE from 'three';
@@ -1392,7 +1394,11 @@ class PointCloudVisualizer {
     if (this.contextLost) {
       return;
     }
+    updateAgentPointSizes(this);
     this.adaptivePointRenderer.beforeRender();
+    if (renderAgentComparison(this)) {
+      return;
+    }
     this.smallViewAffordance.update();
     updateSceneGuides(this);
     const visibilityContext = this.getVisibilityRenderContext();

@@ -1,3 +1,9 @@
+import { setAgentPointSizeMode } from './agentPointSizing';
+import { agentSceneStates } from './agentSceneStates';
+import { agentNamedSelections } from './agentInspection';
+import { agentExport } from './agentExport';
+import { agentComparison, comparisonState } from './agentComparison';
+import { agentMultiView } from './agentCapture';
 import { getPointCloudColorOptions, type PointCloudColorOptionsHost } from '../colorOptions';
 import { transformAgentObject } from './agentTransforms';
 import { sceneGuidesState } from '../state/sceneGuides.svelte';
@@ -25,10 +31,11 @@ export function fitAgentView(
   preset?: string,
   bounds?: THREE.Box3
 ) {
+  const comparison = comparisonState(host as ControlHost);
   const box = bounds?.clone() ?? new THREE.Box3();
   if (!bounds) {
-    host.meshes.forEach(mesh => {
-      if (mesh?.visible) {
+    host.meshes.forEach((mesh, i) => {
+      if (mesh && (comparison ? [comparison.left, comparison.right].includes(i) : mesh.visible)) {
         box.expandByObject(mesh);
       }
     });
@@ -63,7 +70,7 @@ export function fitAgentView(
   host.camera.lookAt(center);
   const inverse = host.camera.quaternion.clone().invert();
   const tanV = Math.tan(THREE.MathUtils.degToRad(host.camera.fov / 2));
-  const tanH = tanV * host.camera.aspect;
+  const tanH = (tanV * host.camera.aspect) / (comparison ? 2 : 1);
   let distance = 0;
   for (const x of [box.min.x, box.max.x]) {
     for (const y of [box.min.y, box.max.y]) {
@@ -92,6 +99,21 @@ export async function applyAgentControl(
   }
   if (agentAlignmentBusy(host)) {
     throw new Error('Alignment is running; inspect its status before editing the scene');
+  }
+  if (operation === 'scene_states') {
+    return agentSceneStates(host, a);
+  }
+  if (operation === 'named_selections') {
+    return agentNamedSelections(host, a);
+  }
+  if (operation === 'export_subset') {
+    return agentExport(host, a);
+  }
+  if (operation === 'comparison') {
+    return agentComparison(host, a);
+  }
+  if (operation === 'multi_view') {
+    return agentMultiView(host, a);
   }
   if (operation === 'transform') {
     return transformAgentObject(host, a);
@@ -200,6 +222,9 @@ export async function applyAgentControl(
       if (!options.some(option => option.value === a.color_mode)) {
         throw new Error('Color mode is unavailable for this object; inspect available_color_modes');
       }
+    }
+    if (a.point_size_mode !== undefined || a.point_size !== undefined) {
+      setAgentPointSizeMode(host, i, a.point_size_mode === 'adaptive');
     }
     if (a.point_size !== undefined) {
       host.updatePointSize(i, a.point_size);

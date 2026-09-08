@@ -1,3 +1,5 @@
+import { agentPointSizeMode } from './agentPointSizing';
+import { comparisonState } from './agentComparison';
 import { getPointCloudColorOptions, type PointCloudColorOptionsHost } from '../colorOptions';
 import { sceneGuidesState } from '../state/sceneGuides.svelte';
 import { getCurrentThemeName } from '../themes';
@@ -27,6 +29,8 @@ export function objectPresentation(host: ControlHost, index: number) {
   ];
   host.meshes[index]?.updateWorldMatrix(true, false);
   return {
+    point_size_mode: agentPointSizeMode(host.spatialFiles[index]),
+    original_rows_available: !!host.spatialFiles[index].sourcePointIndices?.length,
     opacity: opacities.length === 1 ? opacities[0] : null,
     available_color_modes: getPointCloudColorOptions(
       host as unknown as PointCloudColorOptionsHost,
@@ -61,6 +65,7 @@ export function agentViewState(host: ControlHost) {
         ? null
         : getComputedStyle(canvas).backgroundColor;
   return {
+    comparison: comparisonState(host),
     coordinate_system: {
       handedness: 'right-handed',
       camera_convention: viewerState.cameraConvention,

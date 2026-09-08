@@ -1,6 +1,6 @@
 # Local MCP integration
 
-The current checkout is an **unpublished 0.4.0.dev3 preview**. It replaces
+The current checkout is an **unpublished 0.4.0.dev4 preview**. It replaces
 0.3.0's nested localhost iframe with the shared renderer running directly in the
 MCP widget. PyPI still serves 0.3.0 until the next requested release.
 
@@ -115,8 +115,9 @@ Every responding renderer reports a `renderer_id`. The first active renderer
 owns command delivery while its heartbeat is current; duplicate widgets cannot
 answer its commands. After ten seconds without its heartbeat, a replacement can
 take over. Compare IDs after an update: a changed ID indicates a different
-renderer, not proof that the original camera was preserved. Camera bookmarks and
-presentation state are not persisted across renderer restarts.
+renderer, not proof that the original camera was preserved. Camera bookmarks are
+not persisted across renderer restarts; use scene-state export/import for
+persistence.
 
 Expected renderer and argument errors retain their explanation in MCP's error
 response. A zero-match label selection reports that the previous selection is
@@ -222,13 +223,75 @@ traffic still apply. It is not a streaming decoder. Scene/command polling backs
 off from 500 ms to 4 seconds when idle and resets after an update or command; an
 idle command can therefore take up to about 4 seconds to be noticed.
 
-### Remaining inspection work
+### Reproducible inspections and compact replies
 
-Camera bookmarks still do not restore selection or presentation, and source-row
-provenance after invalid-point filtering is not available. Full scene-state
-save/export/import, subset export with provenance, multiple named selections
-with set operations, adaptive point sizing, multi-view previews, linked
-comparisons with error coloring, and screenshot legends remain follow-up work.
+All control/inspection tools default to `detail="summary"`. Mutations return the
+changed camera, appearance or object, plus renderer/revision identifiers; they
+omit the repeated scene dump. `inspect_3d_scene(detail="full")` returns
+matrices, coordinate conventions, attribute counts and complete object
+presentation. Full detail can also be requested on individual controls. PNG and
+artifact tools do not return raw geometry to the model. Error messages stay
+informative in both modes.
+
+There are 24 agent-facing tools and two app-only transport tools. The additional
+inspection tools are:
+
+| Tool                     | Use                                                                          |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `manage_3d_scene_states` | Save/restore complete inspection states; export/import JSON files            |
+| `manage_3d_selections`   | Name subsets, toggle visibility, activate/focus, union/intersection/subtract |
+| `export_3d_selection`    | Save active/named subsets as binary PLY with attributes and indices          |
+| `compare_3d_clouds`      | Linked side-by-side views and paired/nearest distance coloring               |
+| `preview_3d_views`       | One labeled PNG of up to four standard viewpoints, preserving the camera     |
+
+Scene states include camera, transforms, palette/color modes, opacity, point
+size, visibility, presentation, current selection and named subsets. Export to a
+new `.json` under a configured root; after restarting, reopen the same geometry
+in the same order, import the state, then restore it. Source point fingerprints
+are checked before applying. Geometry and video playback are not embedded.
+Limits: 20 states, 4 MiB per state; 20 named selections. Geometry revisions
+expire named selections; stored states can still be restored if matching sources
+are loaded.
+
+Named set operations require the same source cloud and preserve exact decoded
+indices. Empty results preserve the prior selection. Every retained subset has
+an object index for independent visibility/color/opacity. Export writes a NEW
+binary `.ply`, never overwrites a file, and returns only its path and summary.
+Coordinates and normals are object-local; the header records `local_to_world`
+and source origin. Decoded RGB, normals, numeric scalar attributes,
+`decoded_index` and available PCD `source_row` are retained. Unusual/reserved
+scalar names are mapped in header comments. This preserves the viewer's decoded
+values, not every original file datatype (scalar storage remains float32).
+Maximum export: 256 MiB. Export chunks travel inside the server/widget
+transport, not model-facing output.
+
+PCD ASCII, binary and compressed binary now retain original zero-based record
+indices after non-finite coordinates are filtered. Picking returns `source_row`;
+inspection reports decoded/source/filtered counts. Other formats report null for
+original rows when their parser has no mapping; a decoded index is never
+misrepresented as an original row.
+
+Linked comparison uses the same camera in both halves of the WebGL canvas.
+Direct rendering disables EDL while split mode is active; Gaussian splats are
+not supported in split mode. Disable comparison to return to the regular render
+path. Distance coloring supports up to one million combined points: `paired`
+uses corresponding decoded point order; `nearest` searches within the explicit
+`max_distance` in world scene units. Unmatched points are NaN, not zero.
+Distances must be recomputed after transformations or geometry updates; no
+alignment runs.
+
+`set_3d_object(point_size_mode="adaptive")` targets 8 pixels for <100 points, 4
+for <10,000, and 2 for larger clouds at the cloud center, updating as the camera
+moves. Explicit `point_size` switches back to fixed world units. New local
+clouds and selections with at most 100 points enable adaptive sizing
+automatically. Perspective depth means individual points need not have identical
+screen sizes.
+
+Enabled grid, legend and selection summary are included in agent PNG captures.
+The inline legend includes scalar categories/counts for low-cardinality fields
+and ranges for continuous fields. Multi-view preview restores the previous
+camera; it provides angles to inspect, without claiming to identify the best
+angle.
 
 ## Alignment from an agent
 
@@ -293,10 +356,9 @@ distance. Use `navigate_3d_view` for orbiting around a fixed center.
 `theme` (`dark-modern` / `light-modern`). Gamma matches the UI button: true
 treats RGB as linear for the extra-gamma appearance; false decodes source sRGB
 before shading. Axes mark the rotation center; disabled persistent axes can
-still appear during interaction. Grid and legend are DOM overlays visible
-inline, excluded from canvas PNG captures. The theme changes the UI; background
-and object colors remain explicit. All these settings are returned by
-inspection.
+still appear during interaction. Grid and legend appear inline and are drawn
+into agent PNG captures. The theme changes the UI; background and object colors
+remain explicit. All these settings are returned by inspection.
 
 `transform_3d_object` supports translation, axis-angle rotation (including
 90-degree turns), XYZW quaternions, scale, affine matrices, inversion and reset.

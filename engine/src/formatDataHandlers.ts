@@ -73,6 +73,8 @@ export async function handlePcdData(host: FormatDataHandlersHost, message: any):
         `Fields: ${pcdData.fields?.join(', ') || 'unknown'}`,
         ...pcdData.comments,
       ],
+      sourcePointCount: pcdData.sourcePointCount,
+      sourcePointIndices: pcdData.sourcePointIndices,
       vertexCount: pcdData.vertexCount,
       faceCount: 0,
       hasColors: pcdData.hasColors,

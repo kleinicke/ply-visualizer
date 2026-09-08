@@ -166,11 +166,13 @@ export class PointCloudResult {
     take_normals(): Float32Array;
     take_positions(): Float32Array;
     take_scalar_at(index: number): Float32Array;
+    take_source_indices(): Uint32Array;
     readonly has_colors: boolean;
     readonly has_intensity: boolean;
     readonly has_normals: boolean;
     readonly metadata_json: string;
     readonly scalar_field_names: string[];
+    readonly source_count: number;
     readonly vertex_count: number;
 }
 
@@ -401,10 +403,14 @@ export function cloud_position_conditioning(points: Float32Array, cell: number):
  */
 export function coarse_align(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
 
+export function combine_point_indices(a: Uint32Array, b: Uint32Array, operation: string): Uint32Array;
+
 /**
  * Free a buffer previously returned by `alloc`.
  */
 export function dealloc(ptr: number, len: number): void;
+
+export function export_inspection_ply(positions: Float32Array, colors: Uint8Array, normals: Float32Array, scalars: Float32Array, names_json: string, decoded: Uint32Array, original: Uint32Array, metadata: string): Uint8Array;
 
 /**
  * Extract an isosurface at `threshold`.
@@ -423,6 +429,8 @@ export function fit_correspondences(source: Float32Array, target: Float32Array):
  * ICP refinement alone, from `settings.initial` (identity when absent).
  */
 export function icp_refine(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
+
+export function inspection_fingerprint(points: Float32Array): string;
 
 /**
  * What a `.npy` or `.npz` holds, without decoding any of it: a JSON array of
@@ -505,6 +513,8 @@ export function parse_pts(data: Uint8Array): PointCloudResult;
  */
 export function parse_xyz(data: Uint8Array, variant: string, color_mode: string): PointCloudResult;
 
+export function point_distances(source: Float32Array, target: Float32Array, radius: number, paired: boolean): Float32Array;
+
 /**
  * Coarse sweep and/or ICP refinement, per `settings_json`.
  *
@@ -569,12 +579,15 @@ export interface InitOutput {
     readonly build_volume_voxels: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number, t: number, u: number) => [number, number, number];
     readonly cloud_position_conditioning: (a: number, b: number, c: number) => number;
     readonly coarse_align: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly combine_point_indices: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly e57imageresult_metadata_json: (a: number) => [number, number];
     readonly e57imageresult_take_data: (a: number) => [number, number];
     readonly e57imageresult_take_mask: (a: number) => [number, number];
+    readonly export_inspection_ply: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number];
     readonly extract_isosurface: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number];
     readonly fit_correspondences: (a: number, b: number, c: number, d: number) => number;
     readonly icp_refine: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly inspection_fingerprint: (a: number, b: number) => [number, number];
     readonly isosurfacemesh_step: (a: number) => [number, number];
     readonly isosurfacemesh_take_gradient_magnitudes: (a: number) => [number, number];
     readonly isosurfacemesh_take_indices: (a: number) => [number, number];
@@ -636,12 +649,15 @@ export interface InitOutput {
     readonly plyresult_take_face_sizes: (a: number) => [number, number];
     readonly plyresult_take_scalar_at: (a: number, b: number) => [number, number];
     readonly plyresult_vertex_count: (a: number) => number;
+    readonly point_distances: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly pointcloudresult_bbox: (a: number) => [number, number];
     readonly pointcloudresult_has_colors: (a: number) => number;
     readonly pointcloudresult_has_intensity: (a: number) => number;
     readonly pointcloudresult_has_normals: (a: number) => number;
     readonly pointcloudresult_metadata_json: (a: number) => [number, number];
     readonly pointcloudresult_scalar_field_names: (a: number) => [number, number];
+    readonly pointcloudresult_source_count: (a: number) => number;
+    readonly pointcloudresult_take_intensity: (a: number) => [number, number];
     readonly pointcloudresult_take_scalar_at: (a: number, b: number) => [number, number];
     readonly pointcloudresult_vertex_count: (a: number) => number;
     readonly register_pair: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
@@ -681,6 +697,7 @@ export interface InitOutput {
     readonly streamparser_push: (a: number, b: number, c: number) => void;
     readonly voxelmesh_face_count: (a: number) => number;
     readonly voxelmesh_step: (a: number) => [number, number];
+    readonly voxelmesh_vertex_count: (a: number) => number;
     readonly voxelmesh_voxel_count: (a: number) => number;
     readonly voxelmesh_voxel_size: (a: number) => [number, number];
     readonly plyresult_take_colors: (a: number) => [number, number];
@@ -692,7 +709,6 @@ export interface InitOutput {
     readonly stonexrgbimage_height: (a: number) => number;
     readonly stonexrgbimage_width: (a: number) => number;
     readonly stonexstationsession_recolored: (a: number) => number;
-    readonly voxelmesh_vertex_count: (a: number) => number;
     readonly __wbg_stonexrgbimage_free: (a: number, b: number) => void;
     readonly npyarrayresult_take_values: (a: number) => [number, number];
     readonly nrrdvolume_take_samples: (a: number) => [number, number];
@@ -700,9 +716,9 @@ export interface InitOutput {
     readonly plyresult_take_intensity: (a: number) => [number, number];
     readonly plyresult_take_normals: (a: number) => [number, number];
     readonly plyresult_take_positions: (a: number) => [number, number];
-    readonly pointcloudresult_take_intensity: (a: number) => [number, number];
     readonly pointcloudresult_take_normals: (a: number) => [number, number];
     readonly pointcloudresult_take_positions: (a: number) => [number, number];
+    readonly pointcloudresult_take_source_indices: (a: number) => [number, number];
     readonly stonexscanpoints_take_intensity: (a: number) => [number, number];
     readonly stonexscanpoints_take_points_per_column: (a: number) => [number, number];
     readonly stonexscanpoints_take_positions: (a: number) => [number, number];

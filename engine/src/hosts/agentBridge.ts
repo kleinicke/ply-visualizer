@@ -1,3 +1,6 @@
+import { updateAgentLegend } from './agentLegend';
+import { captureAgentCanvas } from './agentCapture';
+import { compactAgentReply } from './agentReplies';
 import { setAgentCamera } from './agentTransforms';
 /* eslint-disable @typescript-eslint/naming-convention -- Python MCP wire-format keys */
 import * as THREE from 'three';
@@ -53,6 +56,7 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
           command.arguments
         )
       : undefined;
+    await updateAgentLegend(host as unknown as ControlHost);
     host.performRender();
     const bounds = new THREE.Box3();
     for (const mesh of host.meshes) {
@@ -99,19 +103,18 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
         },
       };
     }
+    if (command.arguments.detail !== 'full' && command.operation !== 'capture') {
+      reply.result = compactAgentReply(
+        command.operation,
+        reply.result as Record<string, any>,
+        command.arguments
+      );
+    }
     if (
       command.operation === 'capture' ||
       (command.operation === 'selection' && command.arguments.preview)
     ) {
-      const source = host.renderer.domElement;
-      const canvas = document.createElement('canvas');
-      const scale = Math.min(1, 1024 / Math.max(source.width, source.height));
-      canvas.width = Math.max(1, Math.round(source.width * scale));
-      canvas.height = Math.max(1, Math.round(source.height * scale));
-      const ctx = canvas.getContext('2d')!;
-      ctx.fillStyle = getComputedStyle(source).backgroundColor;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+      const canvas = captureAgentCanvas(host as unknown as ControlHost);
       reply.result = {
         ...(command.operation === 'selection' ? (reply.result as object) : {}),
         png: canvas.toDataURL('image/png').split(',')[1],

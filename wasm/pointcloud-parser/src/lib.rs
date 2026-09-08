@@ -12,6 +12,11 @@
 //! New formats that are "rows of whitespace-separated numbers" are easy to add:
 //! parse a column layout, then reuse `parse_rows`.
 
+mod inspection;
+pub use inspection::{
+    combine_point_indices, export_inspection_ply, inspection_fingerprint, point_distances,
+};
+
 use std::mem;
 use wasm_bindgen::prelude::*;
 
@@ -40,6 +45,8 @@ pub use volume::{
 /// `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.
 #[wasm_bindgen]
 pub struct PointCloudResult {
+    source_indices: Vec<u32>,
+    source_count: u32,
     vertex_count: u32,
     positions: Vec<f32>,
     colors: Vec<u8>,
@@ -59,6 +66,14 @@ pub struct PointCloudResult {
 
 #[wasm_bindgen]
 impl PointCloudResult {
+    #[wasm_bindgen(getter)]
+    pub fn source_count(&self) -> u32 {
+        self.source_count
+    }
+    pub fn take_source_indices(&mut self) -> Vec<u32> {
+        mem::take(&mut self.source_indices)
+    }
+
     #[wasm_bindgen(getter)]
     pub fn vertex_count(&self) -> u32 {
         self.vertex_count
@@ -350,7 +365,7 @@ impl Builder {
                 Col::Skip => {}
             }
         }
-        if self.skip_nan && (x.is_nan() || y.is_nan() || z.is_nan()) {
+        if self.skip_nan && (!x.is_finite() || !y.is_finite() || !z.is_finite()) {
             return;
         }
         self.positions.push(x);
@@ -419,6 +434,8 @@ impl Builder {
             self.max = [0.0; 3];
         }
         PointCloudResult {
+            source_indices: Vec::new(),
+            source_count: 0,
             vertex_count,
             positions: self.positions,
             colors: self.colors,
@@ -888,6 +905,7 @@ fn parse_pcd_ascii_rows(data: &[u8], header: &PcdHeader) -> Result<PointCloudRes
         .collect();
     let mut pos = header.data_start;
     let mut rows = 0usize;
+    let mut source_indices = Vec::new();
     while pos < data.len() {
         // Rows are counted, not points: NaN rows are dropped but still consume
         // one of the declared POINTS.
@@ -899,6 +917,7 @@ fn parse_pcd_ascii_rows(data: &[u8], header: &PcdHeader) -> Result<PointCloudRes
             let before = b.count();
             b.push_row(&vals, n);
             if b.count() > before {
+                source_indices.push(rows as u32);
                 for (j, (column, _)) in scalar_columns.iter().enumerate() {
                     scalars[j].1.push(if *column < n {
                         vals[*column] as f32
@@ -912,6 +931,8 @@ fn parse_pcd_ascii_rows(data: &[u8], header: &PcdHeader) -> Result<PointCloudRes
     }
     let mut result = b.finish();
     result.scalars = scalars;
+    result.source_indices = source_indices;
+    result.source_count = rows as u32;
     Ok(result)
 }
 
@@ -1020,6 +1041,8 @@ fn pcd_field_descs(header: &PcdHeader) -> Result<(Vec<PcdFieldDesc>, usize), Str
 /// Accumulates points read field by field, shared by the two binary encodings,
 /// which differ only in where a given field's bytes live.
 struct PcdPointSink {
+    source_indices: Vec<u32>,
+    source_count: u32,
     scalars: Vec<(String, Vec<f32>)>,
     positions: Vec<f32>,
     colors: Vec<u8>,
@@ -1042,6 +1065,8 @@ impl PcdPointSink {
             .any(|d| matches!(d.col, Col::Nx | Col::Ny | Col::Nz));
         let has_intensity = descs.iter().any(|d| d.col == Col::Intensity);
         PcdPointSink {
+            source_indices: Vec::with_capacity(capacity),
+            source_count: 0,
             scalars: descs
                 .iter()
                 .filter_map(|d| {
@@ -1082,6 +1107,8 @@ impl PcdPointSink {
         descs: &[PcdFieldDesc],
         at: impl Fn(&PcdFieldDesc) -> usize,
     ) {
+        let source_index = self.source_count;
+        self.source_count += 1;
         let (mut x, mut y, mut z) = (0f32, 0f32, 0f32);
         let (mut nx, mut ny, mut nz) = (0f32, 0f32, 0f32);
         let mut inten = 0f32;
@@ -1138,9 +1165,10 @@ impl PcdPointSink {
         }
         // PCL writes an invalid range pixel as NaN coordinates rather than
         // leaving it out, so those points are dropped here.
-        if x.is_nan() || y.is_nan() || z.is_nan() {
+        if !x.is_finite() || !y.is_finite() || !z.is_finite() {
             return;
         }
+        self.source_indices.push(source_index);
         for (slot, d) in descs.iter().filter(|d| d.scalar.is_some()).enumerate() {
             let o = at(d);
             self.scalars[slot]
@@ -1178,6 +1206,8 @@ impl PcdPointSink {
             self.max = [0.0; 3];
         }
         PointCloudResult {
+            source_indices: self.source_indices,
+            source_count: self.source_count,
             vertex_count,
             positions: self.positions,
             colors: self.colors,
@@ -1706,6 +1736,8 @@ mod tests {
         assert_eq!(result.vertex_count, 2);
         assert_eq!(result.positions, vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0]);
         assert_eq!(result.intensity, vec![0.1, 0.7]);
+        assert_eq!(result.source_indices, vec![0, 2]);
+        assert_eq!(result.source_count, 3);
 
         let mut binary = b"FIELDS x y z intensity\nSIZE 4 4 4 4\nTYPE F F F F\nCOUNT 1 1 1 1\nWIDTH 3\nHEIGHT 1\nPOINTS 3\nDATA binary\n".to_vec();
         for v in [
@@ -1728,6 +1760,27 @@ mod tests {
         assert_eq!(result.vertex_count, 2);
         assert_eq!(result.positions, vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0]);
         assert_eq!(result.intensity, vec![0.1, 0.7]);
+        assert_eq!(result.source_indices, vec![0, 2]);
+        assert_eq!(result.source_count, 3);
+    }
+
+    #[test]
+    fn compressed_pcd_retains_original_record_indices() {
+        let mut data=b"FIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\nWIDTH 3\nHEIGHT 1\nPOINTS 3\nDATA binary_compressed\n".to_vec();
+        let values = [0f32, f32::NAN, 2., 0., 1., 0., 0., 1., 0.];
+        let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let mut compressed = Vec::new();
+        for chunk in bytes.chunks(32) {
+            compressed.push((chunk.len() - 1) as u8);
+            compressed.extend_from_slice(chunk);
+        }
+        data.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+        data.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        data.extend_from_slice(&compressed);
+        let result = parse_pcd(&data).unwrap();
+        assert_eq!(result.source_indices, vec![0, 2]);
+        assert_eq!(result.source_count, 3);
+        assert_eq!(result.vertex_count, 2);
     }
 
     /// The header facts the point buffers cannot carry. VIEWPOINT is the one

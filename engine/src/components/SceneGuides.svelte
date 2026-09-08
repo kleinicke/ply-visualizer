@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Color } from 'three';
+  import { agentPresentation } from '../state/agentPresentation.svelte';
   import { onMount } from 'svelte';
   import { sceneGuidesState } from '../state/sceneGuides.svelte';
   import { filesState } from '../state/files.svelte';
@@ -31,9 +33,10 @@
       const flat = mode === 'assigned' || /^\d+$/.test(mode);
       const colorIndex = mode === 'assigned' ? index % host.fileColors.length : Number(mode);
       const color = flat ? host.fileColors[colorIndex] : null;
-      const label = getPointCloudColorOptions(host, data, index).find(option => option.value === mode)?.label ?? mode;
+      const hex = color ? '#' + new Color(color[0], color[1], color[2]).getHexString() : null;
+      const label = hex ?? getPointCloudColorOptions(host, data, index).find(option => option.value === mode)?.label ?? mode;
       return [{ name: data.fileName ?? `Object ${index + 1}`, label,
-        color: color ? `rgb(${color.map((v: number) => Math.round(v * 255)).join(',')})` : null }];
+        color: hex }];
     });
   });
 </script>
@@ -50,6 +53,10 @@
 {#if sceneGuidesState.legend && entries.length}
   <aside class="scene-legend" aria-label="Legend">
     <strong>Legend</strong>
+    {#if agentPresentation.selection}<p class="selection-summary">{agentPresentation.selection}</p>{/if}
+    {#each agentPresentation.labels as entry}
+      <div class="legend-entry"><span class="swatch" style:background={entry.color}></span><small>{entry.label}</small></div>
+    {/each}
     {#each entries as entry}
       <div class="legend-entry">
         <span class="swatch" style:background={entry.color ?? 'linear-gradient(135deg, #e38181, #8fd29c, #8faee2)'}></span>
@@ -59,7 +66,14 @@
   </aside>
 {/if}
 
+{#if agentPresentation.comparison.length}
+  <div class="comparison-labels">{#each agentPresentation.comparison as name}<span>{name}</span>{/each}</div>
+{/if}
+
 <style>
+  .selection-summary { overflow-wrap: anywhere; }
+  .comparison-labels { position: absolute; inset: auto 0 12px; display: flex; pointer-events: none; color: white; text-shadow: 0 1px 3px black; }
+  .comparison-labels span { width: 50%; text-align: center; }
   .coordinate-grid { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   line { stroke: #a8b5c5; stroke-opacity: 0.28; stroke-width: 1; }
   text { font: 11px system-ui, sans-serif; paint-order: stroke; stroke: #20252c; stroke-width: 3px; stroke-linejoin: round; }

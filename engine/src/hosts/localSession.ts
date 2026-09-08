@@ -1,3 +1,4 @@
+import { setAgentPointSizeMode } from './agentPointSizing';
 /** Local Python/CLI and notebook host; rendering stays in the shared engine. */
 import '../main';
 import { agentAlignmentBusy, resetAgentAlignment } from './agentAlignment';
@@ -6,7 +7,7 @@ import { mount } from 'svelte';
 import { handleBrowserFiles, type BrowserFileDragDropHost } from '../browserFileDragDrop';
 import { localSessionState as state } from '../state/localSession.svelte';
 import { fitAgentView, type ControlHost } from './agentControls';
-import { clearAgentSelection } from './agentInspection';
+import { resetAgentSelections } from './agentInspection';
 import { viewerState } from '../state/viewer.svelte';
 import Toolbar from '../components/LocalSessionToolbar.svelte';
 import { handleAgentCommand, type AgentViewerHost } from './agentBridge';
@@ -89,7 +90,7 @@ async function start(): Promise<void> {
     }
     const camera = host.camera.clone();
     const target = host.controls.target.clone();
-    clearAgentSelection(host as unknown as ControlHost);
+    resetAgentSelections(host as unknown as ControlHost);
     resetAgentAlignment(host as unknown as ControlHost);
     while (host.spatialFiles.length) {
       host.removeFileByIndex(host.spatialFiles.length - 1);
@@ -126,6 +127,11 @@ async function start(): Promise<void> {
         host.controls.update();
         host.camera.updateProjectionMatrix();
       }
+      host.spatialFiles.forEach((file, i) => {
+        if (!file.faceCount && file.vertexCount <= 100) {
+          setAgentPointSizeMode(host as unknown as ControlHost, i, true);
+        }
+      });
       host.requestRender();
     }
     revision = session.revision;

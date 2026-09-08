@@ -75,6 +75,8 @@ export interface SpatialData {
   useTypedArrays?: boolean;
   /** Full source point count (can differ from vertexCount for filtered invalid records). */
   sourcePointCount?: number;
+  /** Original zero-based PCD record index for each decoded point. */
+  sourcePointIndices?: Uint32Array;
   /** Source-space origin subtracted before conversion to float32 GPU positions. */
   sourceOrigin?: [number, number, number];
   /** Format-specific header/scan metadata retained for inspection and export. */

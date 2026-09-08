@@ -32,11 +32,15 @@ export interface WasmPointCloudResult {
   /** Raw JSON from the parser; empty for formats with no header facts. */
   metadataJson: string;
   scalarFields?: Record<string, Float32Array>;
+  sourcePointIndices?: Uint32Array;
+  sourcePointCount?: number;
 }
 
 /* eslint-disable @typescript-eslint/naming-convention -- the names below are
    the wasm-bindgen surface; they are what the compiled module exports. */
 interface RawResult {
+  source_count?: number;
+  take_source_indices?(): Uint32Array;
   scalar_field_names?: string[];
   take_scalar_at?(index: number): Float32Array;
   vertex_count: number;
@@ -104,6 +108,8 @@ export interface PcdHeaderInfo {
 
 export function marshalWasmPointCloud(r: RawResult): WasmPointCloudResult {
   const out: WasmPointCloudResult = {
+    sourcePointCount: r.source_count || undefined,
+    sourcePointIndices: r.take_source_indices?.(),
     vertexCount: r.vertex_count,
     hasColors: r.has_colors,
     hasNormals: r.has_normals,
@@ -357,6 +363,8 @@ export function toPointCloudPayload(
   comments: string[] = []
 ): Record<string, unknown> {
   return {
+    sourcePointCount: result.sourcePointCount,
+    sourcePointIndices: result.sourcePointIndices,
     vertexCount: result.vertexCount,
     positionsArray: result.positionsArray,
     colorsArray: result.colorsArray,

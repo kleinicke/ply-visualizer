@@ -166,11 +166,13 @@ export class PointCloudResult {
     take_normals(): Float32Array;
     take_positions(): Float32Array;
     take_scalar_at(index: number): Float32Array;
+    take_source_indices(): Uint32Array;
     readonly has_colors: boolean;
     readonly has_intensity: boolean;
     readonly has_normals: boolean;
     readonly metadata_json: string;
     readonly scalar_field_names: string[];
+    readonly source_count: number;
     readonly vertex_count: number;
 }
 
@@ -401,10 +403,14 @@ export function cloud_position_conditioning(points: Float32Array, cell: number):
  */
 export function coarse_align(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
 
+export function combine_point_indices(a: Uint32Array, b: Uint32Array, operation: string): Uint32Array;
+
 /**
  * Free a buffer previously returned by `alloc`.
  */
 export function dealloc(ptr: number, len: number): void;
+
+export function export_inspection_ply(positions: Float32Array, colors: Uint8Array, normals: Float32Array, scalars: Float32Array, names_json: string, decoded: Uint32Array, original: Uint32Array, metadata: string): Uint8Array;
 
 /**
  * Extract an isosurface at `threshold`.
@@ -423,6 +429,8 @@ export function fit_correspondences(source: Float32Array, target: Float32Array):
  * ICP refinement alone, from `settings.initial` (identity when absent).
  */
 export function icp_refine(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
+
+export function inspection_fingerprint(points: Float32Array): string;
 
 /**
  * What a `.npy` or `.npz` holds, without decoding any of it: a JSON array of
@@ -504,6 +512,8 @@ export function parse_pts(data: Uint8Array): PointCloudResult;
  * the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
  */
 export function parse_xyz(data: Uint8Array, variant: string, color_mode: string): PointCloudResult;
+
+export function point_distances(source: Float32Array, target: Float32Array, radius: number, paired: boolean): Float32Array;
 
 /**
  * Coarse sweep and/or ICP refinement, per `settings_json`.

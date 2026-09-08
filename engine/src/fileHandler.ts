@@ -78,6 +78,7 @@ export interface UnifiedFileData {
   scalarFields?: Record<string, Float32Array>;
   useTypedArrays?: boolean;
   sourcePointCount?: number;
+  sourcePointIndices?: Uint32Array;
   sourceOrigin?: [number, number, number];
   metadata?: Record<string, unknown>;
 }
@@ -251,6 +252,8 @@ export function convertToUnifiedFormat(data: any, fileName: string): UnifiedFile
     unified.normalsArray = data.normalsArray ?? null;
     unified.intensityArray = data.intensityArray ?? null;
     unified.scalarFields = data.scalarFields ?? {};
+    unified.sourcePointCount = data.sourcePointCount;
+    unified.sourcePointIndices = data.sourcePointIndices;
   }
 
   return unified;
