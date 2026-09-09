@@ -87,21 +87,23 @@ Registry discovery does not automatically install the server into every client.
 
 ## Submission status (2026-09-09)
 
-| Destination                                                                                              | Status                                                                    |
-| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.kleinicke%2F3d-visualizer) | Active, latest version 0.4.2; installs `3d-visualizer` from PyPI.         |
-| [PyPI](https://pypi.org/project/3d-visualizer/0.4.2/)                                                    | Published; wheel and sdist hashes verified against the release artifacts. |
-| [GitHub MCP bundle](https://github.com/kleinicke/ply-visualizer/releases/tag/python-v0.4.2)              | Published, with the validated MCPB 0.4 UV bundle attached.                |
-| [Awesome MCP Servers](https://github.com/punkpeye/awesome-mcp-servers/pull/14040)                        | Submitted; awaiting maintainer review.                                    |
-| [MCP.so](https://github.com/chatmcp/mcpso/issues/4009)                                                   | Submitted; awaiting directory review.                                     |
-| Glama                                                                                                    | Metadata prepared; submission requires browser sign-in.                   |
-| Smithery                                                                                                 | Bundle published on GitHub; directory submission requires sign-in.        |
-| [MCPServers.org](https://mcpservers.org/submit)                                                          | Free listing form prepared; requires a contact email.                     |
+| Destination                                                                                              | Status                                                                             |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.kleinicke%2F3d-visualizer) | Active, latest version 0.4.2; installs `3d-visualizer` from PyPI.                  |
+| [PyPI](https://pypi.org/project/3d-visualizer/0.4.2/)                                                    | Published; wheel and sdist hashes verified against the release artifacts.          |
+| [GitHub MCP bundle](https://github.com/kleinicke/ply-visualizer/releases/tag/python-v0.4.2)              | Published, with the validated MCPB 0.4 UV bundle attached.                         |
+| [Awesome MCP Servers](https://github.com/punkpeye/awesome-mcp-servers/pull/14040)                        | Submitted; awaiting maintainer review.                                             |
+| [MCP.so](https://github.com/chatmcp/mcpso/issues/4009)                                                   | Submitted; awaiting directory review.                                              |
+| Glama                                                                                                    | Submitted through the signed-in account; awaiting review.                          |
+| [Smithery](https://smithery.ai/servers/f-t4mw/3d-visualizer)                                             | Released 0.4.2 MCPB uploaded; release status SUCCESS; listing metadata configured. |
+| [MCPServers.org](https://mcpservers.org/submit)                                                          | Pending: contact-email privacy has not been confirmed; no email submitted.         |
 
 The old `ply-visualizer` 0.4.1 release remains on PyPI. New releases use
-`3d-visualizer`. The GitHub Actions trusted publisher must be configured for the
-new PyPI project before using the automated publish job; local publication used
-the existing configured token.
+`3d-visualizer`. The GitHub Actions trusted publisher is configured and verified
+in PyPI for `kleinicke/ply-visualizer`, workflow `publish-python.yml`,
+environment `pypi`. The matching GitHub environment exists. The existing 0.4.2
+release used the local token; no new PyPI release was made during directory
+registration.
 
 ## Awesome MCP Servers review requirement
 
@@ -111,3 +113,15 @@ Dockerfile must be pasted into Glama itself. It has not yet been built locally
 because Docker Desktop was unavailable; the released package was verified to
 initialize and expose 27 tools without data or a renderer. The badge remains
 pending until the actual Glama listing path and checks are verified.
+
+## Smithery bundle publication
+
+The account namespace is `f-t4mw`; the public server ID is
+`f-t4mw/3d-visualizer`. Release `a627abbe-bedb-47d3-966e-0593f74acb9b` contains
+the unchanged 0.4.2 GitHub MCPB artifact. Smithery CLI 4.11.1 does not recognize
+MCPB `server.type=uv` when inferring release metadata. Publication used a
+temporary CLI correction mapping that type to the Python runtime; the bundle
+manifest and contents were not changed. Until upstream supports this runtime,
+use the documented multipart upload API with Python release metadata or an
+equivalently corrected CLI. This is a local stdio distribution, not a new hosted
+viewer endpoint.
