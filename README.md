@@ -154,3 +154,5 @@ files are especially helpful when adding support for new formats.
 - **More platforms:** Coming soon
 - **Blog:** Coming soon
 - **Videos:** Coming soon
+
+[![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/kleinicke/ply-visualizer)

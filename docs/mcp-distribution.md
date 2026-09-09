@@ -85,7 +85,7 @@ files. Calibration is explicit, never inferred from image pixels alone.
 Directory submissions pending moderation are not confirmed published listings.
 Registry discovery does not automatically install the server into every client.
 
-## Submission status (2026-09-09)
+## Submission status (2026-09-10)
 
 | Destination                                                                                              | Status                                                                             |
 | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
@@ -94,9 +94,9 @@ Registry discovery does not automatically install the server into every client.
 | [GitHub MCP bundle](https://github.com/kleinicke/ply-visualizer/releases/tag/python-v0.4.2)              | Published, with the validated MCPB 0.4 UV bundle attached.                         |
 | [Awesome MCP Servers](https://github.com/punkpeye/awesome-mcp-servers/pull/14040)                        | Submitted; required Glama score badge added; awaiting checks and review.           |
 | [MCP.so](https://github.com/chatmcp/mcpso/issues/4009)                                                   | Submitted; awaiting directory review.                                              |
-| [Glama](https://glama.ai/mcp/servers/kleinicke/ply-visualizer)                                           | Approved; admin access works; Python build configured; introspection test queued.  |
+| [Glama](https://glama.ai/mcp/servers/kleinicke/ply-visualizer)                                           | Approved; virtual-environment build submitted; checks pending.                     |
 | [Smithery](https://smithery.ai/servers/f-t4mw/3d-visualizer)                                             | Released 0.4.2 MCPB uploaded; release status SUCCESS; listing metadata configured. |
-| [MCPServers.org](https://mcpservers.org/submit)                                                          | Submission confirmed; review expected within 12 hours, with an email notification. |
+| [MCPServers.org](https://mcpservers.org/servers/kleinicke/ply-visualizer)                                | Approved and live; listing badge added to the README.                              |
 
 The old `ply-visualizer` 0.4.1 release remains on PyPI. New releases use
 `3d-visualizer`. The GitHub Actions trusted publisher is configured and verified
@@ -113,8 +113,16 @@ Glama configuration now installs the published Python MCP package, rather than
 trying to execute the VS Code extension. Python 3.13, package version 0.4.2 and
 an empty `/data` root are configured. No API keys are needed for introspection.
 [Test 01a08821-df31-70e8-9f9b-c9f671781605](https://glama.ai/mcp/servers/kleinicke/ply-visualizer/admin/dockerfile/tests/01a08821-df31-70e8-9f9b-c9f671781605)
-was queued; a successful check and release are not yet confirmed. The score
-badge was added to the PR in commit `4395d1c8`.
+failed because uv protects its managed base interpreter. The configuration now
+creates `/opt/visualizer-venv`, installs there and uses its absolute executable.
+A fresh local installation passed MCP initialization and discovery of 27 tools.
+[Replacement test](https://glama.ai/mcp/servers/kleinicke/ply-visualizer/admin/dockerfile/tests/01a0884a-112e-7345-aa44-95be189962c4)
+was submitted with Build & Release; its outcome is pending. The score badge was
+added to the PR in commit `4395d1c8`.
+
+The text-only MCP listing README is in `packages/mcp/README.md`; VS Code
+demonstration media remains in the general README and is excluded from the
+Python README and generated JetBrains description.
 
 ## Smithery bundle publication
 

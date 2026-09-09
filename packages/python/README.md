@@ -1,7 +1,5 @@
 # 3D Visualizer — Python, CLI and MCP
 
-![Point cloud displayed in the 3D viewer](https://raw.githubusercontent.com/kleinicke/ply-visualizer/main/assets/example.png)
-
 <!-- mcp-name: io.github.kleinicke/3d-visualizer -->
 
 Inspect point clouds, meshes and calibrated depth data in Python, notebooks or

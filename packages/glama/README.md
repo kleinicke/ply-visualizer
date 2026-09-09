@@ -22,15 +22,26 @@ Build steps:
 
 ```json
 [
-  "uv pip install --python /usr/local/bin/python '3d-visualizer[mcp]==0.4.2'",
+  "uv venv --python /usr/local/bin/python /opt/visualizer-venv",
+  "uv pip install --python /opt/visualizer-venv/bin/python '3d-visualizer[mcp]==0.4.2'",
   "mkdir -p /data"
 ]
 ```
 
+Glama's uv-managed base interpreter is externally managed. Install into this
+virtual environment instead of changing the base interpreter. The absolute
+startup path also avoids relying on the container PATH.
+
 CMD arguments:
 
 ```json
-["mcp-proxy", "--", "3d-visualizer-mcp", "--root", "/data"]
+[
+  "mcp-proxy",
+  "--",
+  "/opt/visualizer-venv/bin/3d-visualizer-mcp",
+  "--root",
+  "/data"
+]
 ```
 
 Keep the environment schema empty (`properties: {}`, `required: []`) and
