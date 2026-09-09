@@ -1,6 +1,9 @@
 {
   "ply": [
+    "3ds",
+    "dae",
     "e57",
+    "fbx",
     "glb",
     "gltf",
     "ksplat",

@@ -92,9 +92,9 @@ Registry discovery does not automatically install the server into every client.
 | [Official MCP Registry](https://registry.modelcontextprotocol.io/?q=io.github.kleinicke%2F3d-visualizer) | Active, latest version 0.4.2; installs `3d-visualizer` from PyPI.                  |
 | [PyPI](https://pypi.org/project/3d-visualizer/0.4.2/)                                                    | Published; wheel and sdist hashes verified against the release artifacts.          |
 | [GitHub MCP bundle](https://github.com/kleinicke/ply-visualizer/releases/tag/python-v0.4.2)              | Published, with the validated MCPB 0.4 UV bundle attached.                         |
-| [Awesome MCP Servers](https://github.com/punkpeye/awesome-mcp-servers/pull/14040)                        | Submitted; awaiting maintainer review.                                             |
+| [Awesome MCP Servers](https://github.com/punkpeye/awesome-mcp-servers/pull/14040)                        | Submitted; required Glama score badge added; awaiting checks and review.           |
 | [MCP.so](https://github.com/chatmcp/mcpso/issues/4009)                                                   | Submitted; awaiting directory review.                                              |
-| [Glama](https://glama.ai/mcp/servers/kleinicke/ply-visualizer)                                           | Approved and listed; ownership claim, Dockerfile configuration and checks pending. |
+| [Glama](https://glama.ai/mcp/servers/kleinicke/ply-visualizer)                                           | Approved; admin access works; Python build configured; introspection test queued.  |
 | [Smithery](https://smithery.ai/servers/f-t4mw/3d-visualizer)                                             | Released 0.4.2 MCPB uploaded; release status SUCCESS; listing metadata configured. |
 | [MCPServers.org](https://mcpservers.org/submit)                                                          | Submission confirmed; review expected within 12 hours, with an email notification. |
 
@@ -109,15 +109,12 @@ registration.
 
 PR #14040 requires a passing Glama listing and its score badge after the server
 description. See [Glama Dockerfile and setup](../packages/glama/README.md). The
-Dockerfile must be pasted into Glama itself. It has not yet been built locally
-because Docker Desktop was unavailable; the released package was verified to
-initialize and expose 27 tools without data or a renderer. The badge remains
-pending until Glama checks pass. The approved listing is
-`kleinicke/ply-visualizer`; its
-[Dockerfile settings](https://glama.ai/mcp/servers/kleinicke/ply-visualizer/admin/dockerfile)
-still need configuration. Safari rendered the listing and admin page blank
-during the setup attempt, including after reload; no claim or Dockerfile save
-was confirmed.
+Glama configuration now installs the published Python MCP package, rather than
+trying to execute the VS Code extension. Python 3.13, package version 0.4.2 and
+an empty `/data` root are configured. No API keys are needed for introspection.
+[Test 01a08821-df31-70e8-9f9b-c9f671781605](https://glama.ai/mcp/servers/kleinicke/ply-visualizer/admin/dockerfile/tests/01a08821-df31-70e8-9f9b-c9f671781605)
+was queued; a successful check and release are not yet confirmed. The score
+badge was added to the PR in commit `4395d1c8`.
 
 ## Smithery bundle publication
 

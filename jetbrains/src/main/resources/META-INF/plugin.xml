@@ -4,6 +4,7 @@
   <vendor url="https://f-kleinicke.de">Florian Kleinicke</vendor>
   <!-- Description is generated from the root README.md by prepareDescription. -->
   <change-notes><![CDATA[
+    <p>0.1.1 — Extend the IDE compatibility range through build 253 (2025.3).</p>
     <p>0.1.0 — First standalone 3D preview for JetBrains IDEs: local point clouds,
     meshes and scan data, shared viewer controls, native download handling and
     isolated per-editor file delivery.</p>
@@ -11,7 +12,7 @@
   <depends>com.intellij.modules.platform</depends>
   <extensions defaultExtensionNs="com.intellij">
     <!-- generated file types -->
-    <fileType name="Scientific 3D" implementationClass="de.kleinicke.plyvisualizer.PlyFileType" fieldName="INSTANCE" extensions="e57;glb;gltf;ksplat;las;laz;nrrd;obj;off;pcd;ply;pts;sog;splat;spz;stl;x3a;x3r;xyz;xyzn;xyzrgb"/>
+    <fileType name="Scientific 3D" implementationClass="de.kleinicke.plyvisualizer.PlyFileType" fieldName="INSTANCE" extensions="3ds;dae;e57;fbx;glb;gltf;ksplat;las;laz;nrrd;obj;off;pcd;ply;pts;sog;splat;spz;stl;x3a;x3r;xyz;xyzn;xyzrgb"/>
     <!-- end generated file types -->
     <fileEditorProvider implementation="de.kleinicke.plyvisualizer.VisualizerEditorProvider"/>
   </extensions>

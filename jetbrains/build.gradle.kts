@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.7.2"
 }
 group = "de.kleinicke"
-version = "0.1.0"
+version = "0.1.1"
 repositories {
     mavenCentral()
     intellijPlatform { defaultRepositories() }
@@ -31,10 +31,15 @@ intellijPlatform {
         description = providers.fileContents(marketplaceDescription).asText
         ideaVersion {
             sinceBuild = "243"
-            untilBuild = "243.*"
+            untilBuild = "253.*"
         }
     }
-    pluginVerification { ides { create("PC", "2024.3.5") } }
+    pluginVerification {
+        ides {
+            create("PC", "2024.3.5")
+            create("PY", "2025.3.6.1")
+        }
+    }
     signing {
         certificateChain = providers.environmentVariable("JETBRAINS_CERTIFICATE_CHAIN")
         privateKey = providers.environmentVariable("JETBRAINS_PRIVATE_KEY")

@@ -1,5 +1,22 @@
 # JetBrains release-candidate validation
 
+## 0.1.1 compatibility update (2026-09-09)
+
+- Prepared build range `243`–`253.*`, keeping the original minimum SDK.
+- Plugin Verifier reports **Compatible** for PC-243.26053.29 (2024.3.5) and
+  PY-253.33813.50 (2025.3.6.1). Intermediate branches were not separately
+  tested.
+- Both Java tests passed. Regenerated stale format associations from the shared
+  manifest (3DS, DAE and FBX were missing).
+- Signed archive:
+  `build/distributions/ply-visualizer-jetbrains-0.1.1-signed.zip`;
+  `verifyPluginSignature` passed. This update has not been uploaded to
+  Marketplace.
+- Binary compatibility is verified; a live JCEF interaction test on 2025.3 has
+  not been performed. The earlier live testing below applies to 2024.3.5.
+
+## Original 0.1.0 validation
+
 Date: 2026-09-07. Candidate: 0.1.0, `de.kleinicke.plyvisualizer` / **3D
 Visualizer**. Publication status: **uploaded by the user; Marketplace approval
 not confirmed**. The uploaded 0.1.0 ZIP contains the original cube icon. The
