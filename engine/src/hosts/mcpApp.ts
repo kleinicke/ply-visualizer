@@ -61,7 +61,7 @@ for (const name of ['localStorage', 'sessionStorage'] as const) {
     Object.defineProperty(window, name, { value: storage });
   }
 }
-const app = new App({ name: 'ply-visualizer', version: agentBuild.package_version }, {});
+const app = new App({ name: '3d-visualizer', version: agentBuild.package_version }, {});
 let sceneId = '';
 let ready: () => void;
 const sceneReady = new Promise<void>(resolve => {
@@ -134,7 +134,7 @@ window.fetch = async (input, init) => {
   }
   const [path, query = ''] = address.replace(/^\.\//, '').split('?', 2);
   if (
-    !['session.json', 'agent/command', 'agent/result'].includes(path) &&
+    !['session.json', 'agent/command', 'agent/result', 'agent/events'].includes(path) &&
     !path.startsWith('files/')
   ) {
     return nativeFetch(input, init);
@@ -152,6 +152,9 @@ window.fetch = async (input, init) => {
     const value = await call('read_viewer_data', {
       scene_id: sceneId,
       resource: path,
+      ...(path === 'agent/events'
+        ? { after: Number(new URLSearchParams(query).get('after') ?? -1) }
+        : {}),
       ...(path === 'agent/command'
         ? { renderer_id: new URLSearchParams(query).get('renderer_id') }
         : {}),

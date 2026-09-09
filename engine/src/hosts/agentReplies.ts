@@ -23,6 +23,7 @@ export function compactAgentReply(
       ...base,
       camera,
       renderer_build: result.renderer_build,
+      rendering: result.rendering,
       presentation: result.presentation,
       selection: result.selection,
       objects: result.objects.map((o: Record<string, any>) => ({

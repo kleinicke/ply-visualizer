@@ -86,7 +86,7 @@ for (const fixture of ['depth']) {
       const opening = await initial;
       const sceneId = opening.structuredContent.scene_id;
       const html = await readFile(
-        path.resolve('../packages/python/ply_visualizer/_mcp_app/viewer.html'),
+        path.resolve('../packages/python/viz3d/_mcp_app/viewer.html'),
         'utf8'
       );
       await page.exposeFunction('mcpCall', (params: any) => call(params.name, params.arguments));

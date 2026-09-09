@@ -1,4 +1,4 @@
-ply_visualizer/_assets/
+viz3d/_assets/
 __pycache__/
 *.egg-info/
 build/

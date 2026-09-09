@@ -19,13 +19,13 @@ MAX_BODY = 2 * 1024 * 1024
 MAX_UPLOAD = 256 * 1024 * 1024
 
 
-def create_http_app(roots, *, token, state_dir, allowed_hosts=None):
+def create_http_app(roots, *, token, state_dir, allowed_hosts=None, tools="full", renderer="inline"):
     if len(token) < 32: raise ValueError('HTTP bearer token must contain at least 32 characters')
     state = Path(state_dir).resolve()
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     uploads = state / 'uploads'; uploads.mkdir(exist_ok=True, mode=0o700)
     store = TaskStore(state / 'tasks.sqlite')
-    server = create_server([*roots, uploads], task_store=store, transport='streamable-http')
+    server = create_server([*roots, uploads], task_store=store, transport='streamable-http', tools=tools, renderer=renderer)
     mcp_app = server.streamable_http_app(stateless_http=True, json_response=True, transport_security=TransportSecuritySettings(allowed_hosts=allowed_hosts or ['127.0.0.1', '127.0.0.1:*', 'localhost', 'localhost:*', '[::1]', '[::1]:*']))
 
     async def tools(request):
@@ -152,6 +152,8 @@ def create_http_app(roots, *, token, state_dir, allowed_hosts=None):
 def main():
     parser = argparse.ArgumentParser(description='Single-owner REST and HTTP MCP server; use TLS reverse proxy for remote access.')
     parser.add_argument('--root', action='append', required=True)
+    parser.add_argument('--tools', choices=['core', 'full'], default='core')
+    parser.add_argument('--renderer', choices=['auto', 'inline', 'headless'], default='auto')
     parser.add_argument('--host', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--state-dir', default='.local/ply-agent-api')
@@ -164,7 +166,7 @@ def main():
         with os.fdopen(os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as output:
             output.write(secrets.token_urlsafe(32))
     token = token_file.read_text().strip()
-    app = create_http_app(args.root, token=token, state_dir=state, allowed_hosts=args.allowed_host)
+    app = create_http_app(args.root, token=token, state_dir=state, allowed_hosts=args.allowed_host, tools=args.tools, renderer=args.renderer)
     print(f'HTTP MCP: /mcp; REST: /api/v1; bearer credential file: {token_file.resolve()}', flush=True)
     import uvicorn
     uvicorn.run(app, host=args.host, port=args.port, access_log=False)

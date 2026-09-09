@@ -1,5 +1,5 @@
 [project]
 name = "3d-visualizer-mcp-bundle"
-version = "0.4.2"
+version = "0.5.0.dev0"
 requires-python = ">=3.10"
-dependencies = ["3d-visualizer[mcp]==0.4.2"]
+dependencies = ["3d-visualizer[mcp,headless]==0.5.0.dev0"]

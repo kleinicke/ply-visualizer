@@ -24,10 +24,11 @@ object indices and attribute names from inspection.
    colors.
 4. Call `capture_3d_view(scene_id=scene_id)` to see the actual result.
 
-A live MCP widget or explicit browser fallback must respond. A connected server
-alone cannot render headlessly. `list_3d_scenes()` reports scene connection
-status. `close_3d_scene(scene_id=scene_id)` releases temporary data and the
-local server without deleting source files.
+A live MCP widget, explicit browser fallback, or offscreen Chromium must
+respond. Use `--renderer headless` with the headless extra and Chromium for
+unattended work. `list_3d_scenes()` reports scene connection status.
+`close_3d_scene(scene_id=scene_id)` releases temporary data and the local server
+without deleting source files.
 
 ## Find a useful viewpoint
 

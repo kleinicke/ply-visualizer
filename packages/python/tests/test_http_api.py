@@ -6,8 +6,8 @@ import tempfile
 import unittest
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ply_visualizer.http_api import create_http_app
-from ply_visualizer.tasks import TaskStore, IDENTIFIER
+from viz3d.http_api import create_http_app
+from viz3d.tasks import TaskStore, IDENTIFIER
 from starlette.testclient import TestClient
 
 TOKEN = 'test-token-' * 4
@@ -99,7 +99,7 @@ class HTTPTests(unittest.TestCase):
 
     def test_alignment_waits_for_job_completion(self):
         from types import SimpleNamespace
-        from ply_visualizer.tasks import invoke_complete
+        from viz3d.tasks import invoke_complete
         class FakeServer:
             polls = 0
             async def call_tool(self, name, args):

@@ -93,6 +93,20 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         resource = path[len(prefix):] or "index.html"
+        if resource == "agent/events":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            generation = -1
+            try:
+                while not session._closed.is_set():
+                    generation = session.wait_change(generation)
+                    self.wfile.write(f"data: {generation}\n\n".encode())
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         if resource == "agent/command":
             self._send(json.dumps(session._bridge.pending(parse_qs(urlsplit(self.path).query).get("renderer_id", [None])[0])).encode(), "application/json")
             return
@@ -183,7 +197,10 @@ class ViewerSession:
 
     def __init__(self, files, temporary=None):
         self._files = files
-        self._bridge = BrowserBridge()
+        self._events = threading.Condition()
+        self._generation = 0
+        self._bridge = BrowserBridge(self.notify_change)
+        self._headless = None
         self._lock = threading.RLock()
         self._update_lock = threading.Lock()
         self._revision = 0
@@ -201,12 +218,41 @@ class ViewerSession:
         self._thread.start()
         atexit.register(self.close)
 
+    def notify_change(self):
+        with self._events:
+            self._generation += 1
+            self._events.notify_all()
+
+    def wait_change(self, after, timeout=5):
+        with self._events:
+            self._events.wait_for(lambda: self._generation != after or self._closed.is_set(), timeout)
+            return self._generation
+
+    def inspect(self, *, detail="summary"):
+        """Inspect the connected renderer; raises if no renderer answers."""
+        if detail not in {"summary", "full"}: raise ValueError("detail must be summary or full")
+        return self._bridge.request("inspect", {"detail": detail})
+
+    def capture(self):
+        """Return rendered PNG bytes from the active inline, browser or headless view."""
+        import base64
+        return base64.b64decode(self._bridge.request("capture")["png"], validate=True)
+
+    def start_headless(self):
+        from .headless import HeadlessRenderer
+        if self._headless is None:
+            self._headless = HeadlessRenderer(self.url)
+
     def close(self):
         with self._update_lock:
             self._close()
 
     def _close(self):
         if not self._closed.is_set():
+            self._closed.set()
+            self.notify_change()
+            if self._headless is not None:
+                self._headless.close()
             self._server.shutdown()
             self._server.server_close()
             self._thread.join()
@@ -237,6 +283,7 @@ class ViewerSession:
             self._revision += 1
             self._files = [*old_files, *files]
             self._history[self._revision] = (self._files, scene, None)
+            self.notify_change()
             if temporary is not None: self._downloads.append(temporary)
             self._prune_history()
         return self
@@ -287,6 +334,7 @@ class ViewerSession:
                 self._revision += 1
                 self._files = files
                 self._history[self._revision] = (files, scene, folder)
+                self.notify_change()
                 self._prune_history()
         return self
 
@@ -330,7 +378,7 @@ class ViewerSession:
         self.close()
 
 
-def show(*sources, colors=None, target=None, vectors=None, vector_scale=1.0, max_vectors=256, inline=False, open_browser=None) -> ViewerSession:
+def show(*sources, colors=None, target=None, vectors=None, vector_scale=1.0, max_vectors=256, inline=False, open_browser=None, headless=False) -> ViewerSession:
     """Show 3D paths or Nx3 points (NumPy, PyTorch, or Python iterables).
 
     Optional colors are Nx3 integer RGB values (0..255). The viewer opens in
@@ -338,6 +386,8 @@ def show(*sources, colors=None, target=None, vectors=None, vector_scale=1.0, max
     PyTorch tensors are detached internally and transferred to CPU, including
     GPU tensors and tensors requiring gradients. The input is never modified.
     """
+    if headless:
+        open_browser = False
     if open_browser is None:
         try:
             from IPython import get_ipython
@@ -365,7 +415,7 @@ def show(*sources, colors=None, target=None, vectors=None, vector_scale=1.0, max
         else:
             if len(sources) != 1:
                 raise ValueError("Pass either file paths or one (N, 3) point array")
-            temporary = tempfile.TemporaryDirectory(prefix="ply-viewer-")
+            temporary = tempfile.TemporaryDirectory(prefix="viz3d-viewer-")
             try:
                 # Rich scenes are serialized once by update(), before opening.
                 files = [] if target is not None or vectors is not None else [_points_file(sources[0], colors, Path(temporary.name))]
@@ -391,6 +441,12 @@ def show(*sources, colors=None, target=None, vectors=None, vector_scale=1.0, max
             webbrowser.open(session.url)
         except webbrowser.Error:
             pass  # The caller can still use session.url.
+    if headless:
+        try:
+            session.start_headless()
+        except Exception:
+            session.close()
+            raise
     return session
 
 

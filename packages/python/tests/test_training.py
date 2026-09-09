@@ -5,8 +5,8 @@ import unittest
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ply_visualizer import show, show_batch
-from ply_visualizer.training import LayerInspection
+from viz3d import show, show_batch
+from viz3d.training import LayerInspection
 import test_session
 
 

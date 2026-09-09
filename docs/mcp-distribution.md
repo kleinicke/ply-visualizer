@@ -1,12 +1,16 @@
 # 3D Visualizer distribution
 
+Published listing links below describe 0.4.2. The development checkout targets
+the next release; use the current [MCP guide](../packages/python/MCP.md) for
+profiles, headless setup and the new Python import.
+
 The public product name is **3D Visualizer**, the PyPI distribution is
 `3d-visualizer` and the MCP identifier is `io.github.kleinicke/3d-visualizer`.
 The GitHub repository remains `kleinicke/ply-visualizer` and the Python import
-is `ply_visualizer` (Python identifiers cannot begin with a digit). Releases
-through 0.4.1 used the old `ply-visualizer` distribution. The CLI commands are
-`3d-visualizer`, `3d-visualizer-mcp` and `3d-visualizer-api`; legacy
-`ply-viewer*` aliases remain available.
+is `viz3d` (Python identifiers cannot begin with a digit). Releases through
+0.4.1 used the old `ply-visualizer` distribution. The CLI commands are
+`3d-visualizer`, `3d-visualizer-mcp` and `3d-visualizer-api`; the development
+interface removes legacy aliases.
 
 ## Installation
 
@@ -25,7 +29,7 @@ directory until it is actually deployed and tested.
 - `server.json`: official registry entry, PyPI package, icon and required data
   directory. Registry runners use
   `uvx --with 'mcp>=2.2,<3' 3d-visualizer==0.4.2 mcp --root /absolute/data/directory`.
-  The matching `3d-visualizer mcp` subcommand starts MCP, while `ply-viewer`
+  The matching `3d-visualizer mcp` subcommand starts MCP, while `3d-visualizer`
   opens the CLI viewer.
 - `packages/python/README.md`: ownership marker required in the published PyPI
   description. Changing this marker requires a new package release.

@@ -67,7 +67,7 @@ module.exports = {
   output: {
     filename: 'app.js',
     publicPath: '/__ply_assets__/',
-    path: path.resolve(__dirname, '../packages/python/ply_visualizer/_mcp_app'),
+    path: path.resolve(__dirname, '../packages/python/viz3d/_mcp_app'),
     clean: true,
   },
   devtool: false,

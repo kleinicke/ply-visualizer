@@ -5,16 +5,15 @@ import sys
 import textwrap
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / 'packages/python/ply_visualizer/mcp_server.py'
+SOURCE = ROOT / 'packages/python/viz3d/mcp_server.py'
 OUTPUT = ROOT / 'docs/mcp-tools.md'
 
 
 def generate():
     tree = ast.parse(SOURCE.read_text())
     tools = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
-             and any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
-                     and isinstance(d.func.value, ast.Name) and d.func.value.id == 'server'
-                     and d.func.attr == 'tool' for d in node.decorator_list)
+             and any(isinstance(d, ast.Call) and isinstance(d.func, ast.Name)
+                     and d.func.id == 'tool' for d in node.decorator_list)
              and node.name not in {'read_viewer_data', 'submit_viewer_reply'}]
     tools.sort(key=lambda node: node.lineno)
     point_type = next(ast.unparse(node.value) for node in ast.walk(tree)

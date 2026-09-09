@@ -6,9 +6,9 @@ test('Python point arrays and CLI files open in the shared 3D viewer', async ({ 
   const cases = [
     [
       '-c',
-      'from ply_visualizer import show; s = show([[0,0,0],[1,0,0],[0,1,0]], colors=[[255,0,0],[0,255,0],[0,0,255]], open_browser=False); print(s.url, flush=True); s.wait()',
+      'from viz3d import show; s = show([[0,0,0],[1,0,0],[0,1,0]], colors=[[255,0,0],[0,255,0],[0,0,255]], open_browser=False); print(s.url, flush=True); s.wait()',
     ],
-    ['-m', 'ply_visualizer', '--no-browser', path.resolve('examples/example-point-cloud.ply')],
+    ['-m', 'viz3d', '--no-browser', path.resolve('examples/example-point-cloud.ply')],
   ];
   for (const args of cases) {
     const child = spawn('python3', args, {
@@ -74,7 +74,7 @@ test('inline training viewer preserves camera, switches batches, and draws vecto
       '-c',
       `
 import json, sys
-from ply_visualizer import show_batch
+from viz3d import show_batch
 points = [[[0,0,0],[1,0,0],[0,1,0]], [[0,0,0],[1,0,0],[0,1,0],[0,0,1]]]
 s = show_batch(points, target=points, vectors=points, labels=['original','augmented'], open_browser=False)
 print(json.dumps({'url': s.url, 'html': s.iframe()}), flush=True)
@@ -198,7 +198,7 @@ test('agent bridge inspects geometry, applies camera and captures rendered pixel
       '-c',
       `
 import json, sys
-from ply_visualizer import show
+from viz3d import show
 s = show([[0,0,0],[1,0,0],[0,1,0]], open_browser=False)
 print(json.dumps({'url': s.url}), flush=True)
 try:
@@ -246,6 +246,20 @@ finally:
       return new Set(new Uint32Array(pixels.buffer)).size;
     }, capture.png);
     expect(colors).toBeGreaterThan(1);
+    // Lose one acknowledgement: retrying an orbit must not rotate twice.
+    const replies: { result: { camera: unknown } }[] = [];
+    await page.route('**/agent/result', async route => {
+      replies.push(route.request().postDataJSON());
+      if (replies.length === 1) {
+        await route.fulfill({ json: { accepted: false } });
+      } else {
+        await route.continue();
+      }
+    });
+    const orbit = await command('navigate', { action: 'orbit', yaw: 25, pitch: 10 });
+    expect(replies.length).toBeGreaterThanOrEqual(2);
+    expect(replies[1].result.camera).toEqual(replies[0].result.camera);
+    expect(orbit.camera).toEqual(replies[0].result.camera);
   } finally {
     child.stdin.end();
     child.kill('SIGINT');

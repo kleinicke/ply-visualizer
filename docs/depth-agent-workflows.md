@@ -6,7 +6,7 @@ into one schema; the viewer does not estimate calibration from image pixels or
 recursively scan a directory.
 
 ```python
-from ply_visualizer import DepthCalibration, show_depth
+from viz3d import DepthCalibration, show_depth
 
 calibration = DepthCalibration(
     width=640, height=480, fx=525, fy=525, cx=319.5, cy=239.5,
@@ -77,7 +77,7 @@ inspection retains the normalized calibration and its `sources` map.
 ## COLMAP and MCP
 
 ```python
-from ply_visualizer import show_colmap
+from viz3d import show_colmap
 view = show_colmap("dense", image="image1.jpg", variant="geometric", inline=True)
 ```
 

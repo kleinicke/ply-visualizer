@@ -10,7 +10,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import threading
 from urllib.parse import quote
 from mcp import Client
-from ply_visualizer.mcp_server import create_server
+from viz3d.mcp_server import create_server
 
 @contextmanager
 def remote_fixture(path):
@@ -36,7 +36,7 @@ async def test_client(roots):
     import uvicorn
     import httpx2
     from mcp.client.streamable_http import streamable_http_client
-    from ply_visualizer.http_api import create_http_app
+    from viz3d.http_api import create_http_app
     with tempfile.TemporaryDirectory() as state:
         token = 'browser-integration-test-token-0123456789'
         app = create_http_app(roots, token=token, state_dir=state)

@@ -40,4 +40,4 @@ benchmark-vscode-result.json
 /.local/
 
 # Generated inline MCP App resource
-packages/python/ply_visualizer/_mcp_app/
+packages/python/viz3d/_mcp_app/

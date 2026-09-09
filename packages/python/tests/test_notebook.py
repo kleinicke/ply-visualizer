@@ -19,7 +19,7 @@ class NotebookTests(unittest.TestCase):
 import sys, json, webbrowser
 from urllib.request import urlopen
 sys.path.insert(0, {package!r})
-from ply_visualizer import show
+from viz3d import show
 def unexpected_browser(*args):
     raise AssertionError('Notebook should not open a browser tab')
 webbrowser.open = unexpected_browser

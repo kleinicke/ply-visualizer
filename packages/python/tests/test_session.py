@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ply_visualizer import show
+from viz3d import show
 
 
 class SessionTests(unittest.TestCase):
@@ -21,7 +21,7 @@ class SessionTests(unittest.TestCase):
         self.assets.mkdir()
         (self.assets / "bundle.js").write_text("// test")
         (self.assets / "index.html").write_text('<script async src="https://analytics.re4vive.com/js/test.js"></script><title>Viewer</title>')
-        self.asset_patch = patch("ply_visualizer.session.ASSETS", self.assets)
+        self.asset_patch = patch("viz3d.session.ASSETS", self.assets)
         self.asset_patch.start()
         self.addCleanup(self.asset_patch.stop)
 

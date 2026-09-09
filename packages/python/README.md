@@ -1,20 +1,87 @@
 # 3D Visualizer — Python, CLI and MCP
 
-<!-- mcp-name: io.github.kleinicke/3d-visualizer -->
-
 ![Point cloud displayed in the 3D viewer](https://raw.githubusercontent.com/kleinicke/ply-visualizer/main/assets/example.png)
 
-One Python package provides a browser viewer for local 3D files and point
-arrays, plus the `ply-viewer` command. Python 3.10+ and a WebGL-capable browser
-are required. There are no Python runtime dependencies; NumPy arrays work
-without requiring NumPy for users who only open files. Node.js is needed only to
-build the bundled viewer from this repository, not to use an installed wheel.
+<!-- mcp-name: io.github.kleinicke/3d-visualizer -->
 
-Install the Python package from PyPI as **`3d-visualizer`**. The Python import
-remains `ply_visualizer`. Releases through 0.4.1 used the distribution name
-`ply-visualizer`; new releases use `3d-visualizer`. The npm package is not
-published. The commands `3d-visualizer`, `3d-visualizer-mcp` and
-`3d-visualizer-api` are available alongside the legacy `ply-viewer*` aliases.
+Inspect point clouds, meshes and calibrated depth data in Python, notebooks or
+an AI conversation. The package is **`3d-visualizer`**, the Python import is
+**`viz3d`**, and the CLI is **`3d-visualizer`**. Python 3.10+ is required.
+
+This checkout targets the next release. The public 0.4.2 package still uses the
+older import. For the new interface before publication, build the viewer and
+install `./packages/python` with the extras you need.
+
+<!-- prettier-ignore-start -->
+
+<!-- agent-quickstart:start -->
+
+### Agent installation
+
+These examples target **0.5.0.dev0**. Development versions must be installed
+from this checkout until published; do not assume an unreleased version exists on PyPI.
+
+For agents, use `uv tool install` or `uvx`; `uv add` is for using the library
+inside a Python project. Headless mode also needs Chromium installed once.
+
+```sh
+uv tool install "3d-visualizer[mcp,headless]==0.5.0.dev0"
+uvx --from "3d-visualizer[headless]==0.5.0.dev0" playwright install chromium
+3d-visualizer doctor --check-headless
+```
+
+Client configuration (replace the data directory):
+
+```json
+{
+  "mcpServers": {
+    "3d-visualizer": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "3d-visualizer[mcp,headless]==0.5.0.dev0",
+        "3d-visualizer-mcp",
+        "--root",
+        "/absolute/path/to/data"
+      ]
+    }
+  }
+}
+```
+
+[Install in VS Code](vscode:mcp/install?%7B%22name%22%3A%223d-visualizer%22%2C%22type%22%3A%22stdio%22%2C%22command%22%3A%22uvx%22%2C%22args%22%3A%5B%22--from%22%2C%223d-visualizer%5Bmcp%2Cheadless%5D%3D%3D0.5.0.dev0%22%2C%223d-visualizer-mcp%22%2C%22--root%22%2C%22%24%7BworkspaceFolder%7D%22%5D%7D)
+
+The VS Code link uses the current workspace as the allowed data root.
+
+```sh
+claude mcp add --transport stdio 3d-visualizer -- uvx --from "3d-visualizer[mcp,headless]==0.5.0.dev0" 3d-visualizer-mcp --root /absolute/path/to/data
+```
+
+The default `--tools core` exposes eight everyday tools. Use `--tools full`
+for depth conversion, selections, animation, alignment and export.
+`--renderer auto` uses an advertised MCP Apps host, otherwise offscreen
+Chromium. Use `--renderer inline` to require a widget or explicit browser;
+use `--renderer headless` for unattended work.
+<!-- agent-quickstart:end -->
+
+<!-- prettier-ignore-end -->
+
+## Unattended Python rendering
+
+With the `headless` extra and Chromium installed:
+
+```python
+from pathlib import Path
+from viz3d import show
+
+with show("scan.ply", headless=True) as view:
+    state = view.inspect(detail="full")
+    Path("preview.png").write_bytes(view.capture())
+```
+
+This uses offscreen Chromium and the shared renderer. It requires no notebook,
+chat widget or visible browser window. Inspect and capture raise on renderer
+failure instead of returning a placeholder success.
 
 ## Install with uv (recommended)
 
@@ -26,41 +93,18 @@ uv add 3d-visualizer            # Add to a Python project
 uv add "3d-visualizer[notebook]" # Local notebook display support
 uv pip install 3d-visualizer    # Install into an existing virtual environment
 uv tool install 3d-visualizer   # Install the CLI independently
-uvx --from 3d-visualizer ply-viewer scan.ply  # Run without persistent installation
+uvx --from 3d-visualizer 3d-visualizer scan.ply  # Run without persistent installation
 ```
 
-The Python import is `from ply_visualizer import show`. Tool installation does
-not add the library to a Python project or notebook kernel; use `uv add` or
+The Python import is `from viz3d import show`. Tool installation does not add
+the library to a Python project or notebook kernel; use `uv add` or
 `uv pip install` in that environment. No Node.js build is needed for PyPI
 installs.
 
 For local Jupyter, run `uv run --with jupyter jupyter lab` from your project and
 select its Python kernel. Keep that kernel alive while using the viewer.
 
-### AI agents through MCP
-
-Version 0.2.0 adds an optional local MCP server:
-
-```sh
-uvx --from "3d-visualizer[mcp]" ply-viewer-mcp --root /absolute/path/to/workspace
-```
-
-Configure your agent to launch this command. It can open 3D files or point
-arrays, update a scene, inspect rendered geometry, position the camera and
-receive PNG screenshots. See [MCP setup and agent instructions](MCP.md). Version
-0.3.0 includes an MCP Apps preview for hosts permitting local nested iframes,
-with a browser-tab fallback. Version 0.4.0 replaces the nested iframe with
-direct in-widget rendering and adds agent controls for navigation, appearance,
-measurements, video keyframes, label/region selection with focus previews,
-richer picking, named views and overlay opacity. PCD labels are available for
-coloring and filtering. Inspection reports coordinate conventions, camera
-position/direction/pivot, object transforms and presentation state; updates
-reuse the original widget and preserve its camera. Agents can also download
-direct HTTP(S) 3D URLs and run automatic alignment, ICP, landmark fitting and
-align-all strategies with job status and undo. Inline local Jupyter output is
-already supported below.
-
-### Developing from source
+## Developing from source
 
 From the repository root, build the bundled engine with Node 24:
 
@@ -69,10 +113,12 @@ npm ci
 npm run build:python-viewer
 uv tool install ./packages/python
 # Or add the local library to your Python project:
-uv add /absolute/path/to/ply-visualizer/packages/python
+uv add /absolute/path/to/checkout/packages/python
 ```
 
-See [publishing setup](PUBLISHING.md) for releases.
+See
+[publishing setup](https://github.com/kleinicke/ply-visualizer/blob/main/packages/python/PUBLISHING.md)
+for releases.
 
 ## Alternative: install with pip from this repository
 
@@ -81,17 +127,17 @@ After building the browser assets above:
 ```sh
 python3 -m venv packages/python/.venv
 packages/python/.venv/bin/python -m pip install ./packages/python
-packages/python/.venv/bin/ply-viewer engine/examples/example-point-cloud.ply
+packages/python/.venv/bin/3d-visualizer engine/examples/example-point-cloud.ply
 ```
 
 On Windows, replace the environment's `bin/` paths with `Scripts/`, e.g.
-`packages\python\.venv\Scripts\python.exe`, `ply-viewer.exe`, or `jupyter.exe`.
-After activating the environment, the command is simply:
+`packages\python\.venv\Scripts\python.exe`, `3d-visualizer.exe`, or
+`jupyter.exe`. After activating the environment, the command is simply:
 
 ```sh
-ply-viewer scan.ply mesh.stl
-ply-viewer --no-browser scan.ply
-python -m ply_visualizer scan.ply
+3d-visualizer scan.ply mesh.stl
+3d-visualizer --no-browser scan.ply
+python -m viz3d scan.ply
 ```
 
 The command prints a local URL and keeps running until Ctrl+C. `--no-browser`
@@ -101,7 +147,7 @@ render an image or report successful browser rendering to the caller.
 ## Python
 
 ```python
-from ply_visualizer import show
+from viz3d import show
 
 # In an interactive Python session or local notebook:
 viewer = show("scan.ply", "mesh.stl")
@@ -111,7 +157,7 @@ viewer.close()
 ```
 
 ```python
-from ply_visualizer import show
+from viz3d import show
 
 # Lists, iterables, NumPy arrays, and PyTorch tensors with shape (N, 3) work.
 points = [[0, 0, 0], [1, 0, 0], [0, 1, 0]]
@@ -138,14 +184,14 @@ Pass arrays and tensors directly, including RGB colors:
 
 ```python
 import numpy as np
-from ply_visualizer import show
+from viz3d import show
 
 viewer = show(np.random.default_rng(0).normal(size=(1000, 3)))
 ```
 
 ```python
 import torch
-from ply_visualizer import show
+from viz3d import show
 
 device = "cuda" if torch.cuda.is_available() else (
     "mps" if torch.backends.mps.is_available() else "cpu"
@@ -176,10 +222,11 @@ viewer = show(points, colors=rgb)
 ## Training previews
 
 All updates reuse the same browser tab/inline view and preserve its camera. The
-viewer polls for the newest revision every 500 ms; intermediate revisions can be
-skipped. Publish at a useful training interval, not every forward pass.
-Serialization and GPU transfer are synchronous. Updates replace the scene;
-manual files added to that scene are also replaced on the next update.
+viewer receives change notifications and loads the newest revision; intermediate
+revisions can be skipped. Publish at a useful training interval, not every
+forward pass. Serialization and GPU transfer are synchronous. Updates replace
+the scene; manual files added to that scene are also replaced on the next
+update.
 
 ```python
 viewer = show(initial_points)
@@ -198,7 +245,7 @@ scene** to reset the framing explicitly.
 ### Batch and augmentation inspection
 
 ```python
-from ply_visualizer import show_batch
+from viz3d import show_batch
 
 viewer = show_batch(batch, target=target_batch)
 viewer.update_batch(next_batch, target=next_targets, step=step)
@@ -304,15 +351,15 @@ existing 3D viewer to retain its file formats and interaction controls.
 - Multiple files appear together in one scene.
 - OBJ input currently provides geometry; automatic sidecar material/texture
   resolution and external-resource glTF are outside this preview.
-- No separate image-viewer integration, headless rendering, or desktop launch
-  integration yet. The shared 3D viewer retains its existing manual controls and
-  depth-conversion features.
+- No separate image-viewer integration or desktop launch integration yet. The
+  shared 3D viewer retains its existing manual controls and depth-conversion
+  features.
 
 ## Build a distributable wheel
 
 ```sh
 npm run build:python-viewer
-packages/python/.venv/bin/python -m pip wheel --no-deps ./packages/python --wheel-dir /tmp/ply-viewer-wheels
+packages/python/.venv/bin/python -m pip wheel --no-deps ./packages/python --wheel-dir /tmp/3d-visualizer-wheels
 ```
 
 The wheel includes the browser engine and its assets. Install that wheel on

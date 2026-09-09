@@ -8,6 +8,6 @@ module.exports = {
   entry: './src/hosts/localSession.ts',
   output: {
     ...base.output,
-    path: path.resolve(__dirname, '../packages/python/ply_visualizer/_assets'),
+    path: path.resolve(__dirname, '../packages/python/viz3d/_assets'),
   },
 };

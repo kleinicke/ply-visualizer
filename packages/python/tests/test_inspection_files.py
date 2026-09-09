@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import tempfile
 import unittest
 
-from ply_visualizer.inspection_files import artifact_path, export_subset
+from viz3d.inspection_files import artifact_path, export_subset
 
 
 class ArtifactTests(unittest.TestCase):

@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ply_visualizer import DepthCalibration, show_depth, show_colmap
+from viz3d import DepthCalibration, show_depth, show_colmap
 
 class DepthTests(unittest.TestCase):
     def calibration(self, **kwargs):
@@ -50,7 +50,7 @@ class DepthTests(unittest.TestCase):
     def test_mcp_schema_and_missing_calibration(self):
         import asyncio
         from mcp import Client
-        from ply_visualizer.mcp_server import create_server
+        from viz3d.mcp_server import create_server
         async def check():
             async with Client(create_server([Path(__file__).resolve().parents[3]])) as client:
                 tools = (await client.list_tools()).tools

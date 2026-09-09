@@ -26,6 +26,8 @@ const rendererId = Array.from(crypto.getRandomValues(new Uint8Array(16)), n =>
   n.toString(16).padStart(2, '0')
 ).join('');
 
+let previousReply: { id: string; result?: unknown; error?: string } | undefined;
+
 export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean> {
   const response = await fetch(`agent/command?renderer_id=${rendererId}`);
   if (!response.ok) {
@@ -34,6 +36,16 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
   const command = await response.json();
   if (!command) {
     return false;
+  }
+  // A wake-up can race the server clearing an acknowledged command. Replay
+  // the reply instead of applying non-idempotent navigation/transforms twice.
+  if (previousReply?.id === command.id) {
+    await fetch('agent/result', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...previousReply, renderer_id: rendererId }),
+    });
+    return true;
   }
   let reply: { id: string; result?: unknown; error?: string } = { id: command.id };
   try {
@@ -74,6 +86,12 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
     reply.result = {
       alignment: alignmentStatus(host as unknown as ControlHost),
       renderer_build: agentBuild,
+      rendering: {
+        webgl: !!(
+          host.renderer.domElement.getContext('webgl2') ||
+          host.renderer.domElement.getContext('webgl')
+        ),
+      },
       renderer_id: rendererId,
       rendered_revision: Number(document.documentElement.dataset.sessionRevision),
       objects: host.spatialFiles.map(file => ({
@@ -132,6 +150,7 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
   } catch (error) {
     reply = { id: command.id, error: error instanceof Error ? error.message : String(error) };
   }
+  previousReply = reply;
   await fetch('agent/result', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

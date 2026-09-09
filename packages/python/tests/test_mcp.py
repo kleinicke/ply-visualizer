@@ -7,8 +7,8 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 import time
 
-from ply_visualizer.agent_bridge import BrowserBridge
-from ply_visualizer.mcp_server import SceneManager, create_server, browser_default
+from viz3d.agent_bridge import BrowserBridge
+from viz3d.mcp_server import SceneManager, create_server, browser_default
 try:
     from mcp import Client
 except ImportError:
@@ -34,9 +34,9 @@ class BridgeTests(unittest.TestCase):
 
     def test_renderer_ownership_and_expected_errors(self):
         from unittest.mock import patch
-        from ply_visualizer.agent_bridge import RendererError
+        from viz3d.agent_bridge import RendererError
         bridge = BrowserBridge()
-        with patch('ply_visualizer.agent_bridge.time.monotonic', return_value=100):
+        with patch('viz3d.agent_bridge.time.monotonic', return_value=100):
             bridge.pending('original')
             self.assertIsNone(bridge.pending('duplicate'))
             self.assertEqual(bridge.renderer_id(), 'original')
@@ -50,7 +50,7 @@ class BridgeTests(unittest.TestCase):
                 self.assertFalse(bridge.receive({'id': command['id'], 'renderer_id': 'duplicate', 'result': {}}))
                 self.assertTrue(bridge.receive({'id': command['id'], 'renderer_id': 'original', 'error': 'No points matched'}))
                 with self.assertRaisesRegex(RendererError, 'No points matched'): future.result()
-        with patch('ply_visualizer.agent_bridge.time.monotonic', return_value=111):
+        with patch('viz3d.agent_bridge.time.monotonic', return_value=111):
             bridge.pending('replacement')
             self.assertEqual(bridge.renderer_id(), 'replacement')
 
@@ -154,7 +154,7 @@ class MCPTests(unittest.IsolatedAsyncioTestCase):
         from mcp import StdioServerParameters
         source = str(Path(__file__).resolve().parents[1])
         process = StdioServerParameters(command=sys.executable,
-            args=['-m', 'ply_visualizer.mcp_server', '--root', str(Path.cwd())],
+            args=['-m', 'viz3d.mcp_server', '--tools', 'full', '--renderer', 'inline', '--root', str(Path.cwd())],
             env={**os.environ, 'PYTHONPATH': source})
         async with Client(process) as client:
             self.assertEqual(len((await client.list_tools()).tools), 27)

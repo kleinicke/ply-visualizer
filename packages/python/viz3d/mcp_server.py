@@ -17,8 +17,13 @@ from .diagnostics import VERSION, build_info
 from .depth import DepthCalibration, show_depth, show_colmap
 
 
+CORE_TOOLS = frozenset({"open_3d_files", "visualize_points", "inspect_3d_scene", "capture_3d_view", "set_3d_camera", "navigate_3d_view", "list_3d_scenes", "close_3d_scene"})
+APP_TOOLS = frozenset({"read_viewer_data", "submit_viewer_reply"})
+
+
 class SceneManager:
-    def __init__(self, roots, max_scenes=8):
+    def __init__(self, roots, max_scenes=8, renderer="inline"):
+        self.renderer = renderer
         self.roots = [Path(root).expanduser().resolve(strict=True) for root in roots]
         if not self.roots or any(not root.is_dir() for root in self.roots):
             raise ValueError("Provide at least one existing workspace directory")
@@ -40,12 +45,26 @@ class SceneManager:
             raise ValueError("Unknown scene_id; use list_3d_scenes")
         return self.scenes[scene_id]
 
-    def add(self, factory):
+    def add(self, factory, ctx=None, external_browser=False):
         with self._lock:
             if len(self.scenes) >= self.max_scenes:
                 raise ValueError("Close an existing scene before opening another (limit 8)")
             scene_id = uuid.uuid4().hex
-            self.scenes[scene_id] = factory()
+            viewer = factory()
+            self.scenes[scene_id] = viewer
+            try:
+                try:
+                    host = getattr(ctx, "client_capabilities", None) if self.renderer == "auto" else None
+                except (RuntimeError, ValueError):
+                    host = None
+                data = host.model_dump(by_alias=True) if hasattr(host, "model_dump") else {}
+                inline = "io.modelcontextprotocol/ui" in (data.get("extensions") or {})
+                if self.renderer == "headless" or (self.renderer == "auto" and not inline and not external_browser):
+                    viewer.start_headless()
+            except Exception:
+                self.scenes.pop(scene_id)
+                viewer.close()
+                raise
             return self.describe(scene_id)
 
     def describe(self, scene_id):
@@ -54,7 +73,7 @@ class SceneManager:
             manifest = viewer._manifest()
         return {"scene_id": scene_id, "build": build_info(), "url": viewer.url, "revision": manifest["revision"],
                 "files": [entry["name"] for entry in manifest["files"]],
-                "status": "submitted", "connection": viewer._bridge.connection(), "renderer_id": viewer._bridge.renderer_id(), "note": "Use inspect_3d_scene to verify rendering. Inline MCP App renders via MCP. No browser tab is opened unless explicitly requested."}
+                "status": "submitted", "renderer_mode": "headless" if viewer._headless else "inline", "connection": viewer._bridge.connection(), "renderer_id": viewer._bridge.renderer_id(), "note": "Use inspect_3d_scene to verify rendering. Inline MCP App renders via MCP. No browser tab is opened unless explicitly requested."}
 
     def close(self):
         for viewer in self.scenes.values():
@@ -67,7 +86,9 @@ def browser_default(ctx, requested):
         return requested
     return False
 
-def create_server(roots, *, extensions=None, transport="stdio", task_store=None):
+def create_server(roots, *, extensions=None, transport="stdio", task_store=None, tools="full", renderer="inline"):
+    if tools not in {"core", "full"}: raise ValueError("tools must be core or full")
+    if renderer not in {"auto", "inline", "headless"}: raise ValueError("renderer must be auto, inline or headless")
     from mcp.server import MCPServer
     from mcp.server.mcpserver import Image, Context
     from mcp_types import ToolAnnotations, CallToolResult, TextContent, ImageContent
@@ -79,7 +100,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         def run(*args, **kwargs):
             try:
                 return fn(*args, **kwargs)
-            except (RendererError, TimeoutError, ValueError, FileNotFoundError, PermissionError) as error:
+            except (RendererError, TimeoutError, ValueError, FileNotFoundError, PermissionError, RuntimeError) as error:
                 code = ("renderer_timeout" if isinstance(error, TimeoutError) else
                         "renderer_error" if isinstance(error, RendererError) else
                         "permission_denied" if isinstance(error, PermissionError) else
@@ -97,7 +118,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         return CallToolResult(content=content, structured_content=result)
 
     points_type = Annotated[list[tuple[float, float, float]], Field(min_length=1, max_length=20000)]
-    manager = SceneManager(roots)
+    manager = SceneManager(roots, renderer=renderer)
     task_extension = None
     if task_store is not None:
         from .tasks import ViewerTasks, invoke_complete
@@ -114,6 +135,13 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
 
     server = MCPServer("3d-visualizer", version=VERSION, lifespan=lifespan, extensions=extensions,
         instructions="Inspect 3D data inline. Reuse scene_id; replies are compact by default, detail=full adds attributes and coordinate conventions. Inspect after loading and capture to verify. Compare build IDs and rendered_revision; submitted is not rendered. Use source units, never assume meters. Browser opening and URL downloads must be explicit. Alignment is asynchronous: poll status; complex align-all is opt-in. See viewer://capabilities and viewer://workflows for supported formats.")
+    def tool(**options):
+        def register(fn):
+            if tools == "full" or fn.__name__ in CORE_TOOLS | APP_TOOLS:
+                return server.tool(**options)(fn)
+            return fn
+        return register
+
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     local = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
 
@@ -125,7 +153,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         """Interactive 3D viewer rendered directly in the MCP App; no nested iframe or localhost fetch."""
         return (Path(__file__).parent / "_mcp_app" / "viewer.html").read_text(encoding="utf-8")
 
-    @server.tool(annotations=local, meta=ui_meta, structured_output=True)
+    @tool(annotations=local, meta=ui_meta, structured_output=True)
     @explain_errors
     def open_3d_files(paths: Annotated[list[str], Field(min_length=1, max_length=32)], ctx: Context, open_browser: bool | None = None, scene_id: str | None = None) -> dict[str, Any]:
         """Open local point clouds/meshes/splats/animated models together. Pass scene_id to append while preserving camera and existing objects. Include explicit supporting .bin/textures for GLTF/DAE/FBX; no implicit disk or network reads. Paths must be under configured roots. Returns a persistent scene_id and local URL; inspect to verify loading."""
@@ -133,9 +161,9 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         if scene_id is not None:
             manager.get(scene_id).add_files(files)
             return manager.describe(scene_id)
-        return manager.add(lambda: show(*files, open_browser=browser_default(ctx, open_browser)))
+        return manager.add(lambda: show(*files, open_browser=browser_default(ctx, open_browser)), ctx, bool(open_browser))
 
-    @server.tool(annotations=local, meta=ui_meta, structured_output=True)
+    @tool(annotations=local, meta=ui_meta, structured_output=True)
     @explain_errors
     def open_depth_image(path: str, ctx: Context, calibration: DepthCalibration | None = None,
                          rgb: str | None = None, confidence: str | None = None, mask: str | None = None,
@@ -159,7 +187,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         if scene_id:
             factory()
             return manager.describe(scene_id)
-        return manager.add(factory)
+        return manager.add(factory, ctx)
 
     @server.resource("viewer://depth-calibration")
     def depth_calibration_schema() -> str:
@@ -177,18 +205,18 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
             "colmap": "Use path=dense workspace, colmap_image=exact name, colmap_variant=geometric(default) or photometric. Uses sparse undistorted camera, rescales its intrinsics to depth resolution, and inverts the stored world-to-camera pose. Units remain reconstruction units, not assumed meters."
         })
 
-    @server.tool(annotations=local, meta=ui_meta, structured_output=True)
+    @tool(annotations=local, meta=ui_meta, structured_output=True)
     @explain_errors
     def visualize_points(points: points_type, ctx: Context, colors: points_type | None = None,
                          target: points_type | None = None, vectors: points_type | None = None,
                          vector_scale: float = 1.0, open_browser: bool | None = None) -> dict[str, Any]:
         """Visualize up to 20,000 XYZ points, optional RGB (integer 0..255), target overlay, or anchored vector arrows. Use files for larger data; coordinates are not automatically normalized."""
         return manager.add(lambda: show(points, colors=colors, target=target, vectors=vectors,
-                                      vector_scale=vector_scale, open_browser=browser_default(ctx, open_browser)))
+                                      vector_scale=vector_scale, open_browser=browser_default(ctx, open_browser)), ctx, bool(open_browser))
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True), meta=ui_meta, structured_output=True)
+    @tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True), meta=ui_meta, structured_output=True)
     @explain_errors
-    def open_3d_url(url: str | list[str], filename: str | None = None,
+    def open_3d_url(url: str | list[str], ctx: Context, filename: str | None = None,
                     scene_id: str | None = None,
                     max_bytes: Annotated[int, Field(ge=1, le=1024 * 1024 * 1024)] = 256 * 1024 * 1024) -> dict[str, Any]:
         """Download one URL or a list of direct HTTP(S) 3D files into one scene; pass scene_id to append. Self-contained models recommended; external resources are not fetched implicitly. Download each file on the local MCP server and open it inline. This makes a network request to the supplied URL and redirects; no browser CORS is needed. Supports the same formats as local files plus gzip. Supply filename for extensionless/signed URLs. Defaults to a 256 MiB transfer/decompressed limit, at most 1 GiB; 30-second socket and 120-second transfer limits. No login/cookies or webpage extraction. Temporary files are deleted when the scene closes."""
@@ -202,7 +230,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
             downloads = [cleanup.enter_context(open_remote(item, filename, max_bytes)) for item in urls]
             files = [file for download in downloads for file in download._files]
             if scene_id is None:
-                result = manager.add(lambda: show(*files, open_browser=False))
+                result = manager.add(lambda: show(*files, open_browser=False), ctx)
                 viewer = manager.get(result["scene_id"])
             else:
                 viewer = manager.get(scene_id)
@@ -213,7 +241,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
                 download._temporary = None
             return result
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def update_3d_scene(scene_id: str, points: points_type, colors: points_type | None = None,
                         target: points_type | None = None, vectors: points_type | None = None,
@@ -222,14 +250,14 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         manager.get(scene_id).update(points, colors=colors, target=target, vectors=vectors, vector_scale=vector_scale)
         return manager.describe(scene_id)
 
-    @server.tool(annotations=readonly)
+    @tool(annotations=readonly, structured_output=True)
     @explain_errors
-    def list_3d_scenes() -> list[dict]:
+    def list_3d_scenes() -> dict[str, Any]:
         """List scenes owned by this MCP process and their local viewer URLs."""
         with manager._lock:
-            return [manager.describe(scene_id) for scene_id in manager.scenes]
+            return {"scenes": [manager.describe(scene_id) for scene_id in manager.scenes]}
 
-    @server.tool(annotations=readonly)
+    @tool(annotations=readonly)
     @explain_errors
     def inspect_3d_scene(scene_id: str, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Inspect loaded geometry and build IDs (Python package/server and actual renderer; renderer_matches_bundle detects an old widget). Read coordinate conventions/units, camera position/direction/rotation center, projection and viewport, object transforms, opacity/color, exposure/background, selection criteria, geometry counts and bounds from the active inline viewer or explicit browser fallback. Times out if no renderer responds. Compare rendered_revision with the submitted revision."""
@@ -239,7 +267,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         expected = build["renderer_bundle"].get("renderer_build_id")
         return {**result, "build": build, "renderer_matches_bundle": bool(expected and actual.get("renderer_build_id") == expected)}
 
-    @server.tool(annotations=local)
+    @tool(annotations=local)
     @explain_errors
     def set_3d_camera(scene_id: str, fit: bool = False, position: tuple[float, float, float] | None = None,
         target: tuple[float, float, float] | None = None, up: tuple[float, float, float] | None = None,
@@ -255,14 +283,14 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         if up is not None and not any(up): raise ValueError("up must be nonzero")
         return command(scene_id, "camera", dict(detail=detail, fit=fit, position=position, target=target, up=up, rotation=rotation, fov=fov))
 
-    @server.tool(annotations=readonly)
+    @tool(annotations=readonly)
     @explain_errors
     def capture_3d_view(scene_id: str) -> Image:
         """Return an actual PNG of the rendered 3D canvas (maximum 1024 pixels per side) so the agent can visually inspect the result. Requires an active inline viewer or explicit browser fallback."""
         result = manager.get(scene_id)._bridge.request("capture")
         return Image(data=base64.b64decode(result["png"], validate=True), format="png")
 
-    @server.tool(annotations=local)
+    @tool(annotations=local)
     @explain_errors
     def close_3d_scene(scene_id: str) -> dict[str, Any]:
         """Release a viewer's local server and temporary data. Does not delete the user's source files. Any active viewer disconnects."""
@@ -274,7 +302,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
     def command(scene_id, operation, arguments):
         return manager.get(scene_id)._bridge.request(operation, {k: v for k, v in arguments.items() if v is not None})
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def navigate_3d_view(scene_id: str,
         action: Literal["fit", "preset", "orbit", "pan", "zoom", "origin", "pivot", "pick"],
@@ -291,7 +319,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
             raise ValueError("Coordinates and angles must be finite")
         return command(scene_id, "navigate", dict(detail=detail, action=action, preset=preset, vector=vector, screen=screen, yaw=yaw, pitch=pitch, factor=factor))
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def set_3d_appearance(scene_id: str, brightness: Annotated[float, Field(ge=-10, le=10)] | None = None,
                           background: Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None,
@@ -301,7 +329,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         """Set exposure stops, background #RRGGBB, persistent pivot axes, coordinate grid, object/color legend and UI theme. gamma_correction matches the UI toggle: true treats source RGB as linear (extra gamma appearance); false decodes sRGB before shading. Enabled grid/legend are also included in agent PNG captures. Axes may briefly appear during interaction when persistent axes are off."""
         return command(scene_id, "appearance", dict(detail=detail, brightness=brightness, background=background, axes=axes, grid=grid, legend=legend, gamma_correction=gamma_correction, theme=theme))
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def set_3d_object(scene_id: str, object_index: Annotated[int, Field(ge=0)],
         point_size: Annotated[float, Field(gt=0, le=1000)] | None = None,
@@ -317,7 +345,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         if color is not None and color_mode is not None: raise ValueError("Provide color or color_mode")
         return command(scene_id, "object", dict(detail=detail, object_index=object_index, point_size_mode=point_size_mode, point_size_pixels=point_size_pixels, opacity=opacity, point_size=point_size, visible=visible, mode=mode, color=color, color_mode=color_mode))
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def transform_3d_object(scene_id: str, object_index: Annotated[int, Field(ge=0)],
         action: Literal["matrix", "translate", "rotate", "quaternion", "scale", "invert", "reset", "undo"],
@@ -339,7 +367,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
             raise ValueError("Matrix must be affine: last row 0,0,0,1")
         return command(scene_id, "transform", dict(detail=detail, object_index=object_index, action=action, vector=vector, angle=angle, quaternion=quaternion, matrix=matrix, space=space, replace=replace, pivot=pivot))
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def measure_3d_scene(scene_id: str, action: Literal["list", "distance", "path_point", "undo", "close_path", "clear"],
         start: tuple[float, float, float] | None = None, end: tuple[float, float, float] | None = None, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
@@ -349,7 +377,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         if not all(math.isfinite(v) for v in (*(start or ()), *(end or ()))): raise ValueError("Coordinates must be finite")
         return command(scene_id, "measure", dict(detail=detail, action=action, start=start, end=end))
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def control_3d_video(scene_id: str, action: Literal["list", "add", "remove", "goto", "update", "loop", "play", "stop"],
         object_index: Annotated[int, Field(ge=0)] | None = None,
@@ -363,7 +391,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         if action == "loop" and enabled is None: raise ValueError("enabled is required")
         return command(scene_id, "video", dict(detail=detail, action=action, index=index, enabled=enabled, duration=duration, dwell=dwell, object_index=object_index, time=time, speed=speed))
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def align_3d_clouds(scene_id: str,
         action: Literal["auto", "icp", "correspondences", "align_all", "refine_all", "status", "undo"],
@@ -384,13 +412,13 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         if action != "align_all" and strategy != "anchor": raise ValueError("nested/complex strategies apply to align_all only")
         return command(scene_id, "alignment", dict(detail=detail, action=action, source_index=source_index, target_index=target_index, strategy=strategy, up_axis=up_axis, against_all_others=against_all_others, source_points=source_points, target_points=target_points))
 
-    @server.tool(annotations=readonly, structured_output=True)
+    @tool(annotations=readonly, structured_output=True)
     @explain_errors
     def pick_3d_point(scene_id: str, screen: tuple[Annotated[float, Field(ge=0, le=1)], Annotated[float, Field(ge=0, le=1)]], detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
         """Pick normalized canvas XY without moving the camera. Returns hit/miss, world XYZ, object and decoded point indices and scalar attributes. Mesh/splat picks may have null indices; never infer object identity from those."""
         return command(scene_id, "pick", dict(detail=detail, screen=screen))
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def manage_3d_views(scene_id: str, action: Literal["save", "restore", "list", "delete", "undo"],
                         name: Annotated[str, Field(min_length=1, max_length=100)] | None = None, detail: Literal["summary", "full"] = "summary") -> dict[str, Any]:
@@ -398,7 +426,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         if action in ("save", "restore", "delete") and name is None: raise ValueError("name is required")
         return command(scene_id, "views", dict(detail=detail, action=action, name=name))
 
-    @server.tool(annotations=local)
+    @tool(annotations=local)
     @explain_errors
     def select_3d_region(scene_id: str, action: Literal["select", "clear"] = "select",
         object_index: Annotated[int, Field(ge=0)] = 0,
@@ -416,7 +444,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         png = result.pop("png", None)
         return image_result(result, png)
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def manage_3d_selections(scene_id: str, action: Literal["save", "list", "delete", "activate", "visible", "union", "intersection", "subtract"],
         name: Annotated[str, Field(min_length=1, max_length=100)] | None = None,
@@ -429,7 +457,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         if action == "visible" and visible is None: raise ValueError("visible is required")
         return command(scene_id, "named_selections", dict(action=action,name=name,other=other,visible=visible,isolate=isolate,focus=focus,detail=detail))
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def manage_3d_scene_states(scene_id: str, action: Literal["save", "restore", "list", "delete", "export", "import", "export_models"],
         name: Annotated[str, Field(min_length=1, max_length=100)] | None = None,
@@ -446,7 +474,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
             return scene_state_file(manager,scene_id,action,name,path,restore=restore)
         return command(scene_id,"scene_states",dict(action=action,name=name,detail=detail))
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def export_3d_selection(scene_id: str, path: str,
         name: Annotated[str, Field(min_length=1, max_length=100)] | None = None) -> dict[str, Any]:
@@ -454,7 +482,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         from .inspection_files import export_subset
         return export_subset(manager,scene_id,path,name)
 
-    @server.tool(annotations=local, structured_output=True)
+    @tool(annotations=local, structured_output=True)
     @explain_errors
     def compare_3d_clouds(scene_id: str, action: Literal["enable", "disable", "status", "distance", "recompute"],
         left: Annotated[int, Field(ge=0)] = 0, right: Annotated[int, Field(ge=0)] = 1,
@@ -464,7 +492,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         """Enable linked side-by-side WebGL views with the same camera (EDL off in split mode); disable restores ordinary rendering. Distance colors left by world-space distance to right: nearest within max_distance, unmatched=NaN; paired uses corresponding decoded order and requires equal counts. Distance limit: one million combined points. Changes mark distances stale; recompute with action=recompute,left=<source> reuses recorded settings. Restored distance fields require an explicit distance computation. No alignment is run."""
         return command(scene_id,"comparison",dict(action=action,left=left,right=right,method=method,max_distance=max_distance,detail=detail))
 
-    @server.tool(annotations=readonly)
+    @tool(annotations=readonly)
     @explain_errors
     def preview_3d_views(scene_id: str,
         presets: Annotated[list[Literal["front", "back", "top", "bottom", "left", "right", "isometric"]], Field(min_length=1,max_length=4)] = ["front", "top", "isometric"]) -> CallToolResult:
@@ -473,11 +501,13 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         png=result.pop("png")
         return image_result(result, png)
 
-    @server.tool(annotations=readonly, meta={"ui": {"visibility": ["app"]}}, structured_output=True)
+    @tool(annotations=readonly, meta={"ui": {"visibility": ["app"]}}, structured_output=True)
     @explain_errors
-    def read_viewer_data(scene_id: str, resource: str, offset: Annotated[int, Field(ge=0)] = 0, renderer_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None) -> dict[str, Any]:
+    def read_viewer_data(scene_id: str, resource: str, offset: Annotated[int, Field(ge=0)] = 0, renderer_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None, after: Annotated[int, Field(ge=-1)] = -1) -> dict[str, Any]:
         """App-only transport: session metadata, pending commands or bounded geometry chunks."""
         viewer = manager.get(scene_id)
+        if resource == "agent/events":
+            return {"generation": viewer.wait_change(after, timeout=5)}
         with viewer._lock:
             if resource == "session.json":
                 return viewer._manifest()
@@ -505,7 +535,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
                 source.seek(offset)
                 return {"data": base64.b64encode(source.read(512 * 1024)).decode(), "size": size, "offset": offset}
 
-    @server.tool(annotations=local, meta={"ui": {"visibility": ["app"]}}, structured_output=True)
+    @tool(annotations=local, meta={"ui": {"visibility": ["app"]}}, structured_output=True)
     @explain_errors
     def submit_viewer_reply(scene_id: str, reply: dict[str, Any]) -> dict[str, Any]:
         """App-only transport: acknowledge a rendered command result."""
@@ -542,7 +572,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
         """Supported formats, file roots, transport and rendering workflow."""
         import json
         return json.dumps({"build": build_info(), "formats": sorted(FORMATS), "roots": [str(root) for root in manager.roots],
-                           "transport": transport, "tasks_extension": task_store is not None, "http_api": "/api/v1" if transport == "streamable-http" else None, "workflows": "viewer://workflows", "inline_mcp_app": True, "inline_requires": "MCP Apps host with app-to-server tools and WebGL",
+                           "transport": transport, "tool_profile": tools, "renderer_mode": renderer, "headless_available": True, "tasks_extension": task_store is not None, "http_api": "/api/v1" if transport == "streamable-http" else None, "workflows": "viewer://workflows", "inline_mcp_app": True, "inline_requires": "MCP Apps host with app-to-server tools and WebGL",
                            "depth": {"tool": "open_depth_image", "calibration": "viewer://depth-calibration", "formats": ["npy", "npz", "tif", "tiff", "png8/16", "exr", "pfm", "COLMAP dense bin"], "discovery": "agent reads accompanying context and supplies explicit calibration"},
                            "workflow": ["open_3d_files, visualize_points or open_depth_image", "inspect_3d_scene", "set_3d_camera", "capture_3d_view", "close_3d_scene"]})
 
@@ -554,6 +584,8 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None)
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Local 3D viewer MCP server (stdio).")
     parser.add_argument("--root", action="append", help="Allowed 3D file directory; repeat for multiple roots. Defaults to current directory.")
+    parser.add_argument("--tools", choices=["core", "full"], default="core", help="core: everyday inspection; full: depth, selection, comparison and export")
+    parser.add_argument("--renderer", choices=["auto", "inline", "headless"], default="auto", help="auto uses an MCP Apps host when advertised, otherwise headless Chromium")
     parser.add_argument("--task-state-dir", help="Enable persisted MCP Tasks in this single-process state directory")
     args = parser.parse_args(argv)
     try:
@@ -563,11 +595,11 @@ def main(argv=None):
             directory = Path(args.task_state_dir)
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             task_store = TaskStore(directory / 'tasks.sqlite')
-        server = create_server(args.root or [str(Path.cwd())], task_store=task_store)
+        server = create_server(args.root or [str(Path.cwd())], task_store=task_store, tools=args.tools, renderer=args.renderer)
     except ImportError:
         parser.exit(1, 'Install MCP support: uv tool install "3d-visualizer[mcp]"\n')
     except (ValueError, OSError) as error:
-        parser.exit(1, f"ply-viewer-mcp: {error}\n")
+        parser.exit(1, f"3d-visualizer-mcp: {error}\n")
     server.run(transport="stdio")
 
 

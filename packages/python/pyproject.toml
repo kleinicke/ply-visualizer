@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "3d-visualizer"
-version = "0.4.2"
+version = "0.5.0.dev0"
 description = "3D Visualizer: inspect point clouds, meshes and depth data with Python, CLI and MCP"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,6 +12,7 @@ license = "MIT"
 authors = [{ name = "Florian Kleinicke" }]
 
 [project.optional-dependencies]
+headless = ["playwright>=1.58,<2"]
 notebook = ["ipython>=8"]
 mcp = ["mcp>=2.2,<3"]
 http = ["mcp>=2.2,<3", "starlette>=0.48,<2", "uvicorn>=0.31.1,<1"]
@@ -22,15 +23,12 @@ Repository = "https://github.com/kleinicke/ply-visualizer"
 Issues = "https://github.com/kleinicke/ply-visualizer/issues"
 
 [project.scripts]
-3d-visualizer = "ply_visualizer.__main__:main"
-3d-visualizer-mcp = "ply_visualizer.mcp_server:main"
-3d-visualizer-api = "ply_visualizer.http_api:main"
-ply-viewer = "ply_visualizer.__main__:main"
-ply-viewer-api = "ply_visualizer.http_api:main"
-ply-viewer-mcp = "ply_visualizer.mcp_server:main"
+3d-visualizer = "viz3d.__main__:main"
+3d-visualizer-mcp = "viz3d.mcp_server:main"
+3d-visualizer-api = "viz3d.http_api:main"
 
 [tool.setuptools.packages.find]
-include = ["ply_visualizer*"]
+include = ["viz3d*"]
 
 [tool.setuptools.package-data]
-ply_visualizer = ["_assets/**/*", "_assets/*", "_mcp_app/*"]
+viz3d = ["_assets/**/*", "_assets/*", "_mcp_app/*"]

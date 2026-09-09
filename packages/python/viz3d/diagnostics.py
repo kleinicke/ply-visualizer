@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-VERSION = "0.4.2"
+VERSION = "0.5.0.dev0"
 
 @lru_cache(maxsize=1)
 def build_info():

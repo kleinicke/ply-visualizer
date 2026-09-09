@@ -4,7 +4,7 @@ Install the Python package's HTTP extras, then start one server process:
 
 ```sh
 uv pip install '3d-visualizer[http]'
-ply-viewer-api --root /path/to/data --state-dir /path/to/private/server-state
+3d-visualizer-api --root /path/to/data --state-dir /path/to/private/server-state
 ```
 
 For an unpublished checkout use `uv pip install -e 'packages/python[http]'`
@@ -58,13 +58,21 @@ removes only server-managed uploads. Do not delete uploads still needed by an
 active scene. JSON requests are bounded to 2 MiB; upload larger geometry as
 files.
 
-An opened scene is **submitted**, not necessarily rendered. Camera controls,
-projection, inspection and captures require an active inline MCP Apps viewer or
-an explicitly opened browser. For local use the scene's returned loopback URL
-opens its browser viewer. That URL is local to the server machine; it is not a
-remote viewer URL. For remote automation, open the scene through the HTTP MCP
-client's inline viewer and use its scene_id from REST. This API does not start a
-headless browser or install a renderer on a remote server.
+An opened scene is **submitted**, not necessarily rendered. Use
+`--renderer headless` plus the `headless` extra and Chromium for unattended REST
+calls; `--renderer auto` falls back to headless when a client does not advertise
+MCP Apps. `--renderer inline` needs an active widget or explicitly opened
+browser. These options also apply to the HTTP MCP server.
+
+Use `--tools full` for depth, selection and export workflows; the CLI defaults
+to the compact core profile. The Python `create_http_app` factory keeps explicit
+`tools` and `renderer` parameters for embedders. Run
+`3d-visualizer doctor --check-headless` on the server to verify its renderer
+installation.
+
+A returned loopback URL is local to the server machine, not a public remote
+viewer URL. Offscreen rendering keeps geometry transfer between the local server
+and Chromium and returns the PNG through MCP/REST.
 
 ## Tasks
 
@@ -94,7 +102,7 @@ Inspect existing files before retrying an interrupted export or download.
 For stdio, enable the same extension explicitly:
 
 ```sh
-ply-viewer-mcp --root /path/to/data --task-state-dir /path/to/private/stdio-state
+3d-visualizer-mcp --root /path/to/data --task-state-dir /path/to/private/stdio-state
 ```
 
 ## Other implementation choices

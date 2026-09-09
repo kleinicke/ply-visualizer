@@ -193,26 +193,53 @@ async function start(): Promise<void> {
     return true;
   }
 
-  let delay = 500;
+  let running = false;
+  let again = false;
   async function poll() {
-    let active = false;
-    try {
-      active = !!(await refresh());
-    } catch (error) {
-      state.error = error instanceof Error ? error.message : String(error);
-      document.documentElement.dataset.localSession = 'error';
+    if (running) {
+      again = true;
+      return;
     }
-    try {
-      active = (await handleAgentCommand(host)) || active;
-    } catch {
-      /* Retry after a transient disconnect. */
-    }
-    delay = active ? 500 : Math.min(4000, delay * 1.5);
-    window.setTimeout((): void => {
-      void poll();
-    }, delay);
+    running = true;
+    do {
+      again = false;
+      try {
+        await refresh();
+      } catch (error) {
+        state.error = error instanceof Error ? error.message : String(error);
+        document.documentElement.dataset.localSession = 'error';
+      }
+      try {
+        await handleAgentCommand(host);
+      } catch {
+        /* A later notification or heartbeat retries transient disconnects. */
+      }
+    } while (again);
+    running = false;
   }
   void poll();
+  if (document.documentElement.dataset.mcpApp === 'true') {
+    // MCP Apps do not provide a portable binary/event-stream channel. A held
+    // app-only call wakes immediately on a server change, with a heartbeat.
+    void (async () => {
+      let generation = -1;
+      while (true) {
+        try {
+          const response = await fetch(`agent/events?after=${generation}`);
+          generation = (await response.json()).generation;
+          await poll();
+        } catch {
+          await new Promise(resolve => window.setTimeout(resolve, 1000));
+        }
+      }
+    })();
+  } else {
+    const events = new EventSource('agent/events');
+    events.onmessage = () => void poll();
+    window.addEventListener('pagehide', () => events.close(), { once: true });
+  }
+  // Also notices local UI batch changes if a stream is reconnecting.
+  window.setInterval(() => void poll(), 5000);
 }
 
 if (document.documentElement.dataset.visualizerReady === 'true') {

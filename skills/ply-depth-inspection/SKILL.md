@@ -58,7 +58,7 @@ a compatible MCP client.
 ## Python workflow
 
 ```python
-from ply_visualizer import DepthCalibration, show_depth, show_colmap
+from viz3d import DepthCalibration, show_depth, show_colmap
 
 calibration = DepthCalibration(
     width=640, height=480, fx=525, fy=525, cx=319.5, cy=239.5,

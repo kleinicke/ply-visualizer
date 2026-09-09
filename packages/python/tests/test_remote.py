@@ -4,7 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import threading
 import unittest
-from ply_visualizer.remote import open_remote
+from viz3d.remote import open_remote
 
 DATA = b'FIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\nWIDTH 1\nHEIGHT 1\nPOINTS 1\nDATA ascii\n1 2 3\n' + b' ' * 1024
 
@@ -48,7 +48,7 @@ class RemoteTests(unittest.TestCase):
         import asyncio
         import base64
         from mcp import Client
-        from ply_visualizer.mcp_server import create_server
+        from viz3d.mcp_server import create_server
         async def check():
             async with Client(create_server([Path.cwd()])) as client:
                 first = await client.call_tool("open_3d_url", {"url": [self.url + "/cloud.pcd", self.url + "/redirect"]})
