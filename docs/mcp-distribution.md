@@ -94,9 +94,9 @@ Registry discovery does not automatically install the server into every client.
 | [GitHub MCP bundle](https://github.com/kleinicke/ply-visualizer/releases/tag/python-v0.4.2)              | Published, with the validated MCPB 0.4 UV bundle attached.                         |
 | [Awesome MCP Servers](https://github.com/punkpeye/awesome-mcp-servers/pull/14040)                        | Submitted; awaiting maintainer review.                                             |
 | [MCP.so](https://github.com/chatmcp/mcpso/issues/4009)                                                   | Submitted; awaiting directory review.                                              |
-| Glama                                                                                                    | Submitted through the signed-in account; awaiting review.                          |
+| [Glama](https://glama.ai/mcp/servers/kleinicke/ply-visualizer)                                           | Approved and listed; ownership claim, Dockerfile configuration and checks pending. |
 | [Smithery](https://smithery.ai/servers/f-t4mw/3d-visualizer)                                             | Released 0.4.2 MCPB uploaded; release status SUCCESS; listing metadata configured. |
-| [MCPServers.org](https://mcpservers.org/submit)                                                          | Pending: contact-email privacy has not been confirmed; no email submitted.         |
+| [MCPServers.org](https://mcpservers.org/submit)                                                          | Submission confirmed; review expected within 12 hours, with an email notification. |
 
 The old `ply-visualizer` 0.4.1 release remains on PyPI. New releases use
 `3d-visualizer`. The GitHub Actions trusted publisher is configured and verified
@@ -112,7 +112,12 @@ description. See [Glama Dockerfile and setup](../packages/glama/README.md). The
 Dockerfile must be pasted into Glama itself. It has not yet been built locally
 because Docker Desktop was unavailable; the released package was verified to
 initialize and expose 27 tools without data or a renderer. The badge remains
-pending until the actual Glama listing path and checks are verified.
+pending until Glama checks pass. The approved listing is
+`kleinicke/ply-visualizer`; its
+[Dockerfile settings](https://glama.ai/mcp/servers/kleinicke/ply-visualizer/admin/dockerfile)
+still need configuration. Safari rendered the listing and admin page blank
+during the setup attempt, including after reload; no claim or Dockerfile save
+was confirmed.
 
 ## Smithery bundle publication
 
