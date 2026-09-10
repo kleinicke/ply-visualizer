@@ -10,8 +10,9 @@
   manifest (3DS, DAE and FBX were missing).
 - Signed archive:
   `build/distributions/ply-visualizer-jetbrains-0.1.1-signed.zip`;
-  `verifyPluginSignature` passed. This update has not been uploaded to
-  Marketplace.
+  `verifyPluginSignature` passed. Uploaded through the signed-in browser on
+  2026-09-10: Marketplace confirmed **Upload Successful**, pending review (up to
+  two business days). The saved API token was rejected as invalid.
 - Binary compatibility is verified; a live JCEF interaction test on 2025.3 has
   not been performed. The earlier live testing below applies to 2024.3.5.
 
