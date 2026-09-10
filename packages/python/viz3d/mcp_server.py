@@ -134,7 +134,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None,
             manager.close()
 
     server = MCPServer("3d-visualizer", version=VERSION, lifespan=lifespan, extensions=extensions,
-        instructions="Inspect 3D data inline. Reuse scene_id; replies are compact by default, detail=full adds attributes and coordinate conventions. Inspect after loading and capture to verify. Compare build IDs and rendered_revision; submitted is not rendered. Use source units, never assume meters. Browser opening and URL downloads must be explicit. Alignment is asynchronous: poll status; complex align-all is opt-in. See viewer://capabilities and viewer://workflows for supported formats.")
+        instructions="Inspect 3D data inline. Reuse scene_id; replies are compact by default, detail=full adds attributes and coordinate conventions. Inspect after loading and capture to verify. Compare build IDs and rendered_revision; submitted is not rendered. Use source units, never assume meters. Browser opening and URL downloads must be explicit. Alignment is asynchronous: poll status; complex align-all is opt-in. Read viewer://capabilities for the active profile and rendering mode; viewer://workflows has task recipes. For depth/disparity, read viewer://depth-calibration and use accompanying files/context for calibration, never image appearance. A separate skill is optional.")
     def tool(**options):
         def register(fn):
             if tools == "full" or fn.__name__ in CORE_TOOLS | APP_TOOLS:
@@ -545,6 +545,13 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None,
     def workflows() -> str:
         """Short task recipes with success checks; tool schemas define exact arguments."""
         return json.dumps({
+            "depth_to_point_cloud": [
+                "Requires open_depth_image in the active profile. Read viewer://depth-calibration for the supported schema and coefficient ordering.",
+                "Find calibration in accompanying files, dataset documentation or producer code; match image ID, crop/resize stage and rectification. Do not infer it from pixels.",
+                "Distinguish axial depth, ray range, inverse depth and pixel disparity; establish units, value scale, baseline when needed, distortion model and pose direction. Ask for missing required facts.",
+                "For a COLMAP dense workspace, supply path, exact colmap_image and the available colmap_variant; preserve reconstruction units.",
+                "Open with explicit calibration and aligned RGB/mask/confidence when available. Inspect counts, bounds and calibration; capture and compare picks with source pixels before reporting success."
+            ],
             "inspect_unknown_scan": [
                 "open_3d_files(paths=[...]) or explicitly requested open_3d_url(url=...). Keep scene_id.",
                 "inspect_3d_scene(detail=full): verify renderer_matches_bundle, rendered_revision, counts, attributes, coordinates and units.",

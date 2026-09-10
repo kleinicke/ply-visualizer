@@ -9,7 +9,8 @@ The approved listing is
 [kleinicke/ply-visualizer](https://glama.ai/mcp/servers/kleinicke/ply-visualizer).
 The score badge was added to
 [PR #14040](https://github.com/punkpeye/awesome-mcp-servers/pull/14040). The
-checks must still pass before that listing requirement is complete.
+badge check passed. Glama confirmed publication of its release **0.1.0**, which
+installs the Python package **0.4.2**; the directory PR awaits review.
 
 ## Glama generated Dockerfile settings
 

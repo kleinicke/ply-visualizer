@@ -166,5 +166,15 @@ TLS. See the
 Registry identifier: `io.github.kleinicke/3d-visualizer`. The source repository
 remains `kleinicke/ply-visualizer`; it is not an import or installation command.
 The general inspection skill is shipped in `skills/3d-visualizer-inspection`,
-with the depth-focused skill alongside it. Registry listing and package
-installation do not automatically register a server in every agent client.
+with its depth-calibration reference included in that folder. Registry listing
+and package installation do not automatically register a server in every agent
+client.
+
+The skill is optional: tool schemas, initialization instructions and
+`viewer://workflows` provide the essential guidance without installing it. The
+skill helps agents recognize suitable tasks and find calibration in nearby files
+before making a viewer call. Copy the entire
+[`3d-visualizer-inspection`](https://github.com/kleinicke/ply-visualizer/tree/main/skills/3d-visualizer-inspection)
+folder, including `references` and `agents`, into the skill directory supported
+by your client (for Codex: `~/.codex/skills/`). It does not install or register
+MCP, and cannot enable rendering that the client does not support.

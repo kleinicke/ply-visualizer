@@ -1,0 +1,4 @@
+interface:
+  display_name: '3D Visualizer inspection'
+  short_description: 'Inspect 3D data and calibrated depth with MCP'
+  default_prompt: 'Use $3d-visualizer-inspection to inspect this 3D data and verify the rendered result.'

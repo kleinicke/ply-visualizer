@@ -62,3 +62,12 @@ For file conventions, client configuration and detailed workflows, see the
 [MCP reference](https://github.com/kleinicke/ply-visualizer/blob/main/packages/python/MCP.md)
 and
 [Python documentation](https://github.com/kleinicke/ply-visualizer/blob/main/packages/python/README.md).
+
+## Optional agent skill
+
+The
+[3D inspection skill](https://github.com/kleinicke/ply-visualizer/tree/main/skills/3d-visualizer-inspection)
+helps agents choose inspection workflows and translate calibration from nearby
+files. Install the whole folder, including its depth reference, in your client's
+skill directory. MCP tool descriptions and workflow resources remain available
+without the skill; installing it does not configure the MCP connection.

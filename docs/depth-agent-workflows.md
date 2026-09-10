@@ -94,7 +94,8 @@ opens inline without a separate browser. After submission inspect the scene and
 capture it to verify successful conversion. Existing selection, comparison,
 measurements and export tools operate on the resulting point cloud.
 
-A distributable companion skill lives at `skills/ply-depth-inspection/SKILL.md`.
+A distributable companion skill lives at
+`skills/3d-visualizer-inspection/SKILL.md` with a bundled `references/depth.md`.
 It teaches context discovery and translation, with validation checks. Installing
 it helps compatible agents choose the workflow; it cannot force every AI/client
 to use this viewer. Neither a PyPI release nor a skill is required to test a
