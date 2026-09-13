@@ -199,6 +199,42 @@ export async function projectAgentDepth(job: DepthJob, files: File[]): Promise<S
       'Explicit calibration is required; read surrounding parameter files, not image pixels'
     );
   }
+  const coefficientCounts: Record<string, number[]> = {
+    'pinhole-ideal': [0],
+    'pinhole-opencv': [4, 5, 8, 12, 14],
+    'fisheye-equidistant': [0],
+    'fisheye-opencv': [4],
+    'fisheye-kb3': [4],
+    fisheye624: [12],
+    'e57-pinhole': [0],
+    'e57-spherical': [0],
+    'e57-cylindrical': [0],
+  };
+  if (!coefficientCounts[c.camera_model]?.includes(c.coefficients.length)) {
+    throw new Error(
+      'Unsupported camera model or coefficient count; read depth calibration documentation'
+    );
+  }
+  if (
+    ![c.width, c.height].every(v => Number.isInteger(v) && v > 0) ||
+    ![
+      c.fx,
+      c.fy,
+      c.cx,
+      c.cy,
+      c.value_scale,
+      c.value_offset,
+      ...c.coefficients,
+      ...c.invalid_values,
+      ...[c.baseline, c.disparity_offset, c.min_depth, c.max_depth, c.min_confidence].filter(
+        v => v != null
+      ),
+    ].every(Number.isFinite) ||
+    c.fx <= 0 ||
+    c.fy <= 0
+  ) {
+    throw new Error('Calibration values must be finite, with positive dimensions, fx and fy');
+  }
   if (c.width !== raster.width || c.height !== raster.height) {
     throw new Error(
       `Calibration ${c.width}x${c.height} does not match raster ${raster.width}x${raster.height}; explicitly adjust intrinsics for resize/crop`

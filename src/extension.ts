@@ -1,3 +1,4 @@
+import { registerNativeAgentTools } from './agent/tools';
 import { registerRemoteFileCommand } from './remoteFileCommand';
 import * as vscode from 'vscode';
 import { isColmapModelFile } from '../engine/src/formats/colmap/colmapFiles';
@@ -14,6 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(registerRemoteFileCommand(context));
   // Register the PLY editor provider
   const provider = new PointCloudEditorProvider(context);
+  registerNativeAgentTools(context, provider);
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider('plyViewer.plyEditor', provider, {
       webviewOptions: {

@@ -1,3 +1,4 @@
+import { handleNativeAgentRequest } from './hosts/nativeAgent';
 import { updateAgentPointSizes } from './hosts/agentPointSizing';
 import { renderAgentComparison } from './hosts/agentComparison';
 import { createModelObject, updateModelPlayback } from './models/sceneModel';
@@ -2303,6 +2304,9 @@ class PointCloudVisualizer {
 
       try {
         switch (message.type) {
+          case 'nativeAgentRequest':
+            await handleNativeAgentRequest(this, message);
+            break;
           case 'registrationResult':
             handleRegistrationExtensionResult(message);
             break;

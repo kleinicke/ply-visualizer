@@ -332,7 +332,2492 @@
           "group": "navigation"
         }
       ]
-    }
+    },
+    "languageModelTools": [
+      {
+        "name": "viz3d_open_3d_files",
+        "toolReferenceName": "open_3d_files",
+        "displayName": "3D Visualizer: open 3d files",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Open local point clouds/meshes/splats/animated models together. Pass scene_id to append while preserving camera and existing objects. Include explicit supporting .bin/textures for GLTF/DAE/FBX; no implicit disk or network reads. Paths must be in the trusted VS Code workspace. Returns a persistent VS Code scene_id after loading. Maximum 256 MiB total per call; append additional batches with scene_id. Uses the native VS Code viewer.",
+        "userDescription": "Open local point clouds/meshes/splats/animated models together. Pass scene_id to append while preserving camera and existing objects. Include explicit supporting .bin/textures for GLTF/DAE/FBX; no implicit disk or network reads. Paths must be in the trusted VS Code workspace. Returns a persistent VS Code scene_id after loading. Maximum 256 MiB total per call; append additional batches with scene_id. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paths": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "title": "Paths",
+              "type": "array"
+            },
+            "scene_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Scene Id"
+            }
+          },
+          "required": [
+            "paths"
+          ],
+          "title": "open_3d_filesArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_open_depth_image",
+        "toolReferenceName": "open_depth_image",
+        "displayName": "3D Visualizer: open depth image",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Project a depth/disparity raster in the VS Code viewer using explicit calibration from surrounding files/context. Read docs/depth-agent-workflows.md in the 3D Visualizer repository for coefficient ordering and encoding. Calibration dimensions must match the raster; no parameter guessing. Supports NPY/NPZ, TIFF, PNG8/16, EXR, PFM and COLMAP dense .bin. Optional aligned RGB (HxWx3, 0..255), confidence and mask files. Pass scene_id to append without moving the camera. For a COLMAP dense workspace, set path=workspace and colmap_image=exact image name; calibration comes from its undistorted sparse model. Inspect after loading for pixel counts, provenance and projection diagnostics; picks/exports retain original pixel coordinates and raw values. Uses the native VS Code viewer.",
+        "userDescription": "Project a depth/disparity raster in the VS Code viewer using explicit calibration from surrounding files/context. Read docs/depth-agent-workflows.md in the 3D Visualizer repository for coefficient ordering and encoding. Calibration dimensions must match the raster; no parameter guessing. Supports NPY/NPZ, TIFF, PNG8/16, EXR, PFM and COLMAP dense .bin. Optional aligned RGB (HxWx3, 0..255), confidence and mask files. Pass scene_id to append without moving the camera. For a COLMAP dense workspace, set path=workspace and colmap_image=exact image name; calibration comes from its undistorted sparse model. Inspect after loading for pixel counts, provenance and projection diagnostics; picks/exports retain original pixel coordinates and raw values. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "$defs": {
+            "DepthCalibration": {
+              "description": "Intrinsics refer to the exact input raster; all lengths use meters.\n\nkind: z=axial depth, depth=ray range, disparity=rectified horizontal pixel\ndisparity, inverse_depth=1/axial meters. Converted raw = raw*value_scale +\nvalue_offset; disparity uses fx*baseline/(converted_raw+disparity_offset).\ncamera_to_world is a column-major affine matrix in the chosen convention.\nsources maps parameter names to calibration file paths/keys or explanations.",
+              "properties": {
+                "width": {
+                  "title": "Width",
+                  "type": "integer"
+                },
+                "height": {
+                  "title": "Height",
+                  "type": "integer"
+                },
+                "fx": {
+                  "title": "Fx",
+                  "type": "number"
+                },
+                "fy": {
+                  "title": "Fy",
+                  "type": "number"
+                },
+                "cx": {
+                  "title": "Cx",
+                  "type": "number"
+                },
+                "cy": {
+                  "title": "Cy",
+                  "type": "number"
+                },
+                "kind": {
+                  "title": "Kind",
+                  "type": "string"
+                },
+                "camera_model": {
+                  "default": "pinhole-ideal",
+                  "title": "Camera Model",
+                  "type": "string"
+                },
+                "coefficients": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "title": "Coefficients",
+                  "type": "array"
+                },
+                "image_rectified": {
+                  "default": false,
+                  "title": "Image Rectified",
+                  "type": "boolean"
+                },
+                "convention": {
+                  "default": "opencv",
+                  "title": "Convention",
+                  "type": "string"
+                },
+                "value_scale": {
+                  "default": 1.0,
+                  "title": "Value Scale",
+                  "type": "number"
+                },
+                "value_offset": {
+                  "default": 0.0,
+                  "title": "Value Offset",
+                  "type": "number"
+                },
+                "baseline": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Baseline"
+                },
+                "disparity_offset": {
+                  "default": 0.0,
+                  "title": "Disparity Offset",
+                  "type": "number"
+                },
+                "invalid_values": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "title": "Invalid Values",
+                  "type": "array"
+                },
+                "min_depth": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Min Depth"
+                },
+                "max_depth": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Max Depth"
+                },
+                "min_confidence": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Min Confidence"
+                },
+                "array_key": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Array Key"
+                },
+                "channel": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Channel"
+                },
+                "camera_to_world": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "type": "number"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Camera To World"
+                },
+                "sources": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Sources",
+                  "type": "object"
+                }
+              },
+              "required": [
+                "width",
+                "height",
+                "fx",
+                "fy",
+                "cx",
+                "cy",
+                "kind"
+              ],
+              "title": "DepthCalibration",
+              "type": "object"
+            }
+          },
+          "properties": {
+            "path": {
+              "title": "Path",
+              "type": "string"
+            },
+            "calibration": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DepthCalibration"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Explicit calibration from files/context: dimensions and fx,fy,cx,cy in pixels; kind=z axial depth, depth ray range, disparity or inverse_depth. Defaults: camera_model=pinhole-ideal, convention=opencv, value_scale=1, value_offset=0, coefficients=[], invalid_values=[0]. camera_to_world is column-major. RGB must be aligned HxWx3 integer 0..255. Never guess calibration from pixels."
+            },
+            "rgb": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Rgb"
+            },
+            "confidence": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confidence"
+            },
+            "mask": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Mask"
+            },
+            "scene_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Scene Id"
+            },
+            "colmap_image": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Colmap Image"
+            },
+            "colmap_variant": {
+              "default": "geometric",
+              "enum": [
+                "geometric",
+                "photometric"
+              ],
+              "title": "Colmap Variant",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "title": "open_depth_imageArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_visualize_points",
+        "toolReferenceName": "visualize_points",
+        "displayName": "3D Visualizer: visualize points",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Visualize up to 20,000 XYZ points, optional RGB (integer 0..255), target overlay, or anchored vector arrows. Use files for larger data; coordinates are not automatically normalized. Uses the native VS Code viewer.",
+        "userDescription": "Visualize up to 20,000 XYZ points, optional RGB (integer 0..255), target overlay, or anchored vector arrows. Use files for larger data; coordinates are not automatically normalized. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "points": {
+              "items": {
+                "maxItems": 3,
+                "minItems": 3,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "maxItems": 20000,
+              "minItems": 1,
+              "title": "Points",
+              "type": "array"
+            },
+            "colors": {
+              "anyOf": [
+                {
+                  "items": {
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "maxItems": 20000,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Colors"
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "items": {
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "maxItems": 20000,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Target"
+            },
+            "vectors": {
+              "anyOf": [
+                {
+                  "items": {
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "maxItems": 20000,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Vectors"
+            },
+            "vector_scale": {
+              "default": 1.0,
+              "title": "Vector Scale",
+              "type": "number"
+            }
+          },
+          "required": [
+            "points"
+          ],
+          "title": "visualize_pointsArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_open_3d_url",
+        "toolReferenceName": "open_3d_url",
+        "displayName": "3D Visualizer: open 3d url",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Download 1..32 direct HTTP(S) 3D files (including gzip) into a native VS Code scene. Supply filename for extensionless URLs. Optional scene_id appends preserving the camera. No login, cookies, webpage extraction or implicit companion downloads. max_bytes bounds each download/decompressed file; one native load is limited to 256 MiB total. 120-second timeout. Uses the native VS Code viewer.",
+        "userDescription": "Download 1..32 direct HTTP(S) 3D files (including gzip) into a native VS Code scene. Supply filename for extensionless URLs. Optional scene_id appends preserving the camera. No login, cookies, webpage extraction or implicit companion downloads. max_bytes bounds each download/decompressed file; one native load is limited to 256 MiB total. 120-second timeout. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              ],
+              "title": "Url"
+            },
+            "filename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Filename"
+            },
+            "scene_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Scene Id"
+            },
+            "max_bytes": {
+              "default": 268435456,
+              "maximum": 1073741824,
+              "minimum": 1,
+              "title": "Max Bytes",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "title": "open_3d_urlArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_update_3d_scene",
+        "toolReferenceName": "update_3d_scene",
+        "displayName": "3D Visualizer: update 3d scene",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Replace the existing scene's geometry while preserving its camera. Omitted overlays/vectors are removed. Updates the same VS Code viewer tab. Uses the native VS Code viewer.",
+        "userDescription": "Replace the existing scene's geometry while preserving its camera. Omitted overlays/vectors are removed. Updates the same VS Code viewer tab. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "points": {
+              "items": {
+                "maxItems": 3,
+                "minItems": 3,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "maxItems": 20000,
+              "minItems": 1,
+              "title": "Points",
+              "type": "array"
+            },
+            "colors": {
+              "anyOf": [
+                {
+                  "items": {
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "maxItems": 20000,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Colors"
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "items": {
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "maxItems": 20000,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Target"
+            },
+            "vectors": {
+              "anyOf": [
+                {
+                  "items": {
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "maxItems": 20000,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Vectors"
+            },
+            "vector_scale": {
+              "default": 1.0,
+              "title": "Vector Scale",
+              "type": "number"
+            }
+          },
+          "required": [
+            "scene_id",
+            "points"
+          ],
+          "title": "update_3d_sceneArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_list_3d_scenes",
+        "toolReferenceName": "list_3d_scenes",
+        "displayName": "3D Visualizer: list 3d scenes",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "List open VS Code viewer tabs, their scene_id, active/visible state and source URI. Includes manually opened tabs. Uses the native VS Code viewer.",
+        "userDescription": "List open VS Code viewer tabs, their scene_id, active/visible state and source URI. Includes manually opened tabs. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "title": "list_3d_scenesArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_inspect_3d_scene",
+        "toolReferenceName": "inspect_3d_scene",
+        "displayName": "3D Visualizer: inspect 3d scene",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Inspect the selected VS Code viewer: camera position/rotation center, coordinate conventions, transforms, visibility, opacity/color, background/exposure, selections, attributes, bounds and actual renderer build ID. Summary is compact; request detail=full for complete state. Obtain scene_id from list_3d_scenes or an open tool. Uses the native VS Code viewer.",
+        "userDescription": "Inspect the selected VS Code viewer: camera position/rotation center, coordinate conventions, transforms, visibility, opacity/color, background/exposure, selections, attributes, bounds and actual renderer build ID. Summary is compact; request detail=full for complete state. Obtain scene_id from list_3d_scenes or an open tool. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id"
+          ],
+          "title": "inspect_3d_sceneArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_set_3d_camera",
+        "toolReferenceName": "set_3d_camera",
+        "displayName": "3D Visualizer: set 3d camera",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Partially update camera position, target (rotation center), up or vertical FOV in degrees. Rotation is absolute XYZ Euler degrees; it moves target along camera -Z at the previous pivot distance. Rotation cannot combine with target/up. Fit frames visible geometry, optionally at the new FOV. Returns applied view state. Uses the native VS Code viewer.",
+        "userDescription": "Partially update camera position, target (rotation center), up or vertical FOV in degrees. Rotation is absolute XYZ Euler degrees; it moves target along camera -Z at the previous pivot distance. Rotation cannot combine with target/up. Fit frames visible geometry, optionally at the new FOV. Returns applied view state. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "fit": {
+              "default": false,
+              "title": "Fit",
+              "type": "boolean"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position"
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Target"
+            },
+            "up": {
+              "anyOf": [
+                {
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Up"
+            },
+            "rotation": {
+              "anyOf": [
+                {
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Rotation"
+            },
+            "fov": {
+              "anyOf": [
+                {
+                  "exclusiveMaximum": 180,
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Fov"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id"
+          ],
+          "title": "set_3d_cameraArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_capture_3d_view",
+        "toolReferenceName": "capture_3d_view",
+        "displayName": "3D Visualizer: capture 3d view",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Return an actual PNG image part of the selected VS Code viewer (maximum 1024 pixels per side), including enabled guides and legend. Use it to verify the visual result. Uses the native VS Code viewer.",
+        "userDescription": "Return an actual PNG image part of the selected VS Code viewer (maximum 1024 pixels per side), including enabled guides and legend. Use it to verify the visual result. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id"
+          ],
+          "title": "capture_3d_viewArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_close_3d_scene",
+        "toolReferenceName": "close_3d_scene",
+        "displayName": "3D Visualizer: close 3d scene",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Close the selected VS Code viewer tab and release its renderer. Save/export any needed scene state first; source files are not deleted. Uses the native VS Code viewer.",
+        "userDescription": "Close the selected VS Code viewer tab and release its renderer. Save/export any needed scene state first; source files are not deleted. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id"
+          ],
+          "title": "close_3d_sceneArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_navigate_3d_view",
+        "toolReferenceName": "navigate_3d_view",
+        "displayName": "3D Visualizer: navigate 3d view",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Navigate without UI. Fit tightly; presets use Y-up OpenGL. Orbit angles are degrees. Pan/pivot use world XYZ. Zoom <1 moves closer. Pick uses normalized canvas XY (top-left=0,0) and sets rotation center on visible geometry, like double-click. Origin resets pivot to 0,0,0. Uses the native VS Code viewer.",
+        "userDescription": "Navigate without UI. Fit tightly; presets use Y-up OpenGL. Orbit angles are degrees. Pan/pivot use world XYZ. Zoom <1 moves closer. Pick uses normalized canvas XY (top-left=0,0) and sets rotation center on visible geometry, like double-click. Origin resets pivot to 0,0,0. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "action": {
+              "enum": [
+                "fit",
+                "preset",
+                "orbit",
+                "pan",
+                "zoom",
+                "origin",
+                "pivot",
+                "pick"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "preset": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "front",
+                    "back",
+                    "top",
+                    "bottom",
+                    "left",
+                    "right",
+                    "isometric"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Preset"
+            },
+            "vector": {
+              "anyOf": [
+                {
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Vector"
+            },
+            "screen": {
+              "anyOf": [
+                {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "maximum": 1,
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    {
+                      "maximum": 1,
+                      "minimum": 0,
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Screen"
+            },
+            "yaw": {
+              "default": 0,
+              "title": "Yaw",
+              "type": "number"
+            },
+            "pitch": {
+              "default": 0,
+              "title": "Pitch",
+              "type": "number"
+            },
+            "factor": {
+              "default": 1,
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "title": "Factor",
+              "type": "number"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "action"
+          ],
+          "title": "navigate_3d_viewArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_set_3d_appearance",
+        "toolReferenceName": "set_3d_appearance",
+        "displayName": "3D Visualizer: set 3d appearance",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Set exposure stops, background #RRGGBB, persistent pivot axes, coordinate grid, object/color legend and UI theme. gamma_correction matches the UI toggle: true treats source RGB as linear (extra gamma appearance); false decodes sRGB before shading. Enabled grid/legend are also included in agent PNG captures. Axes may briefly appear during interaction when persistent axes are off. Uses the native VS Code viewer.",
+        "userDescription": "Set exposure stops, background #RRGGBB, persistent pivot axes, coordinate grid, object/color legend and UI theme. gamma_correction matches the UI toggle: true treats source RGB as linear (extra gamma appearance); false decodes sRGB before shading. Enabled grid/legend are also included in agent PNG captures. Axes may briefly appear during interaction when persistent axes are off. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "brightness": {
+              "anyOf": [
+                {
+                  "maximum": 10,
+                  "minimum": -10,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Brightness"
+            },
+            "background": {
+              "anyOf": [
+                {
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Background"
+            },
+            "axes": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Axes"
+            },
+            "grid": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Grid"
+            },
+            "legend": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Legend"
+            },
+            "gamma_correction": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Gamma Correction"
+            },
+            "theme": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "dark-modern",
+                    "light-modern"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Theme"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id"
+          ],
+          "title": "set_3d_appearanceArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_set_3d_object",
+        "toolReferenceName": "set_3d_object",
+        "displayName": "3D Visualizer: set 3d object",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Set overlay opacity (0..1), visibility, world-unit point size (or point_size_mode=adaptive for a camera-dependent 2/4/8 pixel target; point_size_pixels=1..64 explicitly sets that target and enables adaptive sizing), points/mesh representation, fixed RGB color or original/intensity/scalar coloring. Get object_index, scalar_fields and available_color_modes from inspection; these include palette indices and projected colors when available. Mesh requires faces. Fixed color and color_mode are mutually exclusive. Uses the native VS Code viewer.",
+        "userDescription": "Set overlay opacity (0..1), visibility, world-unit point size (or point_size_mode=adaptive for a camera-dependent 2/4/8 pixel target; point_size_pixels=1..64 explicitly sets that target and enables adaptive sizing), points/mesh representation, fixed RGB color or original/intensity/scalar coloring. Get object_index, scalar_fields and available_color_modes from inspection; these include palette indices and projected colors when available. Mesh requires faces. Fixed color and color_mode are mutually exclusive. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "object_index": {
+              "minimum": 0,
+              "title": "Object Index",
+              "type": "integer"
+            },
+            "point_size": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 1000,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Point Size"
+            },
+            "point_size_mode": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "adaptive",
+                    "fixed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Point Size Mode"
+            },
+            "point_size_pixels": {
+              "anyOf": [
+                {
+                  "maximum": 64,
+                  "minimum": 1,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Point Size Pixels"
+            },
+            "opacity": {
+              "anyOf": [
+                {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Opacity"
+            },
+            "visible": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Visible"
+            },
+            "mode": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "points",
+                    "mesh"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Mode"
+            },
+            "color": {
+              "anyOf": [
+                {
+                  "pattern": "^#[0-9a-fA-F]{6}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Color"
+            },
+            "color_mode": {
+              "anyOf": [
+                {
+                  "pattern": "^(original|recolored|assigned|[0-9]+|intensity|intensity-grayscale|intensity-viridis|intensity-colors|scalar:[^:]+:(viridis|grayscale|colors))$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Color Mode"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "object_index"
+          ],
+          "title": "set_3d_objectArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_transform_3d_object",
+        "toolReferenceName": "transform_3d_object",
+        "displayName": "3D Visualizer: transform 3d object",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Transform one cloud/mesh without changing source files or camera. Translate/scale use vector XYZ; rotate uses vector axis plus angle degrees (90 for quarter turns); quaternion uses XYZW, normalized. Matrix is affine 4x4 COLUMN-MAJOR, matching inspection (transpose row-major UI input). Default composes current*delta in local space; world uses delta*current. pivot=center rotates/scales around the current bounding-box center; explicit XYZ pivot uses the chosen space; omitted pivot is the coordinate origin. Undo restores the last of up to 50 agent edits per object. replace=True sets an absolute transform. Invert/reset act on the current matrix. Inspect local_to_world to verify. Visibility, point size and coloring use set_3d_object. Uses the native VS Code viewer.",
+        "userDescription": "Transform one cloud/mesh without changing source files or camera. Translate/scale use vector XYZ; rotate uses vector axis plus angle degrees (90 for quarter turns); quaternion uses XYZW, normalized. Matrix is affine 4x4 COLUMN-MAJOR, matching inspection (transpose row-major UI input). Default composes current*delta in local space; world uses delta*current. pivot=center rotates/scales around the current bounding-box center; explicit XYZ pivot uses the chosen space; omitted pivot is the coordinate origin. Undo restores the last of up to 50 agent edits per object. replace=True sets an absolute transform. Invert/reset act on the current matrix. Inspect local_to_world to verify. Visibility, point size and coloring use set_3d_object. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "object_index": {
+              "minimum": 0,
+              "title": "Object Index",
+              "type": "integer"
+            },
+            "action": {
+              "enum": [
+                "matrix",
+                "translate",
+                "rotate",
+                "quaternion",
+                "scale",
+                "invert",
+                "reset",
+                "undo"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "vector": {
+              "anyOf": [
+                {
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Vector"
+            },
+            "angle": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Angle"
+            },
+            "quaternion": {
+              "anyOf": [
+                {
+                  "maxItems": 4,
+                  "minItems": 4,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Quaternion"
+            },
+            "matrix": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "number"
+                  },
+                  "maxItems": 16,
+                  "minItems": 16,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Matrix"
+            },
+            "space": {
+              "default": "local",
+              "enum": [
+                "local",
+                "world"
+              ],
+              "title": "Space",
+              "type": "string"
+            },
+            "replace": {
+              "default": false,
+              "title": "Replace",
+              "type": "boolean"
+            },
+            "pivot": {
+              "anyOf": [
+                {
+                  "const": "center",
+                  "type": "string"
+                },
+                {
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Pivot"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "object_index",
+            "action"
+          ],
+          "title": "transform_3d_objectArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_measure_3d_scene",
+        "toolReferenceName": "measure_3d_scene",
+        "displayName": "3D Visualizer: measure 3d scene",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Add/list/clear visible measurements in scene units. Distance uses start/end XYZ; path_point appends end to the active path; undo removes its last point; close_path toggles closure. Uses the native VS Code viewer.",
+        "userDescription": "Add/list/clear visible measurements in scene units. Distance uses start/end XYZ; path_point appends end to the active path; undo removes its last point; close_path toggles closure. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "action": {
+              "enum": [
+                "list",
+                "distance",
+                "path_point",
+                "undo",
+                "close_path",
+                "clear"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "start": {
+              "anyOf": [
+                {
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Start"
+            },
+            "end": {
+              "anyOf": [
+                {
+                  "maxItems": 3,
+                  "minItems": 3,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "End"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "action"
+          ],
+          "title": "measure_3d_sceneArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_control_3d_video",
+        "toolReferenceName": "control_3d_video",
+        "displayName": "3D Visualizer: control 3d video",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Control camera keyframes, or model animation when object_index is supplied. Model: list clips, update(index/speed), play, stop (pause), loop(enabled), goto(time in seconds, pauses). GLB/GLTF/FBX/DAE retain supported embedded animation; 3DS is static. With no object_index, manage camera keyframes: Add captures current camera. Update sets segment duration/dwell in seconds. Loop requires enabled; play needs two keyframes; stop restores camera. Returns reusable keyframe poses. Uses the native VS Code viewer.",
+        "userDescription": "Control camera keyframes, or model animation when object_index is supplied. Model: list clips, update(index/speed), play, stop (pause), loop(enabled), goto(time in seconds, pauses). GLB/GLTF/FBX/DAE retain supported embedded animation; 3DS is static. With no object_index, manage camera keyframes: Add captures current camera. Update sets segment duration/dwell in seconds. Loop requires enabled; play needs two keyframes; stop restores camera. Returns reusable keyframe poses. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "action": {
+              "enum": [
+                "list",
+                "add",
+                "remove",
+                "goto",
+                "update",
+                "loop",
+                "play",
+                "stop"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "object_index": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Object Index"
+            },
+            "time": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Time"
+            },
+            "speed": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 100,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Speed"
+            },
+            "index": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Index"
+            },
+            "enabled": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Enabled"
+            },
+            "duration": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "maximum": 3600,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Duration"
+            },
+            "dwell": {
+              "anyOf": [
+                {
+                  "maximum": 3600,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Dwell"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "action"
+          ],
+          "title": "control_3d_videoArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_align_3d_clouds",
+        "toolReferenceName": "align_3d_clouds",
+        "displayName": "3D Visualizer: align 3d clouds",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Start a registration job, then poll action=status until job.state is completed/failed; submitted is not aligned. Reuses the viewer's Rust solvers. auto: level/up-axis yaw sweep then ICP; icp: refine an already close pair; correspondences: fit >=3 non-collinear paired world XYZ landmarks. source_index moves, target_index stays fixed. align_all/refine_all hold target fixed; strategies anchor (each to anchor), nested (grow aligned union), complex (grow with extra hypotheses). For auto/icp, against_all_others matches the moving cloud to the union of all other clouds. No scale/nonrigid estimation. up_axis describes the DATA, not the camera (default y); use z for Z-up scans. Clear temporary selections first. Undo restores transforms from the last accepted agent job. Inspection/capture remain available; geometry refresh waits for alignment. Partial align-all failures are reported per object. Uses the native VS Code viewer.",
+        "userDescription": "Start a registration job, then poll action=status until job.state is completed/failed; submitted is not aligned. Reuses the viewer's Rust solvers. auto: level/up-axis yaw sweep then ICP; icp: refine an already close pair; correspondences: fit >=3 non-collinear paired world XYZ landmarks. source_index moves, target_index stays fixed. align_all/refine_all hold target fixed; strategies anchor (each to anchor), nested (grow aligned union), complex (grow with extra hypotheses). For auto/icp, against_all_others matches the moving cloud to the union of all other clouds. No scale/nonrigid estimation. up_axis describes the DATA, not the camera (default y); use z for Z-up scans. Clear temporary selections first. Undo restores transforms from the last accepted agent job. Inspection/capture remain available; geometry refresh waits for alignment. Partial align-all failures are reported per object. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "action": {
+              "enum": [
+                "auto",
+                "icp",
+                "correspondences",
+                "align_all",
+                "refine_all",
+                "status",
+                "undo"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "source_index": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Index"
+            },
+            "target_index": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Target Index",
+              "type": "integer"
+            },
+            "strategy": {
+              "default": "anchor",
+              "enum": [
+                "anchor",
+                "nested",
+                "complex"
+              ],
+              "title": "Strategy",
+              "type": "string"
+            },
+            "up_axis": {
+              "default": "y",
+              "enum": [
+                "x",
+                "y",
+                "z"
+              ],
+              "title": "Up Axis",
+              "type": "string"
+            },
+            "against_all_others": {
+              "default": false,
+              "title": "Against All Others",
+              "type": "boolean"
+            },
+            "source_points": {
+              "anyOf": [
+                {
+                  "items": {
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "maxItems": 256,
+                  "minItems": 3,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Points"
+            },
+            "target_points": {
+              "anyOf": [
+                {
+                  "items": {
+                    "maxItems": 3,
+                    "minItems": 3,
+                    "prefixItems": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ],
+                    "type": "array"
+                  },
+                  "maxItems": 256,
+                  "minItems": 3,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Target Points"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "action"
+          ],
+          "title": "align_3d_cloudsArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_pick_3d_point",
+        "toolReferenceName": "pick_3d_point",
+        "displayName": "3D Visualizer: pick 3d point",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Pick normalized canvas XY without moving the camera. Returns hit/miss, world XYZ, object and decoded point indices and scalar attributes. Mesh/splat picks may have null indices; never infer object identity from those. Uses the native VS Code viewer.",
+        "userDescription": "Pick normalized canvas XY without moving the camera. Returns hit/miss, world XYZ, object and decoded point indices and scalar attributes. Mesh/splat picks may have null indices; never infer object identity from those. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "screen": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                }
+              ],
+              "title": "Screen",
+              "type": "array"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "screen"
+          ],
+          "title": "pick_3d_pointArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_manage_3d_views",
+        "toolReferenceName": "manage_3d_views",
+        "displayName": "3D Visualizer: manage 3d views",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Save/restore named camera views for this renderer session; undo the last agent camera change (up to 50). Names are not persisted after closing/reloading the widget. Does not restore geometry or filters. Uses the native VS Code viewer.",
+        "userDescription": "Save/restore named camera views for this renderer session; undo the last agent camera change (up to 50). Names are not persisted after closing/reloading the widget. Does not restore geometry or filters. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "action": {
+              "enum": [
+                "save",
+                "restore",
+                "list",
+                "delete",
+                "undo"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "action"
+          ],
+          "title": "manage_3d_viewsArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_select_3d_region",
+        "toolReferenceName": "select_3d_region",
+        "displayName": "3D Visualizer: select 3d region",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "One-step select/isolate/focus with PNG preview. Select all points in an object, or intersect scalar field values, world box [minX,minY,minZ,maxX,maxY,maxZ], and plane halfspace ax+by+cz+d>=0. Creates a reversible highlighted point subset; clear restores prior visibility. Label IDs are numeric, not semantic object names: inspect attributes/pick first. No automatic segmentation; point clouds only. Replaces the previous selection. Disable highlight to preserve original colors. Moving the plane requires another select call. Uses the native VS Code viewer.",
+        "userDescription": "One-step select/isolate/focus with PNG preview. Select all points in an object, or intersect scalar field values, world box [minX,minY,minZ,maxX,maxY,maxZ], and plane halfspace ax+by+cz+d>=0. Creates a reversible highlighted point subset; clear restores prior visibility. Label IDs are numeric, not semantic object names: inspect attributes/pick first. No automatic segmentation; point clouds only. Replaces the previous selection. Disable highlight to preserve original colors. Moving the plane requires another select call. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "action": {
+              "default": "select",
+              "enum": [
+                "select",
+                "clear"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "object_index": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Object Index",
+              "type": "integer"
+            },
+            "field": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Field"
+            },
+            "values": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Values"
+            },
+            "bounds": {
+              "anyOf": [
+                {
+                  "maxItems": 6,
+                  "minItems": 6,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Bounds"
+            },
+            "plane": {
+              "anyOf": [
+                {
+                  "maxItems": 4,
+                  "minItems": 4,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plane"
+            },
+            "isolate": {
+              "default": true,
+              "title": "Isolate",
+              "type": "boolean"
+            },
+            "focus": {
+              "default": true,
+              "title": "Focus",
+              "type": "boolean"
+            },
+            "highlight": {
+              "default": true,
+              "title": "Highlight",
+              "type": "boolean"
+            },
+            "preview": {
+              "default": true,
+              "title": "Preview",
+              "type": "boolean"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id"
+          ],
+          "title": "select_3d_regionArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_manage_3d_selections",
+        "toolReferenceName": "manage_3d_selections",
+        "displayName": "3D Visualizer: manage 3d selections",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Name the active selection; retain up to 20 independent subsets. Toggle each name's visibility or activate/focus it. Union/intersection/subtract combine two names from the same source into a new active selection; save it to retain it. Defaults isolate=False and focus=False preserve existing visibility and camera. Empty set results return status=empty, clear the active selection, and cannot export the previous result. Geometry updates expire selections; scene-state export persists them. Uses the native VS Code viewer.",
+        "userDescription": "Name the active selection; retain up to 20 independent subsets. Toggle each name's visibility or activate/focus it. Union/intersection/subtract combine two names from the same source into a new active selection; save it to retain it. Defaults isolate=False and focus=False preserve existing visibility and camera. Empty set results return status=empty, clear the active selection, and cannot export the previous result. Geometry updates expire selections; scene-state export persists them. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "action": {
+              "enum": [
+                "save",
+                "list",
+                "delete",
+                "activate",
+                "visible",
+                "union",
+                "intersection",
+                "subtract"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            },
+            "other": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Other"
+            },
+            "visible": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Visible"
+            },
+            "isolate": {
+              "default": false,
+              "title": "Isolate",
+              "type": "boolean"
+            },
+            "focus": {
+              "default": false,
+              "title": "Focus",
+              "type": "boolean"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "action"
+          ],
+          "title": "manage_3d_selectionsArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_manage_3d_scene_states",
+        "toolReferenceName": "manage_3d_scene_states",
+        "displayName": "3D Visualizer: manage 3d scene states",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Save/restore complete camera, transforms, selection/named subsets, visibility, color, opacity and presentation. Export/import a .json in the trusted VS Code workspace to persist after restarting. Reopen identical geometry in the same order before import; import stores a state; restore=True imports and applies it in one call. Existing files are never overwritten. Maximum 20 states, 4 MiB each. JSON does not embed geometry or playback. action=export_models writes all visible models as a new .glb (no name required), including supported native animation clips. GLB excludes Gaussian splats, grid/UI, source-row attributes and point-size settings; use subset PLY for analysis attributes. Export limit 256 MiB. Uses the native VS Code viewer.",
+        "userDescription": "Save/restore complete camera, transforms, selection/named subsets, visibility, color, opacity and presentation. Export/import a .json in the trusted VS Code workspace to persist after restarting. Reopen identical geometry in the same order before import; import stores a state; restore=True imports and applies it in one call. Existing files are never overwritten. Maximum 20 states, 4 MiB each. JSON does not embed geometry or playback. action=export_models writes all visible models as a new .glb (no name required), including supported native animation clips. GLB excludes Gaussian splats, grid/UI, source-row attributes and point-size settings; use subset PLY for analysis attributes. Export limit 256 MiB. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "action": {
+              "enum": [
+                "save",
+                "restore",
+                "list",
+                "delete",
+                "export",
+                "import",
+                "export_models"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            },
+            "path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Path"
+            },
+            "restore": {
+              "default": false,
+              "title": "Restore",
+              "type": "boolean"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "action"
+          ],
+          "title": "manage_3d_scene_statesArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_export_3d_selection",
+        "toolReferenceName": "export_3d_selection",
+        "displayName": "3D Visualizer: export 3d selection",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Write the active or named subset to a NEW binary .ply in the trusted VS Code workspace (maximum 256 MiB). Preserve decoded RGB, normals, scalar attributes, decoded indices, and original source_row when available (depth raster: pixel_v*width+pixel_u). Coordinates are object-local; header stores local_to_world and source origin. Returns a path, never point data/base64. No overwrite; not a lossless copy of the original file's numeric types. Uses the native VS Code viewer.",
+        "userDescription": "Write the active or named subset to a NEW binary .ply in the trusted VS Code workspace (maximum 256 MiB). Preserve decoded RGB, normals, scalar attributes, decoded indices, and original source_row when available (depth raster: pixel_v*width+pixel_u). Coordinates are object-local; header stores local_to_world and source origin. Returns a path, never point data/base64. No overwrite; not a lossless copy of the original file's numeric types. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "path": {
+              "title": "Path",
+              "type": "string"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "maxLength": 100,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            }
+          },
+          "required": [
+            "scene_id",
+            "path"
+          ],
+          "title": "export_3d_selectionArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_compare_3d_clouds",
+        "toolReferenceName": "compare_3d_clouds",
+        "displayName": "3D Visualizer: compare 3d clouds",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Enable linked side-by-side WebGL views with the same camera (EDL off in split mode); disable restores ordinary rendering. Distance colors left by world-space distance to right: nearest within max_distance, unmatched=NaN; paired uses corresponding decoded order and requires equal counts. Distance limit: one million combined points. Changes mark distances stale; recompute with action=recompute,left=<source> reuses recorded settings. Restored distance fields require an explicit distance computation. No alignment is run. Uses the native VS Code viewer.",
+        "userDescription": "Enable linked side-by-side WebGL views with the same camera (EDL off in split mode); disable restores ordinary rendering. Distance colors left by world-space distance to right: nearest within max_distance, unmatched=NaN; paired uses corresponding decoded order and requires equal counts. Distance limit: one million combined points. Changes mark distances stale; recompute with action=recompute,left=<source> reuses recorded settings. Restored distance fields require an explicit distance computation. No alignment is run. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "action": {
+              "enum": [
+                "enable",
+                "disable",
+                "status",
+                "distance",
+                "recompute"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "left": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Left",
+              "type": "integer"
+            },
+            "right": {
+              "default": 1,
+              "minimum": 0,
+              "title": "Right",
+              "type": "integer"
+            },
+            "method": {
+              "default": "nearest",
+              "enum": [
+                "nearest",
+                "paired"
+              ],
+              "title": "Method",
+              "type": "string"
+            },
+            "max_distance": {
+              "default": 0.1,
+              "exclusiveMinimum": 0,
+              "title": "Max Distance",
+              "type": "number"
+            },
+            "detail": {
+              "default": "summary",
+              "enum": [
+                "summary",
+                "full"
+              ],
+              "title": "Detail",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene_id",
+            "action"
+          ],
+          "title": "compare_3d_cloudsArguments",
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "viz3d_preview_3d_views",
+        "toolReferenceName": "preview_3d_views",
+        "displayName": "3D Visualizer: preview 3d views",
+        "canBeReferencedInPrompt": true,
+        "when": "isWorkspaceTrusted",
+        "modelDescription": "Return one labeled multi-view PNG to choose a useful angle, preserving the original camera. Disable split comparison first. Includes enabled grid, legend and selection summary. Uses the native VS Code viewer.",
+        "userDescription": "Return one labeled multi-view PNG to choose a useful angle, preserving the original camera. Disable split comparison first. Includes enabled grid, legend and selection summary. Uses the native VS Code viewer.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scene_id": {
+              "title": "Scene Id",
+              "type": "string"
+            },
+            "presets": {
+              "default": [
+                "front",
+                "top",
+                "isometric"
+              ],
+              "items": {
+                "enum": [
+                  "front",
+                  "back",
+                  "top",
+                  "bottom",
+                  "left",
+                  "right",
+                  "isometric"
+                ],
+                "type": "string"
+              },
+              "maxItems": 4,
+              "minItems": 1,
+              "title": "Presets",
+              "type": "array"
+            }
+          },
+          "required": [
+            "scene_id"
+          ],
+          "title": "preview_3d_viewsArguments",
+          "additionalProperties": false
+        }
+      }
+    ]
   },
   "scripts": {
     "build:python-viewer": "webpack --config engine/webpack.local.cjs --mode=production && webpack --config engine/webpack.mcp-app.cjs --mode=production",
@@ -348,7 +2833,7 @@
     "lint": "eslint src --ext ts && npm run lint:svelte",
     "lint:svelte": "npm run check --workspace=engine",
     "test": "node ./out/src/test/runTest.js",
-    "test:node": "npm run compile:tests && mocha --ui tdd \"out/src/test/suite/**/*.test.js\" --ignore \"out/src/test/suite/extension.test.js\" --ignore \"out/src/test/suite/extensionAdvanced.test.js\" --ignore \"out/src/test/suite/integration.test.js\" --ignore \"out/src/test/suite/pointCloudEditorProviderAdvanced.test.js\"",
+    "test:node": "npm run compile:tests && mocha --ui tdd \"out/src/test/suite/**/*.test.js\" --ignore \"out/src/test/suite/extension.test.js\" --ignore \"out/src/test/suite/extensionAdvanced.test.js\" --ignore \"out/src/test/suite/integration.test.js\" --ignore \"out/src/test/suite/pointCloudEditorProviderAdvanced.test.js\" --ignore \"out/src/test/suite/nativeAgent.test.js\"",
     "test:coverage": "npm run pretest && c8 node ./out/src/test/runTest.js",
     "coverage": "npm run test:coverage && npm run coverage:report",
     "coverage:report": "c8 report && node ./analyze-coverage.mjs",
@@ -362,7 +2847,8 @@
     "desktop:dev": "npm run dev --workspace=visualizer-desktop --",
     "desktop:build": "npm run build --workspace=visualizer-desktop --",
     "desktop:check": "npm run check --workspace=visualizer-desktop",
-    "desktop:test": "npm run test --workspace=visualizer-desktop"
+    "desktop:test": "npm run test --workspace=visualizer-desktop",
+    "test:vscode-agent": "npm run compile:all && node scripts/test-vscode-agent.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
@@ -399,6 +2885,7 @@
   },
   "dependencies": {
     "7z-wasm": "^1.2.0",
+    "ajv": "^8.20.0",
     "js-yaml": "^5.2.3",
     "lzma": "^2.3.2",
     "three": "^0.185.1"

@@ -2,7 +2,7 @@
  * VS Code Theme System for 3D Visualizer Website
  *
  * This module provides a theme system that allows switching between different
- * VS Code color themes. Themes are loaded dynamically from JSON files.
+ * VS Code color themes. Theme JSON is bundled so switching also works inside offline VS Code webviews.
  */
 
 export interface VSCodeTheme {
@@ -48,12 +48,11 @@ async function loadThemeFromFile(config: (typeof THEME_CONFIGS)[0]): Promise<VSC
   }
 
   try {
-    const response = await fetch(`src/${config.file}`);
-    if (!response.ok) {
-      throw new Error(`Failed to load theme: ${response.statusText}`);
-    }
-
-    const theme: VSCodeTheme = await response.json();
+    const bundled: Record<string, VSCodeTheme> = {
+      'dark-modern': require('./themes/dark-modern.json'),
+      'light-modern': require('./themes/light-modern.json'),
+    };
+    const theme = bundled[config.name];
 
     // Validate the theme structure
     if (!theme.name || !theme.displayName || !theme.colors) {

@@ -1,3 +1,4 @@
+import { validateAgentCommand } from './agentValidation';
 import { localSessionState } from '../state/localSession.svelte';
 import { agentBuild } from './agentBuild';
 import { updateAgentLegend } from './agentLegend';
@@ -47,9 +48,26 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
     });
     return true;
   }
+  const reply = await executeAgentCommand(host, command, true);
+  previousReply = reply;
+  await fetch('agent/result', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...reply, renderer_id: rendererId }),
+  });
+  return true;
+}
+
+/** Transport-independent executor shared by MCP and the native VS Code viewer. */
+export async function executeAgentCommand(
+  host: AgentViewerHost,
+  command: { id: string; operation: string; arguments: Record<string, any> },
+  requireLocalSession = false
+): Promise<{ id: string; result?: any; error?: string }> {
   let reply: { id: string; result?: unknown; error?: string } = { id: command.id };
   try {
-    if (document.documentElement.dataset.localSession !== 'loaded') {
+    validateAgentCommand(command.operation, command.arguments);
+    if (requireLocalSession && document.documentElement.dataset.localSession !== 'loaded') {
       throw new Error(
         localSessionState.error
           ? `Scene loading failed: ${localSessionState.error}`
@@ -150,11 +168,5 @@ export async function handleAgentCommand(host: AgentViewerHost): Promise<boolean
   } catch (error) {
     reply = { id: command.id, error: error instanceof Error ? error.message : String(error) };
   }
-  previousReply = reply;
-  await fetch('agent/result', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...reply, renderer_id: rendererId }),
-  });
-  return true;
+  return reply;
 }

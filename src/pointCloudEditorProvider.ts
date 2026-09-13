@@ -1,3 +1,4 @@
+import { nativeAgentPanels } from './agent/panels';
 import { handleModelResourceRequest } from './providerHandlers/sceneModels';
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -193,6 +194,29 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     return new SpatialDocument(uri);
   }
 
+  public async createAgentScene(): Promise<vscode.WebviewPanel> {
+    const panel = vscode.window.createWebviewPanel(
+      'plyViewer.agentScene',
+      '3D Visualizer — Agent scene',
+      vscode.ViewColumn.Active,
+      { retainContextWhenHidden: true }
+    );
+    const cancellation = new vscode.CancellationTokenSource();
+    try {
+      await this.resolveCustomEditor(
+        new SpatialDocument(vscode.Uri.parse(`viz3d-agent:/${Date.now()}-${Math.random()}`)),
+        panel,
+        cancellation.token
+      );
+      return panel;
+    } catch (error) {
+      panel.dispose();
+      throw error;
+    } finally {
+      cancellation.dispose();
+    }
+  }
+
   public async resolveCustomEditor(
     document: SpatialDocument,
     webviewPanel: vscode.WebviewPanel,
@@ -200,6 +224,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   ): Promise<void> {
     const readyGate = createWebviewReadyGate();
     this.activePanels.add(webviewPanel);
+    nativeAgentPanels.attach(webviewPanel, document.uri);
     this.pathToPanel.set(document.uri.fsPath, webviewPanel);
     this.panelToPath.set(webviewPanel, document.uri.fsPath);
     this.panelVolumeSessions.set(webviewPanel, new Set([document.uri.toString()]));
@@ -417,6 +442,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     // Show UI immediately. Reading/parsing starts in parallel below, while
     // prepareWebviewMessaging queues all outbound messages until webviewReady.
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
+
+    if (document.uri.scheme === 'viz3d-agent') {
+      return;
+    }
 
     // Anchor the load's wall-clock start for the unified end-to-end timing line.
     this.currentLoadStartedAt = Date.now();
@@ -733,9 +762,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     // 1. Add Content Security Policy. 'wasm-unsafe-eval' is required to compile
     //    the TIFF decoder WebAssembly module; connect-src already allows
     //    fetching the .wasm binary from the webview resource origin.
+    //    connect-src blob: allows explicitly supplied GLTF buffers and textures.
     //    connect-src data: is for Spark (gaussian splats), which fetches its
     //    inlined WASM sorter from a data:application/wasm URL.
-    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; connect-src ${webview.cspSource} https: data:; worker-src ${webview.cspSource} blob:; script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; connect-src ${webview.cspSource} https: data: blob:; worker-src ${webview.cspSource} blob:; script-src 'nonce-${nonce}' ${webview.cspSource} 'wasm-unsafe-eval'; img-src ${webview.cspSource} https: blob: data:; font-src ${webview.cspSource};">`;
     html = html.replace('<meta name="viewport"', `${cspMeta}\n    <meta name="viewport"`);
 
     // 2. Replace resource URLs with webview URIs
