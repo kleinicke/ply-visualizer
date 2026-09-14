@@ -1,0 +1,11 @@
+CAD decoding uses occt-import-js 0.0.23 and Open CASCADE Technology.
+The decoder JavaScript and WebAssembly are distributed as separate, unmodified
+assets. They are loaded only for STEP/STP, IGES/IGS and BREP files.
+
+Importer source and build instructions:
+https://github.com/kovacsv/occt-import-js
+Package: https://www.npmjs.com/package/occt-import-js/v/0.0.23
+Open CASCADE source revision is recorded by that project's occt submodule.
+
+Licenses: license.occt-import-js.txt and license.occt.txt in this directory.
+The CAD adapter in engine/src/models/ is part of this viewer.

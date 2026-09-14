@@ -544,7 +544,8 @@ export async function handleBrowserFiles(
     }
     if (modelFiles.length) {
       files = files.filter(
-        file => !isSceneModel(file.name) && !/\.(bin|png|jpe?g|tga|bmp|webp|mtl)$/i.test(file.name)
+        file =>
+          !isSceneModel(file.name) && !/\.(bin|png|jpe?g|tga|bmp|webp|gif|mtl)$/i.test(file.name)
       );
       if (!files.length) {
         return;

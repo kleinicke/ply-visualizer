@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { readRemoteModelResource } from './remoteModelResource';
 import { SceneModel, modelSpatialData } from './sceneModel';
+import { cadFormatForExtension, type CadDecoder } from './cadTypes';
 
 export interface ModelResource {
   bytes: Uint8Array<ArrayBuffer>;
@@ -12,6 +13,7 @@ export interface ModelSource {
   baseUrl?: string;
   readResource?: (relative: string) => Promise<ModelResource>;
   files?: File[];
+  decodeCad?: CadDecoder;
 }
 
 /** Preload declared resources so loaders can use ordinary browser blob URLs in
@@ -54,10 +56,11 @@ async function prepareResources(source: ModelSource, manager: THREE.LoadingManag
         references.add(value);
       }
     }
-  } else {
+  } else if (/\.(fbx|3ds|wrl)$/i.test(source.fileName)) {
     // FBX/3DS store external texture filenames as strings even in binary files.
+    // WRL ImageTexture URLs are quoted strings and use the same resolver.
     // Keep basename matching for old DOS/absolute exporter paths.
-    for (const match of text.matchAll(/[\w .\-/\\:]+\.(?:png|jpe?g|tga|bmp|webp)/gi)) {
+    for (const match of text.matchAll(/[\w .\-/\\:]+\.(?:png|jpe?g|tga|bmp|webp|gif)/gi)) {
       const name = match[0].trim().replace(/^.*?([A-Za-z]:[\\/])/, '$1');
       if (name.length < 512) {
         references.add(name);
@@ -92,7 +95,9 @@ async function prepareResources(source: ModelSource, manager: THREE.LoadingManag
             ? 'image/png'
             : /\.jpe?g$/i.test(name)
               ? 'image/jpeg'
-              : 'application/octet-stream');
+              : /\.gif$/i.test(name)
+                ? 'image/gif'
+                : 'application/octet-stream');
         urls.set(normalize(name), URL.createObjectURL(new Blob([resource.bytes], { type })));
       } catch (error) {
         resourceErrors.set(
@@ -169,9 +174,61 @@ export async function loadSceneModel(source: ModelSource) {
       }
       root = collada.scene;
       clips = root.animations;
-    } else {
+    } else if (extension === '3ds') {
       const { TDSLoader } = await import('three/examples/jsm/loaders/TDSLoader.js');
       root = new TDSLoader(manager).parse(source.bytes.buffer, '');
+    } else if (extension === '3mf') {
+      const { ThreeMFLoader } = await import('three/examples/jsm/loaders/3MFLoader.js');
+      root = new ThreeMFLoader(manager).parse(source.bytes.slice().buffer);
+    } else if (extension === 'amf') {
+      const { AMFLoader } = await import('three/examples/jsm/loaders/AMFLoader.js');
+      let bytes = source.bytes;
+      if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
+        const { unzipSync } = await import('three/examples/jsm/libs/fflate.module.js');
+        const files = unzipSync(bytes);
+        const entry = Object.keys(files).find(name => /\.amf$/i.test(name));
+        if (!entry) {throw new Error('AMF archive contains no AMF document.');}
+        bytes = new Uint8Array(files[entry]);
+      }
+      const document = new DOMParser().parseFromString(
+        new TextDecoder().decode(bytes),
+        'application/xml'
+      );
+      if (
+        document.querySelector('parsererror') ||
+        document.documentElement.localName.toLowerCase() !== 'amf'
+      ) {
+        throw new Error('Invalid AMF document.');
+      }
+      root = new AMFLoader(manager).parse(bytes.slice().buffer);
+      if (document.getElementsByTagName('constellation').length) {
+        resources.warnings.push('AMF object arrangements (constellations) are not supported.');
+      }
+    } else if (extension === 'wrl') {
+      const { VRMLLoader } = await import('three/examples/jsm/loaders/VRMLLoader.js');
+      root = new VRMLLoader(manager).parse(new TextDecoder().decode(source.bytes), '');
+      // VRMLLoader represents a world background with 10,000-unit spheres.
+      // They must not enter model bounds: otherwise the actual object becomes
+      // a speck inside the fitted sky. Retain the viewer's own background.
+      const backgrounds: THREE.Object3D[] = [];
+      root.traverse(object => {
+        if (object.renderOrder === -Infinity) {backgrounds.push(object);}
+      });
+      for (const background of backgrounds) {
+        background.removeFromParent();
+        background.traverse(object => {
+          if (object instanceof THREE.Mesh) {
+            object.geometry.dispose();
+            const materials = Array.isArray(object.material) ? object.material : [object.material];
+            materials.forEach(material => material.dispose());
+          }
+        });
+      }
+    } else if (cadFormatForExtension(extension)) {
+      const { loadCadModel } = await import('./loadCadModel');
+      root = await loadCadModel(source.bytes, cadFormatForExtension(extension)!, source.decodeCad);
+    } else {
+      throw new Error(`Unsupported scene format: ${extension}`);
     }
     manager.itemEnd('scene-model');
     await textures;

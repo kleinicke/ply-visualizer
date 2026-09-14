@@ -1,5 +1,6 @@
 import { nativeAgentPanels } from './agent/panels';
 import { handleModelResourceRequest } from './providerHandlers/sceneModels';
+import { handleCadDecodeRequest } from './providerHandlers/cadModels';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -339,6 +340,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'modelResourceRequest':
           await handleModelResourceRequest(webviewPanel, message);
+          break;
+        case 'cadDecodeRequest':
+          await handleCadDecodeRequest(webviewPanel, this.context.extensionPath, message);
           break;
         case 'splatContainerFetchFailed':
           await resendSplatContainerBytes(webviewPanel, message);

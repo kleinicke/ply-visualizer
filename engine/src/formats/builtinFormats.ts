@@ -196,7 +196,10 @@ export function registerBuiltinFormats(
     },
   });
 
-  registry.register({ extensions: ['fbx', 'dae', '3ds'], category: 'mesh' });
+  registry.register({
+    extensions: ['fbx', 'dae', '3ds', '3mf', 'amf', 'wrl', 'step', 'stp', 'iges', 'igs', 'brep'],
+    category: 'mesh',
+  });
 
   registry.register({
     extensions: ['gltf', 'glb'],

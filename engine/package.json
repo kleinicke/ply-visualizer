@@ -33,6 +33,7 @@
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@sparkjsdev/spark": "^2.1.0",
     "js-yaml": "^5.2.3",
+    "occt-import-js": "0.0.23",
     "three": "^0.185.1"
   }
 }

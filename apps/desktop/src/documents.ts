@@ -36,7 +36,7 @@ export const providers: ViewerProvider[] = [
   {
     id: 'scene',
     views: name =>
-      /\.(ply|xyz|xyzn|xyzrgb|pcd|pts|obj|stl|off|gltf|glb|las|laz|e57|x3a|x3r|spz|splat|ksplat|sog|nrrd)$/i.test(
+      /\.(ply|xyz|xyzn|xyzrgb|pcd|pts|obj|stl|off|gltf|glb|3mf|amf|wrl|step|stp|iges|igs|brep|las|laz|e57|x3a|x3r|spz|splat|ksplat|sog|nrrd)$/i.test(
         name
       )
         ? ['scene']

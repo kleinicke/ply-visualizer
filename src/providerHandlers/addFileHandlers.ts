@@ -727,7 +727,7 @@ export async function handleDroppedFilesFromWebview(
   const remaining = files.filter(
     file =>
       !colmapFiles.includes(file) &&
-      !(hasModels && /\.(png|jpe?g|bmp|tga|bin|mtl|webp)$/i.test(file.name || ''))
+      !(hasModels && /\.(png|jpe?g|bmp|tga|bin|mtl|webp|gif)$/i.test(file.name || ''))
   );
 
   for (let i = 0; i < remaining.length; i++) {

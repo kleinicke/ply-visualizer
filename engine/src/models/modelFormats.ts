@@ -1,5 +1,20 @@
 /** Formats rendered as complete Three.js scenes rather than flattened meshes. */
-export const SCENE_MODEL_EXTENSIONS = ['gltf', 'glb', 'fbx', 'dae', '3ds'] as const;
+export const SCENE_MODEL_EXTENSIONS = [
+  'gltf',
+  'glb',
+  'fbx',
+  'dae',
+  '3ds',
+  '3mf',
+  'amf',
+  'wrl',
+  'step',
+  'stp',
+  'iges',
+  'igs',
+  'brep',
+] as const;
 export function isSceneModel(fileName: string): boolean {
-  return /\.(gltf|glb|fbx|dae|3ds)$/i.test(fileName);
+  const extension = fileName.split('.').pop()?.toLowerCase();
+  return SCENE_MODEL_EXTENSIONS.some(value => value === extension);
 }

@@ -2366,6 +2366,7 @@ class PointCloudVisualizer {
             await this.loadWithPerf('model', message, () => handleSceneModelMessage(this, message));
             break;
           case 'modelResourceResult':
+          case 'cadDecodeResult':
             break;
           case 'splatContainerUri':
             await handleSplatContainerUri(this, message);

@@ -115,7 +115,11 @@ export function modelSpatialData(model: SceneModel, fileName: string, size: numb
   const point = new THREE.Vector3();
   model.root.updateMatrixWorld(true);
   model.root.traverse(object => {
-    if (!(object instanceof THREE.Mesh) && !(object instanceof THREE.Points)) {
+    if (
+      !(object instanceof THREE.Mesh) &&
+      !(object instanceof THREE.Points) &&
+      !(object instanceof THREE.Line)
+    ) {
       return;
     }
     const attribute = object.geometry.getAttribute('position');
@@ -137,7 +141,7 @@ export function modelSpatialData(model: SceneModel, fileName: string, size: numb
   });
   if (!positions.length) {
     model.dispose();
-    throw new Error('The model contains no mesh or point geometry.');
+    throw new Error('The model contains no mesh, line or point geometry.');
   }
   return {
     vertices: [],

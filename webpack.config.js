@@ -23,6 +23,11 @@ module.exports = [
       new CopyPlugin({
         patterns: [
           {
+            from: 'node_modules/occt-import-js/dist',
+            to: 'wasm/cad',
+            globOptions: { ignore: ['**/occt-import-js-worker.js'] },
+          },
+          {
             // Rust/WASM point-cloud parser (nodejs target) — loaded at runtime
             // by the extension host via require(). The .js glue loads the .wasm
             // relative to its own dir, so both must sit together in out/.

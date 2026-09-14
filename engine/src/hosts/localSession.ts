@@ -134,7 +134,7 @@ async function start(): Promise<void> {
         host.spatialFiles.length <
         previousCount +
           files.filter(file =>
-            /\.(ply|xyz|xyzn|xyzrgb|pcd|pts|obj|stl|off|gltf|glb|fbx|dae|3ds|las|laz|e57|spz|splat|ksplat|sog)$/i.test(
+            /\.(ply|xyz|xyzn|xyzrgb|pcd|pts|obj|stl|off|gltf|glb|fbx|dae|3ds|3mf|amf|wrl|step|stp|iges|igs|brep|las|laz|e57|spz|splat|ksplat|sog)$/i.test(
               file.name
             )
           ).length
@@ -239,7 +239,9 @@ async function start(): Promise<void> {
     window.addEventListener('pagehide', () => events.close(), { once: true });
   }
   // Also notices local UI batch changes if a stream is reconnecting.
-  window.setInterval(() => void poll(), 5000);
+  window.setInterval((): void => {
+    void poll();
+  }, 5000);
 }
 
 if (document.documentElement.dataset.visualizerReady === 'true') {

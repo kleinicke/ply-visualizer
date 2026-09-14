@@ -24,7 +24,7 @@ from .arrays import point_rows
 from .agent_bridge import BrowserBridge
 
 
-FORMATS = frozenset(".plydepth .ply .xyz .xyzn .xyzrgb .pcd .pts .obj .stl .off .gltf .glb .fbx .dae .3ds .las .laz .e57 .spz .splat .ksplat .sog".split())
+FORMATS = frozenset(".plydepth .ply .xyz .xyzn .xyzrgb .pcd .pts .obj .stl .off .gltf .glb .fbx .dae .3ds .3mf .amf .wrl .step .stp .iges .igs .brep .las .laz .e57 .spz .splat .ksplat .sog".split())
 ASSETS = Path(__file__).parent / "_assets"
 
 

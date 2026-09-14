@@ -455,7 +455,7 @@ export async function agentNamedSelections(host: ControlHost, a: Record<string, 
       return {
         status: 'empty',
         selected_points: 0,
-        active_selection: null,
+        active_selection: null as ReturnType<typeof currentAgentSelection>,
         operation: a.action,
         exportable: false,
       };
