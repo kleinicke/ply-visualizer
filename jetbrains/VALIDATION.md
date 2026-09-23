@@ -1,5 +1,29 @@
 # JetBrains release-candidate validation
 
+## 0.1.2 current and future IDE compatibility (2026-09-22)
+
+- Kept minimum build 243 and removed `until-build` from the actual signed ZIP.
+  Future versions are allowed to load the plugin; this does not guarantee
+  compatibility with unreleased APIs.
+- Fixed a real 2026.2 runtime failure: JCEF moved into the bundled
+  `com.intellij.modules.jcef` plugin. An optional dependency adds that
+  classloader on newer IDEs while retaining core-provided JCEF on older IDEs.
+  Plugin Verifier alone did not catch the missing dependency; the live test did.
+- Java tests, build, signing and signature verification passed.
+- Plugin Verifier 1.410 reports **Compatible** for installed PY-262.10968.92
+  (2026.2.3) and PC-243.26053.29 (2024.3.5). The 2025.3 verification recorded
+  below applies to 0.1.1, not this archive.
+- Signed 0.1.2 ZIP loaded in a separate profile of the installed PyCharm
+  2026.2.3 on macOS ARM64. Live JCEF regression passed initial load, multiple
+  objects, visibility, camera rotation, measurement/clear and malformed-file
+  feedback, with no page errors. Evidence:
+  `build/release-evidence/jcef-viewer.png`.
+- Java-host Chromium smoke checks passed first-open/reopen for PLY and STL.
+- Regenerated geometry associations from the current shared manifest; newly
+  registered CAD/mesh suffixes are not claimed as separately release-tested.
+- Archive: `build/distributions/ply-visualizer-jetbrains-0.1.2-signed.zip`. Not
+  yet uploaded to Marketplace; published 0.1.1 retains its 253.* ceiling.
+
 ## 0.1.1 compatibility update (2026-09-09)
 
 - Prepared build range `243`–`253.*`, keeping the original minimum SDK.

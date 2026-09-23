@@ -1,3 +1,17 @@
+# Marketplace releases
+
+## Current compatibility update: 0.1.2
+
+Upload `build/distributions/ply-visualizer-jetbrains-0.1.2-signed.zip` as a new
+version of
+[3D Visualizer](https://plugins.jetbrains.com/plugin/34145-3d-visualizer). It
+keeps minimum build 243, removes the maximum build, and fixes JCEF loading on
+2026.2. See [validation](VALIDATION.md) for the completed checks and
+limitations. Marketplace approval is still required before users can find this
+update.
+
+The instructions below describe the original first upload.
+
 # First Marketplace upload
 
 The first upload is manual. The token is for publishing later versions; do not

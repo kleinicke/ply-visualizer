@@ -4,16 +4,31 @@
   <vendor url="https://f-kleinicke.de">Florian Kleinicke</vendor>
   <!-- Description is generated from the root README.md by prepareDescription. -->
   <change-notes><![CDATA[
+    <p>0.1.6 — Add Tools → Convert Depth Image to 3D for manual image conversion; automatic editor registration remains limited to 3D formats.</p>
+    <p>0.1.5 — Fix large-file transfer failures in the embedded browser and report which loading stage failed.</p>
+    <p>0.1.4 — Keep website welcome screens and examples out of IDE editors from startup.</p>
+    <p>0.1.3 — Deliver precise macOS scroll deltas directly to the viewer controls to avoid late zoom jumps in the embedded browser.</p>
+    <p>0.1.2 — Remove the upper IDE build limit so current and future IDE releases can load the plugin. Requires build 243 or newer and a JCEF-enabled runtime.</p>
     <p>0.1.1 — Extend the IDE compatibility range through build 253 (2025.3).</p>
     <p>0.1.0 — First standalone 3D preview for JetBrains IDEs: local point clouds,
     meshes and scan data, shared viewer controls, native download handling and
     isolated per-editor file delivery.</p>
   ]]></change-notes>
   <depends>com.intellij.modules.platform</depends>
+  <!-- JCEF moved out of the platform in 2026.2; older IDEs provide it in core. -->
+  <depends optional="true" config-file="jcef.xml">com.intellij.modules.jcef</depends>
   <extensions defaultExtensionNs="com.intellij">
     <!-- generated file types -->
-    <fileType name="Scientific 3D" implementationClass="de.kleinicke.plyvisualizer.PlyFileType" fieldName="INSTANCE" extensions="3ds;dae;e57;fbx;glb;gltf;ksplat;las;laz;nrrd;obj;off;pcd;ply;pts;sog;splat;spz;stl;x3a;x3r;xyz;xyzn;xyzrgb"/>
+    <fileType name="Scientific 3D" implementationClass="de.kleinicke.plyvisualizer.PlyFileType" fieldName="INSTANCE" extensions="3ds;3mf;amf;brep;dae;e57;fbx;glb;gltf;iges;igs;ksplat;las;laz;nrrd;obj;off;pcd;ply;pts;sog;splat;spz;step;stl;stp;wrl;x3a;x3r;xyz;xyzn;xyzrgb"/>
     <!-- end generated file types -->
     <fileEditorProvider implementation="de.kleinicke.plyvisualizer.VisualizerEditorProvider"/>
   </extensions>
+  <actions>
+    <action id="de.kleinicke.plyvisualizer.ConvertDepthImage"
+            class="de.kleinicke.plyvisualizer.ConvertDepthImageAction"
+            text="Convert Depth Image to 3D…"
+            description="Open a depth image in 3D Visualizer and configure its projection">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </action>
+  </actions>
 </idea-plugin>

@@ -145,6 +145,8 @@ there; put code in the modules above.
   TrackballControls implementation, is the default. The CloudCompare-style
   virtual-ball "Trackball" scheme remains available under `T`; see the resolved
   rotation-direction post-mortem in docs/BACKLOG.md.
+- Not every small feature gets added to the readme. Ask me if you want to
+  mention a new feature there.
 - I've got a tiff/image viewing extension as well. Sometimes I add a prompt in
   the wrong window. Tell me.
 

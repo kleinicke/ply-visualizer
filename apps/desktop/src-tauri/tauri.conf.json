@@ -30,15 +30,552 @@
     "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
     "fileAssociations": [
       {
-        "ext": ["ply", "stl", "obj", "glb", "las", "laz"],
-        "name": "3D data",
-        "role": "Viewer"
+        "ext": ["ply"],
+        "name": "PLY \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
       },
       {
-        "ext": ["png", "jpg", "jpeg", "tif", "tiff", "npy", "npz", "pfm", "exr"],
-        "name": "Images and depth data",
-        "role": "Viewer"
+        "ext": ["xyz"],
+        "name": "XYZ \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "contentTypes": ["de.kleinicke.visualizer.xyz"]
+      },
+      {
+        "ext": ["xyzn"],
+        "name": "XYZN \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["xyzrgb"],
+        "name": "XYZRGB \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["pcd"],
+        "name": "PCD \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["pts"],
+        "name": "PTS \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "contentTypes": ["de.kleinicke.visualizer.pts"]
+      },
+      {
+        "ext": ["obj"],
+        "name": "OBJ \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["stl"],
+        "name": "STL \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["off"],
+        "name": "OFF \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["gltf"],
+        "name": "GLTF \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["glb"],
+        "name": "GLB \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["3mf"],
+        "name": "3MF \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["amf"],
+        "name": "AMF \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["wrl"],
+        "name": "WRL \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["step"],
+        "name": "STEP \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["stp"],
+        "name": "STP \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["iges"],
+        "name": "IGES \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["igs"],
+        "name": "IGS \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["brep"],
+        "name": "BREP \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["las"],
+        "name": "LAS \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["laz"],
+        "name": "LAZ \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["e57"],
+        "name": "E57 \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "contentTypes": ["de.kleinicke.visualizer.e57"]
+      },
+      {
+        "ext": ["x3a"],
+        "name": "X3A \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["x3r"],
+        "name": "X3R \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["spz"],
+        "name": "SPZ \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["splat"],
+        "name": "SPLAT \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["ksplat"],
+        "name": "KSPLAT \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["sog"],
+        "name": "SOG \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["nrrd"],
+        "name": "NRRD \u2014 3D data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["png"],
+        "name": "PNG \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["tif"],
+        "name": "TIF \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["tiff"],
+        "name": "TIFF \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["exr"],
+        "name": "EXR \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["pfm"],
+        "name": "PFM \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["npy"],
+        "name": "NPY \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["npz"],
+        "name": "NPZ \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["jpg"],
+        "name": "JPG \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["jpeg"],
+        "name": "JPEG \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["webp"],
+        "name": "WEBP \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["gif"],
+        "name": "GIF \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["bmp"],
+        "name": "BMP \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["avif"],
+        "name": "AVIF \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["ico"],
+        "name": "ICO \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["hdr"],
+        "name": "HDR \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["jxl"],
+        "name": "JXL \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["tga"],
+        "name": "TGA \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["ppm"],
+        "name": "PPM \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["pgm"],
+        "name": "PGM \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["pbm"],
+        "name": "PBM \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["pnm"],
+        "name": "PNM \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["fit"],
+        "name": "FIT \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["fits"],
+        "name": "FITS \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["fts"],
+        "name": "FTS \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["dcm"],
+        "name": "DCM \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["dicom"],
+        "name": "DICOM \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["nc"],
+        "name": "NC \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["netcdf"],
+        "name": "NETCDF \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["czi"],
+        "name": "CZI \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["nd2"],
+        "name": "ND2 \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["lif"],
+        "name": "LIF \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["sdt"],
+        "name": "SDT \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["ora"],
+        "name": "ORA \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["kra"],
+        "name": "KRA \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["psd"],
+        "name": "PSD \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["psb"],
+        "name": "PSB \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["xcf"],
+        "name": "XCF \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["afphoto"],
+        "name": "AFPHOTO \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["jp2"],
+        "name": "JP2 \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["j2k"],
+        "name": "J2K \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["jxr"],
+        "name": "JXR \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["wdp"],
+        "name": "WDP \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["hdp"],
+        "name": "HDP \u2014 Images and scientific data",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["mp4"],
+        "name": "MP4 \u2014 Video",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["webm"],
+        "name": "WEBM \u2014 Video",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["m4v"],
+        "name": "M4V \u2014 Video",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["mov"],
+        "name": "MOV \u2014 Video",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["ogv"],
+        "name": "OGV \u2014 Video",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["txt"],
+        "name": "TXT \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["text"],
+        "name": "TEXT \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["md"],
+        "name": "MD \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["markdown"],
+        "name": "MARKDOWN \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["json"],
+        "name": "JSON \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["csv"],
+        "name": "CSV \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["tsv"],
+        "name": "TSV \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["log"],
+        "name": "LOG \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["xml"],
+        "name": "XML \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["yaml"],
+        "name": "YAML \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["yml"],
+        "name": "YML \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["ini"],
+        "name": "INI \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
+      },
+      {
+        "ext": ["cfg"],
+        "name": "CFG \u2014 Text previews",
+        "role": "Viewer",
+        "rank": "Alternate"
       }
-    ]
+    ],
+    "macOS": {
+      "infoPlist": "Info.plist",
+      "signingIdentity": "-"
+    }
   }
 }

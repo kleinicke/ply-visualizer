@@ -43,3 +43,43 @@ Sources:
 [Publishing a plugin](https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html)
 and
 [JCEF integration](https://plugins.jetbrains.com/docs/intellij/embedded-browser-jcef.html).
+
+## 0.1.3 macOS scroll adapter
+
+Plain Mac wheel events are consumed before JCEF OSR conversion and delivered
+once as precise pixel wheel events to the existing viewer controls. Other
+platforms and modified gestures retain their existing path. The shared engine
+and VS Code controls are unchanged.
+
+Java tests and signing checks pass.
+`node jetbrains/scripts/check-scroll-ide.mjs` checks 60-event scroll sequences
+in each direction in actual PyCharm JCEF, verifying one delivery per event and a
+decaying camera tail. This exercises the DOM relay and camera, not physical
+trackpad input; user verification remains.
+
+## 0.1.4 IDE startup shell
+
+Both IDE wrappers remove the website welcome mount point before loading HTML.
+The shared welcome component also checks the host before mounting, and its
+visibility state stays disabled in both IDEs. Website startup retains the
+welcome message and examples. JetBrains retains the hidden file input used by
+its bridge.
+
+Three browser startup checks pass (JetBrains query, simulated VS Code API,
+standalone). A MutationObserver verifies that no welcome DOM briefly mounts. The
+VS Code extension builds successfully; its installed extension is unchanged.
+JetBrains Java tests, package signing and signature verification pass.
+
+## 0.1.5 large PLY file transfer
+
+Reproduced on test_pc7.ply in actual PyCharm JCEF: response.blob() fails, while
+response.arrayBuffer() receives HTTP 200 and all 24,513,927 bytes. The bridge
+now reads bytes directly and reports the loading stage and HTTP failures.
+Transfer diagnostics are also forwarded to idea.log with the prefix
+`[3D Visualizer] IDE file transfer failed`. Use Help → Show Log in Finder for
+the regular IDE; the isolated profile writes
+build/current-ide-check/log/idea.log.
+
+Regression: `node jetbrains/scripts/check-large-file-ide.mjs 1634248` with
+test_pc7.ply open in the isolated IDE. Checks original open, reload, point
+count, and injected HTTP-error diagnostics followed by recovery.

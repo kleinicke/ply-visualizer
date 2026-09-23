@@ -1,22 +1,39 @@
+import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
+
 plugins {
     java
     id("org.jetbrains.intellij.platform") version "2.7.2"
 }
 group = "de.kleinicke"
-version = "0.1.1"
+version = "0.1.6"
 repositories {
     mavenCentral()
     intellijPlatform { defaultRepositories() }
 }
+val installedIde = providers.gradleProperty("localIde").orElse("/Applications/PyCharm.app")
+
 dependencies {
     intellijPlatform {
-        pycharmCommunity("2024.3.5")
+        local(installedIde.get())
+        bundledPlugin("com.intellij.modules.jcef")
         pluginVerifier()
         zipSigner()
     }
     testImplementation("junit:junit:4.13.2")
 }
 java { toolchain { languageVersion.set(JavaLanguageVersion.of(21)) } }
+// Read the current SDK's Java 25 classes with its bundled compiler, while
+// retaining Java 21 bytecode for the plugin's existing compatibility declaration.
+val ideJavaHome = file(installedIde.get()).resolve("Contents/jbr/Contents/Home")
+tasks.withType<JavaCompile>().configureEach {
+    options.isFork = true
+    options.forkOptions.executable = ideJavaHome.resolve("bin/javac").absolutePath
+    options.release.set(21)
+}
+tasks.withType<Test>().configureEach {
+    executable = ideJavaHome.resolve("bin/java").absolutePath
+}
+
 val marketplaceDescription = layout.buildDirectory.file("marketplace-description.html")
 val prepareDescription by tasks.registering(Exec::class) {
     workingDir(rootDir)
@@ -31,15 +48,11 @@ intellijPlatform {
         description = providers.fileContents(marketplaceDescription).asText
         ideaVersion {
             sinceBuild = "243"
-            untilBuild = "253.*"
+            // Do not impose an artificial ceiling on future IDE releases.
+            untilBuild = provider { null }
         }
     }
-    pluginVerification {
-        ides {
-            create("PC", "2024.3.5")
-            create("PY", "2025.3.6.1")
-        }
-    }
+
     signing {
         certificateChain = providers.environmentVariable("JETBRAINS_CERTIFICATE_CHAIN")
         privateKey = providers.environmentVariable("JETBRAINS_PRIVATE_KEY")
@@ -76,3 +89,9 @@ val checkFormats by tasks.registering(Exec::class) {
 }
 tasks.compileJava { dependsOn(checkFormats) }
 tasks.named("verifyPluginSignature") { dependsOn("signPlugin") }
+
+// Verify against the installed IDE; do not download a separate test installation.
+tasks.named<VerifyPluginTask>("verifyPlugin") {
+    val ide = file(providers.gradleProperty("verificationIde").orElse(installedIde).get())
+    ides.setFrom(if (ide.extension == "app") ide.resolve("Contents") else ide)
+}

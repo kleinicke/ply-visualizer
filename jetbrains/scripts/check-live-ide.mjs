@@ -12,11 +12,21 @@ try {
     .flatMap(context => context.pages())
     .find(page => page.url().includes('host=jetbrains'));
   if (!page) throw new Error('Open a PLY file in the isolated test IDE first');
+  await page.addInitScript(() => {
+    window.__welcomeMounted = false;
+    new MutationObserver(records => {
+      for (const record of records) for (const node of record.addedNodes) {
+        if (node instanceof Element && (node.matches('#welcome-message') || node.querySelector('#welcome-message'))) window.__welcomeMounted = true;
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
   await page.reload();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.waitForFunction(() => window.visualizer?.meshes?.length > 0);
   await expect(page.locator('#file-list .file-item')).toHaveCount(1);
+  await expect(page.locator('#welcome-message')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__welcomeMounted)).toBe(false);
   await expect(page.locator('.bottom-right-nav')).toHaveCount(0);
   await page
     .locator('#hiddenFileInput')

@@ -16,6 +16,7 @@ let html = await readFile(index, 'utf8');
 html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, script => /plausible|analytics\.re4vive/.test(script) ? '' : script);
 html = html.replace(/<link\b[^>]*rel="(?:manifest|canonical)"[^>]*>/gi, '');
 html = html.replace(/<div class="bottom-right-nav">[\s\S]*?<\/div>/, '');
+html = html.replace(/<div id="welcome-message-mount"><\/div>/, '');
 html = html.replace('</body>', '<script src="../bridge.js" defer></script></body>');
 await writeFile(index, html);
 await import('./collect-notices.mjs');

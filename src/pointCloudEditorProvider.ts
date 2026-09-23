@@ -812,6 +812,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       '<!-- File input removed in VSCode -->'
     );
     html = html.replace(/<div class="bottom-right-nav">[\s\S]*?<\/div>/, '');
+    html = html.replace(/<div id="welcome-message-mount"><\/div>/, '');
 
     return html;
   }

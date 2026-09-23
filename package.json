@@ -2,7 +2,7 @@
   "name": "ply-visualizer",
   "displayName": "3D Point Cloud and Mesh Visualizer (PLY, ...)",
   "description": "A fast 3D visualizer for point clouds and meshes, powered by Rust/WebAssembly decoding and Three.js rendering. Supports PLY, LAS/LAZ, E57, KITTI BIN, XYZ, OBJ, STL, PCD, PTS, OFF, GLTF/GLB and depth conversion.",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "packageManager": "npm@11.17.0",
   "workspaces": [
     "engine",
@@ -299,37 +299,24 @@
           "group": "navigation"
         },
         {
-          "command": "plyViewer.convertTifToPointCloud",
-          "when": "resourceExtname == .tif || resourceExtname == .tiff",
-          "group": "navigation"
-        },
-        {
-          "command": "plyViewer.convertDepthToPointCloud",
-          "when": "resourceExtname == .pfm",
-          "group": "navigation"
-        },
-        {
-          "command": "plyViewer.convertNpyToPointCloud",
-          "when": "resourceExtname == .npy || resourceExtname == .npz",
-          "group": "navigation"
-        },
-        {
           "command": "plyViewer.loadJsonAsPose",
           "when": "resourceExtname == .json",
           "group": "navigation"
         },
         {
-          "command": "plyViewer.convertPngToPointCloud",
-          "when": "resourceExtname == .png",
-          "group": "navigation"
-        },
-        {
-          "command": "plyViewer.convertExrToPointCloud",
-          "when": "resourceExtname == .exr",
+          "submenu": "plyViewer.imageConversion",
+          "when": "resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .png || resourceExtname == .exr",
           "group": "navigation"
         }
       ],
       "editor/title/context": [
+        {
+          "submenu": "plyViewer.imageConversion",
+          "when": "resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .png || resourceExtname == .exr",
+          "group": "navigation"
+        }
+      ],
+      "plyViewer.imageConversion": [
         {
           "command": "plyViewer.convertTifToPointCloud",
           "when": "resourceExtname == .tif || resourceExtname == .tiff",
@@ -2840,6 +2827,12 @@
           "title": "preview_3d_viewsArguments",
           "additionalProperties": false
         }
+      }
+    ],
+    "submenus": [
+      {
+        "id": "plyViewer.imageConversion",
+        "label": "3D Visualizer"
       }
     ]
   },

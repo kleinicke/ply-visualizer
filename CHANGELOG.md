@@ -1,5 +1,12 @@
 # Change Log
 
+## [1.9.0] - 2026- (unreleased)
+
+- Add support for animations for GLTF, GLB, FBX, DAE (Collada), 3DS
+- Create jetbrains version, standalone tauri app, python, rest and mcp interface
+- open remote files
+- Provide AI Agents the commands to use the tools
+
 ## [1.8.0] - 2026-08-28
 
 - Add Kitti's .bin file support

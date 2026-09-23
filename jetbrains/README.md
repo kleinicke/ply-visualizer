@@ -1,8 +1,8 @@
 # 3D Visualizer for JetBrains
 
-Unpublished development preview, version 0.1.0. This builds a standalone 3D
-plugin from this repository's engine. It does not need the TIFF repository or
-bundle an image viewer. The VS Code extension and website retain their builds.
+Version 0.1.2 compatibility update. This builds a standalone 3D plugin from this
+repository's engine. It does not need the TIFF repository or bundle an image
+viewer. The VS Code extension and website retain their builds.
 
 The plugin logo in `src/main/resources/META-INF/pluginIcon.svg` is a vector
 adaptation of the repository's `icon.png`: the same blue/turquoise dotted logo
@@ -30,13 +30,32 @@ The default test project is `../../test_data`. Override it with
 `-PviewerTestProject=/path/to/examples`. The development IDE uses a separate
 sandbox under `build/idea-sandbox`; JCEF debugging uses port 9224.
 
-The archive is `build/distributions/ply-visualizer-jetbrains-0.1.0.zip`. Install
+The archive is `build/distributions/ply-visualizer-jetbrains-0.1.2.zip`. Install
 it with Settings → Plugins → gear menu → Install Plugin from Disk. Use a clean
 test IDE without the earlier combined image/3D prototype; both plugins can offer
 editors for the same 3D files.
 
 Identity: `de.kleinicke.plyvisualizer`, displayed as **3D Visualizer**. This is
-a provisional pre-publication identity, independent of the VS Code extension ID.
+the published Marketplace identity, independent of the VS Code extension ID.
+
+## IDE compatibility
+
+The plugin requires build 243 (2024.3) or newer and a JCEF-enabled runtime.
+Version 0.1.2 omits `until-build`, so future IDE releases are not blocked solely
+by their version number. This is an installation policy, not a guarantee that
+unreleased JetBrains APIs will remain compatible. The optional JCEF dependency
+supports the separate browser plugin introduced in 2026.2. See VALIDATION.md for
+checks.
+
+To verify a release against an existing installation without downloading that
+IDE:
+
+```sh
+./gradlew verifyPlugin -PverificationIde=/Applications/PyCharm.app
+```
+
+The build still compiles against the minimum SDK. Without the property, the
+verifier checks the configured 2024.3.5, 2025.3.6.1 and 2026.2.3 versions.
 
 ## Scope and current limitations
 
@@ -63,7 +82,7 @@ No image-specific status widgets or Mac image pan/pinch adapters are included.
 ## Checks
 
 See [current release-candidate validation](VALIDATION.md) for completed checks,
-the restricted IDE build range, and remaining publication gates.
+the tested IDE builds and remaining release checks.
 
 ```sh
 node scripts/register-formats.mjs --check
@@ -90,3 +109,9 @@ See [release checklist](RELEASE.md) before publishing. The repository's
 - This was a development-sandbox launch, not the fresh install-from-ZIP release
   gate. Plugin Verifier, broader platform checks and the interaction/save/export
   checklist have not been completed. Nothing was uploaded or published.
+
+Local builds and tests use the installed `/Applications/PyCharm.app` (override
+with `-PlocalIde=/path/to/IDE`). Verification defaults to that same current IDE;
+older IDE versions are no longer downloaded or tested. The declared minimum
+compatibility version is unchanged; historical verification does not validate
+future changes.

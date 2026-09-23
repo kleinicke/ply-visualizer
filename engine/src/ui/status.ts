@@ -1,7 +1,6 @@
 import { uiState } from '../state/ui.svelte';
 
-declare const acquireVsCodeApi: () => any;
-const isVSCode = typeof acquireVsCodeApi !== 'undefined';
+import { isIdeHost } from '../hosts/ideEnvironment';
 
 /** Scroll offset remembered independently for each main-panel tab. */
 const tabScrollPositions = new Map<string, number>();
@@ -177,9 +176,9 @@ export interface WelcomeMessageHost {
 
 export function updateWelcomeMessageVisibility(host: WelcomeMessageHost): void {
   // The welcome message is a website-only hint ("click + Add Point Cloud"). In
-  // the VS Code extension files are opened from the editor, so it's just noise
+  // IDE integrations, files are opened from the editor, so it's just noise
   // flashing behind the loading spinner — never show it there.
-  if (isVSCode) {
+  if (isIdeHost) {
     uiState.showWelcomeMessage = false;
     return;
   }

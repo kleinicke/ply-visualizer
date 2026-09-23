@@ -1,4 +1,5 @@
 import { mount } from 'svelte';
+import { isIdeHost } from './hosts/ideEnvironment';
 import WelcomeMessage from './components/WelcomeMessage.svelte';
 
 /**
@@ -10,6 +11,8 @@ export function mountWelcomeMessage(
   onLoadGuidedExample: () => Promise<void>,
   onLoadBasicExample: () => Promise<void>
 ): void {
+  // Never create the website welcome/example DOM in an IDE, even while loading.
+  if (isIdeHost) {return;}
   const target = document.getElementById('welcome-message-mount');
   if (!target) {
     return;
