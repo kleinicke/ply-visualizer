@@ -9,8 +9,9 @@ class RendererError(RuntimeError):
 
 
 class BrowserBridge:
-    def __init__(self, on_change=lambda: None):
+    def __init__(self, on_change=lambda: None, timeout_message=None):
         self._on_change = on_change
+        self._timeout_message = timeout_message
         self._serial = threading.Lock()
         self._condition = threading.Condition()
         self._pending = None
@@ -26,7 +27,7 @@ class BrowserBridge:
                 self._on_change()
                 try:
                     if not self._condition.wait_for(lambda: self._result is not None, timeout):
-                        raise TimeoutError("No renderer response. Keep the inline MCP viewer active and check client support for app-to-server tools and WebAssembly. For unattended use, install the headless extra and Chromium, then use --renderer headless. Diagnose with 3d-visualizer doctor --check-headless.")
+                        raise TimeoutError(self._timeout_message or "No renderer response. Keep the inline MCP viewer active and check client support for app-to-server tools and WebAssembly. For unattended use, install the headless extra and Chromium, then use --renderer headless. Diagnose with 3d-visualizer doctor --check-headless.")
                     result = self._result
                     if "error" in result:
                         raise RendererError(result["error"])

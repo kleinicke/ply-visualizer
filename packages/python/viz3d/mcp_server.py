@@ -19,6 +19,14 @@ from .depth import DepthCalibration, show_depth, show_colmap
 
 CORE_TOOLS = frozenset({"open_3d_files", "visualize_points", "inspect_3d_scene", "capture_3d_view", "set_3d_camera", "navigate_3d_view", "list_3d_scenes", "close_3d_scene"})
 APP_TOOLS = frozenset({"read_viewer_data", "submit_viewer_reply"})
+BROWSER_TOOLS = frozenset({
+    "pair_3d_website", "list_3d_scenes", "inspect_3d_scene", "capture_3d_view", "set_3d_camera",
+    "navigate_3d_view", "set_3d_appearance", "set_3d_object",
+    "transform_3d_object", "measure_3d_scene", "control_3d_video",
+    "align_3d_clouds", "pick_3d_point", "manage_3d_views",
+    "select_3d_region", "manage_3d_selections", "compare_3d_clouds",
+    "preview_3d_views",
+})
 
 
 class SceneManager:
@@ -86,8 +94,8 @@ def browser_default(ctx, requested):
         return requested
     return False
 
-def create_server(roots, *, extensions=None, transport="stdio", task_store=None, tools="full", renderer="inline"):
-    if tools not in {"core", "full"}: raise ValueError("tools must be core or full")
+def create_server(roots, *, extensions=None, transport="stdio", task_store=None, tools="full", renderer="inline", scene_manager=None):
+    if tools not in {"core", "full", "browser"}: raise ValueError("tools must be core, full or browser")
     if renderer not in {"auto", "inline", "headless"}: raise ValueError("renderer must be auto, inline or headless")
     from mcp.server import MCPServer
     from mcp.server.mcpserver import Image, Context
@@ -118,7 +126,7 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None,
         return CallToolResult(content=content, structured_content=result)
 
     points_type = Annotated[list[tuple[float, float, float]], Field(min_length=1, max_length=20000)]
-    manager = SceneManager(roots, renderer=renderer)
+    manager = scene_manager if scene_manager is not None else SceneManager(roots, renderer=renderer)
     task_extension = None
     if task_store is not None:
         from .tasks import ViewerTasks, invoke_complete
@@ -133,11 +141,20 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None,
             if task_store is not None: await task_store.close()
             manager.close()
 
+    instructions = ("Call pair_3d_website to obtain a URL, then open that URL in the user's browser or navigate an existing 3D viewer tab to it. "
+        "A fragment navigation of the existing tab preserves its loaded scene. "
+        "Use the returned scene_id with inspect_3d_scene and navigate_3d_view. "
+        "The visitor may also load files in the browser; tools act only on the paired tab. "
+        "Captures and inspection data are returned to this local MCP client."
+        if tools == "browser" else
+        "Inspect 3D data inline. Reuse scene_id; replies are compact by default, detail=full adds attributes and coordinate conventions. Inspect after loading and capture to verify. Compare build IDs and rendered_revision; submitted is not rendered. Use source units, never assume meters. Browser opening and URL downloads must be explicit. Alignment is asynchronous: poll status; complex align-all is opt-in. Read viewer://capabilities for the active profile and rendering mode; viewer://workflows has task recipes. For depth/disparity, read viewer://depth-calibration and use accompanying files/context for calibration, never image appearance. A separate skill is optional.")
     server = MCPServer("3d-visualizer", version=VERSION, lifespan=lifespan, extensions=extensions,
-        instructions="Inspect 3D data inline. Reuse scene_id; replies are compact by default, detail=full adds attributes and coordinate conventions. Inspect after loading and capture to verify. Compare build IDs and rendered_revision; submitted is not rendered. Use source units, never assume meters. Browser opening and URL downloads must be explicit. Alignment is asynchronous: poll status; complex align-all is opt-in. Read viewer://capabilities for the active profile and rendering mode; viewer://workflows has task recipes. For depth/disparity, read viewer://depth-calibration and use accompanying files/context for calibration, never image appearance. A separate skill is optional.")
+        instructions=instructions)
     def tool(**options):
         def register(fn):
-            if tools == "full" or fn.__name__ in CORE_TOOLS | APP_TOOLS:
+            if tools == "full" or (tools == "core" and fn.__name__ in CORE_TOOLS | APP_TOOLS) or (tools == "browser" and fn.__name__ in BROWSER_TOOLS):
+                if tools == "browser":
+                    return server.tool(**{**options, "meta": None})(fn)
                 return server.tool(**options)(fn)
             return fn
         return register
@@ -162,6 +179,29 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None,
             manager.get(scene_id).add_files(files)
             return manager.describe(scene_id)
         return manager.add(lambda: show(*files, open_browser=browser_default(ctx, open_browser)), ctx, bool(open_browser))
+
+    @tool(annotations=local, structured_output=True)
+    @explain_errors
+    def pair_3d_website(open_browser: bool = False, source_url: str | None = None,
+                        filename: str | None = None, current_url: str | None = None) -> dict[str, Any]:
+        """Create a private link for the public 3D website. To pair an already loaded tab without reloading it, pass its current_url and navigate that SAME tab to the returned URL; only its fragment changes. Or set open_browser=true for a new tab. Optional source_url loads one CORS-accessible HTTPS 3D file in a fresh page; filename identifies extensionless URLs. Return scene_id for subsequent viewer tools. The browser may ask for local device access."""
+        if filename is not None and source_url is None:
+            raise ValueError("filename requires source_url")
+        if source_url is not None and not source_url.startswith("https://"):
+            raise ValueError("source_url must be an HTTPS URL")
+        if current_url is not None:
+            from urllib.parse import urlsplit
+            current = urlsplit(current_url)
+            if current.scheme != "https" or current.netloc != "3d.f-kleinicke.de" or current.path not in ("", "/"):
+                raise ValueError("current_url must be the open 3D website viewer URL")
+            if source_url is not None or filename is not None or open_browser:
+                raise ValueError("current_url pairs an existing tab; do not combine it with source_url, filename or open_browser")
+        result = manager.new_website_session(source_url=source_url, filename=filename, current_url=current_url)
+        if open_browser:
+            import webbrowser
+            if not webbrowser.open(result["url"]):
+                result["note"] = "Could not open a browser automatically; navigate to the returned URL."
+        return result
 
     @tool(annotations=local, meta=ui_meta, structured_output=True)
     @explain_errors
@@ -578,6 +618,12 @@ def create_server(roots, *, extensions=None, transport="stdio", task_store=None,
     def capabilities() -> str:
         """Supported formats, file roots, transport and rendering workflow."""
         import json
+        if tools == "browser":
+            return json.dumps({"tool_profile": "browser", "transport": "stdio",
+                "viewer_url": "https://3d.f-kleinicke.de/",
+                "pairing": "Start the local browser bridge and enter its code in the open viewer tab.",
+                "file_access": "Files are loaded by the visitor in the browser; this profile has no disk or URL loading tools.",
+                "workflow": ["pair_3d_website", "inspect_3d_scene", "navigate_3d_view", "capture_3d_view"]})
         return json.dumps({"build": build_info(), "formats": sorted(FORMATS), "roots": [str(root) for root in manager.roots],
                            "transport": transport, "tool_profile": tools, "renderer_mode": renderer, "headless_available": True, "tasks_extension": task_store is not None, "http_api": "/api/v1" if transport == "streamable-http" else None, "workflows": "viewer://workflows", "inline_mcp_app": True, "inline_requires": "MCP Apps host with app-to-server tools and WebGL",
                            "depth": {"tool": "open_depth_image", "calibration": "viewer://depth-calibration", "formats": ["npy", "npz", "tif", "tiff", "png8/16", "exr", "pfm", "COLMAP dense bin"], "discovery": "agent reads accompanying context and supplies explicit calibration"},

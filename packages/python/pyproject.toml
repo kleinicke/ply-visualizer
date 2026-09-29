@@ -25,6 +25,7 @@ Issues = "https://github.com/kleinicke/ply-visualizer/issues"
 [project.scripts]
 3d-visualizer = "viz3d.__main__:main"
 3d-visualizer-mcp = "viz3d.mcp_server:main"
+3d-visualizer-browser-mcp = "viz3d.browser_mcp:main"
 3d-visualizer-api = "viz3d.http_api:main"
 
 [tool.setuptools.packages.find]

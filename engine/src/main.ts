@@ -156,6 +156,8 @@ import { mountErrorOverlay } from './errorOverlayMount';
 import { mountLoadingOverlay } from './loadingOverlayMount';
 import { mountTabNav } from './tabNavMount';
 import { mountWelcomeMessage } from './welcomeMessageMount';
+import { installBrowserAgent } from './hosts/browserAgent';
+import type { AgentViewerHost } from './hosts/agentBridge';
 import { mountPerformanceStats } from './performanceStatsMount';
 import { mountSequenceControls } from './sequenceControlsMount';
 import { mountFileList } from './fileListMount';
@@ -685,6 +687,7 @@ class PointCloudVisualizer {
       } else {
         // Browser environment
         this.initializeBrowserFileHandler();
+        installBrowserAgent(this as unknown as AgentViewerHost);
         console.log('🌐 Initializing standalone browser version...');
       }
       // Hosts may deliver their first file only after the asynchronous renderer

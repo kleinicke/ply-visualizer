@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://3d.f-kleinicke.de/sitemap.xml

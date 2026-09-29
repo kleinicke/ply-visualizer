@@ -90,6 +90,10 @@ module.exports = {
           to: 'index.html',
         },
         {
+          from: 'guide.html',
+          to: 'guide.html',
+        },
+        {
           from: 'media',
           to: 'media',
         },
@@ -100,6 +104,14 @@ module.exports = {
         {
           from: 'manifest.webmanifest',
           to: 'manifest.webmanifest',
+        },
+        {
+          from: 'robots.txt',
+          to: 'robots.txt',
+        },
+        {
+          from: 'sitemap.xml',
+          to: 'sitemap.xml',
         },
         {
           from: '../icon.png',

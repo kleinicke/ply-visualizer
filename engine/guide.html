@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="A quick start for the 3D Visualizer: try a point cloud, move around it, adjust its appearance, and compare scans." />
+    <link rel="canonical" href="https://3d.f-kleinicke.de/guide.html" />
+    <title>Get started with the 3D Visualizer</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; line-height: 1.6; background: #161b22; color: #edf2f7; }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      a { color: #9ecaff; text-underline-offset: .2em; }
+      a:hover, a:focus-visible { color: #d1e7ff; }
+      header, main, footer { width: min(880px, calc(100% - 40px)); margin: auto; }
+      header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.25rem 0; border-bottom: 1px solid #3b4655; }
+      header strong { font-size: 1rem; }
+      nav { display: flex; gap: 1.25rem; }
+      main { padding: 3rem 0 4rem; }
+      .eyebrow { color: #9ecaff; font-size: .8rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+      h1 { max-width: 750px; font-size: clamp(2.2rem, 6vw, 4rem); line-height: 1.1; margin: .7rem 0 1rem; }
+      h2 { font-size: 1.5rem; margin: 2.5rem 0 .5rem; }
+      p, li { max-width: 72ch; }
+      .lead { color: #c8d2dd; font-size: 1.2rem; }
+      .actions { display: flex; flex-wrap: wrap; gap: .8rem; margin: 1.8rem 0 2.5rem; }
+      .button { display: inline-block; padding: .7rem 1rem; border: 1px solid #65758a; border-radius: .5rem; text-decoration: none; font-weight: 650; }
+      .button.primary { background: #a9d1ff; border-color: #a9d1ff; color: #112234; }
+      .button.primary:hover, .button.primary:focus-visible { background: #d1e7ff; color: #112234; }
+      figure { margin: 0 0 2.5rem; }
+      figure img { display: block; width: 100%; height: auto; border: 1px solid #3b4655; border-radius: .7rem; }
+      figcaption { margin-top: .6rem; color: #b6c2cf; font-size: .85rem; }
+      section { border-top: 1px solid #3b4655; }
+      li + li { margin-top: .45rem; }
+      footer { padding: 1.5rem 0 2.5rem; border-top: 1px solid #3b4655; color: #b6c2cf; font-size: .9rem; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>3D Visualizer</strong>
+      <nav aria-label="Main navigation">
+        <a href="/">Open viewer</a>
+        <a href="https://f-kleinicke.de/">About the project</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Quick start · about 2 minutes</p>
+      <h1>Get a point cloud on screen and explore it</h1>
+      <p class="lead">You can try the viewer without preparing a file. Open the guided example, move around the scan, then try the same controls with your own data.</p>
+      <div class="actions">
+        <a class="button primary" href="/">Try the viewer</a>
+      </div>
+      <figure>
+        <img src="https://f-kleinicke.de/media/ply-example.png" width="1394" height="888" alt="A measured point cloud in the 3D viewer, with file controls and point size settings on the right" />
+        <figcaption>A point cloud with distance measurements. The Files panel controls each loaded object.</figcaption>
+      </figure>
+
+      <section aria-labelledby="start-title">
+        <h2 id="start-title">Try it with an example</h2>
+        <ol>
+          <li>Open the <a href="/">viewer</a> and choose <strong>Guided example</strong> on the welcome screen. It loads a measured point cloud.</li>
+          <li>Drag to rotate, scroll to zoom, and double-click a point to rotate around that spot. Press <strong>F</strong> to fit the loaded objects in view.</li>
+          <li>In the <strong>Files</strong> tab, expand the object. Try its visibility checkbox, <strong>Point Size</strong> slider and <strong>Color</strong> menu.</li>
+        </ol>
+      </section>
+
+      <section aria-labelledby="own-file-title">
+        <h2 id="own-file-title">Open your own file</h2>
+        <p>Choose <strong>+ Add Point Cloud</strong> or drop files onto the viewer. For a glTF model with separate textures or binary buffers, select those supporting files together with the model. Local files stay in your browser.</p>
+        <p>Common starting points are PLY, XYZ, PCD, LAS/LAZ or E57 for point clouds; OBJ, STL or glTF/GLB for meshes. Depth images and Gaussian splats are supported too. Check the <a href="https://github.com/kleinicke/ply-visualizer/blob/main/SUPPORTED_FORMATS.md">full format list</a> if a file does not open as expected.</p>
+      </section>
+
+      <section aria-labelledby="compare-title">
+        <h2 id="compare-title">Compare two scans</h2>
+        <p>Add a second point cloud with <strong>+ Add Point Cloud</strong>. Use each file’s checkbox to show or hide it; Shift-click a checkbox to isolate that file. Once two point clouds are loaded, open <strong>Tools → Align point clouds</strong> to bring them together.</p>
+      </section>
+
+      <section id="agent-control" aria-labelledby="agent-title">
+        <h2 id="agent-title">Continue in the viewer with an AI agent</h2>
+        <p>An agent connected to the local MCP bridge can open this viewer and keep controlling the scene it opened. It can inspect objects, move the camera, change appearance, select points and request a picture without clicking viewer controls. You can still use the viewer normally.</p>
+        <ol>
+          <li>Install the <code>3d-visualizer</code> Python package with its <code>mcp</code> extra from the project source, then configure your MCP client to launch <code>3d-visualizer-browser-mcp</code>.</li>
+          <li>Ask the agent to call <code>pair_3d_website</code> and open the returned link. To continue in an already open viewer tab, it passes that tab's URL as <code>current_url</code> and navigates the same tab to the returned link. Your browser may ask for permission to connect to an app on your device.</li>
+          <li>The agent uses the returned <code>scene_id</code> with <code>inspect_3d_scene</code> or <code>navigate_3d_view</code>. You can continue using the same viewer alongside it.</li>
+        </ol>
+        <p>See the <a href="https://github.com/kleinicke/ply-visualizer/blob/main/docs/browser-agent-pairing.md">MCP setup examples</a> for local development and client configuration.</p>
+      </section>
+
+      <section aria-labelledby="trouble-title">
+        <h2 id="trouble-title">If the view looks wrong</h2>
+        <ul>
+          <li><strong>Nothing visible?</strong> Press <strong>F</strong> to fit the scene and check the file’s visibility checkbox.</li>
+          <li><strong>Points too faint or dense?</strong> Adjust <strong>Point Size</strong> or try a different <strong>Color</strong> mode in the file controls.</li>
+          <li><strong>Need the full manual?</strong> See the <a href="https://github.com/kleinicke/ply-visualizer/blob/main/docs/getting-started.md">getting started documentation</a>.</li>
+        </ul>
+      </section>
+    </main>
+    <footer><a href="https://f-kleinicke.de/impressum.html">Impressum</a> · <a href="https://f-kleinicke.de/datenschutz.html">Privacy</a></footer>
+  </body>
+</html>
