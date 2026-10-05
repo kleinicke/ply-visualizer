@@ -7,8 +7,8 @@ import { SpatialData } from './interfaces';
  * visibility/material updates they drive.
  */
 export interface RenderModeHost {
-  spatialFiles: SpatialData[];
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
+  spatialFiles: readonly SpatialData[];
+  meshes: readonly (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
 
   allowTransparency: boolean;
   scene: THREE.Scene;

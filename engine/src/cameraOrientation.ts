@@ -30,7 +30,7 @@ export function isZUpFormat(file: { fileName?: string; metadata?: { format?: unk
 }
 
 export function shouldOrientZUp(
-  files: Array<{ fileName?: string; metadata?: { format?: unknown } }>
+  files: ReadonlyArray<{ fileName?: string; metadata?: { format?: unknown } }>
 ): boolean {
   return files.some(isZUpFormat);
 }
@@ -43,7 +43,7 @@ export function shouldOrientZUp(
  * alone.
  */
 export function shouldApplySavedViewConvention(
-  files: Array<{ fileName?: string; metadata?: { format?: unknown } }>
+  files: ReadonlyArray<{ fileName?: string; metadata?: { format?: unknown } }>
 ): boolean {
   return !shouldOrientZUp(files);
 }
@@ -79,7 +79,7 @@ export function applyZUpOrientation(host: SceneUpHost): void {
  * this lands at or near (0, 0, 0) rather than out at the survey coordinates.
  */
 export function scannerCapturePointFor(
-  files: Array<{
+  files: ReadonlyArray<{
     fileName?: string;
     sourceOrigin?: readonly number[];
     metadata?: Record<string, unknown>;
@@ -107,7 +107,7 @@ export function scannerCapturePointFor(
 export function applyScannerStartView(
   host: SceneUpHost,
   capturePoint: THREE.Vector3,
-  objects: THREE.Object3D[]
+  objects: readonly THREE.Object3D[]
 ): boolean {
   const box = new THREE.Box3();
   for (const object of objects) {

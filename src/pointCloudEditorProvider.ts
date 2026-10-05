@@ -10,17 +10,7 @@ import { DatasetManager } from './dataset/datasetManager';
 import { isColmapModelFile } from '../engine/src/formats/colmap/colmapFiles';
 import { isImageFile, MAX_TEXTURES } from '../engine/src/formats/colmap/colmapTextures';
 import { PlyParser } from '../engine/src/parsers/plyParser';
-import { ObjParser } from '../engine/src/parsers/objParser';
 import { MtlParser } from '../engine/src/parsers/mtlParser';
-import { StlParser } from '../engine/src/parsers/stlParser';
-import {
-  parsePcdWasm,
-  parsePtsWasm,
-  toPcdPayload,
-  toPointCloudPayload,
-} from '../engine/src/parsers/pointcloudWasm';
-import { OffParser } from '../engine/src/parsers/offParser';
-import { GltfParser } from '../engine/src/parsers/gltfParser';
 import {
   resendSplatContainerBytes,
   sendUltimateRawBinary,
@@ -42,7 +32,7 @@ import { createWebviewReadyGate, type WebviewReadyGate } from './providerHandler
 import { clearVolume, reextractVolume } from './providerHandlers/volumeSessions';
 
 // Shared file handling functionality
-import { detectFileType, detectFileTypeWithContent, isPlyBinary } from '../engine/src/fileHandler';
+import { detectFileType, detectFileTypeWithContent } from '../engine/src/fileHandler';
 
 export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProvider {
   private static readonly viewType = 'plyViewer.plyEditor';
@@ -802,181 +792,23 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
   private async handleSequenceRequestFile(
     webviewPanel: vscode.WebviewPanel,
-    message: { path: string; index: number; requestId?: string }
+    message: { path: string; index: number; requestId: string }
   ): Promise<void> {
-    const fileUri = vscode.Uri.file(message.path);
-    const fileName = path.basename(fileUri.fsPath);
-    const ext = path.extname(fileUri.fsPath).toLowerCase();
     try {
-      if (ext === '.ply') {
-        const bytes = await vscode.workspace.fs.readFile(fileUri);
-        const parser = new PlyParser();
-        const isBinary = isPlyBinary(bytes);
-        if (isBinary) {
-          // The webview parses the file itself, so the whole buffer goes
-          // across - header included - and no offset table travels with it.
-          const rawBinaryData = bytes.buffer.slice(
-            bytes.byteOffset,
-            bytes.byteOffset + bytes.byteLength
-          );
-          sendToWebview(webviewPanel, {
-            type: 'sequence:file:ultimate',
-            index: message.index,
-            requestId: message.requestId,
-            fileName,
-            rawBinaryData,
-            fileSizeInBytes: bytes.byteLength,
-          });
-        } else {
-          const parsed = await parser.parse(bytes);
-          sendToWebview(webviewPanel, {
-            type: 'sequence:file:ply',
-            index: message.index,
-            requestId: message.requestId,
-            fileName,
-            data: parsed,
-          });
-        }
-        return;
-      }
-      if (ext === '.xyz') {
-        const xyz = await vscode.workspace.fs.readFile(fileUri);
-        sendToWebview(webviewPanel, {
-          type: 'sequence:file:xyz',
-          index: message.index,
-          requestId: message.requestId,
-          fileName,
-          data: xyz.buffer.slice(xyz.byteOffset, xyz.byteOffset + xyz.byteLength),
-        });
-        return;
-      }
-      if (ext === '.obj') {
-        const objBytes = await vscode.workspace.fs.readFile(fileUri);
-        const objParser = new ObjParser();
-        const parsed = await objParser.parse(objBytes);
-        sendToWebview(webviewPanel, {
-          type: 'sequence:file:obj',
-          index: message.index,
-          requestId: message.requestId,
-          fileName,
-          data: parsed,
-        });
-        return;
-      }
-      if (ext === '.stl') {
-        const stlBytes = await vscode.workspace.fs.readFile(fileUri);
-        const stlParser = new StlParser();
-        const parsed = await stlParser.parse(stlBytes);
-        sendToWebview(webviewPanel, {
-          type: 'sequence:file:stl',
-          index: message.index,
-          requestId: message.requestId,
-          fileName,
-          data: parsed,
-        });
-        return;
-      }
-      if (ext === '.pcd') {
-        const pcdBytes = await vscode.workspace.fs.readFile(fileUri);
-        const parsed = toPcdPayload(await parsePcdWasm(pcdBytes));
-        sendToWebview(webviewPanel, {
-          type: 'sequence:file:pcd',
-          index: message.index,
-          requestId: message.requestId,
-          fileName,
-          data: parsed,
-        });
-        return;
-      }
-      if (ext === '.pts') {
-        const ptsBytes = await vscode.workspace.fs.readFile(fileUri);
-        const parsed = toPointCloudPayload(await parsePtsWasm(ptsBytes), 'pts');
-        sendToWebview(webviewPanel, {
-          type: 'sequence:file:pts',
-          index: message.index,
-          requestId: message.requestId,
-          fileName,
-          data: parsed,
-        });
-        return;
-      }
-      if (ext === '.off') {
-        const offBytes = await vscode.workspace.fs.readFile(fileUri);
-        const offParser = new OffParser();
-        const parsed = await offParser.parse(offBytes);
-        sendToWebview(webviewPanel, {
-          type: 'sequence:file:off',
-          index: message.index,
-          requestId: message.requestId,
-          fileName,
-          data: parsed,
-        });
-        return;
-      }
-      if (ext === '.gltf' || ext === '.glb') {
-        const gltfBytes = await vscode.workspace.fs.readFile(fileUri);
-        const gltfParser = new GltfParser();
-        const parsed = await gltfParser.parse(gltfBytes);
-        sendToWebview(webviewPanel, {
-          type: 'sequence:file:gltf',
-          index: message.index,
-          requestId: message.requestId,
-          fileName,
-          data: parsed,
-        });
-        return;
-      }
-      if (ext === '.xyzn' || ext === '.xyzrgb') {
-        const xyzBytes = await vscode.workspace.fs.readFile(fileUri);
-        sendToWebview(webviewPanel, {
-          type: 'sequence:file:xyzvariant',
-          index: message.index,
-          requestId: message.requestId,
-          fileName,
-          data: xyzBytes.buffer.slice(
-            xyzBytes.byteOffset,
-            xyzBytes.byteOffset + xyzBytes.byteLength
-          ),
-          variant: ext.substring(1),
-        });
-        return;
-      }
-      if (
-        ext === '.tif' ||
-        ext === '.tiff' ||
-        ext === '.pfm' ||
-        ext === '.npy' ||
-        ext === '.npz' ||
-        ext === '.png' ||
-        ext === '.exr'
-      ) {
-        const depthBytes = await vscode.workspace.fs.readFile(fileUri);
-        sendToWebview(webviewPanel, {
-          type: 'sequence:file:depth',
-          index: message.index,
-          requestId: message.requestId,
-          fileName,
-          data: depthBytes.buffer.slice(
-            depthBytes.byteOffset,
-            depthBytes.byteOffset + depthBytes.byteLength
-          ),
-        });
-        return;
-      }
+      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(message.path));
       sendToWebview(webviewPanel, {
-        type: 'sequence:file:error',
+        type: 'sequence:file',
         index: message.index,
         requestId: message.requestId,
-        fileName,
-        error: `Unsupported file type: ${ext}`,
+        fileName: path.basename(message.path),
+        data: bytes,
       });
-    } catch (err) {
+    } catch (error) {
       sendToWebview(webviewPanel, {
         type: 'sequence:file:error',
         index: message.index,
         requestId: message.requestId,
-        fileName,
-        error: err instanceof Error ? err.message : String(err),
+        error: error instanceof Error ? error.message : String(error),
       });
     }
   }

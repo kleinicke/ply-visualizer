@@ -1,14 +1,14 @@
+import {
+  replaceSpatialGeometry,
+  type GeometryReplacementHost,
+} from '../visualization/replaceSpatialGeometry';
 import type { FileEntryRegistry } from '../state/fileEntries';
-import * as THREE from 'three';
 import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
 import { applyDepthResultTypedArrays } from './depthResultArrays';
 import { runWithFileActivity } from '../fileActivity';
 import { PerfTimer } from '../utils/perfLog';
 
-export interface LiveDepthUpdateHost {
-  spatialFiles: SpatialData[];
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
-  scene: THREE.Scene;
+export interface LiveDepthUpdateHost extends GeometryReplacementHost {
   smallViewAffordance?: { notifyGeometryReplaced(): void };
   getDepthSettings(fileIndex: number): CameraParams;
   processDepthToPointCloud(
@@ -18,8 +18,6 @@ export interface LiveDepthUpdateHost {
     colorImageData?: ImageData,
     signal?: AbortSignal
   ): Promise<DepthConversionResult>;
-  createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material;
-  createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry;
   performRender(): void;
   updateFileStats(): void;
   showStatus(message: string): void;
@@ -177,7 +175,7 @@ async function applyDepthSettingsInner(
     }
 
     // Check if we have cached depth data for this file
-    const depthData = host.spatialFiles[fileIndex]?.depthSource;
+    const depthData = entry.spatial?.data.depthSource;
     if (!depthData) {
       throw new Error('No cached depth data found for this file. Please reload the depth file.');
     }
@@ -208,20 +206,11 @@ async function applyDepthSettingsInner(
       return;
     }
 
-    // Update the stored camera parameters with the processed values (cx/cy might have been updated)
-    depthData.cameraParams = newCameraParams;
-
-    if (depthData.colorImageData) {
-      console.log(
-        `🎨 Reapplying stored color image: ${depthData.colorImageName}\n🎯 Using updated camera params: cx=${newCameraParams.cx}, cy=${newCameraParams.cy}`
-      );
-    }
-
-    // Update the PLY data
-    const spatialData = host.spatialFiles[fileIndex];
+    const spatialData: SpatialData = {
+      ...entry.spatial!.data,
+      depthSource: { ...depthData, cameraParams: newCameraParams },
+    };
     applyDepthResultTypedArrays(spatialData, result);
-    // Mark as depth-derived so gamma correction knows these are already linear colors
-    (spatialData as any).isDepthDerived = true;
     const comments: string[] = [
       `Converted from ${fileType} depth image: ${depthData.fileName}`,
       `Camera: ${newCameraParams.cameraModel}`,
@@ -239,48 +228,8 @@ async function applyDepthSettingsInner(
 
     spatialData.comments = comments;
 
-    // Update cached parameters
-    depthData.cameraParams = newCameraParams;
-
-    // Update the mesh with new data
-    const oldMaterial = host.meshes[fileIndex].material;
-    const colorMode = host.fileEntries.require(fileIndex).state.colorMode || 'assigned';
-    console.log(
-      `🎨 Depth settings apply - fileIndex: ${fileIndex}, hasColors: ${spatialData.hasColors}, colorMode: ${colorMode}, vertexCount: ${spatialData.vertexCount}`
-    );
     perf.mark('arrays');
-    const newMaterial = host.createMaterialForFile(spatialData, fileIndex);
-    host.meshes[fileIndex].material = newMaterial;
-
-    // Ensure point size is correctly applied to the new material
-    if (
-      host.meshes[fileIndex] instanceof THREE.Points &&
-      newMaterial instanceof THREE.PointsMaterial
-    ) {
-      const currentPointSize = host.fileEntries.require(fileIndex).state.pointSize || 0.001;
-      newMaterial.size = currentPointSize;
-      console.log(
-        `🔧 Applied point size ${currentPointSize} to updated ${fileType} material for file ${fileIndex}`
-      );
-    }
-
-    // Replace the mesh so Three.js uploads the returned typed arrays cleanly.
-    const oldMesh = host.meshes[fileIndex];
-    host.scene.remove(oldMesh);
-
-    if (oldMesh.geometry) {
-      oldMesh.geometry.dispose();
-    }
-
-    perf.mark('material');
-    const geometry = host.createGeometryFromSpatialData(spatialData);
-    const newMesh = new THREE.Points(geometry, newMaterial);
-
-    newMesh.matrix.copy(oldMesh.matrix);
-    newMesh.matrixAutoUpdate = oldMesh.matrixAutoUpdate;
-
-    entry.spatial!.object = newMesh;
-    host.scene.add(newMesh);
+    replaceSpatialGeometry(host, entry, spatialData, fileIndex);
 
     perf.mark('geometry');
     // The cloud may have landed somewhere else entirely; let the fit prompt
@@ -288,15 +237,6 @@ async function applyDepthSettingsInner(
     host.smallViewAffordance?.notifyGeometryReplaced();
     host.performRender();
     perf.mark('render');
-
-    // Dispose old material
-    if (oldMaterial) {
-      if (Array.isArray(oldMaterial)) {
-        oldMaterial.forEach(mat => mat.dispose());
-      } else {
-        oldMaterial.dispose();
-      }
-    }
 
     // Update UI
     host.updateFileStats();

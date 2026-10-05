@@ -35,7 +35,7 @@ export type DepthForm = Omit<CameraParams, 'fx'> & {
 };
 export interface DepthFormHost {
   fileEntries: FileEntryRegistry;
-  spatialFiles: SpatialData[];
+  spatialFiles: readonly SpatialData[];
   defaultDepthSettings: CameraParams;
 }
 const optionalNumber = (value: string): number | undefined =>

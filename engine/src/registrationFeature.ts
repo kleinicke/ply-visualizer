@@ -25,9 +25,9 @@ import {
 
 export interface RegistrationHost {
   scene: THREE.Scene;
-  spatialFiles: SpatialData[];
+  spatialFiles: readonly SpatialData[];
   /** X3A camera profiles, so panoramas follow the scans they were shot from. */
-  cameraGroups?: THREE.Group[];
+  cameraGroups?: readonly THREE.Group[];
   setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void;
   setFileEntryVisibility?(fileIndex: number, visible: boolean): void;
   updateMatrixTextarea(fileIndex: number): void;

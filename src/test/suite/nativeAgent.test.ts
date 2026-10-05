@@ -8,7 +8,7 @@ import * as fs from 'fs/promises';
 
 suite('Native VS Code agent tools — real webview', function () {
   this.timeout(180000);
-  let id: string;
+  const scenes = new Set<string>();
   let fixtureRoot: string;
   const points = [
     [0, 0, 0],
@@ -25,6 +25,8 @@ suite('Native VS Code agent tools — real webview', function () {
     ) as vscode.LanguageModelTextPart;
     const data = JSON.parse(text.value);
     assert.ok(data.ok, JSON.stringify(data));
+    if (name === 'close_3d_scene') {scenes.delete(input.scene_id);}
+    else if (data.scene_id) {scenes.add(data.scene_id);}
     return { data, content: result.content };
   }
   suiteSetup(async () => {
@@ -95,10 +97,14 @@ suite('Native VS Code agent tools — real webview', function () {
     await vscode.extensions.getExtension('kleinicke.ply-visualizer')!.activate();
   });
   suiteTeardown(async () => {
-    if (id) {
-      await call('close_3d_scene', { scene_id: id });
-    }
     await fs.rm(fixtureRoot, { recursive: true, force: true });
+  });
+  teardown(async () => {
+    try {
+      await Promise.all([...scenes].map(scene_id => call('close_3d_scene', { scene_id })));
+    } finally {
+      scenes.clear();
+    }
   });
   test('all 25 MCP viewer operations are discoverable as native tools', () => {
     const tools = vscode.lm.tools.filter(t => t.name.startsWith('viz3d_'));
@@ -107,7 +113,7 @@ suite('Native VS Code agent tools — real webview', function () {
   });
   test('loads, navigates, transforms, captures and updates in the identical renderer/tab', async () => {
     const opened = (await call('visualize_points', { points })).data;
-    id = opened.scene_id;
+    const id = opened.scene_id;
     assert.strictEqual(opened.objects[0].vertices, 3);
     const renderer = opened.renderer_id;
     const moved = (
@@ -149,6 +155,7 @@ suite('Native VS Code agent tools — real webview', function () {
     assert.ok(scene.visible);
   });
   test('selection errors are informative; state export/import and subset exports work', async () => {
+    const id = (await call('visualize_points', { points })).data.scene_id;
     await call('manage_3d_scene_states', { scene_id: id, action: 'save', name: 'Overview' });
     await call('set_3d_appearance', {
       scene_id: id,
@@ -194,6 +201,7 @@ suite('Native VS Code agent tools — real webview', function () {
     }
   });
   test('depth projection with defaults, attributes, comparison, measurements and preview', async () => {
+    const id = (await call('visualize_points', { points })).data.scene_id;
     const root = fixtureRoot;
     const file = path.join(root, `.native-depth-${Date.now()}.pfm`);
     const header = Buffer.from('Pf\n2 2\n-1.0\n');
@@ -275,6 +283,7 @@ suite('Native VS Code agent tools — real webview', function () {
     }
   });
   test('URL loading uses the extension host, honors size limits and appends to the native scene', async () => {
+    const id = (await call('visualize_points', { points })).data.scene_id;
     const root = fixtureRoot;
     const bytes = gzipSync(await fs.readFile(path.join(root, 'cloud.ply')));
     const server = createServer((_request, response) => {

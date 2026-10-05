@@ -344,7 +344,7 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
 }
 
 const summaries = new WeakMap<SpatialData, Record<string, unknown>>();
-export async function agentAttributes(files: SpatialData[]) {
+export async function agentAttributes(files: readonly SpatialData[]) {
   const wasm = (await loadRegistrationWasm()) as unknown as {
     scalar_summary(values: Float32Array): string;
   };

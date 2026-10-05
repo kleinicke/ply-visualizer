@@ -1,3 +1,4 @@
+import type { FileEntry, PoseEntryData } from './state/fileEntries';
 import type { FileObject } from './visualization/fileObject';
 import { ViewerLifetime } from './utils/viewerLifetime';
 import type { EntryRequest } from './hosts/viewerProtocol';
@@ -327,10 +328,10 @@ export class PointCloudVisualizer {
   private colmapImageNames: string[] = [];
   private colmapImagesDone = 0;
   // Read projections for renderer/feature contracts; entries own the records.
-  get spatialFiles(): SpatialData[] {
+  get spatialFiles(): readonly SpatialData[] {
     return this.fileEntries.ofKind('spatial').map(entry => entry.spatial!.data);
   }
-  get meshes(): FileObject[] {
+  get meshes(): readonly FileObject[] {
     return this.fileEntries.ofKind('spatial').map(entry => entry.spatial!.object);
   }
 
@@ -353,8 +354,13 @@ export class PointCloudVisualizer {
   sequenceTimer: number | null = null;
   sequenceFps = 2; // ~2 frames per second
   isSequencePlaying = false;
-  sequenceCache = new Map<number, THREE.Object3D>();
-  sequenceCacheOrder: number[] = [];
+  sequenceCache = new Map<number, FileEntry>();
+  sequencePending = new Map<
+    number,
+    { requestId: string; controller: AbortController; processing: boolean }
+  >();
+  sequenceGeneration = 0;
+  sequenceRequestId = 0;
   maxSequenceCache = 6; // keep more frames when navigating back
 
   // Per-file Depth data storage for reprocessing
@@ -363,52 +369,52 @@ export class PointCloudVisualizer {
   private depthConverter: DepthConverter = new DepthConverter();
   private depthWorkerClient: DepthWorkerClient = new DepthWorkerClient(this.depthConverter);
 
-  get poseGroups() {
+  get poseGroups(): readonly THREE.Group[] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.object);
   }
-  get poseMeta() {
+  get poseMeta(): readonly PoseEntryData['meta'][] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.meta);
   }
-  get poseJoints() {
+  get poseJoints(): readonly PoseEntryData['joints'][] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.joints);
   }
-  get poseEdges() {
+  get poseEdges(): readonly PoseEntryData['edges'][] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.edges);
   }
-  get poseUseDatasetColors() {
+  get poseUseDatasetColors(): readonly boolean[] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.useDatasetColors);
   }
-  get poseShowLabels() {
+  get poseShowLabels(): readonly boolean[] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.showLabels);
   }
-  get poseScaleByScore() {
+  get poseScaleByScore(): readonly boolean[] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.scaleByScore);
   }
-  get poseScaleByUncertainty() {
+  get poseScaleByUncertainty(): readonly boolean[] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.scaleByUncertainty);
   }
-  get poseConvention() {
+  get poseConvention(): readonly ('opencv' | 'opengl')[] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.convention);
   }
-  get poseMinScoreThreshold() {
+  get poseMinScoreThreshold(): readonly number[] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.minScoreThreshold);
   }
-  get poseMaxUncertaintyThreshold() {
+  get poseMaxUncertaintyThreshold(): readonly number[] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.maxUncertaintyThreshold);
   }
-  get poseLabelsGroups() {
+  get poseLabelsGroups(): readonly (THREE.Group | null)[] {
     return this.fileEntries.ofKind('pose').map(entry => entry.pose!.labelsGroup);
   }
-  get cameraGroups() {
+  get cameraGroups(): readonly THREE.Group[] {
     return this.fileEntries.ofKind('camera').map(entry => entry.camera!.object);
   }
-  get cameraNames() {
+  get cameraNames(): readonly string[] {
     return this.fileEntries.ofKind('camera').map(entry => entry.camera!.name);
   }
-  get cameraShowLabels() {
+  get cameraShowLabels(): readonly boolean[] {
     return this.fileEntries.ofKind('camera').map(entry => entry.camera!.showLabels);
   }
-  get cameraShowCoords() {
+  get cameraShowCoords(): readonly boolean[] {
     return this.fileEntries.ofKind('camera').map(entry => entry.camera!.showCoords);
   }
   cameraVisibility = true;
@@ -1095,7 +1101,7 @@ export class PointCloudVisualizer {
     this.smallViewAffordance.hide();
     rotationCenterFeature.removeRotationCenterFeedback(this);
     this.gpuTimer.dispose();
-    this.pauseSequence();
+    sequencePlayback.disposeSequence(this);
     this.depthWorkerClient.dispose();
     delete document.documentElement.dataset.visualizerReady;
     this.disposeMessageHandler();
@@ -1110,8 +1116,6 @@ export class PointCloudVisualizer {
         disposeObjects([entry.pose?.object, entry.pose?.labelsGroup, entry.camera?.object]);
       }
     }
-    disposeObjects([...this.sequenceCache.values()]);
-    this.sequenceCache.clear();
     disposeObjects([...(this.scene?.children ?? [])]);
     this.volumeSources.clear();
     this.pendingDepthFiles.clear();
@@ -1565,9 +1569,9 @@ export class PointCloudVisualizer {
 
   private checkMeshVisibility(): void {
     // Check if any meshes are being culled by frustum culling
-    for (let i = 0; i < this.meshes.length; i++) {
-      const mesh = this.meshes[i];
-      const isVisible = this.fileEntries.require(i).state.visible;
+    for (const entry of this.fileEntries.ofKind('spatial')) {
+      const mesh = entry.spatial!.object;
+      const isVisible = entry.state.visible;
 
       if (!isVisible) {
         continue;
@@ -2071,54 +2075,6 @@ export class PointCloudVisualizer {
     sequencePlayback.seekSequence(this, index);
   }
 
-  private async sequenceHandleUltimate(message: any): Promise<void> {
-    await sequencePlayback.sequenceHandleUltimate(this, message);
-  }
-
-  private async sequenceHandlePly(message: any): Promise<void> {
-    await sequencePlayback.sequenceHandlePly(this, message);
-  }
-
-  private async sequenceHandleXyz(message: any): Promise<void> {
-    await sequencePlayback.sequenceHandleXyz(this, message);
-  }
-
-  private async sequenceHandleObj(message: any): Promise<void> {
-    await sequencePlayback.sequenceHandleObj(this, message);
-  }
-
-  private async sequenceHandleStl(message: any): Promise<void> {
-    await sequencePlayback.sequenceHandleStl(this, message);
-  }
-
-  private async sequenceHandleDepth(message: any): Promise<void> {
-    await sequencePlayback.sequenceHandleDepth(this, message);
-  }
-
-  private trimNormalModeArraysFrom(startIndex: number): void {
-    sequencePlayback.trimNormalModeArraysFrom(this, startIndex);
-  }
-
-  private async loadSequenceFrame(index: number): Promise<void> {
-    await sequencePlayback.loadSequenceFrame(this, index);
-  }
-
-  private useSequenceObject(obj: THREE.Object3D, index: number): void {
-    sequencePlayback.useSequenceObject(this, obj, index);
-  }
-
-  private cacheSequenceOnly(obj: THREE.Object3D, index: number): void {
-    sequencePlayback.cacheSequenceOnly(this, obj, index);
-  }
-
-  private swapSequenceObject(obj: THREE.Object3D, index: number): void {
-    sequencePlayback.swapSequenceObject(this, obj, index);
-  }
-
-  private ensureSequenceVisibility(obj: THREE.Object3D): void {
-    sequencePlayback.ensureSequenceVisibility(obj);
-  }
-
   fitCameraToObject(obj: THREE.Object3D): void {
     const box = new THREE.Box3().setFromObject(obj);
     if (!box.isEmpty()) {
@@ -2152,9 +2108,8 @@ export class PointCloudVisualizer {
   }
 
   private rebuildAllPlyMaterials(): void {
-    for (let i = 0; i < this.meshes.length && i < this.spatialFiles.length; i++) {
-      const data = this.spatialFiles[i];
-      const mesh = this.meshes[i];
+    for (const [i, entry] of this.fileEntries.ofKind('spatial').entries()) {
+      const { data, object: mesh } = entry.spatial!;
       if (!data || !mesh || data.sceneModel) {
         continue;
       }
@@ -2485,24 +2440,8 @@ export class PointCloudVisualizer {
             );
           }
         },
-        'sequence:file:ultimate': async message => {
-          await this.sequenceHandleUltimate(message);
-        },
-        'sequence:file:ply': async message => {
-          await this.sequenceHandlePly(message);
-        },
-        'sequence:file:xyz': async message => {
-          await this.sequenceHandleXyz(message);
-        },
-        'sequence:file:obj': async message => {
-          await this.sequenceHandleObj(message);
-        },
-        'sequence:file:stl': async message => {
-          await this.sequenceHandleStl(message);
-        },
-        'sequence:file:depth': async message => {
-          await this.sequenceHandleDepth(message);
-        },
+        'sequence:file': message => sequencePlayback.handleSequenceFile(this, message),
+        'sequence:file:error': message => sequencePlayback.handleSequenceError(this, message),
         fileRemoved: async message => {
           try {
             this.removeFileByIndex(message.fileIndex);
@@ -2872,7 +2811,8 @@ export class PointCloudVisualizer {
     }
 
     const box = new THREE.Box3();
-    for (const obj of this.meshes) {
+    for (const entry of this.fileEntries.ofKind('spatial')) {
+      const obj = entry.spatial!.object;
       box.expandByObject(obj);
     }
     for (const group of this.poseGroups) {
@@ -2895,9 +2835,9 @@ export class PointCloudVisualizer {
     // actually occupy instead. Well-behaved clouds keep their previous
     // framing - see visualization/robustBounds.ts.
     const trimmed = new THREE.Box3();
-    for (let index = 0; index < this.spatialFiles.length; index++) {
-      const positions = this.spatialFiles[index]?.positionsArray;
-      const mesh = this.meshes[index];
+    for (const entry of this.fileEntries.ofKind('spatial')) {
+      const { data, object: mesh } = entry.spatial!;
+      const positions = data.positionsArray;
       if (!positions || !mesh) {
         continue;
       }
@@ -3382,7 +3322,7 @@ export class PointCloudVisualizer {
       const shouldBeVisible = !isSeqMode || data.fileIndex === this.sequenceIndex;
       entry.state.visible = shouldBeVisible;
 
-      const lastObject = this.meshes[this.meshes.length - 1];
+      const lastObject = object;
       if (lastObject) {
         lastObject.visible = shouldBeVisible;
       }
@@ -3453,9 +3393,9 @@ export class PointCloudVisualizer {
     }
 
     // Reassign file indices
-    for (let i = 0; i < this.spatialFiles.length; i++) {
-      this.spatialFiles[i].fileIndex = i;
-    }
+    this.fileEntries.ofKind('spatial').forEach((entry, index) => {
+      entry.spatial!.data.fileIndex = index;
+    });
 
     // Update UI
     this.updateFileList();
@@ -3463,11 +3403,7 @@ export class PointCloudVisualizer {
     this.updateWelcomeMessageVisibility();
 
     // If all scene objects are gone, allow first-load auto-fit for the next import.
-    if (
-      this.spatialFiles.length === 0 &&
-      this.poseGroups.length === 0 &&
-      this.cameraGroups.length === 0
-    ) {
+    if (this.fileEntries.length === 0) {
       this.isFirstFileLoad = true;
     }
 
@@ -4207,8 +4143,8 @@ export class PointCloudVisualizer {
 
   private refreshDepthFileFormsWithDefaults(): void {
     // Update existing depth file forms to use the new default settings
-    for (let i = 0; i < this.spatialFiles.length; i++) {
-      const data = this.spatialFiles[i];
+    for (const [i, entry] of this.fileEntries.ofKind('spatial').entries()) {
+      const data = entry.spatial!.data;
       if (commentSettings.isDepthDerivedFile(data)) {
         console.log(`🔄 Refreshing depth form ${i} with new defaults`);
         this.updateDepthFormWithDefaults(i);

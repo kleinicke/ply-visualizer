@@ -163,7 +163,11 @@ export function modelSpatialData(model: SceneModel, fileName: string, size: numb
 }
 
 export function updateModelPlayback(
-  host: { spatialFiles: SpatialData[]; fileEntries: FileEntryRegistry; requestRender(): void },
+  host: {
+    spatialFiles: readonly SpatialData[];
+    fileEntries: FileEntryRegistry;
+    requestRender(): void;
+  },
   delta: number
 ): void {
   host.spatialFiles.forEach((data, index) => {

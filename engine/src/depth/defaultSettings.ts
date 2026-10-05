@@ -5,7 +5,7 @@ import { isPngDerivedFile } from './commentSettings';
 
 export interface DefaultDepthSettingsHost extends DepthFormHost {
   defaultDepthSettings: CameraParams;
-  spatialFiles: SpatialData[];
+  spatialFiles: readonly SpatialData[];
   vscode: { postMessage(message: any): void };
   getDepthSettings(fileIndex: number): CameraParams;
   showStatus(message: string): void;

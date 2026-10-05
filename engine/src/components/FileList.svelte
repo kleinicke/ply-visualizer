@@ -16,6 +16,7 @@
   );
   const sequenceFrameInfo = $derived(
     (() => {
+      filesState.entries;
       if (!isSequenceFrame) {
         return null;
       }
@@ -23,7 +24,7 @@
       const pathParts = fullPath.split(/[\\/]/);
       const name = pathParts.pop() || `Frame ${host.sequenceIndex + 1}`;
       const shortPath = pathParts.slice(-2).concat(name).join('/');
-      return { name, shortPath };
+      return { name, shortPath, index: host.sequenceIndex, total: host.sequenceFiles.length };
     })(),
   );
 
@@ -46,7 +47,7 @@
         >{sequenceFrameInfo.name}</label
       >
     </div>
-    <div class="file-info">Frame {host.sequenceIndex + 1} of {host.sequenceFiles.length}</div>
+    <div class="file-info">Frame {sequenceFrameInfo.index + 1} of {sequenceFrameInfo.total}</div>
   </div>
 {:else if totalEntries === 0 && !pendingLoadLabel}
   <div class="no-files">No objects loaded</div>

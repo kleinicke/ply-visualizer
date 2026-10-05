@@ -5,11 +5,11 @@ import { registerCameraEntry } from './state/fileEntryState';
 
 export interface CameraProfileHost {
   scene: THREE.Scene;
-  cameraGroups: THREE.Group[];
-  cameraNames: string[];
+  cameraGroups: readonly THREE.Group[];
+  cameraNames: readonly string[];
   cameraVisibility: boolean;
-  cameraShowLabels: boolean[];
-  cameraShowCoords: boolean[];
+  cameraShowLabels: readonly boolean[];
+  cameraShowCoords: readonly boolean[];
   spatialFiles: { length: number };
   poseGroups: { length: number };
   updateFileList(): void;

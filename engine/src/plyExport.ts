@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { SpatialData } from './interfaces';
 
 export interface PlyExportHost {
-  spatialFiles: SpatialData[];
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
+  spatialFiles: readonly SpatialData[];
+  meshes: readonly (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
   vscode: { postMessage(message: any): void };
   showStatus(message: string): void;
   showError(message: string): void;

@@ -10,8 +10,6 @@ export interface SceneBrightnessHost {
   backgroundBrightness: number;
   convertSrgbToLinear: boolean;
   useLinearColorSpace: boolean;
-  spatialFiles: SpatialData[];
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
   showStatus(message: string): void;
   requestRender(): void;
   updateGammaButtonState(): void;
@@ -95,14 +93,13 @@ export function updateGammaButtonState(host: SceneBrightnessHost): void {
 export function rebuildAllColorAttributesForCurrentGammaSetting(host: SceneBrightnessHost): void {
   // Update colors for all meshes based on current convertSrgbToLinear flag
   try {
-    for (let i = 0; i < host.spatialFiles.length && i < host.meshes.length; i++) {
-      const spatialData = host.spatialFiles[i];
-      const mesh = host.meshes[i];
+    for (const entry of host.fileEntries.ofKind('spatial')) {
+      const { data: spatialData, object: mesh } = entry.spatial!;
       if (!mesh || !spatialData) {
         continue;
       }
       const geometry = (mesh as any).geometry;
-      const colorMode = host.fileEntries.require(i).state.colorMode || 'assigned';
+      const colorMode = entry.state.colorMode || 'assigned';
 
       host.applyColorModeToGeometry(spatialData, geometry, colorMode);
 

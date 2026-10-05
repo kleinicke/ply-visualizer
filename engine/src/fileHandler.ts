@@ -232,7 +232,11 @@ export function convertToUnifiedFormat(data: any, fileName: string): UnifiedFile
     vertices: vertices,
     faces: faces,
     format:
-      data.format === 'binary' && data.triangles ? 'binary_little_endian' : data.format || 'ascii',
+      data.format === 'binary' || data.format === 'binary_compressed'
+        ? 'binary_little_endian'
+        : data.format === 'pts'
+          ? 'ascii'
+          : data.format || 'ascii',
     version: data.version || '1.0',
     comments: data.comments || [],
     vertexCount: data.vertexCount ?? vertices.length,

@@ -19,8 +19,6 @@ export interface EDLHost {
   webglRenderer: THREE.WebGLRenderer | null;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
-  meshes: THREE.Object3D[];
-  spatialFiles: SpatialData[];
   edlEnabled: boolean;
   edlMode: EDLMode;
   edlStrength: number;
@@ -93,14 +91,13 @@ export function toggleEDL(host: EDLHost): void {
  */
 export function getAutoEDLPointClouds(host: EDLHost): THREE.Points[] {
   const eligible: THREE.Points[] = [];
-  for (let index = 0; index < host.spatialFiles.length; index++) {
-    const object = host.meshes[index];
-    const data = host.spatialFiles[index];
+  for (const entry of host.fileEntries.ofKind('spatial')) {
+    const { object, data } = entry.spatial!;
     if (
       object instanceof THREE.Points &&
-      host.fileEntries.require(index).state.visible !== false &&
+      entry.state.visible !== false &&
       object.visible &&
-      !shouldUseVertexColors(data, host.fileEntries.require(index).state.colorMode ?? 'assigned')
+      !shouldUseVertexColors(data, entry.state.colorMode ?? 'assigned')
     ) {
       eligible.push(object);
     }

@@ -8,10 +8,10 @@ export interface PointSizeScalingHost {
   allowTransparency: boolean;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
+  meshes: readonly (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
 
-  spatialFiles: SpatialData[];
-  poseGroups: THREE.Group[];
+  spatialFiles: readonly SpatialData[];
+  poseGroups: readonly THREE.Group[];
 
   requestRender(): void;
   showStatus(message: string): void;
@@ -84,34 +84,35 @@ export function updateAllPointSizesForDistance(host: PointSizeScalingHost): void
   const cameraDistance = host.camera.position.distanceTo(sceneCenter);
 
   // Apply distance-based scaling to all point materials
-  host.meshes.forEach((mesh, index) => {
+  host.fileEntries.ofKind('spatial').forEach(entry => {
+    const mesh = entry.spatial!.object;
     if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
       const material = mesh.material as THREE.PointsMaterial;
-      const baseSize = host.fileEntries.require(index).state.pointSize || 1.0;
+      const baseSize = entry.state.pointSize || 1.0;
       setPointSize(host, material, calculateScreenSpacePointSize(baseSize, cameraDistance));
       material.needsUpdate = true;
     }
   });
 
   // Update vertex points objects
-  host.fileEntries.all.forEach((entry, index) => {
+  host.fileEntries.all.forEach(entry => {
     const vertexPoints = entry.resources.vertexPoints;
     if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
       const material = vertexPoints.material as THREE.PointsMaterial;
-      const baseSize = host.fileEntries.require(index).state.pointSize || 1.0;
+      const baseSize = entry.state.pointSize || 1.0;
       setPointSize(host, material, calculateScreenSpacePointSize(baseSize, cameraDistance));
       material.needsUpdate = true;
     }
   });
 
   // Update multi-material groups
-  host.fileEntries.all.forEach((entry, index) => {
+  host.fileEntries.all.forEach(entry => {
     const group = entry.resources.materialGroup;
     if (group) {
       group.traverse(child => {
         if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
           const material = child.material as THREE.PointsMaterial;
-          const baseSize = host.fileEntries.require(index).state.pointSize || DEFAULT_POINT_SIZE;
+          const baseSize = entry.state.pointSize || DEFAULT_POINT_SIZE;
           setPointSize(host, material, calculateScreenSpacePointSize(baseSize, cameraDistance));
           material.needsUpdate = true;
         }
@@ -258,34 +259,31 @@ export function updatePointSize(
 
 export function restoreOriginalPointSizes(host: PointSizeScalingHost): void {
   // Restore original point sizes from stored values
-  host.meshes.forEach((mesh, index) => {
+  host.fileEntries.ofKind('spatial').forEach(entry => {
+    const mesh = entry.spatial!.object;
     if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
       const material = mesh.material as THREE.PointsMaterial;
-      setPointSize(host, material, host.fileEntries.require(index).state.pointSize || 1.0);
+      setPointSize(host, material, entry.state.pointSize || 1.0);
       material.needsUpdate = true;
     }
   });
 
-  host.fileEntries.all.forEach((entry, index) => {
+  host.fileEntries.all.forEach(entry => {
     const vertexPoints = entry.resources.vertexPoints;
     if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
       const material = vertexPoints.material as THREE.PointsMaterial;
-      setPointSize(host, material, host.fileEntries.require(index).state.pointSize || 1.0);
+      setPointSize(host, material, entry.state.pointSize || 1.0);
       material.needsUpdate = true;
     }
   });
 
-  host.fileEntries.all.forEach((entry, index) => {
+  host.fileEntries.all.forEach(entry => {
     const group = entry.resources.materialGroup;
     if (group) {
       group.traverse(child => {
         if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
           const material = child.material as THREE.PointsMaterial;
-          setPointSize(
-            host,
-            material,
-            host.fileEntries.require(index).state.pointSize || DEFAULT_POINT_SIZE
-          );
+          setPointSize(host, material, entry.state.pointSize || DEFAULT_POINT_SIZE);
           material.needsUpdate = true;
         }
       });

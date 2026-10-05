@@ -400,14 +400,14 @@ test('invalid geometry reports a useful error without allocating or publishing a
   expect(result.unchanged).toBe(true);
 });
 
-test('sequence playback transfers objects out of the registry and releases them on restart', async ({
+test('failed volume and depth replacements preserve the displayed file and allow retry', async ({
   page,
 }) => {
   await page.goto('/');
   await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
   const result = await page.evaluate(async () => {
     const viewer = (window as any).visualizer;
-    const data = () => ({
+    const initial = {
       vertices: [{ x: 0, y: 0, z: 0 }],
       faces: [],
       vertexCount: 1,
@@ -417,31 +417,60 @@ test('sequence playback transfers objects out of the registry and releases them 
       format: 'ascii',
       version: '1.0',
       comments: [],
-      fileName: 'frame.ply',
-    });
-    viewer.vscode.postMessage = () => {};
-    viewer.addNewFiles([data()]);
-    let disposed = 0;
-    viewer.meshes[0].geometry.addEventListener('dispose', () => disposed++);
-    viewer.initializeSequence(['a.ply', 'b.ply'], '*.ply');
-    await viewer.sequenceHandlePly({ index: 0, data: data() });
-    const frame = viewer.sequenceCache.get(0);
-    frame.geometry.addEventListener('dispose', () => disposed++);
-    const state = {
-      registered: viewer.fileEntries.length,
-      cache: viewer.sequenceCache.size,
-      visible: frame.visible,
-      parent: frame.parent === viewer.scene,
+      fileName: 'depth.pfm',
+      depthSource: {
+        originalData: new ArrayBuffer(0),
+        fileName: 'depth.pfm',
+        cameraParams: { fx: 1, cameraModel: 'pinhole-ideal', depthType: 'euclidean' },
+        depthDimensions: { width: 1, height: 1 },
+        colorImageName: 'old.png',
+      },
     };
-    viewer.initializeSequence([], '');
-    return { ...state, disposed, cacheAfter: viewer.sequenceCache.size };
+    viewer.addNewFiles([initial]);
+    const entry = viewer.fileEntries.at(0);
+    const old = entry.spatial.object;
+    let disposed = 0;
+    old.geometry.addEventListener('dispose', () => disposed++);
+    viewer.processDepthToPointCloud = async () => ({
+      pointCount: 1,
+      vertices: new Float32Array([1, 2, 3]),
+    });
+    const material = viewer.createMaterialForFile;
+    viewer.createMaterialForFile = () => {
+      throw new Error('Injected replacement failure');
+    };
+    const unchanged = () =>
+      entry.spatial.data === initial &&
+      entry.spatial.object === old &&
+      old.parent === viewer.scene &&
+      disposed === 0;
+    await viewer.handleVolumeData({
+      data: { ...initial, metadata: { volumeRenderMode: 'points' } },
+      fileName: 'volume.nrrd',
+      replaceFileIndex: 0,
+    });
+    const volume = unchanged();
+    await viewer.removeColorImageFromDepth(0);
+    const color = unchanged() && initial.depthSource.colorImageName === 'old.png';
+    await viewer.applyDepthSettings(0);
+    const depth = unchanged();
+    viewer.createMaterialForFile = material;
+    await viewer.removeColorImageFromDepth(0);
+    return {
+      volume,
+      color,
+      depth,
+      disposed,
+      replaced: entry.spatial.object !== old,
+      colorCleared: !entry.spatial.data.depthSource.colorImageName,
+    };
   });
   expect(result).toEqual({
-    registered: 0,
-    cache: 1,
-    visible: true,
-    parent: true,
-    disposed: 2,
-    cacheAfter: 0,
+    volume: true,
+    color: true,
+    depth: true,
+    disposed: 1,
+    replaced: true,
+    colorCleared: true,
   });
 });

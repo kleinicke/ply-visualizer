@@ -21,13 +21,13 @@ import {
 interface StonexCameraHost {
   scene: THREE.Scene;
   fileEntries: FileEntryRegistry;
-  spatialFiles: SpatialData[];
-  meshes: THREE.Object3D[];
-  poseGroups: THREE.Group[];
-  cameraGroups: THREE.Group[];
-  cameraNames: string[];
-  cameraShowLabels: boolean[];
-  cameraShowCoords: boolean[];
+  spatialFiles: readonly SpatialData[];
+  meshes: readonly THREE.Object3D[];
+  poseGroups: readonly THREE.Group[];
+  cameraGroups: readonly THREE.Group[];
+  cameraNames: readonly string[];
+  cameraShowLabels: readonly boolean[];
+  cameraShowCoords: readonly boolean[];
 }
 
 const FRUSTUM_DEPTH_METRES = 5;
@@ -452,7 +452,7 @@ function placeFrameGroup(group: THREE.Group, station?: THREE.Matrix4 | null): vo
 }
 
 interface StationTransformHost {
-  spatialFiles: { metadata?: Record<string, unknown> }[];
+  spatialFiles: readonly { metadata?: Record<string, unknown> }[];
   fileEntries: FileEntryRegistry;
 }
 
@@ -484,7 +484,7 @@ function stationTransformLookup(
  * piled on the origin.
  */
 export function updateStonexCameraStations(
-  host: StationTransformHost & { cameraGroups: THREE.Group[] }
+  host: StationTransformHost & { cameraGroups: readonly THREE.Group[] }
 ): void {
   const stationOf = stationTransformLookup(host);
   for (const profile of host.cameraGroups) {

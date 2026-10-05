@@ -18,10 +18,10 @@ interface ColmapCameraHost {
   scene: THREE.Scene;
   spatialFiles: { length: number };
   fileEntries: FileEntryRegistry;
-  cameraGroups: THREE.Group[];
-  cameraNames: string[];
-  cameraShowLabels: boolean[];
-  cameraShowCoords: boolean[];
+  cameraGroups: readonly THREE.Group[];
+  cameraNames: readonly string[];
+  cameraShowLabels: readonly boolean[];
+  cameraShowCoords: readonly boolean[];
 }
 
 export function addColmapCameraVisualization(host: ColmapCameraHost, data: SpatialData): boolean {

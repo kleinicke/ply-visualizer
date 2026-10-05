@@ -42,12 +42,12 @@ import {
 } from './visualization/stonexColorCorrection';
 
 export interface StationPipelineHost {
-  spatialFiles: SpatialData[];
+  spatialFiles: readonly SpatialData[];
   onFileColorModeChange?(fileIndex: number, mode: string): void;
   updateFileList?(): void;
   /** X3A camera profiles, so panoramas follow the scans they were shot from. */
-  cameraGroups?: THREE.Group[];
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
+  cameraGroups?: readonly THREE.Group[];
+  meshes: readonly (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
   setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void;
   updateMatrixTextarea(fileIndex: number): void;
   requestRender(): void;

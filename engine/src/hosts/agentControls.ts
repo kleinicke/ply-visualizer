@@ -27,7 +27,7 @@ export function fitAgentView(
   host: {
     camera: THREE.PerspectiveCamera;
     controls: { target: THREE.Vector3; update(): void };
-    meshes: (THREE.Object3D | null)[];
+    meshes: readonly (THREE.Object3D | null)[];
   },
   preset?: string,
   bounds?: THREE.Box3

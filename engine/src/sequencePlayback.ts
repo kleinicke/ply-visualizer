@@ -1,71 +1,84 @@
-import { disposeObjects } from './visualization/fileObject';
-import type { FileEntryRegistry } from './state/fileEntries';
 import * as THREE from 'three';
-import { SpatialData } from './interfaces';
+import { hasIntensityData } from './utils/intensity';
+import type { CameraParams, DepthConversionResult, SpatialData } from './interfaces';
+import type { FileEntry, FileEntryRegistry } from './state/fileEntries';
+import {
+  buildFileObject,
+  disposeFileResources,
+  type FileObjectHost,
+} from './visualization/fileObject';
+import { decodeFileMessage } from './formats/fileMessage';
+import { detectFileTypeWithContent } from './fileHandler';
+import { applyDepthResultTypedArrays } from './depth/depthResultArrays';
 import { uiState } from './state/ui.svelte';
+import type { MessageOf } from './hosts/viewerProtocol';
 
-/**
- * Everything the sequence-playback functions need from PointCloudVisualizer.
- * Extracted as a narrow structural interface so these functions can move out
- * of main.ts without migrating the underlying state fields (which are also
- * read/written from unrelated parts of the visualizer).
- */
-export interface SequencePlaybackHost {
+export interface SequencePlaybackHost extends FileObjectHost {
   scene: THREE.Scene;
-  vscode: { postMessage(message: any): void };
-
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
-  spatialFiles: SpatialData[];
-
+  vscode: { postMessage(message: unknown): void };
+  fileEntries: FileEntryRegistry;
+  defaultDepthSettings: CameraParams;
+  processDepthToPointCloud(
+    data: ArrayBuffer,
+    fileName: string,
+    params: CameraParams,
+    color?: ImageData,
+    signal?: AbortSignal
+  ): Promise<DepthConversionResult>;
   sequenceMode: boolean;
   sequenceFiles: string[];
   sequenceIndex: number;
   sequenceTargetIndex: number;
   sequenceDidInitialFit: boolean;
   isSequencePlaying: boolean;
-  sequenceCache: Map<number, THREE.Object3D>;
-  sequenceCacheOrder: number[];
+  sequenceCache: Map<number, FileEntry>;
+  sequencePending: Map<
+    number,
+    { requestId: string; controller: AbortController; processing: boolean }
+  >;
+  sequenceGeneration: number;
+  sequenceRequestId: number;
   sequenceTimer: number | null;
   sequenceFps: number;
   maxSequenceCache: number;
-
   updateFileList(): void;
   requestRender(): void;
   removeFileByIndex(index: number): void;
   fitCameraToObject(obj: THREE.Object3D): void;
-  displayFiles(dataArray: SpatialData[]): Promise<void>;
-  handleUltimateRawBinaryData(message: any): Promise<void>;
-  handleXyzData(message: any): Promise<void>;
-  handleObjData(message: any): Promise<void>;
-  handleStlData(message: any): Promise<void>;
-  handleDepthData(message: any): Promise<void>;
-  fileEntries: FileEntryRegistry;
+  showError(message: string): void;
+}
+
+function disposeFrame(entry: FileEntry): void {
+  disposeFileResources(entry, entry.spatial?.object, entry.spatial?.data);
+}
+
+export function disposeSequence(host: SequencePlaybackHost): void {
+  pauseSequence(host);
+  host.sequenceGeneration++;
+  for (const request of host.sequencePending.values()) {request.controller.abort();}
+  host.sequencePending.clear();
+  for (const entry of host.sequenceCache.values()) {disposeFrame(entry);}
+  host.sequenceCache.clear();
+  host.sequenceMode = false;
+  host.sequenceFiles = [];
+  uiState.sequenceMode = false;
 }
 
 export function initializeSequence(
   host: SequencePlaybackHost,
   files: string[],
-  wildcard: string
+  _wildcard: string
 ): void {
+  disposeSequence(host);
   host.sequenceMode = true;
   host.sequenceFiles = files;
   host.sequenceIndex = 0;
   host.sequenceTargetIndex = 0;
   host.sequenceDidInitialFit = false;
-  host.isSequencePlaying = false;
-  pauseSequence(host);
-  disposeObjects([...host.sequenceCache.values()]);
-  host.sequenceCache.clear();
-  host.sequenceCacheOrder = [];
   uiState.sequenceMode = true;
   updateSequenceUI(host);
-  while (host.fileEntries.length) {
-    host.removeFileByIndex(host.fileEntries.length - 1);
-  }
-  // Load first frame
-  if (files.length > 0) {
-    loadSequenceFrame(host, 0);
-  }
+  while (host.fileEntries.length) {host.removeFileByIndex(host.fileEntries.length - 1);}
+  loadSequenceFrame(host, 0);
   host.updateFileList();
 }
 
@@ -125,263 +138,139 @@ export function seekSequence(host: SequencePlaybackHost, index: number): void {
   loadSequenceFrame(host, clamped);
 }
 
-export async function sequenceHandleUltimate(
-  host: SequencePlaybackHost,
-  message: any
-): Promise<void> {
-  const plyMsg = { ...message, type: 'ultimateRawBinaryData', messageType: 'addFiles' };
-  const startFilesLen = host.spatialFiles.length;
-  await host.handleUltimateRawBinaryData(plyMsg);
-  const created = host.meshes[host.meshes.length - 1];
-  if (created) {
-    if (message.index === host.sequenceTargetIndex) {
-      useSequenceObject(host, created, message.index);
-    } else {
-      cacheSequenceOnly(host, created, message.index);
-    }
-  }
-  trimNormalModeArraysFrom(host, startFilesLen);
-}
-
-export async function sequenceHandlePly(host: SequencePlaybackHost, message: any): Promise<void> {
-  const startFilesLen = host.spatialFiles.length;
-  await host.displayFiles([message.data]);
-  const created = host.meshes[host.meshes.length - 1];
-  if (created) {
-    if (message.index === host.sequenceTargetIndex) {
-      useSequenceObject(host, created, message.index);
-    } else {
-      cacheSequenceOnly(host, created, message.index);
-    }
-  }
-  trimNormalModeArraysFrom(host, startFilesLen);
-}
-
-export async function sequenceHandleXyz(host: SequencePlaybackHost, message: any): Promise<void> {
-  const startFilesLen = host.spatialFiles.length;
-  await host.handleXyzData({
-    type: 'xyzData',
-    fileName: message.fileName,
-    data: message.data,
-    isAddFile: true,
+/** Requests and prefetch share the same pending map. IDs include the sequence generation. */
+function requestFrame(host: SequencePlaybackHost, index: number): void {
+  const path = host.sequenceFiles[index];
+  if (!path || host.sequenceCache.has(index) || host.sequencePending.has(index)) {return;}
+  const requestId = `${host.sequenceGeneration}:${++host.sequenceRequestId}`;
+  host.sequencePending.set(index, {
+    requestId,
+    controller: new AbortController(),
+    processing: false,
   });
-  const created = host.meshes[host.meshes.length - 1];
-  if (created) {
-    if (message.index === host.sequenceTargetIndex) {
-      useSequenceObject(host, created, message.index);
-    } else {
-      cacheSequenceOnly(host, created, message.index);
-    }
-  }
-  trimNormalModeArraysFrom(host, startFilesLen);
+  host.vscode.postMessage({ type: 'sequence:requestFile', path, index, requestId });
 }
 
-export async function sequenceHandleObj(host: SequencePlaybackHost, message: any): Promise<void> {
-  const startFilesLen = host.spatialFiles.length;
-  await host.handleObjData({
-    type: 'objData',
-    fileName: message.fileName,
-    data: message.data,
-    isAddFile: true,
-  });
-  const created = host.meshes[host.meshes.length - 1];
-  if (created) {
-    if (message.index === host.sequenceTargetIndex) {
-      useSequenceObject(host, created, message.index);
-    } else {
-      cacheSequenceOnly(host, created, message.index);
-    }
-  }
-  trimNormalModeArraysFrom(host, startFilesLen);
-}
-
-export async function sequenceHandleStl(host: SequencePlaybackHost, message: any): Promise<void> {
-  const startFilesLen = host.spatialFiles.length;
-  await host.handleStlData({
-    type: 'stlData',
-    fileName: message.fileName,
-    data: message.data,
-    isAddFile: true,
-  });
-  const created = host.meshes[host.meshes.length - 1];
-  if (created) {
-    if (message.index === host.sequenceTargetIndex) {
-      useSequenceObject(host, created, message.index);
-    } else {
-      cacheSequenceOnly(host, created, message.index);
-    }
-  }
-  trimNormalModeArraysFrom(host, startFilesLen);
-}
-
-export async function sequenceHandleDepth(host: SequencePlaybackHost, message: any): Promise<void> {
-  const startFilesLen = host.spatialFiles.length;
-  await host.handleDepthData({
-    type: 'depthData',
-    fileName: message.fileName,
-    data: message.data,
-    isAddFile: true,
-  });
-  const created = host.meshes[host.meshes.length - 1];
-  if (created) {
-    useSequenceObject(host, created, message.index);
-  }
-  trimNormalModeArraysFrom(host, startFilesLen);
-}
-
-export function trimNormalModeArraysFrom(host: SequencePlaybackHost, startIndex: number): void {
-  while (host.fileEntries.countOf('spatial') > startIndex) {
-    host.fileEntries.removeAt(host.fileEntries.countOf('spatial') - 1);
-  }
-}
-
-export async function loadSequenceFrame(host: SequencePlaybackHost, index: number): Promise<void> {
-  const filePath = host.sequenceFiles[index];
-  if (!filePath) {
-    return;
-  }
-  // If cached, display immediately
+export function loadSequenceFrame(host: SequencePlaybackHost, index: number): void {
   const cached = host.sequenceCache.get(index);
-  if (cached) {
-    swapSequenceObject(host, cached, index);
-    return;
-  }
-  // If a request is in-flight and for a different index, let it finish but ignore on arrival
-  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  // Request from extension with requestId for matching
-  host.vscode.postMessage({ type: 'sequence:requestFile', path: filePath, index, requestId });
-  // Show a lightweight loading hint
+  if (cached) {showFrame(host, cached, index);}
+  else {requestFrame(host, index);}
+}
+
+export async function handleSequenceFile(
+  host: SequencePlaybackHost,
+  message: MessageOf<'sequence:file'>
+): Promise<void> {
+  const pending = host.sequencePending.get(message.index);
+  if (!pending || pending.processing || pending.requestId !== message.requestId) {return;}
+  pending.processing = true;
+  const { signal } = pending.controller;
+  let entry: FileEntry | undefined;
+  let data: SpatialData | undefined;
   try {
-    (document.getElementById('loading') as HTMLElement)?.classList.remove('hidden');
-  } catch {}
-}
-
-export function useSequenceObject(
-  host: SequencePlaybackHost,
-  obj: THREE.Object3D,
-  index: number
-): void {
-  // Cache management
-  if (!host.sequenceCache.has(index)) {
-    host.sequenceCache.set(index, obj);
-    host.sequenceCacheOrder.push(index);
-    // Evict if over capacity
-    while (host.sequenceCacheOrder.length > host.maxSequenceCache) {
-      const evictIndex = host.sequenceCacheOrder.shift()!;
-      if (evictIndex !== host.sequenceIndex) {
-        const evictObj = host.sequenceCache.get(evictIndex);
-        if (evictObj) {
-          host.scene.remove(evictObj);
-          if ((evictObj as any).geometry) {
-            (evictObj as any).geometry.dispose?.();
-          }
-          if ((evictObj as any).material) {
-            const mat = (evictObj as any).material;
-            if (Array.isArray(mat)) {
-              mat.forEach(m => m.dispose?.());
-            } else {
-              mat.dispose?.();
-            }
-          }
-        }
-        host.sequenceCache.delete(evictIndex);
-      }
+    const bytes = message.data instanceof Uint8Array ? message.data : new Uint8Array(message.data);
+    const type = await detectFileTypeWithContent(message.fileName, bytes);
+    signal.throwIfAborted();
+    if (type?.isDepthFile) {
+      const params = { ...host.defaultDepthSettings, cx: undefined, cy: undefined };
+      if (/\.png$/i.test(message.fileName)) {params.pngScaleFactor ||= 1000;}
+      const result = await host.processDepthToPointCloud(
+        bytes.slice().buffer,
+        message.fileName,
+        params,
+        undefined,
+        signal
+      );
+      data = {
+        vertices: [],
+        faces: [],
+        vertexCount: 0,
+        faceCount: 0,
+        hasColors: false,
+        hasNormals: false,
+        format: 'ascii',
+        version: '1.0',
+        comments: [],
+        fileName: message.fileName,
+      };
+      applyDepthResultTypedArrays(data, result);
+    } else {
+      data = await decodeFileMessage({ type: 'fileData', fileName: message.fileName, data: bytes });
     }
-  }
-  swapSequenceObject(host, obj, index);
-}
-
-export function cacheSequenceOnly(
-  host: SequencePlaybackHost,
-  obj: THREE.Object3D,
-  index: number
-): void {
-  if (obj.parent) {
-    host.scene.remove(obj);
-  }
-  if (!host.sequenceCache.has(index)) {
-    host.sequenceCache.set(index, obj);
-    host.sequenceCacheOrder.push(index);
-    while (host.sequenceCacheOrder.length > host.maxSequenceCache) {
-      const evictIndex = host.sequenceCacheOrder.shift()!;
-      const evictObj = host.sequenceCache.get(evictIndex);
-      if (evictObj) {
-        host.scene.remove(evictObj);
-        if ((evictObj as any).geometry) {
-          (evictObj as any).geometry.dispose?.();
-        }
-        if ((evictObj as any).material) {
-          const mat = (evictObj as any).material;
-          if (Array.isArray(mat)) {
-            mat.forEach(m => m.dispose?.());
-          } else {
-            mat.dispose?.();
-          }
-        }
-      }
-      host.sequenceCache.delete(evictIndex);
+    signal.throwIfAborted();
+    entry = host.fileEntries.prepare('spatial');
+    entry.state.colorMode = data.hasColors
+      ? 'original'
+      : hasIntensityData(data)
+        ? 'intensity'
+        : 'assigned';
+    entry.state.pointSize = 2.5;
+    const object = buildFileObject(host, data, message.index, entry);
+    entry.spatial = { data, object };
+    if (object instanceof THREE.Points && object.material instanceof THREE.PointsMaterial) {
+      object.material.sizeAttenuation = false;
     }
+    // Frames never enter the ordinary file registry, even during decoding.
+    host.sequenceCache.set(message.index, entry);
+    entry = undefined;
+    data = undefined;
+    if (message.index === host.sequenceTargetIndex)
+      {showFrame(host, host.sequenceCache.get(message.index)!, message.index);}
+    evictFrames(host);
+  } catch (error) {
+    if (entry) {disposeFrame(entry);}
+    else {data?.sceneModel?.dispose();}
+    if (!signal.aborted)
+      {host.showError(
+        `Sequence frame failed: ${error instanceof Error ? error.message : String(error)}`
+      );}
+  } finally {
+    if (host.sequencePending.get(message.index) === pending)
+      {host.sequencePending.delete(message.index);}
   }
 }
 
-export function swapSequenceObject(
+export function handleSequenceError(
   host: SequencePlaybackHost,
-  obj: THREE.Object3D,
-  index: number
+  message: MessageOf<'sequence:file:error'>
 ): void {
-  // Remove current
-  const current = host.sequenceCache.get(host.sequenceIndex);
-  if (current && current !== obj) {
-    current.visible = false;
-    host.scene.remove(current);
+  const pending = host.sequencePending.get(message.index);
+  if (pending?.requestId !== message.requestId) {return;}
+  pending.controller.abort();
+  host.sequencePending.delete(message.index);
+  if (message.index === host.sequenceTargetIndex) {
+    pauseSequence(host);
+    host.showError(`Sequence frame failed: ${message.error}`);
   }
-  // Add new
-  if (!obj.parent) {
-    host.scene.add(obj);
-  }
-  obj.visible = true;
-  // Hide axes when new object is added to rule out looking-only-at-axes confusion
-  try {
-    (host as any).axesGroup.visible = true;
-  } catch {}
+}
 
-  host.requestRender();
+function evictFrames(host: SequencePlaybackHost): void {
+  for (const [index, entry] of host.sequenceCache) {
+    if (host.sequenceCache.size <= Math.max(1, host.maxSequenceCache)) {break;}
+    if (index === host.sequenceIndex) {continue;}
+    host.sequenceCache.delete(index);
+    disposeFrame(entry);
+  }
+}
+
+function showFrame(host: SequencePlaybackHost, entry: FileEntry, index: number): void {
+  const object = entry.spatial!.object;
+  const previous = host.sequenceCache.get(host.sequenceIndex)?.spatial?.object;
+  if (previous && previous !== object) {previous.removeFromParent();}
+  host.scene.add(object);
+  object.visible = true;
   host.sequenceIndex = index;
-  // Make points clearly visible in sequence mode
-  ensureSequenceVisibility(obj);
-  // Fit camera only once on the first visible frame
+  // Refresh insertion order so recently viewed frames survive eviction.
+  host.sequenceCache.delete(index);
+  host.sequenceCache.set(index, entry);
   if (!host.sequenceDidInitialFit) {
-    host.fitCameraToObject(obj);
+    host.fitCameraToObject(object);
     host.sequenceDidInitialFit = true;
   }
   updateSequenceUI(host);
   host.updateFileList();
-  // Hide loading if it was shown
-  try {
-    (document.getElementById('loading') as HTMLElement)?.classList.add('hidden');
-  } catch {}
-  // Preload next
+  host.requestRender();
   const next = (index + 1) % host.sequenceFiles.length;
-  const nextPath = host.sequenceFiles[next] || '';
-  const isDepth = /\.(tif|tiff|pfm|npy|npz|png|exr)$/i.test(nextPath);
-  if (!isDepth && !host.sequenceCache.get(next)) {
-    host.vscode.postMessage({ type: 'sequence:requestFile', path: nextPath, index: next });
-  }
-}
-
-export function ensureSequenceVisibility(obj: THREE.Object3D): void {
-  if (
-    (obj as any).isPoints &&
-    (obj as any).material &&
-    (obj as any).material instanceof THREE.PointsMaterial
-  ) {
-    const mat = (obj as any).material as THREE.PointsMaterial;
-    // Use a sensible on-screen size for sequence mode; avoid tiny defaults
-    if (!mat.size || mat.size < 0.5) {
-      mat.size = 2.5;
-    }
-    // Use screen-space size for clarity regardless of distance
-    mat.sizeAttenuation = false;
-    mat.needsUpdate = true;
-  }
+  if (!/\.(tif|tiff|pfm|npy|npz|png|exr)$/i.test(host.sequenceFiles[next] ?? ''))
+    {requestFrame(host, next);}
 }

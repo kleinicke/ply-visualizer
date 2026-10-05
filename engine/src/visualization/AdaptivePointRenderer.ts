@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { getRoundPointTexture, ROUND_POINT_THRESHOLD_PIXELS } from './PointCloudRenderer';
 
 interface AdaptivePointRendererHost {
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
+  meshes: readonly (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
   rendererBackend: string;
 }
 

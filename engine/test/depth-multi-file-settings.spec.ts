@@ -197,21 +197,27 @@ for (const removeTarget of [false, true]) {
       const pending = viewer.applyDepthSettings(1);
       await started;
       viewer.removeFileByIndex(removeTarget ? 1 : 0);
-      const survivor = viewer.spatialFiles[0];
-      const mesh = viewer.meshes[0];
+      const survivor = viewer.fileEntries.at(0);
+      const oldData = survivor.spatial.data;
+      const positions = oldData.positionsArray;
+      const mesh = survivor.spatial.object;
       release();
       await pending;
       viewer.processDepthToPointCloud = original;
       return {
         count: viewer.spatialFiles.length,
         identity: viewer.fileEntries.indexOf(entry.id),
-        survivorUnchanged: viewer.spatialFiles[0] === survivor,
-        meshReplaced: viewer.meshes[0] !== mesh,
-        sourceName: survivor.depthSource.fileName,
+        survivorUnchanged: viewer.fileEntries.at(0) === survivor,
+        oldDataUnchanged: oldData.positionsArray === positions,
+        dataReplaced: survivor.spatial.data !== oldData,
+        meshReplaced: survivor.spatial.object !== mesh,
+        sourceName: survivor.spatial.data.depthSource.fileName,
       };
     }, removeTarget);
     expect(outcome.count).toBe(1);
     expect(outcome.survivorUnchanged).toBe(true);
+    expect(outcome.oldDataUnchanged).toBe(true);
+    expect(outcome.dataReplaced).toBe(!removeTarget);
     expect(outcome.identity).toBe(removeTarget ? -1 : 0);
     expect(outcome.meshReplaced).toBe(!removeTarget);
     expect(outcome.sourceName).toBe(removeTarget ? 'depth.tif' : 'depth_zstd.tif');

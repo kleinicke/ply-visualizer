@@ -29,7 +29,7 @@ export interface DepthConversionPipelineHost {
     }
   >;
   vscode: { postMessage(message: any): void };
-  spatialFiles: SpatialData[];
+  spatialFiles: readonly SpatialData[];
   datasetTextures: Map<
     string,
     { fileName: string; sceneName: string; data: ArrayBuffer; arrayBuffer: ArrayBuffer }

@@ -100,7 +100,7 @@ export function getPngScaleFactor(data: SpatialData): number {
 }
 
 export interface DepthSettingsHost {
-  spatialFiles: import('../interfaces').SpatialData[];
+  spatialFiles: readonly import('../interfaces').SpatialData[];
   defaultDepthSettings: CameraParams;
 }
 

@@ -1,3 +1,5 @@
+import { parseXyzWasm, toPointCloudPayload } from '../../../engine/src/parsers/pointcloudWasm';
+import { replaceSpatialGeometry } from '../../../engine/src/visualization/replaceSpatialGeometry';
 import { convertToUnifiedFormat } from '../../../engine/src/fileHandler';
 import { WebGLGpuTimer } from '../../../engine/src/rendering/gpuTimer';
 import { validateSpatialData } from '../../../engine/src/visualization/validateSpatialData';
@@ -171,7 +173,19 @@ suite('Viewer lifecycle and boundaries', () => {
   });
   test('a color reprojection cannot write to an entry removed while it was running', async () => {
     const registry = new FileEntryRegistry();
-    registry.add('spatial');
+    const entry = registry.add('spatial').entry;
+    entry.spatial = {
+      data: {
+        ...data(),
+        depthSource: {
+          originalData: new ArrayBuffer(0),
+          fileName: 'test.pfm',
+          cameraParams: { fx: 1, cameraModel: 'pinhole-ideal', depthType: 'euclidean' },
+          depthDimensions: { width: 1, height: 1 },
+        },
+      },
+      object: new THREE.Points(),
+    };
     let finish!: (result: never) => void;
     const pending = new Promise<never>(resolve => {
       finish = resolve;
@@ -179,17 +193,6 @@ suite('Viewer lifecycle and boundaries', () => {
     let errors = 0;
     const host = {
       fileEntries: registry,
-      spatialFiles: [
-        {
-          ...data(),
-          depthSource: {
-            originalData: new ArrayBuffer(0),
-            fileName: 'test.pfm',
-            cameraParams: {},
-            depthDimensions: { width: 1, height: 1 },
-          },
-        },
-      ],
       processDepthToPointCloud: () => pending,
       showStatus: () => {},
       showError: () => {
@@ -198,15 +201,24 @@ suite('Viewer lifecycle and boundaries', () => {
     } as unknown as ColorImageForDepthHost;
     const operation = removeColorImageFromDepth(host, 0);
     registry.removeAt(0);
-    host.spatialFiles.length = 0;
     finish(null as never);
     await operation;
     assert.strictEqual(errors, 0);
-    assert.strictEqual(host.spatialFiles.length, 0);
+    assert.strictEqual(registry.length, 0);
   });
 });
 
 suite('Decoded geometry validation', () => {
+  test('point-only WASM readers omit an absent source-row map', async () => {
+    const points = await parseXyzWasm(new TextEncoder().encode('0 0 0\n1 0 0\n'), 'xyz');
+    assert.strictEqual(points.vertexCount, 2);
+    assert.strictEqual(points.sourcePointIndices, undefined);
+    for (const format of ['ascii', 'pts', 'binary', 'binary_compressed']) {
+      validateSpatialData(
+        convertToUnifiedFormat(toPointCloudPayload(points, format), 'points.xyz')
+      );
+    }
+  });
   test('legacy OBJ and binary STL adapters produce valid shared geometry', () => {
     const obj = convertToUnifiedFormat(
       {
@@ -367,5 +379,88 @@ suite('Viewer lifetime ownership', () => {
     const pending = b.beginDepthWork();
     registry.clear();
     assert.ok(pending.aborted);
+  });
+});
+
+suite('Atomic geometry replacement', () => {
+  for (const failAt of ['geometry', 'material', 'normals'] as const) {
+    test(`a ${failAt} failure retains the old data, state and resources`, () => {
+      const registry = new FileEntryRegistry();
+      const entry = registry.add('spatial').entry;
+      const scene = new THREE.Scene();
+      const original = data();
+      const object = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial());
+      entry.spatial = { data: original, object };
+      entry.state.normalsVisible = true;
+      scene.add(object);
+      let oldDisposed = 0,
+        newDisposed = 0;
+      object.geometry.addEventListener('dispose', () => oldDisposed++);
+      const host = {
+        scene,
+        allowTransparency: false,
+        createGeometryFromSpatialData: () => {
+          if (failAt === 'geometry') {throw new Error('geometry failure');}
+          const geometry = new THREE.BufferGeometry();
+          geometry.addEventListener('dispose', () => newDisposed++);
+          return geometry;
+        },
+        createMaterialForFile: () => {
+          if (failAt === 'material') {throw new Error('material failure');}
+          const material = new THREE.PointsMaterial();
+          material.addEventListener('dispose', () => newDisposed++);
+          return material;
+        },
+        createNormalsVisualizer: () => {
+          throw new Error('normals failure');
+        },
+      };
+      assert.throws(
+        () =>
+          replaceSpatialGeometry(host, entry, { ...data(), hasNormals: true }, 0, {
+            colorMode: 'original',
+          }),
+        /failure/
+      );
+      assert.strictEqual(entry.spatial.data, original);
+      assert.strictEqual(entry.spatial.object, object);
+      assert.strictEqual(entry.state.colorMode, 'assigned');
+      assert.strictEqual(object.parent, scene);
+      assert.strictEqual(oldDisposed, 0);
+      assert.strictEqual(newDisposed, failAt === 'geometry' ? 0 : failAt === 'material' ? 1 : 2);
+      disposeObjects([object]);
+    });
+  }
+  test('a successful replacement preserves the transform and visibility and releases the old object', () => {
+    const entry = new FileEntryRegistry().add('spatial').entry;
+    const scene = new THREE.Scene();
+    const old = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial());
+    entry.spatial = { data: data(), object: old };
+    entry.state.visible = false;
+    old.position.set(1, 2, 3);
+    old.updateMatrix();
+    scene.add(old);
+    let disposed = 0;
+    old.geometry.addEventListener('dispose', () => disposed++);
+    const next = data();
+    replaceSpatialGeometry(
+      {
+        scene,
+        allowTransparency: false,
+        createGeometryFromSpatialData: () => new THREE.BufferGeometry(),
+        createMaterialForFile: () => new THREE.PointsMaterial(),
+        createNormalsVisualizer: () => new THREE.LineSegments(),
+      },
+      entry,
+      next,
+      0
+    );
+    assert.strictEqual(entry.spatial.data, next);
+    assert.deepStrictEqual(entry.spatial.object.matrix.elements, old.matrix.elements);
+    assert.strictEqual(entry.spatial.object.visible, false);
+    assert.strictEqual(old.parent, null);
+    assert.strictEqual(entry.spatial.object.parent, scene);
+    assert.strictEqual(disposed, 1);
+    disposeObjects([entry.spatial.object]);
   });
 });

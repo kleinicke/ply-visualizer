@@ -45,7 +45,7 @@ export interface BrowserFileDragDropHost {
   lifetime: ViewerLifetime;
   browserFileHandler: BrowserMessageHandler | null;
   vscode: { postMessage(message: any): void };
-  spatialFiles: SpatialData[];
+  spatialFiles: readonly SpatialData[];
   filmManager: FilmManager | null;
   showImmediateLoading(message: any): void;
   showError(message: string): void;

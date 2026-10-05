@@ -8,11 +8,11 @@ export interface TransformationMatrixHost {
   camera: THREE.PerspectiveCamera;
   cameraMatrix: THREE.Matrix4;
   controls: { target: THREE.Vector3 };
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
+  meshes: readonly (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
 
-  spatialFiles: SpatialData[];
-  poseGroups: THREE.Group[];
-  cameraGroups: THREE.Group[];
+  spatialFiles: readonly SpatialData[];
+  poseGroups: readonly THREE.Group[];
+  cameraGroups: readonly THREE.Group[];
   /** Present on the full visualizer host; mirrors transforms onto splat meshes. */
   splatMode?: { applyMatrix(fileIndex: number, matrix: THREE.Matrix4 | undefined): void };
   sectionPlanes?: { updateTransform(fileIndex: number, matrix: THREE.Matrix4): void };

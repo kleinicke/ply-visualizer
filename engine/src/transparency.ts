@@ -4,7 +4,7 @@ import * as THREE from 'three';
 export interface TransparencyHost {
   fileEntries: FileEntryRegistry;
   allowTransparency: boolean;
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
+  meshes: readonly (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
 
   showStatus(message: string): void;
   requestRender(): void;

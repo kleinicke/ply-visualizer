@@ -21,13 +21,13 @@ import {
 interface E57CameraHost {
   scene: THREE.Scene;
   fileEntries: FileEntryRegistry;
-  spatialFiles: SpatialData[];
-  poseGroups: THREE.Group[];
-  cameraGroups: THREE.Group[];
-  cameraNames: string[];
-  cameraShowLabels: boolean[];
-  cameraShowCoords: boolean[];
-  meshes: THREE.Object3D[];
+  spatialFiles: readonly SpatialData[];
+  poseGroups: readonly THREE.Group[];
+  cameraGroups: readonly THREE.Group[];
+  cameraNames: readonly string[];
+  cameraShowLabels: readonly boolean[];
+  cameraShowCoords: readonly boolean[];
+  meshes: readonly THREE.Object3D[];
   applyColorModeToGeometry(
     data: SpatialData,
     geometry: THREE.BufferGeometry,

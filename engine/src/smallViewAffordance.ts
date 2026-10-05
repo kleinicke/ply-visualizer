@@ -10,8 +10,7 @@ export const SMALL_VIEW_MIN_DISTANCE_RATIO = 1.5;
 
 interface SmallViewHost {
   camera: THREE.PerspectiveCamera;
-  spatialFiles: SpatialData[];
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
+  spatialFiles: readonly SpatialData[];
   fileEntries: FileEntryRegistry;
   isFileLoading: boolean;
 }
@@ -95,16 +94,12 @@ export class SmallViewAffordance {
 
     const worldBounds = new THREE.Box3();
     let visibleClouds = 0;
-    for (let index = 0; index < this.host.spatialFiles.length; index++) {
-      const mesh = this.host.meshes[index];
-      if (
-        !(mesh instanceof THREE.Points) ||
-        !mesh.visible ||
-        this.host.fileEntries.require(index).state.visible === false
-      ) {
+    for (const entry of this.host.fileEntries.ofKind('spatial')) {
+      const { object: mesh, data } = entry.spatial!;
+      if (!(mesh instanceof THREE.Points) || !mesh.visible || entry.state.visible === false) {
         continue;
       }
-      const localBounds = this.boundsFor(this.host.spatialFiles[index], mesh.geometry);
+      const localBounds = this.boundsFor(data, mesh.geometry);
       if (!localBounds) {
         continue;
       }

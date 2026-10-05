@@ -5,7 +5,7 @@ import { SpatialData } from '../interfaces';
  * coordinate system. The first loaded LiDAR origin becomes the scene origin;
  * later clouds are shifted in-place only when their origin differs.
  */
-export function alignSourceOrigin(data: SpatialData, existing: SpatialData[]): void {
+export function alignSourceOrigin(data: SpatialData, existing: readonly SpatialData[]): void {
   if (!data.sourceOrigin || !data.positionsArray) {
     return;
   }

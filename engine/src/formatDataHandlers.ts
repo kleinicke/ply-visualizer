@@ -1,13 +1,16 @@
-import { validateSpatialData } from './visualization/validateSpatialData';
+import {
+  replaceSpatialGeometry,
+  type GeometryReplacementHost,
+} from './visualization/replaceSpatialGeometry';
 import type { FileEntryRegistry } from './state/fileEntries';
 import { decodeFileMessage, readFileDataMessage } from './formats/fileMessage';
 import * as THREE from 'three';
 import { SpatialData, SpatialFace, SpatialVertex } from './interfaces';
 
-export interface FormatDataHandlersHost {
+export interface FormatDataHandlersHost extends GeometryReplacementHost {
   scene: THREE.Scene;
-  spatialFiles: SpatialData[];
-  meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
+  spatialFiles: readonly SpatialData[];
+  meshes: readonly (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
 
   showStatus(message: string): void;
   showError(message: string): void;
@@ -252,71 +255,17 @@ function replaceVolumeGeometry(
   fileIndex: number,
   data: SpatialData
 ): void {
-  if (fileIndex < 0 || fileIndex >= host.spatialFiles.length) {
-    throw new Error(`Cannot replace missing volume at file index ${fileIndex}`);
-  }
-  validateSpatialData(data);
-  const previous = host.meshes[fileIndex];
-  const previousRenderMode = host.spatialFiles[fileIndex]?.metadata?.volumeRenderMode;
-  const matrix = host.fileEntries.require(fileIndex).transform.clone();
-  const visible = host.fileEntries.require(fileIndex).state.visible ?? true;
-  if (previous) {
-    host.scene.remove(previous);
-    previous.geometry.dispose();
-    const materials = Array.isArray(previous.material) ? previous.material : [previous.material];
-    materials.forEach(material => material.dispose());
-  }
-  const vertexPoints = host.fileEntries.require(fileIndex).resources.vertexPoints;
-  if (vertexPoints) {
-    host.scene.remove(vertexPoints);
-    vertexPoints.geometry.dispose();
-    const materials = Array.isArray(vertexPoints.material)
-      ? vertexPoints.material
-      : [vertexPoints.material];
-    materials.forEach(material => material.dispose());
-    host.fileEntries.require(fileIndex).resources.vertexPoints = null;
-  }
-  const normals = host.fileEntries.require(fileIndex).resources.normals;
-  if (normals) {
-    host.scene.remove(normals);
-    normals.geometry.dispose();
-    const materials = Array.isArray(normals.material) ? normals.material : [normals.material];
-    materials.forEach(material => material.dispose());
-    host.fileEntries.require(fileIndex).resources.normals = null;
-  }
-
+  const entry = host.fileEntries.require(fileIndex);
+  const previousMode = entry.spatial?.data.metadata?.volumeRenderMode;
+  const mode = data.metadata?.volumeRenderMode;
   data.fileIndex = fileIndex;
-  host.fileEntries.spatial(fileIndex).data = data;
-  if (data.metadata?.volumeRenderMode === 'points' && previousRenderMode !== 'points') {
-    host.fileEntries.require(fileIndex).state.colorMode = 'original';
-  } else if (data.metadata?.volumeRenderMode === 'slices' && previousRenderMode !== 'slices') {
-    host.fileEntries.require(fileIndex).state.colorMode = 'original';
-  } else if (data.metadata?.volumeRenderMode === 'voxels' && previousRenderMode !== 'voxels') {
-    host.fileEntries.require(fileIndex).state.colorMode = 'original';
-  } else if (data.metadata?.volumeRenderMode === 'mesh' && previousRenderMode !== 'mesh') {
-    host.fileEntries.require(fileIndex).state.colorMode = 'assigned';
-  }
-  const geometry = host.createGeometryFromSpatialData(data);
-  const material = host.createMaterialForFile(data, fileIndex);
-  const object =
-    data.faceCount > 0
-      ? new THREE.Mesh(geometry, material)
-      : new THREE.Points(geometry, material as THREE.PointsMaterial);
-  object.visible = visible;
-  host.fileEntries.spatial(fileIndex).object = object;
-  host.scene.add(object);
-  host.fileEntries.require(fileIndex).state.solidVisible = data.faceCount > 0;
-  host.fileEntries.require(fileIndex).state.pointsVisible = data.faceCount === 0;
-  host.fileEntries.require(fileIndex).state.wireframeVisible = false;
-  if (data.hasNormals && host.fileEntries.require(fileIndex).state.normalsVisible) {
-    const visualizer = host.createNormalsVisualizer(data);
-    visualizer.visible = visible;
-    host.fileEntries.require(fileIndex).resources.normals = visualizer;
-    host.scene.add(visualizer);
-  } else if (!data.hasNormals) {
-    host.fileEntries.require(fileIndex).state.normalsVisible = false;
-  }
-  host.setTransformationMatrix(fileIndex, matrix);
+  replaceSpatialGeometry(host, entry, data, fileIndex, {
+    colorMode:
+      mode !== previousMode ? (mode === 'mesh' ? 'assigned' : 'original') : entry.state.colorMode,
+    solidVisible: data.faceCount > 0,
+    pointsVisible: data.faceCount === 0,
+    wireframeVisible: false,
+  });
   host.updateFileList();
   host.updateFileStats();
   host.requestRender();

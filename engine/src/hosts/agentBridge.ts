@@ -17,8 +17,8 @@ export interface AgentViewerHost {
   camera: THREE.PerspectiveCamera;
   controls: { target: THREE.Vector3; update(): void };
   renderer: { domElement: HTMLCanvasElement };
-  spatialFiles: SpatialData[];
-  meshes: (THREE.Object3D | null)[];
+  spatialFiles: readonly SpatialData[];
+  meshes: readonly (THREE.Object3D | null)[];
   fitCameraToAllObjects(): void;
   performRender(): void;
 }

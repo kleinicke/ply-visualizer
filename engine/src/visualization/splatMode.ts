@@ -35,7 +35,7 @@ export interface SplatModeHost {
    * something this codebase can refactor away. See docs/WEBGPU_READINESS.md.
    */
   webglRenderer: THREE.WebGLRenderer | null;
-  spatialFiles: SpatialData[];
+  spatialFiles: readonly SpatialData[];
   requestRender(): void;
   showStatus(message: string): void;
   fileEntries: FileEntryRegistry;

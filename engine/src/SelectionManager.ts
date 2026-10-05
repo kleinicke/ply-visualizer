@@ -30,10 +30,10 @@ export type PointPickingImplementation = 'cpu' | 'webgpu';
  */
 export interface SelectionContext {
   camera: THREE.PerspectiveCamera;
-  meshes: THREE.Object3D[];
-  spatialFiles: any[];
-  poseGroups: THREE.Group[];
-  cameraGroups: THREE.Group[];
+  meshes: readonly THREE.Object3D[];
+  spatialFiles: readonly any[];
+  poseGroups: readonly THREE.Group[];
+  cameraGroups: readonly THREE.Group[];
   screenSpaceScaling: boolean;
   /** Active Spark SplatMesh objects, aligned with spatialFiles. */
   splatMeshes?: (THREE.Object3D | null)[];

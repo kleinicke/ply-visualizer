@@ -108,9 +108,11 @@ export interface PcdHeaderInfo {
 /* eslint-enable @typescript-eslint/naming-convention */
 
 export function marshalWasmPointCloud(r: RawResult): WasmPointCloudResult {
+  const sourceIndices = r.take_source_indices?.();
   const out: WasmPointCloudResult = {
     sourcePointCount: r.source_count || undefined,
-    sourcePointIndices: r.take_source_indices?.(),
+    // Readers without source-row tracking return an empty vector, not a map.
+    sourcePointIndices: sourceIndices?.length ? sourceIndices : undefined,
     vertexCount: r.vertex_count,
     hasColors: r.has_colors,
     hasNormals: r.has_normals,
@@ -484,6 +486,8 @@ export async function parseTextTableWasm(
   options: unknown
 ): Promise<WasmPointCloudResult> {
   const wasm = await loadPointcloudWasm();
-  if (!wasm) {throw new Error('point-cloud wasm unavailable');}
+  if (!wasm) {
+    throw new Error('point-cloud wasm unavailable');
+  }
   return marshalWasmPointCloud(wasm.parse_text_table(data, JSON.stringify(options)));
 }
