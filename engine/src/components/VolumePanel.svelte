@@ -15,22 +15,22 @@
         ? 'slices'
         : metadata.volumeRenderMode === 'voxels'
           ? 'voxels'
-          : 'points'
+          : 'points',
   );
   let step = $state<[number, number, number]>(
     Array.isArray(metadata.meshExtractionStep)
       ? ([...metadata.meshExtractionStep] as [number, number, number])
-      : [1, 1, 1]
+      : [1, 1, 1],
   );
   let timer: number | undefined;
   let windowCenter = $state(Number(metadata.windowCenter ?? (range.min + range.max) / 2));
   let windowWidth = $state(
-    Math.max(Number.EPSILON, Number(metadata.windowWidth ?? range.max - range.min))
+    Math.max(Number.EPSILON, Number(metadata.windowWidth ?? range.max - range.min)),
   );
   let brightnessMode = $state<'slice-auto' | 'dicom-window' | 'volume-range'>(
     metadata.brightnessMode === 'slice-auto' || metadata.brightnessMode === 'volume-range'
       ? metadata.brightnessMode
-      : 'dicom-window'
+      : 'dicom-window',
   );
   let sliceIndices = $state<[number, number, number]>(
     Array.isArray(metadata.sliceIndices)
@@ -39,7 +39,7 @@
           number,
           number,
           number,
-        ])
+        ]),
   );
 
   const units = (metadata.intensityUnits as string | undefined) || '';
@@ -50,7 +50,7 @@
   let clipRanges = $state<Array<[number, number]>>(
     Array.isArray(metadata.voxelClip)
       ? (metadata.voxelClip.map((clip: number[]) => [...clip]) as Array<[number, number]>)
-      : sizes.map((size, axis) => host.sectionPlanes.getRange(fileIndex, axis, size))
+      : sizes.map((size, axis) => host.sectionPlanes.getRange(fileIndex, axis, size)),
   );
   const progress = $derived(volumeState.progress[sessionId]);
   const error = $derived(volumeState.errors[sessionId]);
@@ -101,7 +101,7 @@
         axis,
         geometryClips ? 0 : clip[0],
         geometryClips ? sizes[axis] - 1 : clip[1],
-        host.transformationMatrices[fileIndex]
+        host.fileEntries.require(fileIndex).transform,
       );
     });
     host.requestRender();
@@ -149,7 +149,10 @@
     const next = [...sliceIndices] as [number, number, number];
     next[axis] = Math.max(
       0,
-      Math.min(sizes[axis] - 1, Math.round(Number((event.target as HTMLInputElement).value) || 0))
+      Math.min(
+        sizes[axis] - 1,
+        Math.round(Number((event.target as HTMLInputElement).value) || 0),
+      ),
     );
     sliceIndices = next;
     requestExtraction();
@@ -159,7 +162,7 @@
     const next = [...step] as [number, number, number];
     next[axis] = Math.max(
       1,
-      Math.min(sizes[axis] - 1, Number((event.target as HTMLInputElement).value) || 1)
+      Math.min(sizes[axis] - 1, Number((event.target as HTMLInputElement).value) || 1),
     );
     step = next;
     requestExtraction();
@@ -170,7 +173,7 @@
   }
 
   function setClip(axis: number, edge: 0 | 1, value: number) {
-    const next = clipRanges.map(range => [...range] as [number, number]);
+    const next = clipRanges.map((range) => [...range] as [number, number]);
     if (edge === 0) next[axis][0] = Math.min(value, next[axis][1]);
     else next[axis][1] = Math.max(value, next[axis][0]);
     clipRanges = next;

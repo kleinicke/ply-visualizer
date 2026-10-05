@@ -1,3 +1,4 @@
+import type { FileEntryRegistry } from './state/fileEntries';
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
 import { isDepthDerivedFile } from './depth/commentSettings';
@@ -215,7 +216,7 @@ export function shouldUseVertexColors(data: SpatialData, colorMode: string): boo
 
 export interface FileColorsHost {
   fileColors: { length: number };
-  individualColorModes: string[];
+  fileEntries: FileEntryRegistry;
 }
 
 export function getColorName(fileIndex: number): string {
@@ -238,7 +239,7 @@ export function getColorName(fileIndex: number): string {
 export function getColorOptions(host: FileColorsHost, fileIndex: number): string {
   let options = '';
   for (let i = 0; i < host.fileColors.length; i++) {
-    const isSelected = host.individualColorModes[fileIndex] === i.toString();
+    const isSelected = host.fileEntries.require(fileIndex).state.colorMode === i.toString();
     options += `<option value="${i}" ${isSelected ? 'selected' : ''}>${getColorName(i)}</option>`;
   }
   return options;

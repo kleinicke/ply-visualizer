@@ -1,3 +1,4 @@
+import { decodeFileMessage } from '../../../engine/src/formats/fileMessage';
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as path from 'path';
@@ -139,7 +140,19 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
     const customEditors = packageJSON?.contributes?.customEditors;
 
     assert.ok(customEditors, 'Custom editors should be registered');
-    assert.strictEqual(customEditors.length, 2);
+    assert.deepStrictEqual(customEditors.map((editor: any) => editor.viewType).sort(), [
+      'plyViewer.kittiBin',
+      'plyViewer.plyEditor',
+      'plyViewer.textTable',
+    ]);
+    const textEditor = customEditors.find(
+      (editor: any) => editor.viewType === 'plyViewer.textTable'
+    );
+    assert.strictEqual(textEditor.priority, 'option');
+    assert.deepStrictEqual(
+      textEditor.selector.map((selector: any) => selector.filenamePattern).sort(),
+      ['*.asc', '*.csv', '*.tsv', '*.txt']
+    );
 
     const editor = customEditors.find((item: any) => item.viewType === 'plyViewer.plyEditor');
     assert.ok(editor, 'Main 3D custom editor should be registered');
@@ -190,19 +203,14 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
       fs.unlinkSync(filePath);
     }
 
-    const dataMessage = messages.find(message => message.type === 'binarySpatialData');
-    assert.ok(dataMessage, 'The KITTI scan should be sent as spatial data');
-    assert.strictEqual(dataMessage.messageType, 'addFiles');
+    const dataMessage = messages.find(message => message.type === 'fileData');
+    assert.ok(dataMessage, 'KITTI bytes should use registered file delivery');
+    assert.strictEqual(dataMessage.isAddFile, true);
     assert.strictEqual(dataMessage.fileName, fileName);
-    assert.strictEqual(dataMessage.vertexCount, 2);
-    assert.deepStrictEqual(
-      Array.from(new Float32Array(dataMessage.positionBuffer)),
-      [1, 2, 3, -4, 5, -6]
-    );
-    assert.deepStrictEqual(
-      Array.from(new Float32Array(dataMessage.scalarFieldBuffers.intensity)),
-      [0.25, 0.75]
-    );
+    const decoded = await decodeFileMessage(dataMessage);
+    assert.strictEqual(decoded.vertexCount, 2);
+    assert.deepStrictEqual(Array.from(decoded.positionsArray!), [1, 2, 3, -4, 5, -6]);
+    assert.deepStrictEqual(Array.from(decoded.intensityArray!), [0.25, 0.75]);
   });
 
   test('Should add an NRRD volume with its own retained session', async () => {

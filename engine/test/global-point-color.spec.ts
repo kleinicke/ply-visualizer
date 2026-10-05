@@ -33,8 +33,12 @@ test.describe('All point colors', () => {
     await allColors.selectOption('original');
 
     const state = await page.evaluate(() => ({
-      colors: (window as any).visualizer.individualColorModes.slice(0, 2),
-      sizes: (window as any).visualizer.pointSizes.slice(0, 2),
+      colors: (window as any).visualizer.fileEntries.all
+        .map(entry => entry.state.colorMode)
+        .slice(0, 2),
+      sizes: (window as any).visualizer.fileEntries.all
+        .map(entry => entry.state.pointSize)
+        .slice(0, 2),
     }));
     expect(state.colors).toEqual(['original', '1']);
     expect(state.sizes[0]).toBeCloseTo(0.003, 6);
@@ -46,7 +50,9 @@ test.describe('All point colors', () => {
   test('applies universally available flat colors to every cloud', async ({ page }) => {
     await page.locator('#all-point-colors-select').selectOption('0');
     expect(
-      await page.evaluate(() => (window as any).visualizer.individualColorModes.slice(0, 2))
+      await page.evaluate(() =>
+        (window as any).visualizer.fileEntries.all.map(entry => entry.state.colorMode).slice(0, 2)
+      )
     ).toEqual(['0', '0']);
     await expect(page.locator('#all-point-colors-select')).toHaveValue('0');
   });

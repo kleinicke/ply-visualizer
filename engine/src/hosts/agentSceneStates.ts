@@ -96,13 +96,13 @@ async function object(host: ControlHost, file: SpatialData): Promise<ObjectState
       ? Array.from(file.scalarFields!.agent_distance, v => (Number.isFinite(v) ? v : null))
       : undefined,
     signature: await signature(file),
-    matrix: host.transformationMatrices[i].toArray(),
-    visible: host.fileVisibility[i],
-    point_size: host.pointSizes[i],
-    color_mode: host.individualColorModes[i],
+    matrix: host.fileEntries.require(i).transform.toArray(),
+    visible: host.fileEntries.require(i).state.visible,
+    point_size: host.fileEntries.require(i).state.pointSize,
+    color_mode: host.fileEntries.require(i).state.colorMode,
     opacity: objectPresentation(host, i).opacity ?? 1,
-    points: host.pointsVisible[i],
-    mesh: host.solidVisible[i],
+    points: host.fileEntries.require(i).state.pointsVisible,
+    mesh: host.fileEntries.require(i).state.solidVisible,
   };
 }
 async function snapshot(host: ControlHost): Promise<Snapshot> {
@@ -118,7 +118,7 @@ async function snapshot(host: ControlHost): Promise<Snapshot> {
       restore_visibility: base.map(
         file =>
           selectionRestoreVisibility(host)?.get(file) ??
-          host.fileVisibility[host.spatialFiles.indexOf(file)]
+          host.fileEntries.require(host.spatialFiles.indexOf(file)).state.visible
       ),
       name,
       source: base.indexOf(item.source),

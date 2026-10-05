@@ -26,7 +26,7 @@
   // load and unload through main.ts's parallel arrays, which are not
   // themselves reactive.
   const candidates = $derived(
-    filesState.renderTick >= 0 ? registration.registrationCandidates(host, fileIndex) : []
+    filesState.entries.length > 0 ? registration.registrationCandidates(host, fileIndex) : [],
   );
   // This panel's cloud is the anchor. The selected *other* cloud moves onto it.
   const active = $derived(registrationState.targetIndex === fileIndex);
@@ -39,17 +39,17 @@
   const onFixedStep = $derived(workflow === 'coarse-fixed' || workflow === 'fine-fixed');
   const shownSide = $derived(
     registrationState.viewOverride ??
-      (onFixedStep ? 'fixed' : workflow === 'choose' ? 'both' : 'moving')
+      (onFixedStep ? 'fixed' : workflow === 'choose' ? 'both' : 'moving'),
   );
   const fixedPicked = $derived(
     coarseStep
       ? registrationState.coarseFixedCount
-      : registrationState.pairCount + (registrationState.awaiting === 'source' ? 1 : 0)
+      : registrationState.pairCount + (registrationState.awaiting === 'source' ? 1 : 0),
   );
   const movingPicked = $derived(
     coarseStep
       ? registrationState.coarseMovingCount
-      : registrationState.pairCount + (registrationState.awaiting === 'target' ? 1 : 0)
+      : registrationState.pairCount + (registrationState.awaiting === 'target' ? 1 : 0),
   );
   /**
    * One chip per pick so far: complete pairs, plus the half-finished one.
@@ -73,7 +73,7 @@
   const worstCoarseResidual = $derived(
     registrationState.coarseResiduals.length > 0
       ? Math.max(...registrationState.coarseResiduals)
-      : 0
+      : 0,
   );
 
   // Scene units are metres on every scanner archive this is used with, and a
@@ -101,7 +101,6 @@
     const value = Number((event.currentTarget as HTMLSelectElement).value);
     registration.beginSession(host, value, fileIndex);
   }
-
 </script>
 
 {#if candidates.length > 0}
@@ -605,7 +604,7 @@
     font-variant-numeric: tabular-nums;
   }
   /* The worst of three is the one worth re-picking, so it is the one that
-     should catch the eye without reading all three numbers. */
+       should catch the eye without reading all three numbers. */
   .coarse-residual-worst {
     color: var(--vscode-editorWarning-foreground, #cca700);
     opacity: 1;

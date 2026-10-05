@@ -166,7 +166,19 @@ end_header
       const customEditors = packageJSON.contributes?.customEditors;
 
       assert.ok(customEditors, 'Custom editors should be defined');
-      assert.strictEqual(customEditors.length, 2);
+      assert.deepStrictEqual(customEditors.map((editor: any) => editor.viewType).sort(), [
+        'plyViewer.kittiBin',
+        'plyViewer.plyEditor',
+        'plyViewer.textTable',
+      ]);
+      const textEditor = customEditors.find(
+        (editor: any) => editor.viewType === 'plyViewer.textTable'
+      );
+      assert.strictEqual(textEditor.priority, 'option');
+      assert.deepStrictEqual(
+        textEditor.selector.map((selector: any) => selector.filenamePattern).sort(),
+        ['*.asc', '*.csv', '*.tsv', '*.txt']
+      );
 
       const editor = customEditors.find((item: any) => item.viewType === 'plyViewer.plyEditor');
       assert.ok(editor, 'Main 3D custom editor should be defined');
@@ -221,7 +233,7 @@ end_header
       const openFileItem = contextMenuItems.find(
         (item: any) => item.command === 'plyViewer.openFile'
       );
-      const convertTifItem = contextMenuItems.find(
+      const convertTifItem = menus['plyViewer.imageConversion'].find(
         (item: any) => item.command === 'plyViewer.convertTifToPointCloud'
       );
       const loadJsonPoseItem = contextMenuItems.find(

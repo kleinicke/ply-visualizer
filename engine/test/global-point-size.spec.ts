@@ -25,7 +25,12 @@ test.describe('All point sizes', () => {
   });
 
   const sizes = (page: any) =>
-    page.evaluate(() => (window as any).visualizer.pointSizes.slice(0, 2) as number[]);
+    page.evaluate(
+      () =>
+        (window as any).visualizer.fileEntries.all
+          .map(entry => entry.state.pointSize)
+          .slice(0, 2) as number[]
+    );
 
   test('sets every cloud at once, and accepts a size beyond the slider range', async ({ page }) => {
     const slider = page.locator('#all-point-sizes-slider');

@@ -5,13 +5,16 @@ Guidance for Claude Code when working in this repository.
 ## What this is
 
 A VS Code extension for viewing 3D data (point clouds, meshes, depth images).
-One shared visualization engine with two thin hosts:
+One shared visualization engine with host adapters:
 
 1. **VS Code extension** (`src/`) — the primary product; wires the engine into a
    custom editor webview
 2. **Standalone page** (`engine/`, deployed at https://3d.f-kleinicke.de) —
    public demo and the fast test surface (Playwright against a browser page
    skips booting VS Code/Electron)
+3. **Desktop workspace** (`apps/desktop/`) — Tauri host for the shared viewer
+4. **Python / MCP integrations** (`packages/python/`, `engine/src/hosts/`) —
+   local sessions and embedded viewer surfaces
 
 **Core rule:** all shared functionality (parsers, rendering, controls, depth
 processing, webview UI) lives in `engine/src/`. `src/` stays thin and only does
@@ -84,9 +87,21 @@ this repository.
 | Utilities                   | `engine/src/utils/`                                                                                                      |
 | `engine/src/main.ts`        | Last resort — core Three.js scene logic only                                                                             |
 
-`main.ts` (~4,100 lines) once grew past 15,000 lines and was painfully clawed
-back. Never add methods to the `PointCloudVisualizer` class or inline HTML
-there; put code in the modules above.
+Keep `main.ts` focused on scene composition. Put feature implementation in the
+modules above. Shared file presentation state and transforms belong to stable
+`FileEntryRegistry` entries; never add parallel arrays or Svelte mirrors for
+them. Async entry work must retain the entry ID and resolve its current index
+after awaiting. Depth source bytes belong to `SpatialData.depthSource`.
+
+`engine/src/interfaces.ts` owns the spatial data contract. Format detection,
+decoding and raw-byte delivery policy belong in `formats/builtinFormats.ts`;
+`decodeInViewer` routes use the validated `fileData` message. Host streaming,
+container and companion-file loaders stay explicit in the host adapters.
+
+`npm run build:wasm` builds both WASM packages with locked dependencies and
+records source/artifact hashes. Commit `wasm/artifacts.json` with the generated
+outputs. CI checks those hashes, runs `npm run test:rust`, and tests rebuilt
+WASM as well.
 
 ## Conventions and gotchas
 

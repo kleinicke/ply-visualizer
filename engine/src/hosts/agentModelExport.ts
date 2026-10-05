@@ -11,7 +11,7 @@ export async function exportAgentModels(host: ControlHost) {
   const names: string[] = [];
   for (const [i, file] of host.spatialFiles.entries()) {
     const object = host.meshes[i];
-    if (!object || !host.fileVisibility[i]) {
+    if (!object || !host.fileEntries.require(i).state.visible) {
       continue;
     }
     if (file.isGaussianSplat) {

@@ -243,9 +243,9 @@ export async function applyAgentControl(
       host.setFileEntryVisibility(i, a.visible);
     }
     if (a.mode !== undefined) {
-      host.solidVisible[i] = a.mode === 'mesh';
-      host.wireframeVisible[i] = false;
-      host.pointsVisible[i] = a.mode === 'points';
+      host.fileEntries.require(i).state.solidVisible = a.mode === 'mesh';
+      host.fileEntries.require(i).state.wireframeVisible = false;
+      host.fileEntries.require(i).state.pointsVisible = a.mode === 'points';
     }
     if (a.color !== undefined) {
       const c = new THREE.Color(a.color);

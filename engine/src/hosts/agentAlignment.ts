@@ -52,7 +52,7 @@ export function alignmentStatus(host: ControlHost) {
     transforms: host.spatialFiles.map((file, i) => ({
       object_index: i,
       name: file.fileName,
-      matrix: host.transformationMatrices[i]?.toArray() ?? null,
+      matrix: host.fileEntries.require(i).transform?.toArray() ?? null,
     })),
     matrix_layout: 'column-major',
     units: 'scene units',
@@ -116,7 +116,7 @@ export function startAgentAlignment(host: ControlHost, a: Record<string, any>) {
     );
   }
   const before = new Map(
-    host.spatialFiles.map((file, i) => [file, host.transformationMatrices[i].clone()])
+    host.spatialFiles.map((file, i) => [file, host.fileEntries.require(i).transform.clone()])
   );
   const job: Job = {
     id: ++s.serial,
@@ -186,7 +186,7 @@ export function startAgentAlignment(host: ControlHost, a: Record<string, any>) {
       const changed = new Map(
         [...before].filter(([file, matrix]) => {
           const i = host.spatialFiles.indexOf(file);
-          return i >= 0 && !host.transformationMatrices[i].equals(matrix);
+          return i >= 0 && !host.fileEntries.require(i).transform.equals(matrix);
         })
       );
       // The shared workflows report rejected/partial fits in result/entries.

@@ -1,3 +1,4 @@
+import type { FileEntryRegistry } from './state/fileEntries';
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
 import { uiState } from './state/ui.svelte';
@@ -14,11 +15,6 @@ export interface SequencePlaybackHost {
 
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
   spatialFiles: SpatialData[];
-  multiMaterialGroups: (THREE.Group | null)[];
-  materialMeshes: (THREE.Object3D[] | null)[];
-  fileVisibility: boolean[];
-  pointSizes: number[];
-  individualColorModes: string[];
 
   sequenceMode: boolean;
   sequenceFiles: string[];
@@ -41,6 +37,7 @@ export interface SequencePlaybackHost {
   handleObjData(message: any): Promise<void>;
   handleStlData(message: any): Promise<void>;
   handleDepthData(message: any): Promise<void>;
+  fileEntries: FileEntryRegistry;
 }
 
 export function initializeSequence(
@@ -235,20 +232,8 @@ export function trimNormalModeArraysFrom(host: SequencePlaybackHost, startIndex:
   if (host.spatialFiles.length > startIndex) {
     host.spatialFiles.splice(startIndex);
   }
-  if (host.multiMaterialGroups.length > startIndex) {
-    host.multiMaterialGroups.splice(startIndex);
-  }
-  if (host.materialMeshes.length > startIndex) {
-    host.materialMeshes.splice(startIndex);
-  }
-  if (host.fileVisibility.length > startIndex) {
-    host.fileVisibility.splice(startIndex);
-  }
-  if (host.pointSizes.length > startIndex) {
-    host.pointSizes.splice(startIndex);
-  }
-  if (host.individualColorModes.length > startIndex) {
-    host.individualColorModes.splice(startIndex);
+  while (host.fileEntries.countOf('spatial') > startIndex) {
+    host.fileEntries.removeAt(host.fileEntries.countOf('spatial') - 1);
   }
 }
 

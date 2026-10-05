@@ -36,6 +36,10 @@
       >
       button to select a file you want to visualize.
     </p>
+    <p class="privacy-note">
+      <strong>Your files stay on your computer.</strong>
+      Files are processed locally in your browser and are not uploaded.
+    </p>
     <p class="example-prompt">
       No file at hand?
     </p>

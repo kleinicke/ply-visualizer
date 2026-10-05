@@ -1,3 +1,4 @@
+import type { FileEntryRegistry } from '../state/fileEntries';
 import * as THREE from 'three';
 import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
 import { applyDepthResultTypedArrays } from './depthResultArrays';
@@ -5,21 +6,9 @@ import { ColorImageLoader } from '../colorImageLoader';
 
 export interface ColorImageForDepthHost {
   vscode: { postMessage(message: any): void };
-  fileDepthData: Map<
-    number,
-    {
-      originalData: ArrayBuffer;
-      fileName: string;
-      cameraParams: CameraParams;
-      depthDimensions: { width: number; height: number };
-      colorImageData?: any;
-      colorImageName?: string;
-    }
-  >;
   pendingDepthFiles: Map<string, { sceneMetadata?: any }>;
   spatialFiles: SpatialData[];
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
-  pointSizes: number[];
   colorImageLoader: ColorImageLoader;
   needsRender: boolean;
   processDepthToPointCloud(
@@ -36,6 +25,7 @@ export interface ColorImageForDepthHost {
   updateFileList(): void;
   showStatus(message: string): void;
   showError(message: string): void;
+  fileEntries: FileEntryRegistry;
 }
 
 export function requestColorImageForDepth(host: ColorImageForDepthHost, fileIndex: number): void {
@@ -58,7 +48,7 @@ export async function handleColorImageData(
 
     // Get depth data first to access dimensions
     const fileIndex = message.fileIndex;
-    const depthData = host.fileDepthData.get(fileIndex);
+    const depthData = host.spatialFiles[fileIndex]?.depthSource;
     if (!depthData) {
       throw new Error('No cached depth data found for this file');
     }
@@ -98,7 +88,7 @@ export async function handleColorImageData(
       host.meshes[fileIndex] instanceof THREE.Points &&
       newMaterial instanceof THREE.PointsMaterial
     ) {
-      const currentPointSize = host.pointSizes[fileIndex] || 0.001;
+      const currentPointSize = host.fileEntries.require(fileIndex).state.pointSize || 0.001;
       newMaterial.size = currentPointSize;
       console.log(
         `🔧 Applied point size ${currentPointSize} to color-updated depth material for file ${fileIndex}`
@@ -153,12 +143,12 @@ export function getStoredColorImageName(
   host: ColorImageForDepthHost,
   fileIndex: number
 ): string | null {
-  const depthData = host.fileDepthData.get(fileIndex);
+  const depthData = host.spatialFiles[fileIndex]?.depthSource;
   return depthData?.colorImageName || null;
 }
 
 export function getImageSizeDisplay(host: ColorImageForDepthHost, fileIndex: number): string {
-  const depthData = host.fileDepthData.get(fileIndex);
+  const depthData = host.spatialFiles[fileIndex]?.depthSource;
   if (depthData?.depthDimensions) {
     const { width, height } = depthData.depthDimensions;
     return `Image Size: Width: ${width}, Height: ${height}`;
@@ -171,7 +161,7 @@ export async function removeColorImageFromDepth(
   fileIndex: number
 ): Promise<void> {
   try {
-    const depthData = host.fileDepthData.get(fileIndex);
+    const depthData = host.spatialFiles[fileIndex]?.depthSource;
     if (!depthData) {
       throw new Error('No cached Depth data found for this file');
     }
@@ -205,7 +195,7 @@ export async function removeColorImageFromDepth(
       host.meshes[fileIndex] instanceof THREE.Points &&
       newMaterial instanceof THREE.PointsMaterial
     ) {
-      const currentPointSize = host.pointSizes[fileIndex] || 0.001;
+      const currentPointSize = host.fileEntries.require(fileIndex).state.pointSize || 0.001;
       newMaterial.size = currentPointSize;
       console.log(
         `🔧 Applied point size ${currentPointSize} to default-color Depth material for file ${fileIndex}`

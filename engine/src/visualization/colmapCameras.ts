@@ -22,10 +22,6 @@ interface ColmapCameraHost {
   cameraNames: string[];
   cameraShowLabels: boolean[];
   cameraShowCoords: boolean[];
-  fileVisibility: boolean[];
-  pointSizes: number[];
-  individualColorModes: string[];
-  transformationMatrices: THREE.Matrix4[];
 }
 
 export function addColmapCameraVisualization(host: ColmapCameraHost, data: SpatialData): boolean {

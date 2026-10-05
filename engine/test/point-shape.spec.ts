@@ -82,7 +82,7 @@ test('round pass inherits an alignment applied after loading', async ({ page }) 
     const visualizer = (window as any).visualizer;
     const source = visualizer.meshes[0];
     const round = source.children.find((child: any) => child.name === 'adaptive-round-pass');
-    const aligned = visualizer.transformationMatrices[0].clone().makeTranslation(12, -3, 7);
+    const aligned = visualizer.fileEntries.require(0).transform.clone().makeTranslation(12, -3, 7);
     visualizer.setTransformationMatrix(0, aligned);
     source.updateWorldMatrix(true, true);
     return {

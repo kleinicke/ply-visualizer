@@ -57,7 +57,11 @@ test('live update reprojects the second depth image, and only that one', async (
 
   // Live update is meant to be on for every depth file, not just the first.
   expect(
-    await page.evaluate(() => [...((window as any).visualizer.liveDepthUpdateFiles ?? [])].sort())
+    await page.evaluate(() =>
+      (window as any).visualizer.fileEntries.all.flatMap((entry, index) =>
+        entry.state.liveDepth ? [index] : []
+      )
+    )
   ).toEqual([0, 1]);
 
   await openPanel(page, 1);
@@ -124,7 +128,11 @@ test('a depth image added after the first still live-updates', async ({ page }) 
   await expect(page.locator('#file-list .file-item')).toHaveCount(2);
 
   expect(
-    await page.evaluate(() => [...((window as any).visualizer.liveDepthUpdateFiles ?? [])].sort())
+    await page.evaluate(() =>
+      (window as any).visualizer.fileEntries.all.flatMap((entry, index) =>
+        entry.state.liveDepth ? [index] : []
+      )
+    )
   ).toEqual([0, 1]);
 
   await openPanel(page, 1);
@@ -161,4 +169,67 @@ test('the depth settings arrow tracks the panel through every click', async ({ p
     await expect(panel).toBeVisible({ visible: !wasOpen });
     await expect(arrow).toHaveText(wasOpen ? '▶' : '▼');
   }
+});
+
+for (const removeTarget of [false, true]) {
+  test(`pending depth result ${removeTarget ? 'is discarded when its file is removed' : 'follows its file when an earlier row is removed'}`, async ({
+    page,
+  }) => {
+    test.slow();
+    await loadTwoDepthImages(page);
+    const outcome = await page.evaluate(async removeTarget => {
+      const viewer = (window as any).visualizer;
+      const entry = viewer.fileEntries.require(1);
+      const original = viewer.processDepthToPointCloud.bind(viewer);
+      let release!: () => void;
+      let began!: () => void;
+      const started = new Promise<void>(resolve => {
+        began = resolve;
+      });
+      const blocked = new Promise<void>(resolve => {
+        release = resolve;
+      });
+      viewer.processDepthToPointCloud = async (...args: unknown[]) => {
+        began();
+        await blocked;
+        return original(...args);
+      };
+      const pending = viewer.applyDepthSettings(1);
+      await started;
+      viewer.removeFileByIndex(removeTarget ? 1 : 0);
+      const survivor = viewer.spatialFiles[0];
+      const mesh = viewer.meshes[0];
+      release();
+      await pending;
+      viewer.processDepthToPointCloud = original;
+      return {
+        count: viewer.spatialFiles.length,
+        identity: viewer.fileEntries.indexOf(entry.id),
+        survivorUnchanged: viewer.spatialFiles[0] === survivor,
+        meshReplaced: viewer.meshes[0] !== mesh,
+        sourceName: survivor.depthSource.fileName,
+      };
+    }, removeTarget);
+    expect(outcome.count).toBe(1);
+    expect(outcome.survivorUnchanged).toBe(true);
+    expect(outcome.identity).toBe(removeTarget ? -1 : 0);
+    expect(outcome.meshReplaced).toBe(!removeTarget);
+    expect(outcome.sourceName).toBe(removeTarget ? 'depth.tif' : 'depth_zstd.tif');
+  });
+}
+
+test('removing a depth file before the activity indicator paints never targets the next file', async ({
+  page,
+}) => {
+  test.slow();
+  await loadTwoDepthImages(page);
+  const result = await page.evaluate(async () => {
+    const viewer = (window as any).visualizer;
+    const survivor = viewer.meshes[1];
+    const pending = viewer.applyDepthSettings(0);
+    viewer.removeFileByIndex(0);
+    await pending;
+    return { unchanged: viewer.meshes[0] === survivor, count: viewer.spatialFiles.length };
+  });
+  expect(result).toEqual({ unchanged: true, count: 1 });
 });

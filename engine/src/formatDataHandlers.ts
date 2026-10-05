@@ -1,20 +1,13 @@
+import type { FileEntryRegistry } from './state/fileEntries';
+import { decodeFileMessage, readFileDataMessage } from './formats/fileMessage';
 import * as THREE from 'three';
 import { SpatialData, SpatialFace, SpatialVertex } from './interfaces';
-import { filesState } from './state/files.svelte';
 
 export interface FormatDataHandlersHost {
   scene: THREE.Scene;
   spatialFiles: SpatialData[];
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
-  multiMaterialGroups: (THREE.Group | null)[];
-  materialMeshes: (THREE.Object3D[] | null)[];
-  normalsVisualizers: (THREE.LineSegments | null)[];
-  normalsVisible: boolean[];
-  transformationMatrices: THREE.Matrix4[];
-  individualColorModes: string[];
-  appliedMtlColors: (number | null)[];
-  appliedMtlNames: (string | null)[];
-  appliedMtlData: (any | null)[];
+
   showStatus(message: string): void;
   showError(message: string): void;
   addNewFiles(newFiles: SpatialData[]): void;
@@ -26,28 +19,21 @@ export interface FormatDataHandlersHost {
   requestRender(): void;
   createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry;
   createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material;
-  fileVisibility: boolean[];
-  solidVisible: boolean[];
-  pointsVisible: boolean[];
-  wireframeVisible: boolean[];
-  vertexPointsObjects: (THREE.Points | null)[];
+
+  fileEntries: FileEntryRegistry;
 }
 
 function attachNormalsVisualizer(host: FormatDataHandlersHost, spatialData: SpatialData): void {
-  const normalsVisualizer = host.createNormalsVisualizer(spatialData);
-
   // Set initial visibility based on stored state (default true)
-  const fileIndex = spatialData.fileIndex || host.spatialFiles.length - 1;
-  const initialVisible = host.normalsVisible[fileIndex] !== false;
+  const fileIndex = spatialData.fileIndex ?? host.spatialFiles.length - 1;
+  if (host.spatialFiles[fileIndex] !== spatialData) {return;}
+  const normalsVisualizer = host.createNormalsVisualizer(spatialData);
+  const initialVisible = host.fileEntries.require(fileIndex).state.normalsVisible !== false;
   normalsVisualizer.visible = initialVisible;
 
   host.scene.add(normalsVisualizer);
 
-  // Ensure the array has the correct size and place the visualizer at the right index
-  while (host.normalsVisualizers.length <= fileIndex) {
-    host.normalsVisualizers.push(null);
-  }
-  host.normalsVisualizers[fileIndex] = normalsVisualizer;
+  host.fileEntries.require(fileIndex).resources.normals = normalsVisualizer;
 }
 
 export async function handlePcdData(host: FormatDataHandlersHost, message: any): Promise<void> {
@@ -116,7 +102,7 @@ export async function handlePcdData(host: FormatDataHandlersHost, message: any):
     // on top of this, just as it does for all other PCD data.
     if (!isIdentityViewpoint) {
       const fileIndex = spatialData.fileIndex ?? host.spatialFiles.length - 1;
-      if (fileIndex >= 0 && fileIndex < host.transformationMatrices.length) {
+      if (fileIndex >= 0 && fileIndex < host.fileEntries.length) {
         // PCD viewpoint: tx ty tz  qw qx qy qz
         const [tx, ty, tz, qw, qx, qy, qz] = vp;
         const q = new THREE.Quaternion(qx, qy, qz, qw).normalize();
@@ -137,171 +123,6 @@ export async function handlePcdData(host: FormatDataHandlersHost, message: any):
     console.error('Error handling PCD data:', error);
     host.showError(
       `PCD processing failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
-
-export async function handleNpyData(host: FormatDataHandlersHost, message: any): Promise<void> {
-  try {
-    console.log(`Load: recv NPY point cloud ${message.fileName}`);
-    host.showStatus(`NPY: processing point cloud data from ${message.fileName}`);
-
-    const npyData = message.data;
-    console.log(
-      `NPY: ${npyData.vertexCount} points, format=${npyData.format}, colors=${npyData.hasColors}, normals=${npyData.hasNormals}`
-    );
-
-    // NPY data is already in PLY format from the parser
-    const spatialData: SpatialData = {
-      ...npyData,
-      fileName: message.fileName,
-      shortPath: message.shortPath,
-    };
-
-    if (message.isAddFile) {
-      spatialData.fileIndex = host.spatialFiles.length;
-    }
-
-    await host.displayFiles([spatialData]);
-
-    // Handle normals visualization if available
-    const fileIndex = spatialData.fileIndex!;
-    if (npyData.hasNormals) {
-      // Ensure normalsVisualizers array is properly sized
-      while (host.normalsVisualizers.length <= fileIndex) {
-        host.normalsVisualizers.push(null);
-      }
-
-      const normalsVisualizer = host.createNormalsVisualizer(spatialData);
-      if (normalsVisualizer) {
-        host.scene.add(normalsVisualizer);
-      }
-      host.normalsVisualizers[fileIndex] = normalsVisualizer;
-    } else {
-      // Ensure array is properly sized even without normals
-      while (host.normalsVisualizers.length <= fileIndex) {
-        host.normalsVisualizers.push(null);
-      }
-      host.normalsVisualizers[fileIndex] = null;
-    }
-
-    host.showStatus(`NPY: loaded ${npyData.vertexCount} points from ${message.fileName}`);
-  } catch (error) {
-    console.error('Error handling NPY data:', error);
-    host.showError(
-      `NPY processing failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
-
-export async function handlePtsData(host: FormatDataHandlersHost, message: any): Promise<void> {
-  try {
-    console.log(`Load: recv PTS ${message.fileName}`);
-    host.showStatus(`PTS: processing ${message.fileName}`);
-
-    const ptsData = message.data;
-    console.log(
-      `PTS: ${ptsData.vertexCount} points, format=${ptsData.detectedFormat}, colors=${ptsData.hasColors}, normals=${ptsData.hasNormals}, intensity=${ptsData.hasIntensity}`
-    );
-
-    // Convert PTS data to PLY format for rendering
-    const spatialData: SpatialData = {
-      vertices: [],
-      faces: [],
-      format: 'ascii',
-      version: '1.0',
-      comments: [
-        `Converted from PTS: ${message.fileName}`,
-        `Detected format: ${ptsData.detectedFormat}`,
-        ...ptsData.comments,
-      ],
-      vertexCount: ptsData.vertexCount,
-      faceCount: 0,
-      hasColors: ptsData.hasColors,
-      hasNormals: ptsData.hasNormals,
-      hasIntensity: ptsData.hasIntensity,
-      fileName: message.fileName,
-      shortPath: message.shortPath,
-      fileSizeInBytes: message.fileSizeInBytes,
-    };
-    (spatialData as any).useTypedArrays = true;
-    (spatialData as any).positionsArray = ptsData.positionsArray;
-    (spatialData as any).colorsArray = ptsData.colorsArray;
-    (spatialData as any).normalsArray = ptsData.normalsArray;
-    (spatialData as any).intensityArray = ptsData.intensityArray;
-    (spatialData as any).scalarFields = ptsData.scalarFields ?? {};
-
-    if (message.isAddFile) {
-      host.addNewFiles([spatialData]);
-    } else {
-      await host.displayFiles([spatialData]);
-    }
-
-    // Create normals visualizer if PTS has normals
-    if (spatialData.hasNormals) {
-      attachNormalsVisualizer(host, spatialData);
-    }
-
-    host.showStatus(`PTS: loaded ${ptsData.vertexCount} points from ${message.fileName}`);
-  } catch (error) {
-    console.error('Error handling PTS data:', error);
-    host.showError(
-      `PTS processing failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
-
-export async function handleKittiBinData(
-  host: FormatDataHandlersHost,
-  message: any
-): Promise<void> {
-  try {
-    console.log(`Load: recv KITTI BIN ${message.fileName}`);
-    host.showStatus(`KITTI BIN: processing ${message.fileName}`);
-
-    const kittiData = message.data;
-    console.log(
-      `KITTI BIN: ${kittiData.vertexCount} points, format=${kittiData.detectedFormat}, intensity=${kittiData.hasIntensity}`
-    );
-
-    // Convert KITTI BIN data to the shared spatial format for rendering
-    const spatialData: SpatialData = {
-      vertices: [],
-      faces: [],
-      format: 'binary_little_endian',
-      version: '1.0',
-      comments: [
-        `Converted from KITTI BIN: ${message.fileName}`,
-        `Detected format: ${kittiData.detectedFormat}`,
-        ...(kittiData.comments ?? []),
-      ],
-      vertexCount: kittiData.vertexCount,
-      faceCount: 0,
-      hasColors: kittiData.hasColors,
-      hasNormals: kittiData.hasNormals,
-      hasIntensity: kittiData.hasIntensity,
-      fileName: message.fileName,
-      shortPath: message.shortPath,
-      fileSizeInBytes: message.fileSizeInBytes,
-    };
-    (spatialData as any).useTypedArrays = true;
-    (spatialData as any).positionsArray = kittiData.positionsArray;
-    (spatialData as any).colorsArray = kittiData.colorsArray;
-    (spatialData as any).normalsArray = kittiData.normalsArray;
-    (spatialData as any).intensityArray = kittiData.intensityArray;
-    (spatialData as any).scalarFields = kittiData.scalarFields ?? {};
-
-    if (message.isAddFile) {
-      host.addNewFiles([spatialData]);
-    } else {
-      await host.displayFiles([spatialData]);
-    }
-
-    host.showStatus(`KITTI BIN: loaded ${kittiData.vertexCount} points from ${message.fileName}`);
-  } catch (error) {
-    console.error('Error handling KITTI BIN data:', error);
-    host.showError(
-      `KITTI BIN processing failed: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 }
@@ -433,15 +254,15 @@ function replaceVolumeGeometry(
   }
   const previous = host.meshes[fileIndex];
   const previousRenderMode = host.spatialFiles[fileIndex]?.metadata?.volumeRenderMode;
-  const matrix = host.transformationMatrices[fileIndex].clone();
-  const visible = host.fileVisibility[fileIndex] ?? true;
+  const matrix = host.fileEntries.require(fileIndex).transform.clone();
+  const visible = host.fileEntries.require(fileIndex).state.visible ?? true;
   if (previous) {
     host.scene.remove(previous);
     previous.geometry.dispose();
     const materials = Array.isArray(previous.material) ? previous.material : [previous.material];
     materials.forEach(material => material.dispose());
   }
-  const vertexPoints = host.vertexPointsObjects[fileIndex];
+  const vertexPoints = host.fileEntries.require(fileIndex).resources.vertexPoints;
   if (vertexPoints) {
     host.scene.remove(vertexPoints);
     vertexPoints.geometry.dispose();
@@ -449,31 +270,27 @@ function replaceVolumeGeometry(
       ? vertexPoints.material
       : [vertexPoints.material];
     materials.forEach(material => material.dispose());
-    host.vertexPointsObjects[fileIndex] = null;
+    host.fileEntries.require(fileIndex).resources.vertexPoints = null;
   }
-  const normals = host.normalsVisualizers[fileIndex];
+  const normals = host.fileEntries.require(fileIndex).resources.normals;
   if (normals) {
     host.scene.remove(normals);
     normals.geometry.dispose();
     const materials = Array.isArray(normals.material) ? normals.material : [normals.material];
     materials.forEach(material => material.dispose());
-    host.normalsVisualizers[fileIndex] = null;
+    host.fileEntries.require(fileIndex).resources.normals = null;
   }
 
   data.fileIndex = fileIndex;
   host.spatialFiles[fileIndex] = data;
   if (data.metadata?.volumeRenderMode === 'points' && previousRenderMode !== 'points') {
-    host.individualColorModes[fileIndex] = 'original';
-    filesState.colorModes[fileIndex] = 'original';
+    host.fileEntries.require(fileIndex).state.colorMode = 'original';
   } else if (data.metadata?.volumeRenderMode === 'slices' && previousRenderMode !== 'slices') {
-    host.individualColorModes[fileIndex] = 'original';
-    filesState.colorModes[fileIndex] = 'original';
+    host.fileEntries.require(fileIndex).state.colorMode = 'original';
   } else if (data.metadata?.volumeRenderMode === 'voxels' && previousRenderMode !== 'voxels') {
-    host.individualColorModes[fileIndex] = 'original';
-    filesState.colorModes[fileIndex] = 'original';
+    host.fileEntries.require(fileIndex).state.colorMode = 'original';
   } else if (data.metadata?.volumeRenderMode === 'mesh' && previousRenderMode !== 'mesh') {
-    host.individualColorModes[fileIndex] = 'assigned';
-    filesState.colorModes[fileIndex] = 'assigned';
+    host.fileEntries.require(fileIndex).state.colorMode = 'assigned';
   }
   const geometry = host.createGeometryFromSpatialData(data);
   const material = host.createMaterialForFile(data, fileIndex);
@@ -484,16 +301,16 @@ function replaceVolumeGeometry(
   object.visible = visible;
   host.meshes[fileIndex] = object;
   host.scene.add(object);
-  host.solidVisible[fileIndex] = data.faceCount > 0;
-  host.pointsVisible[fileIndex] = data.faceCount === 0;
-  host.wireframeVisible[fileIndex] = false;
-  if (data.hasNormals && host.normalsVisible[fileIndex]) {
+  host.fileEntries.require(fileIndex).state.solidVisible = data.faceCount > 0;
+  host.fileEntries.require(fileIndex).state.pointsVisible = data.faceCount === 0;
+  host.fileEntries.require(fileIndex).state.wireframeVisible = false;
+  if (data.hasNormals && host.fileEntries.require(fileIndex).state.normalsVisible) {
     const visualizer = host.createNormalsVisualizer(data);
     visualizer.visible = visible;
-    host.normalsVisualizers[fileIndex] = visualizer;
+    host.fileEntries.require(fileIndex).resources.normals = visualizer;
     host.scene.add(visualizer);
   } else if (!data.hasNormals) {
-    host.normalsVisible[fileIndex] = false;
+    host.fileEntries.require(fileIndex).state.normalsVisible = false;
   }
   host.setTransformationMatrix(fileIndex, matrix);
   host.updateFileList();
@@ -546,64 +363,6 @@ export async function handleGltfData(host: FormatDataHandlersHost, message: any)
     console.error('Error handling GLTF data:', error);
     host.showError(
       `GLTF processing failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
-
-export async function handleXyzVariantData(
-  host: FormatDataHandlersHost,
-  message: any
-): Promise<void> {
-  try {
-    console.log(`Load: recv XYZ variant (${message.variant}) ${message.fileName}`);
-    host.showStatus(`XYZ: processing ${message.fileName} (${message.variant})`);
-
-    // Data is already parsed into typed arrays by the extension (XyzVariantParser).
-    const xyzData = message.data;
-    const spatialData: SpatialData = {
-      vertices: [],
-      faces: [],
-      format: 'ascii',
-      version: '1.0',
-      comments: [
-        `Converted from ${message.variant.toUpperCase()}: ${message.fileName}`,
-        `Format variant: ${message.variant}`,
-      ],
-      vertexCount: xyzData.vertexCount,
-      faceCount: 0,
-      hasColors: xyzData.hasColors,
-      hasNormals: xyzData.hasNormals,
-      hasIntensity: xyzData.hasIntensity,
-      fileName: message.fileName,
-      shortPath: message.shortPath,
-      fileSizeInBytes: message.fileSizeInBytes,
-    };
-    (spatialData as any).useTypedArrays = true;
-    (spatialData as any).positionsArray = xyzData.positionsArray;
-    (spatialData as any).colorsArray = xyzData.colorsArray;
-    (spatialData as any).normalsArray = xyzData.normalsArray;
-    (spatialData as any).intensityArray = xyzData.intensityArray;
-    (spatialData as any).scalarFields = xyzData.intensityArray
-      ? { intensity: xyzData.intensityArray }
-      : {};
-
-    if (message.isAddFile) {
-      host.addNewFiles([spatialData]);
-    } else {
-      await host.displayFiles([spatialData]);
-    }
-
-    if (spatialData.hasNormals) {
-      attachNormalsVisualizer(host, spatialData);
-    }
-
-    host.showStatus(
-      `${message.variant.toUpperCase()}: loaded ${spatialData.vertexCount} points from ${message.fileName}`
-    );
-  } catch (error) {
-    console.error('Error handling XYZ variant data:', error);
-    host.showError(
-      `${message.variant.toUpperCase()} processing failed: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 }
@@ -1014,8 +773,8 @@ export function handleMtlData(host: FormatDataHandlersHost, message: any): void 
 
     // Update the mesh color based on current render type
     const mesh = host.meshes[fileIndex];
-    const multiMaterialGroup = host.multiMaterialGroups[fileIndex];
-    const subMeshes = host.materialMeshes[fileIndex];
+    const multiMaterialGroup = host.fileEntries.require(fileIndex).resources.materialGroup;
+    const subMeshes = host.fileEntries.require(fileIndex).resources.materialMeshes;
 
     console.log('Mesh info:', {
       meshExists: !!mesh,
@@ -1085,9 +844,9 @@ export function handleMtlData(host: FormatDataHandlersHost, message: any): void 
     }
 
     // Store the applied MTL color, name, and data for future use
-    host.appliedMtlColors[fileIndex] = hexColor;
-    host.appliedMtlNames[fileIndex] = materialName;
-    host.appliedMtlData[fileIndex] = mtlData;
+    host.fileEntries.require(fileIndex).resources.materialColor = hexColor;
+    host.fileEntries.require(fileIndex).resources.materialName = materialName;
+    host.fileEntries.require(fileIndex).resources.materialData = mtlData;
 
     // Update UI to show loaded MTL
     host.updateFileList();
@@ -1101,4 +860,57 @@ export function handleMtlData(host: FormatDataHandlersHost, message: any): void 
       `Failed to apply MTL material: ${error instanceof Error ? error.message : String(error)}`
     );
   }
+}
+
+export async function handleFileData(
+  host: FormatDataHandlersHost,
+  message: unknown
+): Promise<void> {
+  try {
+    const input = readFileDataMessage(message);
+    const data = await decodeFileMessage(input);
+    if (input.isAddFile) {host.addNewFiles([data]);}
+    else {await host.displayFiles([data]);}
+    host.showStatus(`Loaded ${data.vertexCount.toLocaleString()} points from ${input.fileName}`);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {host.showStatus('Import cancelled');}
+    else
+      {host.showError(
+        `File import failed: ${error instanceof Error ? error.message : String(error)}`
+      );}
+  }
+}
+
+/** Shared finalization for already-decoded point buffers from either host. */
+export async function handlePointData(
+  host: FormatDataHandlersHost,
+  message: {
+    type: 'ptsData' | 'kittiBinData' | 'npyData' | 'xyzVariantData';
+    data: SpatialData;
+    fileName: string;
+    shortPath?: string;
+    fileSizeInBytes?: number;
+    isAddFile?: boolean;
+  }
+): Promise<void> {
+  const input = message.data;
+  const data: SpatialData = {
+    ...input,
+    vertices: input.vertices ?? [],
+    faces: input.faces ?? [],
+    version: input.version ?? '1.0',
+    format: message.type === 'kittiBinData' ? 'binary_little_endian' : 'ascii',
+    comments: input.comments ?? [],
+    faceCount: input.faceCount ?? 0,
+    fileName: message.fileName,
+    shortPath: message.shortPath,
+    fileSizeInBytes: message.fileSizeInBytes,
+    useTypedArrays: input.positionsArray !== undefined,
+    scalarFields:
+      input.scalarFields ?? (input.intensityArray ? { intensity: input.intensityArray } : {}),
+  };
+  if (message.isAddFile) {host.addNewFiles([data]);}
+  else {await host.displayFiles([data]);}
+  if (data.hasNormals) {attachNormalsVisualizer(host, data);}
+  host.showStatus(`Loaded ${data.vertexCount.toLocaleString()} points from ${message.fileName}`);
 }

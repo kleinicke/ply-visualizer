@@ -1,3 +1,4 @@
+import { decodesInViewer } from '../../engine/src/fileHandler';
 import { isSceneModel } from '../../engine/src/models/modelFormats';
 import { sendSceneModel } from './sceneModels';
 import * as vscode from 'vscode';
@@ -11,11 +12,9 @@ import {
   toPcdPayload,
   toPointCloudPayload,
 } from '../../engine/src/parsers/pointcloudWasm';
-import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
 import { isColmapModelFile } from '../../engine/src/formats/colmap/colmapFiles';
-import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
 import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
@@ -82,22 +81,6 @@ function decodeLidarData(
   }));
 }
 
-async function addKittiBinData(
-  host: AddFileHost,
-  webviewPanel: vscode.WebviewPanel,
-  bytes: Uint8Array,
-  fileName: string,
-  shortPath: string
-): Promise<void> {
-  const parsedData: any = await new KittiBinParser().parse(bytes, host.logPerf.bind(host));
-  parsedData.fileName = fileName;
-  parsedData.shortPath = shortPath;
-  parsedData.fileSizeInBytes = bytes.byteLength;
-  parsedData.faceCount = 0;
-  parsedData.faces = [];
-  await sendSpatialDataToWebview(webviewPanel, [parsedData], 'addFiles');
-}
-
 async function addStonexX3aData(
   host: AddFileHost,
   webviewPanel: vscode.WebviewPanel,
@@ -157,6 +140,17 @@ export async function handleAddFile(
         host.setLoadStartedAt(Date.now());
         webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
+        if (decodesInViewer(fileName)) {
+          const data = await vscode.workspace.fs.readFile(files[i]);
+          await webviewPanel.webview.postMessage({
+            type: 'fileData',
+            fileName,
+            shortPath,
+            data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+            isAddFile: true,
+          });
+          continue;
+        }
         if (isSceneModel(fileName)) {
           await sendSceneModel(webviewPanel, files[i]);
           continue;
@@ -167,12 +161,6 @@ export async function handleAddFile(
           const extension = fileExtension.slice(1) as 'las' | 'laz' | 'e57';
           const data = decodeLidarData(bytes, extension, fileName, shortPath);
           await sendSpatialDataToWebview(webviewPanel, data, 'multiSpatialData');
-          continue;
-        }
-
-        if (fileExtension === '.bin') {
-          const bytes = await vscode.workspace.fs.readFile(files[i]);
-          await addKittiBinData(host, webviewPanel, bytes, fileName, shortPath);
           continue;
         }
 
@@ -390,22 +378,6 @@ export async function handleAddFile(
         }
 
         // Handle OFF files
-        if (fileExtension === '.off') {
-          const offData = await vscode.workspace.fs.readFile(files[i]);
-          const offParser = new OffParser();
-          const parsedData = await offParser.parse(offData);
-
-          webviewPanel.webview.postMessage({
-            type: 'offData',
-            fileName: fileName,
-            shortPath: shortPath,
-            data: parsedData,
-            isAddFile: true,
-          });
-
-          console.log(`🎯 OFF Add File: ${fileName} sent for processing`);
-          continue;
-        }
 
         // Handle GLTF/GLB files
         if (fileExtension === '.gltf' || fileExtension === '.glb') {
@@ -476,6 +448,17 @@ export async function handleAddFileFromPath(
     host.setLoadStartedAt(Date.now());
     webviewPanel.webview.postMessage({ type: 'startLoading', fileName });
 
+    if (decodesInViewer(fileName)) {
+      const data = await vscode.workspace.fs.readFile(fileUri);
+      await webviewPanel.webview.postMessage({
+        type: 'fileData',
+        fileName,
+        shortPath,
+        data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+        isAddFile: true,
+      });
+      return;
+    }
     if (isSceneModel(fileName)) {
       await sendSceneModel(webviewPanel, fileUri);
       return;
@@ -489,12 +472,6 @@ export async function handleAddFileFromPath(
         shortPath
       );
       await sendSpatialDataToWebview(webviewPanel, data, 'multiSpatialData');
-      return;
-    }
-
-    if (ext === '.bin') {
-      const bytes = await vscode.workspace.fs.readFile(fileUri);
-      await addKittiBinData(host, webviewPanel, bytes, fileName, shortPath);
       return;
     }
 
@@ -651,19 +628,7 @@ export async function handleAddFileFromPath(
       });
       return;
     }
-    if (ext === '.off') {
-      const offData = await vscode.workspace.fs.readFile(fileUri);
-      const offParser = new OffParser();
-      const parsedData = await offParser.parse(offData);
-      webviewPanel.webview.postMessage({
-        type: 'offData',
-        fileName,
-        shortPath,
-        data: parsedData,
-        isAddFile: true,
-      });
-      return;
-    }
+
     if (ext === '.gltf' || ext === '.glb') {
       const gltfData = await vscode.workspace.fs.readFile(fileUri);
       const gltfParser = new GltfParser();
@@ -741,6 +706,16 @@ export async function handleDroppedFilesFromWebview(
 
       const fileData = toUint8Array(droppedFile.data);
       const shortPath = fileName;
+      if (decodesInViewer(fileName)) {
+        await webviewPanel.webview.postMessage({
+          type: 'fileData',
+          fileName,
+          shortPath,
+          data: toArrayBuffer(fileData),
+          isAddFile: true,
+        });
+        continue;
+      }
       const ext = path.extname(fileName).toLowerCase();
       if (isSceneModel(fileName)) {
         await webviewPanel.webview.postMessage({
@@ -797,11 +772,6 @@ export async function handleDroppedFilesFromWebview(
           shortPath
         );
         await sendSpatialDataToWebview(webviewPanel, data, 'multiSpatialData');
-        continue;
-      }
-
-      if (ext === '.bin') {
-        await addKittiBinData(host, webviewPanel, fileData, fileName, shortPath);
         continue;
       }
 
@@ -902,19 +872,6 @@ export async function handleDroppedFilesFromWebview(
         const parsedData = toPointCloudPayload(await parsePtsWasm(fileData), 'pts');
         webviewPanel.webview.postMessage({
           type: 'ptsData',
-          fileName,
-          shortPath,
-          data: parsedData,
-          isAddFile: true,
-        });
-        continue;
-      }
-
-      if (ext === '.off') {
-        const offParser = new OffParser();
-        const parsedData = await offParser.parse(fileData);
-        webviewPanel.webview.postMessage({
-          type: 'offData',
           fileName,
           shortPath,
           data: parsedData,

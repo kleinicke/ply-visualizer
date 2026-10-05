@@ -34,7 +34,10 @@ test.describe('Automatic Eye Dome Lighting', () => {
       .poll(() =>
         page.evaluate(() => {
           const viewer: any = (window as any).visualizer;
-          return [viewer.individualColorModes[1], viewer.edlPass.eligibleObjectCount];
+          return [
+            viewer.fileEntries.require(1).state.colorMode,
+            viewer.edlPass.eligibleObjectCount,
+          ];
         })
       )
       .toEqual(['original', 1]);

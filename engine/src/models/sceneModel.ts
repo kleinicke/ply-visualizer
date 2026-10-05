@@ -1,3 +1,4 @@
+import type { FileEntryRegistry } from '../state/fileEntries';
 import * as THREE from 'three';
 import type { SpatialData } from '../interfaces';
 import { createModelPlayback } from '../state/modelPlayback.svelte';
@@ -179,11 +180,11 @@ export function createModelObject(
 }
 
 export function updateModelPlayback(
-  host: { spatialFiles: SpatialData[]; fileVisibility: boolean[]; requestRender(): void },
+  host: { spatialFiles: SpatialData[]; fileEntries: FileEntryRegistry; requestRender(): void },
   delta: number
 ): void {
   host.spatialFiles.forEach((data, index) => {
-    if (host.fileVisibility[index] && data.sceneModel?.update(delta)) {
+    if (host.fileEntries.require(index).state.visible && data.sceneModel?.update(delta)) {
       host.requestRender();
     }
   });

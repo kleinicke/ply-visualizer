@@ -69,7 +69,7 @@ export function agentViewState(host: ControlHost) {
   const canvas = host.renderer.domElement;
   const visible = new THREE.Box3();
   host.meshes.forEach((mesh, index) => {
-    if (mesh?.visible && host.fileVisibility[index]) {
+    if (mesh?.visible && host.fileEntries.require(index).state.visible) {
       visible.expandByObject(mesh);
     }
   });

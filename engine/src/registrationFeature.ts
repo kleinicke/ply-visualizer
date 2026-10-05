@@ -1,3 +1,4 @@
+import type { FileEntryRegistry } from './state/fileEntries';
 /**
  * Host glue for scan-to-scan registration.
  *
@@ -25,14 +26,13 @@ import {
 export interface RegistrationHost {
   scene: THREE.Scene;
   spatialFiles: SpatialData[];
-  transformationMatrices: THREE.Matrix4[];
-  fileVisibility?: boolean[];
   /** X3A camera profiles, so panoramas follow the scans they were shot from. */
   cameraGroups?: THREE.Group[];
   setTransformationMatrix(fileIndex: number, matrix: THREE.Matrix4): void;
   setFileEntryVisibility?(fileIndex: number, visible: boolean): void;
   updateMatrixTextarea(fileIndex: number): void;
   requestRender(): void;
+  fileEntries: FileEntryRegistry;
 }
 
 /**
@@ -147,7 +147,7 @@ export function worldPoints(host: RegistrationHost, fileIndex: number): Float32A
   if (!source) {
     return null;
   }
-  const matrix = host.transformationMatrices[fileIndex] ?? new THREE.Matrix4();
+  const matrix = host.fileEntries.require(fileIndex).transform ?? new THREE.Matrix4();
   const count = Math.floor(source.length / 3);
   const stride = Math.max(1, Math.ceil(count / MAX_SOLVER_POINTS));
   const kept = Math.ceil(count / stride);
@@ -260,14 +260,14 @@ export function endSession(host: RegistrationHost): void {
 }
 
 function captureVisibility(host: RegistrationHost): void {
-  if (!session || session.savedVisibility || !host.fileVisibility) {
+  if (!session || session.savedVisibility) {
     return;
   }
-  session.savedVisibility = host.fileVisibility.map(value => value !== false);
+  session.savedVisibility = host.fileEntries.all.map(entry => entry.state.visible);
 }
 
 function setWorkflowVisibility(host: RegistrationHost, visibleIndices: number[]): void {
-  if (!session || !host.setFileEntryVisibility || !host.fileVisibility) {
+  if (!session || !host.setFileEntryVisibility) {
     return;
   }
   // Opt-out, because isolating is right for the common case (two scans of one
@@ -279,7 +279,7 @@ function setWorkflowVisibility(host: RegistrationHost, visibleIndices: number[])
   }
   captureVisibility(host);
   const visible = new Set(visibleIndices);
-  for (let index = 0; index < host.fileVisibility.length; index++) {
+  for (let index = 0; index < host.fileEntries.length; index++) {
     host.setFileEntryVisibility(index, visible.has(index));
   }
   host.requestRender();
@@ -547,7 +547,7 @@ function nearestVertexDistanceSq(
   if (!positions) {
     return Infinity;
   }
-  const e = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).elements;
+  const e = (host.fileEntries.require(fileIndex).transform ?? new THREE.Matrix4()).elements;
   const count = Math.floor(positions.length / 3);
   let best = Infinity;
   for (let i = 0; i < count; i++) {
@@ -857,7 +857,7 @@ function applyDelta(host: RegistrationHost, delta: THREE.Matrix4): void {
     return;
   }
   const previous = (
-    host.transformationMatrices[session.sourceIndex] ?? new THREE.Matrix4()
+    host.fileEntries.require(session.sourceIndex).transform ?? new THREE.Matrix4()
   ).clone();
   if (!session.undoMatrix) {
     session.undoMatrix = previous;
@@ -866,7 +866,7 @@ function applyDelta(host: RegistrationHost, delta: THREE.Matrix4): void {
   // rescued group rigid: their poses relative to each other are already solved,
   // and this supplies only the one pose they share.
   for (const index of session.sourceGroup) {
-    const before = (host.transformationMatrices[index] ?? new THREE.Matrix4()).clone();
+    const before = (host.fileEntries.require(index).transform ?? new THREE.Matrix4()).clone();
     host.setTransformationMatrix(index, delta.clone().multiply(before));
     host.updateMatrixTextarea(index);
   }
@@ -917,12 +917,14 @@ export function undo(host: RegistrationHost): void {
     return;
   }
   const restore = session.undoMatrix;
-  const current = (host.transformationMatrices[session.sourceIndex] ?? new THREE.Matrix4()).clone();
+  const current = (
+    host.fileEntries.require(session.sourceIndex).transform ?? new THREE.Matrix4()
+  ).clone();
   const delta = restore.clone().multiply(current.invert());
 
   // The same delta that moved the group has to move all of it back.
   for (const index of session.sourceGroup) {
-    const before = (host.transformationMatrices[index] ?? new THREE.Matrix4()).clone();
+    const before = (host.fileEntries.require(index).transform ?? new THREE.Matrix4()).clone();
     host.setTransformationMatrix(index, delta.clone().multiply(before));
     host.updateMatrixTextarea(index);
   }
@@ -1377,7 +1379,9 @@ async function analyseUnattached(
           extraStarts: inheritedStarts(host, settled, member),
         });
         if (result?.icp && result.icp.fitness >= MIN_ACCEPT_FITNESS) {
-          const previous = (host.transformationMatrices[member] ?? new THREE.Matrix4()).clone();
+          const previous = (
+            host.fileEntries.require(member).transform ?? new THREE.Matrix4()
+          ).clone();
           host.setTransformationMatrix(member, result.matrix.clone().multiply(previous));
           host.updateMatrixTextarea(member);
           settled.push(member);
@@ -1499,10 +1503,12 @@ function inheritedStarts(
   placed: readonly number[],
   fileIndex: number
 ): THREE.Matrix4[] {
-  const inverse = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone().invert();
+  const inverse = (host.fileEntries.require(fileIndex).transform ?? new THREE.Matrix4())
+    .clone()
+    .invert();
   const starts: THREE.Matrix4[] = [];
   for (const index of placed) {
-    const pose = host.transformationMatrices[index] ?? new THREE.Matrix4();
+    const pose = host.fileEntries.require(index).transform ?? new THREE.Matrix4();
     const delta = pose.clone().multiply(inverse);
     if (!starts.some(existing => sameTransform(existing, delta))) {
       starts.push(delta);
@@ -1568,7 +1574,7 @@ async function settlePlacements(
     if (!result?.icp || result.startedFrom !== 'given') {
       continue;
     }
-    const previous = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone();
+    const previous = (host.fileEntries.require(fileIndex).transform ?? new THREE.Matrix4()).clone();
     host.setTransformationMatrix(fileIndex, result.matrix.clone().multiply(previous));
     host.updateMatrixTextarea(fileIndex);
     const entry = entryFor(fileIndex);
@@ -1758,7 +1764,9 @@ async function growFromAnchor(
         const entry = entryFor(fileIndex);
 
         const applyStarted = performance.now();
-        const previous = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone();
+        const previous = (
+          host.fileEntries.require(fileIndex).transform ?? new THREE.Matrix4()
+        ).clone();
         undoAll.set(fileIndex, previous);
         host.setTransformationMatrix(fileIndex, result.matrix.clone().multiply(previous));
         host.updateMatrixTextarea(fileIndex);
@@ -1960,7 +1968,9 @@ export async function alignAllTo(
         }
 
         const applyStarted = performance.now();
-        const previous = (host.transformationMatrices[fileIndex] ?? new THREE.Matrix4()).clone();
+        const previous = (
+          host.fileEntries.require(fileIndex).transform ?? new THREE.Matrix4()
+        ).clone();
         undoAll.set(fileIndex, previous);
         host.setTransformationMatrix(fileIndex, result.matrix.clone().multiply(previous));
         host.updateMatrixTextarea(fileIndex);

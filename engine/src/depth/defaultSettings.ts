@@ -4,7 +4,6 @@ import { isPngDerivedFile } from './commentSettings';
 export interface DefaultDepthSettingsHost {
   defaultDepthSettings: CameraParams;
   spatialFiles: SpatialData[];
-  fileDepthData: Map<number, { depthDimensions?: { width: number; height: number } }>;
   vscode: { postMessage(message: any): void };
   getDepthSettingsFromFileUI(fileIndex: number): CameraParams;
   showStatus(message: string): void;
@@ -256,7 +255,7 @@ export function resetPrinciplePoint(host: DefaultDepthSettingsHost, fileIndex: n
     const cyElement = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
 
     // Get image dimensions from stored depth data
-    const depthData = host.fileDepthData.get(fileIndex);
+    const depthData = host.spatialFiles[fileIndex]?.depthSource;
     if (depthData?.depthDimensions) {
       const computedCx = (depthData.depthDimensions.width - 1) / 2;
       const computedCy = (depthData.depthDimensions.height - 1) / 2;

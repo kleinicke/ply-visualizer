@@ -20,6 +20,8 @@ pub use inspection::{
 use std::mem;
 use wasm_bindgen::prelude::*;
 
+mod text_table;
+pub use text_table::parse_text_table;
 mod lidar;
 mod npy;
 mod ply;

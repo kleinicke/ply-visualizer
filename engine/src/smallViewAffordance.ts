@@ -1,3 +1,4 @@
+import type { FileEntryRegistry } from './state/fileEntries';
 import * as THREE from 'three';
 import type { SpatialData } from './interfaces';
 import { smallViewState } from './state/smallView.svelte';
@@ -11,7 +12,7 @@ interface SmallViewHost {
   camera: THREE.PerspectiveCamera;
   spatialFiles: SpatialData[];
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
-  fileVisibility: boolean[];
+  fileEntries: FileEntryRegistry;
   isFileLoading: boolean;
 }
 
@@ -99,7 +100,7 @@ export class SmallViewAffordance {
       if (
         !(mesh instanceof THREE.Points) ||
         !mesh.visible ||
-        this.host.fileVisibility[index] === false
+        this.host.fileEntries.require(index).state.visible === false
       ) {
         continue;
       }

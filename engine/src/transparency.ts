@@ -1,10 +1,11 @@
+import type { FileEntryRegistry } from './state/fileEntries';
 import * as THREE from 'three';
 
 export interface TransparencyHost {
+  fileEntries: FileEntryRegistry;
   allowTransparency: boolean;
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
-  vertexPointsObjects: (THREE.Points | null)[];
-  multiMaterialGroups: (THREE.Group | null)[];
+
   showStatus(message: string): void;
   requestRender(): void;
 }
@@ -42,7 +43,8 @@ export function updateAllMaterialsForTransparency(host: TransparencyHost): void 
   });
 
   // Update vertex points objects
-  host.vertexPointsObjects.forEach(vertexPoints => {
+  host.fileEntries.all.forEach(entry => {
+    const vertexPoints = entry.resources.vertexPoints;
     if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
       const material = vertexPoints.material as THREE.PointsMaterial;
       // Only toggle blending; preserve the material's existing point shape.
@@ -52,7 +54,8 @@ export function updateAllMaterialsForTransparency(host: TransparencyHost): void 
   });
 
   // Update multi-material groups
-  host.multiMaterialGroups.forEach(group => {
+  host.fileEntries.all.forEach(entry => {
+    const group = entry.resources.materialGroup;
     if (group) {
       group.traverse(child => {
         if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
@@ -66,6 +69,6 @@ export function updateAllMaterialsForTransparency(host: TransparencyHost): void 
   });
 
   console.log(
-    `Updated transparency for ${host.meshes.length} main meshes, ${host.vertexPointsObjects.length} vertex point objects, and ${host.multiMaterialGroups.length} multi-material groups`
+    `Updated transparency for ${host.meshes.length} main meshes, ${host.fileEntries.length} vertex point objects, and ${host.fileEntries.length} multi-material groups`
   );
 }

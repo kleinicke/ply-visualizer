@@ -1,18 +1,10 @@
 {
   "compilerOptions": {
     "module": "commonjs",
-    "target": "ES2020",
     "outDir": "out",
-    "lib": ["ES2020", "DOM"],
     "sourceMap": true,
     "rootDir": ".",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
     "types": ["node", "vscode"],
-    "forceConsistentCasingInFileNames": true,
-    // Matches the webpack aliases: tsc compiles the extension host and the node
-    // test suite, both of which want the CommonJS loader.
     "paths": {
       "#registration-wasm-loader": ["./engine/src/registration/wasmLoader.ts"]
     }
@@ -24,5 +16,6 @@
     "ui-tests",
     "engine/tests",
     "engine/playwright.config.ts"
-  ]
+  ],
+  "extends": "./tsconfig.base.json"
 }

@@ -76,6 +76,7 @@ interface RawNpyResult {
 }
 
 interface PointcloudWasm {
+  parse_text_table(data: Uint8Array, options: string): RawResult;
   parse_xyz(data: Uint8Array, variant: string, colorMode: string): RawResult;
   parse_pts(data: Uint8Array): RawResult;
   parse_pcd(data: Uint8Array): RawResult;
@@ -476,4 +477,13 @@ export async function readNpyWasm(data: Uint8Array, name = ''): Promise<NpyArray
  */
 export function isNpyPointCloudShape(shape: number[]): boolean {
   return shape.length >= 1 && shape[shape.length - 1] === 3;
+}
+
+export async function parseTextTableWasm(
+  data: Uint8Array,
+  options: unknown
+): Promise<WasmPointCloudResult> {
+  const wasm = await loadPointcloudWasm();
+  if (!wasm) {throw new Error('point-cloud wasm unavailable');}
+  return marshalWasmPointCloud(wasm.parse_text_table(data, JSON.stringify(options)));
 }

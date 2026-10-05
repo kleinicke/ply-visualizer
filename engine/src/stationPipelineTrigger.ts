@@ -85,7 +85,7 @@ function currentTransforms(
     if (!scope.has(stem)) {
       continue;
     }
-    transforms[stem] = Array.from(host.transformationMatrices[index].elements);
+    transforms[stem] = Array.from(host.fileEntries.require(index).transform.elements);
   }
   return transforms;
 }
@@ -98,7 +98,7 @@ function visibleArchiveStems(host: any, archiveName: string, fallbackIndex: numb
     if (
       metadata?.containerFileName !== archiveName ||
       !metadata?.embeddedScanName ||
-      filesState.visibility[index] === false
+      host.fileEntries.require(index).state.visible === false
     ) {
       continue;
     }

@@ -34,7 +34,6 @@ export interface NormalizedPose {
  */
 export interface PoseHost {
   scene: THREE.Scene;
-  fileEntries: FileEntryRegistry;
   spatialFiles: { length: number };
   poseGroups: THREE.Group[];
   poseMeta: PoseMeta[];
@@ -48,17 +47,14 @@ export interface PoseHost {
   poseMinScoreThreshold: number[];
   poseMaxUncertaintyThreshold: number[];
   poseLabelsGroups: (THREE.Group | null)[];
-  individualColorModes: string[];
-  pointSizes: number[];
   readonly fileColors: readonly [number, number, number][];
-  fileVisibility: boolean[];
-  transformationMatrices: THREE.Matrix4[];
   applyTransformationMatrix(fileIndex: number): void;
   updateFileList(): void;
   updateFileStats(): void;
   autoFitCameraOnFirstLoad(): void;
   handleCameraProfile(data: any, fileName: string): void;
   showError(message: string): void;
+  fileEntries: FileEntryRegistry;
 }
 
 export function autoConnectKnn(
@@ -345,7 +341,7 @@ export function buildPoseGroup(
 ): THREE.Group {
   const group = new THREE.Group();
   // Default pose color: use assigned color for this index
-  const colorMode = host.individualColorModes[unifiedIndex] ?? 'assigned';
+  const colorMode = host.fileEntries.require(unifiedIndex).state.colorMode ?? 'assigned';
   let baseRGB: [number, number, number];
   if (colorMode === 'assigned') {
     baseRGB = host.fileColors[unifiedIndex % host.fileColors.length] as [number, number, number];
@@ -360,7 +356,7 @@ export function buildPoseGroup(
   const baseColor = new THREE.Color(baseRGB[0], baseRGB[1], baseRGB[2]);
 
   // Joints as instanced spheres (only for valid joints)
-  const radius = host.pointSizes[unifiedIndex] ?? 0.02; // 2 cm default
+  const radius = host.fileEntries.require(unifiedIndex).state.pointSize ?? 0.02; // 2 cm default
   const sphereGeo = new THREE.SphereGeometry(1, 12, 12);
   const mat = new THREE.MeshBasicMaterial({ color: baseColor, transparent: true, opacity: 0.95 });
   const validJointIndices: number[] = [];
@@ -546,7 +542,11 @@ export function updatePoseLabels(host: PoseHost, fileIndex: number): void {
       continue;
     }
     const label = makeLabel(names[originalIndex] || `${originalIndex}`);
-    label.position.set(j.x, j.y + (host.pointSizes[fileIndex] ?? 0.02) * 1.5, j.z);
+    label.position.set(
+      j.x,
+      j.y + (host.fileEntries.require(fileIndex).state.pointSize ?? 0.02) * 1.5,
+      j.z
+    );
     labelsGroup.add(label);
   }
   host.scene.add(labelsGroup);
@@ -559,7 +559,7 @@ export function updatePoseScaling(host: PoseHost, fileIndex: number): void {
     return;
   }
   const group = host.poseGroups[poseIndex];
-  const baseRadius = host.pointSizes[fileIndex] ?? 0.02;
+  const baseRadius = host.fileEntries.require(fileIndex).state.pointSize ?? 0.02;
   const scaleByScore = host.poseScaleByScore[poseIndex];
   const scaleByUnc = host.poseScaleByUncertainty[poseIndex];
   // Fetch scores/uncertainties if available
@@ -657,7 +657,9 @@ export function applyPoseFilters(host: PoseHost, fileIndex: number): void {
             visible = false;
           }
         }
-        const targetScale = visible ? (host.pointSizes[fileIndex] ?? 0.02) : 0;
+        const targetScale = visible
+          ? (host.fileEntries.require(fileIndex).state.pointSize ?? 0.02)
+          : 0;
         dummy.scale.setScalar(targetScale);
         dummy.updateMatrix();
         obj.setMatrixAt(k, dummy.matrix);

@@ -32,13 +32,16 @@ export async function updateAgentLegend(host: ControlHost) {
       ]
     : [];
   host.spatialFiles.forEach((file, i) => {
-    if (!host.fileVisibility[i] && !(split && [split.left, split.right].includes(i))) {
+    if (
+      !host.fileEntries.require(i).state.visible &&
+      !(split && [split.left, split.right].includes(i))
+    ) {
       return;
     }
     if (distanceState(host, i)?.stale) {
       labels.push({ label: `${file.fileName}: distances stale — recompute`, color: '#ffbb44' });
     }
-    const mode = parseScalarColorMode(host.individualColorModes[i]);
+    const mode = parseScalarColorMode(host.fileEntries.require(i).state.colorMode);
     if (!mode) {
       return;
     }

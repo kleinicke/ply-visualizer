@@ -95,7 +95,7 @@ test('loads the guided release example with its predefined presentation', async 
         const visualizer: any = (window as any).visualizer;
         const measurementProject = JSON.parse(visualizer.measurementManager.buildPathProjectJson());
         return {
-          colorMode: visualizer.individualColorModes[0],
+          colorMode: visualizer.fileEntries.require(0).state.colorMode,
           edlEnabled: visualizer.edlEnabled,
           edlMode: visualizer.edlMode,
           keyframes: visualizer.filmManager.getKeyframes().length,

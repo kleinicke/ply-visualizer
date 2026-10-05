@@ -11,7 +11,7 @@
  */
 
 import { isNpyPointCloudShape, readNpyWasm } from './pointcloudWasm';
-import { SpatialData } from './plyParser';
+import type { SpatialData } from '../interfaces';
 
 export class NpyParser {
   async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<SpatialData> {

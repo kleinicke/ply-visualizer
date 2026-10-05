@@ -1,8 +1,8 @@
+import type { FileEntryRegistry } from '../state/fileEntries';
 import * as THREE from 'three';
 import { SpatialData } from '../interfaces';
 
 export interface MeshBuilderHost {
-  individualColorModes: string[];
   convertSrgbToLinear: boolean;
   colorProcessor: { ensureSrgbLUT(): Float32Array };
   applyColorModeToGeometry(
@@ -10,6 +10,7 @@ export interface MeshBuilderHost {
     geometry: THREE.BufferGeometry,
     colorMode: string
   ): void;
+  fileEntries: FileEntryRegistry;
 }
 
 /**
@@ -108,7 +109,7 @@ export function createGeometryFromSpatialData(
 
   const colorMode =
     data.fileIndex !== undefined
-      ? host.individualColorModes[data.fileIndex] || 'assigned'
+      ? host.fileEntries.require(data.fileIndex).state.colorMode || 'assigned'
       : 'assigned';
   host.applyColorModeToGeometry(data, geometry, colorMode);
 

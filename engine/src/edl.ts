@@ -1,3 +1,4 @@
+import type { FileEntryRegistry } from './state/fileEntries';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { EDLPass } from './postprocessing/EDLPass';
@@ -20,8 +21,6 @@ export interface EDLHost {
   camera: THREE.PerspectiveCamera;
   meshes: THREE.Object3D[];
   spatialFiles: SpatialData[];
-  fileVisibility: boolean[];
-  individualColorModes: string[];
   edlEnabled: boolean;
   edlMode: EDLMode;
   edlStrength: number;
@@ -31,6 +30,7 @@ export interface EDLHost {
   edlPass: EDLPass | null;
   requestRender(): void;
   showStatus(message: string): void;
+  fileEntries: FileEntryRegistry;
 }
 
 export function initEDLComposer(host: EDLHost): void {
@@ -98,9 +98,9 @@ export function getAutoEDLPointClouds(host: EDLHost): THREE.Points[] {
     const data = host.spatialFiles[index];
     if (
       object instanceof THREE.Points &&
-      host.fileVisibility[index] !== false &&
+      host.fileEntries.require(index).state.visible !== false &&
       object.visible &&
-      !shouldUseVertexColors(data, host.individualColorModes[index] ?? 'assigned')
+      !shouldUseVertexColors(data, host.fileEntries.require(index).state.colorMode ?? 'assigned')
     ) {
       eligible.push(object);
     }

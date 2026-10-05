@@ -1,49 +1,7 @@
 import { parsePlyWasm } from './pointcloudWasm';
 import { isGaussianSplatLayout } from '../utils/scalarFields';
 
-export interface SpatialVertex {
-  x: number;
-  y: number;
-  z: number;
-  red?: number;
-  green?: number;
-  blue?: number;
-  alpha?: number;
-  nx?: number;
-  ny?: number;
-  nz?: number;
-  intensity?: number;
-}
-
-export interface SpatialFace {
-  indices: number[];
-}
-
-export interface SpatialData {
-  vertices: SpatialVertex[];
-  faces: SpatialFace[];
-  format: 'ascii' | 'binary_little_endian' | 'binary_big_endian';
-  version: string;
-  comments: string[];
-  vertexCount: number;
-  faceCount: number;
-  hasColors: boolean;
-  hasNormals: boolean;
-  hasIntensity?: boolean;
-  /** 3D Gaussian Splatting PLY layout: colors synthesized from f_dc_0..2. */
-  isGaussianSplat?: boolean;
-  /** Where splat mode can re-read the full original PLY (see interfaces.ts). */
-  splatSource?: { url?: string; bytes?: Uint8Array };
-  fileName?: string;
-  shortPath?: string; // parent/grandparent/filename for tooltip display
-  fileIndex?: number;
-  positionsArray?: Float32Array;
-  colorsArray?: Uint8Array | null;
-  normalsArray?: Float32Array | null;
-  intensityArray?: Float32Array | null;
-  scalarFields?: Record<string, Float32Array>;
-  useTypedArrays?: boolean;
-}
+import type { SpatialData } from '../interfaces';
 
 /**
  * PLY entry points that are not the parser.
@@ -223,7 +181,9 @@ export class PlyParser {
     let dataStartPos = headerEndPos;
     if (data[dataStartPos] === 13) {
       dataStartPos++;
-      if (data[dataStartPos] === 10) {dataStartPos++;}
+      if (data[dataStartPos] === 10) {
+        dataStartPos++;
+      }
     } else if (data[dataStartPos] === 10) {
       dataStartPos++;
     } else {

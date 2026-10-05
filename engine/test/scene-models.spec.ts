@@ -150,8 +150,8 @@ for (const fixture of cases) {
           });
           return {
             visible: host.meshes[0].visible,
-            solid: host.solidVisible[0],
-            wire: host.wireframeVisible[0],
+            solid: host.fileEntries.require(0).state.solidVisible,
+            wire: host.fileEntries.require(0).state.wireframeVisible,
             values,
           };
         });

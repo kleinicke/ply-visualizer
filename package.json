@@ -195,6 +195,25 @@
             "filenamePattern": "*.bin"
           }
         ]
+      },
+      {
+        "viewType": "plyViewer.textTable",
+        "displayName": "3D Visualizer (text / height grid)",
+        "selector": [
+          {
+            "filenamePattern": "*.csv"
+          },
+          {
+            "filenamePattern": "*.tsv"
+          },
+          {
+            "filenamePattern": "*.txt"
+          },
+          {
+            "filenamePattern": "*.asc"
+          }
+        ],
+        "priority": "option"
       }
     ],
     "commands": [
@@ -295,7 +314,7 @@
       "explorer/context": [
         {
           "command": "plyViewer.openFile",
-          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .xyzn || resourceExtname == .xyzrgb || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl || resourceExtname == .pcd || resourceExtname == .pts || resourceExtname == .off || resourceExtname == .gltf || resourceExtname == .glb || resourceExtname == .fbx || resourceExtname == .dae || resourceExtname == .3ds || resourceExtname == .3mf || resourceExtname == .amf || resourceExtname == .wrl || resourceExtname == .step || resourceExtname == .stp || resourceExtname == .iges || resourceExtname == .igs || resourceExtname == .brep || resourceExtname == .las || resourceExtname == .laz || resourceExtname == .e57 || resourceExtname == .x3a || resourceExtname == .x3r || resourceExtname == .bin",
+          "when": "resourceExtname == .ply || resourceExtname == .xyz || resourceExtname == .xyzn || resourceExtname == .xyzrgb || resourceExtname == .txt || resourceExtname == .obj || resourceExtname == .stl || resourceExtname == .pcd || resourceExtname == .pts || resourceExtname == .off || resourceExtname == .gltf || resourceExtname == .glb || resourceExtname == .fbx || resourceExtname == .dae || resourceExtname == .3ds || resourceExtname == .3mf || resourceExtname == .amf || resourceExtname == .wrl || resourceExtname == .step || resourceExtname == .stp || resourceExtname == .iges || resourceExtname == .igs || resourceExtname == .brep || resourceExtname == .las || resourceExtname == .laz || resourceExtname == .e57 || resourceExtname == .x3a || resourceExtname == .x3r || resourceExtname == .bin || resourceExtname == .csv || resourceExtname == .tsv || resourceExtname == .asc",
           "group": "navigation"
         },
         {
@@ -2841,7 +2860,7 @@
     "test:python-viewer": "python3 -m unittest discover -s packages/python/tests -v",
     "vscode:prepublish": "npm run clean && npm run compile",
     "compile": "webpack",
-    "build:wasm": "cd wasm/pointcloud-parser && wasm-pack build --target nodejs --release --out-dir pkg && wasm-pack build --target web --release --out-dir pkg-web && node -e \"require('fs').rmSync('pkg-web/.gitignore', { force: true })\" && cd ../tiff-decoder && wasm-pack build --target nodejs --release --out-dir pkg-nodejs && wasm-pack build --target no-modules --release --out-dir pkg-nomodules && cp pkg-nomodules/tiff_wasm.js ../../engine/media/wasm/tiff_wasm.js && cp pkg-nomodules/tiff_wasm_bg.wasm ../../engine/media/wasm/tiff_wasm_bg.wasm",
+    "build:wasm": "node scripts/build-wasm.mjs",
     "compile:tests": "tsc",
     "compile:all": "npm run compile && npm run compile:tests",
     "watch": "webpack --watch",
@@ -2865,7 +2884,9 @@
     "desktop:build": "npm run build --workspace=visualizer-desktop --",
     "desktop:check": "npm run check --workspace=visualizer-desktop",
     "desktop:test": "npm run test --workspace=visualizer-desktop",
-    "test:vscode-agent": "npm run compile:all && node scripts/test-vscode-agent.cjs"
+    "test:vscode-agent": "npm run compile:all && node scripts/test-vscode-agent.cjs",
+    "check:wasm": "node scripts/wasm-artifacts.mjs",
+    "test:rust": "cargo test --locked --manifest-path wasm/pointcloud-parser/Cargo.toml && cargo test --locked --manifest-path wasm/camera-models/Cargo.toml && cargo test --locked --manifest-path wasm/tiff-decoder/Cargo.toml"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",

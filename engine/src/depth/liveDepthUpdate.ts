@@ -1,31 +1,13 @@
+import type { FileEntryRegistry } from '../state/fileEntries';
 import * as THREE from 'three';
 import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
 import { applyDepthResultTypedArrays } from './depthResultArrays';
-import { depthSettingsState } from '../state/depthSettings.svelte';
 import { runWithFileActivity } from '../fileActivity';
 import { PerfTimer } from '../utils/perfLog';
 
 export interface LiveDepthUpdateHost {
-  liveDepthUpdateFiles: Set<number>;
-  liveDepthUpdateInFlight: Set<number>;
-  liveDepthUpdateQueued: Set<number>;
-  liveDepthUpdateTimers: Map<number, number>;
-  liveDepthUpdateVersions: Map<number, number>;
-  fileDepthData: Map<
-    number,
-    {
-      originalData: ArrayBuffer;
-      fileName: string;
-      cameraParams: CameraParams;
-      depthDimensions: { width: number; height: number };
-      colorImageData?: any;
-      colorImageName?: string;
-    }
-  >;
   spatialFiles: SpatialData[];
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
-  individualColorModes: string[];
-  pointSizes: number[];
   scene: THREE.Scene;
   smallViewAffordance?: { notifyGeometryReplaced(): void };
   getDepthSettingsFromFileUI(fileIndex: number): CameraParams;
@@ -41,6 +23,7 @@ export interface LiveDepthUpdateHost {
   updateFileStats(): void;
   showStatus(message: string): void;
   showError(message: string): void;
+  fileEntries: FileEntryRegistry;
 }
 
 export function setLiveDepthUpdateEnabled(
@@ -48,24 +31,13 @@ export function setLiveDepthUpdateEnabled(
   fileIndex: number,
   enabled: boolean
 ): void {
-  if (enabled) {
-    host.liveDepthUpdateFiles.add(fileIndex);
-    if (!depthSettingsState.liveUpdateFileIndices.includes(fileIndex)) {
-      depthSettingsState.liveUpdateFileIndices.push(fileIndex);
-    }
-  } else {
-    host.liveDepthUpdateFiles.delete(fileIndex);
-    const idx = depthSettingsState.liveUpdateFileIndices.indexOf(fileIndex);
-    if (idx !== -1) {
-      depthSettingsState.liveUpdateFileIndices.splice(idx, 1);
-    }
-    host.liveDepthUpdateQueued.delete(fileIndex);
-    host.liveDepthUpdateVersions.delete(fileIndex);
-    const timer = host.liveDepthUpdateTimers.get(fileIndex);
-    if (timer !== undefined) {
-      window.clearTimeout(timer);
-      host.liveDepthUpdateTimers.delete(fileIndex);
-    }
+  const entry = host.fileEntries.require(fileIndex);
+  entry.state.liveDepth = enabled;
+  if (!enabled) {
+    entry.depthUpdate.version++;
+    entry.depthUpdate.queued = false;
+    clearTimeout(entry.depthUpdate.timer);
+    entry.depthUpdate.timer = undefined;
   }
 
   const applyButton = document.querySelector(
@@ -90,56 +62,39 @@ export function scheduleLiveDepthUpdate(
   fileIndex: number,
   delayMs: number = 60
 ): void {
-  if (!host.liveDepthUpdateFiles.has(fileIndex)) {
-    return;
-  }
-
-  const nextVersion = (host.liveDepthUpdateVersions.get(fileIndex) || 0) + 1;
-  host.liveDepthUpdateVersions.set(fileIndex, nextVersion);
-
-  const existing = host.liveDepthUpdateTimers.get(fileIndex);
-  if (existing !== undefined) {
-    window.clearTimeout(existing);
-  }
-
-  const timer = window.setTimeout(() => {
-    host.liveDepthUpdateTimers.delete(fileIndex);
-    void requestLiveDepthUpdate(host, fileIndex);
+  const entry = host.fileEntries.require(fileIndex);
+  if (!entry.state.liveDepth) {return;}
+  entry.depthUpdate.version++;
+  clearTimeout(entry.depthUpdate.timer);
+  entry.depthUpdate.timer = window.setTimeout(() => {
+    entry.depthUpdate.timer = undefined;
+    const index = host.fileEntries.indexOf(entry.id);
+    if (index >= 0) {void requestLiveDepthUpdate(host, index);}
   }, delayMs);
-  host.liveDepthUpdateTimers.set(fileIndex, timer);
 }
 
 export async function requestLiveDepthUpdate(
   host: LiveDepthUpdateHost,
   fileIndex: number
 ): Promise<void> {
-  if (!host.liveDepthUpdateFiles.has(fileIndex)) {
+  const entry = host.fileEntries.require(fileIndex);
+  if (!entry.state.liveDepth) {return;}
+  const work = entry.depthUpdate;
+  if (work.inFlight) {
+    work.queued = true;
     return;
   }
-
-  if (host.liveDepthUpdateInFlight.has(fileIndex)) {
-    host.liveDepthUpdateQueued.add(fileIndex);
-    return;
-  }
-
-  host.liveDepthUpdateInFlight.add(fileIndex);
-  const version = host.liveDepthUpdateVersions.get(fileIndex) || 0;
+  work.inFlight = true;
   try {
-    await applyDepthSettings(host, fileIndex, version);
+    await applyDepthSettings(host, fileIndex, work.version);
   } finally {
-    host.liveDepthUpdateInFlight.delete(fileIndex);
-    if (host.liveDepthUpdateQueued.delete(fileIndex) && host.liveDepthUpdateFiles.has(fileIndex)) {
-      scheduleLiveDepthUpdate(host, fileIndex, 0);
+    work.inFlight = false;
+    const index = host.fileEntries.indexOf(entry.id);
+    if (work.queued && entry.state.liveDepth && index >= 0) {
+      work.queued = false;
+      scheduleLiveDepthUpdate(host, index, 0);
     }
   }
-}
-
-export function isLiveDepthResultCurrent(
-  host: LiveDepthUpdateHost,
-  fileIndex: number,
-  version?: number
-): boolean {
-  return version === undefined || host.liveDepthUpdateVersions.get(fileIndex) === version;
 }
 
 export function waitForNextFrame(): Promise<void> {
@@ -164,7 +119,14 @@ export async function applyDepthSettings(
   fileIndex: number,
   liveVersion?: number
 ): Promise<void> {
-  await runWithFileActivity(() => applyDepthSettingsInner(host, fileIndex, liveVersion));
+  const entry = host.fileEntries.at(fileIndex);
+  if (!entry) {return;}
+  await runWithFileActivity(() => {
+    const currentIndex = host.fileEntries.indexOf(entry.id);
+    return currentIndex < 0
+      ? Promise.resolve()
+      : applyDepthSettingsInner(host, currentIndex, liveVersion);
+  });
 }
 
 async function applyDepthSettingsInner(
@@ -172,6 +134,13 @@ async function applyDepthSettingsInner(
   fileIndex: number,
   liveVersion?: number
 ): Promise<void> {
+  const entry = host.fileEntries.require(fileIndex);
+  const current = () => {
+    fileIndex = host.fileEntries.indexOf(entry.id);
+    return (
+      fileIndex >= 0 && (liveVersion === undefined || entry.depthUpdate.version === liveVersion)
+    );
+  };
   const perf = new PerfTimer('depth/reapply');
   try {
     // Get the current values from the form using the helper method
@@ -200,7 +169,7 @@ async function applyDepthSettingsInner(
     }
 
     // Check if we have cached depth data for this file
-    const depthData = host.fileDepthData.get(fileIndex);
+    const depthData = host.spatialFiles[fileIndex]?.depthSource;
     if (!depthData) {
       throw new Error('No cached depth data found for this file. Please reload the depth file.');
     }
@@ -221,12 +190,12 @@ async function applyDepthSettingsInner(
       depthData.colorImageData
     );
     perf.mark('worker');
-    if (!isLiveDepthResultCurrent(host, fileIndex, liveVersion)) {
+    if (!current()) {
       return;
     }
 
     await waitForNextFrame();
-    if (!isLiveDepthResultCurrent(host, fileIndex, liveVersion)) {
+    if (!current()) {
       return;
     }
 
@@ -266,7 +235,7 @@ async function applyDepthSettingsInner(
 
     // Update the mesh with new data
     const oldMaterial = host.meshes[fileIndex].material;
-    const colorMode = host.individualColorModes[fileIndex] || 'assigned';
+    const colorMode = host.fileEntries.require(fileIndex).state.colorMode || 'assigned';
     console.log(
       `🎨 Depth settings apply - fileIndex: ${fileIndex}, hasColors: ${spatialData.hasColors}, colorMode: ${colorMode}, vertexCount: ${spatialData.vertexCount}`
     );
@@ -279,7 +248,7 @@ async function applyDepthSettingsInner(
       host.meshes[fileIndex] instanceof THREE.Points &&
       newMaterial instanceof THREE.PointsMaterial
     ) {
-      const currentPointSize = host.pointSizes[fileIndex] || 0.001;
+      const currentPointSize = host.fileEntries.require(fileIndex).state.pointSize || 0.001;
       newMaterial.size = currentPointSize;
       console.log(
         `🔧 Applied point size ${currentPointSize} to updated ${fileType} material for file ${fileIndex}`
@@ -295,13 +264,6 @@ async function applyDepthSettingsInner(
     }
 
     perf.mark('material');
-    // Yield once more before the single unavoidable block (building the buffers
-    // and handing them to the GPU), so the busy dot and any pending input are
-    // dealt with immediately before it rather than after.
-    await waitForNextFrame();
-    if (!isLiveDepthResultCurrent(host, fileIndex, liveVersion)) {
-      return;
-    }
     const geometry = host.createGeometryFromSpatialData(spatialData);
     const newMesh = new THREE.Points(geometry, newMaterial);
 

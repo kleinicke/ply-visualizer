@@ -44,7 +44,7 @@ test('a scan shown without colour takes it when it arrives', async ({ page }) =>
     ]);
     return {
       hasColors: data.hasColors,
-      mode: visualizer.individualColorModes[0],
+      mode: visualizer.fileEntries.require(0).state.colorMode,
       first: Array.from((data.colorsArray as Uint8Array).slice(0, 3)) as number[],
     };
   });

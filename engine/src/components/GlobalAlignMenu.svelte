@@ -36,7 +36,7 @@
     group: {
       indices: number[];
       suggestion: { movingIndex: number; fixedIndex: number } | null;
-    } | null
+    } | null,
   ) {
     if (!group?.suggestion) return;
     singleFixed = group.suggestion.fixedIndex;
@@ -46,9 +46,13 @@
     // single shared pose; and holding every placed cloud still means a feature
     // can be picked wherever it is recognisable rather than only on the cloud
     // the suggestion happened to name.
-    registration.beginGroupSession(host, group.indices, registrationState.alignedIndices.length > 0
-      ? registrationState.alignedIndices
-      : [group.suggestion.fixedIndex]);
+    registration.beginGroupSession(
+      host,
+      group.indices,
+      registrationState.alignedIndices.length > 0
+        ? registrationState.alignedIndices
+        : [group.suggestion.fixedIndex],
+    );
     registration.startGuidedMatching(host, false);
   }
   // Off by default, like every other correction: the viewer shows the capture.
@@ -83,23 +87,25 @@
   // load and unload through main.ts's parallel arrays, which are not
   // themselves reactive.
   const alignable = $derived(
-    (filesState.renderTick, registration.registrationCandidates(host, -1))
+    (filesState.entries, registration.registrationCandidates(host, -1)),
   );
-  const hasObjects = $derived((filesState.renderTick, host.fileEntries.length > 0));
+  const hasObjects = $derived((filesState.entries, host.fileEntries.length > 0));
   // One cloud has nothing to align to, but the surrounding Tools menu also
   // contains measurement and viewer options and therefore remains useful.
   const available = $derived(alignable.length >= 2);
   const anchorIndex = $derived(
-    anchorChoice !== null && alignable.includes(anchorChoice) ? anchorChoice : (alignable[0] ?? 0)
+    anchorChoice !== null && alignable.includes(anchorChoice)
+      ? anchorChoice
+      : (alignable[0] ?? 0),
   );
   const movingCount = $derived(Math.max(0, alignable.length - 1));
 
   const singleFixedIndex = $derived(
-    singleFixed !== null && alignable.includes(singleFixed) ? singleFixed : (alignable[0] ?? 0)
+    singleFixed !== null && alignable.includes(singleFixed) ? singleFixed : (alignable[0] ?? 0),
   );
 
   // Only archives carry the per-band reference patches this reads.
-  const hasCameraProfiles = $derived((filesState.renderTick, (host.cameraGroups?.length ?? 0) > 0));
+  const hasCameraProfiles = $derived((filesState.entries, (host.cameraGroups?.length ?? 0) > 0));
 
   function applyBandWhiteBalance(enabled: boolean) {
     bandWhiteBalance = enabled;
@@ -115,24 +121,24 @@
     host.requestRender();
   }
 
-  const archiveIndex = $derived((filesState.renderTick, firstArchiveScanIndex(host)));
+  const archiveIndex = $derived((filesState.entries, firstArchiveScanIndex(host)));
   // Colouring needs the photographs and the camera profile out of the archive,
   // which only the extension host still has open. Hidden everywhere else.
-  const canRecolor = $derived((filesState.renderTick, canRunStationPipeline(host, archiveIndex)));
+  const canRecolor = $derived((filesState.entries, canRunStationPipeline(host, archiveIndex)));
 
   const entries = $derived(registrationState.alignEntries);
-  const alignedCount = $derived(entries.filter(entry => entry.state === 'aligned').length);
-  const failedCount = $derived(entries.filter(entry => entry.state === 'failed').length);
+  const alignedCount = $derived(entries.filter((entry) => entry.state === 'aligned').length);
+  const failedCount = $derived(entries.filter((entry) => entry.state === 'failed').length);
   // Percent of the run, not percent of success: the bar answers "how much
   // longer", and a failed cloud is as finished as an aligned one.
   const alignPercent = $derived(
-    entries.length === 0 ? 0 : Math.round((registrationState.alignDone / entries.length) * 100)
+    entries.length === 0 ? 0 : Math.round((registrationState.alignDone / entries.length) * 100),
   );
 
   const scans = $derived(stationPipelineUi.scans);
-  const coloredCount = $derived(scans.filter(scan => scan.colored).length);
+  const coloredCount = $derived(scans.filter((scan) => scan.colored).length);
   const colorPercent = $derived(
-    scans.length === 0 ? 0 : Math.round((coloredCount / scans.length) * 100)
+    scans.length === 0 ? 0 : Math.round((coloredCount / scans.length) * 100),
   );
 
   const STATE_ICON = { queued: '·', running: '◐', aligned: '✓', failed: '✕' } as const;
@@ -143,20 +149,17 @@
   // places are parsed, used as cameras and recoloured — and scope belongs
   // beside the button that consumes it.
   const archiveName = $derived(
-    (filesState.renderTick,
+    (filesState.entries,
     archiveIndex === null
       ? undefined
-      : (host.spatialFiles?.[archiveIndex]?.metadata?.containerFileName as string | undefined))
+      : (host.spatialFiles?.[archiveIndex]?.metadata?.containerFileName as string | undefined)),
   );
-  const places = $derived(
-    (filesState.renderTick, filesState.renderModeTick, capturePlaces(host, archiveName))
-  );
+  const places = $derived((filesState.entries, capturePlaces(host, archiveName)));
   const placeVisible = (place: { fileIndices: number[] }) =>
-    place.fileIndices.some(index => filesState.visibility[index] !== false);
+    place.fileIndices.some((index) => host.fileEntries.require(index).state.visible !== false);
 
   function togglePlace(place: any, event: Event) {
     setCapturePlaceVisible(host, place, (event.currentTarget as HTMLInputElement).checked);
-    filesState.renderModeTick++;
   }
 
   function fileLabel(index: number): string {
@@ -180,7 +183,7 @@
     host.showStatus(
       enabled
         ? 'Measurement mode: ON — double-click or double-tap points to measure'
-        : 'Measurement mode: OFF — double-click or double-tap moves the rotation center'
+        : 'Measurement mode: OFF — double-click or double-tap moves the rotation center',
     );
   }
 
@@ -613,7 +616,7 @@
 <style>
   .global-align-toggle {
     /* The add button keeps `flex: 1`; this one stays at its natural width so
-       the pair shares the row without a second layout rule. */
+         the pair shares the row without a second layout rule. */
     flex: 0 0 auto;
     white-space: nowrap;
   }
@@ -622,7 +625,7 @@
   }
   .align-menu {
     /* Breaks out of the flex row that holds the two buttons, so the menu is a
-       full-width panel underneath them rather than a third column. */
+         full-width panel underneath them rather than a third column. */
     flex-basis: 100%;
     background-color: var(--vscode-editor-background);
     border: 1px solid var(--vscode-panel-border);
@@ -695,8 +698,8 @@
   }
   .align-reference select {
     /* Full width on its own line: scan names are long and truncating the one
-       control that says what everything else is relative to is not a trade
-       worth making for one saved row. */
+         control that says what everything else is relative to is not a trade
+         worth making for one saved row. */
     display: block;
     width: 100%;
     font-size: 11px;
@@ -772,7 +775,11 @@
     padding: 8px 9px;
     border: 1px solid var(--vscode-editorWarning-foreground, #cca700);
     border-radius: 4px;
-    background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 8%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--vscode-editorWarning-foreground, #cca700) 8%,
+      transparent
+    );
   }
   .align-gap-head {
     font-weight: 600;
@@ -801,15 +808,15 @@
     margin: 4px 0 0;
     padding: 0;
     /* Long captures run to dozens of scans; the list scrolls rather than
-       pushing the file list off the panel. */
+         pushing the file list off the panel. */
     max-height: 132px;
     overflow-y: auto;
   }
   .align-row {
     display: flex;
     /* Wraps rather than truncates. A scan name and its result together are
-       wider than the sidebar at any realistic width, and clipping "overlap
-       37%" to "overlap 3" turns the one number worth reading into a lie. */
+         wider than the sidebar at any realistic width, and clipping "overlap
+         37%" to "overlap 3" turns the one number worth reading into a lie. */
     flex-wrap: wrap;
     align-items: baseline;
     gap: 0 5px;
@@ -822,7 +829,7 @@
   }
   .align-name {
     /* The name is the one thing that may truncate, and only once it has taken
-       the whole row: half a scan name still identifies the row. */
+         the whole row: half a scan name still identifies the row. */
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
@@ -832,7 +839,7 @@
   .align-detail {
     flex: 0 0 auto;
     /* Right-aligned when it shares the row, indented under the name when it
-       wraps to its own — either way it is never cut off. */
+         wraps to its own — either way it is never cut off. */
     margin-left: auto;
     padding-left: 14px;
     font-family: var(--vscode-editor-font-family, monospace);

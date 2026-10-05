@@ -50,10 +50,13 @@ export function captureAgentCanvas(host: ControlHost, maxSize = 1024): HTMLCanva
   }
   if (sceneGuidesState.legend) {
     const lines = host.spatialFiles.flatMap((file, i) => {
-      if (!host.fileVisibility[i] && !(split && [split.left, split.right].includes(i))) {
+      if (
+        !host.fileEntries.require(i).state.visible &&
+        !(split && [split.left, split.right].includes(i))
+      ) {
         return [];
       }
-      const mode = host.individualColorModes[i];
+      const mode = host.fileEntries.require(i).state.colorMode;
       const palette =
         mode === 'assigned'
           ? host.fileColors[i % host.fileColors.length]

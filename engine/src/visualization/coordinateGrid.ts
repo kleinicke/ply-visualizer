@@ -7,7 +7,9 @@ export interface GridProjection {
 
 /** A small number of readable ticks, including for flat and very small scenes. */
 export function coordinateTicks(min: number, max: number): number[] {
-  if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) {return [];}
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) {
+    return [];
+  }
   const span = max - min || Math.max(Math.abs(min) * 0.1, 1);
   const power = 10 ** Math.floor(Math.log10(span / 5));
   const ratio = span / 5 / power;
@@ -18,7 +20,9 @@ export function coordinateTicks(min: number, max: number): number[] {
 }
 
 export function formatCoordinate(value: number): string {
-  if (value === 0) {return '0';}
+  if (value === 0) {
+    return '0';
+  }
   return Number(value.toPrecision(12)).toString();
 }
 
@@ -27,15 +31,21 @@ export function projectCoordinateGrid(host: any, width: number, height: number):
   const result: GridProjection = { lines: [], labels: [] };
   const bounds = new THREE.Box3();
   for (const [index, mesh] of host.meshes.entries()) {
-    if (!mesh || !mesh.visible || host.fileVisibility[index] === false) {continue;}
+    if (!mesh || !mesh.visible || host.fileEntries.require(index).state.visible === false) {
+      continue;
+    }
     mesh.updateWorldMatrix(true, true);
     bounds.union(new THREE.Box3().setFromObject(mesh));
   }
-  if (bounds.isEmpty()) {return result;}
+  if (bounds.isEmpty()) {
+    return result;
+  }
   const ticks = [0, 1, 2].map(axis =>
     coordinateTicks(bounds.min.getComponent(axis), bounds.max.getComponent(axis))
   );
-  if (ticks.some(values => values.length < 2)) {return result;}
+  if (ticks.some(values => values.length < 2)) {
+    return result;
+  }
   const low = ticks.map(values => values[0]);
   const high = ticks.map(values => values[values.length - 1]);
   host.camera.updateMatrixWorld();
@@ -45,7 +55,9 @@ export function projectCoordinateGrid(host: any, width: number, height: number):
   );
   const project = (point: number[]) => {
     const p = new THREE.Vector3(...point).project(host.camera);
-    if (!Number.isFinite(p.x + p.y + p.z) || p.z < -1 || p.z > 1) {return null;}
+    if (!Number.isFinite(p.x + p.y + p.z) || p.z < -1 || p.z > 1) {
+      return null;
+    }
     return { x: ((p.x + 1) * width) / 2, y: ((1 - p.y) * height) / 2 };
   };
   // Three rear box walls keep the grid legible as the camera rotates.
@@ -61,7 +73,9 @@ export function projectCoordinateGrid(host: any, width: number, height: number):
         b[other] = high[other];
         const p = project(a),
           q = project(b);
-        if (p && q) {result.lines.push({ x1: p.x, y1: p.y, x2: q.x, y2: q.y });}
+        if (p && q) {
+          result.lines.push({ x1: p.x, y1: p.y, x2: q.x, y2: q.y });
+        }
       }
     }
   }
@@ -71,8 +85,12 @@ export function projectCoordinateGrid(host: any, width: number, height: number):
       const point = [...back];
       point[axis] = tick;
       const p = project(point);
-      if (!p || p.x < 30 || p.x > width - 60 || p.y < 20 || p.y > height - 30) {continue;}
-      if (occupied.some(q => Math.abs(q.x - p.x) < 65 && Math.abs(q.y - p.y) < 20)) {continue;}
+      if (!p || p.x < 30 || p.x > width - 60 || p.y < 20 || p.y > height - 30) {
+        continue;
+      }
+      if (occupied.some(q => Math.abs(q.x - p.x) < 65 && Math.abs(q.y - p.y) < 20)) {
+        continue;
+      }
       occupied.push(p);
       result.labels.push({ ...p, text: `${'XYZ'[axis]} ${formatCoordinate(tick)}`, axis });
     }

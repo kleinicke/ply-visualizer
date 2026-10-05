@@ -1,3 +1,4 @@
+import type { FileEntryRegistry } from './state/fileEntries';
 /**
  * Applies a station-pipeline result to already-loaded X3A scans.
  *
@@ -48,8 +49,6 @@ export interface StationPipelineUpdate {
 
 export interface StationPipelineHost {
   spatialFiles: SpatialData[];
-  transformationMatrices: THREE.Matrix4[];
-  individualColorModes?: string[];
   onFileColorModeChange?(fileIndex: number, mode: string): void;
   updateFileList?(): void;
   /** X3A camera profiles, so panoramas follow the scans they were shot from. */
@@ -59,6 +58,7 @@ export interface StationPipelineHost {
   updateMatrixTextarea(fileIndex: number): void;
   requestRender(): void;
   updateFileStats?(): void;
+  fileEntries: FileEntryRegistry;
 }
 
 export interface StationPipelineOutcome {
@@ -88,11 +88,10 @@ function ensureRecoloredArray(data: SpatialData): Uint8Array {
 
 /** Switches a file to the recoloured mode if it is not already on it. */
 function selectRecoloredMode(host: StationPipelineHost, fileIndex: number): void {
-  if (host.individualColorModes?.[fileIndex] === RECOLORED_MODE) {
+  if (host.fileEntries.require(fileIndex).state.colorMode === RECOLORED_MODE) {
     return;
   }
   host.onFileColorModeChange?.(fileIndex, RECOLORED_MODE);
-  filesState.colorModes[fileIndex] = RECOLORED_MODE;
 }
 
 /** Pushes the recoloured buffer at the GPU when it is what is being drawn. */
@@ -261,7 +260,7 @@ export function beginStationRecolor(
       recolored.fill(255);
     }
     pendingRecolor.set(index, {
-      previousMode: host.individualColorModes?.[index] ?? 'original',
+      previousMode: host.fileEntries.require(index).state.colorMode ?? 'original',
       filled: false,
     });
     scanOrder.push({ index, name: String(data.metadata.embeddedScanName) });
@@ -309,7 +308,7 @@ function completeUntouchedScans(host: StationPipelineHost): { filled: number; re
       delete data.metadata.stationRecoloredColors;
     }
     host.onFileColorModeChange?.(fileIndex, pending.previousMode);
-    filesState.colorModes[fileIndex] = pending.previousMode;
+
     released++;
   }
   pendingRecolor.clear();
@@ -405,7 +404,9 @@ export function capturePlaces(
       continue;
     }
     const stem = String(metadata.embeddedScanName).replace(/\.x3r$/i, '');
-    const origin = new THREE.Vector3().setFromMatrixPosition(host.transformationMatrices[index]);
+    const origin = new THREE.Vector3().setFromMatrixPosition(
+      host.fileEntries.require(index).transform
+    );
     const existing = places.find(place => place.origin.distanceTo(origin) <= SAME_PLACE_METRES);
     const place =
       existing ??
@@ -424,7 +425,7 @@ export function capturePlaces(
 
 export interface CapturePlaceHost extends StationPipelineHost {
   setFileEntryVisibility(fileIndex: number, visible: boolean): void;
-  fileVisibility: boolean[];
+  fileEntries: FileEntryRegistry;
 }
 
 /** Shows or hides everything captured from one place, cameras included. */
@@ -564,7 +565,7 @@ export function applyLoadTimeColors(
       addStonexCameraVisualization(host as never, data);
     }
     host.onFileColorModeChange?.(fileIndex, 'original');
-    filesState.colorModes[fileIndex] = 'original';
+
     if (!chunked || update.final) {
       noteContainerScanLoaded(update.container, data.vertexCount);
     }

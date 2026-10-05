@@ -40,7 +40,7 @@ export async function agentExport(host: ControlHost, a: Record<string, any>) {
     const metadata = {
       ...(data.metadata?.depth ? { depth: data.metadata.depth } : {}),
       coordinates: 'object-local; apply local_to_world for the rendered pose',
-      local_to_world: host.transformationMatrices[host.spatialFiles.indexOf(data)].toArray(),
+      local_to_world: host.fileEntries.require(host.spatialFiles.indexOf(data)).transform.toArray(),
       source_origin: data.sourceOrigin ?? null,
       source_file: item.source.fileName,
       original_rows_available: !!data.sourcePointIndices?.length,

@@ -1,3 +1,4 @@
+import type { FileEntryRegistry } from './state/fileEntries';
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
 import type { ViewerRenderer } from './rendering/viewerRenderer';
@@ -11,7 +12,6 @@ export interface SceneBrightnessHost {
   useLinearColorSpace: boolean;
   spatialFiles: SpatialData[];
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
-  individualColorModes: string[];
   showStatus(message: string): void;
   requestRender(): void;
   updateGammaButtonState(): void;
@@ -23,6 +23,7 @@ export interface SceneBrightnessHost {
   shouldUseVertexColors(data: SpatialData, colorMode: string): boolean;
   setupPointSrgbDecode(material: THREE.PointsMaterial): void;
   pointColorsNeedSrgbDecode(data: SpatialData, colorMode: string): boolean;
+  fileEntries: FileEntryRegistry;
 }
 
 export function updateRendererColorSpace(host: SceneBrightnessHost): void {
@@ -101,7 +102,7 @@ export function rebuildAllColorAttributesForCurrentGammaSetting(host: SceneBrigh
         continue;
       }
       const geometry = (mesh as any).geometry;
-      const colorMode = host.individualColorModes[i] || 'assigned';
+      const colorMode = host.fileEntries.require(i).state.colorMode || 'assigned';
 
       host.applyColorModeToGeometry(spatialData, geometry, colorMode);
 

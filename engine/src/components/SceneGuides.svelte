@@ -5,7 +5,11 @@
   import { sceneGuidesState } from '../state/sceneGuides.svelte';
   import { filesState } from '../state/files.svelte';
   import { getPointCloudColorOptions } from '../colorOptions';
-  import { projectCoordinateGrid, registerSceneGuides, type GridProjection } from '../visualization/coordinateGrid';
+  import {
+    projectCoordinateGrid,
+    registerSceneGuides,
+    type GridProjection,
+  } from '../visualization/coordinateGrid';
 
   let { host }: { host: any } = $props();
   let grid = $state<GridProjection>({ lines: [], labels: [] });
@@ -25,18 +29,21 @@
   });
   const entries = $derived.by(() => {
     if (!sceneGuidesState.legend) return [];
-    filesState.renderTick;
-    filesState.renderModeTick;
+    filesState.entries;
+
     return host.spatialFiles.flatMap((data: any, index: number) => {
-      if (!data || filesState.visibility[index] === false) return [];
-      const mode = filesState.colorModes[index] ?? host.individualColorModes[index] ?? 'assigned';
+      if (!data || host.fileEntries.require(index).state.visible === false) return [];
+      const mode = host.fileEntries.require(index).state.colorMode;
       const flat = mode === 'assigned' || /^\d+$/.test(mode);
       const colorIndex = mode === 'assigned' ? index % host.fileColors.length : Number(mode);
       const color = flat ? host.fileColors[colorIndex] : null;
       const hex = color ? '#' + new Color(color[0], color[1], color[2]).getHexString() : null;
-      const label = hex ?? getPointCloudColorOptions(host, data, index).find(option => option.value === mode)?.label ?? mode;
-      return [{ name: data.fileName ?? `Object ${index + 1}`, label,
-        color: hex }];
+      const label =
+        getPointCloudColorOptions(host, data, index).find((option) => option.value === mode)
+          ?.label ??
+        hex ??
+        mode;
+      return [{ name: data.fileName ?? `Object ${index + 1}`, label, color: hex }];
     });
   });
 </script>
@@ -72,17 +79,89 @@
 {/if}
 
 <style>
-  .distance-warning { position: absolute; bottom: 42px; left: 16px; color: #ffbb44; background: #20252cee; padding: 6px 10px; font-size: 12px; }
-  .selection-summary { overflow-wrap: anywhere; }
-  .comparison-labels { position: absolute; inset: auto 0 12px; display: flex; pointer-events: none; color: white; text-shadow: 0 1px 3px black; }
-  .comparison-labels span { width: 50%; text-align: center; }
-  .coordinate-grid { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  line { stroke: #a8b5c5; stroke-opacity: 0.28; stroke-width: 1; }
-  text { font: 11px system-ui, sans-serif; paint-order: stroke; stroke: #20252c; stroke-width: 3px; stroke-linejoin: round; }
-  .scene-legend { position: absolute; left: 16px; top: 16px; max-width: min(260px, 40vw); max-height: 45%; overflow: auto; pointer-events: auto; background: var(--vscode-editor-background, #20252c); color: var(--vscode-foreground, #eee); border: 1px solid var(--vscode-panel-border, #555); border-radius: 6px; padding: 12px; font-size: 12px; box-shadow: 0 2px 8px #0003; }
-  .legend-entry { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
-  .legend-entry > div { min-width: 0; }
-  .swatch { width: 12px; height: 12px; flex-shrink: 0; border: 1px solid #888; border-radius: 3px; }
-  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  small { opacity: 0.75; }
+  .distance-warning {
+    position: absolute;
+    bottom: 42px;
+    left: 16px;
+    color: #ffbb44;
+    background: #20252cee;
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .selection-summary {
+    overflow-wrap: anywhere;
+  }
+  .comparison-labels {
+    position: absolute;
+    inset: auto 0 12px;
+    display: flex;
+    pointer-events: none;
+    color: white;
+    text-shadow: 0 1px 3px black;
+  }
+  .comparison-labels span {
+    width: 50%;
+    text-align: center;
+  }
+  .coordinate-grid {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  line {
+    stroke: #a8b5c5;
+    stroke-opacity: 0.28;
+    stroke-width: 1;
+  }
+  text {
+    font:
+      11px system-ui,
+      sans-serif;
+    paint-order: stroke;
+    stroke: #20252c;
+    stroke-width: 3px;
+    stroke-linejoin: round;
+  }
+  .scene-legend {
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    max-width: min(260px, 40vw);
+    max-height: 45%;
+    overflow: auto;
+    pointer-events: auto;
+    background: var(--vscode-editor-background, #20252c);
+    color: var(--vscode-foreground, #eee);
+    border: 1px solid var(--vscode-panel-border, #555);
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 12px;
+    box-shadow: 0 2px 8px #0003;
+  }
+  .legend-entry {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 10px;
+  }
+  .legend-entry > div {
+    min-width: 0;
+  }
+  .swatch {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    border: 1px solid #888;
+    border-radius: 3px;
+  }
+  .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  small {
+    opacity: 0.75;
+  }
 </style>

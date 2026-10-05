@@ -45,15 +45,6 @@ export interface BrowserFileDragDropHost {
   vscode: { postMessage(message: any): void };
   spatialFiles: SpatialData[];
   filmManager: FilmManager | null;
-  fileDepthData: Map<
-    number,
-    {
-      originalData: ArrayBuffer;
-      fileName: string;
-      cameraParams: CameraParams;
-      depthDimensions: { width: number; height: number };
-    }
-  >;
   showImmediateLoading(message: any): void;
   showError(message: string): void;
   removeFileByIndex(fileIndex: number): void;
@@ -578,7 +569,7 @@ export async function handleBrowserFiles(
     const spatialDataArray: SpatialData[] = [];
     // Remember starting index to map newly added files
     const baseIndexStart = host.spatialFiles.length;
-    // Track depth metadata to populate fileDepthData after display
+    // Retain source metadata on each decoded depth file after display
     const depthMetaRecords: Array<{
       localIndex: number;
       fileName: string;
@@ -742,7 +733,7 @@ export async function handleBrowserFiles(
     if (spatialDataArray.length > 0) {
       await host.displayFiles(spatialDataArray);
 
-      // Populate fileDepthData for newly added depth-derived files.
+      // Attach the source to each newly added depth-derived file.
       // The key is the index addNewFiles() actually assigned, read back off the
       // object - never `baseIndexStart + localIndex`. That sum was computed
       // before the camera-parameter prompt, and anything loaded while the
@@ -752,12 +743,12 @@ export async function handleBrowserFiles(
       for (const rec of depthMetaRecords) {
         const fileIndex =
           spatialDataArray[rec.localIndex]?.fileIndex ?? baseIndexStart + rec.localIndex;
-        host.fileDepthData.set(fileIndex, {
+        host.spatialFiles[fileIndex].depthSource = {
           originalData: rec.buffer,
           fileName: rec.fileName,
           cameraParams: rec.params,
           depthDimensions: rec.dims || { width: 0, height: 0 },
-        });
+        };
         if (rec.dims) {
           // Ensure cx/cy fields are populated correctly in UI
           host.updatePrinciplePointFields(fileIndex, rec.dims);

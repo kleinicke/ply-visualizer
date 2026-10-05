@@ -61,7 +61,7 @@ test.describe('Recolored colour mode', () => {
     const state = await page.evaluate(() => {
       const data = (window as any).visualizer.spatialFiles[0];
       return {
-        mode: (window as any).visualizer.individualColorModes[0],
+        mode: (window as any).visualizer.fileEntries.require(0).state.colorMode,
         original: Array.from(data.colorsArray.slice(0, 6)) as number[],
         recolored: Array.from(
           (data.metadata.stationRecoloredColors as Uint8Array).slice(0, 6)
@@ -173,7 +173,7 @@ test.describe('Recolored colour mode', () => {
 
       return {
         whiteAfterStart,
-        modes: [0, 1].map(index => visualizer.individualColorModes[index]),
+        modes: [0, 1].map(index => visualizer.fileEntries.require(index).state.colorMode),
         afterFirstScan: [0, 1].map(index =>
           Array.from(
             (visualizer.spatialFiles[index].metadata.stationRecoloredColors as Uint8Array).slice(
@@ -247,11 +247,11 @@ test.describe('Recolored colour mode', () => {
         containerFileName: 'Site.x3a',
         embeddedScanName: 'Site_0001.x3r',
       };
-      visualizer.individualColorModes[0] = 'original';
+      visualizer.fileEntries.require(0).state.colorMode = 'original';
       visualizer.updateFileList();
 
       feature.beginStationRecolor(visualizer, 'Site.x3a');
-      const duringRun = visualizer.individualColorModes[0];
+      const duringRun = visualizer.fileEntries.require(0).state.colorMode;
 
       // The run ends carrying transforms but no colour for this scan.
       feature.handleStationPipelineResult(visualizer, {
@@ -261,7 +261,7 @@ test.describe('Recolored colour mode', () => {
 
       return {
         duringRun,
-        afterRun: visualizer.individualColorModes[0],
+        afterRun: visualizer.fileEntries.require(0).state.colorMode,
         recolored: Array.from(
           (data.metadata.stationRecoloredColors as Uint8Array).slice(0, 3)
         ) as number[],

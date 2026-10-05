@@ -132,7 +132,7 @@ test.describe('Global align menu', () => {
     // Move cloud 1 away so a successful run has something to undo.
     await page.evaluate(() => {
       const visualizer = (window as any).visualizer;
-      const matrix = visualizer.transformationMatrices[1].clone();
+      const matrix = visualizer.fileEntries.require(1).transform.clone();
       matrix.elements[12] = 3;
       visualizer.setTransformationMatrix(1, matrix);
     });
@@ -170,7 +170,7 @@ test.describe('Global align menu', () => {
     expect(clipped.overflowing).toBe(false);
     expect(clipped.text.length).toBeGreaterThan(0);
     const anchorMoved = await page.evaluate(() => {
-      const elements = (window as any).visualizer.transformationMatrices[0].elements;
+      const elements = (window as any).visualizer.fileEntries.require(0).transform.elements;
       return elements.some((value: number, index: number) => {
         const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
         return Math.abs(value - identity[index]) > 1e-6;

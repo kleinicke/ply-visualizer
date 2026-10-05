@@ -158,7 +158,8 @@ test.describe('Align all to one cloud', () => {
 
     const matrices = await page.evaluate(
       () =>
-        (window as any).visualizer.transformationMatrices
+        (window as any).visualizer.fileEntries.all
+          .map(entry => entry.transform)
           .slice(0, 3)
           .map((m: any) => m.elements.slice()) as number[][]
     );
@@ -174,7 +175,8 @@ test.describe('Align all to one cloud', () => {
     await expect(page.locator('.global-align-results li')).toHaveCount(0);
     const reverted = await page.evaluate(
       () =>
-        (window as any).visualizer.transformationMatrices
+        (window as any).visualizer.fileEntries.all
+          .map(entry => entry.transform)
           .slice(0, 3)
           .map((m: any) => m.elements.slice()) as number[][]
     );
@@ -209,7 +211,8 @@ test.describe('Align all to one cloud', () => {
 
     const matrices = await page.evaluate(
       () =>
-        (window as any).visualizer.transformationMatrices
+        (window as any).visualizer.fileEntries.all
+          .map(entry => entry.transform)
           .slice(0, 3)
           .map((m: any) => m.elements.slice()) as number[][]
     );
@@ -225,7 +228,8 @@ test.describe('Align all to one cloud', () => {
     await page.locator('.global-align-undo').click();
     const reverted = await page.evaluate(
       () =>
-        (window as any).visualizer.transformationMatrices
+        (window as any).visualizer.fileEntries.all
+          .map(entry => entry.transform)
           .slice(0, 3)
           .map((m: any) => m.elements.slice()) as number[][]
     );
@@ -262,7 +266,8 @@ test.describe('Align all to one cloud', () => {
 
     const matrices = await page.evaluate(
       () =>
-        (window as any).visualizer.transformationMatrices
+        (window as any).visualizer.fileEntries.all
+          .map(entry => entry.transform)
           .slice(0, 2)
           .map((m: any) => m.elements.slice()) as number[][]
     );

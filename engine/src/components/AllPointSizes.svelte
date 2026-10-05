@@ -17,13 +17,14 @@
    * flatten sizes the user had deliberately set.
    */
   const sizes = $derived(
-    (filesState.renderTick,
-    filesState.renderModeTick,
-    (host.spatialFiles ?? []).map((_: unknown, index: number) => filesState.pointSizes[index] ?? 0))
+    (filesState.entries,
+    (host.spatialFiles ?? []).map(
+      (_: unknown, index: number) => host.fileEntries.require(index).state.pointSize ?? 0,
+    )),
   );
   const cloudCount = $derived(sizes.length);
   const inSync = $derived(
-    cloudCount > 0 && sizes.every((size: number) => Math.abs(size - sizes[0]) < 1e-9)
+    cloudCount > 0 && sizes.every((size: number) => Math.abs(size - sizes[0]) < 1e-9),
   );
 
   // Dimmed means one thing only: the clouds are not all on the same size, so
@@ -42,10 +43,9 @@
         continue;
       }
       host.updatePointSize(index, size);
-      filesState.pointSizes[index] = size;
     }
     // The per-file rows read their slider positions from this tick.
-    filesState.renderModeTick++;
+
     host.requestRender();
   }
 

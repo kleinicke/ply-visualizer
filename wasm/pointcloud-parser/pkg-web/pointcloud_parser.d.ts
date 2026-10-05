@@ -507,6 +507,8 @@ export function parse_ply_at(ptr: number, len: number): PlyResult;
  */
 export function parse_pts(data: Uint8Array): PointCloudResult;
 
+export function parse_text_table(data: Uint8Array, options: string): PointCloudResult;
+
 /**
  * Parse XYZ / XYZN / XYZRGB. For plain "xyz" the layout is auto-detected from
  * the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
@@ -637,6 +639,7 @@ export interface InitOutput {
     readonly parse_ply: (a: number, b: number) => [number, number, number];
     readonly parse_ply_at: (a: number, b: number) => [number, number, number];
     readonly parse_pts: (a: number, b: number) => number;
+    readonly parse_text_table: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly parse_xyz: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly plyresult_bbox: (a: number) => [number, number];
     readonly plyresult_face_count: (a: number) => number;

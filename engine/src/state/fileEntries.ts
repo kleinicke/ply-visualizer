@@ -1,35 +1,63 @@
-/**
- * Stable identity and ordering for everything the file list shows.
- *
- * The panel addresses entries by a single "unified index" that spans three
- * collections in display order: `spatialFiles`, then `poseGroups`, then
- * `cameraGroups`. That index used to be recomputed at every call site as
- * `spatialFiles.length + poseGroups.length + cameraIndex`, which made an
- * existing entry's address depend on what was loaded *after* it: adding a point
- * cloud once a camera profile was on screen shifted every camera up one slot
- * while their per-entry state (visibility, scale, colour mode, transform)
- * stayed put, so the state silently attached to the wrong row.
- *
- * This registry owns the ordering instead. An entry's `id` is assigned once and
- * never reused, callers ask for indices rather than deriving them, and
- * insertion happens at the end of the entry's own kind block instead of the end
- * of the array.
- *
- * `parentId` is unused by the current loaders but is the reason the registry
- * exists in this shape: container formats that publish a cloud *and* their own
- * cameras (X3A and E57 today, COLMAP reconstructions later) need to say which
- * entries belong to which, rather than encoding it in a scene-graph name
- * prefix the way visualization/cameraFrames.ts has to.
- */
+import { Matrix4, type LineSegments, type Points, type Group, type Object3D } from 'three';
+import type { MtlData } from '../parsers/mtlParser';
 
 export type FileEntryKind = 'spatial' | 'pose' | 'camera';
 
-export interface FileEntry {
-  /** Assigned once, never reused, stable across insertions and removals. */
-  readonly id: number;
-  readonly kind: FileEntryKind;
-  /** Entry that produced this one, for container formats; null at top level. */
-  parentId: number | null;
+export interface EntryPresentation {
+  visible: boolean;
+  pointSize: number;
+  colorMode: string;
+  collapsed: boolean;
+  liveDepth: boolean;
+  depthPanelOpen: boolean;
+  solidVisible: boolean;
+  wireframeVisible: boolean;
+  pointsVisible: boolean;
+  normalsVisible: boolean;
+  splatModeActive: boolean;
+}
+
+export function defaultEntryPresentation(): EntryPresentation {
+  return {
+    visible: true,
+    pointSize: 1,
+    colorMode: 'assigned',
+    collapsed: false,
+    liveDepth: false,
+    depthPanelOpen: false,
+    solidVisible: false,
+    wireframeVisible: false,
+    pointsVisible: true,
+    normalsVisible: false,
+    splatModeActive: false,
+  };
+}
+
+/** GPU resources stay outside Svelte's deep reactive state. */
+export class FileEntry {
+  readonly resources = {
+    normals: null as LineSegments | null,
+    vertexPoints: null as Points | null,
+    materialGroup: null as Group | null,
+    materialMeshes: null as Object3D[] | null,
+    materialColor: null as number | null,
+    materialName: null as string | null,
+    materialData: null as MtlData | null,
+  };
+  readonly transform = new Matrix4();
+  readonly depthUpdate = {
+    version: 0,
+    inFlight: false,
+    queued: false,
+    timer: undefined as number | undefined,
+  };
+
+  constructor(
+    readonly id: number,
+    readonly kind: FileEntryKind,
+    public parentId: number | null,
+    readonly state: EntryPresentation
+  ) {}
 }
 
 /**
@@ -41,6 +69,29 @@ const KIND_ORDER: readonly FileEntryKind[] = ['spatial', 'pose', 'camera'];
 export class FileEntryRegistry {
   private entries: FileEntry[] = [];
   private nextId = 1;
+
+  constructor(
+    private readonly presentation: () => EntryPresentation = defaultEntryPresentation,
+    private readonly changed: (entries: readonly FileEntry[]) => void = () => {}
+  ) {}
+
+  get all(): readonly FileEntry[] {
+    return this.entries;
+  }
+
+  require(index: number): FileEntry {
+    const entry = this.entries[index];
+    if (!entry) {throw new RangeError(`No file entry at index ${index}`);}
+    return entry;
+  }
+
+  get(id: number): FileEntry | undefined {
+    return this.entries.find(entry => entry.id === id);
+  }
+
+  private publish(): void {
+    this.changed([...this.entries]);
+  }
 
   /** Number of entries across every kind; the file list's row count. */
   get length(): number {
@@ -68,9 +119,10 @@ export class FileEntryRegistry {
 
   /** Appends to the end of `kind`'s block and reports where it landed. */
   add(kind: FileEntryKind, parentId: number | null = null): { entry: FileEntry; index: number } {
-    const entry: FileEntry = { id: this.nextId++, kind, parentId };
+    const entry = new FileEntry(this.nextId++, kind, parentId, this.presentation());
     const index = this.startOf(kind) + this.countOf(kind);
     this.entries.splice(index, 0, entry);
+    this.publish();
     return { entry, index };
   }
 
@@ -90,7 +142,7 @@ export class FileEntryRegistry {
     }
     const doomed = new Set<number>([this.entries[index].id]);
     // Repeat to a fixed point so grandchildren go too, whatever the order.
-    for (let changed = true; changed; ) {
+    for (let changed = true; changed;) {
       changed = false;
       for (const entry of this.entries) {
         if (entry.parentId !== null && doomed.has(entry.parentId) && !doomed.has(entry.id)) {
@@ -103,10 +155,14 @@ export class FileEntryRegistry {
     const removed: { entry: FileEntry; index: number }[] = [];
     for (let i = this.entries.length - 1; i >= 0; i--) {
       if (doomed.has(this.entries[i].id)) {
-        removed.push({ entry: this.entries[i], index: i });
+        const entry = this.entries[i];
+        entry.depthUpdate.version++;
+        if (entry.depthUpdate.timer !== undefined) {clearTimeout(entry.depthUpdate.timer);}
+        removed.push({ entry, index: i });
         this.entries.splice(i, 1);
       }
     }
+    this.publish();
     return removed;
   }
 
@@ -148,6 +204,11 @@ export class FileEntryRegistry {
   }
 
   clear(): void {
+    for (const entry of this.entries) {
+      entry.depthUpdate.version++;
+      clearTimeout(entry.depthUpdate.timer);
+    }
     this.entries = [];
+    this.publish();
   }
 }

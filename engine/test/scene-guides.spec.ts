@@ -68,13 +68,14 @@ test('grid respects object transforms and hides with the last object', () => {
   const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 1000);
   camera.position.set(8, 6, 10);
   camera.lookAt(0, 0, 0);
-  const host = { meshes: [mesh], fileVisibility: [true], camera };
+  const entry = { state: { visible: true } };
+  const host = { meshes: [mesh], fileEntries: { require: () => entry }, camera };
   const original = projectCoordinateGrid(host, 800, 800);
   expect(original.lines.length).toBeGreaterThan(0);
   mesh.position.set(2, 0, 0);
   const moved = projectCoordinateGrid(host, 800, 800);
   expect(moved.lines).not.toEqual(original.lines);
-  host.fileVisibility[0] = false;
+  host.fileEntries.require(0).state.visible = false;
   expect(projectCoordinateGrid(host, 800, 800)).toEqual({ lines: [], labels: [] });
   mesh.geometry.dispose();
   mesh.material.dispose();

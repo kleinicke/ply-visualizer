@@ -5,12 +5,11 @@
     normalizeToOfferedCameraModel,
   } from '../depth/cameraModels';
   import type { CameraModel } from '../depth/types';
-  import { depthSettingsState } from '../state/depthSettings.svelte';
   import CalibrationSection from './CalibrationSection.svelte';
 
   let { host, fileIndex, data }: { host: any; fileIndex: number; data: any } = $props();
 
-  const open = $derived(depthSettingsState.openPanelIndices.includes(fileIndex));
+  const open = $derived(host.fileEntries.require(fileIndex).state.depthPanelOpen);
   let principalPointOpen = $state(false);
   let distortionOpen = $state(false);
   let disparityOffsetOpen = $state(false);
@@ -27,7 +26,7 @@
   // it does not carry renders it blank — which is what "it starts up with an
   // empty camera model" was.
   let cameraModel = $state(
-    normalizeToOfferedCameraModel(host.getDepthSetting(data, 'camera') as CameraModel).model
+    normalizeToOfferedCameraModel(host.getDepthSetting(data, 'camera') as CameraModel).model,
   );
   // svelte-ignore state_referenced_locally
   let depthType = $state(host.getDepthSetting(data, 'depth'));
@@ -37,7 +36,9 @@
   const isFisheyeOpencv = $derived(cameraModel === 'fisheye-opencv');
   const isKb3 = $derived(cameraModel === 'fisheye-kb3');
   const isFisheye624 = $derived(cameraModel === 'fisheye624');
-  const showDistortionGroup = $derived(isPinholeOpencv || isFisheyeOpencv || isKb3 || isFisheye624);
+  const showDistortionGroup = $derived(
+    isPinholeOpencv || isFisheyeOpencv || isKb3 || isFisheye624,
+  );
   const coefficientLayout = $derived(
     isPinholeOpencv
       ? 'k1,k2,p1,p2,k3,k4,k5,k6,s1,s2,s3,s4,tauX,tauY'
@@ -45,7 +46,7 @@
         ? 'k0,k1,k2,k3,k4,k5,p0,p1,s0,s1,s2,s3'
         : isKb3
           ? 'k0,k1,k2,k3'
-          : 'k1,k2,k3,k4'
+          : 'k1,k2,k3,k4',
   );
   // OpenCV's fisheye k1..k4 and Kannala-Brandt's k0..k3 are the same four
   // numbers in the same four positions — only the counting differs — so a
@@ -55,17 +56,22 @@
       ? 'OpenCV fisheye k1..k4 and Kannala-Brandt k0..k3 are these first four; leave the rest at 0.'
       : isPinholeOpencv
         ? 'All zero is an ideal pinhole. OpenCV calibrations paste in directly.'
-        : ''
+        : '',
   );
-  const coefficientDefaults = $derived(coefficientLayout.split(',').map(() => '0').join(','));
+  const coefficientDefaults = $derived(
+    coefficientLayout
+      .split(',')
+      .map(() => '0')
+      .join(','),
+  );
   // One box per family of terms — all the radial k's together, the tangential
   // p's together — rather than one ordered run to count positions in. Missing
   // values are zero, so a calibration giving two radial terms is two numbers.
   const coefficientGroups = $derived(
-    CAMERA_MODEL_COEFFICIENT_GROUPS[cameraModel as CameraModel] ?? []
+    CAMERA_MODEL_COEFFICIENT_GROUPS[cameraModel as CameraModel] ?? [],
   );
 
-  const liveUpdateEnabled = $derived(depthSettingsState.liveUpdateFileIndices.includes(fileIndex));
+  const liveUpdateEnabled = $derived(host.fileEntries.require(fileIndex).state.liveDepth);
 
   // Live update is how the panel is meant to be used - change a number, see the
   // cloud move - so it starts on. `defaultedLiveUpdate` makes that a one-time
@@ -75,20 +81,14 @@
   $effect(() => {
     if (!defaultedLiveUpdate) {
       defaultedLiveUpdate = true;
-      if (!depthSettingsState.liveUpdateFileIndices.includes(fileIndex)) {
+      if (!host.fileEntries.require(fileIndex).state.liveDepth) {
         host.setLiveDepthUpdateEnabled(fileIndex, true);
       }
     }
   });
 
   function toggle() {
-    const indices = depthSettingsState.openPanelIndices;
-    const at = indices.indexOf(fileIndex);
-    if (at === -1) {
-      indices.push(fileIndex);
-    } else {
-      indices.splice(at, 1);
-    }
+    host.fileEntries.require(fileIndex).state.depthPanelOpen = !open;
   }
 
   function blurOnWheel(e: WheelEvent) {

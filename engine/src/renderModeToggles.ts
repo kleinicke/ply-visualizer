@@ -1,3 +1,4 @@
+import type { FileEntryRegistry } from './state/fileEntries';
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
 
@@ -7,17 +8,8 @@ import { SpatialData } from './interfaces';
  */
 export interface RenderModeHost {
   spatialFiles: SpatialData[];
-  solidVisible: boolean[];
-  wireframeVisible: boolean[];
-  pointsVisible: boolean[];
-  normalsVisible: boolean[];
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments | null)[];
-  multiMaterialGroups: (THREE.Group | null)[];
-  materialMeshes: (THREE.Object3D[] | null)[];
-  vertexPointsObjects: (THREE.Points | null)[];
-  normalsVisualizers: (THREE.LineSegments | null)[];
-  fileVisibility: boolean[];
-  pointSizes: number[];
+
   allowTransparency: boolean;
   scene: THREE.Scene;
   /** Present on the full visualizer host; drives the per-file splat mode. */
@@ -39,6 +31,7 @@ export interface RenderModeHost {
     data: SpatialData,
     mesh: THREE.Object3D
   ): THREE.LineSegments | null;
+  fileEntries: FileEntryRegistry;
 }
 
 export function toggleUniversalRenderMode(
@@ -70,7 +63,7 @@ export function toggleUniversalRenderMode(
         // Gaussian files use Points/Splats as an exclusive mode selector.
         // File visibility is controlled by the checkbox, so selecting the
         // already-active Points mode must not hide the file.
-        host.pointsVisible[fileIndex] = true;
+        host.fileEntries.require(fileIndex).state.pointsVisible = true;
         if (host.splatMode.isActive(fileIndex)) {
           host.splatMode.disable(fileIndex);
         } else {
@@ -103,19 +96,15 @@ export function toggleSolidRendering(host: RenderModeHost, fileIndex: number): v
   }
 
   // Ensure array is properly sized with default values
-  while (host.solidVisible.length <= fileIndex) {
-    const data = host.spatialFiles[host.solidVisible.length];
-    const defaultValue = data && data.faceCount > 0; // Default true for meshes, false for point clouds
-    host.solidVisible.push(defaultValue);
-  }
 
   // Native model materials switch representation; they do not render a
   // separate wire overlay. Keep their two buttons an exclusive selector.
   if (host.spatialFiles[fileIndex].sceneModel) {
-    host.solidVisible[fileIndex] = true;
-    host.wireframeVisible[fileIndex] = false;
+    host.fileEntries.require(fileIndex).state.solidVisible = true;
+    host.fileEntries.require(fileIndex).state.wireframeVisible = false;
   } else {
-    host.solidVisible[fileIndex] = !host.solidVisible[fileIndex];
+    host.fileEntries.require(fileIndex).state.solidVisible =
+      !host.fileEntries.require(fileIndex).state.solidVisible;
   }
 
   updateMeshVisibilityAndMaterial(host, fileIndex);
@@ -128,15 +117,13 @@ export function toggleWireframeRendering(host: RenderModeHost, fileIndex: number
   }
 
   // Ensure array is properly sized with default values
-  while (host.wireframeVisible.length <= fileIndex) {
-    host.wireframeVisible.push(false); // Wireframe always defaults to false
-  }
 
   if (host.spatialFiles[fileIndex].sceneModel) {
-    host.wireframeVisible[fileIndex] = true;
-    host.solidVisible[fileIndex] = false;
+    host.fileEntries.require(fileIndex).state.wireframeVisible = true;
+    host.fileEntries.require(fileIndex).state.solidVisible = false;
   } else {
-    host.wireframeVisible[fileIndex] = !host.wireframeVisible[fileIndex];
+    host.fileEntries.require(fileIndex).state.wireframeVisible =
+      !host.fileEntries.require(fileIndex).state.wireframeVisible;
   }
 
   updateMeshVisibilityAndMaterial(host, fileIndex);
@@ -149,14 +136,10 @@ export function togglePointsRendering(host: RenderModeHost, fileIndex: number): 
   }
 
   // Ensure array is properly sized with default values
-  while (host.pointsVisible.length <= fileIndex) {
-    const data = host.spatialFiles[host.pointsVisible.length];
-    const defaultValue = !data || data.faceCount === 0; // Default true for point clouds, false for meshes
-    host.pointsVisible.push(defaultValue);
-  }
 
   // Toggle points visibility state
-  host.pointsVisible[fileIndex] = !host.pointsVisible[fileIndex];
+  host.fileEntries.require(fileIndex).state.pointsVisible =
+    !host.fileEntries.require(fileIndex).state.pointsVisible;
 
   updateMeshVisibilityAndMaterial(host, fileIndex);
   host.requestRender();
@@ -166,8 +149,9 @@ export function updateMeshVisibilityAndMaterial(host: RenderModeHost, fileIndex:
   const model = host.spatialFiles[fileIndex]?.sceneModel;
   if (model) {
     const visible =
-      (host.fileVisibility[fileIndex] ?? true) &&
-      ((host.solidVisible[fileIndex] ?? true) || host.wireframeVisible[fileIndex]);
+      (host.fileEntries.require(fileIndex).state.visible ?? true) &&
+      ((host.fileEntries.require(fileIndex).state.solidVisible ?? true) ||
+        host.fileEntries.require(fileIndex).state.wireframeVisible);
     const modelMesh = host.meshes[fileIndex];
     if (modelMesh) {
       modelMesh.visible = !!visible;
@@ -178,7 +162,7 @@ export function updateMeshVisibilityAndMaterial(host: RenderModeHost, fileIndex:
           ? object.material
           : [object.material]) {
           if ('wireframe' in material) {
-            material.wireframe = !!host.wireframeVisible[fileIndex];
+            material.wireframe = !!host.fileEntries.require(fileIndex).state.wireframeVisible;
           }
         }
       }
@@ -187,7 +171,7 @@ export function updateMeshVisibilityAndMaterial(host: RenderModeHost, fileIndex:
   }
 
   const mesh = host.meshes[fileIndex];
-  const multiMaterialGroup = host.multiMaterialGroups[fileIndex];
+  const multiMaterialGroup = host.fileEntries.require(fileIndex).resources.materialGroup;
 
   // Handle either regular mesh or multi-material OBJ group
   const target = multiMaterialGroup || mesh;
@@ -196,10 +180,10 @@ export function updateMeshVisibilityAndMaterial(host: RenderModeHost, fileIndex:
     return;
   }
 
-  const solidVisible = host.solidVisible[fileIndex] ?? true;
-  const wireframeVisible = host.wireframeVisible[fileIndex] ?? false;
-  const pointsVisible = host.pointsVisible[fileIndex] ?? true;
-  const fileVisible = host.fileVisibility[fileIndex] ?? true;
+  const solidVisible = host.fileEntries.require(fileIndex).state.solidVisible ?? true;
+  const wireframeVisible = host.fileEntries.require(fileIndex).state.wireframeVisible ?? false;
+  const pointsVisible = host.fileEntries.require(fileIndex).state.pointsVisible ?? true;
+  const fileVisible = host.fileEntries.require(fileIndex).state.visible ?? true;
 
   // Set visibility for the target (mesh or multi-material group)
   if (mesh && mesh.type === 'Points') {
@@ -239,7 +223,7 @@ export function updateMeshVisibilityAndMaterial(host: RenderModeHost, fileIndex:
   // Update materials for wireframe mode
   if (multiMaterialGroup) {
     // Handle multi-material OBJ groups
-    const subMeshes = host.materialMeshes[fileIndex];
+    const subMeshes = host.fileEntries.require(fileIndex).resources.materialMeshes;
     if (subMeshes) {
       subMeshes.forEach(subMesh => {
         if (subMesh instanceof THREE.Mesh && subMesh.material) {
@@ -294,13 +278,13 @@ export function updateVertexPointsVisualization(
   } // Skip if it's already a point cloud
 
   const shouldShowVertexPoints = pointsVisible && fileVisible;
-  let vertexPointsObject = host.vertexPointsObjects[fileIndex];
+  let vertexPointsObject = host.fileEntries.require(fileIndex).resources.vertexPoints;
 
   if (shouldShowVertexPoints && !vertexPointsObject) {
     // Create vertex points object
     vertexPointsObject = createVertexPointsFromMesh(host, mesh, fileIndex);
     if (vertexPointsObject) {
-      host.vertexPointsObjects[fileIndex] = vertexPointsObject;
+      host.fileEntries.require(fileIndex).resources.vertexPoints = vertexPointsObject;
       host.scene.add(vertexPointsObject);
     }
   }
@@ -309,7 +293,7 @@ export function updateVertexPointsVisualization(
     vertexPointsObject.visible = shouldShowVertexPoints;
     // Update point size from slider
     if (vertexPointsObject.material instanceof THREE.PointsMaterial) {
-      vertexPointsObject.material.size = host.pointSizes[fileIndex] || 1.0;
+      vertexPointsObject.material.size = host.fileEntries.require(fileIndex).state.pointSize || 1.0;
     }
   }
 }
@@ -347,7 +331,7 @@ export function createVertexPointsFromMesh(
   }
 
   // Create point material with current point size
-  const currentPointSize = host.pointSizes[fileIndex] || 1.0;
+  const currentPointSize = host.fileEntries.require(fileIndex).state.pointSize || 1.0;
   const pointsMaterial = new THREE.PointsMaterial({
     size: currentPointSize,
     vertexColors: geometry.attributes.color ? true : false,
@@ -373,8 +357,8 @@ export function updateMultiMaterialPointsVisualization(
   pointsVisible: boolean,
   fileVisible: boolean
 ): void {
-  const multiMaterialGroup = host.multiMaterialGroups[fileIndex];
-  const subMeshes = host.materialMeshes[fileIndex];
+  const multiMaterialGroup = host.fileEntries.require(fileIndex).resources.materialGroup;
+  const subMeshes = host.fileEntries.require(fileIndex).resources.materialMeshes;
 
   if (!multiMaterialGroup || !subMeshes) {
     return;
@@ -396,21 +380,19 @@ export function toggleNormalsRendering(host: RenderModeHost, fileIndex: number):
   }
 
   // Ensure array is properly sized with default values
-  while (host.normalsVisible.length <= fileIndex) {
-    host.normalsVisible.push(false); // Normals always default to false
-  }
 
   // Toggle normals visibility state
-  host.normalsVisible[fileIndex] = !host.normalsVisible[fileIndex];
+  host.fileEntries.require(fileIndex).state.normalsVisible =
+    !host.fileEntries.require(fileIndex).state.normalsVisible;
 
   // Check if we have a normals visualizer, if not try to create one
-  let normalsVisualizer = host.normalsVisualizers[fileIndex];
+  let normalsVisualizer = host.fileEntries.require(fileIndex).resources.normals;
 
   console.log(
-    `Normals toggle for file ${fileIndex}: visible=${host.normalsVisible[fileIndex]}, existing visualizer=${!!normalsVisualizer}`
+    `Normals toggle for file ${fileIndex}: visible=${host.fileEntries.require(fileIndex).state.normalsVisible}, existing visualizer=${!!normalsVisualizer}`
   );
 
-  if (!normalsVisualizer && host.normalsVisible[fileIndex]) {
+  if (!normalsVisualizer && host.fileEntries.require(fileIndex).state.normalsVisible) {
     // Try to create normals visualizer
     const spatialData = host.spatialFiles[fileIndex];
     const mesh = host.meshes[fileIndex];
@@ -450,7 +432,7 @@ export function toggleNormalsRendering(host: RenderModeHost, fileIndex: number):
 
       if (normalsVisualizer) {
         console.log(`✅ Created normals visualizer for file ${fileIndex}`);
-        host.normalsVisualizers[fileIndex] = normalsVisualizer;
+        host.fileEntries.require(fileIndex).resources.normals = normalsVisualizer;
         host.scene.add(normalsVisualizer);
       } else {
         console.log(`❌ Failed to create normals visualizer for file ${fileIndex}`);
@@ -460,9 +442,10 @@ export function toggleNormalsRendering(host: RenderModeHost, fileIndex: number):
 
   if (normalsVisualizer) {
     const shouldBeVisible =
-      host.normalsVisible[fileIndex] && (host.fileVisibility[fileIndex] ?? true);
+      host.fileEntries.require(fileIndex).state.normalsVisible &&
+      (host.fileEntries.require(fileIndex).state.visible ?? true);
     console.log(
-      `Setting normals visualizer visibility: ${shouldBeVisible} (normals=${host.normalsVisible[fileIndex]}, file=${host.fileVisibility[fileIndex] ?? true})`
+      `Setting normals visualizer visibility: ${shouldBeVisible} (normals=${host.fileEntries.require(fileIndex).state.normalsVisible}, file=${host.fileEntries.require(fileIndex).state.visible ?? true})`
     );
 
     // Debug the normals visualizer
@@ -495,18 +478,18 @@ export function updateUniversalRenderButtonStates(host: RenderModeHost): void {
     switch (mode) {
       case 'solid':
       case 'mesh':
-        isActive = host.solidVisible[fileIndex] ?? true;
+        isActive = host.fileEntries.require(fileIndex).state.solidVisible ?? true;
         break;
       case 'wireframe':
-        isActive = host.wireframeVisible[fileIndex] ?? false;
+        isActive = host.fileEntries.require(fileIndex).state.wireframeVisible ?? false;
         break;
       case 'points':
         isActive = host.splatMode?.canEnable(host.spatialFiles[fileIndex])
           ? !host.splatMode.isActive(fileIndex)
-          : (host.pointsVisible[fileIndex] ?? true);
+          : (host.fileEntries.require(fileIndex).state.pointsVisible ?? true);
         break;
       case 'normals':
-        isActive = host.normalsVisible[fileIndex] ?? false;
+        isActive = host.fileEntries.require(fileIndex).state.normalsVisible ?? false;
         break;
       case 'splat':
         isActive = !!host.splatMode?.isActive(fileIndex);

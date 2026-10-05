@@ -40,6 +40,9 @@ export interface FormatDefinition {
   /** Lowercase extensions, without the dot. */
   readonly extensions: readonly string[];
   readonly category: FileCategory;
+  /** Raw bytes are decoded in the viewer (including interactive layout selection). */
+  readonly decodeInViewer?: boolean;
+  readonly requiresImportOptions?: boolean;
   /**
    * Content sniffing that can move a file to a different category than its
    * extension implies. NPY is the only user: it holds either a depth image or

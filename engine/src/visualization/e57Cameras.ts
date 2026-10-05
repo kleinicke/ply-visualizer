@@ -27,10 +27,6 @@ interface E57CameraHost {
   cameraNames: string[];
   cameraShowLabels: boolean[];
   cameraShowCoords: boolean[];
-  fileVisibility: boolean[];
-  pointSizes: number[];
-  individualColorModes: string[];
-  transformationMatrices: THREE.Matrix4[];
   meshes: THREE.Object3D[];
   applyColorModeToGeometry(
     data: SpatialData,
@@ -509,8 +505,8 @@ async function colorPointCloudFromImages(
   data.hasColors = true;
   data.metadata = { ...data.metadata, e57PhotographicallyColoredPoints: coloredCount };
   const fileIndex = data.fileIndex!;
-  host.individualColorModes[fileIndex] = 'original';
-  filesState.colorModes[fileIndex] = 'original';
+  host.fileEntries.require(fileIndex).state.colorMode = 'original';
+
   const points = host.meshes[fileIndex] as THREE.Points | undefined;
   if (points?.geometry) {
     host.applyColorModeToGeometry(data, points.geometry, 'original');
@@ -520,7 +516,7 @@ async function colorPointCloudFromImages(
   }
   // Colouring finishes after the file list has rendered, so nudge it to pick up
   // the new "Original" mode and the photo-provenance note.
-  filesState.renderTick++;
+  filesState.entries = [...host.fileEntries.all];
   host.requestRender();
 }
 

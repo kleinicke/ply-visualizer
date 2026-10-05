@@ -48,7 +48,7 @@ test('a cloud loaded while the depth dialog is open does not steal the depth cac
   expect(depthIndex).toBe(2);
   expect(
     await page.evaluate(
-      index => (window as any).visualizer.fileDepthData.get(index)?.fileName,
+      index => (window as any).visualizer.spatialFiles[index]?.depthSource?.fileName,
       depthIndex
     )
   ).toBe('depth.tif');

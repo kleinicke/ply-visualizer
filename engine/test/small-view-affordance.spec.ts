@@ -115,7 +115,7 @@ test('does not prompt when all point clouds are intentionally hidden', async ({ 
   await loadCloud(page);
   await page.evaluate(() => {
     const visualizer = (window as any).visualizer;
-    visualizer.fileVisibility[0] = false;
+    visualizer.fileEntries.require(0).state.visible = false;
     visualizer.meshes[0].visible = false;
   });
   await pullFarBack(page);

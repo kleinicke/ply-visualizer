@@ -24,7 +24,9 @@ test.describe('Shift applies compatible file controls to all clouds', () => {
     await first.fill('0.0123');
     await first.dispatchEvent('pointerup', { pointerId: 1 });
 
-    const sizes = await page.evaluate(() => (window as any).visualizer.pointSizes.slice(0, 2));
+    const sizes = await page.evaluate(() =>
+      (window as any).visualizer.fileEntries.all.map(entry => entry.state.pointSize).slice(0, 2)
+    );
     expect(sizes[0]).toBeCloseTo(0.0123, 6);
     expect(sizes[1]).toBeCloseTo(0.0123, 6);
     await expect(page.locator('#all-point-sizes-value')).toHaveValue('0.0123');
@@ -36,7 +38,11 @@ test.describe('Shift applies compatible file controls to all clouds', () => {
     await page.locator('#color-0').selectOption('assigned');
     await page.locator('#color-1').selectOption('1');
     await expect
-      .poll(() => page.evaluate(() => (window as any).visualizer.individualColorModes.slice(0, 2)))
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).visualizer.fileEntries.all.map(entry => entry.state.colorMode).slice(0, 2)
+        )
+      )
       .toEqual(['assigned', '1']);
 
     const first = page.locator('#color-0');
@@ -47,7 +53,11 @@ test.describe('Shift applies compatible file controls to all clouds', () => {
     await page.keyboard.up('Shift');
     await first.selectOption('0');
     await expect
-      .poll(() => page.evaluate(() => (window as any).visualizer.individualColorModes.slice(0, 2)))
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).visualizer.fileEntries.all.map(entry => entry.state.colorMode).slice(0, 2)
+        )
+      )
       .toEqual(['0', '1']);
 
     await page.keyboard.down('Shift');
@@ -55,14 +65,22 @@ test.describe('Shift applies compatible file controls to all clouds', () => {
     await page.keyboard.up('Shift');
 
     await expect
-      .poll(() => page.evaluate(() => (window as any).visualizer.individualColorModes.slice(0, 2)))
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).visualizer.fileEntries.all.map(entry => entry.state.colorMode).slice(0, 2)
+        )
+      )
       .toEqual(['original', '1']);
 
     await page.keyboard.down('Shift');
     await first.selectOption('0');
     await page.keyboard.up('Shift');
     await expect
-      .poll(() => page.evaluate(() => (window as any).visualizer.individualColorModes.slice(0, 2)))
+      .poll(() =>
+        page.evaluate(() =>
+          (window as any).visualizer.fileEntries.all.map(entry => entry.state.colorMode).slice(0, 2)
+        )
+      )
       .toEqual(['0', '0']);
   });
 
@@ -80,17 +98,21 @@ test.describe('Shift applies compatible file controls to all clouds', () => {
     await expect(otherMesh).not.toHaveClass(/active/);
 
     await mesh.click({ modifiers: ['Shift'] });
-    expect(await page.evaluate(() => (window as any).visualizer.solidVisible.slice(0, 3))).toEqual([
-      false,
-      false,
-      false,
-    ]);
+    expect(
+      await page.evaluate(() =>
+        (window as any).visualizer.fileEntries.all
+          .map(entry => entry.state.solidVisible)
+          .slice(0, 3)
+      )
+    ).toEqual([false, false, false]);
 
     await mesh.click({ modifiers: ['Shift'] });
-    expect(await page.evaluate(() => (window as any).visualizer.solidVisible.slice(0, 3))).toEqual([
-      true,
-      false,
-      true,
-    ]);
+    expect(
+      await page.evaluate(() =>
+        (window as any).visualizer.fileEntries.all
+          .map(entry => entry.state.solidVisible)
+          .slice(0, 3)
+      )
+    ).toEqual([true, false, true]);
   });
 });

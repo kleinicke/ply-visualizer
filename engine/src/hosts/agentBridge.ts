@@ -125,13 +125,20 @@ export async function executeAgentCommand(
         faces: file.faceCount,
         has_colors: file.hasColors,
         has_normals: file.hasNormals,
-        visible: (host as unknown as ControlHost).fileVisibility[host.spatialFiles.indexOf(file)],
-        point_size: (host as unknown as ControlHost).pointSizes[host.spatialFiles.indexOf(file)],
-        color_mode: (host as unknown as ControlHost).individualColorModes[
+        visible: (host as unknown as ControlHost).fileEntries.require(
           host.spatialFiles.indexOf(file)
-        ],
-        points: (host as unknown as ControlHost).pointsVisible[host.spatialFiles.indexOf(file)],
-        mesh: (host as unknown as ControlHost).solidVisible[host.spatialFiles.indexOf(file)],
+        ).state.visible,
+        point_size: (host as unknown as ControlHost).fileEntries.require(
+          host.spatialFiles.indexOf(file)
+        ).state.pointSize,
+        color_mode: (host as unknown as ControlHost).fileEntries.require(
+          host.spatialFiles.indexOf(file)
+        ).state.colorMode,
+        points: (host as unknown as ControlHost).fileEntries.require(
+          host.spatialFiles.indexOf(file)
+        ).state.pointsVisible,
+        mesh: (host as unknown as ControlHost).fileEntries.require(host.spatialFiles.indexOf(file))
+          .state.solidVisible,
       })),
       bounds: bounds.isEmpty() ? null : { min: bounds.min.toArray(), max: bounds.max.toArray() },
       ...agentViewState(host as unknown as ControlHost),

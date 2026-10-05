@@ -6,7 +6,6 @@ import {
 } from './cameraModels';
 import type { CameraModel } from './types';
 import { CameraParams } from '../interfaces';
-import { depthSettingsState } from '../state/depthSettings.svelte';
 
 /**
  * The distortion coefficients as the panel now holds them: one input per
@@ -56,8 +55,8 @@ function writeCoefficientInputs(
 }
 
 export interface DepthPanelStateHost {
-  fileDepthData: Map<number, { depthDimensions: { width: number; height: number } }>;
-  liveDepthUpdateFiles: Set<number>;
+  spatialFiles: import('../interfaces').SpatialData[];
+  fileEntries: import('../state/fileEntries').FileEntryRegistry;
   setLiveDepthUpdateEnabled(fileIndex: number, enabled: boolean): void;
   updatePrinciplePointFields(
     fileIndex: number,
@@ -102,14 +101,16 @@ export function captureDepthPanelStates(
     const match = id.match(/depth-panel-(\d+)/);
     if (match) {
       const fileIndex = parseInt(match[1]);
+      const entry = host.fileEntries.at(fileIndex);
+      if (!entry) {return;}
       // The panel's own state, not its rendered style: the component owns the
       // display now, and reading it back would race the render.
-      const isVisible = depthSettingsState.openPanelIndices.includes(fileIndex);
+      const isVisible = entry.state.depthPanelOpen;
 
       // Capture current form values
       const formValues = captureDepthFormValues(host, fileIndex);
 
-      states.set(fileIndex, {
+      states.set(entry.id, {
         panelOpen: isVisible,
         formValues: formValues,
       });
@@ -160,7 +161,7 @@ export function captureDepthFormValues(
       ?.checked
       ? 'true'
       : 'false',
-    liveUpdate: host.liveDepthUpdateFiles.has(fileIndex) ? 'true' : 'false',
+    liveUpdate: host.fileEntries.require(fileIndex).state.liveDepth ? 'true' : 'false',
   };
 }
 
@@ -174,7 +175,9 @@ export function restoreDepthPanelStates(
   // Wait a bit for the DOM to be updated
   setTimeout(() => {
     // First, restore panel visibility states and form values
-    states.forEach((state, fileIndex) => {
+    states.forEach((state, entryId) => {
+      const fileIndex = host.fileEntries.indexOf(entryId);
+      if (fileIndex < 0) {return;}
       const panel = document.getElementById(`depth-panel-${fileIndex}`);
       const toggleButton = document.querySelector(
         `[data-file-index="${fileIndex}"].depth-settings-toggle`
@@ -187,13 +190,7 @@ export function restoreDepthPanelStates(
 
         // Restore panel visibility through the state the component reads, so
         // the panel and its arrow cannot end up disagreeing.
-        const indices = depthSettingsState.openPanelIndices;
-        const at = indices.indexOf(fileIndex);
-        if (state.panelOpen && at === -1) {
-          indices.push(fileIndex);
-        } else if (!state.panelOpen && at !== -1) {
-          indices.splice(at, 1);
-        }
+        host.fileEntries.require(fileIndex).state.depthPanelOpen = state.panelOpen;
 
         // Restore form values
         restoreDepthFormValues(host, fileIndex, state.formValues);
@@ -203,8 +200,9 @@ export function restoreDepthPanelStates(
     });
 
     // For any depth files not captured in states (edge case), restore dimensions
-    host.fileDepthData.forEach((depthData, fileIndex) => {
-      if (!states.has(fileIndex)) {
+    host.spatialFiles.forEach(({ depthSource: depthData }, fileIndex) => {
+      if (!depthData) {return;}
+      if (!states.has(host.fileEntries.require(fileIndex).id)) {
         const panel = document.getElementById(`depth-panel-${fileIndex}`);
         if (panel) {
           console.log(
@@ -296,7 +294,7 @@ export function restoreDepthFormValues(
   }
 
   // Also ensure dimensions are displayed correctly
-  const depthData = host.fileDepthData.get(fileIndex);
+  const depthData = host.spatialFiles[fileIndex]?.depthSource;
   if (depthData) {
     const imageSizeDiv = document.getElementById(`image-size-${fileIndex}`);
     if (imageSizeDiv) {

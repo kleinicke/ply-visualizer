@@ -99,12 +99,12 @@ export async function agentPick(host: ControlHost, screen: number[]) {
     return pickSingleView(host, screen);
   }
   const side = screen[0] < 0.5 ? split.left : split.right;
-  const visible = host.fileVisibility.slice();
+  const visible = host.fileEntries.all.map(entry => ({ entry, visible: entry.state.visible }));
   const meshVisible = host.meshes.map(mesh => mesh?.visible);
   const aspect = host.camera.aspect;
   try {
-    host.fileVisibility.forEach((_, i) => {
-      host.fileVisibility[i] = i === side;
+    host.fileEntries.all.forEach((_, i) => {
+      host.fileEntries.require(i).state.visible = i === side;
       if (host.meshes[i]) {
         host.meshes[i]!.visible = i === side;
       }
@@ -113,7 +113,9 @@ export async function agentPick(host: ControlHost, screen: number[]) {
     host.camera.updateProjectionMatrix();
     return await pickSingleView(host, [screen[0] * 2 - (screen[0] < 0.5 ? 0 : 1), screen[1]]);
   } finally {
-    host.fileVisibility.splice(0, host.fileVisibility.length, ...visible);
+    visible.forEach(({ entry, visible }) => {
+      entry.state.visible = visible;
+    });
     host.meshes.forEach((mesh, i) => {
       if (mesh) {
         mesh.visible = meshVisible[i]!;
@@ -292,7 +294,9 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
   };
   clearAgentSelection(host);
   const s = state(host);
-  s.visibility = new Map(host.spatialFiles.map((file, i) => [file, host.fileVisibility[i]]));
+  s.visibility = new Map(
+    host.spatialFiles.map((file, i) => [file, host.fileEntries.require(i).state.visible])
+  );
   const before = pose(host);
   const i = host.spatialFiles.length;
   host.addNewFiles([data]);
@@ -443,7 +447,9 @@ export async function agentNamedSelections(host: ControlHost, a: Record<string, 
       };
       indices = wasm.combine_point_indices(left.indices, right.indices, a.action);
     }
-    const visibility = new Map(host.spatialFiles.map((file, i) => [file, host.fileVisibility[i]]));
+    const visibility = new Map(
+      host.spatialFiles.map((file, i) => [file, host.fileEntries.require(i).state.visible])
+    );
     if (!indices.length) {
       clearAgentSelection(host);
       visibility.forEach((visible, file) => {
@@ -489,7 +495,7 @@ export async function agentNamedSelections(host: ControlHost, a: Record<string, 
       selected_points: item.indices.length,
       object_index: host.spatialFiles.indexOf(item.data),
       source_object_index: host.spatialFiles.indexOf(item.source),
-      visible: host.fileVisibility[host.spatialFiles.indexOf(item.data)],
+      visible: host.fileEntries.require(host.spatialFiles.indexOf(item.data)).state.visible,
     })),
     active_selection: currentAgentSelection(host),
   };

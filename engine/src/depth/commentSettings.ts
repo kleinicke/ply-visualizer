@@ -100,8 +100,8 @@ export function getPngScaleFactor(data: SpatialData): number {
 }
 
 export interface DepthSettingsHost {
+  spatialFiles: import('../interfaces').SpatialData[];
   defaultDepthSettings: CameraParams;
-  fileDepthData: Map<number, { depthDimensions?: { width: number; height: number } }>;
 }
 
 export function getDepthSetting(
@@ -187,7 +187,7 @@ export function getDepthBaseline(host: DepthSettingsHost, data: SpatialData): nu
 export function getDepthCx(host: DepthSettingsHost, data: SpatialData, fileIndex?: number): string {
   // First try to get dimensions from stored depth data using file index
   if (fileIndex !== undefined) {
-    const depthData = host.fileDepthData.get(fileIndex);
+    const depthData = host.spatialFiles[fileIndex]?.depthSource;
     if (depthData?.depthDimensions?.width) {
       const cx = (depthData.depthDimensions.width - 1) / 2;
       return cx.toString();
@@ -207,7 +207,7 @@ export function getDepthCx(host: DepthSettingsHost, data: SpatialData, fileIndex
 export function getDepthCy(host: DepthSettingsHost, data: SpatialData, fileIndex?: number): string {
   // First try to get dimensions from stored depth data using file index
   if (fileIndex !== undefined) {
-    const depthData = host.fileDepthData.get(fileIndex);
+    const depthData = host.spatialFiles[fileIndex]?.depthSource;
     if (depthData?.depthDimensions?.height) {
       const cy = (depthData.depthDimensions.height - 1) / 2;
       return cy.toString();

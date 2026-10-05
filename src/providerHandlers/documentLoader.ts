@@ -1,3 +1,4 @@
+import { decodesInViewer } from '../../engine/src/fileHandler';
 import { isSceneModel } from '../../engine/src/models/modelFormats';
 import { sendSceneModel } from './sceneModels';
 import * as vscode from 'vscode';
@@ -6,10 +7,8 @@ import * as fs from 'fs';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
 import { ObjParser } from '../../engine/src/parsers/objParser';
 import { StlParser } from '../../engine/src/parsers/stlParser';
-import { KittiBinParser } from '../../engine/src/parsers/kittiBinParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
-import { OffParser } from '../../engine/src/parsers/offParser';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
 import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
@@ -61,9 +60,7 @@ export interface DocumentFileTypeFlags {
   isStlFile: boolean;
   isPcdFile: boolean;
   isPtsFile: boolean;
-  isKittiBinFile: boolean;
   isStonexX3aFile: boolean;
-  isOffFile: boolean;
   isGltfFile: boolean;
   isVolumeFile: boolean;
   isXyzVariant: boolean;
@@ -254,9 +251,7 @@ export async function loadDocumentContent(
     isStlFile,
     isPcdFile,
     isPtsFile,
-    isKittiBinFile,
     isStonexX3aFile,
-    isOffFile,
     isGltfFile,
     isVolumeFile,
     isXyzVariant,
@@ -266,6 +261,16 @@ export async function loadDocumentContent(
   } = flags;
 
   try {
+    if (decodesInViewer(documentUri.path)) {
+      const data = await readFileFast(documentUri);
+      await webviewPanel.webview.postMessage({
+        type: 'fileData',
+        fileName: path.basename(documentUri.path),
+        shortPath: host.getShortPath(documentUri.fsPath),
+        data: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+      });
+      return;
+    }
     if (isSceneModel(documentUri.path)) {
       await sendSceneModel(webviewPanel, documentUri);
       return;
@@ -730,51 +735,6 @@ export async function loadDocumentContent(
       return;
     }
 
-    if (isOffFile) {
-      // Handle OFF file
-      webviewPanel.webview.postMessage({
-        type: 'timingUpdate',
-        message: '🚀 Extension: Starting OFF file processing...',
-        timestamp: loadStartTime,
-      });
-
-      const offData = await vscode.workspace.fs.readFile(documentUri);
-      const fileReadTime = performance.now();
-      webviewPanel.webview.postMessage({
-        type: 'timingUpdate',
-        message: `📁 Extension: OFF file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
-        timestamp: fileReadTime,
-      });
-
-      const offParser = new OffParser();
-      const timingCallback = (message: string) => {
-        webviewPanel.webview.postMessage({
-          type: 'timingUpdate',
-          message: message,
-          timestamp: performance.now(),
-        });
-      };
-
-      const parsedData = await offParser.parse(offData, timingCallback);
-      const parseTime = performance.now();
-      webviewPanel.webview.postMessage({
-        type: 'timingUpdate',
-        message: `🎯 Extension: OFF parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
-        timestamp: parseTime,
-      });
-
-      // Send parsed OFF data to webview
-      webviewPanel.webview.postMessage({
-        type: 'offData',
-        fileName: path.basename(documentUri.fsPath),
-        shortPath: host.getShortPath(documentUri.fsPath),
-        fileSizeInBytes: offData.byteLength,
-        data: parsedData,
-      });
-
-      return; // Exit early for OFF files
-    }
-
     if (isGltfFile) {
       // Handle GLTF/GLB file
       webviewPanel.webview.postMessage({
@@ -818,40 +778,6 @@ export async function loadDocumentContent(
       });
 
       return; // Exit early for GLTF/GLB files
-    }
-
-    if (isKittiBinFile) {
-      // Handle KITTI BIN scans - parse in the extension host and send
-      // typed arrays to the webview
-      webviewPanel.webview.postMessage({
-        type: 'timingUpdate',
-        message: '🚀 Extension: Starting KITTI BIN file processing...',
-        timestamp: loadStartTime,
-      });
-
-      const loadStart = performance.now();
-      const binBytes = await readFileFast(documentUri);
-      const kittiParser = new KittiBinParser();
-      const kittiParsed = await kittiParser.parse(binBytes, (msg: string) => {
-        webviewPanel.webview.postMessage({
-          type: 'timingUpdate',
-          message: msg,
-          timestamp: performance.now(),
-        });
-      });
-      host.logPerf(
-        `⏱️ PERF[kitti-bin/ext] load ${(performance.now() - loadStart).toFixed(1)}ms (${kittiParsed.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
-      );
-
-      webviewPanel.webview.postMessage({
-        type: 'kittiBinData',
-        fileName: path.basename(documentUri.fsPath),
-        shortPath: host.getShortPath(documentUri.fsPath),
-        fileSizeInBytes: binBytes.byteLength,
-        data: kittiParsed,
-      });
-
-      return; // Exit early for KITTI BIN files
     }
 
     if (isXyzVariant) {

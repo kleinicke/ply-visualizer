@@ -28,10 +28,6 @@ interface StonexCameraHost {
   cameraNames: string[];
   cameraShowLabels: boolean[];
   cameraShowCoords: boolean[];
-  fileVisibility: boolean[];
-  pointSizes: number[];
-  individualColorModes: string[];
-  transformationMatrices: THREE.Matrix4[];
 }
 
 const FRUSTUM_DEPTH_METRES = 5;
@@ -459,7 +455,7 @@ function placeFrameGroup(group: THREE.Group, station?: THREE.Matrix4 | null): vo
 
 interface StationTransformHost {
   spatialFiles: { metadata?: Record<string, unknown> }[];
-  transformationMatrices: THREE.Matrix4[];
+  fileEntries: FileEntryRegistry;
 }
 
 /**
@@ -476,7 +472,7 @@ function stationTransformLookup(
   for (let index = 0; index < host.spatialFiles.length; index++) {
     const name = host.spatialFiles[index]?.metadata?.embeddedScanName as string | undefined;
     if (name) {
-      byStem.set(name.replace(/\.x3r$/i, ''), host.transformationMatrices[index]);
+      byStem.set(name.replace(/\.x3r$/i, ''), host.fileEntries.require(index).transform);
     }
   }
   return stem => (stem ? (byStem.get(stem) ?? null) : null);

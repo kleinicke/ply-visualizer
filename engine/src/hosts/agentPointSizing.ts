@@ -47,7 +47,9 @@ export function updateAgentPointSizes(host: ControlHost) {
       1e-8,
       (pixels * 2 * distance) / Math.max(1, host.renderer.domElement.clientHeight)
     );
-    if (Math.abs(host.pointSizes[i] - size) > Math.max(1e-10, size * 0.01)) {
+    if (
+      Math.abs(host.fileEntries.require(i).state.pointSize - size) > Math.max(1e-10, size * 0.01)
+    ) {
       host.updatePointSize(i, size);
     }
   });

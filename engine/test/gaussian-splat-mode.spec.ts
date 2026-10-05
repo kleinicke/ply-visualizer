@@ -164,7 +164,7 @@ test('3DGS file previews with DC colors and toggles into splat mode', async ({ p
     const v = (window as any).visualizer;
     const mesh = v.splatMode.getMesh(0);
     return {
-      active: !!v.splatModeActive[0],
+      active: !!v.fileEntries.require(0).state.splatModeActive,
       pointsVisible: v.meshes[0].visible,
       splatMeshInScene: !!mesh?.parent,
       splatMeshVisible: !!mesh?.visible,
@@ -210,7 +210,10 @@ test('3DGS file previews with DC colors and toggles into splat mode', async ({ p
   // the visible-point-cloud list must still contain the hidden mesh.
   const pickable = await page.evaluate(() => {
     const v = (window as any).visualizer;
-    return v.fileVisibility[0] !== false && v.meshes[0].geometry.getAttribute('position').count;
+    return (
+      v.fileEntries.require(0).state.visible !== false &&
+      v.meshes[0].geometry.getAttribute('position').count
+    );
   });
   expect(pickable).toBe(2000);
 
@@ -230,11 +233,13 @@ test('3DGS file previews with DC colors and toggles into splat mode', async ({ p
   await page.locator('#size-0').fill('0.01');
   await page.locator('#size-0').dblclick();
   await expect(page.locator('#size-0')).toHaveValue('0.001');
-  expect(await page.evaluate(() => (window as any).visualizer.pointSizes[0])).toBeCloseTo(0.001);
+  expect(
+    await page.evaluate(() => (window as any).visualizer.fileEntries.require(0).state.pointSize)
+  ).toBeCloseTo(0.001);
   const pointsState = await page.evaluate(() => {
     const v = (window as any).visualizer;
     return {
-      active: !!v.splatModeActive[0],
+      active: !!v.fileEntries.require(0).state.splatModeActive,
       pointsVisible: v.meshes[0].visible,
       splatMesh: v.splatMode.getMesh(0),
     };
@@ -284,7 +289,7 @@ test('.splat container loads with splat mode on by default', async ({ page }) =>
     const v = (window as any).visualizer;
     const data = v.spatialFiles[0];
     return {
-      active: !!v.splatModeActive[0],
+      active: !!v.fileEntries.require(0).state.splatModeActive,
       pointsVisible: v.meshes[0].visible,
       splatMeshInScene: !!v.splatMode.getMesh(0)?.parent,
       vertexCount: data.vertexCount,
@@ -342,7 +347,8 @@ test('removing a file during splat decode does not attach a ghost mesh', async (
     const v = (window as any).visualizer;
     return {
       fileCount: v.spatialFiles.length,
-      activeCount: v.splatModeActive.filter(Boolean).length,
+      activeCount: v.fileEntries.all.map(entry => entry.state.splatModeActive).filter(Boolean)
+        .length,
       splatMeshesInScene: v.scene.children.filter(
         (child: any) => child.constructor?.name === 'SplatMesh'
       ).length,

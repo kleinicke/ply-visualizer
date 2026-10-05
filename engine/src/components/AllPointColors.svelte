@@ -8,8 +8,8 @@
   type GlobalOption = PointCloudColorOption & { available: number };
 
   const clouds = $derived.by((): Cloud[] => {
-    filesState.renderTick;
-    filesState.renderModeTick;
+    filesState.entries;
+
     return (host.spatialFiles ?? []).flatMap((data: any, index: number) => {
       if (!data || host.splatMode?.isActive(index)) {
         return [];
@@ -42,7 +42,7 @@
       }
       return { value, label, available: details.available };
     }).sort(
-      (a, b) => optionRank(a.value) - optionRank(b.value) || a.label.localeCompare(b.label)
+      (a, b) => optionRank(a.value) - optionRank(b.value) || a.label.localeCompare(b.label),
     );
   });
 
@@ -50,8 +50,10 @@
     if (cloudCount === 0) {
       return '';
     }
-    const first = filesState.colorModes[clouds[0].index] ?? 'assigned';
-    return clouds.every(cloud => (filesState.colorModes[cloud.index] ?? 'assigned') === first)
+    const first = host.fileEntries.require(clouds[0].index).state.colorMode ?? 'assigned';
+    return clouds.every(
+      (cloud) => (host.fileEntries.require(cloud.index).state.colorMode ?? 'assigned') === first,
+    )
       ? first
       : '';
   });
@@ -73,7 +75,7 @@
       return;
     }
     for (const cloud of clouds) {
-      if (cloud.options.some(option => option.value === value)) {
+      if (cloud.options.some((option) => option.value === value)) {
         // Deliberately call only the colour entry point. In particular, do not
         // engage AllPointSizes: mixed per-cloud sizes must remain mixed.
         host.onFileColorModeChange(cloud.index, value);

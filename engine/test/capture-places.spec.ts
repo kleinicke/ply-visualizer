@@ -44,7 +44,7 @@ test.describe('Capture places', () => {
           embeddedScanName: `Site_000${index}${suffix}.x3r`,
         };
       });
-      visualizer.transformationMatrices[1].makeTranslation(offset, 0, 0);
+      visualizer.fileEntries.require(1).transform.makeTranslation(offset, 0, 0);
       visualizer.updateFileList();
     }, secondOffset);
   }
@@ -65,7 +65,10 @@ test.describe('Capture places', () => {
 
     await toggles.nth(1).uncheck();
     const visibility = await page.evaluate(
-      () => (window as any).visualizer.fileVisibility.slice(0, 2) as boolean[]
+      () =>
+        (window as any).visualizer.fileEntries.all
+          .map(entry => entry.state.visible)
+          .slice(0, 2) as boolean[]
     );
     expect(visibility[0]).toBe(true);
     expect(visibility[1]).toBe(false);

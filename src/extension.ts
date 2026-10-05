@@ -1,3 +1,4 @@
+import { requiresImportOptions } from '../engine/src/fileHandler';
 import { registerNativeAgentTools } from './agent/tools';
 import { registerRemoteFileCommand } from './remoteFileCommand';
 import * as vscode from 'vscode';
@@ -38,12 +39,22 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Generic text extensions are opt-in so ordinary CSV/TXT editing stays unchanged.
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider('plyViewer.textTable', provider, {
+      webviewOptions: { retainContextWhenHidden: true },
+      supportsMultipleEditorsPerDocument: false,
+    })
+  );
+
   // Register command for opening PLY/XYZ files
   context.subscriptions.push(
     vscode.commands.registerCommand('plyViewer.openFile', (uri: vscode.Uri) => {
       const viewType = uri.fsPath.toLowerCase().endsWith('.bin')
         ? 'plyViewer.kittiBin'
-        : 'plyViewer.plyEditor';
+        : requiresImportOptions(uri.fsPath)
+          ? 'plyViewer.textTable'
+          : 'plyViewer.plyEditor';
       vscode.commands.executeCommand('vscode.openWith', uri, viewType);
     })
   );

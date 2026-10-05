@@ -35,7 +35,17 @@ export interface SpatialFace {
   indices: number[];
 }
 
+export interface DepthSource {
+  originalData: ArrayBuffer;
+  fileName: string;
+  cameraParams: CameraParams;
+  depthDimensions: { width: number; height: number };
+  colorImageData?: ImageData;
+  colorImageName?: string;
+}
+
 export interface SpatialData {
+  depthSource?: DepthSource;
   /** Browser-owned full scene; never serialized through postMessage. */
   sceneModel?: SceneModelData;
   vertices: SpatialVertex[];

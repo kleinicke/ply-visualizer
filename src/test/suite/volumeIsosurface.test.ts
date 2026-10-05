@@ -622,14 +622,12 @@ suite('Volume points and clipping', () => {
     );
     points.updateMatrixWorld(true);
     const manager = new SelectionManager({
-      fileEntries: {} as any,
+      fileEntries: { require: () => ({ state: { visible: true, pointSize: 0.1 } }) } as any,
       camera,
       meshes: [points],
       spatialFiles: [],
       poseGroups: [],
       cameraGroups: [],
-      fileVisibility: [true],
-      pointSizes: [0.1],
       screenSpaceScaling: false,
       // Keep z <= 0.5, clipping the front point at z=1.
       clippingPlanes: [new THREE.Plane(new THREE.Vector3(0, 0, -1), 0.5)],

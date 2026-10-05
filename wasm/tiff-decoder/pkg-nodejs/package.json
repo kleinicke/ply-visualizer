@@ -1,0 +1,13 @@
+{
+  "name": "tiff-wasm",
+  "description": "Fast TIFF decoder for WebAssembly",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "tiff_wasm_bg.wasm",
+    "tiff_wasm.js",
+    "tiff_wasm.d.ts"
+  ],
+  "main": "tiff_wasm.js",
+  "types": "tiff_wasm.d.ts"
+}

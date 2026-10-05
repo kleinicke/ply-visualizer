@@ -231,7 +231,7 @@ test.describe('Scan-to-scan registration', () => {
     await expect(panel.locator('.registration-coarse')).toBeVisible();
 
     const before = await page.evaluate(
-      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+      () => (window as any).visualizer.fileEntries.require(1).transform.elements.slice() as number[]
     );
     expect(cornerDeviation(before, corner => corner)).toBeLessThan(1e-6);
 
@@ -249,7 +249,7 @@ test.describe('Scan-to-scan registration', () => {
     });
 
     const after = await page.evaluate(
-      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+      () => (window as any).visualizer.fileEntries.require(1).transform.elements.slice() as number[]
     );
     expect(cornerDeviation(after, expectedInverse)).toBeLessThan(0.05);
 
@@ -267,7 +267,7 @@ test.describe('Scan-to-scan registration', () => {
     await panel.locator('.registration-undo').click();
     await expect(panel.locator('.registration-result')).toContainText('Reverted');
     const reverted = await page.evaluate(
-      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+      () => (window as any).visualizer.fileEntries.require(1).transform.elements.slice() as number[]
     );
     expect(cornerDeviation(reverted, corner => corner)).toBeLessThan(1e-6);
   });
@@ -385,7 +385,7 @@ test.describe('Scan-to-scan registration', () => {
     await expect(page.locator('#file-1')).toBeChecked();
 
     const after = await page.evaluate(
-      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+      () => (window as any).visualizer.fileEntries.require(1).transform.elements.slice() as number[]
     );
     expect(cornerDeviation(after, expectedInverse)).toBeLessThan(0.01);
 
@@ -453,7 +453,7 @@ test.describe('Scan-to-scan registration', () => {
     // Redoing starts a fresh set of landmarks rather than resetting the cloud:
     // the transform that was already applied stays on screen.
     const applied = await page.evaluate(
-      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+      () => (window as any).visualizer.fileEntries.require(1).transform.elements.slice() as number[]
     );
     await panel.locator('.registration-redo-coarse').click();
     await expect
@@ -461,7 +461,7 @@ test.describe('Scan-to-scan registration', () => {
       .toBe('coarse-fixed');
     await expect(panel.locator('.coarse-residual')).toHaveCount(0);
     const kept = await page.evaluate(
-      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+      () => (window as any).visualizer.fileEntries.require(1).transform.elements.slice() as number[]
     );
     expect(kept).toEqual(applied);
   });
@@ -537,7 +537,7 @@ test.describe('Scan-to-scan registration', () => {
     // With two clouds loaded "all others" is the same single cloud, so the
     // answer must still be the station offset.
     const after = await page.evaluate(
-      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+      () => (window as any).visualizer.fileEntries.require(1).transform.elements.slice() as number[]
     );
     expect(cornerDeviation(after, expectedInverse)).toBeLessThan(0.05);
   });
@@ -575,7 +575,7 @@ test.describe('Scan-to-scan registration', () => {
 
     await expect(panel.locator('.registration-result')).toContainText('Live fit from 3 fine pairs');
     const after = await page.evaluate(
-      () => (window as any).visualizer.transformationMatrices[1].elements.slice() as number[]
+      () => (window as any).visualizer.fileEntries.require(1).transform.elements.slice() as number[]
     );
     expect(cornerDeviation(after, expectedInverse)).toBeLessThan(0.01);
   });

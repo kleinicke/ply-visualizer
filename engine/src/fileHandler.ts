@@ -57,37 +57,25 @@ export interface FileTypeInfo {
 }
 
 // Unified file data interface
-export interface UnifiedFileData {
-  vertices: any[];
-  faces?: any[];
-  format: string;
-  version?: string;
-  comments?: string[];
-  vertexCount: number;
-  faceCount: number;
-  hasColors: boolean;
-  hasNormals: boolean;
-  hasIntensity?: boolean;
-  fileName: string;
-  fileIndex?: number;
-  triangles?: any[]; // For STL format
-  positionsArray?: Float32Array;
-  colorsArray?: Uint8Array | null;
-  normalsArray?: Float32Array | null;
-  intensityArray?: Float32Array | null;
-  scalarFields?: Record<string, Float32Array>;
-  useTypedArrays?: boolean;
-  sourcePointCount?: number;
-  sourcePointIndices?: Uint32Array;
-  sourceOrigin?: [number, number, number];
-  metadata?: Record<string, unknown>;
-}
+export type UnifiedFileData = import('./interfaces').SpatialData;
 
 // Parser result interface
-export interface ParseResult {
-  data: UnifiedFileData;
-  type: string; // 'spatialData', 'stlData', 'objData', etc.
-}
+export type ParseResult =
+  | { type: 'jsonData'; data: { format: 'json'; fileName: string; comments: string[] } }
+  | {
+      type:
+        | 'spatialData'
+        | 'stlData'
+        | 'objData'
+        | 'pcdData'
+        | 'ptsData'
+        | 'kittiBinData'
+        | 'offData'
+        | 'gltfData'
+        | 'npyData'
+        | 'xyzData';
+      data: UnifiedFileData;
+    };
 
 // Error handling interface
 export interface FileError {
@@ -99,6 +87,14 @@ export interface FileError {
 /**
  * Detects file type information from filename
  */
+export function requiresImportOptions(fileName: string): boolean {
+  return formats.find(fileName.split('.').pop() ?? '')?.requiresImportOptions === true;
+}
+
+export function decodesInViewer(fileName: string): boolean {
+  return formats.find(fileName.split('.').pop() ?? '')?.decodeInViewer === true;
+}
+
 export function detectFileType(fileName: string): FileTypeInfo | null {
   const extension = fileName.toLowerCase().split('.').pop();
   if (!extension) {
@@ -232,13 +228,14 @@ export function convertToUnifiedFormat(data: any, fileName: string): UnifiedFile
   }
 
   const unified: UnifiedFileData = {
+    ...data,
     vertices: vertices,
     faces: faces,
     format: data.format || 'ascii',
     version: data.version || '1.0',
     comments: data.comments || [],
     vertexCount: data.vertexCount ?? vertices.length,
-    faceCount: faces.length,
+    faceCount: data.indicesArray ? data.indicesArray.length / 3 : faces.length,
     hasColors: data.hasColors || false,
     hasNormals: data.hasNormals ?? !!data.triangles,
     hasIntensity: data.hasIntensity || false,
@@ -325,10 +322,11 @@ export async function processFiles(
         }
       } else {
         const result = await parseFileData(file.data, fileType, file.name, timingCallback);
-        result.data.fileIndex = results.length;
+        if (result.type !== 'jsonData') {result.data.fileIndex = results.length;}
         results.push(result);
       }
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {continue;}
       const fileError: FileError = {
         fileName: file.name,
         error: generateErrorMessage(file.name, fileType?.extension || '', error),
@@ -827,6 +825,7 @@ export async function convertDepthToUnified(
   const fileType = isPfm ? 'PFM' : isNpy ? 'NPY' : isPng ? 'PNG' : 'TIF';
 
   const unified: UnifiedFileData = {
+    ...data,
     vertices: verts,
     faces: [],
     format: 'binary_little_endian',

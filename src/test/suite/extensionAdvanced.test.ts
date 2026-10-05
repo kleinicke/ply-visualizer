@@ -61,7 +61,19 @@ suite('Extension Advanced Test Suite', () => {
     const customEditors = packageJSON?.contributes?.customEditors;
 
     assert.ok(customEditors, 'Custom editors should be defined');
-    assert.strictEqual(customEditors.length, 2);
+    assert.deepStrictEqual(customEditors.map((editor: any) => editor.viewType).sort(), [
+      'plyViewer.kittiBin',
+      'plyViewer.plyEditor',
+      'plyViewer.textTable',
+    ]);
+    const textEditor = customEditors.find(
+      (editor: any) => editor.viewType === 'plyViewer.textTable'
+    );
+    assert.strictEqual(textEditor.priority, 'option');
+    assert.deepStrictEqual(
+      textEditor.selector.map((selector: any) => selector.filenamePattern).sort(),
+      ['*.asc', '*.csv', '*.tsv', '*.txt']
+    );
 
     const editor = customEditors.find((item: any) => item.viewType === 'plyViewer.plyEditor');
     assert.ok(editor, 'Main 3D custom editor should be defined');
@@ -129,7 +141,10 @@ suite('Extension Advanced Test Suite', () => {
       'Open file command should be in context menu'
     );
     assert.ok(
-      commands.includes('plyViewer.convertTifToPointCloud'),
+      contextMenuItems.some((item: any) => item.submenu === 'plyViewer.imageConversion') &&
+        menus['plyViewer.imageConversion'].some(
+          (item: any) => item.command === 'plyViewer.convertTifToPointCloud'
+        ),
       'TIF conversion should be in context menu'
     );
   });

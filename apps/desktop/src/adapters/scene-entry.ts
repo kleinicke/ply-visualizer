@@ -1,5 +1,5 @@
+import type { FileEntry } from '../../../../engine/src/state/fileEntries';
 import '../../../../engine/src/hosts/embeddedViewer';
-import { filesState } from '../../../../engine/src/state/files.svelte';
 import { handleBrowserFiles } from '../../../../engine/src/browserFileDragDrop';
 import { uiState } from '../../../../engine/src/state/ui.svelte';
 import { Box3, Vector3 } from 'three';
@@ -7,7 +7,7 @@ const host = () => (window as any).visualizer;
 const viewer = () => (window as any).embeddedViewer;
 let queue = Promise.resolve();
 let generation = 0;
-let isolated: { index: number; visibility: boolean[] } | null = null;
+let isolated: { id: number; visibility: Map<number, boolean> } | null = null;
 const scene = {
   async open(file: File, id: string, append = false, preserveCamera = false) {
     const request = ++generation;
@@ -66,10 +66,10 @@ const scene = {
           name: data.fileName || `Object ${index + 1}`,
           count: data.vertexCount,
           faces: data.faceCount,
-          visible: h.fileVisibility[index] !== false,
-          size: h.pointSizes[index] || 0.001,
+          visible: h.fileEntries.require(index).state.visible !== false,
+          size: h.fileEntries.require(index).state.pointSize || 0.001,
           colors: data.hasColors,
-          colorMode: filesState.colorModes[index] || 'assigned',
+          colorMode: h.fileEntries.require(index).state.colorMode,
         })) || [],
       fps: uiState.perfStatsText,
     };
@@ -96,7 +96,7 @@ const scene = {
         h.removeFileByIndex(index);
         continue;
       }
-      if ((h.fileVisibility[index] !== false) !== object.visible) {
+      if ((h.fileEntries.require(index).state.visible !== false) !== object.visible) {
         scene.visibility(index);
       }
       scene.size(index, object.size);
@@ -113,25 +113,29 @@ const scene = {
   },
   isolate(index: number) {
     const h = host();
-    const target =
-      isolated?.index === index
-        ? isolated.visibility
-        : h.spatialFiles.map((_: any, i: number) => i === index);
-    if (isolated?.index === index) {
+    const id = h.fileEntries.require(index).id;
+    if (isolated && isolated.id === id) {
+      for (const [entryId, visible] of isolated.visibility) {
+        const currentIndex = h.fileEntries.indexOf(entryId);
+        if (currentIndex >= 0) {h.setFileEntryVisibility(currentIndex, visible);}
+      }
       isolated = null;
     } else {
-      isolated = { index, visibility: [...h.fileVisibility] };
+      isolated = {
+        id,
+        visibility: new Map(
+          h.fileEntries.all.map((entry: FileEntry) => [entry.id, entry.state.visible])
+        ),
+      };
+      h.fileEntries.all.forEach((entry: FileEntry, i: number) =>
+        h.setFileEntryVisibility(i, entry.id === id)
+      );
     }
-    target.forEach((v: boolean, i: number) => {
-      if ((h.fileVisibility[i] !== false) !== v) {
-        h.setFileEntryVisibility(i, v);
-      }
-    });
   },
   visibility(index: number) {
     const h = host();
     isolated = null;
-    h.setFileEntryVisibility(index, h.fileVisibility[index] === false);
+    h.setFileEntryVisibility(index, h.fileEntries.require(index).state.visible === false);
   },
   remove(index: number) {
     host().removeFileByIndex(index);
@@ -141,11 +145,9 @@ const scene = {
       throw new Error('Point size must be positive.');
     }
     host().updatePointSize(index, value);
-    filesState.pointSizes[index] = value;
   },
   color(index: number, value: string) {
     host().onFileColorModeChange(index, value);
-    filesState.colorModes[index] = value;
   },
   fit() {
     const h = host();

@@ -14,7 +14,7 @@ export function transformAgentObject(host: ControlHost, a: Record<string, any>) 
     throw new Error('Unknown object_index; inspect the scene first');
   }
   const file = host.spatialFiles[i];
-  const current = host.transformationMatrices[i].clone();
+  const current = host.fileEntries.require(i).transform.clone();
   const undo = history.get(file) ?? [];
   if (a.action === 'undo') {
     const previous = undo.pop();
@@ -83,7 +83,7 @@ export function transformAgentObject(host: ControlHost, a: Record<string, any>) 
   if (!delta.elements.every(Number.isFinite)) {
     throw new Error('Transform produced non-finite values');
   }
-  undo.push(host.transformationMatrices[i].clone());
+  undo.push(host.fileEntries.require(i).transform.clone());
   if (undo.length > 50) {
     undo.shift();
   }

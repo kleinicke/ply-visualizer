@@ -5,7 +5,6 @@ import { registerCameraEntry } from './state/fileEntryState';
 
 export interface CameraProfileHost {
   scene: THREE.Scene;
-  fileEntries: FileEntryRegistry;
   cameraGroups: THREE.Group[];
   cameraNames: string[];
   cameraVisibility: boolean;
@@ -13,15 +12,12 @@ export interface CameraProfileHost {
   cameraShowCoords: boolean[];
   spatialFiles: { length: number };
   poseGroups: { length: number };
-  fileVisibility: boolean[];
-  pointSizes: number[];
-  individualColorModes: string[];
-  transformationMatrices: THREE.Matrix4[];
   updateFileList(): void;
   updateFileStats(): void;
   autoFitCameraOnFirstLoad(): void;
   applyTransformationMatrix(fileIndex: number): void;
   showError(message: string): void;
+  fileEntries: FileEntryRegistry;
 }
 
 export function handleCameraProfile(host: CameraProfileHost, data: any, fileName: string): void {

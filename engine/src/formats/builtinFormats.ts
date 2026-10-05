@@ -1,3 +1,4 @@
+import { requestTextImport } from '../textImport/bridge';
 import { PlyParser } from '../parsers/plyParser';
 import { ObjParser } from '../parsers/objParser';
 import { StlParser } from '../parsers/stlParser';
@@ -29,9 +30,8 @@ import { FormatRegistry, UnifiedConverter } from './formatRegistry';
 /**
  * Registration of every format the viewer accepts.
  *
- * Each entry is the whole story for one format: which extensions it claims,
- * which pipeline it belongs to, and how to decode it. Adding a format means
- * adding one `register` call here and nothing else.
+ * Defines detection, decoding, and raw-byte delivery policy. Host-only streaming
+ * paths remain in their adapters; formats using decodeInViewer need no host dispatch.
  *
  * `convertToUnifiedFormat` arrives as an argument rather than an import
  * because it lives in fileHandler.ts, which imports this module - taking it as
@@ -90,6 +90,17 @@ export function registerBuiltinFormats(
   });
 
   registry.register({
+    extensions: ['csv', 'tsv', 'txt', 'asc'],
+    requiresImportOptions: true,
+    decodeInViewer: true,
+    category: 'pointCloud',
+    async parse({ data, fileName }) {
+      const payload = await requestTextImport(data, fileName);
+      return { data: convertToUnifiedFormat(payload, fileName), type: 'spatialData' };
+    },
+  });
+
+  registry.register({
     extensions: ['xyz', 'xyzn', 'xyzrgb'],
     category: 'pointCloud',
     async parse({ data, fileName, timingCallback }) {
@@ -140,6 +151,7 @@ export function registerBuiltinFormats(
   registry.register({
     // KITTI velodyne scans.
     extensions: ['bin'],
+    decodeInViewer: true,
     category: 'pointCloud',
     async parse({ data, fileName, timingCallback }) {
       const kittiBinData = await new KittiBinParser().parse(data, timingCallback);
@@ -189,6 +201,7 @@ export function registerBuiltinFormats(
 
   registry.register({
     extensions: ['off'],
+    decodeInViewer: true,
     category: 'mesh',
     async parse({ data, fileName, timingCallback }) {
       const offData = await new OffParser().parse(data, timingCallback);
@@ -277,13 +290,7 @@ export function registerBuiltinFormats(
       const textContent = new TextDecoder().decode(data);
       return {
         data: {
-          vertices: [],
-          faces: [],
           format: 'json',
-          vertexCount: 0,
-          faceCount: 0,
-          hasColors: false,
-          hasNormals: false,
           fileName,
           comments: [textContent],
         },
