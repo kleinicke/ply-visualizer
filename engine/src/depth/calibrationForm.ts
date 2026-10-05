@@ -1,31 +1,16 @@
+import type { EntryRequest } from '../hosts/viewerProtocol';
 import type { CameraModel } from './types';
 import { groupsFromCoefficients, normalizeToOfferedCameraModel } from './cameraModels';
 import { parseCalibrationFile } from './calibrationFileParser';
 
-/**
- * Fills the panel's grouped coefficient boxes from an ordered array.
- *
- * The grouping is not the array order — OpenCV's pinhole splits its radial
- * terms around the tangential pair — so the mapping comes from
- * `groupsFromCoefficients` rather than from counting.
- */
-function writeCoefficients(
-  fileIndex: number,
-  model: CameraModel,
-  coefficients: readonly number[]
-): void {
-  groupsFromCoefficients(model, coefficients).forEach((value, index) => {
-    const input = document.getElementById(
-      `coefficient-group-${fileIndex}-${index}`
-    ) as HTMLInputElement | null;
-    if (input) {
-      input.value = value;
-    }
-  });
-}
+import {
+  getDepthForm,
+  type CameraCalibration,
+  type DepthCalibration,
+  type DepthFormHost,
+} from './panelState';
 
-export interface CalibrationFormHost {
-  calibrationData?: Map<number, any>;
+export interface CalibrationFormHost extends DepthFormHost {
   vscode: { postMessage(message: any): void };
   pendingDepthFiles: Map<string, { sceneMetadata?: any }>;
   updateSingleDefaultButtonState(fileIndex: number): void;
@@ -39,7 +24,8 @@ export function openCalibrationFileDialog(host: CalibrationFormHost, fileIndex: 
   host.vscode.postMessage({
     type: 'selectCalibrationFile',
     fileIndex: fileIndex,
-  });
+    entryId: host.fileEntries.require(fileIndex).id,
+  } satisfies EntryRequest);
 }
 
 export async function loadCalibrationFile(
@@ -47,8 +33,13 @@ export async function loadCalibrationFile(
   file: File,
   fileIndex: number
 ): Promise<void> {
+  const entry = host.fileEntries.require(fileIndex);
   try {
     const text = await file.text();
+    fileIndex = host.fileEntries.indexOf(entry.id);
+    if (fileIndex < 0) {
+      return;
+    }
 
     // Parse calibration file based on format
     const calibrationData = parseCalibrationFile(text, file.name);
@@ -107,64 +98,20 @@ export function handleCalibrationFileSelected(host: CalibrationFormHost, message
 
 export function displayCalibrationInfo(
   host: CalibrationFormHost,
-  calibrationData: any,
+  calibrationData: DepthCalibration['data'],
   fileName: string,
   fileIndex: number
 ): void {
-  const calibrationInfo = document.getElementById(`calibration-info-${fileIndex}`);
-  const calibrationFilename = document.getElementById(`calibration-filename-${fileIndex}`);
-  const cameraSelect = document.getElementById(`camera-select-${fileIndex}`) as HTMLSelectElement;
-
-  if (!calibrationInfo || !calibrationFilename || !cameraSelect) {
-    console.error('Calibration UI elements not found');
-    return;
+  const names = Object.keys(calibrationData?.cameras ?? {});
+  if (!names.length) {
+    throw new Error('No cameras found in the calibration file');
   }
-
-  // Show calibration info panel
-  calibrationInfo.style.display = 'block';
-  calibrationFilename.textContent = `📄 ${fileName}`;
-
-  // Clear and populate camera selection dropdown
-  cameraSelect.innerHTML = '<option value="">Select camera...</option>';
-
-  // Store calibration data for this file index
-  if (!host.calibrationData) {
-    host.calibrationData = new Map();
-  }
-  host.calibrationData.set(fileIndex, calibrationData);
-
-  // Extract camera names from calibration data and automatically select the first one
-  if (calibrationData.cameras && typeof calibrationData.cameras === 'object') {
-    const cameraNames = Object.keys(calibrationData.cameras);
-
-    // Populate dropdown with all cameras
-    cameraNames.forEach(cameraName => {
-      const option = document.createElement('option');
-      option.value = cameraName;
-      option.textContent = cameraName;
-      cameraSelect.appendChild(option);
-    });
-
-    if (cameraNames.length > 0) {
-      // Automatically select the first camera
-      const firstCamera = cameraNames[0];
-      cameraSelect.value = firstCamera;
-
-      // Auto-populate form fields from the first camera
-      const cameraData = calibrationData.cameras[firstCamera];
-      populateFormFromCalibration(host, cameraData, fileIndex);
-
-      console.log(
-        `📷 Loaded calibration file with ${cameraNames.length} cameras: ${cameraNames.join(', ')}\n✅ Automatically selected first camera: ${firstCamera}`
-      );
-    } else {
-      console.warn('No cameras found in calibration file');
-      alert('No cameras found in the calibration file. Please check the file format.');
-    }
-  } else {
-    console.warn('No cameras found in calibration file');
-    alert('No cameras found in the calibration file. Please check the file format.');
-  }
+  getDepthForm(host, fileIndex).calibration = {
+    fileName,
+    selectedCamera: names[0],
+    data: calibrationData,
+  };
+  populateFormFromCalibration(host, calibrationData.cameras[names[0]], fileIndex);
 }
 
 export function onCameraSelectionChange(
@@ -172,186 +119,65 @@ export function onCameraSelectionChange(
   fileIndex: number,
   selectedCamera: string
 ): void {
-  if (!selectedCamera || !host.calibrationData || !host.calibrationData.has(fileIndex)) {
+  const calibration = getDepthForm(host, fileIndex).calibration;
+  const camera = calibration?.data.cameras[selectedCamera];
+  if (!calibration || !camera) {
     return;
   }
-
-  const calibrationData = host.calibrationData.get(fileIndex);
-  const cameraData = calibrationData.cameras[selectedCamera];
-
-  if (!cameraData) {
-    console.warn(`Camera "${selectedCamera}" not found in calibration data`);
-    return;
-  }
-
-  // Auto-populate form fields from camera data
-  populateFormFromCalibration(host, cameraData, fileIndex);
-
-  console.log(`📷 Applied calibration for camera "${selectedCamera}" to file ${fileIndex}`);
+  calibration.selectedCamera = selectedCamera;
+  populateFormFromCalibration(host, camera, fileIndex);
 }
 
 export function populateFormFromCalibration(
   host: CalibrationFormHost,
-  cameraData: any,
+  cameraData: CameraCalibration,
   fileIndex: number
 ): void {
-  // Get form elements
-  const fxInput = document.getElementById(`fx-${fileIndex}`) as HTMLInputElement;
-  const fyInput = document.getElementById(`fy-${fileIndex}`) as HTMLInputElement;
-  const cxInput = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement;
-  const cyInput = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
-  const cameraModelSelect = document.getElementById(
-    `camera-model-${fileIndex}`
-  ) as HTMLSelectElement;
-  const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
-  const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
-
-  // Populate focal lengths
-  if (cameraData.fx !== undefined && fxInput) {
-    fxInput.value = String(cameraData.fx);
-  }
-  if (cameraData.fy !== undefined && fyInput) {
-    fyInput.value = String(cameraData.fy);
-  }
-
-  // Populate principal point
-  if (cameraData.cx !== undefined && cxInput) {
-    cxInput.value = String(cameraData.cx);
-  }
-  if (cameraData.cy !== undefined && cyInput) {
-    cyInput.value = String(cameraData.cy);
-  }
-
-  // Populate baseline if available (from calib.txt files)
-  if (cameraData.baseline !== undefined && baselineInput) {
-    baselineInput.value = String(cameraData.baseline);
-
-    // Smart auto-detection: If baseline is present and depth type is still at default (euclidean),
-    // auto-switch to disparity mode since baseline is typically used for disparity data.
-    // But only if the user hasn't explicitly changed the depth type from default.
-    // TODO: This is very handcrafted and should be more general in the future
-    if (depthTypeSelect && depthTypeSelect.value === 'euclidean') {
-      console.log(
-        `📐 Baseline detected (${cameraData.baseline}mm), auto-switching depth type to 'disparity'`
-      );
-      depthTypeSelect.value = 'disparity';
-
-      // Show baseline and disparity offset groups since we switched to disparity
-      const baselineGroup = document.getElementById(`baseline-group-${fileIndex}`);
-      const disparityOffsetGroup = document.getElementById(`disparity-offset-group-${fileIndex}`);
-      if (baselineGroup) {
-        baselineGroup.style.display = '';
-      }
-      if (disparityOffsetGroup) {
-        disparityOffsetGroup.style.display = '';
-      }
-    } else if (depthTypeSelect) {
-      console.log(
-        `📐 Baseline detected but depth type already set to '${depthTypeSelect.value}', keeping user choice`
-      );
+  const form = getDepthForm(host, fileIndex);
+  for (const key of [
+    'fx',
+    'fy',
+    'cx',
+    'cy',
+    'baseline',
+    'k1',
+    'k2',
+    'k3',
+    'k4',
+    'p1',
+    'p2',
+  ] as const) {
+    if (cameraData[key] !== undefined) {
+      form[key] = Number(cameraData[key]);
     }
   }
-
-  // Set disparity offset (doffs) from calib.txt data if available
-  const calibrationData = host.calibrationData?.get(fileIndex);
-  if (calibrationData && calibrationData._calibTxtData) {
-    const disparityOffsetInput = document.getElementById(
-      `disparity-offset-${fileIndex}`
-    ) as HTMLInputElement;
-    if (disparityOffsetInput) {
-      disparityOffsetInput.value = String(calibrationData._calibTxtData.doffs);
-    }
+  if (cameraData.baseline !== undefined && form.depthType === 'euclidean') {
+    form.depthType = 'disparity';
   }
-
-  // Try to set camera model if available
-  if (cameraData.camera_model && cameraModelSelect) {
-    // Map common camera model names to our options
-    const modelMapping: { [key: string]: string } = {
-      pinhole: 'pinhole-ideal',
-      pinhole_ideal: 'pinhole-ideal',
-      opencv: 'pinhole-opencv',
-      pinhole_opencv: 'pinhole-opencv',
-      fisheye: 'fisheye-equidistant',
-      fisheye_equidistant: 'fisheye-equidistant',
-      kannala_brandt_k3: 'fisheye-kb3',
-      kb3: 'fisheye-kb3',
-      fisheye_radtan_thinprism: 'fisheye624',
-      fisheye624: 'fisheye624',
-    };
-
-    const modelName =
-      modelMapping[cameraData.camera_model.toLowerCase()] || cameraData.camera_model;
-    if (modelName) {
-      // The panel offers two general models; a calibration naming a specific
-      // one is moved onto whichever covers it, with its coefficients placed in
-      // the slots that model expects. Without this a name the select does not
-      // carry would silently leave the previous model selected.
-      const offered = normalizeToOfferedCameraModel(
-        modelName as CameraModel,
-        Array.isArray(cameraData.coefficients) ? cameraData.coefficients : []
-      );
-      const option = Array.from(cameraModelSelect.options).find(opt => opt.value === offered.model);
-      if (option) {
-        cameraModelSelect.value = offered.model;
-        // CRITICAL FIX: Trigger change event to show/hide distortion parameter fields
-        cameraModelSelect.dispatchEvent(new Event('change'));
-      }
-      if (Array.isArray(cameraData.coefficients)) {
-        writeCoefficients(fileIndex, offered.model, offered.coefficients);
-      }
-    }
-  } else if (Array.isArray(cameraData.coefficients)) {
-    const selected = (cameraModelSelect?.value ?? '') as CameraModel;
-    writeCoefficients(fileIndex, selected, cameraData.coefficients);
+  const calibrationData = form.calibration?.data;
+  if (calibrationData?._calibTxtData?.doffs !== undefined) {
+    form.disparityOffset = Number(calibrationData._calibTxtData.doffs);
   }
-
-  // Populate distortion coefficients if available
-  if (cameraData.k1 !== undefined) {
-    const k1Input = document.getElementById(`k1-${fileIndex}`) as HTMLInputElement;
-    if (k1Input) {
-      k1Input.value = String(cameraData.k1);
-    }
-  }
-  if (cameraData.k2 !== undefined) {
-    const k2Input = document.getElementById(`k2-${fileIndex}`) as HTMLInputElement;
-    if (k2Input) {
-      k2Input.value = String(cameraData.k2);
-    }
-  }
-  if (cameraData.k3 !== undefined) {
-    const k3Input = document.getElementById(`k3-${fileIndex}`) as HTMLInputElement;
-    if (k3Input) {
-      k3Input.value = String(cameraData.k3);
-    }
-  }
-  if (cameraData.k4 !== undefined) {
-    const k4Input = document.getElementById(`k4-${fileIndex}`) as HTMLInputElement;
-    if (k4Input) {
-      k4Input.value = String(cameraData.k4);
-    }
-  }
-  if (cameraData.p1 !== undefined) {
-    const p1Input = document.getElementById(`p1-${fileIndex}`) as HTMLInputElement;
-    if (p1Input) {
-      p1Input.value = String(cameraData.p1);
-    }
-  }
-  if (cameraData.p2 !== undefined) {
-    const p2Input = document.getElementById(`p2-${fileIndex}`) as HTMLInputElement;
-    if (p2Input) {
-      p2Input.value = String(cameraData.p2);
-    }
-  }
-
-  // Trigger update of default button state
+  const modelMapping: Record<string, CameraModel> = {
+    pinhole: 'pinhole-ideal',
+    pinhole_ideal: 'pinhole-ideal',
+    opencv: 'pinhole-opencv',
+    pinhole_opencv: 'pinhole-opencv',
+    fisheye: 'fisheye-equidistant',
+    fisheye_equidistant: 'fisheye-equidistant',
+    kannala_brandt_k3: 'fisheye-kb3',
+    kb3: 'fisheye-kb3',
+    fisheye_radtan_thinprism: 'fisheye624',
+    fisheye624: 'fisheye624',
+  };
+  const model = cameraData.camera_model
+    ? (modelMapping[cameraData.camera_model.toLowerCase()] ?? cameraData.camera_model)
+    : form.cameraModel;
+  const offered = normalizeToOfferedCameraModel(
+    model as CameraModel,
+    cameraData.coefficients ?? []
+  );
+  form.cameraModel = offered.model as import('../interfaces').CameraParams['cameraModel'];
+  form.coefficientGroups = groupsFromCoefficients(offered.model, offered.coefficients);
   host.updateSingleDefaultButtonState(fileIndex);
-
-  console.log('📐 Camera parameters populated from calibration:', {
-    fx: cameraData.fx,
-    fy: cameraData.fy,
-    cx: cameraData.cx,
-    cy: cameraData.cy,
-    baseline: cameraData.baseline,
-    model: cameraData.camera_model,
-  });
 }

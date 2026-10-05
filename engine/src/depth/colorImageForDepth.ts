@@ -1,3 +1,4 @@
+import type { EntryRequest } from '../hosts/viewerProtocol';
 import type { FileEntryRegistry } from '../state/fileEntries';
 import * as THREE from 'three';
 import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
@@ -19,8 +20,6 @@ export interface ColorImageForDepthHost {
   ): Promise<DepthConversionResult>;
   createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material;
   createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry;
-  captureDepthPanelStates(): Map<number, { panelOpen: boolean; formValues: any }>;
-  restoreDepthPanelStates(states: Map<number, { panelOpen: boolean; formValues: any }>): void;
   updateFileStats(): void;
   updateFileList(): void;
   showStatus(message: string): void;
@@ -32,7 +31,8 @@ export function requestColorImageForDepth(host: ColorImageForDepthHost, fileInde
   host.vscode.postMessage({
     type: 'selectColorImage',
     fileIndex: fileIndex,
-  });
+    entryId: host.fileEntries.require(fileIndex).id,
+  } satisfies EntryRequest);
 }
 
 export async function handleColorImageData(
@@ -47,7 +47,9 @@ export async function handleColorImageData(
     const file = new File([blob], message.fileName, { type: message.mimeType || 'image/png' });
 
     // Get depth data first to access dimensions
-    const fileIndex = message.fileIndex;
+    let fileIndex = message.fileIndex;
+    const entry = host.fileEntries.require(fileIndex);
+    const version = ++entry.depthUpdate.version;
     const depthData = host.spatialFiles[fileIndex]?.depthSource;
     if (!depthData) {
       throw new Error('No cached depth data found for this file');
@@ -56,13 +58,13 @@ export async function handleColorImageData(
     // Load and validate the color image using ColorImageLoader
     const imageData = await host.colorImageLoader.loadAndValidate(file, depthData.depthDimensions);
 
+    fileIndex = host.fileEntries.indexOf(entry.id);
+    if (fileIndex < 0 || entry.depthUpdate.version !== version) {
+      return;
+    }
     if (!imageData) {
       return; // Error already shown by ColorImageLoader
     }
-
-    // Store color image data and name in depth data for future reprocessing
-    depthData.colorImageData = imageData;
-    depthData.colorImageName = message.fileName;
 
     // Reprocess depth image with color data
     const result = await host.processDepthToPointCloud(
@@ -71,6 +73,13 @@ export async function handleColorImageData(
       depthData.cameraParams,
       imageData
     );
+
+    fileIndex = host.fileEntries.indexOf(entry.id);
+    if (fileIndex < 0 || entry.depthUpdate.version !== version) {
+      return;
+    }
+    depthData.colorImageData = imageData;
+    depthData.colorImageName = message.fileName;
 
     // Update the PLY data
     const spatialData = host.spatialFiles[fileIndex];
@@ -112,11 +121,9 @@ export async function handleColorImageData(
     // Trigger re-render to display the updated colors
     host.needsRender = true;
 
-    // Update UI (preserve depth panel states)
-    const openPanelStates = host.captureDepthPanelStates();
+    // Refresh entry data in the file list
     host.updateFileStats();
     host.updateFileList();
-    host.restoreDepthPanelStates(openPanelStates);
     host.showStatus(`Color image "${message.fileName}" applied successfully!`);
 
     // Check if this is part of a dataset workflow
@@ -160,6 +167,8 @@ export async function removeColorImageFromDepth(
   host: ColorImageForDepthHost,
   fileIndex: number
 ): Promise<void> {
+  const entry = host.fileEntries.require(fileIndex);
+  const version = ++entry.depthUpdate.version;
   try {
     const depthData = host.spatialFiles[fileIndex]?.depthSource;
     if (!depthData) {
@@ -168,16 +177,19 @@ export async function removeColorImageFromDepth(
 
     host.showStatus('Removing color image and reverting to default colors...');
 
-    // Remove stored color image data
-    delete depthData.colorImageData;
-    delete depthData.colorImageName;
-
     // Reprocess depth image without color data (will use default grayscale colors)
     const result = await host.processDepthToPointCloud(
       depthData.originalData,
       depthData.fileName,
       depthData.cameraParams
     );
+
+    fileIndex = host.fileEntries.indexOf(entry.id);
+    if (fileIndex < 0 || entry.depthUpdate.version !== version) {
+      return;
+    }
+    delete depthData.colorImageData;
+    delete depthData.colorImageName;
 
     // Update the PLY data
     const spatialData = host.spatialFiles[fileIndex];
@@ -216,11 +228,9 @@ export async function removeColorImageFromDepth(
       }
     }
 
-    // Update UI (preserve depth panel states)
-    const openPanelStates = host.captureDepthPanelStates();
+    // Refresh entry data in the file list
     host.updateFileStats();
     host.updateFileList();
-    host.restoreDepthPanelStates(openPanelStates);
     host.showStatus('Color image removed - reverted to default depth-based colors');
   } catch (error) {
     console.error('Error removing color image:', error);

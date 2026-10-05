@@ -1,3 +1,4 @@
+import { sendToWebview } from './webviewTransport';
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 import * as path from 'path';
@@ -29,7 +30,7 @@ export async function sendSceneModel(panel: vscode.WebviewPanel, uri: vscode.Uri
   }
   map.set(sourceId, { uri, remote });
   const bytes = await vscode.workspace.fs.readFile(uri);
-  await panel.webview.postMessage({
+  await sendToWebview(panel, {
     type: 'sceneModelData',
     sourceId,
     fileName: path.basename(uri.path),
@@ -73,13 +74,13 @@ export async function handleModelResourceRequest(
       }
       bytes = found;
     }
-    await panel.webview.postMessage({
+    await sendToWebview(panel, {
       type: 'modelResourceResult',
       requestId: message.requestId,
       data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
     });
   } catch (error) {
-    await panel.webview.postMessage({
+    await sendToWebview(panel, {
       type: 'modelResourceResult',
       requestId: message.requestId,
       error: error instanceof Error ? error.message : String(error),

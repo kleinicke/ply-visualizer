@@ -18,7 +18,8 @@ import { alignAllTo } from './registrationFeature';
 import { firstArchiveScanIndex, runStationPipeline } from './stationPipelineTrigger';
 import { perfLog } from './utils/perfLog';
 
-export type BenchmarkStep = 'alignAll' | 'refineAll' | 'recolorAll' | 'registerAndRecolorAll';
+import type { BenchmarkStep } from './hosts/viewerProtocol';
+export type { BenchmarkStep } from './hosts/viewerProtocol';
 
 /**
  * @param anchorIndex cloud every other one is aligned onto. Defaults to the

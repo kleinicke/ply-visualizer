@@ -1,3 +1,4 @@
+import { sendToWebview } from './webviewTransport';
 /**
  * Runs the X3A station pipeline for an already-open archive.
  *
@@ -34,7 +35,7 @@ export async function handleStationPipeline(
   options: StonexStationPipelineOptions
 ): Promise<void> {
   if (!documentPath || !/\.x3a$/i.test(documentPath)) {
-    webviewPanel.webview.postMessage({
+    sendToWebview(webviewPanel, {
       type: 'stationPipelineResult',
       error: 'The station pipeline only applies to an open .x3a archive.',
     });
@@ -45,7 +46,7 @@ export async function handleStationPipeline(
   // goes to the panel. Without this the button just says "Working..." and there
   // is no way to tell slow from stuck.
   const notify = (message: string) =>
-    void webviewPanel.webview.postMessage({
+    void sendToWebview(webviewPanel, {
       type: 'stationPipelineProgress',
       message: message.replace(/^Stonex X3A: /, ''),
     });
@@ -61,7 +62,7 @@ export async function handleStationPipeline(
       ...options,
       onScanColored: async update => {
         const scanName = `${update.scanStem}.x3r`;
-        const delivered = await webviewPanel.webview.postMessage({
+        const delivered = await sendToWebview(webviewPanel, {
           type: 'stationPipelineResult',
           partial: true,
           updates: [
@@ -106,7 +107,7 @@ export async function handleStationPipeline(
     const coloring = metadata?.stationColoringResult;
     const timing = metadata?.stationPipelineTiming as StonexStationPipelineTiming | undefined;
     const publishStarted = performance.now();
-    await webviewPanel.webview.postMessage({
+    await sendToWebview(webviewPanel, {
       type: 'stationPipelineResult',
       updates,
       summary: coloring
@@ -147,7 +148,7 @@ export async function handleStationPipeline(
         `(${parsed.length} scans)`
     );
   } catch (error) {
-    webviewPanel.webview.postMessage({
+    sendToWebview(webviewPanel, {
       type: 'stationPipelineResult',
       error: error instanceof Error ? error.message : String(error),
     });

@@ -1,3 +1,4 @@
+import { sendToWebview } from './webviewTransport';
 import type * as vscode from 'vscode';
 import {
   loadRegistrationWasm,
@@ -75,14 +76,14 @@ export async function handleRegistrationRequest(
       throw new Error('The registration WebAssembly module failed to load in the extension host.');
     }
     const result = run(wasm, message.kind as RegistrationKind, source, target, settingsJson);
-    await webviewPanel.webview.postMessage({
+    await sendToWebview(webviewPanel, {
       type: 'registrationResult',
       id,
       matrix: result?.matrix ?? null,
       stats: result?.stats ?? null,
     });
   } catch (error) {
-    await webviewPanel.webview.postMessage({
+    await sendToWebview(webviewPanel, {
       type: 'registrationResult',
       id,
       error: error instanceof Error ? error.message : String(error),

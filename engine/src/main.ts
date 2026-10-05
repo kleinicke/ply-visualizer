@@ -1,8 +1,11 @@
+import type { EntryRequest } from './hosts/viewerProtocol';
+import { listenForViewerMessages } from './hosts/viewerRouter';
+import { buildFileObject, disposeObjects, disposeFileResources } from './visualization/fileObject';
 import './textImport/prompt';
 import { handleNativeAgentRequest } from './hosts/nativeAgent';
 import { updateAgentPointSizes } from './hosts/agentPointSizing';
 import { renderAgentComparison } from './hosts/agentComparison';
-import { createModelObject, updateModelPlayback } from './models/sceneModel';
+import { updateModelPlayback } from './models/sceneModel';
 import { handleSceneModelMessage } from './models/modelMessages';
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
@@ -39,38 +42,6 @@ declare const acquireVsCodeApi: () => any;
 
 // Environment detection - works in both VSCode and browser
 const isVSCode = typeof acquireVsCodeApi !== 'undefined';
-
-const BACKGROUND_CHANGE_MESSAGES = new Set([
-  'stonexColorReady',
-  'spatialData',
-  'multiSpatialData',
-  'sceneModelData',
-  'splatContainerUri',
-  'ultimateRawBinaryData',
-  'ultimateRawBinaryUri',
-  'directTypedArrayData',
-  'binarySpatialData',
-  'addFiles',
-  'startLargeFile',
-  'largeFileChunk',
-  'largeFileComplete',
-  'depthData',
-  'objData',
-  'stlData',
-  'xyzData',
-  'fileData',
-  'pcdData',
-  'ptsData',
-  'kittiBinData',
-  'offData',
-  'gltfData',
-  'volumeData',
-  'colmapModelFiles',
-  'colmapImages',
-  'npyData',
-  'xyzVariantData',
-  'poseData',
-]);
 
 // Shared file handling functionality
 import {
@@ -380,9 +351,6 @@ export class PointCloudVisualizer {
   maxSequenceCache = 6; // keep more frames when navigating back
 
   // Per-file Depth data storage for reprocessing
-
-  // Calibration data storage for each depth file
-  calibrationData?: Map<number, any>;
 
   // Depth converter instance
   private depthConverter: DepthConverter = new DepthConverter();
@@ -1072,9 +1040,13 @@ export class PointCloudVisualizer {
   }
 
   private dispose(): void {
-    for (const data of this.spatialFiles) {
-      data.sceneModel?.dispose();
-    }
+    this.disposeMessageHandler();
+    const entries = this.fileEntries.all.filter(entry => entry.kind === 'spatial');
+    this.fileEntries.clear();
+    entries.forEach((entry, index) =>
+      disposeFileResources(entry, this.meshes[index], this.spatialFiles[index])
+    );
+    disposeObjects([...this.poseGroups, ...this.cameraGroups]);
     // Clean up ResizeObserver
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
@@ -1789,8 +1761,12 @@ export class PointCloudVisualizer {
     return colorModeUtils.shouldUseVertexColors(data, colorMode);
   }
 
-  createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry {
-    const { geometry, geometryMs } = meshBuilder.createGeometryFromSpatialData(this, data);
+  createGeometryFromSpatialData(data: SpatialData, colorMode?: string): THREE.BufferGeometry {
+    const { geometry, geometryMs } = meshBuilder.createGeometryFromSpatialData(
+      this,
+      data,
+      colorMode
+    );
     this.lastGeometryMs = geometryMs;
     return geometry;
   }
@@ -2082,8 +2058,8 @@ export class PointCloudVisualizer {
     }
   }
 
-  getDepthSettingsFromFileUI(fileIndex: number): CameraParams {
-    return depthPanelState.getDepthSettingsFromFileUI(fileIndex);
+  getDepthSettings(fileIndex: number): CameraParams {
+    return depthPanelState.depthParams(depthPanelState.getDepthForm(this, fileIndex));
   }
 
   private rebuildAllPlyMaterials(): void {
@@ -2273,293 +2249,295 @@ export class PointCloudVisualizer {
     uiStatus.createShortcutsUI(() => this.updateControlStatus());
   }
 
-  private setupMessageHandler(): void {
-    window.addEventListener('message', async event => {
-      const message = event.data;
-      const tracksBackgroundChange = BACKGROUND_CHANGE_MESSAGES.has(message.type);
-      if (tracksBackgroundChange) {
-        uiState.backgroundChanges++;
-      }
+  private disposeMessageHandler: () => void = () => {};
 
-      try {
-        switch (message.type) {
-          case 'nativeAgentRequest':
-            await handleNativeAgentRequest(this, message);
-            break;
-          case 'registrationResult':
-            handleRegistrationExtensionResult(message);
-            break;
+  private setupMessageHandler(): void {
+    this.disposeMessageHandler = listenForViewerMessages(
+      this.fileEntries,
+      {
+        nativeAgentRequest: async message => {
+          await handleNativeAgentRequest(this, message);
+        },
+        registrationResult: async message => {
+          handleRegistrationExtensionResult(message);
+          return;
           // Benchmark harness only (scripts/benchmark-vscode.mjs): runs one
           // scripted step of the load → align → recolour scenario. See
           // benchmarkScenario.ts for why this seam exists.
-          case 'benchmarkScenario':
-            await runBenchmarkScenario(this, message.step, message.anchorIndex ?? 0);
-            break;
-          case 'timing':
-            this.handleTimingMessage(message);
-            break;
-          case 'startLoading':
-            this.showImmediateLoading(message);
-            break;
-          case 'backgroundOperationComplete':
-            this.completeBackgroundOperation();
-            break;
-          case 'timingUpdate':
-            // Allow timing updates, suppress other spam
-            if (
-              typeof message.message === 'string' &&
-              message.message.includes('🧪 Header face types')
-            ) {
-              console.log(message.message);
-            }
-            break;
-          case 'loadingError':
-            const fileType = message.fileType || 'point cloud';
-            const fileName = message.fileName ? ` (${message.fileName})` : '';
-            this.showError(`Failed to load ${fileType} file${fileName}: ${message.error}`);
-            break;
-          case 'stonexColorReady':
-            stationPipelineFeature.applyLoadTimeColors(this, message.updates ?? []);
-            break;
-          case 'stationPipelineProgress':
-            stationPipelineFeature.reportStationPipelineProgress(message.message);
-            break;
-          case 'stationPipelineResult':
-            stationPipelineFeature.handleStationPipelineResult(this, message);
-            break;
-          case 'spatialData':
-          case 'multiSpatialData':
-            try {
-              // Both single and multi-file data are handled the same way now
-              const dataArray = Array.isArray(message.data) ? message.data : [message.data];
-              await this.loadWithPerf('ply', message, () => this.displayFiles(dataArray));
-            } catch (error) {
-              console.error('Error displaying PLY data:', error);
-              this.showError(
-                'Failed to display PLY data: ' +
-                  (error instanceof Error ? error.message : String(error))
-              );
-            }
-            break;
-          case 'sceneModelData':
-            await this.loadWithPerf('model', message, () => handleSceneModelMessage(this, message));
-            break;
-          case 'modelResourceResult':
-          case 'cadDecodeResult':
-            break;
-          case 'splatContainerUri':
-            await handleSplatContainerUri(this, message);
-            break;
-          case 'ultimateRawBinaryData':
-            try {
-              await this.handleUltimateRawBinaryData(message);
-            } catch (error) {
-              console.error('Error handling ultimate raw binary data:', error);
-              this.showError(
-                'Failed to handle ultimate raw binary data: ' +
-                  (error instanceof Error ? error.message : String(error))
-              );
-            }
-            break;
-          case 'ultimateRawBinaryUri':
-            await this.handleUltimateRawBinaryUri(message);
-            break;
-          case 'directTypedArrayData':
-            try {
-              await this.loadWithPerf('ply', message, () =>
-                this.handleDirectTypedArrayData(message)
-              );
-            } catch (error) {
-              console.error('Error handling direct TypedArray data:', error);
-              this.showError(
-                'Failed to handle direct TypedArray data: ' +
-                  (error instanceof Error ? error.message : String(error))
-              );
-            }
-            break;
-          case 'binarySpatialData':
-            try {
-              await this.loadWithPerf('ply', message, () => this.handleBinarySpatialData(message));
-              stationPipelineFeature.flushPendingLoadTimeColors(this);
-            } catch (error) {
-              console.error('Error handling binary PLY data:', error);
-              this.showError(
-                'Failed to handle binary PLY data: ' +
-                  (error instanceof Error ? error.message : String(error))
-              );
-            }
-            break;
-          case 'addFiles':
-            try {
-              this.addNewFiles(message.data);
-            } catch (error) {
-              console.error('Error adding new files:', error);
-              this.showError(
-                'Failed to add files: ' + (error instanceof Error ? error.message : String(error))
-              );
-            }
-            break;
-          case 'sequence:init':
-            try {
-              this.initializeSequence(message.files as string[], message.wildcard as string);
-            } catch (error) {
-              console.error('Error starting sequence:', error);
-              this.showError(
-                'Failed to start sequence: ' +
-                  (error instanceof Error ? error.message : String(error))
-              );
-            }
-            break;
-          case 'sequence:file:ultimate':
-            await this.sequenceHandleUltimate(message);
-            break;
-          case 'sequence:file:ply':
-            await this.sequenceHandlePly(message);
-            break;
-          case 'sequence:file:xyz':
-            await this.sequenceHandleXyz(message);
-            break;
-          case 'sequence:file:obj':
-            await this.sequenceHandleObj(message);
-            break;
-          case 'sequence:file:stl':
-            await this.sequenceHandleStl(message);
-            break;
-          case 'sequence:file:depth':
-            await this.sequenceHandleDepth(message);
-            break;
-          case 'fileRemoved':
-            try {
-              this.removeFileByIndex(message.fileIndex);
-            } catch (error) {
-              console.error('Error removing file:', error);
-              this.showError(
-                'Failed to remove file: ' + (error instanceof Error ? error.message : String(error))
-              );
-            }
-            break;
-          case 'startLargeFile':
-            this.handleStartLargeFile(message);
-            break;
-          case 'largeFileChunk':
-            this.handleLargeFileChunk(message);
-            break;
-          case 'largeFileComplete':
-            await this.handleLargeFileComplete(message);
-            break;
-          case 'cancelLargeFile':
-            largeFileChunking.handleCancelLargeFile(this, message);
-            break;
-          case 'depthData':
-            this.handleDepthData(message);
-            break;
-          case 'objData':
-            await this.loadWithPerf('obj', message, () => this.handleObjData(message));
-            break;
-          case 'stlData':
-            await this.loadWithPerf('stl', message, () => this.handleStlData(message));
-            break;
-          case 'xyzData':
-            await this.loadWithPerf('xyz', message, () => this.handleXyzData(message));
-            break;
-          case 'pcdData':
-            await this.loadWithPerf('pcd', message, () => this.handlePcdData(message));
-            break;
-          case 'ptsData':
-            await this.loadWithPerf('pts', message, () =>
-              formatDataHandlers.handlePointData(this, message)
+        },
+        benchmarkScenario: async message => {
+          await runBenchmarkScenario(this, message.step, message.anchorIndex ?? 0);
+        },
+        timing: async message => {
+          this.handleTimingMessage(message);
+        },
+        startLoading: async message => {
+          this.showImmediateLoading(message);
+        },
+        backgroundOperationComplete: async message => {
+          this.completeBackgroundOperation();
+        },
+        timingUpdate: async message => {
+          // Allow timing updates, suppress other spam
+          if (
+            typeof message.message === 'string' &&
+            message.message.includes('🧪 Header face types')
+          ) {
+            console.log(message.message);
+          }
+        },
+        loadingError: async message => {
+          const fileType = message.fileType || 'point cloud';
+          const fileName = message.fileName ? ` (${message.fileName})` : '';
+          this.showError(`Failed to load ${fileType} file${fileName}: ${message.error}`);
+        },
+        stonexColorReady: async message => {
+          stationPipelineFeature.applyLoadTimeColors(this, message.updates ?? []);
+        },
+        stationPipelineProgress: async message => {
+          stationPipelineFeature.reportStationPipelineProgress(message.message);
+        },
+        stationPipelineResult: async message => {
+          stationPipelineFeature.handleStationPipelineResult(this, message);
+        },
+        spatialData: async message => {
+          try {
+            // Both single and multi-file data are handled the same way now
+            const dataArray = Array.isArray(message.data) ? message.data : [message.data];
+            await this.loadWithPerf('ply', message, () => this.displayFiles(dataArray));
+          } catch (error) {
+            console.error('Error displaying PLY data:', error);
+            this.showError(
+              'Failed to display PLY data: ' +
+                (error instanceof Error ? error.message : String(error))
             );
-            break;
-          case 'kittiBinData':
-            await this.loadWithPerf('kitti-bin', message, () =>
-              formatDataHandlers.handlePointData(this, message)
+          }
+        },
+        multiSpatialData: async message => {
+          try {
+            // Both single and multi-file data are handled the same way now
+            const dataArray = Array.isArray(message.data) ? message.data : [message.data];
+            await this.loadWithPerf('ply', message, () => this.displayFiles(dataArray));
+          } catch (error) {
+            console.error('Error displaying PLY data:', error);
+            this.showError(
+              'Failed to display PLY data: ' +
+                (error instanceof Error ? error.message : String(error))
             );
-            break;
-          case 'offData':
-            await this.loadWithPerf('off', message, () => this.handleOffData(message));
-            break;
-          case 'gltfData':
-            await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
-            break;
-          case 'volumeData':
-            if (!acceptVolumeResponse(message.data?.metadata?.volumeSessionId, message.requestId)) {
-              break;
-            }
-            updateVolumeProgress(message.data?.metadata?.volumeSessionId, message.requestId, 1);
-            await this.loadWithPerf('volume', message, () => this.handleVolumeData(message));
-            break;
-          case 'volume:progress':
-            updateVolumeProgress(message.sessionId, message.requestId, message.fraction);
-            break;
-          case 'volume:error':
-            setVolumeError(message.sessionId, message.requestId, message.error);
-            break;
-          case 'colmapModelFiles':
-            await this.loadWithPerf('colmap', message, () => this.handleColmapModelFiles(message));
-            break;
-          case 'colmapImages':
-            await this.handleColmapImages(message);
-            break;
-          case 'npyData':
-            await this.loadWithPerf('npy', message, () =>
-              formatDataHandlers.handlePointData(this, message)
+          }
+        },
+        sceneModelData: async message => {
+          await this.loadWithPerf('model', message, () => handleSceneModelMessage(this, message));
+        },
+        modelResourceResult: async message => {},
+        cadDecodeResult: async message => {},
+        splatContainerUri: async message => {
+          await handleSplatContainerUri(this, message);
+        },
+        ultimateRawBinaryData: async message => {
+          try {
+            await this.handleUltimateRawBinaryData(message);
+          } catch (error) {
+            console.error('Error handling ultimate raw binary data:', error);
+            this.showError(
+              'Failed to handle ultimate raw binary data: ' +
+                (error instanceof Error ? error.message : String(error))
             );
-            break;
-          case 'fileData':
-            await this.loadWithPerf('file', message, () =>
-              formatDataHandlers.handleFileData(this, message)
+          }
+        },
+        ultimateRawBinaryUri: async message => {
+          await this.handleUltimateRawBinaryUri(message);
+        },
+        directTypedArrayData: async message => {
+          try {
+            await this.loadWithPerf('ply', message, () => this.handleDirectTypedArrayData(message));
+          } catch (error) {
+            console.error('Error handling direct TypedArray data:', error);
+            this.showError(
+              'Failed to handle direct TypedArray data: ' +
+                (error instanceof Error ? error.message : String(error))
             );
-            break;
-          case 'xyzVariantData':
-            await this.loadWithPerf('xyz', message, () =>
-              formatDataHandlers.handlePointData(this, message)
+          }
+        },
+        binarySpatialData: async message => {
+          try {
+            await this.loadWithPerf('ply', message, () => this.handleBinarySpatialData(message));
+            stationPipelineFeature.flushPendingLoadTimeColors(this);
+          } catch (error) {
+            console.error('Error handling binary PLY data:', error);
+            this.showError(
+              'Failed to handle binary PLY data: ' +
+                (error instanceof Error ? error.message : String(error))
             );
-            break;
-          case 'cameraParams':
-            this.handleCameraParams(message);
-            break;
-          case 'cameraParamsCancelled':
-            this.handleCameraParamsCancelled(message.requestId);
-            break;
-          case 'datasetTexture':
-            this.handleDatasetTexture(message);
-            break;
-          case 'cameraParamsError':
-            this.handleCameraParamsError(message.error, message.requestId);
-            break;
-          case 'savePlyFileResult':
-            this.handleSaveSpatialFileResult(message);
-            break;
-          case 'colorImageData':
-            this.handleColorImageData(message);
-            break;
-          case 'defaultDepthSettings':
-            this.handleDefaultDepthSettings(message);
-            break;
-          case 'mtlData':
-            this.handleMtlData(message);
-            break;
-          case 'calibrationFileSelected':
-            this.handleCalibrationFileSelected(message);
-            break;
-          case 'poseData':
-            try {
-              await (this as any).handlePoseData(message);
-            } catch (error) {
-              console.error('Error handling pose data:', error);
-              this.showError(
-                'Failed to handle pose data: ' +
-                  (error instanceof Error ? error.message : String(error))
-              );
-            }
-            break;
-        }
-      } finally {
-        if (tracksBackgroundChange) {
-          uiState.backgroundChanges = Math.max(0, uiState.backgroundChanges - 1);
-        }
-      }
-    });
+          }
+        },
+        addFiles: async message => {
+          try {
+            this.addNewFiles(message.data);
+          } catch (error) {
+            console.error('Error adding new files:', error);
+            this.showError(
+              'Failed to add files: ' + (error instanceof Error ? error.message : String(error))
+            );
+          }
+        },
+        'sequence:init': async message => {
+          try {
+            this.initializeSequence(message.files as string[], message.wildcard as string);
+          } catch (error) {
+            console.error('Error starting sequence:', error);
+            this.showError(
+              'Failed to start sequence: ' +
+                (error instanceof Error ? error.message : String(error))
+            );
+          }
+        },
+        'sequence:file:ultimate': async message => {
+          await this.sequenceHandleUltimate(message);
+        },
+        'sequence:file:ply': async message => {
+          await this.sequenceHandlePly(message);
+        },
+        'sequence:file:xyz': async message => {
+          await this.sequenceHandleXyz(message);
+        },
+        'sequence:file:obj': async message => {
+          await this.sequenceHandleObj(message);
+        },
+        'sequence:file:stl': async message => {
+          await this.sequenceHandleStl(message);
+        },
+        'sequence:file:depth': async message => {
+          await this.sequenceHandleDepth(message);
+        },
+        fileRemoved: async message => {
+          try {
+            this.removeFileByIndex(message.fileIndex);
+          } catch (error) {
+            console.error('Error removing file:', error);
+            this.showError(
+              'Failed to remove file: ' + (error instanceof Error ? error.message : String(error))
+            );
+          }
+        },
+        startLargeFile: async message => {
+          this.handleStartLargeFile(message);
+        },
+        largeFileChunk: async message => {
+          this.handleLargeFileChunk(message);
+        },
+        largeFileComplete: async message => {
+          await this.handleLargeFileComplete(message);
+        },
+        cancelLargeFile: async message => {
+          largeFileChunking.handleCancelLargeFile(this, message);
+        },
+        depthData: async message => {
+          this.handleDepthData(message);
+        },
+        objData: async message => {
+          await this.loadWithPerf('obj', message, () => this.handleObjData(message));
+        },
+        stlData: async message => {
+          await this.loadWithPerf('stl', message, () => this.handleStlData(message));
+        },
+        xyzData: async message => {
+          await this.loadWithPerf('xyz', message, () => this.handleXyzData(message));
+        },
+        pcdData: async message => {
+          await this.loadWithPerf('pcd', message, () => this.handlePcdData(message));
+        },
+        ptsData: async message => {
+          await this.loadWithPerf('pts', message, () =>
+            formatDataHandlers.handlePointData(this, message)
+          );
+        },
+        kittiBinData: async message => {
+          await this.loadWithPerf('kitti-bin', message, () =>
+            formatDataHandlers.handlePointData(this, message)
+          );
+        },
+        offData: async message => {
+          await this.loadWithPerf('off', message, () => this.handleOffData(message));
+        },
+        gltfData: async message => {
+          await this.loadWithPerf('gltf', message, () => this.handleGltfData(message));
+        },
+        volumeData: async message => {
+          if (!acceptVolumeResponse(message.data?.metadata?.volumeSessionId, message.requestId)) {
+            return;
+          }
+          updateVolumeProgress(message.data?.metadata?.volumeSessionId, message.requestId ?? 0, 1);
+          await this.loadWithPerf('volume', message, () => this.handleVolumeData(message));
+        },
+        'volume:progress': async message => {
+          updateVolumeProgress(message.sessionId, message.requestId, message.fraction);
+        },
+        'volume:error': async message => {
+          setVolumeError(message.sessionId, message.requestId, message.error);
+        },
+        colmapModelFiles: async message => {
+          await this.loadWithPerf('colmap', message, () => this.handleColmapModelFiles(message));
+        },
+        colmapImages: async message => {
+          await this.handleColmapImages(message);
+        },
+        npyData: async message => {
+          await this.loadWithPerf('npy', message, () =>
+            formatDataHandlers.handlePointData(this, message)
+          );
+        },
+        fileData: async message => {
+          await this.loadWithPerf('file', message, () =>
+            formatDataHandlers.handleFileData(this, message)
+          );
+        },
+        xyzVariantData: async message => {
+          await this.loadWithPerf('xyz', message, () =>
+            formatDataHandlers.handlePointData(this, message)
+          );
+        },
+        cameraParams: async message => {
+          this.handleCameraParams(message);
+        },
+        cameraParamsCancelled: async message => {
+          this.handleCameraParamsCancelled(message.requestId);
+        },
+        datasetTexture: async message => {
+          this.handleDatasetTexture(message);
+        },
+        cameraParamsError: async message => {
+          this.handleCameraParamsError(message.error, message.requestId);
+        },
+        savePlyFileResult: async message => {
+          this.handleSaveSpatialFileResult(message);
+        },
+        colorImageData: async message => {
+          this.handleColorImageData(message);
+        },
+        defaultDepthSettings: async message => {
+          this.handleDefaultDepthSettings(message);
+        },
+        mtlData: async message => {
+          this.handleMtlData(message);
+        },
+        calibrationFileSelected: async message => {
+          this.handleCalibrationFileSelected(message);
+        },
+        poseData: async message => {
+          try {
+            await (this as any).handlePoseData(message);
+          } catch (error) {
+            console.error('Error handling pose data:', error);
+            this.showError(
+              'Failed to handle pose data: ' +
+                (error instanceof Error ? error.message : String(error))
+            );
+          }
+        },
+      },
+      error => this.showError(error)
+    );
   }
 
   private currentTiming: {
@@ -2672,10 +2650,7 @@ export class PointCloudVisualizer {
     if (this.sequenceMode) {
       this.addNewFiles(dataArray);
 
-      // Capture and restore form states even in sequence mode
-      const openPanelStates = this.captureDepthPanelStates();
       this.updateFileList();
-      this.restoreDepthPanelStates(openPanelStates);
 
       // Ensure color consistency with current gamma setting
       this.rebuildAllColorAttributesForCurrentGammaSetting();
@@ -2688,11 +2663,7 @@ export class PointCloudVisualizer {
     this.addNewFiles(dataArray);
     this.updateFileStats();
 
-    // Capture current form states before regenerating UI
-    const openPanelStates = this.captureDepthPanelStates();
     this.updateFileList();
-    // Restore form values after UI regeneration
-    this.restoreDepthPanelStates(openPanelStates);
 
     this.updateCameraControlsPanel();
 
@@ -2710,8 +2681,12 @@ export class PointCloudVisualizer {
     return new Promise(resolve => setTimeout(resolve, 0));
   }
 
-  createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material {
-    const colorMode = this.fileEntries.require(fileIndex).state.colorMode || 'assigned';
+  createMaterialForFile(
+    data: SpatialData,
+    fileIndex: number,
+    state = this.fileEntries.require(fileIndex).state
+  ): THREE.Material {
+    const colorMode = state.colorMode || 'assigned';
 
     if (data.faceCount > 0) {
       // Mesh material
@@ -2752,11 +2727,11 @@ export class PointCloudVisualizer {
       const material = new THREE.PointsMaterial();
 
       // Initialize point size if not set
-      if (!this.fileEntries.require(fileIndex).state.pointSize) {
-        this.fileEntries.require(fileIndex).state.pointSize = DEFAULT_POINT_SIZE;
+      if (!state.pointSize) {
+        state.pointSize = DEFAULT_POINT_SIZE;
       }
 
-      material.size = this.fileEntries.require(fileIndex).state.pointSize;
+      material.size = state.pointSize;
       material.sizeAttenuation = true; // Always use distance-based scaling
 
       // Apply point count-based optimizations
@@ -2887,6 +2862,13 @@ export class PointCloudVisualizer {
       this.fitCameraToAllObjects();
     }
     this.isFirstFileLoad = false;
+  }
+
+  setCameraColorCorrection(
+    group: THREE.Group,
+    settings: import('./visualization/stonexColorCorrection').StonexColorCorrection
+  ): void {
+    stonexCameras.setStonexColorCorrection(this, group, settings);
   }
 
   updateFileStats(): void {
@@ -3124,9 +3106,7 @@ export class PointCloudVisualizer {
       // otherwise this remount silently discards any depth settings panel
       // that's open and edited (open state + unsaved field values) the
       // moment a second file starts loading.
-      const openPanelStates = this.captureDepthPanelStates();
       this.updateFileList();
-      this.restoreDepthPanelStates(openPanelStates);
       return;
     }
 
@@ -3195,14 +3175,16 @@ export class PointCloudVisualizer {
     this.vscode.postMessage({
       type: 'removeFile',
       fileIndex: fileIndex,
-    });
+      entryId: this.fileEntries.require(fileIndex).id,
+    } satisfies EntryRequest);
   }
 
   requestLoadMtl(fileIndex: number): void {
     this.vscode.postMessage({
       type: 'loadMtl',
       fileIndex: fileIndex,
-    });
+      entryId: this.fileEntries.require(fileIndex).id,
+    } satisfies EntryRequest);
   }
 
   private requestColorImageForDepth(fileIndex: number): void {
@@ -3225,23 +3207,9 @@ export class PointCloudVisualizer {
       // Assign new file index
       data.fileIndex = this.spatialFiles.length;
 
-      // Add to data array
-      this.spatialFiles.push(data);
-
-      // Claim the entry's slot before anything writes per-file state into it.
-      // Spatial files sort first, so the unified index equals data.fileIndex,
-      // but the insert still has to happen here: appending would land past any
-      // pose or camera entries already loaded and hand this file their slots.
-      const { index: entryIndex } = this.fileEntries.add('spatial');
-      insertEntryState(this, entryIndex, {
-        visible: true,
-        pointSize: DEFAULT_POINT_SIZE,
-        colorMode: 'assigned',
-      });
-
-      // Update welcome message visibility
-      this.updateWelcomeMessageVisibility();
-
+      const entry = this.fileEntries.prepare('spatial');
+      entry.state.depthForm = depthPanelState.createDepthForm(this, data, data.fileIndex);
+      entry.state.liveDepth = true;
       // Initialize visibility states based on file type
       const isObjFile = (data as any).isObjFile;
       const objData = (data as any).objData;
@@ -3250,24 +3218,24 @@ export class PointCloudVisualizer {
 
       if (data.faceCount > 0 || data.sceneModel) {
         // Native scenes can contain point primitives as well as meshes.
-        this.fileEntries.require(data.fileIndex).state.solidVisible = true;
+        entry.state.solidVisible = true;
 
         if (isMultiMaterial) {
           // Multi-material OBJ - points represent distinct geometric elements
-          this.fileEntries.require(data.fileIndex).state.pointsVisible = true; // Show points by default
+          entry.state.pointsVisible = true; // Show points by default
         } else {
           // Single-material mesh - points are just mesh vertices
-          this.fileEntries.require(data.fileIndex).state.pointsVisible = false; // Don't show mesh vertices as points
+          entry.state.pointsVisible = false; // Don't show mesh vertices as points
         }
       } else {
         // Point cloud file (PLY, XYZ, PTS) - show points only
-        this.fileEntries.require(data.fileIndex).state.solidVisible = false; // No mesh surface exists
-        this.fileEntries.require(data.fileIndex).state.pointsVisible = true; // Show actual point data
+        entry.state.solidVisible = false; // No mesh surface exists
+        entry.state.pointsVisible = true; // Show actual point data
       }
 
       // Wireframe and normals always start disabled
-      this.fileEntries.require(data.fileIndex).state.wireframeVisible = false;
-      this.fileEntries.require(data.fileIndex).state.normalsVisible = false;
+      entry.state.wireframeVisible = false;
+      entry.state.normalsVisible = false;
 
       // Initialize vertex points object (null initially, created on demand)
 
@@ -3284,7 +3252,7 @@ export class PointCloudVisualizer {
             : this.hasIntensityData(data)
               ? 'intensity'
               : 'assigned';
-      this.fileEntries.require(data.fileIndex).state.colorMode = initialColorMode;
+      entry.state.colorMode = initialColorMode;
 
       console.log(
         `🎨 addNewFiles - fileIndex: ${data.fileIndex}, hasColors: ${data.hasColors}, colorMode: ${initialColorMode}, useOriginalColors: ${this.useOriginalColors}`
@@ -3295,288 +3263,25 @@ export class PointCloudVisualizer {
         typeof recommendedPointSize === 'number' && recommendedPointSize > 0
           ? recommendedPointSize
           : DEFAULT_POINT_SIZE;
-      this.fileEntries.require(data.fileIndex).state.pointSize = initialPointSize;
+      entry.state.pointSize = initialPointSize;
 
-      // debug
-
-      // Create geometry and material
-      // Use data.fileIndex which is the spatialFiles array index
-      const geometry = this.createGeometryFromSpatialData(data);
-      const material = this.createMaterialForFile(data, data.fileIndex);
-
-      // Check if this is an OBJ file and handle different rendering modes
-      const isObjFile2 = (data as any).isObjFile;
-      const objRenderType = (data as any).objRenderType;
-
-      if (data.sceneModel) {
-        const modelObject = createModelObject(data, geometry, material);
-        this.scene.add(modelObject);
-        this.meshes.push(modelObject);
-        this.requestRender();
-      } else if (isObjFile2) {
-        if (objRenderType === 'wireframe' && (data as any).objLines) {
-          // Create wireframe using LineSegments
-          const lines = (data as any).objLines;
-          const linePositions = new Float32Array(lines.length * 6); // 2 vertices per line, 3 coords per vertex
-
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const startVertex = data.vertices[line.start];
-            const endVertex = data.vertices[line.end];
-
-            const i6 = i * 6;
-            linePositions[i6] = startVertex.x;
-            linePositions[i6 + 1] = startVertex.y;
-            linePositions[i6 + 2] = startVertex.z;
-            linePositions[i6 + 3] = endVertex.x;
-            linePositions[i6 + 4] = endVertex.y;
-            linePositions[i6 + 5] = endVertex.z;
-          }
-
-          const lineGeometry = new THREE.BufferGeometry();
-          lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
-
-          const lineMaterial = new THREE.LineBasicMaterial({
-            color: 0xff0000, // Red wireframe
-          });
-
-          const wireframeMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
-          (wireframeMesh as any).isLineSegments = true;
-          this.scene.add(wireframeMesh);
-          this.meshes.push(wireframeMesh);
-          this.requestRender();
-        } else if (objRenderType === 'mesh' && data.faceCount > 0) {
-          // Create multi-material mesh(es)
-          const objData = (data as any).objData;
-
-          if (objData && objData.materialGroups && objData.materialGroups.length > 1) {
-            // Multi-material rendering: create separate mesh for each material group
-            const subMeshes: THREE.Object3D[] = [];
-            const meshGroup = new THREE.Group();
-
-            for (const materialGroup of objData.materialGroups) {
-              if (materialGroup.faces.length > 0) {
-                // Create geometry for this material group
-                const groupGeometry = new THREE.BufferGeometry();
-
-                // Collect vertices for faces in this group
-                const faceVertices: number[] = [];
-                const faceIndices: number[] = [];
-                let vertexOffset = 0;
-
-                for (const face of materialGroup.faces) {
-                  if (face.indices.length >= 3) {
-                    // Add vertices for this face
-                    for (const vertexIndex of face.indices) {
-                      const vertex = data.vertices[vertexIndex];
-                      faceVertices.push(vertex.x, vertex.y, vertex.z);
-                    }
-
-                    // Triangulate face (fan triangulation)
-                    for (let i = 1; i < face.indices.length - 1; i++) {
-                      faceIndices.push(vertexOffset);
-                      faceIndices.push(vertexOffset + i);
-                      faceIndices.push(vertexOffset + i + 1);
-                    }
-
-                    vertexOffset += face.indices.length;
-                  }
-                }
-
-                if (faceVertices.length > 0) {
-                  groupGeometry.setAttribute(
-                    'position',
-                    new THREE.BufferAttribute(new Float32Array(faceVertices), 3)
-                  );
-                  groupGeometry.setIndex(faceIndices);
-                  groupGeometry.computeVertexNormals();
-
-                  const groupMaterial = new THREE.MeshBasicMaterial({
-                    color: 0x808080, // Default gray - will be colored by MTL
-                    side: THREE.DoubleSide,
-                  });
-
-                  const groupMesh = new THREE.Mesh(groupGeometry, groupMaterial);
-                  (groupMesh as any).materialName = materialGroup.material;
-                  (groupMesh as any).isObjMesh = true;
-
-                  meshGroup.add(groupMesh);
-                  subMeshes.push(groupMesh);
-                }
-              }
-
-              // Handle lines in this material group
-              if (materialGroup.lines.length > 0) {
-                const linePositions = new Float32Array(materialGroup.lines.length * 6);
-
-                for (let i = 0; i < materialGroup.lines.length; i++) {
-                  const line = materialGroup.lines[i];
-                  const startVertex = data.vertices[line.start];
-                  const endVertex = data.vertices[line.end];
-
-                  const i6 = i * 6;
-                  linePositions[i6] = startVertex.x;
-                  linePositions[i6 + 1] = startVertex.y;
-                  linePositions[i6 + 2] = startVertex.z;
-                  linePositions[i6 + 3] = endVertex.x;
-                  linePositions[i6 + 4] = endVertex.y;
-                  linePositions[i6 + 5] = endVertex.z;
-                }
-
-                const lineGeometry = new THREE.BufferGeometry();
-                lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
-
-                const lineMaterial = new THREE.LineBasicMaterial({
-                  color: 0xff0000, // Default red - will be colored by MTL
-                });
-
-                const lineSegments = new THREE.LineSegments(lineGeometry, lineMaterial);
-                (lineSegments as any).materialName = materialGroup.material;
-                (lineSegments as any).isLineSegments = true;
-
-                meshGroup.add(lineSegments);
-                subMeshes.push(lineSegments);
-              }
-
-              // Handle points in this material group
-              if (materialGroup.points.length > 0) {
-                const pointPositions = new Float32Array(materialGroup.points.length * 3);
-
-                for (let i = 0; i < materialGroup.points.length; i++) {
-                  const point = materialGroup.points[i];
-                  const vertex = data.vertices[point.index];
-
-                  const i3 = i * 3;
-                  pointPositions[i3] = vertex.x;
-                  pointPositions[i3 + 1] = vertex.y;
-                  pointPositions[i3 + 2] = vertex.z;
-                }
-
-                const pointGeometry = new THREE.BufferGeometry();
-                pointGeometry.setAttribute(
-                  'position',
-                  new THREE.BufferAttribute(pointPositions, 3)
-                );
-
-                const pointMaterial = new THREE.PointsMaterial({
-                  color: 0xff0000, // Default red - will be colored by MTL
-                  size: this.fileEntries.require(data.fileIndex).state.pointSize || 0.001, // Use stored point size (world units)
-                  sizeAttenuation: true, // Use world-space sizing like other file types
-                  // Apply transparency settings
-                  transparent: this.allowTransparency,
-                  alphaTest: this.allowTransparency ? 0.1 : 0,
-                  opacity: 1.0,
-                  depthWrite: true,
-                  depthTest: true,
-                  side: THREE.DoubleSide,
-                });
-
-                const points = new THREE.Points(pointGeometry, pointMaterial);
-                (points as any).materialName = materialGroup.material;
-                (points as any).isPoints = true;
-
-                meshGroup.add(points);
-                subMeshes.push(points);
-              }
-            }
-
-            (meshGroup as any).isObjMesh = true;
-            (meshGroup as any).isMultiMaterial = true;
-            this.scene.add(meshGroup);
-            this.fileEntries.require(data.fileIndex!).resources.materialGroup = meshGroup;
-            this.fileEntries.require(data.fileIndex!).resources.materialMeshes = subMeshes;
-
-            console.log(`Created multi-material OBJ with ${subMeshes.length} sub-meshes`);
-          } else {
-            // Single material or fallback to original logic
-            const meshMaterial = new THREE.MeshBasicMaterial({
-              color: 0x808080,
-              side: THREE.DoubleSide,
-              vertexColors: data.hasColors,
-            });
-
-            if (objData && objData.hasNormals && objData.normals.length > 0) {
-              const normals = new Float32Array(data.vertexCount * 3);
-              for (let i = 0; i < data.vertexCount && i < objData.normals.length; i++) {
-                const normal = objData.normals[i];
-                normals[i * 3] = normal.nx;
-                normals[i * 3 + 1] = normal.ny;
-                normals[i * 3 + 2] = normal.nz;
-              }
-              geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-            }
-
-            const mesh = new THREE.Mesh(geometry, meshMaterial);
-            (mesh as any).isObjMesh = true;
-            this.scene.add(mesh);
-            this.meshes.push(mesh);
-            this.requestRender();
-            // this.requestRender();
-          }
-        } else {
-          // Fallback to points - use optimized creation
-          const mesh = this.createOptimizedPointCloud(geometry, material as THREE.PointsMaterial);
-          this.scene.add(mesh);
-          this.meshes.push(mesh);
-          this.requestRender();
-        }
-      } else {
-        // Handle legacy OBJ wireframe format and regular PLY files
-        const isObjWireframe = (data as any).isObjWireframe;
-
-        if (isObjWireframe && (data as any).objLines) {
-          // Legacy wireframe handling
-          const lines = (data as any).objLines;
-          const linePositions = new Float32Array(lines.length * 6);
-
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const startVertex = data.vertices[line.start];
-            const endVertex = data.vertices[line.end];
-
-            const i6 = i * 6;
-            linePositions[i6] = startVertex.x;
-            linePositions[i6 + 1] = startVertex.y;
-            linePositions[i6 + 2] = startVertex.z;
-            linePositions[i6 + 3] = endVertex.x;
-            linePositions[i6 + 4] = endVertex.y;
-            linePositions[i6 + 5] = endVertex.z;
-          }
-
-          const lineGeometry = new THREE.BufferGeometry();
-          lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
-
-          const lineMaterial = new THREE.LineBasicMaterial({
-            color: 0xff0000,
-          });
-
-          const wireframeMesh = new THREE.LineSegments(lineGeometry, lineMaterial);
-          (wireframeMesh as any).isLineSegments = true;
-          this.scene.add(wireframeMesh);
-          this.meshes.push(wireframeMesh);
-          this.requestRender();
-        } else {
-          // Create regular mesh for PLY files
-          const shouldShowAsPoints = data.faceCount === 0;
-          const mesh = shouldShowAsPoints
-            ? this.createOptimizedPointCloud(geometry, material as THREE.PointsMaterial)
-            : new THREE.Mesh(geometry, material);
-
-          this.scene.add(mesh);
-          this.meshes.push(mesh);
-          this.requestRender();
-        }
-      }
+      const object = buildFileObject(this, data, data.fileIndex, entry);
+      // No externally visible entry exists until every resource has been built.
+      this.spatialFiles.push(data);
+      this.meshes.push(object);
+      this.scene.add(object);
+      this.fileEntries.commit(entry);
+      this.updateWelcomeMessageVisibility();
+      this.requestRender();
       // If sequence mode is active, only the current frame stays visible to avoid overloading the scene
       const isSeqMode = this.sequenceFiles.length > 0;
       const shouldBeVisible = !isSeqMode || data.fileIndex === this.sequenceIndex;
-      this.fileEntries.require(data.fileIndex).state.visible = shouldBeVisible;
+      entry.state.visible = shouldBeVisible;
 
       const lastObject = this.meshes[this.meshes.length - 1];
       if (lastObject) {
         lastObject.visible = shouldBeVisible;
       }
-      const isObjFile3 = (data as any).isObjFile;
 
       if ((data.metadata?.stonexCameraFrames as unknown[])?.length) {
         stonexCameraFiles.push(data);
@@ -3613,10 +3318,8 @@ export class PointCloudVisualizer {
       }
     }
 
-    // Update UI (preserve depth panel states)
-    const openPanelStates = this.captureDepthPanelStates();
+    // Refresh entry data in the file list
     this.updateFileList();
-    this.restoreDepthPanelStates(openPanelStates);
     this.updateFileStats();
     this.showLoading(false);
 
@@ -3653,15 +3356,7 @@ export class PointCloudVisualizer {
       if (!group) {
         continue;
       }
-      this.scene.remove(group);
-      group.traverse((object: any) => {
-        object.geometry?.dispose?.();
-        const materials = Array.isArray(object.material) ? object.material : [object.material];
-        for (const material of materials) {
-          material?.map?.dispose?.();
-          material?.dispose?.();
-        }
-      });
+      disposeObjects([group]);
       this.cameraGroups.splice(child.kindIndex, 1);
       this.cameraNames.splice(child.kindIndex, 1);
       this.cameraShowLabels.splice(child.kindIndex, 1);
@@ -3680,8 +3375,9 @@ export class PointCloudVisualizer {
 
     // Which collection this index refers to is the registry's to answer.
     const kind = this.fileEntries.kindAt(fileIndex);
-    if (!kind) {return;}
-    const openPanelStates = this.captureDepthPanelStates();
+    if (!kind) {
+      return;
+    }
 
     if (kind === 'camera') {
       const cameraIndex = this.fileEntries.kindIndexAt(fileIndex);
@@ -3690,21 +3386,7 @@ export class PointCloudVisualizer {
       }
 
       const group = this.cameraGroups[cameraIndex];
-      this.scene.remove(group);
-      group.traverse((obj: any) => {
-        if (obj.geometry && typeof obj.geometry.dispose === 'function') {
-          obj.geometry.dispose();
-        }
-        if (obj.material) {
-          if (Array.isArray(obj.material)) {
-            obj.material.forEach((m: any) => m.dispose && m.dispose());
-          } else if (typeof obj.material.dispose === 'function') {
-            const material = obj.material as THREE.Material & { map?: THREE.Texture };
-            material.map?.dispose();
-            obj.material.dispose();
-          }
-        }
-      });
+      disposeObjects([group]);
       this.cameraGroups.splice(cameraIndex, 1);
       this.cameraNames.splice(cameraIndex, 1);
       this.cameraShowLabels.splice(cameraIndex, 1);
@@ -3712,9 +3394,8 @@ export class PointCloudVisualizer {
 
       this.removeEntryAndChildren(fileIndex);
 
-      // Preserve depth panel states when removing files
+      // Refresh the list after registry membership changes
       this.updateFileList();
-      this.restoreDepthPanelStates(openPanelStates);
       this.updateFileStats();
       return;
     }
@@ -3726,109 +3407,34 @@ export class PointCloudVisualizer {
       }
 
       const group = this.poseGroups[poseIndex];
-      this.scene.remove(group);
-      group.traverse((obj: any) => {
-        if (obj.geometry && typeof obj.geometry.dispose === 'function') {
-          obj.geometry.dispose();
-        }
-        if (obj.material) {
-          if (Array.isArray(obj.material)) {
-            obj.material.forEach((m: any) => m.dispose && m.dispose());
-          } else if (typeof obj.material.dispose === 'function') {
-            obj.material.dispose();
-          }
-        }
-      });
+      disposeObjects([group]);
       this.poseGroups.splice(poseIndex, 1);
       this.poseMeta.splice(poseIndex, 1);
       this.poseLabelsGroups.splice(poseIndex, 1);
       this.poseJoints.splice(poseIndex, 1);
       this.poseEdges.splice(poseIndex, 1);
 
-      // pose.ts keys its per-pose toggles by the unified index, not by the pose
-      // index, so they are spliced here alongside the shared entry state rather
-      // than with poseGroups above.
-      this.poseUseDatasetColors.splice(fileIndex, 1);
-      this.poseShowLabels.splice(fileIndex, 1);
-      this.poseScaleByScore.splice(fileIndex, 1);
-      this.poseScaleByUncertainty.splice(fileIndex, 1);
-      this.poseConvention.splice(fileIndex, 1);
-      this.poseMinScoreThreshold.splice(fileIndex, 1);
-      this.poseMaxUncertaintyThreshold.splice(fileIndex, 1);
+      this.poseUseDatasetColors.splice(poseIndex, 1);
+      this.poseShowLabels.splice(poseIndex, 1);
+      this.poseScaleByScore.splice(poseIndex, 1);
+      this.poseScaleByUncertainty.splice(poseIndex, 1);
+      this.poseConvention.splice(poseIndex, 1);
+      this.poseMinScoreThreshold.splice(poseIndex, 1);
+      this.poseMaxUncertaintyThreshold.splice(poseIndex, 1);
 
       this.removeEntryAndChildren(fileIndex);
 
-      // Preserve depth panel states when removing files
+      // Refresh the list after registry membership changes
       this.updateFileList();
-      this.restoreDepthPanelStates(openPanelStates);
       this.updateFileStats();
       return;
     }
 
-    this.spatialFiles[fileIndex]?.sceneModel?.dispose();
-    // Remove mesh from scene
-    const mesh = this.meshes[fileIndex];
-    this.scene.remove(mesh);
-    if (mesh.geometry) {
-      mesh.geometry.dispose();
-    }
-    if (mesh.material) {
-      if (Array.isArray(mesh.material)) {
-        mesh.material.forEach(mat => mat.dispose());
-      } else {
-        mesh.material.dispose();
-      }
-    }
-
-    // Remove normals visualizer from scene and dispose
-    const normalsVisualizer = this.fileEntries.require(fileIndex).resources.normals;
-    if (normalsVisualizer) {
-      this.scene.remove(normalsVisualizer);
-      if (normalsVisualizer.geometry) {
-        normalsVisualizer.geometry.dispose();
-      }
-      if (normalsVisualizer.material) {
-        if (Array.isArray(normalsVisualizer.material)) {
-          normalsVisualizer.material.forEach(mat => mat.dispose());
-        } else {
-          normalsVisualizer.material.dispose();
-        }
-      }
-    }
-
-    // Remove vertex points object from scene and dispose
-    const vertexPoints = this.fileEntries.require(fileIndex).resources.vertexPoints;
-    if (vertexPoints) {
-      this.scene.remove(vertexPoints);
-      if (vertexPoints.geometry) {
-        vertexPoints.geometry.dispose();
-      }
-      if (vertexPoints.material) {
-        if (Array.isArray(vertexPoints.material)) {
-          vertexPoints.material.forEach(mat => mat.dispose());
-        } else {
-          vertexPoints.material.dispose();
-        }
-      }
-    }
-
-    // Remove multi-material group from scene and dispose
-    const multiMaterialGroup = this.fileEntries.require(fileIndex).resources.materialGroup;
-    if (multiMaterialGroup) {
-      this.scene.remove(multiMaterialGroup);
-      multiMaterialGroup.traverse((obj: any) => {
-        if (obj.geometry && typeof obj.geometry.dispose === 'function') {
-          obj.geometry.dispose();
-        }
-        if (obj.material) {
-          if (Array.isArray(obj.material)) {
-            obj.material.forEach((m: any) => m.dispose && m.dispose());
-          } else if (typeof obj.material.dispose === 'function') {
-            obj.material.dispose();
-          }
-        }
-      });
-    }
+    disposeFileResources(
+      this.fileEntries.require(fileIndex),
+      this.meshes[fileIndex],
+      this.spatialFiles[fileIndex]
+    );
 
     // Remove from arrays
     const volumeSessionId = this.spatialFiles[fileIndex]?.metadata?.volumeSessionId;
@@ -3846,16 +3452,13 @@ export class PointCloudVisualizer {
 
     this.removeEntryAndChildren(fileIndex);
 
-    // Remove rendering mode states for this file
-
     // Reassign file indices
     for (let i = 0; i < this.spatialFiles.length; i++) {
       this.spatialFiles[i].fileIndex = i;
     }
 
-    // Update UI (preserve depth panel states)
+    // Update UI
     this.updateFileList();
-    this.restoreDepthPanelStates(openPanelStates);
     this.updateFileStats();
     this.updateWelcomeMessageVisibility();
 
@@ -4609,114 +4212,20 @@ export class PointCloudVisualizer {
   }
 
   private updateDepthFormWithDefaults(fileIndex: number): void {
-    // Update form fields to show default values (but preserve cx/cy if they exist from image dimensions)
-    const fxInput = document.getElementById(`fx-${fileIndex}`) as HTMLInputElement;
-    const fyInput = document.getElementById(`fy-${fileIndex}`) as HTMLInputElement;
-    if (fxInput) {
-      fxInput.value = this.defaultDepthSettings.fx.toString();
-    }
-    if (fyInput && this.defaultDepthSettings.fy !== undefined) {
-      fyInput.value = this.defaultDepthSettings.fy.toString();
-    }
-
-    // Preserve cx/cy values if they were auto-calculated from Depth dimensions
-    const cxInput = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement;
-    const cyInput = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
-    const depthData = this.spatialFiles[fileIndex]?.depthSource;
-
-    if (cxInput && depthData?.depthDimensions) {
-      // Keep the computed cx value based on actual image dimensions
-      const computedCx = (depthData.depthDimensions.width - 1) / 2;
-      cxInput.value = computedCx.toString();
-      console.log(
-        `📐 Preserving computed cx = ${computedCx} for file ${fileIndex} (not overriding with defaults)`
-      );
-    }
-
-    if (cyInput && depthData?.depthDimensions) {
-      // Keep the computed cy value based on actual image dimensions
-      const computedCy = (depthData.depthDimensions.height - 1) / 2;
-      cyInput.value = computedCy.toString();
-      console.log(
-        `📐 Preserving computed cy = ${computedCy} for file ${fileIndex} (not overriding with defaults)`
-      );
-    }
-
-    const cameraModelSelect = document.getElementById(
-      `camera-model-${fileIndex}`
-    ) as HTMLSelectElement;
-    if (cameraModelSelect) {
-      cameraModelSelect.value = this.defaultDepthSettings.cameraModel;
-    }
-
-    const depthTypeSelect = document.getElementById(`depth-type-${fileIndex}`) as HTMLSelectElement;
-    if (depthTypeSelect) {
-      depthTypeSelect.value = this.defaultDepthSettings.depthType;
-
-      // Update baseline and disparity offset visibility based on depth type
-      const baselineGroup = document.getElementById(`baseline-group-${fileIndex}`);
-      const disparityOffsetGroup = document.getElementById(`disparity-offset-group-${fileIndex}`);
-      const isDisparity = this.defaultDepthSettings.depthType === 'disparity';
-      if (baselineGroup) {
-        baselineGroup.style.display = isDisparity ? '' : 'none';
-      }
-      if (disparityOffsetGroup) {
-        disparityOffsetGroup.style.display = isDisparity ? '' : 'none';
-      }
-    }
-
-    const baselineInput = document.getElementById(`baseline-${fileIndex}`) as HTMLInputElement;
-    if (baselineInput && this.defaultDepthSettings.baseline !== undefined) {
-      baselineInput.value = this.defaultDepthSettings.baseline.toString();
-    }
-
-    const conventionSelect = document.getElementById(
-      `convention-${fileIndex}`
-    ) as HTMLSelectElement;
-    if (conventionSelect) {
-      conventionSelect.value = this.defaultDepthSettings.convention || 'opengl';
-    }
-
-    const depthScaleInput = document.getElementById(`depth-scale-${fileIndex}`) as HTMLInputElement;
-    if (depthScaleInput && this.defaultDepthSettings.depthScale !== undefined) {
-      depthScaleInput.value = this.defaultDepthSettings.depthScale.toString();
-    }
-
-    const depthBiasInput = document.getElementById(`depth-bias-${fileIndex}`) as HTMLInputElement;
-    if (depthBiasInput && this.defaultDepthSettings.depthBias !== undefined) {
-      depthBiasInput.value = this.defaultDepthSettings.depthBias.toString();
-    }
-
-    console.log(`✅ Updated depth form ${fileIndex} with defaults:`, this.defaultDepthSettings);
+    depthPanelState.resetFormDefaults(
+      depthPanelState.getDepthForm(this, fileIndex),
+      this.defaultDepthSettings
+    );
   }
 
   updatePrinciplePointFields(
     fileIndex: number,
     dimensions: { width: number; height: number }
   ): void {
-    // Update cx and cy form fields with computed values based on actual image dimensions
-    const cxInput = document.getElementById(`cx-${fileIndex}`) as HTMLInputElement;
-    const cyInput = document.getElementById(`cy-${fileIndex}`) as HTMLInputElement;
-
-    const computedCx = (dimensions.width - 1) / 2;
-    const computedCy = (dimensions.height - 1) / 2;
-
-    if (cxInput) {
-      cxInput.value = computedCx.toString();
-    }
-
-    if (cyInput) {
-      cyInput.value = computedCy.toString();
-    }
-
-    // Update image size display
-    const imageSizeDiv = document.getElementById(`image-size-${fileIndex}`);
-    if (imageSizeDiv) {
-      imageSizeDiv.textContent = `Image Size: Width: ${dimensions.width}, Height: ${dimensions.height}`;
-    }
-
-    // Note: Not calling updateSingleDefaultButtonState() here to avoid duplicate calls
-    // It will be called by updateFileList() which renders the UI
+    Object.assign(depthPanelState.getDepthForm(this, fileIndex), {
+      cx: (dimensions.width - 1) / 2,
+      cy: (dimensions.height - 1) / 2,
+    });
   }
 
   private updateDefaultButtonState(): void {
@@ -4805,25 +4314,6 @@ export class PointCloudVisualizer {
 
   private handleMtlData(message: any): void {
     formatDataHandlers.handleMtlData(this, message);
-  }
-
-  /**
-   * Capture the current open/closed state of depth settings panels and form values
-   */
-  captureDepthPanelStates(): Map<number, { panelOpen: boolean; formValues: any }> {
-    return depthPanelState.captureDepthPanelStates(this);
-  }
-
-  private captureDepthFormValues(fileIndex: number): any {
-    return depthPanelState.captureDepthFormValues(this, fileIndex);
-  }
-
-  restoreDepthPanelStates(states: Map<number, { panelOpen: boolean; formValues: any }>): void {
-    depthPanelState.restoreDepthPanelStates(this, states);
-  }
-
-  private restoreDepthFormValues(fileIndex: number, formValues: any): void {
-    depthPanelState.restoreDepthFormValues(this, fileIndex, formValues);
   }
 
   async promptForCameraParameters(fileName: string): Promise<CameraParams | null> {

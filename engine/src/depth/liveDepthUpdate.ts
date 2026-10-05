@@ -10,7 +10,7 @@ export interface LiveDepthUpdateHost {
   meshes: (THREE.Mesh | THREE.Points | THREE.LineSegments)[];
   scene: THREE.Scene;
   smallViewAffordance?: { notifyGeometryReplaced(): void };
-  getDepthSettingsFromFileUI(fileIndex: number): CameraParams;
+  getDepthSettings(fileIndex: number): CameraParams;
   processDepthToPointCloud(
     depthData: ArrayBuffer,
     fileName: string,
@@ -63,13 +63,17 @@ export function scheduleLiveDepthUpdate(
   delayMs: number = 60
 ): void {
   const entry = host.fileEntries.require(fileIndex);
-  if (!entry.state.liveDepth) {return;}
+  if (!entry.state.liveDepth) {
+    return;
+  }
   entry.depthUpdate.version++;
   clearTimeout(entry.depthUpdate.timer);
   entry.depthUpdate.timer = window.setTimeout(() => {
     entry.depthUpdate.timer = undefined;
     const index = host.fileEntries.indexOf(entry.id);
-    if (index >= 0) {void requestLiveDepthUpdate(host, index);}
+    if (index >= 0) {
+      void requestLiveDepthUpdate(host, index);
+    }
   }, delayMs);
 }
 
@@ -78,7 +82,9 @@ export async function requestLiveDepthUpdate(
   fileIndex: number
 ): Promise<void> {
   const entry = host.fileEntries.require(fileIndex);
-  if (!entry.state.liveDepth) {return;}
+  if (!entry.state.liveDepth) {
+    return;
+  }
   const work = entry.depthUpdate;
   if (work.inFlight) {
     work.queued = true;
@@ -120,7 +126,9 @@ export async function applyDepthSettings(
   liveVersion?: number
 ): Promise<void> {
   const entry = host.fileEntries.at(fileIndex);
-  if (!entry) {return;}
+  if (!entry) {
+    return;
+  }
   await runWithFileActivity(() => {
     const currentIndex = host.fileEntries.indexOf(entry.id);
     return currentIndex < 0
@@ -144,7 +152,7 @@ async function applyDepthSettingsInner(
   const perf = new PerfTimer('depth/reapply');
   try {
     // Get the current values from the form using the helper method
-    const newCameraParams = host.getDepthSettingsFromFileUI(fileIndex);
+    const newCameraParams = host.getDepthSettings(fileIndex);
 
     // DEBUG: Log what we read from the form
     console.log(

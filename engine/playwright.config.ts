@@ -1,5 +1,6 @@
 /// <reference types="node" />
 
+import { externalFixtureSpecs } from './test/externalFixtures';
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
@@ -30,6 +31,12 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: [...externalFixtureSpecs],
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'external-fixtures',
+      testMatch: [...externalFixtureSpecs],
       use: { ...devices['Desktop Chrome'] },
     },
   ],

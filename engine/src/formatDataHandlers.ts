@@ -26,7 +26,9 @@ export interface FormatDataHandlersHost {
 function attachNormalsVisualizer(host: FormatDataHandlersHost, spatialData: SpatialData): void {
   // Set initial visibility based on stored state (default true)
   const fileIndex = spatialData.fileIndex ?? host.spatialFiles.length - 1;
-  if (host.spatialFiles[fileIndex] !== spatialData) {return;}
+  if (host.spatialFiles[fileIndex] !== spatialData) {
+    return;
+  }
   const normalsVisualizer = host.createNormalsVisualizer(spatialData);
   const initialVisible = host.fileEntries.require(fileIndex).state.normalsVisible !== false;
   normalsVisualizer.visible = initialVisible;
@@ -869,15 +871,20 @@ export async function handleFileData(
   try {
     const input = readFileDataMessage(message);
     const data = await decodeFileMessage(input);
-    if (input.isAddFile) {host.addNewFiles([data]);}
-    else {await host.displayFiles([data]);}
+    if (input.isAddFile) {
+      host.addNewFiles([data]);
+    } else {
+      await host.displayFiles([data]);
+    }
     host.showStatus(`Loaded ${data.vertexCount.toLocaleString()} points from ${input.fileName}`);
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {host.showStatus('Import cancelled');}
-    else
-      {host.showError(
+    if (error instanceof Error && error.name === 'AbortError') {
+      host.showStatus('Import cancelled');
+    } else {
+      host.showError(
         `File import failed: ${error instanceof Error ? error.message : String(error)}`
-      );}
+      );
+    }
   }
 }
 
@@ -886,7 +893,7 @@ export async function handlePointData(
   host: FormatDataHandlersHost,
   message: {
     type: 'ptsData' | 'kittiBinData' | 'npyData' | 'xyzVariantData';
-    data: SpatialData;
+    data: import('./interfaces').PointDataPayload;
     fileName: string;
     shortPath?: string;
     fileSizeInBytes?: number;
@@ -909,8 +916,13 @@ export async function handlePointData(
     scalarFields:
       input.scalarFields ?? (input.intensityArray ? { intensity: input.intensityArray } : {}),
   };
-  if (message.isAddFile) {host.addNewFiles([data]);}
-  else {await host.displayFiles([data]);}
-  if (data.hasNormals) {attachNormalsVisualizer(host, data);}
+  if (message.isAddFile) {
+    host.addNewFiles([data]);
+  } else {
+    await host.displayFiles([data]);
+  }
+  if (data.hasNormals) {
+    attachNormalsVisualizer(host, data);
+  }
   host.showStatus(`Loaded ${data.vertexCount.toLocaleString()} points from ${message.fileName}`);
 }

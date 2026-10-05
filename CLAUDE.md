@@ -91,12 +91,22 @@ Keep `main.ts` focused on scene composition. Put feature implementation in the
 modules above. Shared file presentation state and transforms belong to stable
 `FileEntryRegistry` entries; never add parallel arrays or Svelte mirrors for
 them. Async entry work must retain the entry ID and resolve its current index
-after awaiting. Depth source bytes belong to `SpatialData.depthSource`.
+after awaiting. Build file objects off-scene with `visualization/fileObject.ts`
+and commit their prepared registry entry only after construction succeeds.
+Dispose entry-owned resources through its shared disposal helper. Depth source
+bytes belong to `SpatialData.depthSource`. Depth inputs and calibration
+selection live in `entry.state.depthForm`; bind components to that state rather
+than reading or restoring input values through DOM IDs.
 
 `engine/src/interfaces.ts` owns the spatial data contract. Format detection,
 decoding and raw-byte delivery policy belong in `formats/builtinFormats.ts`;
 `decodeInViewer` routes use the validated `fileData` message. Host streaming,
 container and companion-file loaders stay explicit in the host adapters.
+`hosts/viewerProtocol.ts` defines validated host/viewer message contracts;
+`hosts/viewerRouter.ts` owns dispatch, background accounting, and entry-ID
+resolution. Extension senders use `providerHandlers/webviewTransport.ts` for
+readiness and timing. Never replace `Webview.postMessage`. Native agent requests
+also wait until the host has dispatched the initial document load.
 
 `npm run build:wasm` builds both WASM packages with locked dependencies and
 records source/artifact hashes. Commit `wasm/artifacts.json` with the generated
@@ -192,3 +202,14 @@ WASM as well.
   `engine/playwright.config.ts` caps workers rather than using Playwright's
   default of half the cores. Raising it makes the heavy file-loading specs time
   out whenever anything else is building.
+
+## Test projects
+
+Playwright's `chromium` project runs on a clean checkout. Specs needing the
+separately downloaded datasets belong in `engine/test/externalFixtures.ts` and
+run in the `external-fixtures` project. New regression tests should generate
+small fixtures whenever practical. CI runs `--project=chromium` explicitly.
+
+The VS Code integration runner accepts `VSCODE_TEST_VERSION=minimum`, `stable`,
+or an explicit version. `minimum` is read from `engines.vscode` in package.json;
+CI tests both minimum and stable. Each run uses a disposable trusted workspace.

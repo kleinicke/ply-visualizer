@@ -1,3 +1,4 @@
+import { sendToWebview } from './webviewTransport';
 import * as vscode from 'vscode';
 import type { SpatialData } from '../../engine/src/interfaces';
 import type { VolumeData } from '../../engine/src/parsers/nrrdParser';
@@ -120,7 +121,7 @@ export async function reextractVolume(
 ): Promise<void> {
   const session = sessions.get(key);
   if (!session) {
-    void webviewPanel.webview.postMessage({
+    void sendToWebview(webviewPanel, {
       type: 'volume:error',
       sessionId: key,
       requestId: message.requestId,
@@ -196,7 +197,7 @@ export async function reextractVolume(
       return;
     }
     lastProgress = percent;
-    void webviewPanel.webview.postMessage({
+    void sendToWebview(webviewPanel, {
       type: 'volume:progress',
       sessionId: key,
       requestId: message.requestId,
@@ -266,7 +267,7 @@ export async function reextractVolume(
     }
     const data = result.data;
     decorateVolumeData(data, key, session);
-    const delivered = await webviewPanel.webview.postMessage({
+    const delivered = await sendToWebview(webviewPanel, {
       type: 'volumeData',
       fileName: session.volume.fileName,
       data,
@@ -281,7 +282,7 @@ export async function reextractVolume(
       return;
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const delivered = await webviewPanel.webview.postMessage({
+    const delivered = await sendToWebview(webviewPanel, {
       type: 'volume:error',
       sessionId: key,
       requestId: message.requestId,

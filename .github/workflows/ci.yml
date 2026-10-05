@@ -80,15 +80,8 @@ jobs:
       - name: Install Playwright browsers
         run: npm exec -- playwright install --with-deps chromium
 
-      # testfiles/ is 8.2 GB and deliberately gitignored, so the fixture-heavy
-      # specs cannot run on a clean checkout. Select the specs that build their
-      # own data at run time. The list is computed rather than hardcoded, so a
-      # new spec is picked up (or excluded) automatically instead of rotting.
-      - name: Run engine tests (specs that need no large fixtures)
-        # xargs rather than an unquoted variable: word-splitting an unquoted
-        # expansion is shell-dependent (zsh does not split), and this should not
-        # silently collapse into a single non-matching regex.
-        run: grep -L '\.\./testfiles/' test/*.spec.ts | xargs npm exec -- playwright test
+      - name: Run self-contained engine tests
+        run: npm exec -- playwright test --project=chromium
         working-directory: engine
 
       - uses: actions/upload-artifact@v4
@@ -101,7 +94,11 @@ jobs:
   # The tests that need a real VS Code instance. Slowest job, and the only one
   # needing a display, so it is kept separate from the fast gate.
   extension:
-    name: VS Code integration tests
+    name: VS Code integration (${{ matrix.vscode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        vscode: [minimum, stable]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -118,6 +115,8 @@ jobs:
       # extension host starts.
       - name: Run VS Code tests
         run: xvfb-run -a npm test
+        env:
+          VSCODE_TEST_VERSION: ${{ matrix.vscode }}
 
   rust:
     name: Rust tests and rebuilt WASM

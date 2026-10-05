@@ -190,3 +190,7 @@ export interface DepthConversionResult {
     info?: string;
   };
 }
+
+/** Parser output before the point-only loader supplies mesh/PLY defaults. */
+export type PointDataPayload = Pick<SpatialData, 'vertexCount' | 'hasColors' | 'hasNormals'> &
+  Partial<Omit<SpatialData, 'format'>> & { format?: string };

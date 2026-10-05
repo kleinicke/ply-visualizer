@@ -185,6 +185,28 @@ export function updateMeshVisibilityAndMaterial(host: RenderModeHost, fileIndex:
   const pointsVisible = host.fileEntries.require(fileIndex).state.pointsVisible ?? true;
   const fileVisible = host.fileEntries.require(fileIndex).state.visible ?? true;
 
+  if (multiMaterialGroup) {
+    // The OBJ group inherits its file wrapper's transform and visibility.
+    if (mesh) {
+      mesh.visible = fileVisible;
+    }
+    multiMaterialGroup.visible = true;
+    for (const object of host.fileEntries.require(fileIndex).resources.materialMeshes ?? []) {
+      object.visible =
+        object instanceof THREE.Points ? pointsVisible : solidVisible || wireframeVisible;
+      if (object instanceof THREE.Mesh) {
+        for (const material of Array.isArray(object.material)
+          ? object.material
+          : [object.material]) {
+          if ('wireframe' in material) {
+            material.wireframe = wireframeVisible && !solidVisible;
+          }
+        }
+      }
+    }
+    return;
+  }
+
   // Set visibility for the target (mesh or multi-material group)
   if (mesh && mesh.type === 'Points') {
     // Point cloud case. In splat mode the points are hidden (Spark renders
@@ -208,9 +230,6 @@ export function updateMeshVisibilityAndMaterial(host: RenderModeHost, fileIndex:
         wireframeVisible,
         fileVisible
       );
-    } else if (multiMaterialGroup) {
-      // Handle points for multi-material OBJ groups independently
-      updateMultiMaterialPointsVisualization(host, fileIndex, pointsVisible, fileVisible);
     }
   }
 
@@ -221,25 +240,7 @@ export function updateMeshVisibilityAndMaterial(host: RenderModeHost, fileIndex:
   // 4. Neither active: mesh is hidden (handled by visibility check above)
 
   // Update materials for wireframe mode
-  if (multiMaterialGroup) {
-    // Handle multi-material OBJ groups
-    const subMeshes = host.fileEntries.require(fileIndex).resources.materialMeshes;
-    if (subMeshes) {
-      subMeshes.forEach(subMesh => {
-        if (subMesh instanceof THREE.Mesh && subMesh.material) {
-          const material = subMesh.material as THREE.Material;
-          if (
-            material instanceof THREE.MeshBasicMaterial ||
-            material instanceof THREE.MeshLambertMaterial
-          ) {
-            material.wireframe = wireframeVisible && !solidVisible;
-            material.opacity = 1.0;
-            material.transparent = false;
-          }
-        }
-      });
-    }
-  } else if (mesh && (mesh as any).material) {
+  if (mesh && (mesh as any).material) {
     // Handle regular single mesh
     const meshWithMaterial = mesh as THREE.Mesh;
     if (Array.isArray(meshWithMaterial.material)) {

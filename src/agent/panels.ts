@@ -1,3 +1,5 @@
+import { readHostMessage } from '../../engine/src/hosts/viewerProtocol';
+import { sendToWebview } from '../providerHandlers/webviewTransport';
 /* eslint-disable @typescript-eslint/naming-convention -- Shared agent wire protocol. */
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
@@ -70,7 +72,16 @@ export class NativeAgentPanels {
             resolve(result);
           }
         };
-        const listener = scene.panel.webview.onDidReceiveMessage(message => {
+        const listener = scene.panel.webview.onDidReceiveMessage(raw => {
+          let message;
+          try {
+            message = readHostMessage(raw);
+          } catch {
+            return;
+          }
+          if (!message) {
+            return;
+          }
           if (message.type === 'nativeAgentReply' && message.id === id) {
             finish(message.error ? new Error(message.error) : undefined, message.result);
           }
@@ -89,7 +100,7 @@ export class NativeAgentPanels {
         // Keep the queue locked until acknowledgement, even if the caller cancels:
         // interrupting a GPU operation cannot safely roll it back.
         void Promise.resolve(
-          scene.panel.webview.postMessage({
+          sendToWebview(scene.panel, {
             type: 'nativeAgentRequest',
             id,
             operation,

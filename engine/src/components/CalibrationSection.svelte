@@ -1,6 +1,7 @@
 <script lang="ts">
   let { host, fileIndex }: { host: any; fileIndex: number } = $props();
 
+  const calibration = $derived(host.fileEntries.require(fileIndex).state.depthForm?.calibration);
   let open = $state(false);
 
   function toggle() {
@@ -33,20 +34,22 @@
     <div
       class="calibration-info"
       id={`calibration-info-${fileIndex}`}
-      style="display: none; margin-top: 4px; padding: 4px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;"
+      style="display: {calibration ? 'block' : 'none'}; margin-top: 4px; padding: 4px; background: var(--vscode-input-background); border: 1px solid var(--vscode-panel-border); border-radius: 2px;"
     >
       <div style="display: flex; align-items: center; gap: 8px;">
         <div
           id={`calibration-filename-${fileIndex}`}
           style="font-size: 9px; font-weight: bold; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
-        ></div>
+        >{calibration?.fileName ?? ''}</div>
         <select
           id={`camera-select-${fileIndex}`}
           style="flex: 0 0 25%; font-size: 9px; padding: 1px 2px;"
+          value={calibration?.selectedCamera ?? ''}
           onchange={(e: Event) =>
             host.onCameraSelectionChange(fileIndex, (e.target as HTMLSelectElement).value)}
         >
           <option value="">Select camera...</option>
+          {#each Object.keys(calibration?.data.cameras ?? {}) as name}<option value={name}>{name}</option>{/each}
         </select>
       </div>
     </div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { FileListHost } from './fileListTypes';
+  import { fileRows, type FileListHost } from './fileListTypes';
   import { filesState } from '../state/files.svelte';
   import { addTooltipsToTruncatedFilenames } from '../ui/dialogs';
   import AllPointColors from './AllPointColors.svelte';
@@ -8,9 +8,7 @@
 
   let { host }: { host: FileListHost } = $props();
 
-  const entryRows = $derived(
-    filesState.entries.map((entry, index) => ({ index, id: entry.id, kind: entry.kind })),
-  );
+  const entryRows = $derived(fileRows(host, filesState.entries));
   const totalEntries = $derived(entryRows.length);
 
   const isSequenceFrame = $derived(
@@ -53,11 +51,10 @@
 {:else if totalEntries === 0 && !pendingLoadLabel}
   <div class="no-files">No objects loaded</div>
 {:else}
-  {#each entryRows as row (row.id)}
+  {#each entryRows as row (row.entry.id)}
     <FileItem
       {host}
-      index={row.index}
-      kind={row.kind === 'spatial' ? 'pointcloud' : row.kind}
+      {row}
     />
   {/each}
   {#if pendingLoadLabel !== null}

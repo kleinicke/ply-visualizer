@@ -4,6 +4,8 @@ import type { MtlData } from '../parsers/mtlParser';
 export type FileEntryKind = 'spatial' | 'pose' | 'camera';
 
 export interface EntryPresentation {
+  depthIsDefault: boolean;
+  depthForm: import('../depth/panelState').DepthForm | null;
   visible: boolean;
   pointSize: number;
   colorMode: string;
@@ -19,6 +21,8 @@ export interface EntryPresentation {
 
 export function defaultEntryPresentation(): EntryPresentation {
   return {
+    depthIsDefault: false,
+    depthForm: null,
     visible: true,
     pointSize: 1,
     colorMode: 'assigned',
@@ -81,7 +85,9 @@ export class FileEntryRegistry {
 
   require(index: number): FileEntry {
     const entry = this.entries[index];
-    if (!entry) {throw new RangeError(`No file entry at index ${index}`);}
+    if (!entry) {
+      throw new RangeError(`No file entry at index ${index}`);
+    }
     return entry;
   }
 
@@ -117,12 +123,24 @@ export class FileEntryRegistry {
     return start;
   }
 
-  /** Appends to the end of `kind`'s block and reports where it landed. */
-  add(kind: FileEntryKind, parentId: number | null = null): { entry: FileEntry; index: number } {
-    const entry = new FileEntry(this.nextId++, kind, parentId, this.presentation());
-    const index = this.startOf(kind) + this.countOf(kind);
+  prepare(kind: FileEntryKind, parentId: number | null = null): FileEntry {
+    return new FileEntry(this.nextId++, kind, parentId, this.presentation());
+  }
+
+  commit(entry: FileEntry): number {
+    if (this.get(entry.id)) {
+      throw new Error('Entry already committed');
+    }
+    const index = this.startOf(entry.kind) + this.countOf(entry.kind);
     this.entries.splice(index, 0, entry);
     this.publish();
+    return index;
+  }
+
+  /** Appends to the end of `kind`'s block and reports where it landed. */
+  add(kind: FileEntryKind, parentId: number | null = null): { entry: FileEntry; index: number } {
+    const entry = this.prepare(kind, parentId);
+    const index = this.commit(entry);
     return { entry, index };
   }
 
@@ -157,7 +175,9 @@ export class FileEntryRegistry {
       if (doomed.has(this.entries[i].id)) {
         const entry = this.entries[i];
         entry.depthUpdate.version++;
-        if (entry.depthUpdate.timer !== undefined) {clearTimeout(entry.depthUpdate.timer);}
+        if (entry.depthUpdate.timer !== undefined) {
+          clearTimeout(entry.depthUpdate.timer);
+        }
         removed.push({ entry, index: i });
         this.entries.splice(i, 1);
       }

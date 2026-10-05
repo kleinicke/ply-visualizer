@@ -1,3 +1,13 @@
+import type {
+  StationPipelineUpdate,
+  StationPipelineMessage,
+  LoadTimeColorUpdate,
+} from './hosts/stationPipelineTypes';
+export type {
+  StationPipelineUpdate,
+  StationPipelineMessage,
+  LoadTimeColorUpdate,
+} from './hosts/stationPipelineTypes';
 import type { FileEntryRegistry } from './state/fileEntries';
 /**
  * Applies a station-pipeline result to already-loaded X3A scans.
@@ -30,22 +40,6 @@ import {
   DEFAULT_STONEX_COLOR_CORRECTION,
   type StonexColorCalibration,
 } from './visualization/stonexColorCorrection';
-
-export interface StationPipelineUpdate {
-  /** `metadata.embeddedScanName`, the archive member this update belongs to. */
-  scanName: string;
-  /**
-   * Set on a partial update: colours cover the scan's own points only, so the
-   * host can send each scan as it finishes rather than the archive at the end.
-   */
-  partial?: boolean;
-  /** Column-major 4x4 placing the scan in the archive's common frame. */
-  transform: number[] | null;
-  /** Present only when this scan's colour changed. */
-  rawColors?: Uint8Array;
-  frameIndices?: Uint16Array;
-  photographicallyColoredPoints?: number;
-}
 
 export interface StationPipelineHost {
   spatialFiles: SpatialData[];
@@ -202,14 +196,6 @@ export function reportStationPipelineProgress(message: unknown): void {
   if (typeof message === 'string' && message.length > 0) {
     stationPipelineUi.message = message;
   }
-}
-
-export interface StationPipelineMessage {
-  updates?: StationPipelineUpdate[];
-  summary?: string;
-  error?: string;
-  /** A scan finished; more are still coming, so the run stays busy. */
-  partial?: boolean;
 }
 
 /**
@@ -449,25 +435,6 @@ export function setCapturePlaceVisible(
     }
   }
   host.requestRender();
-}
-
-export interface LoadTimeColorUpdate {
-  scanName: string;
-  colors: Uint8Array;
-  /** The payload is raw camera RGB; derive corrected display RGB on completion. */
-  colorsAreRaw?: boolean;
-  /** Set when the colour arrives in chunks; absent means the whole scan. */
-  pointOffset?: number;
-  totalPoints?: number;
-  /** True on the closing chunk, which is what makes the colour visible. */
-  final?: boolean;
-  /** Present on the scan that carries the archive's camera profile. */
-  cameraFrames?: unknown[];
-  rawColors?: Uint8Array | null;
-  frameIndices?: Uint16Array | null;
-  colorCalibration?: unknown;
-  photographicallyColoredPoints?: number;
-  container?: unknown;
 }
 
 // Extension messages can overtake an async geometry build in the webview. Keep

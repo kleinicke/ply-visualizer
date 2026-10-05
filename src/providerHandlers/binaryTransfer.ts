@@ -1,3 +1,4 @@
+import { sendToWebview } from './webviewTransport';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 
@@ -97,7 +98,7 @@ export async function sendUltimateRawBinary(
   );
 
   // Send raw binary data + parsing metadata
-  webviewPanel.webview.postMessage({
+  sendToWebview(webviewPanel, {
     type: 'ultimateRawBinaryData',
     messageType: messageType,
     // Wall-clock epoch stamped right before postMessage so the webview can
@@ -135,7 +136,7 @@ export function sendSplatContainerUri(
   messageType: 'multiSpatialData' | 'addFiles',
   fileSizeInBytes?: number
 ): void {
-  void webviewPanel.webview.postMessage({
+  void sendToWebview(webviewPanel, {
     type: 'splatContainerUri',
     messageType,
     fileUri: webviewPanel.webview.asWebviewUri(fileUri).toString(),
@@ -160,7 +161,7 @@ export async function resendSplatContainerBytes(
   try {
     const uri = vscode.Uri.parse(message.docUri);
     const bytes = await vscode.workspace.fs.readFile(uri);
-    void webviewPanel.webview.postMessage({
+    void sendToWebview(webviewPanel, {
       type: 'splatContainerUri',
       messageType: message.messageType || 'addFiles',
       data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
@@ -170,7 +171,7 @@ export async function resendSplatContainerBytes(
     });
   } catch (error) {
     console.error('Splat container fallback failed:', error);
-    void webviewPanel.webview.postMessage({
+    void sendToWebview(webviewPanel, {
       type: 'loadingError',
       fileName: message.fileName,
       fileType: 'gaussian splat',
@@ -332,7 +333,7 @@ export async function sendBinaryData(
   );
 
   // Send metadata + binary buffers
-  const delivered = await webviewPanel.webview.postMessage({
+  const delivered = await sendToWebview(webviewPanel, {
     type: 'binarySpatialData',
     messageType: messageType,
     fileName: spatialData.fileName,
@@ -400,7 +401,7 @@ export async function sendLargeFileInChunksOptimized(
 
   // Send start message. A unique key matters for E57 files whose scans may
   // legally have duplicate or missing names.
-  const started = await webviewPanel.webview.postMessage({
+  const started = await sendToWebview(webviewPanel, {
     type: 'startLargeFile',
     transferId,
     fileName: spatialData.fileName,
@@ -461,7 +462,7 @@ export async function sendLargeFileInChunksOptimized(
       const chunkColors = !typed && colors ? colors.slice(startIdx, endIdx) : undefined;
       const chunkNormals = !typed && normals ? normals.slice(startIdx, endIdx) : undefined;
 
-      const delivered = await webviewPanel.webview.postMessage({
+      const delivered = await sendToWebview(webviewPanel, {
         type: 'largeFileChunk',
         transferId,
         fileName: spatialData.fileName,
@@ -494,7 +495,7 @@ export async function sendLargeFileInChunksOptimized(
     }
 
     // Send completion message
-    const completed = await webviewPanel.webview.postMessage({
+    const completed = await sendToWebview(webviewPanel, {
       type: 'largeFileComplete',
       transferId,
       fileName: spatialData.fileName,
@@ -505,7 +506,7 @@ export async function sendLargeFileInChunksOptimized(
     }
   } catch (error) {
     // Best-effort cleanup; the original transfer error remains authoritative.
-    await webviewPanel.webview.postMessage({
+    await sendToWebview(webviewPanel, {
       type: 'cancelLargeFile',
       transferId,
       fileName: spatialData.fileName,

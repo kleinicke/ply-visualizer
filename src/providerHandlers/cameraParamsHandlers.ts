@@ -1,3 +1,4 @@
+import { sendToWebview } from './webviewTransport';
 import * as vscode from 'vscode';
 
 export async function handleCameraParametersRequest(
@@ -32,7 +33,7 @@ export async function handleCameraParametersRequest(
     console.log('🎯 Using default settings for camera parameters dialog:', defaults);
 
     // Always use saved defaults without showing a customization dialog.
-    webviewPanel.webview.postMessage({
+    sendToWebview(webviewPanel, {
       type: 'cameraParams',
       cameraModel: defaults.cameraModel,
       fx: defaults.fx,
@@ -43,7 +44,7 @@ export async function handleCameraParametersRequest(
       requestId: message.requestId,
     });
   } catch (error) {
-    webviewPanel.webview.postMessage({
+    sendToWebview(webviewPanel, {
       type: 'cameraParamsError',
       error: error instanceof Error ? error.message : String(error),
       requestId: message.requestId,
@@ -103,7 +104,7 @@ export async function handleCameraParametersWithScaleRequest(
     );
 
     if (!useDefaults) {
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'cameraParamsCancelled',
         requestId: message.requestId,
       });
@@ -112,7 +113,7 @@ export async function handleCameraParametersWithScaleRequest(
 
     if (useDefaults.value === 'defaults') {
       // Use saved defaults without showing additional dialogs
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'cameraParams',
         cameraModel: defaults.cameraModel,
         fx: defaults.fx,
@@ -170,7 +171,7 @@ export async function handleCameraParametersWithScaleRequest(
     );
 
     if (!cameraModel) {
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'cameraParamsCancelled',
         requestId: message.requestId,
       });
@@ -213,7 +214,7 @@ export async function handleCameraParametersWithScaleRequest(
         ignoreFocusOut: true,
       });
       if (coefficientInput === undefined) {
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'cameraParamsCancelled',
           requestId: message.requestId,
         });
@@ -238,7 +239,7 @@ export async function handleCameraParametersWithScaleRequest(
     });
 
     if (!pngScaleFactorInput) {
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'cameraParamsCancelled',
         requestId: message.requestId,
       });
@@ -263,7 +264,7 @@ export async function handleCameraParametersWithScaleRequest(
     });
 
     if (!fxInput) {
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'cameraParamsCancelled',
         requestId: message.requestId,
       });
@@ -292,7 +293,7 @@ export async function handleCameraParametersWithScaleRequest(
 
     if (fyInput === undefined) {
       // User cancelled
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'cameraParamsCancelled',
         requestId: message.requestId,
       });
@@ -328,7 +329,7 @@ export async function handleCameraParametersWithScaleRequest(
     );
 
     if (!convention) {
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'cameraParamsCancelled',
         requestId: message.requestId,
       });
@@ -336,7 +337,7 @@ export async function handleCameraParametersWithScaleRequest(
     }
 
     // Send camera parameters to webview
-    webviewPanel.webview.postMessage({
+    sendToWebview(webviewPanel, {
       type: 'cameraParams',
       cameraModel: cameraModel.value,
       fx: fx,
@@ -348,7 +349,7 @@ export async function handleCameraParametersWithScaleRequest(
       requestId: message.requestId,
     });
   } catch (error) {
-    webviewPanel.webview.postMessage({
+    sendToWebview(webviewPanel, {
       type: 'cameraParamsError',
       error: error instanceof Error ? error.message : String(error),
       requestId: message.requestId,

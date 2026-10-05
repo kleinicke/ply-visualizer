@@ -106,12 +106,6 @@ export function applyTransformationMatrix(host: TransformationMatrixHost, fileIn
       setObjectMatrix(normalsVisualizer, matrix);
     }
 
-    // Also apply transformation to multi-material groups (for OBJ files)
-    const multiMaterialGroup = host.fileEntries.require(fileIndex).resources.materialGroup;
-    if (multiMaterialGroup) {
-      setObjectMatrix(multiMaterialGroup, matrix);
-    }
-
     // Also mirror onto the splat mesh when this file renders as splats
     host.splatMode?.applyMatrix(fileIndex, matrix);
 

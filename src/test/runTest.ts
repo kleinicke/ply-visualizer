@@ -1,7 +1,7 @@
 import * as path from 'path';
 import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
 import { execFileSync } from 'child_process';
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, rm, readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 
 async function main() {
@@ -19,7 +19,17 @@ async function main() {
     // Passed to --extensionTestsPath
     const extensionTestsPath = path.resolve(__dirname, './suite/index');
 
+    const manifest = JSON.parse(
+      await readFile(path.join(extensionDevelopmentPath, 'package.json'), 'utf8')
+    );
+    const minimum = manifest.engines.vscode.match(/\d+\.\d+\.\d+/)?.[0];
+    const requested = process.env.VSCODE_TEST_VERSION ?? 'stable';
+    if (requested === 'minimum' && !minimum) {
+      throw new Error('No minimum VS Code version declared');
+    }
+    const version = requested === 'minimum' ? minimum : requested;
     const vscodeExecutablePath = await downloadAndUnzipVSCode({
+      version,
       cachePath: path.join(extensionDevelopmentPath, '.vscode-test'),
       extensionDevelopmentPath,
     });

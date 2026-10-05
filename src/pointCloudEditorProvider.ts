@@ -1,3 +1,5 @@
+import { readHostMessage } from '../engine/src/hosts/viewerProtocol';
+import { sendToWebview, registerWebviewTransport } from './providerHandlers/webviewTransport';
 import { nativeAgentPanels } from './agent/panels';
 import { handleModelResourceRequest } from './providerHandlers/sceneModels';
 import { handleCadDecodeRequest } from './providerHandlers/cadModels';
@@ -95,43 +97,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   }
 
   /**
-   * Wrap a panel's postMessage once so outbound messages wait for the webview
-   * listener and data-bearing messages receive an accurate send timestamp.
-   * Keeping this at the common boundary covers all format-specific send sites.
-   */
-  private prepareWebviewMessaging(
-    webviewPanel: vscode.WebviewPanel,
-    readyGate: WebviewReadyGate
-  ): void {
-    const webview = webviewPanel.webview;
-    const original = webview.postMessage.bind(webview);
-    (webview as any).postMessage = async (msg: any) => {
-      // VS Code may restore a custom editor before its scripts have installed
-      // a `message` listener. Keep parsing in parallel, but do not release
-      // extension-to-webview messages until the webview explicitly says it
-      // is ready. Disposing the panel resolves the gate with false so queued
-      // messages cannot leak or hang forever.
-      if (!(await readyGate.wait())) {
-        return false;
-      }
-      if (
-        msg &&
-        typeof msg === 'object' &&
-        typeof msg.type === 'string' &&
-        msg.type.endsWith('Data')
-      ) {
-        if (msg.postedAt === undefined) {
-          msg.postedAt = Date.now();
-        }
-        if (msg.loadStartedAt === undefined && this.currentLoadStartedAt) {
-          msg.loadStartedAt = this.currentLoadStartedAt;
-        }
-      }
-      return original(msg);
-    };
-  }
-
-  /**
    * Run one scripted benchmark step in the visible viewer.
    *
    * The benchmark harness lives in the extension host, but aligning and
@@ -150,7 +115,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     if (!panel) {
       return false;
     }
-    await panel.webview.postMessage({ type: 'benchmarkScenario', step, anchorIndex });
+    await sendToWebview(panel, { type: 'benchmarkScenario', step, anchorIndex });
     return true;
   }
 
@@ -224,14 +189,17 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     token: vscode.CancellationToken
   ): Promise<void> {
     const readyGate = createWebviewReadyGate();
+    const initialLoad = createWebviewReadyGate();
+    const loadStartedAt = Date.now();
     this.activePanels.add(webviewPanel);
     nativeAgentPanels.attach(webviewPanel, document.uri);
     this.pathToPanel.set(document.uri.fsPath, webviewPanel);
     this.panelToPath.set(webviewPanel, document.uri.fsPath);
     this.panelVolumeSessions.set(webviewPanel, new Set([document.uri.toString()]));
-    this.prepareWebviewMessaging(webviewPanel, readyGate);
+    registerWebviewTransport(webviewPanel, readyGate, () => loadStartedAt, initialLoad);
     webviewPanel.onDidDispose(() => {
       readyGate.dispose();
+      initialLoad.dispose();
       this.activePanels.delete(webviewPanel);
       this.pathToPanel.delete(document.uri.fsPath);
       this.panelToPath.delete(webviewPanel);
@@ -301,7 +269,17 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // Register before assigning HTML. Restored webviews can initialize very
     // quickly, and their ready signal must never race this subscription.
-    webviewPanel.webview.onDidReceiveMessage(async message => {
+    webviewPanel.webview.onDidReceiveMessage(async raw => {
+      let message;
+      try {
+        message = readHostMessage(raw);
+      } catch (error) {
+        void vscode.window.showErrorMessage(String(error));
+        return;
+      }
+      if (!message) {
+        return;
+      }
       switch (message.type) {
         case 'webviewReady':
           readyGate.markReady();
@@ -320,7 +298,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'volume:reextract':
           if (typeof message.sessionId !== 'string' || !message.sessionId) {
-            await webviewPanel.webview.postMessage({
+            await sendToWebview(webviewPanel, {
               type: 'volume:error',
               sessionId: '',
               requestId: message.requestId,
@@ -357,9 +335,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           await handleAddFile(this.addFileHost, webviewPanel, this.panelToPath.get(webviewPanel));
           break;
         case 'removeFile':
-          webviewPanel.webview.postMessage({
+          sendToWebview(webviewPanel, {
             type: 'fileRemoved',
             fileIndex: message.fileIndex,
+            entryId: message.entryId,
           });
           break;
         case 'requestCameraParams':
@@ -418,7 +397,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
               message.files || []
             );
           } finally {
-            await webviewPanel.webview.postMessage({ type: 'backgroundOperationComplete' });
+            await sendToWebview(webviewPanel, { type: 'backgroundOperationComplete' });
           }
           break;
         case 'requestDatasetTexture':
@@ -442,17 +421,18 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     });
 
     // Show UI immediately. Reading/parsing starts in parallel below, while
-    // prepareWebviewMessaging queues all outbound messages until webviewReady.
+    // The transport queues outbound messages until webviewReady.
     webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
 
     if (document.uri.scheme === 'viz3d-agent') {
+      initialLoad.markReady();
       return;
     }
 
     // Anchor the load's wall-clock start for the unified end-to-end timing line.
     this.currentLoadStartedAt = Date.now();
 
-    void webviewPanel.webview.postMessage({
+    void sendToWebview(webviewPanel, {
       type: 'startLoading',
       fileName: path.basename(document.uri.fsPath),
       isTifFile: isTifFile,
@@ -474,7 +454,12 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     // and none of them parses as a point cloud on its own. Opening any one of
     // them loads the whole reconstruction from its directory instead.
     if (isColmapModelFile(path.basename(document.uri.fsPath))) {
-      setImmediate(() => void this.loadColmapReconstruction(document.uri, webviewPanel));
+      setImmediate(
+        () =>
+          void this.loadColmapReconstruction(document.uri, webviewPanel).finally(() =>
+            initialLoad.markReady()
+          )
+      );
       return;
     }
 
@@ -504,7 +489,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             isSplatContainerFile,
           });
         } finally {
-          await webviewPanel.webview.postMessage({ type: 'backgroundOperationComplete' });
+          try {
+            await sendToWebview(webviewPanel, { type: 'backgroundOperationComplete' });
+          } finally {
+            initialLoad.markReady();
+          }
         }
       })();
     });
@@ -554,7 +543,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       // The model goes first and on its own. It is small and parses in well
       // under a second, so the cloud and the camera frames are on screen while
       // the photographs - often hundreds of megabytes - are still being read.
-      void webviewPanel.webview.postMessage({
+      void sendToWebview(webviewPanel, {
         type: 'colmapModelFiles',
         files: modelFiles,
         fileName: path.basename(directory.fsPath),
@@ -570,7 +559,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         error instanceof Error ? error.message : String(error)
       }`;
       vscode.window.showErrorMessage(message);
-      void webviewPanel.webview.postMessage({ type: 'loadingError', error: message });
+      void sendToWebview(webviewPanel, { type: 'loadingError', error: message });
     }
   }
 
@@ -601,7 +590,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       const totalBytes = files.reduce((sum, file) => sum + file.data.byteLength, 0);
       const BATCH = 8;
       for (let start = 0; start < files.length; start += BATCH) {
-        void webviewPanel.webview.postMessage({
+        void sendToWebview(webviewPanel, {
           type: 'colmapImages',
           files: files.slice(start, start + BATCH),
           total: files.length,
@@ -666,7 +655,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   // Start sequence playback in current active webview with background loading hint
   public startSequence(filePaths: string[], wildcard: string): void {
     for (const panel of this.activePanels) {
-      panel.webview.postMessage({
+      sendToWebview(panel, {
         type: 'sequence:init',
         files: filePaths,
         wildcard: wildcard,
@@ -679,7 +668,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   public startSequenceFor(targetFsPath: string, filePaths: string[], wildcard: string): void {
     const panel = this.pathToPanel.get(targetFsPath);
     if (panel) {
-      panel.webview.postMessage({ type: 'sequence:init', files: filePaths, wildcard });
+      sendToWebview(panel, { type: 'sequence:init', files: filePaths, wildcard });
       return;
     }
     // Fallback: use last known active panel if mapping not present
@@ -830,7 +819,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
             bytes.byteOffset,
             bytes.byteOffset + bytes.byteLength
           );
-          webviewPanel.webview.postMessage({
+          sendToWebview(webviewPanel, {
             type: 'sequence:file:ultimate',
             index: message.index,
             requestId: message.requestId,
@@ -840,7 +829,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           });
         } else {
           const parsed = await parser.parse(bytes);
-          webviewPanel.webview.postMessage({
+          sendToWebview(webviewPanel, {
             type: 'sequence:file:ply',
             index: message.index,
             requestId: message.requestId,
@@ -852,7 +841,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       }
       if (ext === '.xyz') {
         const xyz = await vscode.workspace.fs.readFile(fileUri);
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'sequence:file:xyz',
           index: message.index,
           requestId: message.requestId,
@@ -865,7 +854,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         const objBytes = await vscode.workspace.fs.readFile(fileUri);
         const objParser = new ObjParser();
         const parsed = await objParser.parse(objBytes);
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'sequence:file:obj',
           index: message.index,
           requestId: message.requestId,
@@ -878,7 +867,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         const stlBytes = await vscode.workspace.fs.readFile(fileUri);
         const stlParser = new StlParser();
         const parsed = await stlParser.parse(stlBytes);
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'sequence:file:stl',
           index: message.index,
           requestId: message.requestId,
@@ -890,7 +879,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       if (ext === '.pcd') {
         const pcdBytes = await vscode.workspace.fs.readFile(fileUri);
         const parsed = toPcdPayload(await parsePcdWasm(pcdBytes));
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'sequence:file:pcd',
           index: message.index,
           requestId: message.requestId,
@@ -902,7 +891,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       if (ext === '.pts') {
         const ptsBytes = await vscode.workspace.fs.readFile(fileUri);
         const parsed = toPointCloudPayload(await parsePtsWasm(ptsBytes), 'pts');
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'sequence:file:pts',
           index: message.index,
           requestId: message.requestId,
@@ -915,7 +904,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         const offBytes = await vscode.workspace.fs.readFile(fileUri);
         const offParser = new OffParser();
         const parsed = await offParser.parse(offBytes);
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'sequence:file:off',
           index: message.index,
           requestId: message.requestId,
@@ -928,7 +917,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         const gltfBytes = await vscode.workspace.fs.readFile(fileUri);
         const gltfParser = new GltfParser();
         const parsed = await gltfParser.parse(gltfBytes);
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'sequence:file:gltf',
           index: message.index,
           requestId: message.requestId,
@@ -939,7 +928,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       }
       if (ext === '.xyzn' || ext === '.xyzrgb') {
         const xyzBytes = await vscode.workspace.fs.readFile(fileUri);
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'sequence:file:xyzvariant',
           index: message.index,
           requestId: message.requestId,
@@ -962,7 +951,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         ext === '.exr'
       ) {
         const depthBytes = await vscode.workspace.fs.readFile(fileUri);
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'sequence:file:depth',
           index: message.index,
           requestId: message.requestId,
@@ -974,7 +963,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         });
         return;
       }
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'sequence:file:error',
         index: message.index,
         requestId: message.requestId,
@@ -982,7 +971,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         error: `Unsupported file type: ${ext}`,
       });
     } catch (err) {
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'sequence:file:error',
         index: message.index,
         requestId: message.requestId,
@@ -1026,7 +1015,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       console.error('PLY fetch fallback failed:', error);
       const detail = error instanceof Error ? error.message : String(error);
       if (fallbackPanel) {
-        void fallbackPanel.webview.postMessage({
+        void sendToWebview(fallbackPanel, {
           type: 'loadingError',
           fileName: message.fileName,
           fileType: 'PLY',
@@ -1060,11 +1049,12 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         await vscode.workspace.fs.writeFile(saveUri, plyContent);
 
         // Send success response back to webview
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'savePlyFileResult',
           success: true,
           filePath: saveUri.fsPath,
           fileIndex: message.fileIndex,
+          entryId: message.entryId,
         });
 
         // Show success message to user
@@ -1077,22 +1067,24 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       } else {
         // User cancelled the save dialog
         console.log('🚫 User cancelled PLY save dialog');
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'savePlyFileResult',
           success: false,
           cancelled: true,
           fileIndex: message.fileIndex,
+          entryId: message.entryId,
         });
       }
     } catch (error) {
       console.error('❌ Error saving PLY file:', error);
 
       // Send error response back to webview
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'savePlyFileResult',
         success: false,
         error: error instanceof Error ? error.message : String(error),
         fileIndex: message.fileIndex,
+        entryId: message.entryId,
       });
 
       // Show error message to user
@@ -1243,9 +1235,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         }
 
         // Send file data back to webview
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'colorImageData',
           fileIndex: message.fileIndex,
+          entryId: message.entryId,
           data: fileData.buffer.slice(
             fileData.byteOffset,
             fileData.byteOffset + fileData.byteLength
@@ -1282,7 +1275,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       const fileName = path.basename(message.texturePath);
 
       // Send texture data to webview
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'datasetTexture',
         fileName: fileName,
         sceneName: message.sceneName,
@@ -1316,7 +1309,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       const fileContent = Buffer.from(fileData).toString('utf-8');
 
       // Send calibration file data to webview (same format as manual selection)
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'calibrationFileSelected',
         fileIndex: fileIndex,
         fileName: fileName,
@@ -1364,7 +1357,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       }
 
       // Send image data to webview (same format as manual selection)
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'colorImageData',
         fileIndex: fileIndex,
         data: fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength),
@@ -1419,9 +1412,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         };
 
         // Send MTL data to webview
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'mtlData',
           fileIndex: message.fileIndex,
+          entryId: message.entryId,
           fileName: path.basename(mtlFile.fsPath),
           data: serializedMtl,
         });
@@ -1497,7 +1491,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         };
 
         // Send MTL data to webview
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'mtlData',
           fileIndex: fileIndex,
           fileName: path.basename(mtlPath),
@@ -1535,7 +1529,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       // Filter out cx/cy from saved settings as they should be auto-calculated per image
       const filteredSettings = savedSettings
         ? {
-            fx: savedSettings.fx || 1000,
+            ...savedSettings,
+            fx: savedSettings.fx ?? 1000,
+            cx: undefined,
+            cy: undefined,
             fy: savedSettings.fy,
             cameraModel: savedSettings.cameraModel,
             depthType: savedSettings.depthType,
@@ -1556,7 +1553,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         string | undefined;
 
       // Send settings back to webview
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'defaultDepthSettings',
         settings: filteredSettings,
         viewConvention,
@@ -1571,7 +1568,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     } catch (error) {
       console.error('Failed to load default depth settings:', error);
       // Send default fallback settings
-      webviewPanel.webview.postMessage({
+      sendToWebview(webviewPanel, {
         type: 'defaultDepthSettings',
         settings: {
           fx: 1000,
@@ -1617,9 +1614,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         const fileContent = Buffer.from(fileData).toString('utf-8');
 
         // Send calibration file data to webview
-        webviewPanel.webview.postMessage({
+        sendToWebview(webviewPanel, {
           type: 'calibrationFileSelected',
           fileIndex: message.fileIndex,
+          entryId: message.entryId,
           fileName: fileName,
           content: fileContent,
         });

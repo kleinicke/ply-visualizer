@@ -18,18 +18,11 @@
   let conventionOpen = $state(false);
   let colorImageOpen = $state(false);
 
-  // Intentional: seed local UI state from the host once at mount; the change
-  // handlers keep it in sync afterwards
-  // svelte-ignore state_referenced_locally
-  // Normalized on the way in: the setting can come from a `Camera:` comment
-  // saved before the picker was consolidated, and assigning the select a value
-  // it does not carry renders it blank — which is what "it starts up with an
-  // empty camera model" was.
-  let cameraModel = $state(
-    normalizeToOfferedCameraModel(host.getDepthSetting(data, 'camera') as CameraModel).model,
-  );
-  // svelte-ignore state_referenced_locally
-  let depthType = $state(host.getDepthSetting(data, 'depth'));
+  const form = $derived(host.fileEntries.require(fileIndex).state.depthForm!);
+  const cameraModel = $derived(form.cameraModel);
+  const depthType = $derived(form.depthType);
+  const isDefault = $derived(host.fileEntries.require(fileIndex).state.depthIsDefault);
+  $effect(() => host.updateSingleDefaultButtonState(fileIndex));
 
   const isDisparity = $derived(depthType === 'disparity');
   const isPinholeOpencv = $derived(cameraModel === 'pinhole-opencv');
@@ -73,20 +66,6 @@
 
   const liveUpdateEnabled = $derived(host.fileEntries.require(fileIndex).state.liveDepth);
 
-  // Live update is how the panel is meant to be used - change a number, see the
-  // cloud move - so it starts on. `defaultedLiveUpdate` makes that a one-time
-  // decision per file: turning it off stays off, rather than being re-enabled
-  // every time the panel re-renders.
-  let defaultedLiveUpdate = false;
-  $effect(() => {
-    if (!defaultedLiveUpdate) {
-      defaultedLiveUpdate = true;
-      if (!host.fileEntries.require(fileIndex).state.liveDepth) {
-        host.setLiveDepthUpdateEnabled(fileIndex, true);
-      }
-    }
-  });
-
   function toggle() {
     host.fileEntries.require(fileIndex).state.depthPanelOpen = !open;
   }
@@ -100,12 +79,10 @@
   }
 
   function onCameraModelChange(e: Event) {
-    cameraModel = (e.target as HTMLSelectElement).value as CameraModel;
     host.updateSingleDefaultButtonState(fileIndex);
   }
 
   function onDepthTypeChange(e: Event) {
-    depthType = (e.target as HTMLSelectElement).value;
     host.updateSingleDefaultButtonState(fileIndex);
   }
 
@@ -229,7 +206,7 @@
       <select
         id={`camera-model-${fileIndex}`}
         style="width: 100%; padding: 2px; font-size: 11px;"
-        value={cameraModel}
+        bind:value={form.cameraModel}
         onchange={onCameraModelChange}
       >
         <!-- Two general models, because every other one is a special case of
@@ -255,7 +232,7 @@
       <select
         id={`depth-type-${fileIndex}`}
         style="width: 100%; padding: 2px; font-size: 11px;"
-        value={depthType}
+        bind:value={form.depthType}
         onchange={onDepthTypeChange}
       >
         <option value="euclidean">Euclidean</option>
@@ -272,7 +249,7 @@
           <input
             type="number"
             id={`fx-${fileIndex}`}
-            value={host.getDepthFx(data)}
+            bind:value={form.fx}
             min="1"
             step="0.1"
             style="width: 100%; padding: 2px; font-size: 11px;"
@@ -285,7 +262,7 @@
           <input
             type="number"
             id={`fy-${fileIndex}`}
-            value={host.getDepthFy(data)}
+            bind:value={form.fy}
             step="0.1"
             style="width: 100%; padding: 2px; font-size: 11px;"
             placeholder="Same as fx"
@@ -315,7 +292,7 @@
             <input
               type="number"
               id={`cx-${fileIndex}`}
-              value={host.getDepthCx(data, fileIndex)}
+              bind:value={form.cx}
               step="0.1"
               style="width: 100%; padding: 2px; font-size: 11px;"
               oninput={onFieldInput}
@@ -327,7 +304,7 @@
             <input
               type="number"
               id={`cy-${fileIndex}`}
-              value={host.getDepthCy(data, fileIndex)}
+              bind:value={form.cy}
               step="0.1"
               style="width: 100%; padding: 2px; font-size: 11px;"
               oninput={onFieldInput}
@@ -377,6 +354,7 @@
               <input
                 type="text"
                 id={`coefficient-group-${fileIndex}-${index}`}
+                bind:value={form.coefficientGroups[index]}
                 placeholder={group.terms.map(() => '0').join(',')}
                 style="width: 100%; padding: 2px; font-size: 11px;"
                 oninput={onFieldInput}
@@ -403,7 +381,7 @@
       <input
         type="number"
         id={`baseline-${fileIndex}`}
-        value={host.getDepthBaseline(data)}
+        bind:value={form.baseline}
         min="0.1"
         step="0.1"
         style="width: 100%; padding: 2px; font-size: 11px;"
@@ -429,7 +407,7 @@
           <input
             type="number"
             id={`disparity-offset-${fileIndex}`}
-            value="0"
+            bind:value={form.disparityOffset}
             step="0.1"
             style="flex: 1; padding: 2px; font-size: 11px;"
             placeholder="Offset added to disparity values"
@@ -463,11 +441,11 @@
         <div style="display: flex; gap: 6px; align-items: end;">
           <div style="flex: 1;">
             <label for={`depth-scale-${fileIndex}`} style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Scale:</label>
-            <input type="number" id={`depth-scale-${fileIndex}`} value="1.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Scale factor" oninput={onFieldInput} onwheel={blurOnWheel} />
+            <input type="number" id={`depth-scale-${fileIndex}`} bind:value={form.depthScale} step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Scale factor" oninput={onFieldInput} onwheel={blurOnWheel} />
           </div>
           <div style="flex: 1;">
             <label for={`depth-bias-${fileIndex}`} style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Bias:</label>
-            <input type="number" id={`depth-bias-${fileIndex}`} value="0.0" step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Bias offset" oninput={onFieldInput} onwheel={blurOnWheel} />
+            <input type="number" id={`depth-bias-${fileIndex}`} bind:value={form.depthBias} step="0.1" style="width: 100%; padding: 2px; font-size: 11px;" placeholder="Bias offset" oninput={onFieldInput} onwheel={blurOnWheel} />
           </div>
           <div style="flex: 0 0 auto;">
             <button
@@ -487,7 +465,7 @@
         <input
           type="number"
           id={`png-scale-factor-${fileIndex}`}
-          value={host.getPngScaleFactor(data)}
+          bind:value={form.pngScaleFactor}
           min="0.1"
           step="0.1"
           style="width: 100%; padding: 2px; font-size: 11px;"
@@ -515,7 +493,7 @@
         style="display: {rgb24Open ? 'block' : 'none'}; margin-top: 4px;"
       >
         <label for={`rgb24-conversion-mode-${fileIndex}`} style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px;">Conversion Mode:</label>
-        <select id={`rgb24-conversion-mode-${fileIndex}`} style="width: 100%; padding: 2px; font-size: 11px;" value={host.getRgb24ConversionMode(data)} onchange={onFieldInput}>
+        <select id={`rgb24-conversion-mode-${fileIndex}`} style="width: 100%; padding: 2px; font-size: 11px;" bind:value={form.rgb24ConversionMode} onchange={onFieldInput}>
           <option value="shift">RGB as 24-bit</option>
           <option value="multiply">Shift 255</option>
           <option value="red">Red Channel Only</option>
@@ -525,7 +503,7 @@
         <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">How to extract depth from RGB channels (only used if image is RGB)</div>
 
         <label for={`rgb24-scale-factor-${fileIndex}`} style="display: block; font-size: 9px; font-weight: bold; margin-bottom: 2px; margin-top: 8px;">RGB24 Scale Factor:</label>
-        <input type="number" id={`rgb24-scale-factor-${fileIndex}`} value={host.getRgb24ScaleFactor(data)} style="width: 100%; padding: 2px; font-size: 11px;" step="1" min="1" oninput={onFieldInput} />
+        <input type="number" id={`rgb24-scale-factor-${fileIndex}`} bind:value={form.rgb24ScaleFactor} style="width: 100%; padding: 2px; font-size: 11px;" step="1" min="1" oninput={onFieldInput} />
         <div style="font-size: 9px; color: var(--vscode-descriptionForeground); margin-top: 1px;">Divider for 24 bit image (e.g., 1000, so max value is 16777.215)</div>
       </div>
     </div>
@@ -543,7 +521,7 @@
         id={`coordinate-convention-${fileIndex}`}
         style="display: {conventionOpen ? 'block' : 'none'}; margin-top: 4px;"
       >
-        <select id={`convention-${fileIndex}`} style="width: 100%; padding: 2px; font-size: 11px;" value={host.getDepthConvention(data)} onchange={onConventionChange}>
+        <select id={`convention-${fileIndex}`} style="width: 100%; padding: 2px; font-size: 11px;" bind:value={form.convention} onchange={onConventionChange}>
           <option value="opengl">OpenGL (Y-up, Z-backward)</option>
           <option value="opencv">OpenCV (Y-down, Z-forward)</option>
         </select>
@@ -603,7 +581,7 @@
           class="use-as-default-settings"
           data-file-index={fileIndex}
           style="flex: 1; padding: 4px 8px; background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: 1px solid var(--vscode-panel-border); border-radius: 2px; cursor: pointer; font-size: 11px;"
-          onclick={useAsDefaultSettings}>⭐ Use as Default</button
+          onclick={useAsDefaultSettings}>{isDefault ? '✓ Current Default' : '⭐ Use as Default'}</button
         >
         <button
           class="reset-to-default-settings"

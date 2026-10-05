@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { FileItemHost } from './fileListTypes';
+  import type { FileItemHost, FileRow } from './fileListTypes';
   import ModelAnimationPanel from './ModelAnimationPanel.svelte';
   import { filesState } from '../state/files.svelte';
   import { runWithFileActivity } from '../fileActivity';
@@ -12,7 +12,6 @@
   import TransformSection from './TransformSection.svelte';
   import VolumePanel from './VolumePanel.svelte';
   import {
-    setStonexColorCorrection,
     setStonexImageDistortion,
     setStonexImagesVisible,
     setStonexScannerVisible,
@@ -23,28 +22,16 @@
     type StonexColorCorrection,
   } from '../visualization/stonexColorCorrection';
 
-  let {
-    host,
-    index,
-    kind,
-  }: { host: FileItemHost; index: number; kind: 'pointcloud' | 'pose' | 'camera' } = $props();
-
+  let { host, row }: { host: FileItemHost; row: FileRow } = $props();
   ensureKeyboardModifierTracking();
-
-  const data = $derived(
-    (filesState.entries, kind === 'pointcloud' ? host.spatialFiles[index] : null),
-  );
-  // Position within poseGroups/cameraGroups. The per-pose toggle arrays and the
-  // camera label arrays are keyed by it; host methods take the unified index.
-  const poseIndex = $derived((filesState.entries, host.fileEntries.kindIndexAt(index)));
-  const meta = $derived((filesState.entries, kind === 'pose' ? host.poseMeta[poseIndex] : null));
-  const cameraIndex = $derived((filesState.entries, host.fileEntries.kindIndexAt(index)));
-  const cameraGroup = $derived(
-    (filesState.entries, kind === 'camera' ? host.cameraGroups[cameraIndex] : null),
-  );
-  const cameraProfileName = $derived(
-    (filesState.entries, kind === 'camera' ? host.cameraNames[cameraIndex] : ''),
-  );
+  const index = $derived(row.index);
+  const kind = $derived(row.kind);
+  const data = $derived(row.data);
+  const poseIndex = $derived(row.kindIndex);
+  const cameraIndex = $derived(row.kindIndex);
+  const meta = $derived(row.pose);
+  const cameraGroup = $derived(row.cameraGroup);
+  const cameraProfileName = $derived(row.cameraName);
   // Set by sources that fetch their images after the frames are on screen
   // (COLMAP). Absent for sources whose previews are embedded and already
   // decoded, so nothing extra is shown for those.
@@ -56,9 +43,9 @@
       : null;
   });
 
-  const visible = $derived(host.fileEntries.require(index).state.visible ?? true);
-  const collapsed = $derived(host.fileEntries.require(index).state.collapsed ?? false);
-  const colorMode = $derived(host.fileEntries.require(index).state.colorMode ?? 'assigned');
+  const visible = $derived(row.entry.state.visible ?? true);
+  const collapsed = $derived(row.entry.state.collapsed ?? false);
+  const colorMode = $derived(row.entry.state.colorMode ?? 'assigned');
 
   const isDepthDerivedFile = $derived(
     kind === 'pointcloud' &&
@@ -126,7 +113,7 @@
         host.fileEntries.require(fileIndex).state.collapsed = newCollapsed;
       }
     } else {
-      host.fileEntries.require(index).state.collapsed = newCollapsed;
+      row.entry.state.collapsed = newCollapsed;
     }
   }
 
@@ -141,7 +128,7 @@
       // Synchronize once the browser has completed the cancelled default
       // action; all other checkboxes update reactively through filesState.
       window.setTimeout(() => {
-        checkbox.checked = host.fileEntries.require(index).state.visible ?? true;
+        checkbox.checked = row.entry.state.visible ?? true;
       }, 0);
       return;
     }
@@ -310,10 +297,10 @@
   );
   const pointSize = $derived(
     kind === 'pose'
-      ? (host.fileEntries.require(index).state.pointSize ?? 0.02)
+      ? (row.entry.state.pointSize ?? 0.02)
       : kind === 'camera'
-        ? (host.fileEntries.require(index).state.pointSize ?? 1.0)
-        : host.fileEntries.require(index).state.pointSize || recommendedPointSize,
+        ? (row.entry.state.pointSize ?? 1.0)
+        : row.entry.state.pointSize || recommendedPointSize,
   );
   const sizePrecision = $derived(kind === 'pose' ? 3 : kind === 'camera' ? 1 : 4);
   const pointSizeSliderMax = $derived(Math.max(0.1, recommendedPointSize * 4));
@@ -375,7 +362,7 @@
     if (!isNaN(newSize) && newSize > 0) {
       setPointSize(newSize);
     } else {
-      const currentSize = host.fileEntries.require(index).state.pointSize || defaultPointSize();
+      const currentSize = row.entry.state.pointSize || defaultPointSize();
       input.value = currentSize.toFixed(sizePrecision);
     }
   }
@@ -513,7 +500,7 @@
       if (version !== colorCorrectionVersion || !cameraGroup) {
         return;
       }
-      setStonexColorCorrection(host, cameraGroup, colorCorrection);
+      host.setCameraColorCorrection(cameraGroup, colorCorrection);
       host.requestRender();
     });
   }
@@ -683,9 +670,9 @@
           >
             🎨 Load MTL Material
           </button>
-          {#if host.fileEntries.require(index).resources.materialName}
+          {#if row.entry.resources.materialName}
             <div class="mtl-status" style="font-size: 9px; color: var(--vscode-textLink-foreground); margin-bottom: 4px; text-align: center;">
-              📄 {host.fileEntries.require(index).resources.materialName} applied
+              📄 {row.entry.resources.materialName} applied
             </div>
           {/if}
         </div>
