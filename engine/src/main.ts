@@ -361,6 +361,7 @@ export class PointCloudVisualizer {
   >();
   sequenceGeneration = 0;
   sequenceRequestId = 0;
+  maxSequenceCacheBytes = 256 * 1024 * 1024;
   maxSequenceCache = 6; // keep more frames when navigating back
 
   // Per-file Depth data storage for reprocessing
@@ -1108,6 +1109,7 @@ export class PointCloudVisualizer {
     const entries = [...this.fileEntries.all];
     this.splatMode.dispose();
     this.sectionPlanes.dispose();
+    registrationFeature.endSession(this, false);
     this.fileEntries.clear();
     for (const entry of entries) {
       if (entry.spatial) {
@@ -3372,6 +3374,7 @@ export class PointCloudVisualizer {
   }
 
   removeFileByIndex(fileIndex: number): void {
+    registrationFeature.endSession(this);
     const removed = this.fileEntries.removeAt(fileIndex);
     for (const { entry, index } of removed) {
       if (entry.spatial) {

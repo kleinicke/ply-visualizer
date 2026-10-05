@@ -26,7 +26,9 @@ test.beforeEach(async ({ page }) => {
     (window as any).visualizer.setupMessageHandler();
     (window as any).requests = [];
     (window as any).visualizer.vscode.postMessage = (message: any) => {
-      if (message.type === 'sequence:requestFile') {(window as any).requests.push(message);}
+      if (message.type === 'sequence:requestFile') {
+        (window as any).requests.push(message);
+      }
     };
   });
 });
@@ -223,4 +225,36 @@ test('the shared sequence decoder loads binary PLY, mesh, point and depth frames
       ).toBe('intensity');
     }
   }
+});
+
+test('byte budget evicts prefetched frames and keeps an oversized visible frame', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const v = (window as any).visualizer;
+    v.maxSequenceCache = 6;
+    v.maxSequenceCacheBytes = 1;
+    v.initializeSequence(['a.ply', 'b.ply', 'c.ply'], '*.ply');
+  });
+  const requests = () => page.evaluate(() => (window as any).requests);
+  await reply(page, (await requests())[0]);
+  await expect.poll(async () => (await requests()).length).toBe(2);
+  await reply(page, (await requests())[1]);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).visualizer.sequencePending.size))
+    .toBe(0);
+  expect(await page.evaluate(() => [...(window as any).visualizer.sequenceCache.keys()])).toEqual([
+    0,
+  ]);
+  await page.evaluate(() => (window as any).visualizer.seekSequence(1));
+  await reply(page, (await requests()).at(-1));
+  await expect
+    .poll(() => page.evaluate(() => [...(window as any).visualizer.sequenceCache.keys()]))
+    .toEqual([1]);
+  expect(
+    await page.evaluate(() => {
+      const v = (window as any).visualizer;
+      return v.sequenceCache.get(1).spatial.object.parent === v.scene;
+    })
+  ).toBe(true);
 });

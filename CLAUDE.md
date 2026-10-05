@@ -67,10 +67,11 @@ this repository.
   the `--ignore` list in the `test:node` script in sync if a new test file
   imports `vscode`.
 - Integration tests and VS Code benchmarks prune old completed downloads from
-  `.vscode-test/` after selecting their runtime. They retain that runtime, any
-  version still running, incomplete downloads, and test profiles. The shared
-  helper is `scripts/prune-vscode-test-cache.cjs`; if process inspection is
-  unavailable, cleanup is skipped rather than risking an active test instance.
+  `.vscode-test/` after selecting their runtime. They retain that runtime, the
+  minimum supported version, the newest cached release, any version still
+  running, incomplete downloads, and test profiles. The shared helper is
+  `scripts/prune-vscode-test-cache.cjs`; if process inspection is unavailable,
+  cleanup is skipped rather than risking an active test instance.
 
 ## Where code goes
 
@@ -120,10 +121,13 @@ container and companion-file loaders stay explicit in the host adapters.
 resolution. Sequence frames use one raw-byte `sequence:file` response and the
 shared decoders. A generation-scoped request ID deduplicates pending frames and
 rejects replies from restarted sequences. The sequence cache owns complete file
-entries outside the normal registry; eviction always protects the visible frame.
-Extension senders use `providerHandlers/webviewTransport.ts` for readiness and
-timing. Never replace `Webview.postMessage`. Native agent requests also wait
-until the host has dispatched the initial document load.
+entries outside the normal registry. Eviction uses both a six-frame limit and a
+256 MiB estimate of retained CPU buffers and GPU payloads, counting shared CPU
+buffers once. The visible frame always survives, even if it exceeds the budget;
+decoding peaks and driver overhead are outside this estimate. Extension senders
+use `providerHandlers/webviewTransport.ts` for readiness and timing. Never
+replace `Webview.postMessage`. Native agent requests also wait until the host
+has dispatched the initial document load.
 
 `npm run build:wasm` builds both WASM packages with locked dependencies and
 records source/artifact hashes. Commit `wasm/artifacts.json` with the generated

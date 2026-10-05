@@ -1,3 +1,4 @@
+import { estimateSequenceBytes } from './sequenceMemory';
 import * as THREE from 'three';
 import { hasIntensityData } from './utils/intensity';
 import type { CameraParams, DepthConversionResult, SpatialData } from './interfaces';
@@ -41,6 +42,7 @@ export interface SequencePlaybackHost extends FileObjectHost {
   sequenceTimer: number | null;
   sequenceFps: number;
   maxSequenceCache: number;
+  maxSequenceCacheBytes: number;
   updateFileList(): void;
   requestRender(): void;
   removeFileByIndex(index: number): void;
@@ -55,9 +57,13 @@ function disposeFrame(entry: FileEntry): void {
 export function disposeSequence(host: SequencePlaybackHost): void {
   pauseSequence(host);
   host.sequenceGeneration++;
-  for (const request of host.sequencePending.values()) {request.controller.abort();}
+  for (const request of host.sequencePending.values()) {
+    request.controller.abort();
+  }
   host.sequencePending.clear();
-  for (const entry of host.sequenceCache.values()) {disposeFrame(entry);}
+  for (const entry of host.sequenceCache.values()) {
+    disposeFrame(entry);
+  }
   host.sequenceCache.clear();
   host.sequenceMode = false;
   host.sequenceFiles = [];
@@ -77,7 +83,9 @@ export function initializeSequence(
   host.sequenceDidInitialFit = false;
   uiState.sequenceMode = true;
   updateSequenceUI(host);
-  while (host.fileEntries.length) {host.removeFileByIndex(host.fileEntries.length - 1);}
+  while (host.fileEntries.length) {
+    host.removeFileByIndex(host.fileEntries.length - 1);
+  }
   loadSequenceFrame(host, 0);
   host.updateFileList();
 }
@@ -141,7 +149,9 @@ export function seekSequence(host: SequencePlaybackHost, index: number): void {
 /** Requests and prefetch share the same pending map. IDs include the sequence generation. */
 function requestFrame(host: SequencePlaybackHost, index: number): void {
   const path = host.sequenceFiles[index];
-  if (!path || host.sequenceCache.has(index) || host.sequencePending.has(index)) {return;}
+  if (!path || host.sequenceCache.has(index) || host.sequencePending.has(index)) {
+    return;
+  }
   const requestId = `${host.sequenceGeneration}:${++host.sequenceRequestId}`;
   host.sequencePending.set(index, {
     requestId,
@@ -153,8 +163,11 @@ function requestFrame(host: SequencePlaybackHost, index: number): void {
 
 export function loadSequenceFrame(host: SequencePlaybackHost, index: number): void {
   const cached = host.sequenceCache.get(index);
-  if (cached) {showFrame(host, cached, index);}
-  else {requestFrame(host, index);}
+  if (cached) {
+    showFrame(host, cached, index);
+  } else {
+    requestFrame(host, index);
+  }
 }
 
 export async function handleSequenceFile(
@@ -162,7 +175,9 @@ export async function handleSequenceFile(
   message: MessageOf<'sequence:file'>
 ): Promise<void> {
   const pending = host.sequencePending.get(message.index);
-  if (!pending || pending.processing || pending.requestId !== message.requestId) {return;}
+  if (!pending || pending.processing || pending.requestId !== message.requestId) {
+    return;
+  }
   pending.processing = true;
   const { signal } = pending.controller;
   let entry: FileEntry | undefined;
@@ -173,7 +188,9 @@ export async function handleSequenceFile(
     signal.throwIfAborted();
     if (type?.isDepthFile) {
       const params = { ...host.defaultDepthSettings, cx: undefined, cy: undefined };
-      if (/\.png$/i.test(message.fileName)) {params.pngScaleFactor ||= 1000;}
+      if (/\.png$/i.test(message.fileName)) {
+        params.pngScaleFactor ||= 1000;
+      }
       const result = await host.processDepthToPointCloud(
         bytes.slice().buffer,
         message.fileName,
@@ -214,19 +231,25 @@ export async function handleSequenceFile(
     host.sequenceCache.set(message.index, entry);
     entry = undefined;
     data = undefined;
-    if (message.index === host.sequenceTargetIndex)
-      {showFrame(host, host.sequenceCache.get(message.index)!, message.index);}
+    if (message.index === host.sequenceTargetIndex) {
+      showFrame(host, host.sequenceCache.get(message.index)!, message.index);
+    }
     evictFrames(host);
   } catch (error) {
-    if (entry) {disposeFrame(entry);}
-    else {data?.sceneModel?.dispose();}
-    if (!signal.aborted)
-      {host.showError(
+    if (entry) {
+      disposeFrame(entry);
+    } else {
+      data?.sceneModel?.dispose();
+    }
+    if (!signal.aborted) {
+      host.showError(
         `Sequence frame failed: ${error instanceof Error ? error.message : String(error)}`
-      );}
+      );
+    }
   } finally {
-    if (host.sequencePending.get(message.index) === pending)
-      {host.sequencePending.delete(message.index);}
+    if (host.sequencePending.get(message.index) === pending) {
+      host.sequencePending.delete(message.index);
+    }
   }
 }
 
@@ -235,7 +258,9 @@ export function handleSequenceError(
   message: MessageOf<'sequence:file:error'>
 ): void {
   const pending = host.sequencePending.get(message.index);
-  if (pending?.requestId !== message.requestId) {return;}
+  if (pending?.requestId !== message.requestId) {
+    return;
+  }
   pending.controller.abort();
   host.sequencePending.delete(message.index);
   if (message.index === host.sequenceTargetIndex) {
@@ -246,8 +271,15 @@ export function handleSequenceError(
 
 function evictFrames(host: SequencePlaybackHost): void {
   for (const [index, entry] of host.sequenceCache) {
-    if (host.sequenceCache.size <= Math.max(1, host.maxSequenceCache)) {break;}
-    if (index === host.sequenceIndex) {continue;}
+    if (
+      host.sequenceCache.size <= Math.max(1, host.maxSequenceCache) &&
+      estimateSequenceBytes(host.sequenceCache.values()) <= host.maxSequenceCacheBytes
+    ) {
+      break;
+    }
+    if (index === host.sequenceIndex) {
+      continue;
+    }
     host.sequenceCache.delete(index);
     disposeFrame(entry);
   }
@@ -256,7 +288,9 @@ function evictFrames(host: SequencePlaybackHost): void {
 function showFrame(host: SequencePlaybackHost, entry: FileEntry, index: number): void {
   const object = entry.spatial!.object;
   const previous = host.sequenceCache.get(host.sequenceIndex)?.spatial?.object;
-  if (previous && previous !== object) {previous.removeFromParent();}
+  if (previous && previous !== object) {
+    previous.removeFromParent();
+  }
   host.scene.add(object);
   object.visible = true;
   host.sequenceIndex = index;
@@ -271,6 +305,7 @@ function showFrame(host: SequencePlaybackHost, entry: FileEntry, index: number):
   host.updateFileList();
   host.requestRender();
   const next = (index + 1) % host.sequenceFiles.length;
-  if (!/\.(tif|tiff|pfm|npy|npz|png|exr)$/i.test(host.sequenceFiles[next] ?? ''))
-    {requestFrame(host, next);}
+  if (!/\.(tif|tiff|pfm|npy|npz|png|exr)$/i.test(host.sequenceFiles[next] ?? '')) {
+    requestFrame(host, next);
+  }
 }

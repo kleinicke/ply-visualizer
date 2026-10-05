@@ -1,4 +1,4 @@
-// Keep the selected test runtime and any runtime still in use. Never touch
+// Keep minimum, newest cached release, selected, and running test runtimes. Never touch
 // profiles, extensions, symlinks, or incomplete downloads.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,10 +11,25 @@ function prune(cache, executable, processes) {
     throw new Error('Selected executable must be inside the VS Code test cache');
   }
   if (!fs.existsSync(executable)) throw new Error('Selected VS Code executable does not exist');
+  const minimum = require('../package.json').engines.vscode.match(/\d+\.\d+\.\d+/)[0];
+  const entries = fs.readdirSync(cache, { withFileTypes: true });
+  const completed = entries.filter(
+    entry => entry.isDirectory() && fs.existsSync(path.join(cache, entry.name, 'is-complete'))
+  );
+  const versionOf = name => name.match(/^vscode-.*-(\d+\.\d+\.\d+)$/)?.[1];
+  const versions = completed.map(entry => versionOf(entry.name)).filter(Boolean);
+  versions.sort((a, b) => {
+    const left = a.split('.').map(Number),
+      right = b.split('.').map(Number);
+    return left[0] - right[0] || left[1] - right[1] || left[2] - right[2];
+  });
+  const stable = versions.at(-1);
   const removed = [];
-  for (const entry of fs.readdirSync(cache, { withFileTypes: true })) {
+  for (const entry of entries) {
     if (!entry.isDirectory() || entry.name === keep || !/^vscode-[\w.-]+$/.test(entry.name))
       continue;
+    const version = versionOf(entry.name);
+    if (version && (version === minimum || version === stable)) continue;
     const directory = path.join(cache, entry.name);
     if (!fs.existsSync(path.join(directory, 'is-complete'))) continue;
     if (processes.includes(directory)) continue;

@@ -597,15 +597,42 @@ test.describe('Scan-to-scan registration', () => {
     await panel.locator('.registration-needs-coarse').click();
 
     const canvas = page.locator('#three-canvas');
-    const box = (await canvas.boundingBox())!;
-    const centre = { x: box.width / 2, y: box.height / 2 };
+    // The canvas centre can lie outside the isolated cloud or under the open
+    // alignment menu. Exercise the gesture on a projected, unobstructed point.
+    const pickPosition = () =>
+      page.evaluate(() => {
+        const viewer = (window as any).visualizer;
+        const canvas = viewer.renderer.domElement as HTMLCanvasElement;
+        const rect = canvas.getBoundingClientRect();
+        const object = viewer.fileEntries.require(0).spatial.object;
+        const positions = object.geometry.getAttribute('position');
+        for (let index = 0; index < positions.count; index += 101) {
+          const point = object.position.clone().fromBufferAttribute(positions, index);
+          object.localToWorld(point).project(viewer.camera);
+          if (point.z < -1 || point.z > 1) {
+            continue;
+          }
+          const x = ((point.x + 1) * rect.width) / 2;
+          const y = ((1 - point.y) * rect.height) / 2;
+          if (
+            x > 10 &&
+            x < rect.width - 10 &&
+            y > 10 &&
+            y < rect.height - 10 &&
+            document.elementFromPoint(rect.left + x, rect.top + y) === canvas
+          ) {
+            return { x, y };
+          }
+        }
+        throw new Error('No unobstructed fixture point is on screen');
+      });
 
-    await canvas.dblclick({ position: centre });
+    await canvas.dblclick({ position: await pickPosition() });
     expect(
       await page.evaluate(() => (window as any).__plyRegistrationState?.coarseFixedCount ?? -1)
     ).toBe(0);
 
-    await canvas.dblclick({ position: centre, modifiers: ['ControlOrMeta'] });
+    await canvas.dblclick({ position: await pickPosition(), modifiers: ['ControlOrMeta'] });
     await expect
       .poll(() => page.evaluate(() => (window as any).__plyRegistrationState?.coarseFixedCount))
       .toBe(1);
