@@ -1,3 +1,4 @@
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import { isSceneModel } from './models/modelFormats';
 import { loadSceneModel } from './models/loadSceneModel';
 import { setupRemoteFileLoader } from './remoteFileLoader';
@@ -41,6 +42,7 @@ function trackWebsiteEvent(name: string): void {
 }
 
 export interface BrowserFileDragDropHost {
+  lifetime: ViewerLifetime;
   browserFileHandler: BrowserMessageHandler | null;
   vscode: { postMessage(message: any): void };
   spatialFiles: SpatialData[];
@@ -111,7 +113,7 @@ export function handleBrowserMessage(host: BrowserFileDragDropHost, message: any
   }
 }
 
-export function setupPanelResizeAndDrag(): void {
+export function setupPanelResizeAndDrag(host: BrowserFileDragDropHost): void {
   const mainPanel = document.getElementById('main-ui-panel');
   const tabContent = document.querySelector('.tab-content') as HTMLElement;
 
@@ -137,7 +139,7 @@ export function setupPanelResizeAndDrag(): void {
   };
 
   // Update cursor when hovering over resize zone
-  mainPanel.addEventListener('mousemove', (e: MouseEvent) => {
+  host.lifetime.listen(mainPanel, 'mousemove', (e: MouseEvent) => {
     if (!isDragging) {
       if (isInResizeZone(e)) {
         mainPanel.style.cursor = 'ns-resize';
@@ -147,14 +149,14 @@ export function setupPanelResizeAndDrag(): void {
     }
   });
 
-  mainPanel.addEventListener('mouseleave', () => {
+  host.lifetime.listen(mainPanel, 'mouseleave', () => {
     if (!isDragging) {
       mainPanel.style.cursor = '';
     }
   });
 
   // Start dragging
-  mainPanel.addEventListener('mousedown', (e: MouseEvent) => {
+  host.lifetime.listen(mainPanel, 'mousedown', (e: MouseEvent) => {
     if (isInResizeZone(e)) {
       isDragging = true;
       startY = e.clientY;
@@ -185,7 +187,7 @@ export function setupPanelResizeAndDrag(): void {
   });
 
   // Handle dragging
-  document.addEventListener('mousemove', (e: MouseEvent) => {
+  host.lifetime.listen(document, 'mousemove', (e: MouseEvent) => {
     if (isDragging) {
       const deltaY = e.clientY - startY;
       const newHeight = startHeight + deltaY;
@@ -201,7 +203,7 @@ export function setupPanelResizeAndDrag(): void {
   });
 
   // Stop dragging
-  document.addEventListener('mouseup', () => {
+  host.lifetime.listen(document, 'mouseup', () => {
     if (isDragging) {
       isDragging = false;
       mainPanel.style.cursor = '';
@@ -218,7 +220,7 @@ export function setupBrowserFileHandlers(host: BrowserFileDragDropHost): void {
   const mainPanel = document.getElementById('main-ui-panel');
 
   if (fileInput) {
-    fileInput.addEventListener('change', event => {
+    host.lifetime.listen(fileInput, 'change', event => {
       const files = (event.target as HTMLInputElement).files;
       if (files) {
         handleDroppedFiles(host, Array.from(files));
@@ -228,18 +230,18 @@ export function setupBrowserFileHandlers(host: BrowserFileDragDropHost): void {
 
   // Add drag & drop support to the Add Point Cloud button
   if (addFileButton) {
-    addFileButton.addEventListener('dragover', event => {
+    host.lifetime.listen(addFileButton, 'dragover', event => {
       handleDragOver(event);
       addFileButton.style.backgroundColor = '#1177bb';
       addFileButton.style.transform = 'scale(1.02)';
     });
 
-    addFileButton.addEventListener('dragleave', () => {
+    host.lifetime.listen(addFileButton, 'dragleave', () => {
       addFileButton.style.backgroundColor = '';
       addFileButton.style.transform = '';
     });
 
-    addFileButton.addEventListener('drop', event => {
+    host.lifetime.listen(addFileButton, 'drop', event => {
       addFileButton.style.backgroundColor = '';
       addFileButton.style.transform = '';
       void handleDropEvent(host, event);
@@ -248,30 +250,30 @@ export function setupBrowserFileHandlers(host: BrowserFileDragDropHost): void {
 
   // Also add drag & drop to the entire main UI panel as fallback
   if (mainPanel) {
-    mainPanel.addEventListener('dragover', event => {
+    host.lifetime.listen(mainPanel, 'dragover', event => {
       handleDragOver(event);
     });
 
-    mainPanel.addEventListener('drop', event => {
+    host.lifetime.listen(mainPanel, 'drop', event => {
       void handleDropEvent(host, event);
     });
   }
 
   // Add drag & drop support to the entire window
-  document.addEventListener('dragover', event => {
+  host.lifetime.listen(document, 'dragover', event => {
     handleDragOver(event);
     // Add visual feedback to the entire window
     document.body.style.backgroundColor = 'rgba(0, 95, 184, 0.1)';
   });
 
-  document.addEventListener('dragleave', event => {
+  host.lifetime.listen(document, 'dragleave', event => {
     // Only remove highlight when leaving the entire document
     if (!event.relatedTarget || event.relatedTarget === document.documentElement) {
       document.body.style.backgroundColor = '';
     }
   });
 
-  document.addEventListener('drop', event => {
+  host.lifetime.listen(document, 'drop', event => {
     document.body.style.backgroundColor = '';
     void handleDropEvent(host, event);
   });
@@ -283,7 +285,7 @@ export function setupBrowserFileHandlers(host: BrowserFileDragDropHost): void {
 
 /** Receive a local depth image directly from images.f-kleinicke.de. */
 export function setupScientificImageHandoff(host: BrowserFileDragDropHost): void {
-  window.addEventListener('message', event => {
+  host.lifetime.listen(window, 'message', event => {
     if (!SCIENTIFIC_IMAGE_ORIGINS.has(event.origin)) {
       return;
     }

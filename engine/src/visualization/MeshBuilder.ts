@@ -1,3 +1,4 @@
+import { validateSpatialData } from './validateSpatialData';
 import type { FileEntryRegistry } from '../state/fileEntries';
 import * as THREE from 'three';
 import { SpatialData } from '../interfaces';
@@ -23,6 +24,7 @@ export function createGeometryFromSpatialData(
   data: SpatialData,
   initialColorMode?: string
 ): { geometry: THREE.BufferGeometry; geometryMs: number } {
+  validateSpatialData(data);
   const geometry = new THREE.BufferGeometry();
 
   try {

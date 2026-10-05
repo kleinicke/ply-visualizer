@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import PerformanceStats from './components/PerformanceStats.svelte';
 
 /**
@@ -7,10 +8,15 @@ import PerformanceStats from './components/PerformanceStats.svelte';
  * renderStats.ts's updateFPSDisplay just sets the store field at the same
  * 250ms throttle interval it always used, no more direct DOM writes.
  */
-export function mountPerformanceStats(): void {
+export function mountPerformanceStats(lifetime: ViewerLifetime): void {
   const target = document.getElementById('performance-stats-mount');
   if (!target) {
     return;
   }
-  mount(PerformanceStats, { target });
+  {
+    const component = mount(PerformanceStats, { target });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

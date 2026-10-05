@@ -431,9 +431,7 @@ export function addStonexCameraVisualization(host: StonexCameraHost, data: Spati
   });
 
   host.scene.add(profile);
-  host.cameraGroups.push(profile);
-  host.cameraNames.push(`${profileName} cameras`);
-  registerCameraEntry(host);
+  registerCameraEntry(host, profile, `${profileName} cameras`);
   return true;
 }
 

@@ -1,4 +1,7 @@
-import { Matrix4, type LineSegments, type Points, type Group, type Object3D } from 'three';
+import type { SpatialData } from '../interfaces';
+import type { FileObject } from '../visualization/fileObject';
+import type { PoseMeta, PoseJoint } from '../pose';
+import { Matrix4, Group, type LineSegments, type Points, type Object3D } from 'three';
 import type { MtlData } from '../parsers/mtlParser';
 
 export type FileEntryKind = 'spatial' | 'pose' | 'camera';
@@ -37,8 +40,36 @@ export function defaultEntryPresentation(): EntryPresentation {
   };
 }
 
+export interface SpatialEntryData {
+  data: SpatialData;
+  object: FileObject;
+}
+export interface PoseEntryData {
+  object: Group;
+  meta: PoseMeta;
+  joints: PoseJoint[];
+  edges: [number, number][];
+  useDatasetColors: boolean;
+  showLabels: boolean;
+  scaleByScore: boolean;
+  scaleByUncertainty: boolean;
+  convention: 'opencv' | 'opengl';
+  minScoreThreshold: number;
+  maxUncertaintyThreshold: number;
+  labelsGroup: Group | null;
+}
+export interface CameraEntryData {
+  object: Group;
+  name: string;
+  showLabels: boolean;
+  showCoords: boolean;
+}
+
 /** GPU resources stay outside Svelte's deep reactive state. */
 export class FileEntry {
+  spatial: SpatialEntryData | null = null;
+  pose: PoseEntryData | null = null;
+  camera: CameraEntryData | null = null;
   readonly resources = {
     normals: null as LineSegments | null,
     vertexPoints: null as Points | null,
@@ -50,18 +81,54 @@ export class FileEntry {
   };
   readonly transform = new Matrix4();
   readonly depthUpdate = {
+    controller: undefined as AbortController | undefined,
     version: 0,
     inFlight: false,
     queued: false,
     timer: undefined as number | undefined,
   };
 
+  cancelDepthWork(): void {
+    this.depthUpdate.version++;
+    this.depthUpdate.controller?.abort();
+    this.depthUpdate.controller = undefined;
+    this.depthUpdate.queued = false;
+    clearTimeout(this.depthUpdate.timer);
+    this.depthUpdate.timer = undefined;
+  }
+
+  beginDepthWork(): AbortSignal {
+    this.cancelDepthWork();
+    this.depthUpdate.controller = new AbortController();
+    return this.depthUpdate.controller.signal;
+  }
+
   constructor(
     readonly id: number,
     readonly kind: FileEntryKind,
     public parentId: number | null,
     readonly state: EntryPresentation
-  ) {}
+  ) {
+    if (kind === 'pose') {
+      this.pose = {
+        object: new Group(),
+        meta: { jointCount: 0, edgeCount: 0, fileName: '' },
+        joints: [],
+        edges: [],
+        useDatasetColors: false,
+        showLabels: false,
+        scaleByScore: false,
+        scaleByUncertainty: false,
+        convention: 'opengl',
+        minScoreThreshold: 0,
+        maxUncertaintyThreshold: 1,
+        labelsGroup: null,
+      };
+    }
+    if (kind === 'camera') {
+      this.camera = { object: new Group(), name: '', showLabels: false, showCoords: false };
+    }
+  }
 }
 
 /**
@@ -78,6 +145,24 @@ export class FileEntryRegistry {
     private readonly presentation: () => EntryPresentation = defaultEntryPresentation,
     private readonly changed: (entries: readonly FileEntry[]) => void = () => {}
   ) {}
+
+  ofKind(kind: FileEntryKind): FileEntry[] {
+    return this.entries.filter(entry => entry.kind === kind);
+  }
+
+  spatial(index: number): SpatialEntryData {
+    const value = this.require(this.indexOfKind('spatial', index)).spatial;
+    if (!value) {
+      throw new Error('Spatial entry has no data');
+    }
+    return value;
+  }
+  pose(index: number): PoseEntryData {
+    return this.require(this.indexOfKind('pose', index)).pose!;
+  }
+  camera(index: number): CameraEntryData {
+    return this.require(this.indexOfKind('camera', index)).camera!;
+  }
 
   get all(): readonly FileEntry[] {
     return this.entries;
@@ -148,11 +233,10 @@ export class FileEntryRegistry {
    * Drops the entry at a unified index, and any entry that named it as a
    * parent, and so on down.
    *
-   * Returns everything removed in **descending index order**, which is what
-   * makes the caller's job safe: splicing its own per-entry arrays from the
-   * highest index first leaves earlier positions valid. Removing a container
-   * without its children would strand their scene objects with no row to
-   * control them.
+   * Returns removed entries with their former indices in descending order.
+   * Each returned entry still owns its records and resources for cleanup.
+   * Removing a container without its children would strand their scene objects
+   * with no row to control them.
    */
   removeAt(index: number): { entry: FileEntry; index: number }[] {
     if (!this.entries[index]) {
@@ -174,10 +258,7 @@ export class FileEntryRegistry {
     for (let i = this.entries.length - 1; i >= 0; i--) {
       if (doomed.has(this.entries[i].id)) {
         const entry = this.entries[i];
-        entry.depthUpdate.version++;
-        if (entry.depthUpdate.timer !== undefined) {
-          clearTimeout(entry.depthUpdate.timer);
-        }
+        entry.cancelDepthWork();
         removed.push({ entry, index: i });
         this.entries.splice(i, 1);
       }
@@ -225,8 +306,7 @@ export class FileEntryRegistry {
 
   clear(): void {
     for (const entry of this.entries) {
-      entry.depthUpdate.version++;
-      clearTimeout(entry.depthUpdate.timer);
+      entry.cancelDepthWork();
     }
     this.entries = [];
     this.publish();

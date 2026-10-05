@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import SvelteSmokeTest from './components/SvelteSmokeTest.svelte';
 
 /**
@@ -7,10 +8,16 @@ import SvelteSmokeTest from './components/SvelteSmokeTest.svelte';
  * assert the Svelte pipeline actually ran inside the real webview bundle.
  * Remove this file and its call site once Phase 0 is confirmed via F5.
  */
-export function mountSvelteSmokeTest(): void {
+export function mountSvelteSmokeTest(lifetime: ViewerLifetime): void {
   const target = document.createElement('div');
   target.id = 'svelte-smoke-test-root';
   target.style.display = 'none';
   document.body.appendChild(target);
-  mount(SvelteSmokeTest, { target });
+  lifetime.add(() => target.remove());
+  {
+    const component = mount(SvelteSmokeTest, { target });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

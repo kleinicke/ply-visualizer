@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import Stats from './components/Stats.svelte';
 
 /**
@@ -6,10 +7,15 @@ import Stats from './components/Stats.svelte';
  * innerHTML building. main.ts's updateFileStats()/updateFileStatsImmediate()
  * just set state/files.svelte.js fields now.
  */
-export function mountStats(host: unknown): void {
+export function mountStats(lifetime: ViewerLifetime, host: unknown): void {
   const target = document.getElementById('file-stats-mount');
   if (!target) {
     return;
   }
-  mount(Stats, { target, props: { host } });
+  {
+    const component = mount(Stats, { target, props: { host } });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

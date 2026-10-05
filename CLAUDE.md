@@ -92,11 +92,21 @@ modules above. Shared file presentation state and transforms belong to stable
 `FileEntryRegistry` entries; never add parallel arrays or Svelte mirrors for
 them. Async entry work must retain the entry ID and resolve its current index
 after awaiting. Build file objects off-scene with `visualization/fileObject.ts`
-and commit their prepared registry entry only after construction succeeds.
-Dispose entry-owned resources through its shared disposal helper. Depth source
-bytes belong to `SpatialData.depthSource`. Depth inputs and calibration
-selection live in `entry.state.depthForm`; bind components to that state rather
-than reading or restoring input values through DOM IDs.
+and commit their prepared registry entry only after construction succeeds. Each
+entry owns its spatial data/root, pose data/settings, or camera profile. The
+viewer's collection getters are derived views, never mutation targets; write
+through the entry. Dispose entry-owned resources through its shared disposal
+helper. Viewer listeners, mounts and timers belong to `ViewerLifetime`; disposal
+must stop rendering, unmount UI, cancel depth work and release scene resources.
+Depth conversions accept an `AbortSignal`: entries cancel obsolete jobs, and the
+client serializes worker requests so it can terminate an active conversion
+without killing another file's work. Main-thread fallback checks cancellation
+between phases; synchronous WASM on that path cannot be interrupted mid-call.
+Decoded geometry is checked by `visualization/validateSpatialData.ts` before GPU
+allocation (counts, attribute lengths/types and face bounds). Depth source bytes
+belong to `SpatialData.depthSource`. Depth inputs and calibration selection live
+in `entry.state.depthForm`; bind components to that state rather than reading or
+restoring input values through DOM IDs.
 
 `engine/src/interfaces.ts` owns the spatial data contract. Format detection,
 decoding and raw-byte delivery policy belong in `formats/builtinFormats.ts`;

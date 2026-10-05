@@ -59,9 +59,7 @@ function createScannerMarker(data: SpatialData): THREE.Group {
 
 function registerCameraGroup(host: E57CameraHost, profile: THREE.Group, name: string): void {
   host.scene.add(profile);
-  host.cameraGroups.push(profile);
-  host.cameraNames.push(name);
-  registerCameraEntry(host);
+  registerCameraEntry(host, profile, name);
 }
 
 function imagePose(

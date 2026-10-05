@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import LoadingOverlay from './components/LoadingOverlay.svelte';
 
 /**
@@ -7,10 +8,15 @@ import LoadingOverlay from './components/LoadingOverlay.svelte';
  * state/ui.svelte.ts - showLoading()/showImmediateLoading()/setLoadingDetail()
  * in main.ts just set store fields, this component renders them.
  */
-export function mountLoadingOverlay(): void {
+export function mountLoadingOverlay(lifetime: ViewerLifetime): void {
   const target = document.getElementById('loading-mount');
   if (!target) {
     return;
   }
-  mount(LoadingOverlay, { target });
+  {
+    const component = mount(LoadingOverlay, { target });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

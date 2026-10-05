@@ -1,9 +1,12 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import SceneGuides from './components/SceneGuides.svelte';
 
-export function mountSceneGuides(host: unknown): void {
+export function mountSceneGuides(lifetime: ViewerLifetime, host: unknown): void {
   const container = document.getElementById('viewer-container');
-  if (!container || document.getElementById('scene-guides-mount')) {return;}
+  if (!container || document.getElementById('scene-guides-mount')) {
+    return;
+  }
   const target = document.createElement('div');
   target.id = 'scene-guides-mount';
   Object.assign(target.style, {
@@ -13,5 +16,10 @@ export function mountSceneGuides(host: unknown): void {
     zIndex: '5',
   });
   container.appendChild(target);
-  mount(SceneGuides, { target, props: { host } });
+  {
+    const component = mount(SceneGuides, { target, props: { host } });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

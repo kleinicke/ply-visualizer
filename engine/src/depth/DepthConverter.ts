@@ -60,7 +60,8 @@ export class DepthConverter {
   async processDepthToPointCloud(
     depthData: ArrayBuffer,
     fileName: string,
-    cameraParams: CameraParams
+    cameraParams: CameraParams,
+    signal?: AbortSignal
   ): Promise<DepthConversionResult> {
     try {
       console.log(
@@ -74,12 +75,14 @@ export class DepthConverter {
       }
 
       // Timed for the caller's single PERF line, mirroring depthWorker.ts.
+      signal?.throwIfAborted();
       const decodeStart = performance.now();
       const decoded = await this.decodeDepthImage(depthData, fileName, cameraParams);
       const decodeMs = performance.now() - decodeStart;
 
+      signal?.throwIfAborted();
       const projectStart = performance.now();
-      const result = await this.projectDecodedDepthImage(decoded, fileName, cameraParams);
+      const result = await this.projectDecodedDepthImage(decoded, fileName, cameraParams, signal);
       result.timings = {
         decodeMs,
         projectMs: performance.now() - projectStart,
@@ -90,6 +93,7 @@ export class DepthConverter {
 
       return result as unknown as DepthConversionResult;
     } catch (error) {
+      signal?.throwIfAborted();
       throw new Error(
         `Failed to process depth file: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -149,8 +153,10 @@ export class DepthConverter {
   async projectDecodedDepthImage(
     decoded: DecodedDepthImage,
     fileName: string,
-    cameraParams: CameraParams
+    cameraParams: CameraParams,
+    signal?: AbortSignal
   ): Promise<DepthConversionResult> {
+    signal?.throwIfAborted();
     const { image, meta: baseMeta } = decoded;
 
     // Auto-calculate cx/cy if not provided
@@ -250,7 +256,9 @@ export class DepthConverter {
   - depthScale: ${cameraParams.depthScale ?? 'not set'}
   - depthBias: ${cameraParams.depthBias ?? 'not set'}`);
 
+    signal?.throwIfAborted();
     const result = await projectToPointCloudParallel(norm, projectionParams);
+    signal?.throwIfAborted();
 
     if (result.projectionDiagnostics?.rejectedCount) {
       console.warn(

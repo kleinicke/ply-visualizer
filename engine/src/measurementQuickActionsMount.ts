@@ -1,7 +1,8 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import MeasurementQuickActions from './components/MeasurementQuickActions.svelte';
 
-export function mountMeasurementQuickActions(host: unknown): void {
+export function mountMeasurementQuickActions(lifetime: ViewerLifetime, host: unknown): void {
   const panel = document.getElementById('main-ui-panel');
   if (!panel || document.getElementById('measurement-quick-actions-mount')) {
     return;
@@ -9,5 +10,11 @@ export function mountMeasurementQuickActions(host: unknown): void {
   const target = document.createElement('div');
   target.id = 'measurement-quick-actions-mount';
   panel.appendChild(target);
-  mount(MeasurementQuickActions, { target, props: { host } });
+  lifetime.add(() => target.remove());
+  {
+    const component = mount(MeasurementQuickActions, { target, props: { host } });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

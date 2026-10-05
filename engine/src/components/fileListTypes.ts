@@ -71,10 +71,10 @@ export function fileRows(host: FileItemHost, entries: readonly FileEntry[]): Fil
       index,
       kindIndex,
       kind: entry.kind === 'spatial' ? 'pointcloud' : entry.kind,
-      data: entry.kind === 'spatial' ? host.spatialFiles[kindIndex] : null,
-      pose: entry.kind === 'pose' ? host.poseMeta[kindIndex] : null,
-      cameraGroup: entry.kind === 'camera' ? host.cameraGroups[kindIndex] : null,
-      cameraName: entry.kind === 'camera' ? host.cameraNames[kindIndex] : '',
+      data: entry.spatial?.data ?? null,
+      pose: entry.pose?.meta ?? null,
+      cameraGroup: entry.camera?.object ?? null,
+      cameraName: entry.camera?.name ?? '',
     };
   });
 }

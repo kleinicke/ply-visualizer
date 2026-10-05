@@ -15,7 +15,8 @@ export interface LiveDepthUpdateHost {
     depthData: ArrayBuffer,
     fileName: string,
     cameraParams: CameraParams,
-    colorImageData?: any
+    colorImageData?: ImageData,
+    signal?: AbortSignal
   ): Promise<DepthConversionResult>;
   createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material;
   createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry;
@@ -34,10 +35,7 @@ export function setLiveDepthUpdateEnabled(
   const entry = host.fileEntries.require(fileIndex);
   entry.state.liveDepth = enabled;
   if (!enabled) {
-    entry.depthUpdate.version++;
-    entry.depthUpdate.queued = false;
-    clearTimeout(entry.depthUpdate.timer);
-    entry.depthUpdate.timer = undefined;
+    entry.cancelDepthWork();
   }
 
   const applyButton = document.querySelector(
@@ -66,8 +64,7 @@ export function scheduleLiveDepthUpdate(
   if (!entry.state.liveDepth) {
     return;
   }
-  entry.depthUpdate.version++;
-  clearTimeout(entry.depthUpdate.timer);
+  entry.cancelDepthWork();
   entry.depthUpdate.timer = window.setTimeout(() => {
     entry.depthUpdate.timer = undefined;
     const index = host.fileEntries.indexOf(entry.id);
@@ -143,11 +140,14 @@ async function applyDepthSettingsInner(
   liveVersion?: number
 ): Promise<void> {
   const entry = host.fileEntries.require(fileIndex);
+  if (liveVersion !== undefined && liveVersion !== entry.depthUpdate.version) {
+    return;
+  }
+  const signal = entry.beginDepthWork();
+  const version = entry.depthUpdate.version;
   const current = () => {
     fileIndex = host.fileEntries.indexOf(entry.id);
-    return (
-      fileIndex >= 0 && (liveVersion === undefined || entry.depthUpdate.version === liveVersion)
-    );
+    return fileIndex >= 0 && entry.depthUpdate.version === version && !signal.aborted;
   };
   const perf = new PerfTimer('depth/reapply');
   try {
@@ -195,7 +195,8 @@ async function applyDepthSettingsInner(
       depthData.originalData,
       depthData.fileName,
       newCameraParams,
-      depthData.colorImageData
+      depthData.colorImageData,
+      signal
     );
     perf.mark('worker');
     if (!current()) {
@@ -278,7 +279,7 @@ async function applyDepthSettingsInner(
     newMesh.matrix.copy(oldMesh.matrix);
     newMesh.matrixAutoUpdate = oldMesh.matrixAutoUpdate;
 
-    host.meshes[fileIndex] = newMesh;
+    entry.spatial!.object = newMesh;
     host.scene.add(newMesh);
 
     perf.mark('geometry');
@@ -303,6 +304,9 @@ async function applyDepthSettingsInner(
     perf.note('verts', spatialData.vertexCount ?? 0);
     perf.summary();
   } catch (error) {
+    if (signal.aborted) {
+      return;
+    }
     console.error(`Error applying depth settings:`, error);
     host.showError(
       `Failed to apply depth settings: ${error instanceof Error ? error.message : String(error)}`

@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import GlobalAlignMenu from './components/GlobalAlignMenu.svelte';
 
 /**
@@ -9,10 +10,15 @@ import GlobalAlignMenu from './components/GlobalAlignMenu.svelte';
  * component decides for itself whether to render anything (two or more clouds
  * with point data), so mounting is unconditional.
  */
-export function mountGlobalAlignMenu(host: unknown): void {
+export function mountGlobalAlignMenu(lifetime: ViewerLifetime, host: unknown): void {
   const target = document.getElementById('global-align-mount');
   if (!target) {
     return;
   }
-  mount(GlobalAlignMenu, { target, props: { host } });
+  {
+    const component = mount(GlobalAlignMenu, { target, props: { host } });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

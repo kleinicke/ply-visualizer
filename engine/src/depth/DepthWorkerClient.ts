@@ -29,6 +29,24 @@ export class DepthWorkerClient {
   private nextRequestId = 1;
   private pending = new Map<number, PendingRequest>();
   private primedCacheKeys = new Set<string>();
+  private sourceIds = new WeakMap<ArrayBuffer, number>();
+  private nextSourceId = 1;
+  private tail: Promise<unknown> = Promise.resolve();
+  private lifetime = new AbortController();
+
+  dispose(): void {
+    if (this.lifetime.signal.aborted) {
+      return;
+    }
+    this.lifetime.abort();
+    this.resetWorker();
+  }
+
+  private resetWorker(): void {
+    this.worker?.terminate();
+    this.worker = undefined;
+    this.primedCacheKeys.clear();
+  }
 
   constructor(private readonly fallbackConverter: DepthConverter) {}
 
@@ -36,23 +54,59 @@ export class DepthWorkerClient {
     depthData: ArrayBuffer,
     fileName: string,
     cameraParams: CameraParams,
-    colorImageData?: ImageData
+    colorImageData?: ImageData,
+    signal?: AbortSignal
+  ): Promise<DepthConversionResult> {
+    const combined = AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])]);
+    combined.throwIfAborted();
+    // A single active request lets cancellation stop synchronous WASM too,
+    // without terminating another file's conversion. Queued jobs copy no bytes.
+    const job = this.tail.then(async () => {
+      combined.throwIfAborted();
+      return this.process(depthData, fileName, cameraParams, colorImageData, combined);
+    });
+    this.tail = job.catch(() => {});
+    return job;
+  }
+
+  private async process(
+    depthData: ArrayBuffer,
+    fileName: string,
+    cameraParams: CameraParams,
+    colorImageData: ImageData | undefined,
+    signal: AbortSignal
   ): Promise<DepthConversionResult> {
     const worker = this.getWorker();
     if (!worker) {
-      return this.processOnMainThread(depthData, fileName, cameraParams, colorImageData);
+      return this.processOnMainThread(depthData, fileName, cameraParams, colorImageData, signal);
     }
 
     const id = this.nextRequestId++;
     const configKey = decodeConfigKey(cameraParams);
-    const cacheKey = `${fileName}:${depthData.byteLength}:${configKey}`;
+    let sourceId = this.sourceIds.get(depthData);
+    if (sourceId === undefined) {
+      sourceId = this.nextSourceId++;
+      this.sourceIds.set(depthData, sourceId);
+    }
+    const cacheKey = `${sourceId}:${configKey}`;
     const shouldSendDepthData = !this.primedCacheKeys.has(cacheKey);
     const copiedDepthData = shouldSendDepthData ? depthData.slice(0) : undefined;
 
+    let onAbort: () => void;
     return new Promise<DepthConversionResult>((resolve, reject) => {
+      onAbort = () => {
+        this.pending.delete(id);
+        this.resetWorker();
+        reject(signal.reason);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
       this.pending.set(id, {
         resolve: result => {
           this.primedCacheKeys.add(cacheKey);
+          // Match the worker's four-entry insertion-order decoded cache.
+          if (this.primedCacheKeys.size > 4) {
+            this.primedCacheKeys.delete(this.primedCacheKeys.values().next().value!);
+          }
           resolve(result);
         },
         reject,
@@ -75,10 +129,14 @@ export class DepthWorkerClient {
         this.pending.delete(id);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
-    }).catch(async error => {
-      console.warn('[DepthWorker] failed, using main-thread fallback:', error);
-      return this.processOnMainThread(depthData, fileName, cameraParams, colorImageData);
-    });
+    })
+      .finally(() => signal.removeEventListener('abort', onAbort))
+      .catch(async error => {
+        signal.throwIfAborted();
+        this.resetWorker();
+        console.warn('[DepthWorker] failed, using main-thread fallback:', error);
+        return this.processOnMainThread(depthData, fileName, cameraParams, colorImageData, signal);
+      });
   }
 
   private getWorker(): Worker | null {
@@ -122,7 +180,8 @@ export class DepthWorkerClient {
     depthData: ArrayBuffer,
     fileName: string,
     cameraParams: CameraParams,
-    colorImageData?: ImageData
+    colorImageData: ImageData | undefined,
+    signal: AbortSignal
   ): Promise<DepthConversionResult> {
     // Every camera model needs the kernel now, not only the distorted ones:
     // the JavaScript projection that used to cover pinhole and equidistant
@@ -130,11 +189,14 @@ export class DepthWorkerClient {
     if (!(await initTiffWasm())) {
       throw new Error(`${cameraParams.cameraModel} requires the Rust/WASM camera-model kernel`);
     }
+    signal.throwIfAborted();
     const result = await this.fallbackConverter.processDepthToPointCloud(
       depthData,
       fileName,
-      cameraParams
+      cameraParams,
+      signal
     );
+    signal.throwIfAborted();
     if (colorImageData) {
       applyColorToDepthResult(result, colorImageData, cameraParams);
     }

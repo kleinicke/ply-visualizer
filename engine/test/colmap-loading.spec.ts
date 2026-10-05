@@ -219,14 +219,14 @@ test('the progress counter clears once every image has arrived', async ({ page }
     const visualizer = (window as any).visualizer;
     const profile = visualizer.cameraGroups[0];
     profile.userData.imageProgress = { done: 2, total: 3 };
-    (window as any).__plyFilesState.renderTick += 1;
+    visualizer.updateFileList();
   });
   await expect(page.locator(ROWS).nth(1)).toContainText('images 2 / 3');
 
   await page.evaluate(() => {
     const visualizer = (window as any).visualizer;
     visualizer.cameraGroups[0].userData.imageProgress = null;
-    (window as any).__plyFilesState.renderTick += 1;
+    visualizer.updateFileList();
   });
   await expect(page.locator(ROWS).nth(1)).not.toContainText('images');
   await expect(page.locator(ROWS).nth(1)).toContainText('3 cameras');

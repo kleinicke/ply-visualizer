@@ -211,9 +211,9 @@ test('removing a pose after a cloud preserves the next pose settings', async ({ 
         },
       });
     }
-    viewer.poseShowLabels[0] = false;
-    viewer.poseShowLabels[1] = true;
-    viewer.poseMinScoreThreshold[1] = 0.7;
+    viewer.fileEntries.pose(0).showLabels = false;
+    viewer.fileEntries.pose(1).showLabels = true;
+    viewer.fileEntries.pose(1).minScoreThreshold = 0.7;
     viewer.removeFileByIndex(1);
     return {
       kinds: viewer.fileEntries.all.map((entry: any) => entry.kind),
@@ -222,4 +222,226 @@ test('removing a pose after a cloud preserves the next pose settings', async ({ 
     };
   });
   expect(result).toEqual({ kinds: ['spatial', 'pose'], labels: [true], scores: [0.7] });
+});
+
+test('disposed viewer stops rendering and responding, and a replacement viewer works', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
+  await page.evaluate(async () => {
+    const old = (window as any).visualizer;
+    let callbacks = 0;
+    old.requestRender = () => callbacks++;
+    old.dispose();
+    old.dispose();
+    document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    window.dispatchEvent(new Event('resize'));
+    (window as any).__disposedViewer = { old, callbacks: () => callbacks };
+    await Promise.resolve();
+    (window as any).visualizer = new (window as any).PointCloudVisualizer();
+  });
+  await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
+  await page.locator('#hiddenFileInput').setInputFiles({
+    name: 'recreated.off',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n'),
+  });
+  await expect(page.locator('#file-list .file-item')).toHaveCount(1);
+  await expect(page.locator('#three-canvas')).toHaveCount(1);
+  const state = await page.evaluate(() => {
+    const { old, callbacks } = (window as any).__disposedViewer;
+    return {
+      animation: old.animationId,
+      files: old.fileEntries.length,
+      callbacks: callbacks(),
+      ready: (window as any).visualizer.meshes.length,
+    };
+  });
+  expect(state).toEqual({ animation: null, files: 0, callbacks: 0, ready: 1 });
+  expect(errors).toEqual([]);
+});
+
+test('depth worker cancellation skips queued jobs, stops active work and recovers without fallback', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
+  const result = await page.evaluate(async () => {
+    const NativeWorker = window.Worker;
+    const workers: any[] = [];
+    let fallback = 0;
+    class FakeWorker {
+      messages: any[] = [];
+      terminated = false;
+      onmessage: any;
+      constructor() {
+        workers.push(this);
+      }
+      postMessage(message: any) {
+        this.messages.push(message);
+      }
+      terminate() {
+        this.terminated = true;
+      }
+      finish() {
+        this.onmessage({
+          data: {
+            id: this.messages.at(-1).id,
+            ok: true,
+            result: { vertices: new Float32Array(3), pointCount: 1 },
+          },
+        });
+      }
+    }
+    (window as any).Worker = FakeWorker;
+    const Client = (window as any).visualizer.depthWorkerClient.constructor;
+    const client = new Client({
+      processDepthToPointCloud: () => {
+        fallback++;
+        throw new Error('Unexpected fallback');
+      },
+    });
+    const params = { cameraModel: 'pinhole-ideal', depthType: 'orthogonal', fx: 1 };
+    const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+    try {
+      const active = new AbortController(),
+        queued = new AbortController();
+      const first = client
+        .processDepthToPointCloud(new ArrayBuffer(4), 'same.pfm', params, undefined, active.signal)
+        .catch((e: Error) => e.name);
+      const skipped = client
+        .processDepthToPointCloud(new ArrayBuffer(4), 'same.pfm', params, undefined, queued.signal)
+        .catch((e: Error) => e.name);
+      const next = client.processDepthToPointCloud(new ArrayBuffer(4), 'same.pfm', params);
+      await tick();
+      queued.abort();
+      active.abort();
+      await tick();
+      const started = workers.reduce((sum, worker) => sum + worker.messages.length, 0);
+      workers.at(-1).finish();
+      const completed = await next;
+      const firstKey = workers.at(-1).messages[0].cacheKey;
+      const other = client.processDepthToPointCloud(new ArrayBuffer(4), 'same.pfm', params);
+      await tick();
+      const secondKey = workers.at(-1).messages.at(-1).cacheKey;
+      workers.at(-1).finish();
+      await other;
+      const pending = client
+        .processDepthToPointCloud(new ArrayBuffer(4), 'pending.pfm', params)
+        .catch((e: Error) => e.name);
+      await tick();
+      client.dispose();
+      return {
+        first: await first,
+        skipped: await skipped,
+        pending: await pending,
+        started,
+        completed: completed.pointCount,
+        stopped: workers.every(worker => worker.terminated),
+        fallback,
+        distinctSources: firstKey !== secondKey,
+      };
+    } finally {
+      client.dispose();
+      window.Worker = NativeWorker;
+    }
+  });
+  expect(result).toEqual({
+    first: 'AbortError',
+    skipped: 'AbortError',
+    pending: 'AbortError',
+    started: 2,
+    completed: 1,
+    stopped: true,
+    fallback: 0,
+    distinctSources: true,
+  });
+});
+
+test('invalid geometry reports a useful error without allocating or publishing an object', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
+  const result = await page.evaluate(() => {
+    const viewer = (window as any).visualizer;
+    const baseline = viewer.scene.children.length;
+    let message = '';
+    try {
+      viewer.addNewFiles([
+        {
+          vertices: [],
+          faces: [],
+          vertexCount: 2,
+          faceCount: 0,
+          format: 'ascii',
+          version: '1.0',
+          comments: [],
+          hasColors: false,
+          hasNormals: false,
+          useTypedArrays: true,
+          positionsArray: new Float32Array(3),
+        },
+      ]);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    return {
+      message,
+      entries: viewer.fileEntries.length,
+      unchanged: baseline === viewer.scene.children.length,
+    };
+  });
+  expect(result.message).toContain('positionsArray has 3 values; expected 6');
+  expect(result.entries).toBe(0);
+  expect(result.unchanged).toBe(true);
+});
+
+test('sequence playback transfers objects out of the registry and releases them on restart', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
+  const result = await page.evaluate(async () => {
+    const viewer = (window as any).visualizer;
+    const data = () => ({
+      vertices: [{ x: 0, y: 0, z: 0 }],
+      faces: [],
+      vertexCount: 1,
+      faceCount: 0,
+      hasColors: false,
+      hasNormals: false,
+      format: 'ascii',
+      version: '1.0',
+      comments: [],
+      fileName: 'frame.ply',
+    });
+    viewer.vscode.postMessage = () => {};
+    viewer.addNewFiles([data()]);
+    let disposed = 0;
+    viewer.meshes[0].geometry.addEventListener('dispose', () => disposed++);
+    viewer.initializeSequence(['a.ply', 'b.ply'], '*.ply');
+    await viewer.sequenceHandlePly({ index: 0, data: data() });
+    const frame = viewer.sequenceCache.get(0);
+    frame.geometry.addEventListener('dispose', () => disposed++);
+    const state = {
+      registered: viewer.fileEntries.length,
+      cache: viewer.sequenceCache.size,
+      visible: frame.visible,
+      parent: frame.parent === viewer.scene,
+    };
+    viewer.initializeSequence([], '');
+    return { ...state, disposed, cacheAfter: viewer.sequenceCache.size };
+  });
+  expect(result).toEqual({
+    registered: 0,
+    cache: 1,
+    visible: true,
+    parent: true,
+    disposed: 2,
+    cacheAfter: 0,
+  });
 });

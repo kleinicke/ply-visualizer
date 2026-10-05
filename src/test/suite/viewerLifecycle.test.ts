@@ -1,3 +1,7 @@
+import { convertToUnifiedFormat } from '../../../engine/src/fileHandler';
+import { WebGLGpuTimer } from '../../../engine/src/rendering/gpuTimer';
+import { validateSpatialData } from '../../../engine/src/visualization/validateSpatialData';
+import { ViewerLifetime } from '../../../engine/src/utils/viewerLifetime';
 import {
   removeColorImageFromDepth,
   type ColorImageForDepthHost,
@@ -199,5 +203,169 @@ suite('Viewer lifecycle and boundaries', () => {
     await operation;
     assert.strictEqual(errors, 0);
     assert.strictEqual(host.spatialFiles.length, 0);
+  });
+});
+
+suite('Decoded geometry validation', () => {
+  test('legacy OBJ and binary STL adapters produce valid shared geometry', () => {
+    const obj = convertToUnifiedFormat(
+      {
+        vertices: data().vertices,
+        faces: [],
+        hasNormals: true,
+        normals: [{ nx: 0, ny: 0, nz: 1 }],
+        materialGroups: [],
+      },
+      'normals.obj'
+    );
+    assert.strictEqual(obj.hasNormals, false);
+    validateSpatialData(obj);
+    const stl = convertToUnifiedFormat(
+      {
+        format: 'binary',
+        triangles: [
+          {
+            vertices: [
+              { x: 0, y: 0, z: 0 },
+              { x: 1, y: 0, z: 0 },
+              { x: 0, y: 1, z: 0 },
+            ],
+            normal: { x: 0, y: 0, z: 1 },
+          },
+        ],
+      },
+      'triangle.stl'
+    );
+    assert.strictEqual(stl.format, 'binary_little_endian');
+    validateSpatialData(stl);
+  });
+  test('rejects inconsistent buffers, attribute counts and out-of-range face indices', () => {
+    const valid = (): SpatialData => ({
+      ...data(),
+      useTypedArrays: true,
+      vertices: [],
+      positionsArray: new Float32Array(3),
+    });
+    for (const [patch, expected] of [
+      [{ vertexCount: -1 }, /vertexCount/],
+      [{ positionsArray: new Float32Array(2) }, /positionsArray/],
+      [{ colorsArray: new Uint8Array(4) }, /colorsArray/],
+      [{ hasNormals: true }, /normalsArray/],
+      [{ scalarFields: { score: new Float32Array(2) } }, /scalarFields.score/],
+      [{ sourcePointIndices: new Uint32Array(2) }, /sourcePointIndices/],
+      [{ faceCount: 1, indicesArray: new Uint32Array([0, 0, 1]) }, /face index/],
+      [{ faceCount: 1, indicesArray: new Uint32Array([0, 0]) }, /indicesArray/],
+      [{ faceCount: 1, faces: [{ indices: [0, 0, -1] }] }, /face index/],
+    ] as const) {
+      assert.throws(() => validateSpatialData({ ...valid(), ...patch }), expected);
+    }
+    assert.throws(() => validateSpatialData({ ...data(), vertexCount: 2 }), /vertices/);
+    assert.throws(() => validateSpatialData({ ...data(), hasColors: true }), /red\/green\/blue/);
+  });
+  test('accepts empty geometry, polygon faces and intentional missing scalar values', () => {
+    validateSpatialData({ ...data(), vertices: [], vertexCount: 0 });
+    validateSpatialData({ ...data(), scalarFields: { distance: new Float32Array([NaN]) } });
+    validateSpatialData({ ...data(), faceCount: 1, faces: [{ indices: [0, 0, 0, 0] }] });
+  });
+  test('native model summaries validate their actual scene geometry', () => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3)
+    );
+    geometry.setIndex([0, 1, 2]);
+    const root = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    const model = { root, dispose() {} };
+    const native = { ...data(), faceCount: 1, sceneModel: model };
+    validateSpatialData(native);
+    geometry.setIndex([0, 1, 3]);
+    assert.throws(() => validateSpatialData(native), /scene face index/);
+    geometry.setIndex([0, 1, 2]);
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1], 3));
+    assert.throws(() => validateSpatialData(native), /scene normal/);
+    disposeObjects([root]);
+  });
+  test('message guards do not claim incomplete geometry is SpatialData', () => {
+    assert.throws(
+      () =>
+        readViewerMessage({
+          type: 'spatialData',
+          data: { vertexCount: 1, faceCount: 0, vertices: [] },
+        }),
+      /Invalid geometry/
+    );
+  });
+});
+
+suite('Viewer lifetime ownership', () => {
+  test('GPU timer disposal ends and releases pending queries exactly once', () => {
+    let next = 0,
+      ended = 0;
+    const deleted: number[] = [];
+    const timer = new WebGLGpuTimer({
+      getExtension: () => ({ TIME_ELAPSED_EXT: 1 }),
+      createQuery: () => ++next,
+      beginQuery() {},
+      endQuery: () => ended++,
+      deleteQuery: (id: number) => deleted.push(id),
+    } as unknown as WebGLRenderingContext);
+    timer.begin();
+    timer.end();
+    timer.begin();
+    timer.dispose();
+    timer.dispose();
+    assert.strictEqual(ended, 2);
+    assert.deepStrictEqual(deleted, [1, 2]);
+  });
+  test('disposal removes callbacks and timers, and is idempotent', async () => {
+    const target = new EventTarget();
+    let calls = 0,
+      cleanups = 0;
+    const first = new ViewerLifetime();
+    first.listen(target, 'click', () => calls++);
+    first.defer(() => calls++);
+    first.add(() => cleanups++);
+    target.dispatchEvent(new Event('click'));
+    first.dispose();
+    first.dispose();
+    const second = new ViewerLifetime();
+    second.listen(target, 'click', () => calls++);
+    target.dispatchEvent(new Event('click'));
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.strictEqual(calls, 2);
+    assert.strictEqual(cleanups, 1);
+    second.dispose();
+  });
+  test('records and descendant ownership survive mixed-kind removal', () => {
+    const registry = new FileEntryRegistry();
+    const a = registry.add('spatial').entry;
+    a.spatial = { data: data(), object: new THREE.Points() };
+    const pose = registry.add('pose').entry;
+    pose.pose!.meta.fileName = 'pose';
+    pose.pose!.showLabels = true;
+    const camera = registry.add('camera', a.id).entry;
+    camera.camera!.name = 'owned camera';
+    const b = registry.add('spatial').entry;
+    b.spatial = { data: { ...data(), fileName: 'second' }, object: new THREE.Points() };
+    const obsolete = a.beginDepthWork();
+    const signal = a.beginDepthWork();
+    assert.ok(obsolete.aborted);
+    assert.ok(!signal.aborted);
+    const removed = registry.removeAt(0);
+    assert.ok(signal.aborted);
+    assert.deepStrictEqual(
+      removed.map(x => x.entry.id),
+      [camera.id, a.id]
+    );
+    assert.strictEqual(registry.spatial(0), b.spatial);
+    assert.strictEqual(registry.pose(0), pose.pose);
+    assert.strictEqual(registry.pose(0).showLabels, true);
+    assert.strictEqual(registry.pose(0).meta.fileName, 'pose');
+    const replacement = new THREE.Points();
+    registry.spatial(0).object = replacement;
+    assert.strictEqual(b.spatial.object, replacement);
+    const pending = b.beginDepthWork();
+    registry.clear();
+    assert.ok(pending.aborted);
   });
 });

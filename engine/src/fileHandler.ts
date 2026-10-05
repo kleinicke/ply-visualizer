@@ -231,13 +231,16 @@ export function convertToUnifiedFormat(data: any, fileName: string): UnifiedFile
     ...data,
     vertices: vertices,
     faces: faces,
-    format: data.format || 'ascii',
+    format:
+      data.format === 'binary' && data.triangles ? 'binary_little_endian' : data.format || 'ascii',
     version: data.version || '1.0',
     comments: data.comments || [],
     vertexCount: data.vertexCount ?? vertices.length,
     faceCount: data.indicesArray ? data.indicesArray.length / 3 : faces.length,
     hasColors: data.hasColors || false,
-    hasNormals: data.hasNormals ?? !!data.triangles,
+    // OBJ normals use face-corner indices, not the unified vertex indices.
+    // No per-vertex normal array is produced here; mesh construction computes it.
+    hasNormals: /\.obj$/i.test(fileName) ? false : (data.hasNormals ?? !!data.triangles),
     hasIntensity: data.hasIntensity || false,
     fileName: fileName,
   };
@@ -322,11 +325,15 @@ export async function processFiles(
         }
       } else {
         const result = await parseFileData(file.data, fileType, file.name, timingCallback);
-        if (result.type !== 'jsonData') {result.data.fileIndex = results.length;}
+        if (result.type !== 'jsonData') {
+          result.data.fileIndex = results.length;
+        }
         results.push(result);
       }
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {continue;}
+      if (error instanceof Error && error.name === 'AbortError') {
+        continue;
+      }
       const fileError: FileError = {
         fileName: file.name,
         error: generateErrorMessage(file.name, fileType?.extension || '', error),

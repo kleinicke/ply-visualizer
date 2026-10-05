@@ -1,9 +1,12 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import SmallViewAffordance from './components/SmallViewAffordance.svelte';
 
-export function mountSmallViewAffordance(host: unknown): void {
+export function mountSmallViewAffordance(lifetime: ViewerLifetime, host: unknown): void {
   const panel = document.getElementById('main-ui-panel');
-  if (!panel || document.getElementById('small-view-affordance-mount')) {return;}
+  if (!panel || document.getElementById('small-view-affordance-mount')) {
+    return;
+  }
   const target = document.createElement('div');
   target.id = 'small-view-affordance-mount';
   target.style.position = 'fixed';
@@ -17,8 +20,18 @@ export function mountSmallViewAffordance(host: unknown): void {
     target.style.width = `${bounds.width}px`;
   };
   positionBelowPanel();
-  new ResizeObserver(positionBelowPanel).observe(panel);
-  window.addEventListener('resize', positionBelowPanel);
+  const observer = new ResizeObserver(positionBelowPanel);
+  observer.observe(panel);
+  lifetime.add(() => {
+    observer.disconnect();
+    target.remove();
+  });
+  lifetime.listen(window, 'resize', positionBelowPanel);
 
-  mount(SmallViewAffordance, { target, props: { host } });
+  {
+    const component = mount(SmallViewAffordance, { target, props: { host } });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

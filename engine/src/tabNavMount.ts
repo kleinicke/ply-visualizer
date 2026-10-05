@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import TabNav from './components/TabNav.svelte';
 
 /**
@@ -7,10 +8,15 @@ import TabNav from './components/TabNav.svelte';
  * setupEventListeners(). Active-tab highlighting reads uiState.activeTab,
  * which switchTab() (ui/status.ts) already wrote through to since Phase 1.
  */
-export function mountTabNav(host: unknown): void {
+export function mountTabNav(lifetime: ViewerLifetime, host: unknown): void {
   const target = document.getElementById('tab-nav-mount');
   if (!target) {
     return;
   }
-  mount(TabNav, { target, props: { host } });
+  {
+    const component = mount(TabNav, { target, props: { host } });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

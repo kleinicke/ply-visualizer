@@ -388,19 +388,19 @@
   }
 
   function onPoseDatasetColorsChange(e: Event) {
-    host.poseUseDatasetColors[poseIndex] = (e.target as HTMLInputElement).checked;
+    host.fileEntries.pose(poseIndex).useDatasetColors = (e.target as HTMLInputElement).checked;
     host.updatePoseAppearance(index);
   }
   function onPoseShowLabelsChange(e: Event) {
-    host.poseShowLabels[poseIndex] = (e.target as HTMLInputElement).checked;
+    host.fileEntries.pose(poseIndex).showLabels = (e.target as HTMLInputElement).checked;
     host.updatePoseLabels(index);
   }
   function onPoseScaleScoreChange(e: Event) {
-    host.poseScaleByScore[poseIndex] = (e.target as HTMLInputElement).checked;
+    host.fileEntries.pose(poseIndex).scaleByScore = (e.target as HTMLInputElement).checked;
     host.updatePoseScaling(index);
   }
   function onPoseScaleUncertaintyChange(e: Event) {
-    host.poseScaleByUncertainty[poseIndex] = (e.target as HTMLInputElement).checked;
+    host.fileEntries.pose(poseIndex).scaleByUncertainty = (e.target as HTMLInputElement).checked;
     host.updatePoseScaling(index);
   }
   function onPoseConventionChange(e: Event) {
@@ -409,7 +409,7 @@
   }
   function onPoseMinScoreInput(e: Event) {
     const v = Math.max(0, Math.min(1, parseFloat((e.target as HTMLInputElement).value)));
-    host.poseMinScoreThreshold[poseIndex] = v;
+    host.fileEntries.pose(poseIndex).minScoreThreshold = v;
     const value = document.getElementById(`pose-minscore-val-${index}`);
     if (value) value.textContent = v.toFixed(2);
     host.applyPoseFilters(index);
@@ -421,7 +421,7 @@
   }
   function onPoseMaxUncInput(e: Event) {
     const v = Math.max(0, Math.min(1, parseFloat((e.target as HTMLInputElement).value)));
-    host.poseMaxUncertaintyThreshold[poseIndex] = v;
+    host.fileEntries.pose(poseIndex).maxUncertaintyThreshold = v;
     const value = document.getElementById(`pose-maxunc-val-${index}`);
     if (value) value.textContent = v.toFixed(2);
     host.applyPoseFilters(index);

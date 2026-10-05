@@ -60,10 +60,8 @@ export function handleCameraProfile(host: CameraProfileHost, data: any, fileName
 
     if (cameraCount > 0) {
       host.scene.add(cameraProfileGroup);
-      host.cameraGroups.push(cameraProfileGroup);
-      host.cameraNames.push(fileName); // Store filename instead of individual camera names
 
-      const unifiedIndex = registerCameraEntry(host);
+      const unifiedIndex = registerCameraEntry(host, cameraProfileGroup, fileName);
       host.applyTransformationMatrix(unifiedIndex);
     }
 
@@ -266,7 +264,7 @@ export function toggleCameraProfileLabels(
   });
 
   // Update state array
-  host.cameraShowLabels[cameraProfileIndex] = showLabels;
+  host.fileEntries.camera(cameraProfileIndex).showLabels = showLabels;
 }
 
 export function toggleCameraProfileCoordinates(
@@ -312,7 +310,7 @@ export function toggleCameraProfileCoordinates(
   });
 
   // Update state array
-  host.cameraShowCoords[cameraProfileIndex] = showCoords;
+  host.fileEntries.camera(cameraProfileIndex).showCoords = showCoords;
 }
 
 export function applyCameraScale(

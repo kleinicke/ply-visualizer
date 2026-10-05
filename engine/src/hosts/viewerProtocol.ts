@@ -1,3 +1,4 @@
+import { validateSpatialData } from '../visualization/validateSpatialData';
 export type BenchmarkStep = 'alignAll' | 'refineAll' | 'recolorAll' | 'registerAndRecolorAll';
 import type { LoadTimeColorUpdate, StationPipelineUpdate } from './stationPipelineTypes';
 import type { SpatialData, PointDataPayload } from '../interfaces';
@@ -23,11 +24,10 @@ const array: Guard<unknown[]> = Array.isArray;
 const strings: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.every(string);
 const binary: Guard<ArrayBuffer | Uint8Array> = (v): v is ArrayBuffer | Uint8Array =>
   v instanceof ArrayBuffer || v instanceof Uint8Array;
-const spatial: Guard<SpatialData> = (v): v is SpatialData =>
-  object(v) &&
-  index(v.vertexCount) &&
-  index(v.faceCount) &&
-  (Array.isArray(v.vertices) || v.positionsArray instanceof Float32Array);
+const spatial: Guard<SpatialData> = (v): v is SpatialData => {
+  validateSpatialData(v);
+  return true;
+};
 const points: Guard<PointDataPayload> = (v): v is PointDataPayload =>
   object(v) &&
   index(v.vertexCount) &&
@@ -37,7 +37,7 @@ const points: Guard<PointDataPayload> = (v): v is PointDataPayload =>
 const spatialList: Guard<SpatialData[]> = (v): v is SpatialData[] =>
   Array.isArray(v) && v.every(spatial);
 const oneOrMany: Guard<SpatialData | SpatialData[]> = (v): v is SpatialData | SpatialData[] =>
-  spatial(v) || spatialList(v);
+  Array.isArray(v) ? spatialList(v) : spatial(v);
 
 // Each discriminant declares the fields the router needs. Format-specific
 // parsers and command validators validate the content of opaque payloads.

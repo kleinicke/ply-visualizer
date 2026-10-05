@@ -135,6 +135,10 @@ export class AdaptivePointRenderer {
     this.views.delete(source);
   }
 
+  dispose(): void {
+    this.removeAllViews();
+  }
+
   private removeAllViews(): void {
     for (const [source, view] of this.views) {
       this.removeView(source, view);

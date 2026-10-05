@@ -1,8 +1,10 @@
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import * as THREE from 'three';
 import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export interface AxesFeatureHost {
+  lifetime: ViewerLifetime;
   controls: { target: THREE.Vector3; update(): void } & Partial<{
     addEventListener(event: string, handler: any): void;
   }>;
@@ -18,7 +20,7 @@ export interface AxesFeatureHost {
   showUpVectorIndicator(upVector: THREE.Vector3): void;
 }
 
-export function setupAxesVisibility(host: AxesFeatureHost): void {
+export function setupAxesVisibility(host: AxesFeatureHost): () => void {
   // Track interaction state for axes visibility
   let axesHideTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -53,26 +55,24 @@ export function setupAxesVisibility(host: AxesFeatureHost): void {
     }, 500);
   };
 
-  // Add event listeners for axes visibility based on control type
-  if (
-    host.controlType === 'trackball' ||
-    host.controlType === 'legacy-trackball' ||
-    host.controlType === 'arcball'
-  ) {
-    (host.controls as any).addEventListener('start', showAxes);
-    (host.controls as any).addEventListener('end', hideAxesAfterDelay);
-    (host.controls as any).addEventListener('change', () => host.requestRender());
-  } else {
-    const orbitControls = host.controls as OrbitControls;
-    orbitControls.addEventListener('start', showAxes);
-    orbitControls.addEventListener('end', hideAxesAfterDelay);
-    orbitControls.addEventListener('change', () => host.requestRender());
-  }
+  const controls = host.controls as OrbitControls;
+  const changed = () => host.requestRender();
+  controls.addEventListener('start', showAxes);
+  controls.addEventListener('end', hideAxesAfterDelay);
+  controls.addEventListener('change', changed);
 
   // Initialize button state
   host.updateAxesButtonState();
   // Only mark rotation-origin button active if target is exactly at origin right now
   host.updateRotationOriginButtonState();
+  return () => {
+    if (axesHideTimeout !== null) {
+      clearTimeout(axesHideTimeout);
+    }
+    controls.removeEventListener('start', showAxes);
+    controls.removeEventListener('end', hideAxesAfterDelay);
+    controls.removeEventListener('change', changed);
+  };
 }
 
 export function addAxesHelper(host: AxesFeatureHost): void {
@@ -254,9 +254,10 @@ export function showUpVectorIndicator(host: AxesFeatureHost, upVector: THREE.Vec
   host.scene.add(arrowHelper);
 
   // Remove after 2 seconds
-  setTimeout(() => {
+  const timer = setTimeout(() => {
     host.scene.remove(arrowHelper);
     arrowHelper.dispose();
     host.requestRender();
   }, 2000);
+  host.lifetime.add(() => clearTimeout(timer));
 }

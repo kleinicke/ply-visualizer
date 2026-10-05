@@ -483,9 +483,17 @@ export class SplatModeManager {
     }
   }
 
-  /** Keep the parallel mesh array aligned when main splices its file arrays. */
-  onFileRemoved(fileIndex: number): void {
-    const data = this.host.spatialFiles[fileIndex];
+  dispose(): void {
+    for (let index = this.host.spatialFiles.length - 1; index >= 0; index--) {
+      this.onFileRemoved(index);
+    }
+    this.sparkRenderer?.removeFromParent();
+    this.sparkRenderer?.dispose();
+    this.sparkRenderer = null;
+  }
+
+  /** Keep feature state aligned when an entry is removed. */
+  onFileRemoved(fileIndex: number, data = this.host.spatialFiles[fileIndex]): void {
     const timer = this.filterTimers.get(data);
     if (timer !== undefined) {
       window.clearTimeout(timer);

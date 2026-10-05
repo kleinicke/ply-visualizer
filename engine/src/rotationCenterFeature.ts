@@ -21,7 +21,7 @@ interface RotationCenterFeedback {
 
 const feedbackByHost = new WeakMap<RotationCenterFeatureHost, RotationCenterFeedback>();
 
-function removeRotationCenterFeedback(
+export function removeRotationCenterFeedback(
   host: RotationCenterFeatureHost,
   expectedFeedback?: RotationCenterFeedback
 ): void {

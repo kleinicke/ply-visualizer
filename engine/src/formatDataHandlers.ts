@@ -1,3 +1,4 @@
+import { validateSpatialData } from './visualization/validateSpatialData';
 import type { FileEntryRegistry } from './state/fileEntries';
 import { decodeFileMessage, readFileDataMessage } from './formats/fileMessage';
 import * as THREE from 'three';
@@ -254,6 +255,7 @@ function replaceVolumeGeometry(
   if (fileIndex < 0 || fileIndex >= host.spatialFiles.length) {
     throw new Error(`Cannot replace missing volume at file index ${fileIndex}`);
   }
+  validateSpatialData(data);
   const previous = host.meshes[fileIndex];
   const previousRenderMode = host.spatialFiles[fileIndex]?.metadata?.volumeRenderMode;
   const matrix = host.fileEntries.require(fileIndex).transform.clone();
@@ -284,7 +286,7 @@ function replaceVolumeGeometry(
   }
 
   data.fileIndex = fileIndex;
-  host.spatialFiles[fileIndex] = data;
+  host.fileEntries.spatial(fileIndex).data = data;
   if (data.metadata?.volumeRenderMode === 'points' && previousRenderMode !== 'points') {
     host.fileEntries.require(fileIndex).state.colorMode = 'original';
   } else if (data.metadata?.volumeRenderMode === 'slices' && previousRenderMode !== 'slices') {
@@ -301,7 +303,7 @@ function replaceVolumeGeometry(
       ? new THREE.Mesh(geometry, material)
       : new THREE.Points(geometry, material as THREE.PointsMaterial);
   object.visible = visible;
-  host.meshes[fileIndex] = object;
+  host.fileEntries.spatial(fileIndex).object = object;
   host.scene.add(object);
   host.fileEntries.require(fileIndex).state.solidVisible = data.faceCount > 0;
   host.fileEntries.require(fileIndex).state.pointsVisible = data.faceCount === 0;
@@ -415,7 +417,8 @@ export async function handleObjData(host: FormatDataHandlersHost, message: any):
       vertexCount: vertices.length,
       faceCount: faces.length,
       hasColors: true,
-      hasNormals: objData.hasNormals,
+      // OBJ corner normals are kept in objData; these vertices have no normals.
+      hasNormals: false,
       fileName: message.fileName, // Keep original OBJ filename
       shortPath: message.shortPath,
       fileIndex: host.spatialFiles.length,

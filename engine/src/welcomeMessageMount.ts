@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import { isIdeHost } from './hosts/ideEnvironment';
 import WelcomeMessage from './components/WelcomeMessage.svelte';
 
@@ -7,18 +8,26 @@ import WelcomeMessage from './components/WelcomeMessage.svelte';
  * driven entirely by state/ui.svelte.ts's showWelcomeMessage field now.
  */
 export function mountWelcomeMessage(
+  lifetime: ViewerLifetime,
   onAddCloud: () => void,
   onLoadGuidedExample: () => Promise<void>,
   onLoadBasicExample: () => Promise<void>
 ): void {
   // Never create the website welcome/example DOM in an IDE, even while loading.
-  if (isIdeHost) {return;}
+  if (isIdeHost) {
+    return;
+  }
   const target = document.getElementById('welcome-message-mount');
   if (!target) {
     return;
   }
-  mount(WelcomeMessage, {
-    target,
-    props: { onAddCloud, onLoadGuidedExample, onLoadBasicExample },
-  });
+  {
+    const component = mount(WelcomeMessage, {
+      target,
+      props: { onAddCloud, onLoadGuidedExample, onLoadBasicExample },
+    });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

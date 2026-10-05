@@ -1,3 +1,4 @@
+import { disposeObjects } from './visualization/fileObject';
 import type { FileEntryRegistry } from './state/fileEntries';
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
@@ -30,6 +31,7 @@ export interface SequencePlaybackHost {
 
   updateFileList(): void;
   requestRender(): void;
+  removeFileByIndex(index: number): void;
   fitCameraToObject(obj: THREE.Object3D): void;
   displayFiles(dataArray: SpatialData[]): Promise<void>;
   handleUltimateRawBinaryData(message: any): Promise<void>;
@@ -51,16 +53,15 @@ export function initializeSequence(
   host.sequenceTargetIndex = 0;
   host.sequenceDidInitialFit = false;
   host.isSequencePlaying = false;
+  pauseSequence(host);
+  disposeObjects([...host.sequenceCache.values()]);
   host.sequenceCache.clear();
   host.sequenceCacheOrder = [];
   uiState.sequenceMode = true;
   updateSequenceUI(host);
-  // Clear any existing meshes from normal mode
-  for (const obj of host.meshes) {
-    host.scene.remove(obj);
+  while (host.fileEntries.length) {
+    host.removeFileByIndex(host.fileEntries.length - 1);
   }
-  host.meshes = [];
-  host.spatialFiles = [];
   // Load first frame
   if (files.length > 0) {
     loadSequenceFrame(host, 0);
@@ -229,9 +230,6 @@ export async function sequenceHandleDepth(host: SequencePlaybackHost, message: a
 }
 
 export function trimNormalModeArraysFrom(host: SequencePlaybackHost, startIndex: number): void {
-  if (host.spatialFiles.length > startIndex) {
-    host.spatialFiles.splice(startIndex);
-  }
   while (host.fileEntries.countOf('spatial') > startIndex) {
     host.fileEntries.removeAt(host.fileEntries.countOf('spatial') - 1);
   }

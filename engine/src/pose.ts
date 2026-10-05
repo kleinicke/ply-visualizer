@@ -324,13 +324,6 @@ export function registerPoseEntry(host: PoseHost): { unifiedIndex: number; poseI
   const { index } = host.fileEntries.add('pose');
   insertEntryState(host, index, { visible: true, pointSize: 0.02, colorMode: 'assigned' });
   const poseIndex = host.fileEntries.kindIndexAt(index);
-  host.poseUseDatasetColors.splice(poseIndex, 0, false);
-  host.poseShowLabels.splice(poseIndex, 0, false);
-  host.poseScaleByScore.splice(poseIndex, 0, false);
-  host.poseScaleByUncertainty.splice(poseIndex, 0, false);
-  host.poseConvention.splice(poseIndex, 0, 'opengl');
-  host.poseMinScoreThreshold.splice(poseIndex, 0, 0);
-  host.poseMaxUncertaintyThreshold.splice(poseIndex, 0, 1);
   return { unifiedIndex: index, poseIndex };
 }
 
@@ -507,7 +500,7 @@ export function updatePoseLabels(host: PoseHost, fileIndex: number): void {
   const existing = host.poseLabelsGroups[poseIndex];
   if (existing) {
     host.scene.remove(existing);
-    host.poseLabelsGroups[poseIndex] = null;
+    host.fileEntries.pose(poseIndex).labelsGroup = null;
   }
   if (!show) {
     return;
@@ -550,7 +543,7 @@ export function updatePoseLabels(host: PoseHost, fileIndex: number): void {
     labelsGroup.add(label);
   }
   host.scene.add(labelsGroup);
-  host.poseLabelsGroups[poseIndex] = labelsGroup;
+  host.fileEntries.pose(poseIndex).labelsGroup = labelsGroup;
 }
 
 export function updatePoseScaling(host: PoseHost, fileIndex: number): void {
@@ -615,7 +608,7 @@ export function applyPoseConvention(
   const mat = new THREE.Matrix4().set(1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1);
   group.applyMatrix4(mat);
   group.updateMatrixWorld(true);
-  host.poseConvention[poseIndex] = conv;
+  host.fileEntries.pose(poseIndex).convention = conv;
 }
 
 export function applyPoseFilters(host: PoseHost, fileIndex: number): void {
@@ -735,12 +728,12 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
       for (let i = 0; i < data.instance_info.length; i++) {
         const single = { ...data, instance_info: [data.instance_info[i]] };
         const parsedPose = normalizePose(single);
-        const { unifiedIndex } = registerPoseEntry(host);
+        const { unifiedIndex, poseIndex } = registerPoseEntry(host);
         const group = buildPoseGroup(host, parsedPose, unifiedIndex);
         host.scene.add(group);
-        host.poseGroups.push(group);
-        host.poseJoints.push(parsedPose.joints as any);
-        host.poseEdges.push(parsedPose.edges);
+        host.fileEntries.pose(poseIndex).object = group;
+        host.fileEntries.pose(poseIndex).joints = parsedPose.joints as any;
+        host.fileEntries.pose(poseIndex).edges = parsedPose.edges;
         const invalidJoints = parsedPose.joints.filter((j: any) => j.valid !== true).length;
         const extras = (data as any).__poseExtras || {};
         // Extract scores/uncertainties when available
@@ -755,7 +748,7 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
             jointUnc = instInfo.keypoint_uncertainties.slice();
           }
         } catch {}
-        host.poseMeta.push({
+        host.fileEntries.pose(poseIndex).meta = {
           jointCount: parsedPose.joints.length,
           edgeCount: parsedPose.edges.length,
           fileName: `${fileName} [${i + 1}/${data.instance_info.length}]`,
@@ -766,7 +759,7 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
           skeletonLinks: extras.skeletonLinks || [],
           jointScores,
           jointUncertainties: jointUnc,
-        });
+        };
         host.applyTransformationMatrix(unifiedIndex);
       }
       host.updateFileList();
@@ -776,13 +769,13 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
       document.getElementById('loading')?.classList.add('hidden');
     } else {
       const parsedPose = normalizePose(data);
-      const { unifiedIndex } = registerPoseEntry(host);
+      const { unifiedIndex, poseIndex } = registerPoseEntry(host);
       const group = buildPoseGroup(host, parsedPose, unifiedIndex);
       host.scene.add(group);
       // Track pose group and meta
-      host.poseGroups.push(group);
-      host.poseJoints.push(parsedPose.joints as any);
-      host.poseEdges.push(parsedPose.edges);
+      host.fileEntries.pose(poseIndex).object = group;
+      host.fileEntries.pose(poseIndex).joints = parsedPose.joints as any;
+      host.fileEntries.pose(poseIndex).edges = parsedPose.edges;
       const invalidJoints = parsedPose.joints.filter((j: any) => j.valid !== true).length;
       const extras = (data as any).__poseExtras || {};
       // Extract scores/uncertainties for non-Halpe formats
@@ -809,7 +802,7 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
           }
         }
       } catch {}
-      host.poseMeta.push({
+      host.fileEntries.pose(poseIndex).meta = {
         jointCount: parsedPose.joints.length,
         edgeCount: parsedPose.edges.length,
         fileName,
@@ -820,7 +813,7 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
         skeletonLinks: extras.skeletonLinks || [],
         jointScores,
         jointUncertainties: jointUnc,
-      });
+      };
       host.applyTransformationMatrix(unifiedIndex);
       // Update UI
       host.updateFileList();

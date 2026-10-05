@@ -20,6 +20,14 @@ export class SectionPlaneManager {
     this.publish();
   }
 
+  dispose(): void {
+    this.entries.clear();
+    if (this.renderer) {
+      this.renderer.clippingPlanes = [];
+    }
+    this.renderer = null;
+  }
+
   getRange(fileIndex: number, axis: number, size: number): [number, number] {
     return this.entries.get(fileIndex)?.ranges[axis] ?? [0, Math.max(0, size - 1)];
   }

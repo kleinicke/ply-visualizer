@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import SequenceControls from './components/SequenceControls.svelte';
 
 /**
@@ -10,15 +11,23 @@ import SequenceControls from './components/SequenceControls.svelte';
  * were never in the markup, which only has a single `#seq-play-pause`
  * toggle) - the bar was always hidden and the toggle button never worked.
  */
-export function mountSequenceControls(callbacks: {
-  onPlayPause: () => void;
-  onPrev: () => void;
-  onNext: () => void;
-  onSeek: (index: number) => void;
-}): void {
+export function mountSequenceControls(
+  lifetime: ViewerLifetime,
+  callbacks: {
+    onPlayPause: () => void;
+    onPrev: () => void;
+    onNext: () => void;
+    onSeek: (index: number) => void;
+  }
+): void {
   const target = document.getElementById('sequence-controls-mount');
   if (!target) {
     return;
   }
-  mount(SequenceControls, { target, props: callbacks });
+  {
+    const component = mount(SequenceControls, { target, props: callbacks });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

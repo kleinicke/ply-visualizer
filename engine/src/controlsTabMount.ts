@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import ControlsTabTop from './components/ControlsTabTop.svelte';
 import ControlsTabBottom from './components/ControlsTabBottom.svelte';
 import CameraControlsPanel from './components/CameraControlsPanel.svelte';
@@ -10,17 +11,32 @@ import CameraControlsPanel from './components/CameraControlsPanel.svelte';
  * setupThemeSwitcher() wires it before PointCloudVisualizer even exists, so
  * folding it into one of these components would race that setup.
  */
-export function mountControlsTab(host: unknown): void {
+export function mountControlsTab(lifetime: ViewerLifetime, host: unknown): void {
   const top = document.getElementById('controls-tab-top-mount');
   if (top) {
-    mount(ControlsTabTop, { target: top, props: { host } });
+    {
+      const component = mount(ControlsTabTop, { target: top, props: { host } });
+      lifetime.add(() => {
+        void unmount(component);
+      });
+    }
   }
   const bottom = document.getElementById('controls-tab-bottom-mount');
   if (bottom) {
-    mount(ControlsTabBottom, { target: bottom, props: { host } });
+    {
+      const component = mount(ControlsTabBottom, { target: bottom, props: { host } });
+      lifetime.add(() => {
+        void unmount(component);
+      });
+    }
   }
   const camera = document.getElementById('camera-controls-panel');
   if (camera) {
-    mount(CameraControlsPanel, { target: camera, props: { host } });
+    {
+      const component = mount(CameraControlsPanel, { target: camera, props: { host } });
+      lifetime.add(() => {
+        void unmount(component);
+      });
+    }
   }
 }

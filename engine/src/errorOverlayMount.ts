@@ -1,4 +1,5 @@
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import type { ViewerLifetime } from './utils/viewerLifetime';
 import ErrorOverlay from './components/ErrorOverlay.svelte';
 
 /**
@@ -6,10 +7,15 @@ import ErrorOverlay from './components/ErrorOverlay.svelte';
  * driven entirely by state/ui.svelte.ts now - ui/status.ts's
  * showError/clearError just set store fields, this component renders them.
  */
-export function mountErrorOverlay(): void {
+export function mountErrorOverlay(lifetime: ViewerLifetime): void {
   const target = document.getElementById('error-mount');
   if (!target) {
     return;
   }
-  mount(ErrorOverlay, { target });
+  {
+    const component = mount(ErrorOverlay, { target });
+    lifetime.add(() => {
+      void unmount(component);
+    });
+  }
 }

@@ -16,7 +16,8 @@ export interface ColorImageForDepthHost {
     depthData: ArrayBuffer,
     fileName: string,
     cameraParams: CameraParams,
-    colorImageData?: any
+    colorImageData?: ImageData,
+    signal?: AbortSignal
   ): Promise<DepthConversionResult>;
   createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material;
   createGeometryFromSpatialData(data: SpatialData): THREE.BufferGeometry;
@@ -49,7 +50,8 @@ export async function handleColorImageData(
     // Get depth data first to access dimensions
     let fileIndex = message.fileIndex;
     const entry = host.fileEntries.require(fileIndex);
-    const version = ++entry.depthUpdate.version;
+    const signal = entry.beginDepthWork();
+    const version = entry.depthUpdate.version;
     const depthData = host.spatialFiles[fileIndex]?.depthSource;
     if (!depthData) {
       throw new Error('No cached depth data found for this file');
@@ -71,7 +73,8 @@ export async function handleColorImageData(
       depthData.originalData,
       depthData.fileName,
       depthData.cameraParams,
-      imageData
+      imageData,
+      signal
     );
 
     fileIndex = host.fileEntries.indexOf(entry.id);
@@ -139,6 +142,9 @@ export async function handleColorImageData(
       );
     }
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return;
+    }
     console.error('Error handling color image data:', error);
     host.showError(
       `Failed to apply color image: ${error instanceof Error ? error.message : String(error)}`
@@ -168,7 +174,8 @@ export async function removeColorImageFromDepth(
   fileIndex: number
 ): Promise<void> {
   const entry = host.fileEntries.require(fileIndex);
-  const version = ++entry.depthUpdate.version;
+  const signal = entry.beginDepthWork();
+  const version = entry.depthUpdate.version;
   try {
     const depthData = host.spatialFiles[fileIndex]?.depthSource;
     if (!depthData) {
@@ -181,7 +188,9 @@ export async function removeColorImageFromDepth(
     const result = await host.processDepthToPointCloud(
       depthData.originalData,
       depthData.fileName,
-      depthData.cameraParams
+      depthData.cameraParams,
+      undefined,
+      signal
     );
 
     fileIndex = host.fileEntries.indexOf(entry.id);
@@ -233,6 +242,9 @@ export async function removeColorImageFromDepth(
     host.updateFileList();
     host.showStatus('Color image removed - reverted to default depth-based colors');
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return;
+    }
     console.error('Error removing color image:', error);
     host.showError(
       `Failed to remove color image: ${error instanceof Error ? error.message : String(error)}`

@@ -29,6 +29,7 @@ export interface GpuTimer {
    * asynchronous, so this returns completed measurements, not this frame's.
    */
   poll(): void;
+  dispose(): void;
   /** Rolling average in milliseconds, or 0 when nothing has been measured. */
   readonly averageMs: number;
 }
@@ -39,6 +40,7 @@ export const NULL_GPU_TIMER: GpuTimer = {
   begin() {},
   end() {},
   poll() {},
+  dispose() {},
   averageMs: 0,
 };
 
@@ -138,6 +140,15 @@ export class WebGLGpuTimer implements GpuTimer {
     }
   }
 
+  dispose(): void {
+    this.end();
+    for (const query of this.pending.splice(0)) {
+      this.deleteQuery(query);
+    }
+    this.samples.length = 0;
+    this.average = 0;
+  }
+
   private readQuery(query: unknown): number | null {
     if (this.gl.getQueryParameter) {
       if (!this.gl.getQueryParameter(query, this.gl.QUERY_RESULT_AVAILABLE)) {
@@ -212,6 +223,12 @@ export class WebGPUGpuTimer implements GpuTimer {
     return this.average;
   }
 
+  dispose(): void {
+    this.supported = false;
+    this.samples.length = 0;
+    this.average = 0;
+  }
+
   begin(): void {}
 
   end(): void {}
@@ -224,6 +241,9 @@ export class WebGPUGpuTimer implements GpuTimer {
     this.renderer
       .resolveTimestampsAsync()
       .then(elapsed => {
+        if (!this.supported) {
+          return;
+        }
         // The promise resolves with the duration in milliseconds; older three
         // revisions only update renderer.info, so fall back to that.
         const timeMs = elapsed ?? this.renderer.info?.render?.timestamp;
