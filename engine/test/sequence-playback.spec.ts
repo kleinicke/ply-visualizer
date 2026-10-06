@@ -258,3 +258,57 @@ test('byte budget evicts prefetched frames and keeps an oversized visible frame'
     })
   ).toBe(true);
 });
+
+test('rapid seeks keep one decode and only the latest queued frame', async ({ page }) => {
+  await page.evaluate(() => {
+    const w = window as any;
+    const v = w.visualizer;
+    w.depthCalls = [];
+    w.depthFinishes = [];
+    v.processDepthToPointCloud = (
+      _bytes: unknown,
+      name: string,
+      _params: unknown,
+      _color: unknown,
+      signal: AbortSignal
+    ) =>
+      new Promise(resolve => {
+        w.depthCalls.push({ name, signal });
+        w.depthFinishes.push(() =>
+          resolve({ pointCount: 1, vertices: new Float32Array([0, 0, 0]) })
+        );
+      });
+    v.initializeSequence(
+      Array.from({ length: 11 }, (_, index) => `${index}.pfm`),
+      '*.pfm'
+    );
+  });
+  const requests = () => page.evaluate(() => (window as any).requests);
+  await reply(page, (await requests())[0]);
+  await page.waitForFunction(() => (window as any).depthCalls.length === 1);
+  for (let index = 1; index <= 10; index++) {
+    await page.evaluate(index => (window as any).visualizer.seekSequence(index), index);
+    await reply(page, (await requests()).at(-1));
+    await expect
+      .poll(() => page.evaluate(() => (window as any).visualizer.sequenceQueuedFrame?.index))
+      .toBe(index);
+  }
+  expect(
+    await page.evaluate(() => {
+      const w = window as any;
+      return [
+        w.depthCalls.length,
+        w.depthCalls[0].signal.aborted,
+        w.visualizer.sequencePending.size,
+      ];
+    })
+  ).toEqual([1, true, 1]);
+  await page.evaluate(() => (window as any).depthFinishes[0]());
+  await page.waitForFunction(() => (window as any).depthCalls.length === 2);
+  expect(await page.evaluate(() => (window as any).depthCalls[1].name)).toBe('10.pfm');
+  await page.evaluate(() => (window as any).depthFinishes[1]());
+  await expect.poll(() => page.evaluate(() => (window as any).visualizer.sequenceIndex)).toBe(10);
+  expect(await page.evaluate(() => [...(window as any).visualizer.sequenceCache.keys()])).toEqual([
+    10,
+  ]);
+});

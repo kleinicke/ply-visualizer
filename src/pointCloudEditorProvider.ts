@@ -1,3 +1,4 @@
+import { SequenceFileReader } from './providerHandlers/sequenceFiles';
 import { readHostMessage } from '../engine/src/hosts/viewerProtocol';
 import { sendToWebview, registerWebviewTransport } from './providerHandlers/webviewTransport';
 import { nativeAgentPanels } from './agent/panels';
@@ -26,7 +27,10 @@ import {
   type AddFileHost,
 } from './providerHandlers/addFileHandlers';
 import { handleStationPipeline } from './providerHandlers/stationPipeline';
-import { handleRegistrationRequest } from './providerHandlers/registration';
+import {
+  handleRegistrationRequest,
+  cancelRegistrationRequest,
+} from './providerHandlers/registration';
 import { loadDocumentContent, type DocumentLoaderHost } from './providerHandlers/documentLoader';
 import { createWebviewReadyGate, type WebviewReadyGate } from './providerHandlers/webviewReadyGate';
 import { clearVolume, reextractVolume } from './providerHandlers/volumeSessions';
@@ -178,6 +182,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     webviewPanel: vscode.WebviewPanel,
     token: vscode.CancellationToken
   ): Promise<void> {
+    const sequenceReader = new SequenceFileReader(message => sendToWebview(webviewPanel, message));
     const readyGate = createWebviewReadyGate();
     const initialLoad = createWebviewReadyGate();
     const loadStartedAt = Date.now();
@@ -188,6 +193,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     this.panelVolumeSessions.set(webviewPanel, new Set([document.uri.toString()]));
     registerWebviewTransport(webviewPanel, readyGate, () => loadStartedAt, initialLoad);
     webviewPanel.onDidDispose(() => {
+      sequenceReader.dispose();
+      cancelRegistrationRequest(webviewPanel);
       readyGate.dispose();
       initialLoad.dispose();
       this.activePanels.delete(webviewPanel);
@@ -283,6 +290,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         case 'perfLog':
           this.logPerf(message.line);
           break;
+        case 'registrationCancel':
+          cancelRegistrationRequest(webviewPanel, message.id);
+          break;
         case 'registrationRequest':
           await handleRegistrationRequest(webviewPanel, message);
           break;
@@ -373,8 +383,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
         case 'selectCalibrationFile':
           await this.handleSelectCalibrationFile(webviewPanel, message);
           break;
+        case 'sequence:cancelFile':
+          sequenceReader.cancel(message.requestId);
+          break;
         case 'sequence:requestFile':
-          await this.handleSequenceRequestFile(webviewPanel, message);
+          await sequenceReader.request(message);
           break;
         case 'addFileFromPath':
           await handleAddFileFromPath(this.addFileHost, webviewPanel, message.path as string);
@@ -788,29 +801,6 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     html = html.replace(/<div id="welcome-message-mount"><\/div>/, '');
 
     return html;
-  }
-
-  private async handleSequenceRequestFile(
-    webviewPanel: vscode.WebviewPanel,
-    message: { path: string; index: number; requestId: string }
-  ): Promise<void> {
-    try {
-      const bytes = await vscode.workspace.fs.readFile(vscode.Uri.file(message.path));
-      sendToWebview(webviewPanel, {
-        type: 'sequence:file',
-        index: message.index,
-        requestId: message.requestId,
-        fileName: path.basename(message.path),
-        data: bytes,
-      });
-    } catch (error) {
-      sendToWebview(webviewPanel, {
-        type: 'sequence:file:error',
-        index: message.index,
-        requestId: message.requestId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
   }
 
   /**

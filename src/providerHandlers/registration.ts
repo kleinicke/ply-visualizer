@@ -1,9 +1,7 @@
 import { sendToWebview } from './webviewTransport';
 import type * as vscode from 'vscode';
-import {
-  loadRegistrationWasm,
-  type RegistrationWasm,
-} from '../../engine/src/registration/wasmLoader';
+import { Worker } from 'node:worker_threads';
+import { join } from 'node:path';
 import type { RegistrationKind } from '../../engine/src/registration/registrationWorker';
 
 interface RegistrationMessage {
@@ -30,32 +28,66 @@ function coordinates(value: unknown, name: string): Float32Array {
   return value;
 }
 
-function run(
-  wasm: RegistrationWasm,
-  kind: RegistrationKind,
-  source: Float32Array,
-  target: Float32Array,
-  settingsJson: string
-): { matrix: Float64Array; stats: string } | null {
-  const result =
-    kind === 'register'
-      ? wasm.register_pair(source, target, settingsJson)
-      : kind === 'coarse'
-        ? wasm.coarse_align(source, target, settingsJson)
-        : kind === 'icp'
-          ? wasm.icp_refine(source, target, settingsJson)
-          : wasm.fit_correspondences(source, target);
-  if (!result) {
-    return null;
+interface HostWorker {
+  worker: Worker;
+  active?: { id: string; resolve(value: any): void; reject(error: Error): void };
+}
+const workers = new WeakMap<vscode.WebviewPanel, HostWorker>();
+
+/** Termination interrupts synchronous WASM without blocking the extension host. */
+export function cancelRegistrationRequest(panel: vscode.WebviewPanel, id?: string): void {
+  const state = workers.get(panel);
+  if (!state || (id !== undefined && state.active?.id !== id)) {
+    return;
   }
-  try {
-    return { matrix: result.matrix, stats: result.stats };
-  } finally {
-    result.free?.();
-  }
+  workers.delete(panel);
+  const error = new Error('Alignment cancelled.');
+  error.name = 'AbortError';
+  state.active?.reject(error);
+  state.active = undefined;
+  void state.worker.terminate();
 }
 
-/** Runs browser registration in the extension process so ICP cannot freeze the webview. */
+function getWorker(panel: vscode.WebviewPanel): HostWorker {
+  const existing = workers.get(panel);
+  if (existing) {
+    return existing;
+  }
+  const worker = new Worker(join(__dirname, 'registrationWorker.js'));
+  const state: HostWorker = { worker };
+  workers.set(panel, state);
+  worker.on('message', value => {
+    const active = state.active;
+    state.active = undefined;
+    worker.unref();
+    if (value?.error) {
+      active?.reject(new Error(value.error));
+    } else {
+      active?.resolve(value);
+    }
+  });
+  const failed = (error: Error) => {
+    if (workers.get(panel) === state) {
+      workers.delete(panel);
+    }
+    state.active?.reject(error);
+    state.active = undefined;
+    void worker.terminate();
+  };
+  worker.on('error', failed);
+  worker.on('exit', code => {
+    if (workers.get(panel) === state) {
+      workers.delete(panel);
+    }
+    if (state.active) {
+      failed(new Error(`Registration worker exited (${code}).`));
+    }
+  });
+  worker.unref();
+  return state;
+}
+
+/** Each panel owns one reusable, cancellable solver worker. */
 export async function handleRegistrationRequest(
   webviewPanel: vscode.WebviewPanel,
   message: RegistrationMessage
@@ -71,11 +103,18 @@ export async function handleRegistrationRequest(
     const source = coordinates(message.source, 'Source');
     const target = coordinates(message.target, 'Target');
     const settingsJson = typeof message.settingsJson === 'string' ? message.settingsJson : '{}';
-    const wasm = await loadRegistrationWasm();
-    if (!wasm) {
-      throw new Error('The registration WebAssembly module failed to load in the extension host.');
+    const state = getWorker(webviewPanel);
+    if (state.active) {
+      throw new Error('An alignment is already running in this panel.');
     }
-    const result = run(wasm, message.kind as RegistrationKind, source, target, settingsJson);
+    const result = await new Promise<{ matrix: Float64Array; stats: string } | null>(
+      (resolve, reject) => {
+        state.active = { id, resolve, reject };
+        state.worker.ref();
+        // Do not detach webview transport buffers that another consumer may retain.
+        state.worker.postMessage({ kind: message.kind, source, target, settingsJson });
+      }
+    );
     await sendToWebview(webviewPanel, {
       type: 'registrationResult',
       id,
@@ -83,6 +122,9 @@ export async function handleRegistrationRequest(
       stats: result?.stats ?? null,
     });
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return;
+    }
     await sendToWebview(webviewPanel, {
       type: 'registrationResult',
       id,

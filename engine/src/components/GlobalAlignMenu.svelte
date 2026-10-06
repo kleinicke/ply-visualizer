@@ -295,6 +295,12 @@
         <h5>Align {movingCount} cloud{movingCount === 1 ? '' : 's'} to it</h5>
       </header>
       <div class="align-actions">
+        {#if registrationState.busy}
+          <button
+            class="registration-cancel"
+            onclick={() => registration.cancelAlignment(host)}
+          >Cancel alignment</button>
+        {/if}
         <button
           class="global-align-run align-primary"
           onclick={() =>

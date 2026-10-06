@@ -1,9 +1,8 @@
 /**
  * Loads the registration wasm for callers that have no `Worker`.
  *
- * Two of those exist: the VS Code extension host, which is already its own
- * process so blocking it does not freeze the viewer, and Node (the test
- * suite). Both take the `nodejs` wasm-pack build, which is CommonJS and
+ * The VS Code solver worker thread and Node tests take the `nodejs`
+ * wasm-pack build, which is CommonJS and
  * initializes itself on require; the browser's `web` build is loaded by
  * `registrationWorker.ts` instead.
  *

@@ -424,6 +424,13 @@
           </div>
         {/if}
 
+        {#if active && registrationState.busy}
+          <button
+            class="registration-cancel"
+            onclick={() => registration.cancelAlignment(host)}
+          >Cancel alignment</button>
+        {/if}
+
         {#if active && registrationState.status && workflow === 'choose'}
           <div class="pair-status">{registrationState.status}</div>
         {/if}

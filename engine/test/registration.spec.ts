@@ -375,6 +375,9 @@ test.describe('Scan-to-scan registration', () => {
     await expect(page.locator('#file-1')).toBeChecked();
     await panel.locator('.registration-apply-coarse').click();
     await expect(panel.locator('.registration-result')).toContainText('Coarse match applied');
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState.status))
+      .toContain('Check the three landmarks');
 
     // Coarse matching now ends as its own step: both clouds stay on screen so
     // the result can be judged, and nothing advances until asked.
@@ -574,6 +577,9 @@ test.describe('Scan-to-scan registration', () => {
     }
 
     await expect(panel.locator('.registration-result')).toContainText('Live fit from 3 fine pairs');
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__plyRegistrationState.status))
+      .toContain('double-click another feature');
     const after = await page.evaluate(
       () => (window as any).visualizer.fileEntries.require(1).transform.elements.slice() as number[]
     );

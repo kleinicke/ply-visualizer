@@ -37,6 +37,8 @@ export interface SequencePlaybackHost extends FileObjectHost {
     number,
     { requestId: string; controller: AbortController; processing: boolean }
   >;
+  sequenceDecoding: boolean;
+  sequenceQueuedFrame: MessageOf<'sequence:file'> | null;
   sequenceGeneration: number;
   sequenceRequestId: number;
   sequenceTimer: number | null;
@@ -54,13 +56,26 @@ function disposeFrame(entry: FileEntry): void {
   disposeFileResources(entry, entry.spatial?.object, entry.spatial?.data);
 }
 
+function cancelFrame(host: SequencePlaybackHost, index: number): void {
+  const pending = host.sequencePending.get(index);
+  if (!pending) {
+    return;
+  }
+  pending.controller.abort();
+  host.sequencePending.delete(index);
+  host.vscode.postMessage({ type: 'sequence:cancelFile', requestId: pending.requestId });
+  if (host.sequenceQueuedFrame?.requestId === pending.requestId) {
+    host.sequenceQueuedFrame = null;
+  }
+}
+
 export function disposeSequence(host: SequencePlaybackHost): void {
   pauseSequence(host);
   host.sequenceGeneration++;
-  for (const request of host.sequencePending.values()) {
-    request.controller.abort();
+  for (const index of host.sequencePending.keys()) {
+    cancelFrame(host, index);
   }
-  host.sequencePending.clear();
+  host.sequenceQueuedFrame = null;
   for (const entry of host.sequenceCache.values()) {
     disposeFrame(entry);
   }
@@ -149,7 +164,12 @@ export function seekSequence(host: SequencePlaybackHost, index: number): void {
 /** Requests and prefetch share the same pending map. IDs include the sequence generation. */
 function requestFrame(host: SequencePlaybackHost, index: number): void {
   const path = host.sequenceFiles[index];
-  if (!path || host.sequenceCache.has(index) || host.sequencePending.has(index)) {
+  if (
+    !path ||
+    host.sequenceCache.has(index) ||
+    host.sequencePending.has(index) ||
+    host.sequencePending.size >= 2
+  ) {
     return;
   }
   const requestId = `${host.sequenceGeneration}:${++host.sequenceRequestId}`;
@@ -162,6 +182,12 @@ function requestFrame(host: SequencePlaybackHost, index: number): void {
 }
 
 export function loadSequenceFrame(host: SequencePlaybackHost, index: number): void {
+  // Scrubbing replaces intent instead of creating an unbounded decode queue.
+  for (const pendingIndex of host.sequencePending.keys()) {
+    if (pendingIndex !== index) {
+      cancelFrame(host, pendingIndex);
+    }
+  }
   const cached = host.sequenceCache.get(index);
   if (cached) {
     showFrame(host, cached, index);
@@ -179,6 +205,30 @@ export async function handleSequenceFile(
     return;
   }
   pending.processing = true;
+  host.sequenceQueuedFrame = message;
+  if (host.sequenceDecoding) {
+    return;
+  }
+  host.sequenceDecoding = true;
+  try {
+    while (host.sequenceQueuedFrame) {
+      const next = host.sequenceQueuedFrame;
+      host.sequenceQueuedFrame = null;
+      const request = host.sequencePending.get(next.index);
+      if (request?.requestId === next.requestId) {
+        await decodeFrame(host, next, request);
+      }
+    }
+  } finally {
+    host.sequenceDecoding = false;
+  }
+}
+
+async function decodeFrame(
+  host: SequencePlaybackHost,
+  message: MessageOf<'sequence:file'>,
+  pending: { requestId: string; controller: AbortController; processing: boolean }
+): Promise<void> {
   const { signal } = pending.controller;
   let entry: FileEntry | undefined;
   let data: SpatialData | undefined;

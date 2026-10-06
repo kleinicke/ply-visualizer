@@ -1,5 +1,11 @@
+import { Worker } from 'node:worker_threads';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import * as assert from 'assert';
-import { handleRegistrationRequest } from '../../providerHandlers/registration';
+import {
+  handleRegistrationRequest,
+  cancelRegistrationRequest,
+} from '../../providerHandlers/registration';
 import {
   configureRegistrationExtensionHost,
   fitCorrespondences,
@@ -8,6 +14,27 @@ import {
 } from '../../../engine/src/registration';
 
 suite('Registration extension-host bridge', () => {
+  test('the packaged Node worker resolves its bundled WASM', async function () {
+    const workerPath = resolve(__dirname, '../../../registrationWorker.js');
+    if (!existsSync(workerPath)) {
+      this.skip();
+    }
+    const worker = new Worker(workerPath);
+    try {
+      const points = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+      const reply = new Promise<any>((resolve, reject) => {
+        worker.once('message', resolve);
+        worker.once('error', reject);
+      });
+      worker.postMessage({ kind: 'fit', source: points, target: points, settingsJson: '{}' });
+      const result = await reply;
+      assert.strictEqual(result?.error, undefined);
+      assert.ok(result?.matrix instanceof Float64Array);
+    } finally {
+      await worker.terminate();
+    }
+  });
+
   test('runs a request and returns the solver result to the webview', async () => {
     const source = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
     const target = new Float32Array([2, -1, 0.5, 3, -1, 0.5, 2, 0, 0.5, 2, -1, 1.5]);
@@ -37,6 +64,89 @@ suite('Registration extension-host bridge', () => {
     assert.ok(Math.abs(replies[0].matrix[12] - 2) < 1e-6);
     assert.ok(Math.abs(replies[0].matrix[13] + 1) < 1e-6);
     assert.ok(Math.abs(replies[0].matrix[14] - 0.5) < 1e-6);
+    cancelRegistrationRequest(panel as never);
+  });
+
+  test('cancels a panel worker and accepts a fresh request afterwards', async () => {
+    const replies: any[] = [];
+    const panel = {
+      webview: {
+        postMessage: async (message: unknown) => {
+          replies.push(message);
+          return true;
+        },
+      },
+    };
+    const points = new Float32Array(300_000);
+    for (let index = 0; index < points.length; index++) {
+      points[index] = Math.sin(index);
+    }
+    const running = handleRegistrationRequest(panel as never, {
+      id: 'cancelled',
+      kind: 'register',
+      source: points,
+      target: points,
+    });
+    cancelRegistrationRequest(panel as never, 'unrelated-id');
+    cancelRegistrationRequest(panel as never, 'cancelled');
+    await running;
+    assert.strictEqual(replies.length, 0);
+    const triangle = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    await handleRegistrationRequest(panel as never, {
+      id: 'fresh',
+      kind: 'fit',
+      source: triangle,
+      target: triangle,
+    });
+    assert.strictEqual(replies.length, 1);
+    assert.strictEqual(replies[0].id, 'fresh');
+    assert.ok(replies[0].matrix);
+    cancelRegistrationRequest(panel as never);
+  });
+
+  test('client cancellation rejects promptly, sends a cancel message and ignores a late reply', async () => {
+    const messages: any[] = [];
+    configureRegistrationExtensionHost(message => {
+      messages.push(message);
+    });
+    try {
+      const controller = new AbortController();
+      const points = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+      const result = fitCorrespondences(points, points, controller.signal);
+      await new Promise(resolve => setImmediate(resolve));
+      const rejected = assert.rejects(result, { name: 'AbortError' });
+      controller.abort();
+      await rejected;
+      assert.strictEqual(messages.length, 2);
+      assert.strictEqual(messages[1].type, 'registrationCancel');
+      assert.strictEqual(messages[1].id, messages[0].id);
+      assert.strictEqual(
+        handleRegistrationExtensionResult({ id: messages[0].id, matrix: null }),
+        false
+      );
+    } finally {
+      configureRegistrationExtensionHost(null);
+    }
+  });
+
+  test('cancelling a queued client request leaves the active request alone', async () => {
+    const messages: any[] = [];
+    configureRegistrationExtensionHost(message => messages.push(message));
+    try {
+      const points = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+      const first = fitCorrespondences(points, points);
+      await new Promise(resolve => setImmediate(resolve));
+      const controller = new AbortController();
+      const queued = fitCorrespondences(points, points, controller.signal);
+      const rejected = assert.rejects(queued, { name: 'AbortError' });
+      controller.abort();
+      await rejected;
+      assert.strictEqual(messages.length, 1);
+      handleRegistrationExtensionResult({ id: messages[0].id, matrix: null });
+      assert.strictEqual(await first, null);
+    } finally {
+      configureRegistrationExtensionHost(null);
+    }
   });
 
   test('returns an actionable error for malformed point data', async () => {

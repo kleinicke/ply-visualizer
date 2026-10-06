@@ -359,6 +359,8 @@ export class PointCloudVisualizer {
     number,
     { requestId: string; controller: AbortController; processing: boolean }
   >();
+  sequenceDecoding = false;
+  sequenceQueuedFrame: import('./hosts/viewerProtocol').MessageOf<'sequence:file'> | null = null;
   sequenceGeneration = 0;
   sequenceRequestId = 0;
   maxSequenceCacheBytes = 256 * 1024 * 1024;

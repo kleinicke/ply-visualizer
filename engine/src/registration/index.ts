@@ -19,8 +19,8 @@
  * `wasm/pointcloud-parser/src/registration/` and are tested there with
  * `cargo test`; this module is the marshalling layer and nothing else. In a
  * browser the work runs in `registrationWorker.ts`, so a sweep never blocks the
- * render thread; the extension host has no `Worker`, but it is already a
- * separate process from the webview, so it calls the same wasm inline.
+ * render thread; the extension host uses a Node worker thread so it can
+ * receive cancellation while the same synchronous WASM kernel is running.
  */
 
 import * as THREE from 'three';
@@ -162,14 +162,18 @@ const pending = new Map<
 
 let workerReady: Promise<Worker | null> | null = null;
 
-type ExtensionPostMessage = (message: {
-  type: 'registrationRequest';
-  id: string;
-  kind: RegistrationKind;
-  source: Float32Array;
-  target: Float32Array;
-  settingsJson: string;
-}) => void;
+type ExtensionPostMessage = (
+  message:
+    | {
+        type: 'registrationRequest';
+        id: string;
+        kind: RegistrationKind;
+        source: Float32Array;
+        target: Float32Array;
+        settingsJson: string;
+      }
+    | { type: 'registrationCancel'; id: string }
+) => void;
 
 let extensionPostMessage: ExtensionPostMessage | null = null;
 let nextExtensionRequestId = 1;
@@ -184,7 +188,7 @@ const extensionPending = new Map<
  * A webview cannot construct the same-origin worker used by the standalone
  * viewer. Running several seconds of ICP inline made the button look broken
  * because rendering and status updates froze until it returned. The extension
- * host is already a separate process, so it is the natural worker there.
+ * host delegates to a Node worker thread, which can be terminated on cancel.
  */
 export function configureRegistrationExtensionHost(postMessage: ExtensionPostMessage | null): void {
   extensionPostMessage = postMessage;
@@ -224,7 +228,7 @@ export function handleRegistrationExtensionResult(message: {
  * answers — and the buffers, being transferred, are gone by the time we learn
  * that, leaving nothing to retry with in-page.
  */
-async function ensureWorker(): Promise<Worker | null> {
+async function ensureWorker(signal?: AbortSignal): Promise<Worker | null> {
   // `document` rather than `Worker` alone: this module is also loaded by the
   // extension host and by Node, and the dynamic import below must not be
   // evaluated there (see workerHost.ts).
@@ -234,36 +238,54 @@ async function ensureWorker(): Promise<Worker | null> {
   if (workerReady) {
     return workerReady;
   }
-  workerReady = startWorker();
+  workerReady = startWorker(signal).catch(error => {
+    workerReady = null;
+    throw error;
+  });
   return workerReady;
 }
 
-async function startWorker(): Promise<Worker | null> {
+async function startWorker(signal?: AbortSignal): Promise<Worker | null> {
   try {
     const { createRegistrationWorker } = await import('./workerHost');
+    signal?.throwIfAborted();
     worker = createRegistrationWorker();
   } catch (error) {
+    signal?.throwIfAborted();
     console.warn('[registration] worker unavailable, running in page:', error);
     workerUnavailable = true;
     return null;
   }
 
+  const starting = worker;
   const handshake = await new Promise<boolean>(resolve => {
     const settle = (value: boolean) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', aborted);
       resolve(value);
     };
+    const aborted = () => {
+      starting.terminate();
+      settle(false);
+    };
     const timer = setTimeout(() => settle(false), 10_000);
-    worker!.addEventListener('message', function onReady(event: MessageEvent) {
+    signal?.addEventListener('abort', aborted, { once: true });
+    starting.addEventListener('message', function onReady(event: MessageEvent) {
       if (typeof event.data?.ready !== 'boolean') {
         return;
       }
-      worker!.removeEventListener('message', onReady as EventListener);
+      starting.removeEventListener('message', onReady as EventListener);
       settle(event.data.ready === true);
     });
-    worker!.addEventListener('error', () => settle(false), { once: true });
+    starting.addEventListener('error', () => settle(false), { once: true });
   });
 
+  if (signal?.aborted) {
+    starting.terminate();
+    worker = null;
+    workerReady = null;
+    signal.throwIfAborted();
+  }
   if (!handshake) {
     console.warn('[registration] worker did not start, running in page instead');
     worker?.terminate();
@@ -272,7 +294,7 @@ async function startWorker(): Promise<Worker | null> {
     return null;
   }
 
-  worker.onmessage = event => {
+  starting.onmessage = event => {
     const request = pending.get(event.data.id);
     if (!request) {
       return;
@@ -287,7 +309,10 @@ async function startWorker(): Promise<Worker | null> {
     }
     request.resolve(decode(event.data.matrix, event.data.stats));
   };
-  worker.onerror = event => {
+  starting.onerror = event => {
+    if (worker !== starting) {
+      return;
+    }
     const error = new Error(event.message || 'Registration worker failed');
     for (const request of pending.values()) {
       request.reject(error);
@@ -333,33 +358,118 @@ function decode(matrix: Float64Array | null, stats: string | null): Registration
   };
 }
 
-async function dispatch(
+type PendingResult = {
+  resolve(value: RegistrationResult | null): void;
+  reject(error: Error): void;
+};
+
+function pendingResult<K>(
+  requests: Map<K, PendingResult>,
+  id: K,
+  signal: AbortSignal | undefined,
+  send: () => void,
+  cancel: () => void
+): Promise<RegistrationResult | null> {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      requests.delete(id);
+      signal?.removeEventListener('abort', abort);
+    };
+    const abort = () => {
+      cleanup();
+      cancel();
+      reject(signal!.reason);
+    };
+    requests.set(id, {
+      resolve: value => {
+        cleanup();
+        resolve(value);
+      },
+      reject: error => {
+        cleanup();
+        reject(error);
+      },
+    });
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    try {
+      send();
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
+  });
+}
+
+// A terminated browser worker belongs only to its active request. Queued callers
+// keep their buffers and start on a fresh worker after cancellation.
+let dispatchTail: Promise<unknown> = Promise.resolve();
+function dispatch(
   kind: RegistrationKind,
   source: Float32Array,
   target: Float32Array,
-  settings: unknown
+  settings: unknown,
+  signal?: AbortSignal
 ): Promise<RegistrationResult | null> {
+  const result = dispatchTail.then(() => dispatchNow(kind, source, target, settings, signal));
+  dispatchTail = result.catch(() => {});
+  if (!signal) {
+    return result;
+  }
+  // A queued cancellation must settle immediately without interrupting the
+  // unrelated request currently using the shared worker.
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    void result.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    if (signal.aborted) {
+      abort();
+    }
+  });
+}
+
+async function dispatchNow(
+  kind: RegistrationKind,
+  source: Float32Array,
+  target: Float32Array,
+  settings: unknown,
+  signal?: AbortSignal
+): Promise<RegistrationResult | null> {
+  signal?.throwIfAborted();
   const settingsJson = JSON.stringify(settings ?? {});
   if (extensionPostMessage) {
+    const postMessage = extensionPostMessage;
     const id = `registration-${nextExtensionRequestId++}`;
-    return new Promise<RegistrationResult | null>((resolve, reject) => {
-      extensionPending.set(id, { resolve, reject });
-      extensionPostMessage!({
-        type: 'registrationRequest',
-        id,
-        kind,
-        source,
-        target,
-        settingsJson,
-      });
-    });
+    return pendingResult(
+      extensionPending,
+      id,
+      signal,
+      () => {
+        postMessage({
+          type: 'registrationRequest',
+          id,
+          kind,
+          source,
+          target,
+          settingsJson,
+        });
+      },
+      () => postMessage({ type: 'registrationCancel', id })
+    );
   }
-  const host = await ensureWorker();
+  const host = await ensureWorker(signal);
+  signal?.throwIfAborted();
   if (!host) {
     const wasm = await loadRegistrationWasm();
+    signal?.throwIfAborted();
     if (!wasm) {
       throw new Error('Registration is unavailable: the WebAssembly module failed to load.');
     }
+    // The in-page fallback cannot process UI cancellation mid-kernel; worker
+    // paths above/below are interruptible by terminating their execution host.
     const result =
       kind === 'register'
         ? wasm.register_pair(source, target, settingsJson)
@@ -380,12 +490,21 @@ async function dispatch(
 
   const id = nextRequestId++;
   const request: RegistrationRequest = { id, kind, source, target, settingsJson };
-  return new Promise<RegistrationResult | null>((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    // The point buffers are copies made for this call, so transferring them
-    // costs nothing and saves duplicating tens of megabytes per request.
-    host.postMessage(request, [source.buffer, target.buffer]);
-  });
+  return pendingResult(
+    pending,
+    id,
+    signal,
+    () => {
+      // The point buffers are copies made for this call, so transferring them
+      // costs nothing and saves duplicating tens of megabytes per request.
+      host.postMessage(request, [source.buffer, target.buffer]);
+    },
+    () => {
+      host.terminate();
+      worker = null;
+      workerReady = null;
+    }
+  );
 }
 
 function icpSettings(options: IcpOptions): Record<string, unknown> {
@@ -414,32 +533,41 @@ export function registrationBackend(): 'extension host' | 'worker' | 'in page' |
 export function registerPair(
   source: Float32Array,
   target: Float32Array,
-  options: RegisterPairOptions = {}
+  options: RegisterPairOptions = {},
+  signal?: AbortSignal
 ): Promise<RegistrationResult | null> {
-  return dispatch('register', source, target, {
-    coarse: options.coarse === false ? undefined : (options.coarse ?? {}),
-    icp: options.icp === false ? undefined : icpSettings(options.icp ?? {}),
-    maxCandidates: options.maxCandidates,
-    extraStarts: options.extraStarts?.map(matrix => Array.from(matrix.elements)),
-  });
+  return dispatch(
+    'register',
+    source,
+    target,
+    {
+      coarse: options.coarse === false ? undefined : (options.coarse ?? {}),
+      icp: options.icp === false ? undefined : icpSettings(options.icp ?? {}),
+      maxCandidates: options.maxCandidates,
+      extraStarts: options.extraStarts?.map(matrix => Array.from(matrix.elements)),
+    },
+    signal
+  );
 }
 
 /** The yaw sweep alone, for callers that want the shortlist without refining. */
 export function coarseAlign(
   source: Float32Array,
   target: Float32Array,
-  options: CoarseAlignOptions = {}
+  options: CoarseAlignOptions = {},
+  signal?: AbortSignal
 ): Promise<RegistrationResult | null> {
-  return dispatch('coarse', source, target, options);
+  return dispatch('coarse', source, target, options, signal);
 }
 
 /** ICP refinement alone, from `options.initial` (identity when absent). */
 export function icpRefine(
   source: Float32Array,
   target: Float32Array,
-  options: IcpOptions = {}
+  options: IcpOptions = {},
+  signal?: AbortSignal
 ): Promise<RegistrationResult | null> {
-  return dispatch('icp', source, target, icpSettings(options));
+  return dispatch('icp', source, target, icpSettings(options), signal);
 }
 
 /**
@@ -448,7 +576,8 @@ export function icpRefine(
  */
 export function fitCorrespondences(
   source: Float32Array,
-  target: Float32Array
+  target: Float32Array,
+  signal?: AbortSignal
 ): Promise<RegistrationResult | null> {
-  return dispatch('fit', source, target, {});
+  return dispatch('fit', source, target, {}, signal);
 }
