@@ -227,18 +227,18 @@ test('the shared sequence decoder loads binary PLY, mesh, point and depth frames
   }
 });
 
-test('byte budget evicts prefetched frames and keeps an oversized visible frame', async ({
+test('a reduced byte budget evicts in-flight prefetch and keeps the visible frame', async ({
   page,
 }) => {
   await page.evaluate(() => {
     const v = (window as any).visualizer;
     v.maxSequenceCache = 6;
-    v.maxSequenceCacheBytes = 1;
     v.initializeSequence(['a.ply', 'b.ply', 'c.ply'], '*.ply');
   });
   const requests = () => page.evaluate(() => (window as any).requests);
   await reply(page, (await requests())[0]);
   await expect.poll(async () => (await requests()).length).toBe(2);
+  await page.evaluate(() => ((window as any).visualizer.maxSequenceCacheBytes = 1));
   await reply(page, (await requests())[1]);
   await expect
     .poll(() => page.evaluate(() => (window as any).visualizer.sequencePending.size))
@@ -310,5 +310,32 @@ test('rapid seeks keep one decode and only the latest queued frame', async ({ pa
   await expect.poll(() => page.evaluate(() => (window as any).visualizer.sequenceIndex)).toBe(10);
   expect(await page.evaluate(() => [...(window as any).visualizer.sequenceCache.keys()])).toEqual([
     10,
+  ]);
+});
+
+test('an oversized visible frame skips prefetch but explicit navigation still loads', async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const v = (window as any).visualizer;
+    v.maxSequenceCacheBytes = 1;
+    v.initializeSequence(['a.ply', 'b.ply'], '*.ply');
+  });
+  const requests = () => page.evaluate(() => (window as any).requests);
+  await reply(page, (await requests())[0]);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).visualizer.sequencePending.size))
+    .toBe(0);
+  expect(await requests()).toHaveLength(1);
+  await page.evaluate(() => (window as any).visualizer.seekSequence(1));
+  expect(await requests()).toHaveLength(2);
+  await reply(page, (await requests())[1]);
+  await expect.poll(() => page.evaluate(() => (window as any).visualizer.sequenceIndex)).toBe(1);
+  await expect
+    .poll(() => page.evaluate(() => (window as any).visualizer.sequencePending.size))
+    .toBe(0);
+  expect(await requests()).toHaveLength(2);
+  expect(await page.evaluate(() => [...(window as any).visualizer.sequenceCache.keys()])).toEqual([
+    1,
   ]);
 });

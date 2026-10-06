@@ -82,8 +82,8 @@ export function startAgentAlignment(host: ControlHost, a: Record<string, any>) {
     s.undo = undefined;
     ui.canUndoAll = false;
     ui.alignEntries = [];
-    ui.alignedIndices = [];
-    ui.alignmentAnchorIndex = null;
+    ui.alignedIds = [];
+    ui.alignmentAnchorId = null;
     s.job = {
       id: ++s.serial,
       action: 'undo',
@@ -224,7 +224,7 @@ export function resetAgentAlignment(host: ControlHost) {
   endSession(host);
   ui.canUndoAll = false;
   ui.alignEntries = [];
-  ui.alignedIndices = [];
-  ui.alignmentAnchorIndex = null;
+  ui.alignedIds = [];
+  ui.alignmentAnchorId = null;
   ui.unattachedGroups = [];
 }

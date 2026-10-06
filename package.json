@@ -2869,7 +2869,7 @@
     "lint": "eslint src --ext ts && npm run lint:svelte",
     "lint:svelte": "npm run check --workspace=engine",
     "test": "node ./out/src/test/runTest.js",
-    "test:node": "npm run compile:tests && mocha --ui tdd \"out/src/test/suite/**/*.test.js\" --ignore \"out/src/test/suite/extension.test.js\" --ignore \"out/src/test/suite/extensionAdvanced.test.js\" --ignore \"out/src/test/suite/integration.test.js\" --ignore \"out/src/test/suite/pointCloudEditorProviderAdvanced.test.js\" --ignore \"out/src/test/suite/nativeAgent.test.js\"",
+    "test:node": "node --test scripts/prune-vscode-test-cache.test.cjs && npm run compile:tests && mocha --ui tdd \"out/src/test/suite/**/*.test.js\" --ignore \"out/src/test/suite/extension.test.js\" --ignore \"out/src/test/suite/extensionAdvanced.test.js\" --ignore \"out/src/test/suite/integration.test.js\" --ignore \"out/src/test/suite/pointCloudEditorProviderAdvanced.test.js\" --ignore \"out/src/test/suite/nativeAgent.test.js\"",
     "test:coverage": "npm run pretest && c8 node ./out/src/test/runTest.js",
     "coverage": "npm run test:coverage && npm run coverage:report",
     "coverage:report": "c8 report && node ./analyze-coverage.mjs",

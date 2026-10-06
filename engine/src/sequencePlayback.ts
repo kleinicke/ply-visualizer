@@ -355,7 +355,10 @@ function showFrame(host: SequencePlaybackHost, entry: FileEntry, index: number):
   host.updateFileList();
   host.requestRender();
   const next = (index + 1) % host.sequenceFiles.length;
-  if (!/\.(tif|tiff|pfm|npy|npz|png|exr)$/i.test(host.sequenceFiles[next] ?? '')) {
+  if (
+    estimateSequenceBytes([entry]) < host.maxSequenceCacheBytes &&
+    !/\.(tif|tiff|pfm|npy|npz|png|exr)$/i.test(host.sequenceFiles[next] ?? '')
+  ) {
     requestFrame(host, next);
   }
 }

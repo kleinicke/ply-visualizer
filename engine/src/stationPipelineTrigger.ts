@@ -69,16 +69,16 @@ function currentTransforms(
 ): Record<string, number[]> {
   const transforms: Record<string, number[]> = {};
   const alignedOnly =
-    registrationState.alignmentAnchorIndex === anchorIndex &&
-    registrationState.alignedIndices.length > 0
-      ? new Set(registrationState.alignedIndices)
+    registrationState.alignmentAnchorId === host.fileEntries.require(anchorIndex).id &&
+    registrationState.alignedIds.length > 0
+      ? new Set(registrationState.alignedIds)
       : null;
   for (let index = 0; index < (host.spatialFiles?.length ?? 0); index++) {
     const metadata = host.spatialFiles[index]?.metadata;
     if (metadata?.containerFileName !== archiveName || !metadata?.embeddedScanName) {
       continue;
     }
-    if (alignedOnly && !alignedOnly.has(index)) {
+    if (alignedOnly && !alignedOnly.has(host.fileEntries.require(index).id)) {
       continue;
     }
     const stem = String(metadata.embeddedScanName).replace(/\.x3r$/i, '');

@@ -32,27 +32,20 @@
    * *which* pair to fix — the solver already knows, and asking them to hunt for
    * it is most of the work.
    */
-  function linkByHand(
-    group: {
-      indices: number[];
-      suggestion: { movingIndex: number; fixedIndex: number } | null;
-    } | null,
-  ) {
-    if (!group?.suggestion) return;
-    singleFixed = group.suggestion.fixedIndex;
-    showSingle = true;
-    // The whole group moves against the whole placed scene, not one cloud
-    // against one cloud. The group is already solved internally, so it needs a
-    // single shared pose; and holding every placed cloud still means a feature
-    // can be picked wherever it is recognisable rather than only on the cloud
-    // the suggestion happened to name.
-    registration.beginGroupSession(
-      host,
-      group.indices,
-      registrationState.alignedIndices.length > 0
-        ? registrationState.alignedIndices
-        : [group.suggestion.fixedIndex],
+  function linkByHand(group: registration.UnattachedGroup) {
+    if (!group.suggestion) return;
+    const indices = (ids: number[]) =>
+      ids.map(id => host.fileEntries.indexOf(id)).filter(index => index >= 0);
+    const moving = indices(group.ids);
+    const fixed = indices(
+      registrationState.alignedIds.length > 0
+        ? registrationState.alignedIds
+        : [group.suggestion.fixedId],
     );
+    if (!moving.length || !fixed.length) return;
+    singleFixed = group.suggestion.fixedId;
+    showSingle = true;
+    registration.beginGroupSession(host, moving, fixed);
     registration.startGuidedMatching(host, false);
   }
   // Off by default, like every other correction: the viewer shows the capture.
@@ -83,9 +76,7 @@
   // is what someone who just opened a multi-scan archive almost always wants.
   let anchorChoice = $state<number | null>(null);
 
-  // Recomputed on the file list's render tick rather than reactively: files
-  // load and unload through main.ts's parallel arrays, which are not
-  // themselves reactive.
+  // Registry membership changes are published through the file list's render tick.
   const alignable = $derived(
     (filesState.entries, registration.registrationCandidates(host, -1)),
   );
@@ -94,14 +85,16 @@
   // contains measurement and viewer options and therefore remains useful.
   const available = $derived(alignable.length >= 2);
   const anchorIndex = $derived(
-    anchorChoice !== null && alignable.includes(anchorChoice)
-      ? anchorChoice
+    anchorChoice !== null && alignable.some(index => host.fileEntries.require(index).id === anchorChoice)
+      ? host.fileEntries.indexOf(anchorChoice)
       : (alignable[0] ?? 0),
   );
   const movingCount = $derived(Math.max(0, alignable.length - 1));
 
   const singleFixedIndex = $derived(
-    singleFixed !== null && alignable.includes(singleFixed) ? singleFixed : (alignable[0] ?? 0),
+    singleFixed !== null && alignable.some(index => host.fileEntries.require(index).id === singleFixed)
+      ? host.fileEntries.indexOf(singleFixed)
+      : (alignable[0] ?? 0),
   );
 
   // Only archives carry the per-band reference patches this reads.
@@ -167,7 +160,7 @@
   }
 
   function onAnchorChange(event: Event) {
-    anchorChoice = Number((event.currentTarget as HTMLSelectElement).value);
+    anchorChoice = host.fileEntries.require(Number((event.currentTarget as HTMLSelectElement).value)).id;
   }
 
   function toggleTools(): void {
@@ -376,7 +369,7 @@
           {/if}
         </div>
         <ul class="global-align-results align-list">
-          {#each entries as entry (entry.index)}
+          {#each entries as entry (entry.id)}
             <li class={`align-row align-row-${entry.state}`}>
               <span class="align-icon">{STATE_ICON[entry.state]}</span>
               <span class="align-name" title={entry.name}>{entry.name}</span>
@@ -396,12 +389,12 @@
             {#each registrationState.unattachedGroups as group, groupIndex (groupIndex)}
               <div class="align-gap-group">
                 <div class="align-gap-members">
-                  {group.indices.length === 1 ? 'This cloud' : `These ${group.indices.length} clouds`}
+                  {group.ids.length === 1 ? 'This cloud' : `These ${group.ids.length} clouds`}
                   stayed separate: <strong>{group.names.join(', ')}</strong>
                 </div>
                 {#if group.suggestion}
                   <div class="align-gap-suggest">
-                    {group.indices.length > 1
+                    {group.ids.length > 1
                       ? 'They are already aligned to each other, so they move as one and need a single placement.'
                       : 'It needs one placement.'}
                     Look near <strong>{group.suggestion.movingName}</strong> and
@@ -604,7 +597,7 @@
             id="global-align-single-fixed"
             value={singleFixedIndex}
             onchange={event =>
-              (singleFixed = Number((event.currentTarget as HTMLSelectElement).value))}
+              (singleFixed = host.fileEntries.require(Number((event.currentTarget as HTMLSelectElement).value)).id)}
           >
             {#each alignable as index (index)}
               <option value={index}>{fileLabel(index)}</option>

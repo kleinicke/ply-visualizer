@@ -52,12 +52,12 @@ function describeFailure(error: unknown): string {
 
 /** One cluster of clouds the automatic run could not attach. */
 export interface UnattachedGroup {
-  indices: number[];
+  ids: number[];
   names: string[];
   /** The most promising single pair to link this group back to the scene. */
   suggestion: {
-    movingIndex: number;
-    fixedIndex: number;
+    movingId: number;
+    fixedId: number;
     movingName: string;
     fixedName: string;
     overlapPercent: number;
@@ -102,8 +102,8 @@ function registrationGuard(host: RegistrationHost) {
     registrationState.result = operation.controller.signal.reason.message;
     registrationState.alignEntries = [];
     registrationState.alignDone = 0;
-    registrationState.alignmentAnchorIndex = null;
-    registrationState.alignedIndices = [];
+    registrationState.alignmentAnchorId = null;
+    registrationState.alignedIds = [];
     registrationState.unattachedGroups = [];
     finish();
     return false;
@@ -316,6 +316,46 @@ export function endSession(host: RegistrationHost, restoreScene = true): void {
   if (restoreScene) {
     host.requestRender();
   }
+}
+
+/** Drop results for removed files without retargeting surviving results. */
+export function reconcileAlignmentResults(host: RegistrationHost): void {
+  const exists = (id: number) => !!host.fileEntries.get(id)?.spatial;
+  if (
+    registrationState.alignmentAnchorId !== null &&
+    !exists(registrationState.alignmentAnchorId)
+  ) {
+    registrationState.alignmentAnchorId = null;
+    registrationState.alignedIds = [];
+    registrationState.alignEntries = [];
+    registrationState.unattachedGroups = [];
+    registrationState.alignDone = 0;
+    return;
+  }
+  registrationState.alignedIds = registrationState.alignedIds.filter(exists);
+  registrationState.alignEntries = registrationState.alignEntries.filter(entry => exists(entry.id));
+  registrationState.alignDone = registrationState.alignEntries.filter(
+    entry => entry.state === 'aligned' || entry.state === 'failed'
+  ).length;
+  registrationState.unattachedGroups = registrationState.unattachedGroups.flatMap(group => {
+    const members = group.ids
+      .map((id, index) => ({ id, name: group.names[index] }))
+      .filter(member => exists(member.id));
+    if (!members.length) {
+      return [];
+    }
+    const suggestion = group.suggestion;
+    return [
+      {
+        ids: members.map(member => member.id),
+        names: members.map(member => member.name),
+        suggestion:
+          suggestion && exists(suggestion.movingId) && exists(suggestion.fixedId)
+            ? suggestion
+            : null,
+      },
+    ];
+  });
 }
 
 function captureVisibility(host: RegistrationHost): void {
@@ -934,10 +974,13 @@ function applyDelta(host: RegistrationHost, delta: THREE.Matrix4): void {
   // manual/automatic correction makes the previously failed cloud trustworthy
   // for best-camera colouring too.
   if (
-    registrationState.alignmentAnchorIndex === session.targetIndex &&
-    !registrationState.alignedIndices.includes(session.sourceIndex)
+    registrationState.alignmentAnchorId === host.fileEntries.require(session.targetIndex).id &&
+    !registrationState.alignedIds.includes(host.fileEntries.require(session.sourceIndex).id)
   ) {
-    registrationState.alignedIndices = [...registrationState.alignedIndices, session.sourceIndex];
+    registrationState.alignedIds = [
+      ...registrationState.alignedIds,
+      host.fileEntries.require(session.sourceIndex).id,
+    ];
   }
 
   for (const pair of session.pairs) {
@@ -997,11 +1040,9 @@ export function undo(host: RegistrationHost): void {
     session.pending.point.applyMatrix4(delta);
   }
   session.undoMatrix = null;
-  if (registrationState.alignmentAnchorIndex === session.targetIndex) {
-    const sourceIndex = session.sourceIndex;
-    registrationState.alignedIndices = registrationState.alignedIndices.filter(
-      index => index !== sourceIndex
-    );
+  if (registrationState.alignmentAnchorId === host.fileEntries.require(session.targetIndex).id) {
+    const sourceId = host.fileEntries.require(session.sourceIndex).id;
+    registrationState.alignedIds = registrationState.alignedIds.filter(id => id !== sourceId);
   }
   registrationState.result = 'Reverted to the transform from before the last alignment.';
   refreshMarkers(host);
@@ -1563,13 +1604,13 @@ async function analyseUnattached(
       }
     }
     groups.push({
-      indices: members,
+      ids: members.map(index => host.fileEntries.require(index).id),
       names: members.map(index => host.spatialFiles[index]?.fileName ?? `File ${index + 1}`),
       suggestion:
         best && best.overlap > 0
           ? {
-              movingIndex: best.from,
-              fixedIndex: best.to,
+              movingId: host.fileEntries.require(best.from).id,
+              fixedId: host.fileEntries.require(best.to).id,
               movingName: host.spatialFiles[best.from]?.fileName ?? `File ${best.from + 1}`,
               fixedName: host.spatialFiles[best.to]?.fileName ?? `File ${best.to + 1}`,
               overlapPercent: Math.round(best.overlap * 100),
@@ -1811,14 +1852,14 @@ async function growFromAnchor(
 
   registrationState.busy = true;
   registrationState.alignEntries = targets.map(index => ({
-    index,
+    id: host.fileEntries.require(index).id,
     name: host.spatialFiles[index]?.fileName ?? `File ${index + 1}`,
     state: 'queued' as const,
     detail: '',
   }));
   registrationState.alignDone = 0;
-  registrationState.alignmentAnchorIndex = anchorIndex;
-  registrationState.alignedIndices = [anchorIndex];
+  registrationState.alignmentAnchorId = host.fileEntries.require(anchorIndex).id;
+  registrationState.alignedIds = [host.fileEntries.require(anchorIndex).id];
   await new Promise(resolve => setTimeout(resolve, 0));
   if (!guard()) {
     return;
@@ -1834,7 +1875,9 @@ async function growFromAnchor(
   // considered, which is worth seeing next to its overlap.
   const attempts = new Map<number, number>();
   const entryFor = (fileIndex: number) =>
-    registrationState.alignEntries.find(entry => entry.index === fileIndex);
+    registrationState.alignEntries.find(
+      entry => entry.id === host.fileEntries.require(fileIndex).id
+    );
 
   try {
     let progress = true;
@@ -1961,7 +2004,10 @@ async function growFromAnchor(
         remaining.delete(fileIndex);
         aligned++;
         progress = true;
-        registrationState.alignedIndices = [...registrationState.alignedIndices, fileIndex];
+        registrationState.alignedIds = [
+          ...registrationState.alignedIds,
+          host.fileEntries.require(fileIndex).id,
+        ];
         registrationState.alignDone = targets.length - remaining.size;
         if (entry) {
           entry.state = 'aligned';
@@ -2092,14 +2138,14 @@ export async function alignAllTo(
   // Seed every target as queued before the first solve, so the panel shows the
   // whole run up front instead of a list that grows out of nothing.
   registrationState.alignEntries = targets.map(index => ({
-    index,
+    id: host.fileEntries.require(index).id,
     name: host.spatialFiles[index]?.fileName ?? `File ${index + 1}`,
     state: 'queued' as const,
     detail: '',
   }));
   registrationState.alignDone = 0;
-  registrationState.alignmentAnchorIndex = anchorIndex;
-  registrationState.alignedIndices = [anchorIndex];
+  registrationState.alignmentAnchorId = host.fileEntries.require(anchorIndex).id;
+  registrationState.alignedIds = [host.fileEntries.require(anchorIndex).id];
   // Yield once so the panel shows the first status before the solver blocks
   // (it does, in a webview: see wasmLoader.browser.ts).
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -2176,7 +2222,10 @@ export async function alignAllTo(
         const applyStarted = performance.now();
         commitAlignmentTransform(host, fileIndex, result.matrix, undoAll, guard);
         aligned++;
-        registrationState.alignedIndices = [...registrationState.alignedIndices, fileIndex];
+        registrationState.alignedIds = [
+          ...registrationState.alignedIds,
+          host.fileEntries.require(fileIndex).id,
+        ];
         applyMs += performance.now() - applyStarted;
 
         const margin =
@@ -2243,8 +2292,8 @@ export function undoAlignAll(host: RegistrationHost): void {
   registrationState.canUndoAll = false;
   registrationState.alignEntries = [];
   registrationState.alignDone = 0;
-  registrationState.alignmentAnchorIndex = null;
-  registrationState.alignedIndices = [];
+  registrationState.alignmentAnchorId = null;
+  registrationState.alignedIds = [];
   registrationState.result = 'Reverted every transform that align-all changed.';
   host.requestRender();
 }

@@ -3378,6 +3378,7 @@ export class PointCloudVisualizer {
   removeFileByIndex(fileIndex: number): void {
     registrationFeature.endSession(this);
     const removed = this.fileEntries.removeAt(fileIndex);
+    registrationFeature.reconcileAlignmentResults(this);
     for (const { entry, index } of removed) {
       if (entry.spatial) {
         const { data, object } = entry.spatial;

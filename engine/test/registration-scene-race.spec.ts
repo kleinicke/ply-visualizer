@@ -258,3 +258,97 @@ test('the Cancel alignment button stops a pending solve and permits another run'
       .toContain('cancelled');
   }
 });
+
+test('completed alignment groups and colouring keep file identity after deletion', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
+  const ids = await page.evaluate(() => {
+    const w = window as any;
+    const v = w.visualizer;
+    v.addNewFiles(
+      Array.from({ length: 4 }, (_, index) => ({
+        vertices: [
+          { x: 0, y: 0, z: 0 },
+          { x: 1, y: 0, z: 0 },
+          { x: 0, y: 1, z: 0 },
+        ],
+        faces: [],
+        vertexCount: 3,
+        faceCount: 0,
+        format: 'ascii',
+        version: '1.0',
+        comments: [],
+        hasColors: false,
+        hasNormals: false,
+        fileName: `${index}.ply`,
+        metadata: index ? { containerFileName: 'test.x3a', embeddedScanName: `${index}.x3r` } : {},
+      }))
+    );
+    const ids = v.fileEntries.all.map((entry: any) => entry.id);
+    const s = w.__plyRegistrationState;
+    s.alignmentAnchorId = ids[1];
+    s.alignedIds = [ids[1], ids[3]];
+    s.alignEntries = [
+      { id: ids[2], name: '2.ply', state: 'failed', detail: '' },
+      { id: ids[3], name: '3.ply', state: 'aligned', detail: '' },
+    ];
+    s.alignDone = 2;
+    s.unattachedGroups = [
+      {
+        ids: [ids[2]],
+        names: ['2.ply'],
+        suggestion: {
+          movingId: ids[2],
+          fixedId: ids[1],
+          movingName: '2.ply',
+          fixedName: '1.ply',
+          overlapPercent: 10,
+        },
+      },
+    ];
+    v.runningInVSCode = true;
+    w.sent = [];
+    v.vscode.postMessage = (message: any) => w.sent.push(message);
+    v.removeFileByIndex(0);
+    return ids;
+  });
+  await page.locator('#global-align-toggle').click();
+  await page.locator('#tools-align').click();
+  await page.locator('#global-align-anchor').selectOption('2');
+  await page.locator('.global-align-recolor').click();
+  expect(
+    await page.evaluate(() =>
+      Object.keys(
+        (window as any).sent.find((m: any) => m.type === 'stationPipeline').options.transforms
+      )
+    )
+  ).toEqual(['1', '3']);
+  await page.getByRole('button', { name: 'Place this group by hand' }).click();
+  expect(
+    await page.evaluate(() => {
+      const s = (window as any).__plyRegistrationState;
+      return [s.sourceIndex, s.targetIndex];
+    })
+  ).toEqual([1, 0]);
+  await page.evaluate(() => (window as any).visualizer.removeFileByIndex(1));
+  await expect(page.locator('#global-align-anchor')).toHaveValue('1');
+  expect(
+    await page.evaluate(() => {
+      const s = (window as any).__plyRegistrationState;
+      return {
+        aligned: s.alignedIds,
+        groups: s.unattachedGroups,
+        rows: s.alignEntries.map((e: any) => e.id),
+      };
+    })
+  ).toEqual({ aligned: [ids[1], ids[3]], groups: [], rows: [ids[3]] });
+  await page.evaluate(() => (window as any).visualizer.removeFileByIndex(0));
+  expect(
+    await page.evaluate(() => {
+      const s = (window as any).__plyRegistrationState;
+      return [s.alignmentAnchorId, s.alignedIds, s.alignEntries, s.unattachedGroups];
+    })
+  ).toEqual([null, [], [], []]);
+});

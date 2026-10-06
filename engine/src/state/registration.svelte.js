@@ -22,11 +22,11 @@ export const registrationState = $state(
    *   result: string;
    *   canUndo: boolean;
    *   canUndoAll: boolean;
-   *   alignEntries: { index: number; name: string; state: 'queued' | 'running' | 'aligned' | 'failed'; detail: string }[];
+   *   alignEntries: { id: number; name: string; state: 'queued' | 'running' | 'aligned' | 'failed'; detail: string }[];
    *   alignDone: number;
-   *   alignmentAnchorIndex: number | null;
-   *   alignedIndices: number[];
-   *   unattachedGroups: { indices: number[]; names: string[]; suggestion: { movingIndex: number; fixedIndex: number; movingName: string; fixedName: string; overlapPercent: number } | null }[];
+   *   alignmentAnchorId: number | null;
+   *   alignedIds: number[];
+   *   unattachedGroups: { ids: number[]; names: string[]; suggestion: { movingId: number; fixedId: number; movingName: string; fixedName: string; overlapPercent: number } | null }[];
    *   matchAgainstAllOthers: boolean;
    *   upAxis: 'x' | 'y' | 'z';
    *   markerScale: number;
@@ -68,8 +68,8 @@ export const registrationState = $state(
     // Successful members of the latest anchor-wide registration. Colouring
     // uses this allow-list so a failed/unaligned station's photos cannot
     // compete merely because its identity transform is still on screen.
-    alignmentAnchorIndex: null,
-    alignedIndices: [],
+    alignmentAnchorId: null,
+    alignedIds: [],
     // Clouds the automatic run could not attach, grouped by whether they can
     // see each other, each with the single most promising pair that would join
     // it back to the scene. Empty whenever everything was placed.
