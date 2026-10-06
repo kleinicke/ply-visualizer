@@ -103,7 +103,7 @@ pub(crate) fn decode_ppm_impl(
 
     let magic = read_token(data, &mut offset);
     if !matches!(magic.as_str(), "P1" | "P2" | "P3" | "P4" | "P5" | "P6") {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Invalid PPM/PGM/PBM magic number: {}",
             magic
         )));
@@ -157,7 +157,7 @@ pub(crate) fn decode_ppm_impl(
                 Some(0) => *slot = 255,
                 Some(1) => *slot = 0,
                 _ => {
-                    return Err(DecodeError::new(&format!(
+                    return Err(DecodeError::new(format!(
                         "Invalid PBM pixel value: {} (must be 0 or 1)",
                         token
                     )))
@@ -171,6 +171,8 @@ pub(crate) fn decode_ppm_impl(
             offset += 1;
         }
 
+        // Retain the original overflow behavior for very large dimensions.
+        #[allow(clippy::manual_div_ceil)]
         let bytes_per_row = (width + 7) / 8;
         let expected_bytes = bytes_per_row * height;
         if offset + expected_bytes > data.len() {
@@ -200,7 +202,7 @@ pub(crate) fn decode_ppm_impl(
                     Some(v) if v >= 0 && (v as u32) <= maxval => {
                         *slot = v as u16;
                     }
-                    _ => return Err(DecodeError::new(&format!("Invalid pixel value: {}", token))),
+                    _ => return Err(DecodeError::new(format!("Invalid pixel value: {}", token))),
                 }
             }
             pixel_data = PixelData::U16(out);
@@ -213,7 +215,7 @@ pub(crate) fn decode_ppm_impl(
                     Some(v) if v >= 0 && (v as u32) <= maxval => {
                         *slot = v as u8;
                     }
-                    _ => return Err(DecodeError::new(&format!("Invalid pixel value: {}", token))),
+                    _ => return Err(DecodeError::new(format!("Invalid pixel value: {}", token))),
                 }
             }
             pixel_data = PixelData::U8(out);
@@ -354,4 +356,3 @@ pub(crate) fn decode_ppm_display_owned_impl(
         valid_count: 0.0,
     })
 }
-

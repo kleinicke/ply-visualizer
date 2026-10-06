@@ -130,9 +130,12 @@ replace `Webview.postMessage`. Native agent requests also wait until the host
 has dispatched the initial document load.
 
 `npm run build:wasm` builds both WASM packages with locked dependencies and
-records source/artifact hashes. Commit `wasm/artifacts.json` with the generated
-outputs. CI checks those hashes, runs `npm run test:rust`, and tests rebuilt
-WASM as well.
+records source/artifact hashes. The copied image backend and its local patches
+are documented in `docs/image-decoder-backend.md`; run
+`npm run lint:rust:image`, `npm run lint:rust:image:wasm`, and
+`npm run format:rust:image:check` when updating it. Commit `wasm/artifacts.json`
+with the generated outputs. CI checks those hashes, runs `npm run test:rust`,
+and tests rebuilt WASM as well.
 
 ## Conventions and gotchas
 

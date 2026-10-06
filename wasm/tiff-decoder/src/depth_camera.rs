@@ -111,6 +111,7 @@ impl DepthProjectResult {
 }
 
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)] // Preserve the JavaScript calling convention.
 pub fn normalize_depth_fast(
     data: &[f32],
     width: u32,
@@ -260,6 +261,7 @@ pub fn project_depth_band(
 }
 
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)] // Preserve the JavaScript calling convention.
 pub fn project_depth_fast(
     data: &[f32],
     width: u32,
@@ -421,8 +423,8 @@ fn project_depth_impl(
                 depth_value as f64
             };
             positions.push((ray.value[0] * scale) as f32);
-            positions.push((ray.value[1] * scale * convention_sign as f64) as f32);
-            positions.push((ray.value[2] * scale * convention_sign as f64) as f32);
+            positions.push((ray.value[1] * scale * convention_sign) as f32);
+            positions.push((ray.value[2] * scale * convention_sign) as f32);
 
             let s = if denom > 0.0 {
                 (depth_value.ln() - log_min) * inv_denom
@@ -457,6 +459,7 @@ fn project_depth_impl(
 }
 
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)] // Preserve the JavaScript calling convention.
 pub fn project_depth_inspection(
     data: &[f32],
     width: u32,
@@ -491,6 +494,7 @@ pub fn project_depth_inspection(
 /// Project one OpenCV-coordinate ray. Returns
 /// `[valid, converged, iterations, u, v]`.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)] // Preserve the JavaScript calling convention.
 pub fn camera_project(
     camera_model: &str,
     fx: f64,
@@ -527,6 +531,7 @@ pub fn camera_project(
 /// rejected points are returned as NaN pairs. `max_normalized_x/y` provide an
 /// optional pre-distortion calibration-domain guard (use infinity to disable).
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)] // Preserve the JavaScript calling convention.
 pub fn camera_project_points_indexed(
     camera_model: &str,
     fx: f64,
@@ -544,7 +549,7 @@ pub fn camera_project_points_indexed(
     let intrinsics = Intrinsics { fx, fy, cx, cy };
     camera_models::validate(model, intrinsics, coefficients)
         .map_err(|error| JsValue::from_str(&error))?;
-    if positions.len() % 3 != 0 {
+    if !positions.len().is_multiple_of(3) {
         return Err(JsValue::from_str(
             "positions must contain interleaved xyz values",
         ));
@@ -617,6 +622,7 @@ pub fn camera_project_points_indexed(
 /// Unproject one pixel to a unit OpenCV-coordinate ray. Returns
 /// `[valid, converged, iterations, x, y, z]`.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)] // Preserve the JavaScript calling convention.
 pub fn camera_unproject(
     camera_model: &str,
     fx: f64,

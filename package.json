@@ -2886,7 +2886,11 @@
     "desktop:test": "npm run test --workspace=visualizer-desktop",
     "test:vscode-agent": "npm run compile:all && node scripts/test-vscode-agent.cjs",
     "check:wasm": "node scripts/wasm-artifacts.mjs",
-    "test:rust": "cargo test --locked --manifest-path wasm/pointcloud-parser/Cargo.toml && cargo test --locked --manifest-path wasm/camera-models/Cargo.toml && cargo test --locked --manifest-path wasm/tiff-decoder/Cargo.toml"
+    "lint:rust:image": "cargo clippy --manifest-path wasm/tiff-decoder/Cargo.toml -p scientific-image-decoders -p tiff-wasm --all-targets --no-deps --locked -- -D warnings",
+    "lint:rust:image:wasm": "cargo clippy --manifest-path wasm/tiff-decoder/Cargo.toml -p scientific-image-decoders -p tiff-wasm --target wasm32-unknown-unknown --all-targets --no-deps --locked -- -D warnings",
+    "format:rust:image": "cargo fmt --manifest-path crates/image-decoders/Cargo.toml && cargo fmt --manifest-path wasm/tiff-decoder/Cargo.toml",
+    "format:rust:image:check": "cargo fmt --manifest-path crates/image-decoders/Cargo.toml --check && cargo fmt --manifest-path wasm/tiff-decoder/Cargo.toml --check",
+    "test:rust": "cargo test --locked --manifest-path wasm/pointcloud-parser/Cargo.toml && cargo test --locked --manifest-path wasm/camera-models/Cargo.toml && cargo test --locked --manifest-path wasm/tiff-decoder/Cargo.toml -p scientific-image-decoders -p tiff-wasm"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",

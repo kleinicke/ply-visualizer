@@ -12,19 +12,20 @@ pub(crate) fn decode_png_samples_impl(
 ) -> Result<PngResult, DecodeError> {
     let start_time = crate::time::now_ms();
     let cursor = Cursor::new(data);
-    let mut limits = png::Limits::default();
-    limits.bytes = 512 * 1024 * 1024;
+    let limits = png::Limits {
+        bytes: 512 * 1024 * 1024,
+    };
     let decoder = png::Decoder::new_with_limits(cursor, limits);
     let mut reader = decoder
         .read_info()
-        .map_err(|e| DecodeError::new(&format!("Failed to read PNG info: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Failed to read PNG info: {}", e)))?;
     let read_info_time = crate::time::now_ms() - start_time;
 
     let decode_start = crate::time::now_ms();
     let mut raw = vec![0u8; reader.output_buffer_size()];
     let info = reader
         .next_frame(&mut raw)
-        .map_err(|e| DecodeError::new(&format!("Failed to decode PNG frame: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Failed to decode PNG frame: {}", e)))?;
     raw.truncate(info.buffer_size());
     let decode_time = crate::time::now_ms() - decode_start;
 

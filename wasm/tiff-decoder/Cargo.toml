@@ -13,7 +13,7 @@ default = ["console_error_panic_hook"]
 
 [dependencies]
 camera-models = { path = "../camera-models" }
-scientific-image-decoders = { path = "../../crates/image-decoders", default-features = false, features = ["tiff", "exr", "png", "pfm"] }
+scientific-image-decoders = { path = "../../crates/image-decoders", default-features = false, features = ["tiff", "exr", "png", "pfm", "codec-webp"] }
 wasm-bindgen = "0.2"
 console_error_panic_hook = { version = "0.1.6", optional = true }
 

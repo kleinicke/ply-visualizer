@@ -150,7 +150,7 @@ impl<'a> Reader<'a> {
     /// returning either the joined char string (type 2) or the numeric list.
     fn values(&mut self, var_type: u32, count: usize) -> Result<AttrRaw, DecodeError> {
         let size = type_size(var_type)
-            .ok_or_else(|| DecodeError::new(&format!("Unsupported NetCDF type: {}", var_type)))?;
+            .ok_or_else(|| DecodeError::new(format!("Unsupported NetCDF type: {}", var_type)))?;
         if var_type == 2 {
             let total = count
                 .checked_mul(size)
@@ -282,7 +282,7 @@ fn stored_value(
 ) -> Result<f64, DecodeError> {
     let dims = variable_dimensions(variable, dimensions)?;
     let type_sz = type_size(variable.var_type).ok_or_else(|| {
-        DecodeError::new(&format!(
+        DecodeError::new(format!(
             "Unsupported NetCDF variable type: {}",
             variable.var_type
         ))
@@ -291,10 +291,10 @@ fn stored_value(
 
     let mut linear: f64 = 0.0;
     let start = if is_record { 1 } else { 0 };
-    for i in start..dims.len() {
+    for (i, dim) in dims.iter().enumerate().skip(start) {
         let idx_val = indices.get(i).copied().unwrap_or(0.0);
         let idx_val = if idx_val.is_finite() { idx_val } else { 0.0 };
-        linear = linear * dims[i].size as f64 + clamp_trunc(idx_val, dims[i].size) as f64;
+        linear = linear * dim.size as f64 + clamp_trunc(idx_val, dim.size) as f64;
     }
     let record_index = if is_record {
         let idx_val = indices.first().copied().unwrap_or(0.0);
@@ -305,8 +305,8 @@ fn stored_value(
     };
 
     let p = variable.begin + record_index * record_size + linear * type_sz as f64;
-    if !(p >= 0.0) || p + (type_sz as f64) > data.len() as f64 {
-        return Err(DecodeError::new(&format!(
+    if p.is_nan() || p < 0.0 || p + (type_sz as f64) > data.len() as f64 {
+        return Err(DecodeError::new(format!(
             "Truncated NetCDF variable data: {}",
             variable.name
         )));
@@ -320,14 +320,14 @@ fn stored_value(
         5 => f32::from_be_bytes([b[0], b[1], b[2], b[3]]) as f64,
         6 => f64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
         _ => {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "Unsupported NetCDF variable type: {}",
                 variable.var_type
             )))
         }
     };
 
-    if fill_values(&variable.attrs).iter().any(|&fv| stored == fv) {
+    if fill_values(&variable.attrs).contains(&stored) {
         return Ok(f64::NAN);
     }
     Ok(
@@ -496,7 +496,7 @@ pub(crate) fn decode_netcdf_impl(
     }
     let version = data[3];
     if version != 1 && version != 2 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Unsupported NetCDF format version: CDF-{}",
             version
         )));
@@ -768,7 +768,7 @@ pub(crate) fn decode_netcdf_impl(
 
         let cell_count = dimensions[cd].size;
         let mut cell_values = vec![0f32; cell_count];
-        for cell in 0..cell_count {
+        for (cell, value) in cell_values.iter_mut().enumerate() {
             let indices: Vec<f64> = selected_dimensions
                 .iter()
                 .enumerate()
@@ -780,8 +780,7 @@ pub(crate) fn decode_netcdf_impl(
                     }
                 })
                 .collect();
-            cell_values[cell] =
-                stored_value(data, selected, &dimensions, record_size, &indices)? as f32;
+            *value = stored_value(data, selected, &dimensions, record_size, &indices)? as f32;
         }
 
         let lat_vertex_idx = *variable_by_name.get("latVertex").unwrap();
@@ -827,7 +826,7 @@ pub(crate) fn decode_netcdf_impl(
         let height: usize = 360;
         let mut out = vec![f32::NAN; width * height];
 
-        for cell in 0..cell_count {
+        for (cell, &cell_value) in cell_values.iter().enumerate() {
             let raw_edge_count = stored_value(
                 data,
                 &variables[n_edges_on_cell_idx],
@@ -872,7 +871,7 @@ pub(crate) fn decode_netcdf_impl(
                 }
                 points.push(Point { x, y });
             }
-            fill_polygon(&mut out, width, height, &points, cell_values[cell]);
+            fill_polygon(&mut out, width, height, &points, cell_value);
         }
 
         let selected = &variables[selected_idx];
@@ -1026,4 +1025,3 @@ pub(crate) fn decode_netcdf_impl(
         data: out,
     })
 }
-

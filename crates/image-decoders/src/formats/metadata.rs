@@ -1,3 +1,19 @@
+// Several helpers below serve only the container formats. A NARROW build —
+// `jxl` or `jpegxr` on their own, which is what the separate WebAssembly
+// modules in `wasm/` use — pulls this module in for its shared types and
+// leaves the rest unused. That is expected; it is not dead code to delete.
+#![cfg_attr(
+    not(any(
+        feature = "fits",
+        feature = "netcdf",
+        feature = "dicom",
+        feature = "czi",
+        feature = "nd2",
+        feature = "lif"
+    )),
+    allow(dead_code)
+)]
+
 /// Escape a string for embedding inside a JSON string literal.
 pub(crate) fn json_escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
@@ -28,4 +44,3 @@ pub(crate) fn push_generic_attr_row(
         json_escape(&value_debug),
     ));
 }
-

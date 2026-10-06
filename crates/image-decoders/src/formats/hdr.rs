@@ -96,8 +96,8 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, DecodeError> {
     // Omitting it saves 100 MiB for a 5120² image at every later handoff.
     let mut output = vec![0f32; pixel_count * 3];
     let mut scales = [0f32; 256];
-    for e in 1..256 {
-        scales[e] = 2f32.powi(e as i32 - 128) / 255.0;
+    for (e, scale) in scales.iter_mut().enumerate().skip(1) {
+        *scale = 2f32.powi(e as i32 - 128) / 255.0;
     }
     let mut rle_time = 0.0;
     let mut convert_time = 0.0;
@@ -193,4 +193,3 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, DecodeError> {
         all_tags_json: hdr_header_lines_to_json(&header_lines),
     })
 }
-

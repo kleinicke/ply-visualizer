@@ -154,7 +154,7 @@ pub(crate) fn decode_pfm_impl(
     }
     let dims: Vec<&str> = dims_line.split_whitespace().collect();
     let width = dims
-        .get(0)
+        .first()
         .and_then(|s| parse_int_js(s))
         .ok_or_else(|| DecodeError::new("Invalid PFM dimensions"))?;
     let height = dims
@@ -221,8 +221,8 @@ pub(crate) fn decode_pfm_impl(
             }
         }
     } else {
-        for i in 0..out.len() {
-            out[i] = read_f32(data, offset + i * 4, little_endian)?;
+        for (i, value) in out.iter_mut().enumerate() {
+            *value = read_f32(data, offset + i * 4, little_endian)?;
         }
     }
 
@@ -251,4 +251,3 @@ pub(crate) fn decode_pfm_impl(
     }
     .maybe_finalize_stats(compute_stats))
 }
-

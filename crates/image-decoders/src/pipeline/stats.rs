@@ -518,4 +518,3 @@ where
         total_count: valid_count,
     }
 }
-

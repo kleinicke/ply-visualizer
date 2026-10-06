@@ -1,5 +1,8 @@
 use super::orientation::TiffOrientation;
-use super::tags::{extract_all_tags_json, extract_ome_xml, extract_page_tags_json};
+use super::pages;
+use super::tags::{
+    extract_all_tags_json, extract_geo_json, extract_ome_xml, extract_page_tags_json,
+};
 use super::{finalize_decode_bytes, patch_photometric_to_grayscale};
 use crate::pipeline::stats::compute_stats_u8;
 use crate::DecodeError;
@@ -150,10 +153,10 @@ pub(crate) fn decode_jpeg_ycbcr(
     }
     let offsets = decoder
         .get_tag_u64_vec(Tag::StripOffsets)
-        .map_err(|e| DecodeError::new(&format!("JPEG: StripOffsets: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("JPEG: StripOffsets: {}", e)))?;
     let counts = decoder
         .get_tag_u64_vec(Tag::StripByteCounts)
-        .map_err(|e| DecodeError::new(&format!("JPEG: StripByteCounts: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("JPEG: StripByteCounts: {}", e)))?;
     // JPEGTables (tag 347): optional abbreviated table stream shared by strips.
     let tables: Option<Vec<u8>> = decoder.get_tag_u8_vec(Tag::Unknown(347)).ok();
 
@@ -169,7 +172,7 @@ pub(crate) fn decode_jpeg_ycbcr(
         let mut jd = JpegDecoder::new(Cursor::new(jpeg));
         let px = jd
             .decode()
-            .map_err(|e| DecodeError::new(&format!("JPEG decode failed: {:?}", e)))?;
+            .map_err(|e| DecodeError::new(format!("JPEG decode failed: {:?}", e)))?;
         let info = jd
             .info()
             .ok_or_else(|| DecodeError::new("JPEG: missing image info"))?;
@@ -227,6 +230,8 @@ pub(crate) fn decode_jpeg_ycbcr(
         timing_pack_ms: 0.0,
         all_tags_json: extract_all_tags_json(data),
         ome_xml: extract_ome_xml(data),
+        geo_json: extract_geo_json(data, 0),
+        page_directory_json: pages::page_directory_json(data),
     })
 }
 
@@ -237,6 +242,7 @@ pub(crate) fn decode_jpeg_ycbcr(
 pub(crate) fn unpack_bilevel(data: &[u8], width: u32, height: u32, photometric: u32) -> Vec<u8> {
     let width = width as usize;
     let height = height as usize;
+    #[allow(clippy::manual_div_ceil)] // width is u32; adding 7 can overflow on wasm32.
     let row_bytes = (width + 7) / 8;
     let white_is_zero = photometric == 0;
     let mut out = Vec::with_capacity(width.saturating_mul(height));
@@ -266,13 +272,14 @@ pub(crate) fn decode_palette(
     // all greens, then all blues.
     let cmap = {
         let mut d = Decoder::new(Cursor::new(data))
-            .map_err(|e| DecodeError::new(&format!("Palette: decoder init: {}", e)))?;
+            .map_err(|e| DecodeError::new(format!("Palette: decoder init: {}", e)))?
+            .with_limits(tiff::decoder::Limits::unlimited());
         for _ in 0..page_index {
             d.next_image()
-                .map_err(|e| DecodeError::new(&format!("Palette: page select: {}", e)))?;
+                .map_err(|e| DecodeError::new(format!("Palette: page select: {}", e)))?;
         }
         d.get_tag_u16_vec(Tag::Unknown(320))
-            .map_err(|e| DecodeError::new(&format!("Palette: missing ColorMap: {}", e)))?
+            .map_err(|e| DecodeError::new(format!("Palette: missing ColorMap: {}", e)))?
     };
     if cmap.is_empty() || cmap.len() % 3 != 0 {
         return Err(DecodeError::new("Palette: invalid ColorMap length"));
@@ -286,11 +293,14 @@ pub(crate) fn decode_palette(
         return Err(DecodeError::new("Palette: could not patch photometric tag"));
     }
 
+    // Unlimited for the same reason as everywhere else: the tiff crate's
+    // default limits reject a large image outright.
     let mut d = Decoder::new(Cursor::new(patched.as_slice()))
-        .map_err(|e| DecodeError::new(&format!("Palette: patched decoder init: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Palette: patched decoder init: {}", e)))?
+        .with_limits(tiff::decoder::Limits::unlimited());
     for _ in 0..page_index {
         d.next_image()
-            .map_err(|e| DecodeError::new(&format!("Palette: patched page select: {}", e)))?;
+            .map_err(|e| DecodeError::new(format!("Palette: patched page select: {}", e)))?;
     }
     let compression = d.get_tag_u32(Tag::Compression).unwrap_or(1);
     let predictor = d.get_tag_u32(Tag::Predictor).unwrap_or(1);
@@ -310,10 +320,48 @@ pub(crate) fn decode_palette(
     let orientation = TiffOrientation::from_tag(d.get_tag_u32(Tag::Orientation).unwrap_or(1));
 
     let index_bits = d.get_tag_u32(Tag::BitsPerSample).unwrap_or(8);
-    let mut indices: Vec<usize> = match d
-        .read_image()
-        .map_err(|e| DecodeError::new(&format!("Palette: index decode failed: {}", e)))?
+    // Codecs the tiff crate does not implement (ZSTD, LZMA, PNG-in-TIFF,
+    // LERC, JPEG 2000, JPEG XR): read the indices with our own block decoder
+    // instead of
+    // `read_image()`, which would only report the compression as unsupported.
+    // Sub-byte indices are left to `read_image()` on purpose — the block
+    // decoder already unpacks them to one value per sample, which the
+    // row-by-row unpacking below would then unpack a second time.
+    let block_decoded = if compression == 50000
+        && index_bits >= 8
+        && tile_width == 0
+        && tile_length == 0
+        && planar != 2
     {
+        // Strip ZSTD has its own reader, the same one the non-palette path uses.
+        Some(super::strips::decode_zstd(&patched, &mut d)?)
+    } else if matches!(
+        compression,
+        34887 | 34925 | 34933 | 50000 | 34712 | 33003 | 33004 | 33005 | 34934 | 22610
+    ) && index_bits >= 8
+    {
+        super::strips::try_decode_general_strips_tiles(
+            &patched,
+            &mut d,
+            width,
+            height,
+            1,
+            index_bits,
+            compression,
+            predictor,
+            planar,
+            tile_width,
+            tile_length,
+        )?
+    } else {
+        None
+    };
+    let mut indices: Vec<usize> = match match block_decoded {
+        Some(result) => result,
+        None => d
+            .read_image()
+            .map_err(|e| DecodeError::new(format!("Palette: index decode failed: {}", e)))?,
+    } {
         DecodingResult::U8(v) => v.iter().map(|&x| x as usize).collect(),
         DecodingResult::U16(v) => v.iter().map(|&x| x as usize).collect(),
         _ => return Err(DecodeError::new("Palette: unexpected index sample type")),
@@ -326,6 +374,8 @@ pub(crate) fn decode_palette(
     // byte boundary, so unpacking has to be done row by row.
     if index_bits < 8 && index_bits > 0 {
         let per_row = width as usize;
+        #[allow(clippy::manual_div_ceil)]
+        // Packed-row multiplication and addition may overflow usize.
         let row_bytes = (per_row * index_bits as usize + 7) / 8;
         let mask = (1usize << index_bits) - 1;
         let mut unpacked = Vec::with_capacity(per_row * height as usize);
@@ -345,7 +395,11 @@ pub(crate) fn decode_palette(
                 let shift = bit_count - index_bits;
                 unpacked.push((bit_buf >> shift) & mask);
                 bit_count -= index_bits;
-                bit_buf &= if bit_count == 0 { 0 } else { (1usize << bit_count) - 1 };
+                bit_buf &= if bit_count == 0 {
+                    0
+                } else {
+                    (1usize << bit_count) - 1
+                };
             }
         }
         indices = unpacked;
@@ -399,6 +453,8 @@ pub(crate) fn decode_palette(
         timing_pack_ms: 0.0,
         all_tags_json: extract_page_tags_json(data, page_index),
         ome_xml: extract_ome_xml(data),
+        geo_json: extract_geo_json(data, page_index),
+        page_directory_json: pages::page_directory_json(data),
     })
 }
 
@@ -532,7 +588,7 @@ pub(crate) fn decode_ccitt(
         let mut ctx = DecoderContext::new(settings);
         collector.cur_x = 0;
         decode(&strip, &mut collector, &mut ctx)
-            .map_err(|e| DecodeError::new(&format!("CCITT strip {} decode failed: {:?}", i, e)))?;
+            .map_err(|e| DecodeError::new(format!("CCITT strip {} decode failed: {:?}", i, e)))?;
     }
 
     let mut pixels = collector.pixels;
@@ -581,6 +637,8 @@ pub(crate) fn decode_ccitt(
         timing_pack_ms: 0.0,
         all_tags_json: extract_all_tags_json(data),
         ome_xml: extract_ome_xml(data),
+        geo_json: extract_geo_json(data, 0),
+        page_directory_json: pages::page_directory_json(data),
     })
 }
 
@@ -616,7 +674,7 @@ pub(crate) fn decode_ycbcr_subsampled(
     let sub_h = *subsampling.first().unwrap_or(&2) as usize;
     let sub_v = *subsampling.get(1).unwrap_or(&2) as usize;
     if sub_h == 0 || sub_v == 0 || sub_h > 4 || sub_v > 4 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: unsupported YCbCrSubSampling {}x{}",
             CTX, sub_h, sub_v
         )));
@@ -633,18 +691,19 @@ pub(crate) fn decode_ycbcr_subsampled(
         let tile_width = decoder.get_tag_u32(Tag::TileWidth).unwrap_or(0) as usize;
         let tile_length = decoder.get_tag_u32(Tag::TileLength).unwrap_or(0) as usize;
         if tile_width == 0 || tile_length == 0 {
-            return Err(DecodeError::new(&format!("{}: bad tile geometry", CTX)));
+            return Err(DecodeError::new(format!("{}: bad tile geometry", CTX)));
         }
         (
             decoder
                 .get_tag_u64_vec(Tag::TileOffsets)
-                .map_err(|e| DecodeError::new(&format!("{}: tile offsets: {}", CTX, e)))?,
+                .map_err(|e| DecodeError::new(format!("{}: tile offsets: {}", CTX, e)))?,
             decoder
                 .get_tag_u64_vec(Tag::TileByteCounts)
-                .map_err(|e| DecodeError::new(&format!("{}: tile byte counts: {}", CTX, e)))?,
+                .map_err(|e| DecodeError::new(format!("{}: tile byte counts: {}", CTX, e)))?,
             tile_length.div_ceil(sub_v),
             tile_width.div_ceil(sub_h),
-            width as usize / tile_width.max(1) + usize::from(width as usize % tile_width != 0),
+            width as usize / tile_width.max(1)
+                + usize::from(!(width as usize).is_multiple_of(tile_width)),
         )
     } else {
         let rows_per_strip = decoder
@@ -654,10 +713,10 @@ pub(crate) fn decode_ycbcr_subsampled(
         (
             decoder
                 .get_tag_u64_vec(Tag::StripOffsets)
-                .map_err(|e| DecodeError::new(&format!("{}: strip offsets: {}", CTX, e)))?,
+                .map_err(|e| DecodeError::new(format!("{}: strip offsets: {}", CTX, e)))?,
             decoder
                 .get_tag_u64_vec(Tag::StripByteCounts)
-                .map_err(|e| DecodeError::new(&format!("{}: strip byte counts: {}", CTX, e)))?,
+                .map_err(|e| DecodeError::new(format!("{}: strip byte counts: {}", CTX, e)))?,
             rows_per_strip.div_ceil(sub_v),
             units_across,
             1usize,
@@ -677,7 +736,7 @@ pub(crate) fn decode_ycbcr_subsampled(
             let end = start.saturating_add(counts[block_index] as usize);
             block_index += 1;
             if end > data.len() {
-                return Err(DecodeError::new(&format!("{}: block out of bounds", CTX)));
+                return Err(DecodeError::new(format!("{}: block out of bounds", CTX)));
             }
             let rows_here = rows_per_block.min(unit_rows_total - unit_row_base);
             let expected = block_width_units * rows_here * unit_bytes;
@@ -755,6 +814,8 @@ pub(crate) fn decode_ycbcr_subsampled(
         timing_pack_ms: 0.0,
         all_tags_json: String::new(),
         ome_xml: String::new(),
+        geo_json: String::new(),
+        page_directory_json: String::new(),
     })
 }
 
@@ -793,10 +854,10 @@ pub(crate) fn decode_sgilog(
         .max(1);
     let offsets = decoder
         .get_tag_u64_vec(Tag::StripOffsets)
-        .map_err(|e| DecodeError::new(&format!("{}: strip offsets: {}", CTX, e)))?;
+        .map_err(|e| DecodeError::new(format!("{}: strip offsets: {}", CTX, e)))?;
     let counts = decoder
         .get_tag_u64_vec(Tag::StripByteCounts)
-        .map_err(|e| DecodeError::new(&format!("{}: strip byte counts: {}", CTX, e)))?;
+        .map_err(|e| DecodeError::new(format!("{}: strip byte counts: {}", CTX, e)))?;
 
     let is_luv = photometric == 32845;
     // LogL is one 16-bit sample per pixel. LogLuv is one 32-bit sample per
@@ -817,7 +878,10 @@ pub(crate) fn decode_sgilog(
         let start = offset as usize;
         let end = start.saturating_add(count as usize);
         if end > data.len() {
-            return Err(DecodeError::new(&format!("{}: strip {} out of bounds", CTX, index)));
+            return Err(DecodeError::new(format!(
+                "{}: strip {} out of bounds",
+                CTX, index
+            )));
         }
         let rows_here = (rows_per_strip as usize).min(height as usize - row_base);
         if rows_here == 0 {
@@ -834,7 +898,9 @@ pub(crate) fn decode_sgilog(
                 if at + 3 > block.len() {
                     break;
                 }
-                *slot = ((block[at] as u32) << 16) | ((block[at + 1] as u32) << 8) | block[at + 2] as u32;
+                *slot = ((block[at] as u32) << 16)
+                    | ((block[at + 1] as u32) << 8)
+                    | block[at + 2] as u32;
             }
         } else {
             // SGILog: run-length over byte planes, most significant plane
@@ -904,8 +970,13 @@ pub(crate) fn decode_sgilog(
 
     // `apply_orientation` is generic over the sample type, so the float raster
     // reuses the same transform the byte paths use.
-    let (out, width, height) =
-        super::orientation::apply_orientation(&out, width, height, out_channels as u32, orientation);
+    let (out, width, height) = super::orientation::apply_orientation(
+        &out,
+        width,
+        height,
+        out_channels as u32,
+        orientation,
+    );
     let channels = out_channels as u32;
     let (min, max) = (
         out.iter().copied().fold(f32::INFINITY, f32::min),
@@ -940,6 +1011,8 @@ pub(crate) fn decode_sgilog(
         timing_pack_ms: 0.0,
         all_tags_json: String::new(),
         ome_xml: String::new(),
+        geo_json: String::new(),
+        page_directory_json: String::new(),
     })
 }
 
@@ -968,14 +1041,22 @@ fn logluv_to_rgb(raw: u32, is_24bit: bool) -> (f64, f64, f64) {
     let (luminance, u_prime, v_prime) = if is_24bit {
         let le = (raw >> 14) & 0x3ff;
         let ce = raw & 0x3fff;
-        let y = if le == 0 { 0.0 } else { ((le as f64 + 0.5) / 64.0 - 12.0).exp2() };
+        let y = if le == 0 {
+            0.0
+        } else {
+            ((le as f64 + 0.5) / 64.0 - 12.0).exp2()
+        };
         // UV_SQSIZ / UV_NDIVS decomposition from the LogLuv specification.
         let vi = (ce / 163) as f64;
         let ui = (ce % 163) as f64;
         (y, (ui + 0.5) * 0.003_25 + 0.0, (vi + 0.5) * 0.003_25 + 0.0)
     } else {
         let le = (raw >> 16) & 0x7fff;
-        let y = if le == 0 { 0.0 } else { ((le as f64 + 0.5) / 256.0 - 64.0).exp2() };
+        let y = if le == 0 {
+            0.0
+        } else {
+            ((le as f64 + 0.5) / 256.0 - 64.0).exp2()
+        };
         let u = ((raw >> 8) & 0xff) as f64;
         let v = (raw & 0xff) as f64;
         (y, (u + 0.5) / 410.0, (v + 0.5) / 410.0)
@@ -997,4 +1078,3 @@ fn logluv_to_rgb(raw: u32, is_24bit: bool) -> (f64, f64, f64) {
     let b = 0.061 * big_x - 0.224 * luminance + 1.163 * big_z;
     (r.max(0.0), g.max(0.0), b.max(0.0))
 }
-

@@ -30,6 +30,7 @@ function digest(paths) {
 const sources = [
   ...collect('wasm', path => /\.(rs|toml|lock)$/.test(path)),
   ...collect('crates/image-decoders', path => /\.(rs|toml|lock)$/.test(path)),
+  ...collect('crates/jpegxr', path => /\.(rs|toml|lock)$/.test(path)),
   'scripts/build-wasm.mjs',
 ];
 const outputs = [

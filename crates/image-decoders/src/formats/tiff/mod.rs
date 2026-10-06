@@ -1,6 +1,10 @@
 mod cmyk;
 mod codecs;
+pub(crate) mod geokeys;
 mod orientation;
+pub(crate) mod pages;
+pub(crate) mod region;
+pub(crate) mod remote;
 pub(crate) mod strips;
 pub(crate) mod tags;
 
@@ -11,13 +15,17 @@ use crate::pipeline::stats::{
 };
 use crate::{demosaic, TiffResult};
 use cmyk::convert_cmyk_to_rgb;
-use codecs::{decode_ccitt, decode_jpeg_ycbcr, decode_palette, decode_sgilog, decode_ycbcr_subsampled, unpack_bilevel};
+pub(crate) use cmyk::convert_cmyk_u8_to_rgb;
+use codecs::{
+    decode_ccitt, decode_jpeg_ycbcr, decode_palette, decode_sgilog, decode_ycbcr_subsampled,
+    unpack_bilevel,
+};
 use orientation::{apply_orientation, TiffOrientation};
 use strips::{
     decode_zstd, try_decode_float_predictor_strips, try_decode_general_strips_tiles,
     try_decode_subbit_strips, try_decode_uncompressed_strips,
 };
-use tags::{extract_ome_xml, extract_page_tags_json};
+use tags::{extract_geo_json, extract_ome_xml, extract_page_tags_json};
 
 use crate::DecodeError;
 use std::io::Cursor;
@@ -99,6 +107,26 @@ pub(crate) fn decode_tiff_impl(
 ) -> Result<TiffResult, DecodeError> {
     let start_time = crate::time::now_ms();
 
+    // FillOrder=2 reverses every byte of the ENCODED strip/tile, including a
+    // codec's control bytes. Reversing the decoded samples is therefore too
+    // late for PackBits (its run headers have already been misread). The tiff
+    // crate does not normalize byte-aligned FillOrder=2 inputs, so normalize
+    // the selected page's encoded blocks and its tag in a private copy, then
+    // run the ordinary decoder unchanged. CCITT already performs this exact
+    // normalization inside decode_ccitt and must not be reversed twice.
+    let raw_fill_order = raw_tag_u32(data, page_index, 266).unwrap_or(1);
+    let raw_compression = raw_tag_u32(data, page_index, 259).unwrap_or(1);
+    if raw_fill_order == 2 && !matches!(raw_compression, 2..=4) {
+        if let Some(patched) = normalize_lsb_fill_order(data, page_index) {
+            let mut result = decode_tiff_impl(&patched, compute_stats, page_index)?;
+            result.all_tags_json = extract_page_tags_json(data, page_index);
+            result.ome_xml = extract_ome_xml(data);
+            result.geo_json = extract_geo_json(data, page_index);
+            result.page_directory_json = pages::page_directory_json(data);
+            return Ok(result);
+        }
+    }
+
     // CFA (Bayer) files declare PhotometricInterpretation 32803, which the tiff
     // crate refuses in Decoder::new. Their pixels are an ordinary single-channel
     // plane, so decode against a copy that says BlackIsZero and put the real
@@ -120,18 +148,20 @@ pub(crate) fn decode_tiff_impl(
             let mut patched = data.to_vec();
             if patch_photometric_to_grayscale(&mut patched, page_index) {
                 let mut sgi_decoder = Decoder::new(Cursor::new(patched.as_slice()))
-                    .map_err(|e| DecodeError::new(&format!("SGI Log TIFF: decoder init: {}", e)))?
+                    .map_err(|e| DecodeError::new(format!("SGI Log TIFF: decoder init: {}", e)))?
                     .with_limits(tiff::decoder::Limits::unlimited());
                 for _ in 0..page_index {
-                    sgi_decoder
-                        .next_image()
-                        .map_err(|e| DecodeError::new(&format!("SGI Log TIFF: page select: {}", e)))?;
+                    sgi_decoder.next_image().map_err(|e| {
+                        DecodeError::new(format!("SGI Log TIFF: page select: {}", e))
+                    })?;
                 }
-                let (w, h) = sgi_decoder.dimensions().map_err(|e| {
-                    DecodeError::new(&format!("SGI Log TIFF: dimensions: {}", e))
-                })?;
+                let (w, h) = sgi_decoder
+                    .dimensions()
+                    .map_err(|e| DecodeError::new(format!("SGI Log TIFF: dimensions: {}", e)))?;
                 let orientation_tag = TiffOrientation::from_tag(
-                    sgi_decoder.get_tag_u32(tiff::tags::Tag::Orientation).unwrap_or(1),
+                    sgi_decoder
+                        .get_tag_u32(tiff::tags::Tag::Orientation)
+                        .unwrap_or(1),
                 );
                 let mut result = decode_sgilog(
                     data,
@@ -144,6 +174,8 @@ pub(crate) fn decode_tiff_impl(
                 )?;
                 result.all_tags_json = extract_page_tags_json(data, page_index);
                 result.ome_xml = extract_ome_xml(data);
+                result.geo_json = extract_geo_json(data, page_index);
+                result.page_directory_json = pages::page_directory_json(data);
                 return Ok(result);
             }
         }
@@ -158,25 +190,25 @@ pub(crate) fn decode_tiff_impl(
     // here is wasm32's own address space, and an over-large allocation fails
     // as a normal allocation error rather than a security problem.
     let mut decoder = Decoder::new(cursor)
-        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?
+        .map_err(|e| DecodeError::new(format!("Failed to create decoder: {}", e)))?
         .with_limits(tiff::decoder::Limits::unlimited());
 
     for current in 0..page_index {
         if !decoder.more_images() {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "TIFF page index {} is out of range (only {} page(s))",
                 page_index,
                 current + 1
             )));
         }
         decoder.next_image().map_err(|e| {
-            DecodeError::new(&format!("Failed to select TIFF page {}: {}", page_index, e))
+            DecodeError::new(format!("Failed to select TIFF page {}: {}", page_index, e))
         })?;
     }
 
     let (width, height) = decoder
         .dimensions()
-        .map_err(|e| DecodeError::new(&format!("Failed to get dimensions: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Failed to get dimensions: {}", e)))?;
 
     // Palette (RGBPalette, PhotometricInterpretation 3) images are rejected by
     // the tiff crate's colortype()/read_image(), so handle them via a dedicated
@@ -191,7 +223,7 @@ pub(crate) fn decode_tiff_impl(
     // Get color type and bits per sample
     let color_type = decoder
         .colortype()
-        .map_err(|e| DecodeError::new(&format!("Failed to get color type: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Failed to get color type: {}", e)))?;
 
     // `channels` MUST equal the actual per-pixel stride of the buffer we hand
     // back below, so SamplesPerPixel (tag 277) - not `color_type` - is the
@@ -227,6 +259,18 @@ pub(crate) fn decode_tiff_impl(
     let compression = decoder
         .get_tag_u32(tiff::tags::Tag::Compression)
         .unwrap_or(1);
+
+    // WebP-in-TIFF (50001, the code libtiff and GDAL write) is decoded by the
+    // `tiff` crate's own `webp` feature,
+    // which the core build leaves off — image-webp is 129 KiB for a codec
+    // almost no file uses. Report it exactly the way `decompress_block` reports
+    // the codecs it does not carry, so the webview routes the file to the codec
+    // module rather than surfacing the crate's own "unsupported" text, which
+    // reads like a dead end.
+    #[cfg(not(feature = "codec-webp"))]
+    if compression == 50001 {
+        return Err(crate::formats::external_codec::needed("WebP", "TIFF"));
+    }
 
     // Get predictor (default to 1 = None if not found)
     let predictor = decoder.get_tag_u32(tiff::tags::Tag::Predictor).unwrap_or(1);
@@ -281,10 +325,10 @@ pub(crate) fn decode_tiff_impl(
     if compression == 2 || compression == 3 || compression == 4 {
         let offsets = decoder
             .get_tag_u64_vec(tiff::tags::Tag::StripOffsets)
-            .map_err(|e| DecodeError::new(&format!("CCITT: missing StripOffsets: {}", e)))?;
+            .map_err(|e| DecodeError::new(format!("CCITT: missing StripOffsets: {}", e)))?;
         let counts = decoder
             .get_tag_u64_vec(tiff::tags::Tag::StripByteCounts)
-            .map_err(|e| DecodeError::new(&format!("CCITT: missing StripByteCounts: {}", e)))?;
+            .map_err(|e| DecodeError::new(format!("CCITT: missing StripByteCounts: {}", e)))?;
         // FillOrder defaults to 1 (MSB first); T4Options (tag 292) defaults to 0.
         let fill_order = decoder.get_tag_u32(tiff::tags::Tag::FillOrder).unwrap_or(1);
         let t4_options = decoder
@@ -335,10 +379,18 @@ pub(crate) fn decode_tiff_impl(
         let subsampled = subsampling.first().copied().unwrap_or(1) > 1
             || subsampling.get(1).copied().unwrap_or(1) > 1;
         if subsampled {
-            let mut result =
-                decode_ycbcr_subsampled(data, &mut decoder, width, height, compression, orientation)?;
+            let mut result = decode_ycbcr_subsampled(
+                data,
+                &mut decoder,
+                width,
+                height,
+                compression,
+                orientation,
+            )?;
             result.all_tags_json = extract_page_tags_json(data, page_index);
             result.ome_xml = extract_ome_xml(data);
+            result.geo_json = extract_geo_json(data, page_index);
+            result.page_directory_json = pages::page_directory_json(data);
             return Ok(result);
         }
     }
@@ -347,11 +399,22 @@ pub(crate) fn decode_tiff_impl(
 
     // Read image data (decompression happens here). ZSTD (50000) is decoded
     // with the pure-Rust ruzstd crate rather than the tiff crate's C zstd, so
-    // the WASM build needs no C toolchain. The decompressed strips are rebuilt
-    // into an uncompressed TIFF and handed back to the tiff crate, which still
-    // performs predictor un-application and type/endianness handling.
+    // the WASM build needs no C toolchain. For a plain STRIP layout the
+    // decompressed strips are rebuilt into an uncompressed TIFF and handed back
+    // to the tiff crate, which still performs predictor un-application and
+    // type/endianness handling. Tiled and planar-2 ZSTD cannot be expressed
+    // that way, so they go to the block decoder below, which decompresses each
+    // tile itself — that is the shape cloud-optimized GeoTIFFs use.
+    // 9..=15-bit samples are excluded too: rebuilding them as an uncompressed
+    // TIFF only moves the failure to the tiff crate, which has no color type
+    // for those depths. `try_decode_subbit_strips` unpacks them itself.
+    let zstd_strips = compression == 50000
+        && tile_width == 0
+        && tile_length == 0
+        && planar_configuration != 2
+        && !(9..=15).contains(&bits_per_sample);
     let mut direct_decode = false;
-    let mut decode_result = if compression == 50000 {
+    let mut decode_result = if zstd_strips {
         decode_zstd(data, &mut decoder)?
     } else if let Some(result) = try_decode_general_strips_tiles(
         data,
@@ -408,9 +471,27 @@ pub(crate) fn decode_tiff_impl(
         direct_decode = true;
         result
     } else {
-        decoder
-            .read_image()
-            .map_err(|e| DecodeError::new(&format!("Failed to decode image: {}", e)))?
+        decoder.read_image().map_err(|e| {
+            // SampleFormat 5 (complex integer) and 6 (complex float) hold two
+            // components per sample — real and imaginary — and are what SAR
+            // single-look-complex products use. The crate's message for them
+            // ("sample format [Unknown(5)] is unsupported") reads like a broken
+            // file rather than a missing feature, which sends people looking
+            // for a fault in their data.
+            let sample_format = decoder
+                .get_tag_u64(tiff::tags::Tag::SampleFormat)
+                .unwrap_or(0);
+            if sample_format == 5 || sample_format == 6 {
+                return DecodeError::new(
+                    "This TIFF holds complex samples (SampleFormat \
+                     5/6 — real and imaginary parts per pixel), as SAR \
+                     single-look-complex products do. Complex data is not \
+                     decoded yet; converting to amplitude (e.g. gdal_translate \
+                     -ot Float32 with a magnitude expression) opens correctly.",
+                );
+            }
+            DecodeError::new(format!("Failed to decode image: {}", e))
+        })?
     };
 
     // The direct-decode paths above (`try_decode_general_strips_tiles`,
@@ -426,7 +507,7 @@ pub(crate) fn decode_tiff_impl(
     if !direct_decode {
         let element_count = decoding_result_len(&decode_result);
         let pixel_count = (width as usize) * (height as usize);
-        if pixel_count > 0 && element_count % pixel_count == 0 {
+        if pixel_count > 0 && element_count.is_multiple_of(pixel_count) {
             let actual_channels = (element_count / pixel_count) as u32;
             if actual_channels > 0 {
                 channels = actual_channels;
@@ -695,7 +776,7 @@ pub(crate) fn decode_tiff_impl(
     let total_time = crate::time::now_ms() - start_time;
     let metadata_time = total_time - decompress_time - convert_time;
 
-    let result = Ok(TiffResult {
+    Ok(TiffResult {
         width,
         height,
         channels,
@@ -725,16 +806,16 @@ pub(crate) fn decode_tiff_impl(
         timing_pack_ms: pack_time,
         all_tags_json: extract_page_tags_json(data, page_index),
         ome_xml: extract_ome_xml(data),
-    });
-
-    result
+        geo_json: extract_geo_json(data, page_index),
+        page_directory_json: pages::page_directory_json(data),
+    })
 }
 
-/// Rewrite one IFD's PhotometricInterpretation (tag 262) from
-/// RGBPalette (3) to BlackIsZero (1), in place, so the tiff crate will decode
-/// the raw palette indices instead of refusing the image. Returns false (and
-/// leaves the buffer untouched) for anything it does not understand, e.g.
-/// BigTIFF.
+// Rewrite one IFD's PhotometricInterpretation (tag 262) from
+// RGBPalette (3) to BlackIsZero (1), in place, so the tiff crate will decode
+// the raw palette indices instead of refusing the image. Returns false (and
+// leaves the buffer untouched) for anything it does not understand, e.g.
+// BigTIFF.
 
 /// Read one SHORT/LONG tag straight out of the IFD, without the tiff crate.
 ///
@@ -750,9 +831,19 @@ pub(crate) fn raw_tag_u32(data: &[u8], page_index: u32, want: u16) -> Option<u32
         b"MM" => false,
         _ => return None,
     };
-    let rd16 = |b: &[u8]| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) };
+    let rd16 = |b: &[u8]| {
+        if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        }
+    };
     let rd32 = |b: &[u8]| {
-        if le { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) }
+        if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        }
     };
     if rd16(data.get(2..4)?) != 42 {
         return None; // classic TIFF only; BigTIFF falls back
@@ -781,6 +872,134 @@ pub(crate) fn raw_tag_u32(data: &[u8], page_index: u32, want: u16) -> Option<u32
         });
     }
     None
+}
+
+/// Normalize a non-CCITT FillOrder=2 page into the MSB-first representation
+/// expected by the Rust TIFF paths. Both classic TIFF and BigTIFF keep a
+/// single SHORT value inline in the IFD entry, so the tag can be patched
+/// without rebuilding the directory.
+fn normalize_lsb_fill_order(data: &[u8], page_index: u32) -> Option<Vec<u8>> {
+    use tiff::tags::Tag;
+
+    let mut decoder = Decoder::new(Cursor::new(data))
+        .ok()?
+        .with_limits(tiff::decoder::Limits::unlimited());
+    for _ in 0..page_index {
+        decoder.next_image().ok()?;
+    }
+    let (offsets, counts) = if let (Ok(offsets), Ok(counts)) = (
+        decoder.get_tag_u64_vec(Tag::TileOffsets),
+        decoder.get_tag_u64_vec(Tag::TileByteCounts),
+    ) {
+        (offsets, counts)
+    } else {
+        (
+            decoder.get_tag_u64_vec(Tag::StripOffsets).ok()?,
+            decoder.get_tag_u64_vec(Tag::StripByteCounts).ok()?,
+        )
+    };
+    if offsets.len() != counts.len() {
+        return None;
+    }
+
+    let le = match data.get(0..2)? {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let rd16 = |b: &[u8]| {
+        if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        }
+    };
+    let rd32 = |b: &[u8]| {
+        if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let rd64 = |b: &[u8]| {
+        if le {
+            u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+        } else {
+            u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+        }
+    };
+
+    let magic = rd16(data.get(2..4)?);
+    let (mut ifd, count_bytes, entry_bytes, value_offset, next_bytes) = match magic {
+        42 => (
+            rd32(data.get(4..8)?) as usize,
+            2usize,
+            12usize,
+            8usize,
+            4usize,
+        ),
+        43 if rd16(data.get(4..6)?) == 8 => (
+            rd64(data.get(8..16)?) as usize,
+            8usize,
+            20usize,
+            12usize,
+            8usize,
+        ),
+        _ => return None,
+    };
+    for _ in 0..page_index {
+        let count = if count_bytes == 2 {
+            rd16(data.get(ifd..ifd + 2)?) as usize
+        } else {
+            usize::try_from(rd64(data.get(ifd..ifd + 8)?)).ok()?
+        };
+        let next = ifd
+            .checked_add(count_bytes)?
+            .checked_add(count.checked_mul(entry_bytes)?)?;
+        ifd = if next_bytes == 4 {
+            rd32(data.get(next..next + 4)?) as usize
+        } else {
+            usize::try_from(rd64(data.get(next..next + 8)?)).ok()?
+        };
+        if ifd == 0 {
+            return None;
+        }
+    }
+    let count = if count_bytes == 2 {
+        rd16(data.get(ifd..ifd + 2)?) as usize
+    } else {
+        usize::try_from(rd64(data.get(ifd..ifd + 8)?)).ok()?
+    };
+    let mut fill_value_at = None;
+    for index in 0..count {
+        let entry = ifd
+            .checked_add(count_bytes)?
+            .checked_add(index.checked_mul(entry_bytes)?)?;
+        if rd16(data.get(entry..entry + 2)?) == 266 && rd16(data.get(entry + 2..entry + 4)?) == 3 {
+            fill_value_at = Some(entry + value_offset);
+            break;
+        }
+    }
+
+    let mut patched = data.to_vec();
+    for (&offset, &count) in offsets.iter().zip(&counts) {
+        let start = usize::try_from(offset).ok()?;
+        let len = usize::try_from(count).ok()?;
+        let end = start.checked_add(len)?;
+        for byte in patched.get_mut(start..end)? {
+            *byte = byte.reverse_bits();
+        }
+    }
+    let value_at = fill_value_at?;
+    let one = if le {
+        1u16.to_le_bytes()
+    } else {
+        1u16.to_be_bytes()
+    };
+    patched
+        .get_mut(value_at..value_at + 2)?
+        .copy_from_slice(&one);
+    Some(patched)
 }
 
 pub(crate) fn patch_photometric_to_grayscale(buf: &mut [u8], page_index: u32) -> bool {
@@ -848,16 +1067,48 @@ pub(crate) fn patch_photometric_to_grayscale(buf: &mut [u8], page_index: u32) ->
 /// Parse just enough of `data` to describe a predictor-3 float strip layout.
 /// Used by the strip-parallel entry points in the crate root.
 pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan> {
+    float_strip_plan_for_page(data, 0)
+}
+
+/// The same plan for any page in the chain. A pyramid's overviews are pages,
+/// and a region read of the level being displayed needs that level's geometry.
+pub(crate) fn float_strip_plan_for_page(
+    data: &[u8],
+    page_index: u32,
+) -> Option<strips::FloatStripPlan> {
     let mut decoder = Decoder::new(Cursor::new(data)).ok()?;
+    if page_index > 0 {
+        decoder.seek_to_image(page_index as usize).ok()?;
+    }
     let (width, height) = decoder.dimensions().ok()?;
     let color_type = decoder.colortype().ok()?;
-    let channels = match color_type {
-        tiff::ColorType::Gray(_) => 1,
-        tiff::ColorType::GrayA(_) => 2,
-        tiff::ColorType::RGB(_) => 3,
-        tiff::ColorType::RGBA(_) | tiff::ColorType::CMYK(_) => 4,
+    match color_type {
+        tiff::ColorType::Gray(_)
+        | tiff::ColorType::GrayA(_)
+        | tiff::ColorType::RGB(_)
+        | tiff::ColorType::RGBA(_)
+        | tiff::ColorType::CMYK(_)
+        | tiff::ColorType::Multiband { .. } => {}
+        // Anything else (palette, YCbCr, ...) is decoded by a path that
+        // rewrites the pixels, which a per-block decode cannot reproduce.
         _ => return None,
-    };
+    }
+    // The STRIDE is SamplesPerPixel, not what the color type implies: a file
+    // with RGB plus four extra samples has a color type of RGB and seven
+    // samples per pixel, and reading three would walk the rows at the wrong
+    // stride — the whole-file decode reports seven, so this must too.
+    let channels = decoder
+        .get_tag_u64_vec(tiff::tags::Tag::SamplesPerPixel)
+        .ok()
+        .and_then(|values| values.first().copied())
+        .map(|value| value as u32)
+        .filter(|value| *value > 0)
+        .unwrap_or(match color_type {
+            tiff::ColorType::Gray(_) => 1,
+            tiff::ColorType::GrayA(_) => 2,
+            tiff::ColorType::RGB(_) => 3,
+            _ => 4,
+        });
     let bits_per_sample = decoder
         .get_tag_u64_vec(tiff::tags::Tag::BitsPerSample)
         .ok()
@@ -866,27 +1117,25 @@ pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan
     let compression = decoder
         .get_tag_u64(tiff::tags::Tag::Compression)
         .unwrap_or(1) as u32;
-    let predictor = decoder
-        .get_tag_u64(tiff::tags::Tag::Predictor)
-        .unwrap_or(1) as u32;
+    let predictor = decoder.get_tag_u64(tiff::tags::Tag::Predictor).unwrap_or(1) as u32;
     let planar_configuration = decoder
         .get_tag_u64(tiff::tags::Tag::PlanarConfiguration)
         .unwrap_or(1) as u32;
-    // The strip-parallel path returns raw samples with no post-processing, so
-    // anything decode_tiff_impl would transform afterwards must disqualify the
-    // file here: orientation flips, CMYK->RGB, palette expansion and CFA all
-    // rewrite the pixels, and reproducing them per strip would duplicate logic
-    // that is only correct on the whole image.
+    // Palette expansion and CFA rewrite pixels using image-global metadata and
+    // stay on the whole-image path. Unsigned 8-bit chunky CMYK is safe here:
+    // each worker applies the shared authoritative CMYK conversion to its own
+    // independently decoded rows.
     let photometric = decoder
         .get_tag_u64(tiff::tags::Tag::PhotometricInterpretation)
         .unwrap_or(1) as u32;
-    if photometric != 1 && photometric != 2 {
+    let parallel_cmyk =
+        photometric == 5 && channels == 4 && bits_per_sample == 8 && planar_configuration == 1;
+    if photometric != 1 && photometric != 2 && !parallel_cmyk {
         return None;
     }
-    let orientation = decoder.get_tag_u64(tiff::tags::Tag::Orientation).unwrap_or(1);
-    if orientation != 1 {
-        return None;
-    }
+    let orientation = decoder
+        .get_tag_u64(tiff::tags::Tag::Orientation)
+        .unwrap_or(1);
     if decoder.get_tag_u64_vec(tiff::tags::Tag::ColorMap).is_ok() {
         return None;
     }
@@ -903,6 +1152,8 @@ pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan
         compression,
         predictor,
         planar_configuration,
+        orientation as u32,
+        photometric,
     )
 }
 
@@ -914,13 +1165,15 @@ pub(crate) struct StripMetadata {
     pub photometric_interpretation: u32,
     pub all_tags_json: String,
     pub ome_xml: String,
+    pub geo_json: String,
+    pub page_directory_json: String,
 }
 
 pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeError> {
     let cfa_patched = demosaic::neutralize_cfa_photometric(data);
     let raw: &[u8] = cfa_patched.as_deref().unwrap_or(data);
     let mut decoder = Decoder::new(Cursor::new(raw))
-        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?
+        .map_err(|e| DecodeError::new(format!("Failed to create decoder: {}", e)))?
         .with_limits(tiff::decoder::Limits::unlimited());
     let mut page_count = 1u32;
     while decoder.more_images() {
@@ -930,7 +1183,7 @@ pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeErr
         page_count += 1;
     }
     let mut decoder = Decoder::new(Cursor::new(raw))
-        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?
+        .map_err(|e| DecodeError::new(format!("Failed to create decoder: {}", e)))?
         .with_limits(tiff::decoder::Limits::unlimited());
     let photometric_interpretation = decoder
         .get_tag_u64(tiff::tags::Tag::PhotometricInterpretation)
@@ -940,6 +1193,58 @@ pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeErr
         photometric_interpretation,
         all_tags_json: extract_page_tags_json(data, 0),
         ome_xml: extract_ome_xml(data),
+        geo_json: extract_geo_json(data, 0),
+        page_directory_json: pages::page_directory_json(data),
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::decode_tiff_impl;
+
+    #[test]
+    fn packbits_fill_order_two_reverses_encoded_bytes_before_decode() {
+        let pixels = [75u8, 58, 42, 77, 60, 44];
+        let mut encoded = vec![5u8]; // PackBits literal run of six bytes.
+        encoded.extend_from_slice(&pixels);
+        encoded
+            .iter_mut()
+            .for_each(|byte| *byte = byte.reverse_bits());
+
+        const TAGS: u16 = 10;
+        let data_offset = 8 + 2 + TAGS as u32 * 12 + 4;
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"II");
+        tiff.extend_from_slice(&42u16.to_le_bytes());
+        tiff.extend_from_slice(&8u32.to_le_bytes());
+        tiff.extend_from_slice(&TAGS.to_le_bytes());
+        let put = |out: &mut Vec<u8>, tag: u16, kind: u16, value: u32| {
+            out.extend_from_slice(&tag.to_le_bytes());
+            out.extend_from_slice(&kind.to_le_bytes());
+            out.extend_from_slice(&1u32.to_le_bytes());
+            if kind == 3 {
+                out.extend_from_slice(&(value as u16).to_le_bytes());
+                out.extend_from_slice(&[0, 0]);
+            } else {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+        };
+        put(&mut tiff, 256, 4, pixels.len() as u32); // ImageWidth
+        put(&mut tiff, 257, 4, 1); // ImageLength
+        put(&mut tiff, 258, 3, 8); // BitsPerSample
+        put(&mut tiff, 259, 3, 32773); // PackBits
+        put(&mut tiff, 262, 3, 1); // BlackIsZero
+        put(&mut tiff, 266, 3, 2); // FillOrder = LSB-to-MSB
+        put(&mut tiff, 273, 4, data_offset); // StripOffsets
+        put(&mut tiff, 277, 3, 1); // SamplesPerPixel
+        put(&mut tiff, 278, 4, 1); // RowsPerStrip
+        put(&mut tiff, 279, 4, encoded.len() as u32); // StripByteCounts
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff.extend_from_slice(&encoded);
+
+        let decoded = decode_tiff_impl(&tiff, true, 0).unwrap();
+        assert_eq!(decoded.data, pixels);
+        assert!(decoded.all_tags_json.contains("\"name\":\"FillOrder\""));
+        assert!(decoded.all_tags_json.contains("\"value\":\"2\""));
+    }
+}

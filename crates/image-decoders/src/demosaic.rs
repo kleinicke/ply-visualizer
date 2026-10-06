@@ -30,7 +30,7 @@ pub struct CfaPattern {
 impl CfaPattern {
     fn new(period: usize, grid: Vec<u8>) -> Self {
         debug_assert_eq!(grid.len(), period * period);
-        let channels = if grid.iter().any(|&c| c == I) { 4 } else { 3 };
+        let channels = if grid.contains(&I) { 4 } else { 3 };
         CfaPattern {
             period,
             grid,
@@ -524,7 +524,7 @@ pub fn demosaic(
 ) -> Result<DemosaicResult, DecodeError> {
     let (w, h) = (width as usize, height as usize);
     if w == 0 || h == 0 || data.len() < w * h {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "demosaic: plane too small ({} values for {}x{})",
             data.len(),
             w,
@@ -784,4 +784,3 @@ mod tests {
         assert_eq!(a.take_data(), b.take_data());
     }
 }
-

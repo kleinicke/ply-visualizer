@@ -1,0 +1,16 @@
+# Vendored from https://github.com/henriksson-lab/jpegxr-pure-rs (0.1.0), a
+# pure-Rust translation of Microsoft's JXRLib, with one change: see VENDORING.md.
+[package]
+name = "jpegxr-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Pure Rust JPEG XR decoder (vendored jpegxr-pure-rs, patched to decode from memory)"
+license = "BSD-3-Clause"
+publish = false
+
+[lib]
+name = "jpegxr"
+path = "src/lib.rs"
+
+[dependencies]
+libc = "0.2"

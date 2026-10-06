@@ -130,7 +130,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
       - run: npm ci
+      - run: npm run format:rust:image:check
+      - run: npm run lint:rust:image
+      - run: npm run lint:rust:image:wasm
       - run: npm run test:rust
       - run: cargo install wasm-pack --version 0.15.0 --locked
       - run: npm run build:wasm

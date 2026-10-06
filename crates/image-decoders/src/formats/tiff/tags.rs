@@ -124,7 +124,74 @@ pub(crate) fn extract_page_tags_json(data: &[u8], page_index: u32) -> String {
         .collect();
     let mut out = Vec::new();
     append_ifd_tags(&mut decoder, main_entries, "TIFF", &mut out);
+    // GeoTIFF's key directory is a flat integer array pointing into two other
+    // tags; shown raw it is unreadable, which is what a plain tag dump gives.
+    // Unpacked here so the panel can show "EPSG:32631 (WGS 84 / UTM zone 31N)"
+    // where the raw dump showed "1, 1, 1, 8, 1024, 0, 1, 1, ...".
+    if let Some(geo) = read_geo_reference(&mut decoder) {
+        for key in &geo.keys {
+            out.push(format!(
+                "{{\"tag\":null,\"name\":\"{}\",\"group\":\"GeoKeys\",\"value\":\"{}\"}}",
+                json_escape(&key.name),
+                json_escape(&key.value)
+            ));
+        }
+    }
     format!("[{}]", out.join(","))
+}
+
+/// Read the six GeoTIFF tags off `decoder` and unpack them.
+///
+/// Every one is optional and a missing one is ordinary rather than an error —
+/// a non-geo TIFF has none of them, and a geo one may carry the key directory
+/// with no georeferencing (a CRS but no placement) or the reverse.
+pub(crate) fn read_geo_reference(
+    decoder: &mut Decoder<Cursor<&[u8]>>,
+) -> Option<super::geokeys::GeoReference> {
+    use tiff::tags::Tag;
+    let directory = decoder.get_tag_u16_vec(Tag::Unknown(34735)).ok()?;
+    let doubles = decoder
+        .get_tag_f64_vec(Tag::Unknown(34736))
+        .unwrap_or_default();
+    let ascii = decoder
+        .get_tag_ascii_string(Tag::Unknown(34737))
+        .unwrap_or_default();
+    let pixel_scale = decoder
+        .get_tag_f64_vec(Tag::Unknown(33550))
+        .unwrap_or_default();
+    let tiepoint = decoder
+        .get_tag_f64_vec(Tag::Unknown(33922))
+        .unwrap_or_default();
+    let transformation = decoder
+        .get_tag_f64_vec(Tag::Unknown(34264))
+        .unwrap_or_default();
+    super::geokeys::parse_geo_reference(
+        &directory,
+        &doubles,
+        &ascii,
+        &pixel_scale,
+        &tiepoint,
+        &transformation,
+    )
+}
+
+/// The georeferencing as JSON for the webview's coordinate readout, or an
+/// empty string when the file carries none.
+pub(crate) fn extract_geo_json(data: &[u8], page_index: u32) -> String {
+    let data = cfa_safe_bytes(data);
+    let mut decoder = match Decoder::new(Cursor::new(data.as_ref())) {
+        Ok(d) => d,
+        Err(_) => return String::new(),
+    };
+    for _ in 0..page_index {
+        if decoder.next_image().is_err() {
+            return String::new();
+        }
+    }
+    match read_geo_reference(&mut decoder) {
+        Some(geo) => geo.to_json(),
+        None => String::new(),
+    }
 }
 
 /// TIFF/Exif field type sizes in bytes, per the TIFF6/Exif spec (type IDs 1-12).
@@ -375,4 +442,3 @@ pub(crate) fn extract_bare_ifd_tags_json(data: &[u8]) -> String {
     walk_bare_ifd(data, ifd0_offset, big_endian, "Exif", &mut out, 0);
     format!("[{}]", out.join(","))
 }
-

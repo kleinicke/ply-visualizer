@@ -203,7 +203,7 @@ fn oob() -> DecodeError {
     DecodeError::new("NPY: unexpected end of data while reading samples")
 }
 
-fn get_slice<'a>(data: &'a [u8], offset: usize, len: usize) -> Result<&'a [u8], DecodeError> {
+fn get_slice(data: &[u8], offset: usize, len: usize) -> Result<&[u8], DecodeError> {
     let end = offset.checked_add(len).ok_or_else(oob)?;
     data.get(offset..end).ok_or_else(oob)
 }
@@ -311,10 +311,7 @@ fn read_npy_samples(
         .and_then(|c| c.to_digit(10))
         .unwrap_or(0) as usize;
     if width == 0 {
-        return Err(DecodeError::new(&format!(
-            "Unsupported NPY dtype {}",
-            dtype
-        )));
+        return Err(DecodeError::new(format!("Unsupported NPY dtype {}", dtype)));
     }
     let little = dtype.starts_with('<') || dtype.starts_with('=');
     let unsigned = dtype.contains('u');
@@ -418,7 +415,7 @@ pub(crate) fn decode_npy_single(
         .get(7)
         .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
     if major != 1 && major != 2 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Unsupported NPY version {}.{}",
             major, minor
         )));
@@ -461,7 +458,7 @@ pub(crate) fn decode_npy_single(
     let (height, width, channels): (i64, i64, i64) = match dims.len() {
         2 => (dims[0], dims[1], 1),
         3 => (dims[0], dims[1], dims[2]),
-        n => return Err(DecodeError::new(&format!("Unsupported NPY dims {}", n))),
+        n => return Err(DecodeError::new(format!("Unsupported NPY dims {}", n))),
     };
     if height < 0 || width < 0 || channels < 0 {
         return Err(DecodeError::new("Invalid NPY dimensions"));
@@ -477,7 +474,7 @@ pub(crate) fn decode_npy_single(
         && cfg!(target_endian = "little")
         && (channels == 1 || channels == 3 || channels == 4)
         && off % std::mem::align_of::<f32>() == 0
-        && (data.as_ptr() as usize + off) % std::mem::align_of::<f32>() == 0;
+        && (data.as_ptr() as usize + off).is_multiple_of(std::mem::align_of::<f32>());
 
     let (out, source_data_offset, source_stats) = if reusable_native_f32 {
         let byte_len = elems.checked_mul(4).ok_or_else(oob)?;
@@ -638,8 +635,6 @@ fn decode_npz(data: &[u8]) -> Result<NpyParsed, DecodeError> {
         })
         .unwrap_or(0);
 
-    let mut arrays = arrays;
     let (_key, parsed) = arrays.swap_remove(pick_idx);
     Ok(parsed)
 }
-

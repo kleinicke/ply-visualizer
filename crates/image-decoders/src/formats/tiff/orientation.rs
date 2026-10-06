@@ -81,4 +81,3 @@ pub(crate) fn apply_orientation<T: Copy>(
     }
     (out, out_w as u32, out_h as u32)
 }
-

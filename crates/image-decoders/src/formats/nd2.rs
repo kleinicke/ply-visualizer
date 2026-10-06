@@ -22,8 +22,9 @@
 //! lossy modes are rejected by name rather than guessed at, matching how
 //! `czi.rs` handles codecs it does not implement.
 
+use super::half::f16_to_f32;
 use super::json_value::{push_opt, to_json_string, JsonValue};
-use super::scientific_common::{f16_to_f32, get_slice, ScientificParsed};
+use super::scientific_common::{get_slice, ScientificParsed};
 use crate::DecodeError;
 use std::collections::HashMap;
 
@@ -61,7 +62,7 @@ fn mul(a: usize, b: usize) -> Result<usize, DecodeError> {
 }
 
 fn u64_to_usize(value: u64, what: &str) -> Result<usize, DecodeError> {
-    usize::try_from(value).map_err(|_| DecodeError::new(&format!("ND2 {} is too large", what)))
+    usize::try_from(value).map_err(|_| DecodeError::new(format!("ND2 {} is too large", what)))
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +188,7 @@ fn parse_lv(data: &[u8], mut offset: usize, end: usize, depth: u32) -> (Vec<(Str
             4 | 5 | 7 => match u64_le(data, offset) {
                 Ok(v) => {
                     offset += 8;
-                    Lv::Int(if value_type == 4 { v as i64 } else { v as i64 })
+                    Lv::Int(v as i64)
                 }
                 Err(_) => break,
             },
@@ -234,10 +235,7 @@ fn parse_lv(data: &[u8], mut offset: usize, end: usize, depth: u32) -> (Vec<(Str
                 offset += 12;
                 let header_bytes = offset - header_start;
                 let total = u64_to_usize(total, "metadata level length").unwrap_or(0);
-                let child_end = header_start
-                    .saturating_add(total)
-                    .min(end)
-                    .max(offset);
+                let child_end = header_start.saturating_add(total).min(end).max(offset);
                 let (children, _) = parse_lv(data, offset, child_end, depth + 1);
                 offset = child_end;
                 let _ = header_bytes;
@@ -447,7 +445,7 @@ fn chunk_payload(data: &[u8], position: u64) -> Result<&[u8], DecodeError> {
     let start = u64_to_usize(position, "chunk offset")?;
     let magic = u32_le(data, start)?;
     if magic != CHUNK_MAGIC {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Bad ND2 chunk magic 0x{:08X} at offset {}",
             magic, position
         )));
@@ -455,7 +453,7 @@ fn chunk_payload(data: &[u8], position: u64) -> Result<&[u8], DecodeError> {
     let name_length = u64_to_usize(u32_le(data, add(start, 4)?)? as u64, "chunk name length")?;
     let data_length = u64_to_usize(u64_le(data, add(start, 8)?)?, "chunk length")?;
     let payload_start = add(add(start, 16)?, name_length)?;
-    Ok(get_slice(data, payload_start, data_length, "ND2 chunk")?)
+    get_slice(data, payload_start, data_length, "ND2 chunk")
 }
 
 /// Parse the chunk map into `name -> (offset, length)`.
@@ -482,7 +480,12 @@ fn parse_chunk_map(map: &[u8]) -> HashMap<String, Chunk> {
             break;
         };
         let _ = chunk_length;
-        chunks.insert(name, Chunk { offset: chunk_offset });
+        chunks.insert(
+            name,
+            Chunk {
+                offset: chunk_offset,
+            },
+        );
         offset = name_end + 16;
     }
     chunks
@@ -650,12 +653,16 @@ fn axis_model(experiment: &Lv, frame_count: usize) -> Vec<Axis> {
         depth += 1;
     }
 
-    let declared_product: usize = declared.iter().map(|(_, size)| *size).product::<usize>().max(1);
+    let declared_product: usize = declared
+        .iter()
+        .map(|(_, size)| *size)
+        .product::<usize>()
+        .max(1);
     let mut axes: Vec<(String, usize)> = Vec::new();
     if declared_product == 0 || frame_count == 0 {
         return Vec::new();
     }
-    if frame_count % declared_product == 0 {
+    if frame_count.is_multiple_of(declared_product) {
         axes.extend(declared.iter().cloned());
         let remainder = frame_count / declared_product;
         if remainder > 1 {
@@ -777,9 +784,12 @@ pub(crate) fn decode_nd2_impl(
         .get("uiBpcInMemory")
         .and_then(Lv::as_i64)
         .unwrap_or(16) as u32;
-    let pixel_type_id = attributes.get("ePixelType").and_then(Lv::as_i64).unwrap_or(1);
+    let pixel_type_id = attributes
+        .get("ePixelType")
+        .and_then(Lv::as_i64)
+        .unwrap_or(1);
     let kind = pixel_type(bits, pixel_type_id).ok_or_else(|| {
-        DecodeError::new(&format!(
+        DecodeError::new(format!(
             "Unsupported ND2 pixel layout: {} bits, pixel type {}",
             bits, pixel_type_id
         ))
@@ -791,7 +801,7 @@ pub(crate) fn decode_nd2_impl(
     if let Some(mode) = compression {
         if mode == 0 || mode == 1 {
             let name = if mode == 0 { "lossless" } else { "lossy" };
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "Compressed ND2 is not supported yet ({} compression); only uncompressed frames decode",
                 name
             )));
@@ -903,7 +913,10 @@ pub(crate) fn decode_nd2_impl(
         let row_start = mul(row, row_stride)?;
         let target_row = mul(mul(row, width)?, output_channels)?;
         for column in 0..width {
-            let pixel_start = add(row_start, mul(mul(column, channels)?, kind.bytes_per_sample)?)?;
+            let pixel_start = add(
+                row_start,
+                mul(mul(column, channels)?, kind.bytes_per_sample)?,
+            )?;
             if is_rgb {
                 for channel in 0..3 {
                     let offset = add(pixel_start, mul(channel, kind.bytes_per_sample)?)?;
@@ -958,10 +971,7 @@ pub(crate) fn decode_nd2_impl(
         "pixelTypeName".to_string(),
         JsonValue::Str(kind.name.to_string()),
     ));
-    fields.push((
-        "frameCount".to_string(),
-        JsonValue::Num(frame_count as f64),
-    ));
+    fields.push(("frameCount".to_string(), JsonValue::Num(frame_count as f64)));
     // Surfaced rather than hidden: a run stopped mid-loop leaves frames on
     // disk that the dimension grid cannot address, and silently dropping them
     // would look like data loss.
@@ -1048,18 +1058,13 @@ pub(crate) fn decode_nd2_impl(
 /// Channel names from `ImageMetadataSeqLV|0`, where each plane's descriptor
 /// carries the probe or filter name. Falls back to positional names so the
 /// selector always has a label.
-fn channel_names(
-    chunks: &HashMap<String, Chunk>,
-    data: &[u8],
-    channels: usize,
-) -> Vec<String> {
+fn channel_names(chunks: &HashMap<String, Chunk>, data: &[u8], channels: usize) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     if let Some(chunk) = find_chunk(chunks, "ImageMetadataSeq") {
         if let Ok(payload) = chunk_payload(data, chunk.offset) {
             let tree = metadata_tree(payload);
             let root = unwrap_root(&tree, "SLxPictureMetadata");
-            if let Some(Lv::Map(planes)) = root.path(&["sPicturePlanes", "sPlaneNew"])
-            {
+            if let Some(Lv::Map(planes)) = root.path(&["sPicturePlanes", "sPlaneNew"]) {
                 for (_, plane) in planes {
                     let name = plane
                         .get("sDescription")
@@ -1084,4 +1089,3 @@ fn channel_names(
     }
     names
 }
-

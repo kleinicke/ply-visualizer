@@ -11,4 +11,3 @@ pub(crate) fn now_ms() -> f64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1_000.0
 }
-

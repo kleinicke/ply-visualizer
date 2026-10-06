@@ -114,7 +114,7 @@ fn xtension_upper(header: &Header) -> String {
 /// Removes the FIRST 'd' or 'D' character in `s`, replacing it with 'E' —
 /// matches the TS `.replace(/[dD]/, 'E')` (regex without the global flag).
 fn replace_first_dd(s: &str) -> String {
-    match s.find(|c| c == 'd' || c == 'D') {
+    match s.find(['d', 'D']) {
         Some(idx) => {
             let mut out = String::with_capacity(s.len());
             out.push_str(&s[..idx]);
@@ -301,7 +301,7 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, DecodeEr
 
         if is_image
             && naxis >= 2.0
-            && axes.get(0).copied().unwrap_or(0.0) > 0.0
+            && axes.first().copied().unwrap_or(0.0) > 0.0
             && axes.get(1).copied().unwrap_or(0.0) > 0.0
             && bitpix_supported
         {
@@ -368,25 +368,55 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, DecodeEr
             let mut out = vec![0f32; plane_pixels];
             let bpv = bytes_per_value_f as usize;
             let bitpix_i = bitpix as i64;
-            for y in 0..height {
-                let src_y = height - 1 - y;
-                for x in 0..width {
-                    let idx = src_y
-                        .checked_mul(width)
-                        .and_then(|v| v.checked_add(x))
-                        .ok_or_else(|| DecodeError::new("FITS: index overflow"))?;
-                    let byte_off = data_offset
+            // The overwhelmingly common scientific-image case is big-endian
+            // Float32 (BITPIX=-32). Validate each row once and decode contiguous
+            // chunks, rather than doing several checked-index/helper calls for every
+            // pixel. Scaling and BLANK semantics remain identical to the generic path.
+            if bitpix_i == -32 {
+                let row_bytes = width
+                    .checked_mul(4)
+                    .ok_or_else(|| DecodeError::new("FITS: row size overflow"))?;
+                for y in 0..height {
+                    let src_y = height - 1 - y;
+                    let row_start = data_offset
                         .checked_add(
-                            idx.checked_mul(bpv)
+                            src_y
+                                .checked_mul(row_bytes)
                                 .ok_or_else(|| DecodeError::new("FITS: offset overflow"))?,
                         )
                         .ok_or_else(|| DecodeError::new("FITS: offset overflow"))?;
-                    let stored = read_stored(data, byte_off, bitpix_i)?;
-                    let value = match blank {
-                        Some(b) if stored == b => f32::NAN,
-                        _ => (zero + scale * stored) as f32,
-                    };
-                    out[y * width + x] = value;
+                    let row = get_slice(data, row_start, row_bytes, "FITS")?;
+                    let out_row = &mut out[y * width..(y + 1) * width];
+                    for (dst, bytes) in out_row.iter_mut().zip(row.chunks_exact(4)) {
+                        let stored =
+                            f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64;
+                        *dst = match blank {
+                            Some(b) if stored == b => f32::NAN,
+                            _ => (zero + scale * stored) as f32,
+                        };
+                    }
+                }
+            } else {
+                for y in 0..height {
+                    let src_y = height - 1 - y;
+                    for x in 0..width {
+                        let idx = src_y
+                            .checked_mul(width)
+                            .and_then(|v| v.checked_add(x))
+                            .ok_or_else(|| DecodeError::new("FITS: index overflow"))?;
+                        let byte_off = data_offset
+                            .checked_add(
+                                idx.checked_mul(bpv)
+                                    .ok_or_else(|| DecodeError::new("FITS: offset overflow"))?,
+                            )
+                            .ok_or_else(|| DecodeError::new("FITS: offset overflow"))?;
+                        let stored = read_stored(data, byte_off, bitpix_i)?;
+                        let value = match blank {
+                            Some(b) if stored == b => f32::NAN,
+                            _ => (zero + scale * stored) as f32,
+                        };
+                        out[y * width + x] = value;
+                    }
                 }
             }
 
@@ -405,12 +435,12 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, DecodeEr
             let object_val = header
                 .get("OBJECT")
                 .filter(|v| truthy(Some(v)))
-                .map(|v| header_value_to_json(v));
+                .map(header_value_to_json);
             push_opt(&mut fields, "object", object_val);
             let unit_val = header
                 .get("BUNIT")
                 .filter(|v| truthy(Some(v)))
-                .map(|v| header_value_to_json(v));
+                .map(header_value_to_json);
             push_opt(&mut fields, "unit", unit_val);
             fields.push((
                 "firstPlaneOnly".to_string(),
@@ -458,10 +488,9 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, DecodeEr
     } else {
         "This file holds tabular or header-only data rather than an image."
     };
-    Err(DecodeError::new(&format!(
+    Err(DecodeError::new(format!(
         "FITS file contains no 2D image HDU (found {}). {}",
         hdu_kinds.join(", "),
         explanation
     )))
 }
-

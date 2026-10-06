@@ -1,11 +1,13 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Project one OpenCV-coordinate ray. Returns
- * `[valid, converged, iterations, u, v]`.
+ * Unproject one pixel to a unit OpenCV-coordinate ray. Returns
+ * `[valid, converged, iterations, x, y, z]`.
  */
-export function camera_project(camera_model: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array, x: number, y: number, z: number): Float64Array;
+export function camera_unproject(camera_model: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array, u: number, v: number): Float64Array;
+export function project_depth_inspection(data: Float32Array, width: number, height: number, kind: string, camera_model: string, convention: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array): DepthProjectResult;
 export function normalize_depth_fast(data: Float32Array, width: number, height: number, kind: string, unit: string, scale: number, depth_scale: number, depth_bias: number, fx: number, baseline: number, disparity_offset: number, has_clamp_min: boolean, clamp_min: number, has_clamp_max: boolean, clamp_max: number): NormalizeDepthResult;
+export function project_depth_fast(data: Float32Array, width: number, height: number, kind: string, camera_model: string, convention: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array): DepthProjectResult;
 /**
  * Project selected 3D points after applying a row-major 4x4 transform.
  *
@@ -15,13 +17,11 @@ export function normalize_depth_fast(data: Float32Array, width: number, height: 
  * optional pre-distortion calibration-domain guard (use infinity to disable).
  */
 export function camera_project_points_indexed(camera_model: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array, positions: Float32Array, indices: Uint32Array, transform: Float64Array, max_normalized_x: number, max_normalized_y: number): Float32Array;
-export function project_depth_inspection(data: Float32Array, width: number, height: number, kind: string, camera_model: string, convention: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array): DepthProjectResult;
-export function project_depth_fast(data: Float32Array, width: number, height: number, kind: string, camera_model: string, convention: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array): DepthProjectResult;
 /**
- * Unproject one pixel to a unit OpenCV-coordinate ray. Returns
- * `[valid, converged, iterations, x, y, z]`.
+ * Project one OpenCV-coordinate ray. Returns
+ * `[valid, converged, iterations, u, v]`.
  */
-export function camera_unproject(camera_model: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array, u: number, v: number): Float64Array;
+export function camera_project(camera_model: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array, x: number, y: number, z: number): Float64Array;
 /**
  * One horizontal band of an image, projected with the *whole* image's depth
  * range and row offset.
@@ -42,15 +42,15 @@ export function decode_colmap_depth(bytes: Uint8Array): Float32Array;
  * PFM raw samples in top-left raster order; caller explicitly supplies value scale.
  */
 export function decode_depth_pfm(bytes: Uint8Array): DepthRaster;
-export function tiff_page_count(data: Uint8Array): number;
 export function decode_tiff_page_fast(data: Uint8Array, page_index: number): TiffResult;
-export function decode_tiff_fast(data: Uint8Array): TiffResult;
 export function decode_tiff(data: Uint8Array): TiffResult;
+export function decode_png_samples_fast(data: Uint8Array): PngResult;
 export function extract_exif_tags(data: Uint8Array): string;
 export function decode_tiff_page(data: Uint8Array, page_index: number): TiffResult;
 export function decode_exr_fast(data: Uint8Array): ExrResult;
-export function decode_png_samples_fast(data: Uint8Array): PngResult;
+export function tiff_page_count(data: Uint8Array): number;
 export function decode_png16_fast(data: Uint8Array): PngResult;
+export function decode_tiff_fast(data: Uint8Array): TiffResult;
 export class DepthProjectResult {
   private constructor();
   free(): void;

@@ -284,6 +284,7 @@ dependencies = [
  "tiff",
  "weezl",
  "wide",
+ "zune-inflate",
  "zune-jpeg",
 ]
 

@@ -26,8 +26,9 @@
 //! (histograms and similar), keyed to the base file's block IDs, and carry no
 //! pixels the viewer needs.
 
+use super::half::f16_to_f32;
 use super::json_value::{push_opt, to_json_string, JsonValue};
-use super::scientific_common::{f16_to_f32, get_slice, ScientificParsed};
+use super::scientific_common::{get_slice, ScientificParsed};
 use crate::DecodeError;
 use std::collections::HashMap;
 
@@ -57,7 +58,7 @@ fn mul(a: usize, b: usize) -> Result<usize, DecodeError> {
 }
 
 fn u64_to_usize(value: u64, what: &str) -> Result<usize, DecodeError> {
-    usize::try_from(value).map_err(|_| DecodeError::new(&format!("LIF {} is too large", what)))
+    usize::try_from(value).map_err(|_| DecodeError::new(format!("LIF {} is too large", what)))
 }
 
 /// Read `units` UTF-16LE code units as a `String`.
@@ -90,11 +91,14 @@ impl Node {
     }
 
     fn number(&self, key: &str) -> Option<f64> {
-        self.attribute(key).and_then(|v| v.trim().parse::<f64>().ok())
+        self.attribute(key)
+            .and_then(|v| v.trim().parse::<f64>().ok())
     }
 
     fn child(&self, name: &str) -> Option<&Node> {
-        self.children.iter().find(|c| c.name.eq_ignore_ascii_case(name))
+        self.children
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(name))
     }
 
     /// Follow a chain of single child names.
@@ -206,9 +210,7 @@ fn parse_xml(text: &str) -> Option<Node> {
         }
         let self_closing = tag.ends_with('/');
         let body = tag.trim_end_matches('/');
-        let name_end = body
-            .find(|c: char| c.is_whitespace())
-            .unwrap_or(body.len());
+        let name_end = body.find(|c: char| c.is_whitespace()).unwrap_or(body.len());
         let name = body[..name_end].to_string();
         let attributes = parse_attributes(&body[name_end..]);
         let node = Node {
@@ -304,7 +306,10 @@ fn collect_series(node: &Node, prefix: &str, out: &mut Vec<Series>) {
 
 fn build_series(element: &Node, image: &Node, path: &str) -> Option<Series> {
     let description = image.child("ImageDescription")?;
-    let memory_block = element.child("Memory")?.attribute("MemoryBlockID")?.to_string();
+    let memory_block = element
+        .child("Memory")?
+        .attribute("MemoryBlockID")?
+        .to_string();
 
     let mut dimensions = Vec::new();
     if let Some(dims) = description.child("Dimensions") {
@@ -425,7 +430,8 @@ pub(crate) fn decode_lif_impl(
     }
     let xml_units = u64_to_usize(u32_le(data, 9)? as u64, "header length")?;
     let xml_text = utf16_at(data, 13, xml_units)?;
-    let root = parse_xml(&xml_text).ok_or_else(|| DecodeError::new("LIF header XML is unreadable"))?;
+    let root =
+        parse_xml(&xml_text).ok_or_else(|| DecodeError::new("LIF header XML is unreadable"))?;
 
     // The container version decides the width of every memory block's size
     // field: version 1 wrote a u32, version 2 a u64. Guessing wrong desynchronises
@@ -440,7 +446,11 @@ pub(crate) fn decode_lif_impl(
         }
         // [u32 testcode][u32 length][u8 0x2A][size][u8 0x2A][u32 name_units][name]
         let mut offset = add(cursor, 8)?;
-        if *get_slice(data, offset, 1, "LIF block")?.first().unwrap_or(&0) != MARKER {
+        if *get_slice(data, offset, 1, "LIF block")?
+            .first()
+            .unwrap_or(&0)
+            != MARKER
+        {
             break;
         }
         offset = add(offset, 1)?;
@@ -453,7 +463,11 @@ pub(crate) fn decode_lif_impl(
             offset = add(offset, 4)?;
             value
         };
-        if *get_slice(data, offset, 1, "LIF block")?.first().unwrap_or(&0) != MARKER {
+        if *get_slice(data, offset, 1, "LIF block")?
+            .first()
+            .unwrap_or(&0)
+            != MARKER
+        {
             break;
         }
         offset = add(offset, 1)?;
@@ -529,6 +543,8 @@ pub(crate) fn decode_lif_impl(
     }
     // Leica records significant bits (12-bit cameras are common); the stored
     // sample is the next whole number of bytes up.
+    // Resolution comes from metadata and may reach usize::MAX on 32-bit targets.
+    #[allow(clippy::manual_div_ceil)]
     let bytes_per_sample = ((resolution as usize) + 7) / 8;
     let is_float = series.channels[0].data_type == 1;
     if series
@@ -548,7 +564,7 @@ pub(crate) fn decode_lif_impl(
             (true, 2) => (3, 1.0, "float16", 16),
             (true, 4) => (3, 1.0, "float32", 32),
             _ => {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "Unsupported LIF channel format: {} bits, DataType {}",
                     resolution, series.channels[0].data_type
                 )))
@@ -666,21 +682,22 @@ pub(crate) fn decode_lif_impl(
         selectors.push(("C".to_string(), channel_count, requested_channel, labels));
     }
 
-    let mut fields: Vec<(String, JsonValue)> = Vec::new();
-    fields.push(("format".to_string(), JsonValue::Str("LIF".to_string())));
-    fields.push((
-        "pixelTypeName".to_string(),
-        JsonValue::Str(source_numeric_type.to_string()),
-    ));
-    fields.push((
-        "seriesName".to_string(),
-        JsonValue::Str(series.name.clone()),
-    ));
-    fields.push((
-        "seriesCount".to_string(),
-        JsonValue::Num(series_count as f64),
-    ));
-    if resolution % 8 != 0 {
+    let mut fields: Vec<(String, JsonValue)> = vec![
+        ("format".to_string(), JsonValue::Str("LIF".to_string())),
+        (
+            "pixelTypeName".to_string(),
+            JsonValue::Str(source_numeric_type.to_string()),
+        ),
+        (
+            "seriesName".to_string(),
+            JsonValue::Str(series.name.clone()),
+        ),
+        (
+            "seriesCount".to_string(),
+            JsonValue::Num(series_count as f64),
+        ),
+    ];
+    if !resolution.is_multiple_of(8) {
         // A 12-bit camera stored in 16-bit words: worth surfacing, because it
         // explains why the data never reaches the type maximum.
         fields.push((
@@ -701,7 +718,12 @@ pub(crate) fn decode_lif_impl(
     if !channel_names.is_empty() {
         fields.push((
             "channelNames".to_string(),
-            JsonValue::Arr(channel_names.iter().map(|n| JsonValue::Str(n.clone())).collect()),
+            JsonValue::Arr(
+                channel_names
+                    .iter()
+                    .map(|n| JsonValue::Str(n.clone()))
+                    .collect(),
+            ),
         ));
     }
     fields.push((
@@ -769,5 +791,3 @@ fn read_sample(
         _ => return Err(DecodeError::new("Unsupported LIF sample width")),
     })
 }
-
-

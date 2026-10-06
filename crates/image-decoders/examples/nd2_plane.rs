@@ -13,8 +13,19 @@ fn main() {
     let sum: f64 = data.iter().map(|v| *v as f64).sum();
     let mut mn = f32::INFINITY;
     let mut mx = f32::NEG_INFINITY;
-    for v in &data { mn = mn.min(*v); mx = mx.max(*v); }
-    println!("{}x{}x{} n={} sum={:.1} min={} max={} first8={:?}",
-        w, h, c, data.len(), sum, mn, mx, &data[..8.min(data.len())]);
+    for v in &data {
+        mn = mn.min(*v);
+        mx = mx.max(*v);
+    }
+    println!(
+        "{}x{}x{} n={} sum={:.1} min={} max={} first8={:?}",
+        w,
+        h,
+        c,
+        data.len(),
+        sum,
+        mn,
+        mx,
+        &data[..8.min(data.len())]
+    );
 }
-

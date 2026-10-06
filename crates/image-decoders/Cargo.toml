@@ -9,8 +9,40 @@ keywords = ["image", "decoder", "scientific", "medical", "tiff"]
 categories = ["multimedia::images", "parser-implementations"]
 readme = "README.md"
 
+[[example]]
+name = "czi_probe"
+required-features = ["czi"]
+
+[[example]]
+name = "jxl_probe"
+required-features = ["jxl"]
+
+[[example]]
+name = "jxr_probe"
+required-features = ["jpegxr"]
+
+[[example]]
+name = "lif_plane"
+required-features = ["lif"]
+
+[[example]]
+name = "lif_survey"
+required-features = ["lif"]
+
+[[example]]
+name = "nd2_plane"
+required-features = ["nd2"]
+
+[[example]]
+name = "nd2_survey"
+required-features = ["nd2"]
+
 [features]
 default = ["all-formats"]
+
+# The CORE format set: every container parser, and the codecs that are either
+# small or common enough that a file is likely to need them. This is what
+# `wasm/tiff-decoder` builds, and what every image open downloads.
 all-formats = [
     "tiff",
     "exr",
@@ -18,6 +50,7 @@ all-formats = [
     "hdr",
     "jpeg",
     "pfm",
+    "sgi",
     "netpbm",
     "npy",
     "fits",
@@ -26,37 +59,100 @@ all-formats = [
     "czi",
     "nd2",
     "lif",
+    "sdt",
     "demosaic",
 ]
-tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt"]
-exr = ["dep:exr"]
+
+# The HEAVY codecs, deliberately excluded from `all-formats`.
+#
+# Each is a codestream codec — compressed bytes in, raw samples out — that
+# carries no container knowledge, and each is large relative to how often a
+# real file uses one. Together they are roughly 620 KiB of WebAssembly that a
+# plain LZW or Deflate TIFF would otherwise pay for on every open. They are
+# built into the separate `wasm/codec-decoder` module instead, which the
+# webview fetches only when a file's own header declares one of them.
+#
+# Because they are codestream codecs, ONE module serves every container: the
+# same JPEG XR decoder answers for TIFF compression 34934, a CZI subblock and
+# a standalone .jxr, and the same JPEG 2000 decoder answers for TIFF 34712 and
+# DICOM transfer syntax 1.2.840.10008.1.2.4.90.
+heavy-codecs = [
+    "codec-jpeg2000",
+    "codec-jpegxr",
+    "codec-jpegls",
+    "codec-lerc",
+    "codec-lzma",
+    "codec-webp",
+]
+codec-jpeg2000 = ["dep:dicom-toolkit-jpeg2000"]
+codec-jpegxr = ["dep:jpegxr-wasm"]
+# JPEG-LS and lossless JPEG, used only by DICOM transfer syntaxes.
+codec-jpegls = ["dep:pure_jpegls", "dep:pure_jpegli"]
+codec-lerc = ["dep:lerc-reader"]
+codec-lzma = ["dep:xz4rust"]
+codec-webp = ["tiff?/webp"]
+
+tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:png"]
+exr = ["dep:exr", "dep:zune-inflate"]
 png = ["dep:png"]
 hdr = []
+# Standalone `.jxr`/`.wdp`/`.hdp` files. The decoder itself is `codec-jpegxr`,
+# so this only adds the pixel-format mapping a bare file needs.
+jpegxr = ["codec-jpegxr"]
+# Standalone `.jp2`/`.jpf`/`.jpx`/`.j2k`/`.j2c`/`.jpc` files. As with `jpegxr`,
+# the decoder itself is the heavy `codec-jpeg2000`; this only adds the mapping
+# a bare file needs. Sentinel-2 bands are the reason it exists.
+jpeg2000 = ["codec-jpeg2000"]
+# Deliberately NOT in `all-formats`: jxl-rs is large enough that including it
+# would grow the main WebAssembly module by more than a megabyte, which every
+# TIFF open would pay for. `wasm/jxl-decoder` builds this feature on its own.
+jxl = ["dep:jxl"]
 jpeg = ["dep:zune-jpeg"]
+sgi = []
 pfm = []
 netpbm = []
 npy = []
 fits = []
 netcdf = []
-dicom = ["dep:dicom-object", "dep:dicom-pixeldata"]
-czi = []
+# `jpeg` is not optional here: DICOM's JPEG Baseline transfer syntax is decoded
+# by the same zune-jpeg the TIFF path uses, rather than by a second JPEG crate.
+dicom = ["jpeg", "dep:flate2"]
+czi = ["dep:ruzstd", "dep:weezl", "jpeg"]
 nd2 = []
 lif = []
+sdt = ["dep:flate2"]
 demosaic = []
 
 [dependencies]
-tiff = { version = "0.11.3", features = ["webp"], optional = true }
+# The crate's own defaults (deflate, fax, jpeg, lzw) are the common codecs and
+# stay on. `webp` is NOT: image-webp is 129 KiB and TIFF compression 34927 is
+# rare, so `codec-webp` turns it on for the codec module only.
+tiff = { version = "0.11.3", features = ["deflate", "fax", "jpeg", "lzw"], default-features = false, optional = true }
 exr = { version = "1.74", default-features = false, optional = true }
+zune-inflate = { version = "0.2.54", default-features = false, features = ["zlib"], optional = true }
 png = { version = "0.17", default-features = false, optional = true }
 ruzstd = { version = "0.8", optional = true }
+xz4rust = { version = "0.2.1", default-features = false, features = ["alloc", "crc64", "delta", "std"], optional = true }
+# LERC decoding only; `default-features = false` drops its ndarray dependency.
+lerc-reader = { version = "0.5", default-features = false, optional = true }
+# JPEG 2000 at NATIVE bit depth (`decode_native`). The sibling `pdfluent-jpeg2000`
+# shares the codestream reader but its `decode()` flattens 16-bit samples to 8,
+# which is wrong for scientific data — this is the variant to use.
+dicom-toolkit-jpeg2000 = { version = "0.5", optional = true }
+# JPEG-LS and lossless JPEG for DICOM. Both are zero-dependency and touch no
+# filesystem, which matters: the pure-Rust JPEG XR decoder does, and that is
+# exactly why JPEG XR cannot be supported here.
+# Vendored at crates/jpegxr because the published crate decodes only through a
+# temporary file, which WebAssembly has nowhere to put. See its VENDORING.md.
+jpegxr-wasm = { path = "../jpegxr", optional = true }
+jxl = { version = "0.6", optional = true }
+pure_jpegls = { version = "2.0", optional = true }
+pure_jpegli = { version = "2.0", optional = true }
 weezl = { version = "0.1.12", optional = true }
 flate2 = { version = "1.1", optional = true }
 zune-jpeg = { version = "0.5", optional = true }
 hayro-ccitt = { version = "0.3", optional = true }
 wide = "0.7"
-dicom-object = { version = "0.10", default-features = false, optional = true }
-dicom-pixeldata = { version = "0.10", default-features = false, features = ["native"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
-

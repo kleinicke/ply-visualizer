@@ -37,6 +37,8 @@ mod formats;
 mod pipeline;
 #[cfg(any(feature = "tiff", feature = "exr", feature = "png", feature = "hdr"))]
 mod time;
+#[cfg(feature = "tiff")]
+pub use formats::tiff::region::{TiffRegion, TiffRegionResult};
 pub use pipeline::stats;
 
 #[cfg(feature = "czi")]
@@ -63,6 +65,8 @@ use formats::npy::{decode_npy_display_impl, decode_npy_impl};
 use formats::pfm::decode_pfm_impl;
 #[cfg(feature = "png")]
 use formats::png::decode_png16_impl;
+#[cfg(feature = "sdt")]
+use formats::sdt::decode_sdt_impl;
 #[cfg(feature = "tiff")]
 use formats::tiff::{decode_tiff_impl, tags::extract_bare_ifd_tags_json};
 
@@ -112,6 +116,15 @@ pub struct TiffResult {
     // every page result so restoring directly to a later page still has the
     // dataset's C/Z/T semantics without decoding page zero first.
     ome_xml: String,
+    // GeoTIFF georeferencing (34735/34736/34737 unpacked, plus the model
+    // transform from 33550+33922 or 34264) as JSON, or empty for a TIFF that
+    // carries none. Computed per page like `ome_xml` above, because a
+    // multi-page GeoTIFF's pages can sit at different resolutions.
+    geo_json: String,
+    // What the file's other images ARE — separate pages, pyramid overviews, or
+    // masks — as JSON. See formats::tiff::pages. Whole-file, not per-page, so
+    // every page result carries the same value.
+    page_directory_json: String,
 }
 
 pub struct ExrResult {
@@ -135,6 +148,18 @@ pub struct ExrResult {
     // plus the crate's generic "other"/custom-attribute bags), in the same
     // {"tag","name","group","value"} shape as TiffResult.all_tags_json.
     all_tags_json: String,
+}
+
+/// Compressed blocks and metadata for the guarded parallel EXR ZIP16 path.
+pub struct ExrZipPlan {
+    pub width: u32,
+    pub height: u32,
+    pub data_y: i32,
+    pub channel_name: String,
+    pub compressed: Vec<u8>,
+    pub counts: Vec<u32>,
+    pub y_coordinates: Vec<i32>,
+    pub all_tags_json: String,
 }
 
 pub struct PngResult {
@@ -339,7 +364,7 @@ impl DecodedArray {
     /// reported than answered with an empty array.
     fn claim(&mut self, method: &str) -> Result<(), DecodeError> {
         if self.taken {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "DecodedArray::{method} called more than once. The decoded samples are \
                  moved out on the first call, not copied. Take them once and reuse that \
                  array (media/modules/wasm-decoders.ts does this for every format)."
@@ -363,17 +388,12 @@ impl DecodedArray {
     /// mode, and their large RGB files showed that an unconditional pass was
     /// pure first-paint overhead. Their processors request Rust-backed stats
     /// lazily if the visualization mode changes.
-    #[cfg(any(
-        feature = "pfm",
-        feature = "netpbm",
-        feature = "npy",
-        feature = "fits",
-        feature = "netcdf",
-        feature = "dicom",
-        feature = "czi",
-        feature = "nd2",
-        feature = "lif"
-    ))]
+    // Deliberately NOT gated on a list of features. Nearly every decoder ends
+    // by calling this, the list went stale three times as formats moved
+    // between builds, and each time the symptom was a feature combination that
+    // simply did not compile. `allow(dead_code)` costs nothing here — the
+    // linker drops it from a build that has no caller.
+    #[allow(dead_code)]
     fn finalize_stats(mut self) -> Self {
         let stats = match self.sample_kind {
             1 => pipeline::stats::compute_image_range_uint(
@@ -402,6 +422,7 @@ impl DecodedArray {
         self
     }
 
+    #[allow(dead_code)]
     fn maybe_finalize_stats(self, compute_stats: bool) -> Self {
         if compute_stats {
             self.finalize_stats()
@@ -421,12 +442,16 @@ impl DecodedArray {
 }
 
 #[cfg(any(
+    feature = "jpeg2000",
+    feature = "jpegxr",
+    feature = "jxl",
     feature = "fits",
     feature = "netcdf",
     feature = "dicom",
     feature = "czi",
     feature = "nd2",
-    feature = "lif"
+    feature = "lif",
+    feature = "sdt"
 ))]
 impl From<formats::scientific_common::ScientificParsed> for DecodedArray {
     fn from(p: formats::scientific_common::ScientificParsed) -> Self {
@@ -508,17 +533,58 @@ impl JpegResult {
 /// - Pixel-inspector readouts on lossy JPEG images can therefore differ by 1
 ///   between builds. For lossy data there is no single "correct" stored value to
 ///   be off by; quantitative work should not be reading lossy JPEG anyway.
-/// - `test/goldens/external/dicom-fixture-external-0002-dcm.json` was captured
-///   before simd128 was enabled and so fails against current builds. Re-capturing
-///   it is a decision to accept IDCT variance, not a routine refresh.
+/// - `test/goldens/external/dicom-fixture-external-0002-dcm.json` has moved
+///   when SIMD was enabled and again when DICOM JPEG Baseline was switched to
+///   this shared decoder. Re-capturing it is a decision to accept IDCT
+///   variance, not a routine refresh.
 #[cfg(feature = "jpeg")]
 pub fn decode_jpeg_fast(data: &[u8]) -> Result<JpegResult, DecodeError> {
+    decode_jpeg_impl(data, None)
+}
+
+/// `decode_jpeg_fast`, but able to pin the output colorspace.
+///
+/// zune-jpeg's default expands a single-component (greyscale) JPEG to three
+/// RGB channels. That suits the callers that hand the result straight to a
+/// canvas, but not DICOM: a MONOCHROME2 dataset declares one sample per pixel,
+/// and three would disagree with every other tag in the file. Passing the
+/// dataset's own SamplesPerPixel keeps the decode honest to the container.
+#[cfg(feature = "jpeg")]
+pub(crate) fn decode_jpeg_with_channels(
+    data: &[u8],
+    channels: u32,
+) -> Result<JpegResult, DecodeError> {
+    let colorspace = match channels {
+        1 => zune_jpeg::zune_core::colorspace::ColorSpace::Luma,
+        3 => zune_jpeg::zune_core::colorspace::ColorSpace::RGB,
+        _ => {
+            return Err(DecodeError::new(format!(
+                "JPEG: {} samples per pixel is not a baseline JPEG output",
+                channels
+            )))
+        }
+    };
+    decode_jpeg_impl(data, Some(colorspace))
+}
+
+#[cfg(feature = "jpeg")]
+fn decode_jpeg_impl(
+    data: &[u8],
+    colorspace: Option<zune_jpeg::zune_core::colorspace::ColorSpace>,
+) -> Result<JpegResult, DecodeError> {
     use zune_jpeg::JpegDecoder;
 
-    let mut decoder = JpegDecoder::new(Cursor::new(data));
+    let mut decoder = match colorspace {
+        Some(colorspace) => JpegDecoder::new_with_options(
+            Cursor::new(data),
+            zune_jpeg::zune_core::options::DecoderOptions::default()
+                .jpeg_set_out_colorspace(colorspace),
+        ),
+        None => JpegDecoder::new(Cursor::new(data)),
+    };
     let pixels = decoder
         .decode()
-        .map_err(|e| DecodeError::new(&format!("JPEG decode failed: {:?}", e)))?;
+        .map_err(|e| DecodeError::new(format!("JPEG decode failed: {:?}", e)))?;
     let info = decoder
         .info()
         .ok_or_else(|| DecodeError::new("JPEG: missing image info"))?;
@@ -677,6 +743,42 @@ impl TiffResult {
         self.sample_format
     }
 
+    /// JavaScript carrier used for the decoded samples.
+    ///
+    /// This mirrors `DecodedArray::sample_kind`: 0 = f32, 1 = u8, and
+    /// 3 = little-endian u16 samples packed in a byte vector. TIFF keeps
+    /// signed, floating-point, and wider-than-16-bit samples on the existing
+    /// f32 path because the renderer needs their signed/range semantics.
+    pub fn sample_kind(&self) -> u32 {
+        if self.sample_format == 1 && !self.data.is_empty() {
+            if self.bits_per_sample <= 8 {
+                return 1;
+            }
+            if self.bits_per_sample <= 16 {
+                return 3;
+            }
+        }
+        0
+    }
+
+    pub fn data_len(&self) -> usize {
+        match self.sample_kind() {
+            1 => self.data.len(),
+            3 => self.data.len() / 2,
+            _ if !self.data_f32.is_empty() => self.data_f32.len(),
+            _ => {
+                let storage_bytes = match self.bits_per_sample {
+                    0 => return 0,
+                    b if b <= 8 => 1usize,
+                    b if b <= 16 => 2,
+                    b if b <= 32 => 4,
+                    _ => 8,
+                };
+                self.data.len() / storage_bytes
+            }
+        }
+    }
+
     pub fn min_value(&self) -> f64 {
         self.min_value
     }
@@ -761,6 +863,14 @@ impl TiffResult {
         self.all_tags_json.clone()
     }
 
+    pub fn geo_json(&self) -> String {
+        self.geo_json.clone()
+    }
+
+    pub fn page_directory_json(&self) -> String {
+        self.page_directory_json.clone()
+    }
+
     /// Get raw data as bytes (for transferring to JS)
     pub fn get_data_bytes(&self) -> Vec<u8> {
         if self.data.is_empty() && !self.data_f32.is_empty() {
@@ -835,6 +945,13 @@ impl TiffResult {
         }
         self.get_data_as_f32()
     }
+
+    /// Move the compact unsigned carrier out without widening every sample to
+    /// f32. For `sample_kind == 3` the returned bytes are little-endian u16s;
+    /// JavaScript reinterprets the same ArrayBuffer as a `Uint16Array`.
+    pub fn take_data_as_u8(&mut self) -> Vec<u8> {
+        mem::take(&mut self.data)
+    }
 }
 
 /// Decode a TIFF file from an ArrayBuffer
@@ -878,15 +995,201 @@ pub fn cfa_safe_bytes(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 pub fn tiff_page_count(data: &[u8]) -> Result<u32, DecodeError> {
     let bytes = cfa_safe_bytes(data);
     let mut decoder = Decoder::new(Cursor::new(bytes.as_ref()))
-        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Failed to create decoder: {}", e)))?;
     let mut count = 1u32;
     while decoder.more_images() {
         decoder
             .next_image()
-            .map_err(|e| DecodeError::new(&format!("Failed to enumerate TIFF pages: {}", e)))?;
+            .map_err(|e| DecodeError::new(format!("Failed to enumerate TIFF pages: {}", e)))?;
         count = count.saturating_add(1);
     }
     Ok(count)
+}
+
+/// Classify every image in a TIFF's main IFD chain: which are pages of their
+/// own, which are pyramid overviews of an earlier page, which are masks.
+/// Reads headers only. Returns "" for a file with no readable directory.
+#[cfg(feature = "tiff")]
+pub fn tiff_page_directory_json(data: &[u8]) -> String {
+    formats::tiff::pages::page_directory_json(data)
+}
+
+/// A rectangle of one page of a TIFF, decoded on its own.
+///
+/// The cost of this follows the rectangle, not the image: only the strips or
+/// tiles the rectangle touches are read. That is what lets a viewer show a
+/// gigapixel scene at full resolution — it never decodes more than a window's
+/// worth — and what makes an exact pixel readout affordable while a reduced
+/// pyramid level is on screen.
+///
+/// Returns an error for layouts that are decoded whole (palette, YCbCr, CFA,
+/// planar, rotated, sub-byte samples); callers fall back to the page decode.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_region(
+    data: &[u8],
+    page_index: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<formats::tiff::region::TiffRegionResult, DecodeError> {
+    let plan = formats::tiff::float_strip_plan_for_page(data, page_index).ok_or_else(|| {
+        DecodeError::new("Region decode: this file's layout is decoded as a whole image")
+    })?;
+    formats::tiff::region::decode_region(
+        data,
+        &plan,
+        formats::tiff::region::TiffRegion {
+            x,
+            y,
+            width,
+            height,
+        },
+    )
+}
+
+/// A bounded preview is available for large single-page scalar float TIFFs.
+/// Keep this conservative: region decoding must preserve the native samples.
+#[cfg(feature = "tiff")]
+pub fn tiff_preview_reduction(data: &[u8]) -> u32 {
+    let Some(plan) = formats::tiff::float_strip_plan_for(data) else {
+        return 0;
+    };
+    if plan.width as u64 * plan.height as u64 <= 130_000_000
+        || plan.channels != 1
+        || plan.sample_format != 3
+        || plan.bits_per_sample != 32
+        || !formats::tiff::region::region_decode_supported(&plan)
+        || tiff_page_count(data).ok() != Some(1)
+    {
+        return 0;
+    }
+    let block_width = if plan.is_tiled() {
+        plan.tile_width
+    } else {
+        plan.width
+    };
+    let block_height = if plan.is_tiled() {
+        plan.tile_length
+    } else {
+        plan.rows_per_strip
+    };
+    // A stored block is the minimum allocation even for a one-pixel request.
+    if block_width as u64 * block_height as u64 > 8_000_000 {
+        return 0;
+    }
+    let mut reduction = 2;
+    while plan.width.div_ceil(reduction) > 4096 || plan.height.div_ceil(reduction) > 4096 {
+        reduction *= 2;
+    }
+    reduction
+}
+
+/// Generate a nearest-sample overview without allocating the full raster.
+/// Full-image finite min/max are accumulated while each stored block is read
+/// once. The original file remains authoritative for region/picker requests.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
+    use formats::tiff::region::{decode_region, TiffRegion};
+    let reduction = tiff_preview_reduction(data);
+    if reduction == 0 {
+        return Err(DecodeError::new("TIFF has no bounded preview route"));
+    }
+    let plan = formats::tiff::float_strip_plan_for(data).unwrap();
+    let width = plan.width.div_ceil(reduction);
+    let height = plan.height.div_ceil(reduction);
+    let mut pixels = vec![0.0f32; width as usize * height as usize];
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let bw = if plan.is_tiled() {
+        plan.tile_width
+    } else {
+        plan.width
+    };
+    let bh = if plan.is_tiled() {
+        plan.tile_length
+    } else {
+        plan.rows_per_strip
+    }
+    .max(1);
+    for y in (0..plan.height).step_by(bh as usize) {
+        for x in (0..plan.width).step_by(bw as usize) {
+            let region = decode_region(
+                data,
+                &plan,
+                TiffRegion {
+                    x,
+                    y,
+                    width: bw,
+                    height: bh,
+                },
+            )?;
+            for &value in &region.data_f32 {
+                if value.is_finite() {
+                    min = min.min(value as f64);
+                    max = max.max(value as f64);
+                }
+            }
+            // Grid anchored at source pixel (0,0), including partial edge blocks.
+            for sy in ((y.div_ceil(reduction) * reduction)..y + region.region.height)
+                .step_by(reduction as usize)
+            {
+                for sx in ((x.div_ceil(reduction) * reduction)..x + region.region.width)
+                    .step_by(reduction as usize)
+                {
+                    pixels[(sy / reduction * width + sx / reduction) as usize] =
+                        region.data_f32[((sy - y) * region.region.width + sx - x) as usize];
+                }
+            }
+        }
+    }
+    let meta = formats::tiff::strip_metadata_for(data)?;
+    let directory = format!(
+        "{},{{\"index\":1,\"width\":{},\"height\":{},\"samplesPerPixel\":1,\"kind\":\"overview\",\"parent\":0,\"reduction\":{},\"blockWidth\":{},\"blockHeight\":{},\"generated\":true}}]",
+        meta.page_directory_json.trim_end().trim_end_matches(']'), width, height, reduction, width, height
+    );
+    Ok(TiffResult {
+        width,
+        height,
+        channels: 1,
+        bits_per_sample: 32,
+        sample_format: 3,
+        compression: plan.compression,
+        predictor: plan.predictor,
+        photometric_interpretation: 1,
+        planar_configuration: 1,
+        rows_per_strip: plan.rows_per_strip,
+        strip_count: plan.offsets.len() as u32,
+        strip_byte_count_total: plan.counts.iter().sum(),
+        strip_byte_count_max: *plan.counts.iter().max().unwrap_or(&0),
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        tile_count: 0,
+        direct_decode: false,
+        data: Vec::new(),
+        data_f32: pixels,
+        min_value: min,
+        max_value: max,
+        timing_metadata_ms: 0.0,
+        timing_decode_ms: 0.0,
+        timing_convert_ms: 0.0,
+        timing_stats_ms: 0.0,
+        timing_pack_ms: 0.0,
+        all_tags_json: meta.all_tags_json,
+        ome_xml: meta.ome_xml,
+        geo_json: meta.geo_json,
+        page_directory_json: directory,
+    })
+}
+
+/// Whether `decode_tiff_region` can serve this page at all, without decoding.
+/// Lets a caller decide between a region strategy and the whole-image one
+/// before committing to either.
+#[cfg(feature = "tiff")]
+pub fn tiff_region_decode_available(data: &[u8], page_index: u32) -> bool {
+    formats::tiff::float_strip_plan_for_page(data, page_index)
+        .map(|plan| formats::tiff::region::region_decode_supported(&plan))
+        .unwrap_or(false)
 }
 
 /// Decode an arbitrary zero-based TIFF page and compute min/max statistics.
@@ -1014,6 +1317,37 @@ pub fn decode_netcdf_fast(data: &[u8], options_json: &str) -> Result<DecodedArra
 /// the TS parser uses, so `decode-worker.ts`'s existing JPEG-Baseline
 /// fallback (TS frame extraction + the shared `decode_jpeg_fast`) keeps
 /// working unchanged against this decoder.
+/// Decode a standalone JPEG XR file (`.jxr`, `.wdp`, `.hdp`).
+///
+/// The same codestream decoder TIFF's compression 34934 uses; this entry point
+/// exists because a bare JPEG XR file has no TIFF wrapper to describe it, so
+/// the pixel format has to be read off the codestream itself.
+#[cfg(feature = "jpegxr")]
+pub fn decode_jpegxr_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    Ok(formats::jpegxr::decode_jpegxr_impl(data)?.into())
+}
+
+/// Decode a standalone JPEG 2000 file (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`,
+/// `.jpc`).
+///
+/// The same codestream decoder TIFF's compression 34712 uses. It exists
+/// separately because a bare JPEG 2000 file has no TIFF wrapper to describe
+/// it, and because its precision has to be read off the codestream: a
+/// Sentinel-2 band is 12 bits stored in 16, and normalizing it against the
+/// storage width would render it at a sixteenth brightness.
+#[cfg(feature = "jpeg2000")]
+pub fn decode_jpeg2000_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    Ok(formats::jpeg2000::decode_jpeg2000_impl(data)?.into())
+}
+
+/// Standalone JPEG XL (`.jxl`). Built only into the separate `jxl-decoder`
+/// WebAssembly module — see `formats::jxl` for why it is not part of
+/// `all-formats`.
+#[cfg(feature = "jxl")]
+pub fn decode_jxl_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    Ok(formats::jxl::decode_jxl_impl(data)?.into())
+}
+
 #[cfg(feature = "dicom")]
 pub fn decode_dicom_fast(data: &[u8], frame_index: u32) -> Result<DecodedArray, DecodeError> {
     Ok(decode_dicom_impl(data, frame_index)?.into())
@@ -1022,8 +1356,8 @@ pub fn decode_dicom_fast(data: &[u8], frame_index: u32) -> Result<DecodedArray, 
 /// Decode a Zeiss CZI plane. `options_json` is the JSON-serialized
 /// `CziDecodeOptions` (`{ indices?: Record<string, number> }`) selecting the
 /// Z/C/T/... coordinate to assemble; unspecified axes default to their first
-/// coordinate. Compressed subblocks (JPEG/LZW/JPEG XR/Zstd) are rejected —
-/// only uncompressed subblocks decode.
+/// coordinate. JPEG, LZW and Zstd subblocks decode in the core module; JPEG XR
+/// uses the same lazy heavy-codec retry as TIFF and standalone `.jxr` files.
 #[cfg(feature = "czi")]
 pub fn decode_czi_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, DecodeError> {
     Ok(decode_czi_impl(data, options_json)?.into())
@@ -1046,18 +1380,41 @@ pub fn decode_lif_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
     Ok(decode_lif_impl(data, options_json)?.into())
 }
 
+/// Decode a Becker & Hickl SDT TCSPC histogram image. `options_json` selects
+/// the data block, visualization mode, and raw time bin.
+#[cfg(feature = "sdt")]
+pub fn decode_sdt_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, DecodeError> {
+    Ok(decode_sdt_impl(data, options_json)?.into())
+}
+
 // Canonical Rust names. The `*_fast` spellings above are retained because the
 // WASM adapter's public JavaScript API has used them for years.
 #[cfg(feature = "czi")]
 pub use decode_czi_fast as decode_czi;
-#[cfg(feature = "nd2")]
-pub use decode_nd2_fast as decode_nd2;
-#[cfg(feature = "lif")]
-pub use decode_lif_fast as decode_lif;
 #[cfg(feature = "dicom")]
 pub use decode_dicom_fast as decode_dicom;
 #[cfg(feature = "exr")]
 pub use decode_exr_fast as decode_exr;
+#[cfg(feature = "lif")]
+pub use decode_lif_fast as decode_lif;
+#[cfg(feature = "nd2")]
+pub use decode_nd2_fast as decode_nd2;
+#[cfg(feature = "sdt")]
+pub use decode_sdt_fast as decode_sdt;
+#[cfg(feature = "exr")]
+pub fn exr_zip_f32_plan(data: &[u8]) -> Result<Option<ExrZipPlan>, DecodeError> {
+    formats::exr::zip_f32_plan(data)
+}
+
+#[cfg(feature = "exr")]
+pub fn decode_exr_zip_f32_blocks(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+) -> Result<Vec<u8>, DecodeError> {
+    formats::exr::decode_zip_f32_blocks(blob, counts, rows, width)
+}
 #[cfg(feature = "fits")]
 pub use decode_fits_fast as decode_fits;
 #[cfg(feature = "hdr")]
@@ -1086,7 +1443,14 @@ pub use decode_ppm_fast as decode_netpbm;
 // the worker boundary is therefore one file's worth, not one per worker.
 // ---------------------------------------------------------------------------
 
-/// Layout of a predictor-3 float TIFF, or `None` if the file is not that shape.
+/// Layout of a TIFF whose blocks can each be decoded on their own, or `None`
+/// if the file is not that shape.
+///
+/// A "strip" in this API is a UNIT OF WORK: one strip of a stripped file, or
+/// one whole tile ROW of a tiled one. Both are full-width bands of the image,
+/// which is what lets a worker return rows the caller places at a single
+/// offset. `offsets`/`counts` list every BLOCK — one per strip, or
+/// `blocks_across` per tile row, in row-major order.
 pub struct TiffFloatStripPlan {
     pub width: u32,
     pub height: u32,
@@ -1097,11 +1461,24 @@ pub struct TiffFloatStripPlan {
     pub predictor: u32,
     /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
     pub sample_format: u32,
+    /// TIFF PlanarConfiguration: 1 = chunky, 2 = separate channel planes.
+    pub planar_configuration: u32,
+    /// TIFF Orientation tag (1-8).
+    pub orientation: u32,
+    pub photometric_interpretation: u32,
     pub little_endian: bool,
+    /// Image rows covered by one unit: `RowsPerStrip`, or `TileLength`.
     pub rows_per_strip: u32,
-    /// Byte offset of each strip within the file.
+    /// `TileWidth`/`TileLength`, both zero for a stripped file.
+    pub tile_width: u32,
+    pub tile_length: u32,
+    /// Tiles per tile row; 1 for a stripped file.
+    pub blocks_across: u32,
+    /// Tag 50674's second value, for LERC blocks.
+    pub lerc_additional_compression: u32,
+    /// Byte offset of each block within the file.
     pub offsets: Vec<u64>,
-    /// Compressed length of each strip.
+    /// Compressed length of each block.
     pub counts: Vec<u64>,
 }
 
@@ -1115,8 +1492,15 @@ pub fn tiff_float_strip_plan(data: &[u8]) -> Option<TiffFloatStripPlan> {
         compression: plan.compression,
         predictor: plan.predictor,
         sample_format: plan.sample_format,
+        planar_configuration: plan.planar_configuration,
+        orientation: plan.orientation,
+        photometric_interpretation: plan.photometric_interpretation,
         little_endian: plan.little_endian,
         rows_per_strip: plan.rows_per_strip,
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        blocks_across: plan.blocks_across,
+        lerc_additional_compression: plan.lerc_additional_compression,
         offsets: plan.offsets,
         counts: plan.counts,
     })
@@ -1138,7 +1522,20 @@ pub fn decode_tiff_float_strip_range(
     first_strip: u32,
     plan: &TiffFloatStripPlan,
 ) -> Result<Vec<f32>, DecodeError> {
-    let inner = formats::tiff::strips::FloatStripPlan {
+    let inner = inner_plan(plan);
+    let raster = formats::tiff::strips::decode_unit_range(blob, counts, first_strip, &inner)?;
+    let raster = if plan.photometric_interpretation == 5 {
+        formats::tiff::convert_cmyk_u8_to_rgb(raster, plan.channels).0
+    } else {
+        raster
+    };
+    Ok(formats::tiff::strips::strip_bytes_to_f32(&raster, &inner))
+}
+
+/// The internal plan carries the geometry; the public one is the wire form.
+#[cfg(feature = "tiff")]
+fn inner_plan(plan: &TiffFloatStripPlan) -> formats::tiff::strips::FloatStripPlan {
+    formats::tiff::strips::FloatStripPlan {
         width: plan.width,
         height: plan.height,
         channels: plan.channels,
@@ -1146,45 +1543,20 @@ pub fn decode_tiff_float_strip_range(
         compression: plan.compression,
         predictor: plan.predictor,
         sample_format: plan.sample_format,
+        planar_configuration: plan.planar_configuration,
+        orientation: plan.orientation,
+        photometric_interpretation: plan.photometric_interpretation,
         little_endian: plan.little_endian,
         rows_per_strip: plan.rows_per_strip,
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        blocks_across: plan.blocks_across,
+        lerc_additional_compression: plan.lerc_additional_compression,
+        // A range decode is told its blocks by `counts`; the plan's own block
+        // table is only needed by the caller doing the slicing.
         offsets: Vec::new(),
         counts: Vec::new(),
-    };
-    let row_bytes = inner.row_bytes();
-    let first = first_strip as usize;
-
-    let mut rows_total = 0usize;
-    for index in 0..counts.len() {
-        rows_total += inner.rows_in(first + index);
     }
-    let mut raster = vec![0u8; rows_total * row_bytes];
-
-    let mut in_pos = 0usize;
-    let mut out_pos = 0usize;
-    for (index, &count) in counts.iter().enumerate() {
-        let rows = inner.rows_in(first + index);
-        if rows == 0 {
-            break;
-        }
-        let end = in_pos
-            .checked_add(count as usize)
-            .filter(|end| *end <= blob.len())
-            .ok_or_else(|| DecodeError::new("Strip range: compressed blob is shorter than its counts"))?;
-        formats::tiff::strips::decode_float_predictor_strip(
-            &blob[in_pos..end],
-            &inner,
-            rows,
-            &mut raster[out_pos..out_pos + rows * row_bytes],
-        )?;
-        in_pos = end;
-        out_pos += rows * row_bytes;
-    }
-
-    Ok(formats::tiff::strips::strip_bytes_to_f32(
-        &raster[..out_pos],
-        &inner,
-    ))
 }
 
 /// Metadata accompanying a strip-parallel decode.
@@ -1193,6 +1565,8 @@ pub struct TiffStripMetadata {
     pub photometric_interpretation: u32,
     pub all_tags_json: String,
     pub ome_xml: String,
+    pub geo_json: String,
+    pub page_directory_json: String,
 }
 
 #[cfg(feature = "tiff")]
@@ -1202,6 +1576,8 @@ pub fn tiff_strip_metadata(data: &[u8]) -> Result<TiffStripMetadata, DecodeError
         photometric_interpretation: m.photometric_interpretation,
         all_tags_json: m.all_tags_json,
         ome_xml: m.ome_xml,
+        geo_json: m.geo_json,
+        page_directory_json: m.page_directory_json,
     })
 }
 
@@ -1225,51 +1601,8 @@ pub fn decode_tiff_strip_range_raw(
     first_strip: u32,
     plan: &TiffFloatStripPlan,
 ) -> Result<Vec<u8>, DecodeError> {
-    let inner = formats::tiff::strips::FloatStripPlan {
-        width: plan.width,
-        height: plan.height,
-        channels: plan.channels,
-        bits_per_sample: plan.bits_per_sample,
-        compression: plan.compression,
-        predictor: plan.predictor,
-        sample_format: plan.sample_format,
-        little_endian: plan.little_endian,
-        rows_per_strip: plan.rows_per_strip,
-        offsets: Vec::new(),
-        counts: Vec::new(),
-    };
-    let row_bytes = inner.row_bytes();
-    let first = first_strip as usize;
-
-    let mut rows_total = 0usize;
-    for index in 0..counts.len() {
-        rows_total += inner.rows_in(first + index);
-    }
-    let mut raster = vec![0u8; rows_total * row_bytes];
-
-    let mut in_pos = 0usize;
-    let mut out_pos = 0usize;
-    for (index, &count) in counts.iter().enumerate() {
-        let rows = inner.rows_in(first + index);
-        if rows == 0 {
-            break;
-        }
-        let end = in_pos
-            .checked_add(count as usize)
-            .filter(|end| *end <= blob.len())
-            .ok_or_else(|| {
-                DecodeError::new("Strip range: compressed blob is shorter than its counts")
-            })?;
-        formats::tiff::strips::decode_float_predictor_strip(
-            &blob[in_pos..end],
-            &inner,
-            rows,
-            &mut raster[out_pos..out_pos + rows * row_bytes],
-        )?;
-        in_pos = end;
-        out_pos += rows * row_bytes;
-    }
-    raster.truncate(out_pos);
+    let inner = inner_plan(plan);
+    let mut raster = formats::tiff::strips::decode_unit_range(blob, counts, first_strip, &inner)?;
 
     let bytes_per_sample = (plan.bits_per_sample / 8) as usize;
     let big_endian = plan.predictor == 3 || !plan.little_endian;
@@ -1278,9 +1611,23 @@ pub fn decode_tiff_strip_range_raw(
             sample.reverse();
         }
     }
+    if plan.photometric_interpretation == 5 {
+        raster = formats::tiff::convert_cmyk_u8_to_rgb(raster, plan.channels).0;
+    }
     Ok(raster)
 }
 
+#[cfg(feature = "tiff")]
+pub use formats::tiff::remote::{
+    header_json as remote_tiff_header, ifd_json as remote_tiff_ifd,
+    index_values as remote_tiff_index_values,
+};
+
+/// Decode SGI RGB (verbatim or RLE, 8/16-bit) to top-down interleaved samples.
+#[cfg(feature = "sgi")]
+pub fn decode_sgi_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    formats::sgi::decode(data)
+}
 
 /// Raw 8/16-bit PNG samples, without display color or gamma conversion.
 #[cfg(feature = "png")]

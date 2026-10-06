@@ -11,6 +11,7 @@ fn tiff_is_little_endian(data: &[u8]) -> Option<bool> {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // The TIFF metadata is passed through from the caller unchanged.
 pub(crate) fn try_decode_uncompressed_strips(
     data: &[u8],
     decoder: &mut Decoder<Cursor<&[u8]>>,
@@ -27,7 +28,7 @@ pub(crate) fn try_decode_uncompressed_strips(
     if compression != 1 || predictor != 1 || planar_configuration != 1 {
         return Ok(None);
     }
-    if bits_per_sample == 0 || bits_per_sample % 8 != 0 {
+    if bits_per_sample == 0 || !bits_per_sample.is_multiple_of(8) {
         return Ok(None);
     }
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
@@ -197,63 +198,520 @@ pub(crate) fn decompress_strip_or_tile(
     expected_len: usize,
     context: &str,
 ) -> Result<Vec<u8>, DecodeError> {
+    decompress_block(block, compression, expected_len, context, None)
+}
+
+// The typed fields are read only by the LERC/JPEG 2000/JPEG XR block
+// decoders, which the core build leaves out; the struct itself is still needed
+// by every caller of `decompress_block`.
+#[cfg_attr(
+    not(any(
+        feature = "codec-lerc",
+        feature = "codec-jpeg2000",
+        feature = "codec-jpegxr",
+        feature = "jxl"
+    )),
+    allow(dead_code)
+)]
+/// How the samples in a block are laid out, for the codecs that decode to
+/// TYPED values rather than to the file's raw bytes. LERC and PNG both hand
+/// back numbers of a known type; turning those back into a TIFF strip means
+/// writing them in the file's own byte order and width, which the byte-in,
+/// byte-out codecs (LZW, Deflate, ZSTD, LZMA) never need to know.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BlockCodecInfo {
+    pub bits_per_sample: u32,
+    /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
+    pub sample_format: u32,
+    pub little_endian: bool,
+    /// TIFF tag 50674 (LercParameters), second value: an extra codec applied
+    /// on top of the LERC blob. 0 = none, 1 = Deflate, 2 = ZSTD.
+    #[cfg_attr(not(feature = "codec-lerc"), allow(dead_code))]
+    pub lerc_additional_compression: u32,
+    /// PhotometricInterpretation 6: the block's samples are YCbCr and have to
+    /// be converted on the way out. Only the codecs that carry colour
+    /// themselves (JPEG 2000) consult this.
+    #[cfg_attr(not(feature = "codec-jpeg2000"), allow(dead_code))]
+    pub ycbcr: bool,
+}
+
+/// `decompress_strip_or_tile` plus the layout the typed codecs need. Callers
+/// that can meet a LERC or PNG block must pass `info`; the others may pass
+/// `None` and get a clear error rather than a wrong picture if such a block
+/// turns up anyway.
+pub(crate) fn decompress_block(
+    block: &[u8],
+    compression: u32,
+    expected_len: usize,
+    context: &str,
+    info: Option<&BlockCodecInfo>,
+) -> Result<Vec<u8>, DecodeError> {
     use std::io::Read;
 
     match compression {
         1 => Ok(block.to_vec()),
-        5 => {
-            let mut lzw = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
-            let mut out = vec![0u8; expected_len];
-            let mut in_pos = 0usize;
-            let mut out_pos = 0usize;
-            while out_pos < expected_len {
-                let result = lzw.decode_bytes(&block[in_pos..], &mut out[out_pos..]);
-                in_pos += result.consumed_in;
-                out_pos += result.consumed_out;
-                match result.status {
-                    Ok(weezl::LzwStatus::Ok) => {}
-                    Ok(weezl::LzwStatus::Done) => break,
-                    Ok(weezl::LzwStatus::NoProgress) => {
-                        if in_pos >= block.len() {
-                            // Input exhausted before an EOI code appeared.
-                            // Tolerate this the same way libtiff does; the
-                            // caller already validates `out` was filled to
-                            // the expected length below.
-                            break;
-                        }
-                        return Err(DecodeError::new(&format!(
-                            "{}: LZW decode stalled before end of input",
-                            context
-                        )));
-                    }
-                    Err(e) => {
-                        return Err(DecodeError::new(&format!(
-                            "{}: LZW decode failed: {}",
-                            context, e
-                        )))
-                    }
-                }
-            }
-            if out_pos < expected_len {
-                return Err(DecodeError::new(&format!(
-                    "{}: LZW stream produced {} bytes, expected {}",
-                    context, out_pos, expected_len
-                )));
-            }
-            Ok(out)
-        }
+        5 => crate::formats::compression::decode_tiff_lzw(block, expected_len, context),
         8 | 32946 => {
             let mut zd = flate2::read::ZlibDecoder::new(block);
             let mut buf = Vec::new();
             zd.read_to_end(&mut buf).map_err(|e| {
-                DecodeError::new(&format!("{}: Deflate decode failed: {}", context, e))
+                DecodeError::new(format!("{}: Deflate decode failed: {}", context, e))
             })?;
             Ok(buf)
         }
-        _ => Err(DecodeError::new(&format!(
+        // ZSTD, via the pure-Rust ruzstd crate so the WASM build needs no C
+        // toolchain. A single strip or tile is one complete zstd frame; GDAL
+        // writes exactly one frame per block, but concatenated frames are legal
+        // so the decoder is re-created until the input is consumed.
+        50000 => {
+            let mut buf = Vec::with_capacity(expected_len);
+            let mut rest = block;
+            while !rest.is_empty() && buf.len() < expected_len {
+                let mut cursor = std::io::Cursor::new(rest);
+                let mut dec =
+                    ruzstd::decoding::StreamingDecoder::new(&mut cursor).map_err(|e| {
+                        DecodeError::new(format!("{}: ZSTD decoder init failed: {:?}", context, e))
+                    })?;
+                dec.read_to_end(&mut buf).map_err(|e| {
+                    DecodeError::new(format!("{}: ZSTD decode failed: {:?}", context, e))
+                })?;
+                let consumed = cursor.position() as usize;
+                if consumed == 0 || consumed > rest.len() {
+                    break;
+                }
+                rest = &rest[consumed..];
+            }
+            Ok(buf)
+        }
+        // LZMA. libtiff and tifffile both write each strip/tile as a
+        // standalone .xz stream (magic FD 37 7A 58 5A 00), not a bare LZMA1
+        // chunk, so this is the xz entry point.
+        #[cfg(feature = "codec-lzma")]
+        34925 => {
+            let mut out = Vec::with_capacity(expected_len);
+            // libtiff applies an XZ delta filter before LZMA2 when its TIFF
+            // predictor option is enabled. `lzma-rs` only understands a bare
+            // LZMA2 filter and rejected those perfectly valid streams with
+            // "Unknown filter id 3". xz4rust supports the standard XZ filter
+            // chain (including delta) and remains pure Rust/WASM-compatible.
+            // XzReader owns its std::io::Read source. A TIFF block is already
+            // bounded and in memory, so give the reader an owned buffer. Cap
+            // the declared dictionary at XZ preset 9's 64 MiB: the default
+            // reader permits a hostile stream to request roughly 3 GiB, and
+            // eagerly starts every strip with a wasteful 16 MiB allocation.
+            let xz = xz4rust::XzDecoder::in_heap_with_alloc_dict_size(
+                xz4rust::DICT_SIZE_MIN,
+                64 * 1024 * 1024,
+            );
+            let mut decoder = xz4rust::XzReader::new_with_buffer_size_and_decoder(
+                std::io::Cursor::new(block.to_vec()),
+                std::num::NonZeroUsize::new(8192).unwrap(),
+                xz,
+            );
+            decoder
+                .read_to_end(&mut out)
+                .map_err(|e| DecodeError::new(format!("{}: LZMA decode failed: {}", context, e)))?;
+            Ok(out)
+        }
+        #[cfg(not(feature = "codec-lzma"))]
+        34925 => Err(crate::formats::external_codec::needed("LZMA", context)),
+        // PNG-in-TIFF: every block is a complete PNG stream covering exactly
+        // that strip or tile.
+        34933 => decode_png_block(
+            block,
+            expected_len,
+            context,
+            codec_info(info, context, "PNG")?,
+        ),
+        // LERC, including GDAL's LERC_DEFLATE and LERC_ZSTD, which wrap the
+        // same blob in a second codec named by tag 50674.
+        #[cfg(feature = "codec-lerc")]
+        34887 => decode_lerc_block(
+            block,
+            expected_len,
+            context,
+            codec_info(info, context, "LERC")?,
+        ),
+        #[cfg(not(feature = "codec-lerc"))]
+        34887 => Err(crate::formats::external_codec::needed("LERC", context)),
+        // JPEG XR. 22610 is the code Hamamatsu NDPI files use.
+        #[cfg(feature = "codec-jpegxr")]
+        34934 | 22610 => decode_jpegxr_block(
+            block,
+            expected_len,
+            context,
+            codec_info(info, context, "JPEG XR")?,
+        ),
+        #[cfg(not(feature = "codec-jpegxr"))]
+        34934 | 22610 => Err(crate::formats::external_codec::needed("JPEG XR", context)),
+        // JPEG 2000. 34712 is the registered code; 33003/33004/33005 are what
+        // Aperio slide scanners write (YCbCr, lossy, and RGB respectively).
+        #[cfg(feature = "codec-jpeg2000")]
+        34712 | 33003 | 33004 | 33005 => decode_jpeg2000_block(
+            block,
+            expected_len,
+            context,
+            codec_info(info, context, "JPEG 2000")?,
+        ),
+        #[cfg(not(feature = "codec-jpeg2000"))]
+        34712 | 33003 | 33004 | 33005 => {
+            Err(crate::formats::external_codec::needed("JPEG 2000", context))
+        }
+        // JPEG XL in TIFF, registered as compression 50002. It lives in the
+        // separate lazy JXL module, which builds this same container parser.
+        #[cfg(feature = "jxl")]
+        50002 => decode_jxl_block(
+            block,
+            expected_len,
+            context,
+            codec_info(info, context, "JPEG XL")?,
+        ),
+        #[cfg(not(feature = "jxl"))]
+        50002 => Err(crate::formats::external_codec::needed("JPEG XL", context)),
+        _ => Err(DecodeError::new(format!(
             "{}: compression {} is not supported",
             context, compression
         ))),
+    }
+}
+
+#[cfg(feature = "jxl")]
+fn decode_jxl_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: &BlockCodecInfo,
+) -> Result<Vec<u8>, DecodeError> {
+    let decoded = crate::formats::jxl::decode_jxl_impl(block)?;
+    let bytes_per_sample = (info.bits_per_sample as usize).div_ceil(8);
+    if decoded.data.len().saturating_mul(bytes_per_sample) != expected_len {
+        return Err(DecodeError::new(format!(
+            "{}: JPEG XL decoded {} samples, but the TIFF block needs {} bytes of {}-bit samples",
+            context,
+            decoded.data.len(),
+            expected_len,
+            info.bits_per_sample
+        )));
+    }
+    if decoded.sample_format != info.sample_format
+        || decoded.bits_per_sample != info.bits_per_sample
+    {
+        return Err(DecodeError::new(format!(
+            "{}: JPEG XL is sample format {}/{}-bit, TIFF declares {}/{}-bit",
+            context,
+            decoded.sample_format,
+            decoded.bits_per_sample,
+            info.sample_format,
+            info.bits_per_sample
+        )));
+    }
+
+    let mut out = Vec::with_capacity(expected_len);
+    match (info.sample_format, info.bits_per_sample) {
+        (1, 8) => out.extend(decoded.data.iter().map(|&value| value as u8)),
+        (1, 16) => {
+            for value in decoded.data {
+                out.extend_from_slice(&to_file_order_2(value as u16, info.little_endian));
+            }
+        }
+        (3, 32) => {
+            for value in decoded.data {
+                out.extend_from_slice(&to_file_order_4(value.to_bits(), info.little_endian));
+            }
+        }
+        _ => {
+            return Err(DecodeError::new(format!(
+                "{}: JPEG XL TIFF samples {}/{}-bit are not supported",
+                context, info.sample_format, info.bits_per_sample
+            )))
+        }
+    }
+    Ok(out)
+}
+
+/// A typed codec cannot run without knowing the sample layout; a caller that
+/// did not supply one has a bug, and saying so beats decoding garbage.
+fn codec_info<'a>(
+    info: Option<&'a BlockCodecInfo>,
+    context: &str,
+    codec: &str,
+) -> Result<&'a BlockCodecInfo, DecodeError> {
+    info.ok_or_else(|| {
+        DecodeError::new(format!(
+            "{}: {} blocks need the sample layout, which this path does not have",
+            context, codec
+        ))
+    })
+}
+
+/// Decode one PNG-compressed strip/tile. The PNG crate returns 16-bit samples
+/// big-endian (PNG's own order); a little-endian TIFF wants them the other way
+/// round, so they are swapped back into the file's order.
+fn decode_png_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: &BlockCodecInfo,
+) -> Result<Vec<u8>, DecodeError> {
+    let mut decoder = png::Decoder::new(block);
+    // Keep the samples exactly as stored: no palette expansion, no
+    // 1/2/4-bit widening. A TIFF strip must come back with the geometry the
+    // IFD promised, and any expansion here would change its stride.
+    decoder.set_transformations(png::Transformations::IDENTITY);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| DecodeError::new(format!("{}: PNG header: {}", context, e)))?;
+    let mut buffer = vec![0u8; reader.output_buffer_size()];
+    let frame = reader
+        .next_frame(&mut buffer)
+        .map_err(|e| DecodeError::new(format!("{}: PNG decode failed: {}", context, e)))?;
+    buffer.truncate(frame.buffer_size());
+    if info.bits_per_sample == 16 && info.little_endian {
+        for pair in buffer.chunks_exact_mut(2) {
+            pair.swap(0, 1);
+        }
+    }
+    if buffer.len() < expected_len {
+        return Err(DecodeError::new(format!(
+            "{}: PNG block holds {} bytes, expected {}",
+            context,
+            buffer.len(),
+            expected_len
+        )));
+    }
+    Ok(buffer)
+}
+
+#[cfg(feature = "codec-lerc")]
+/// Decode one LERC-compressed strip/tile.
+///
+/// LERC is a *value* codec: it hands back numbers, with a validity mask and a
+/// declared maximum error, not the strip's bytes. Re-serializing them in the
+/// file's own sample type and byte order lets the rest of the block path treat
+/// a LERC tile exactly like any other. Values the blob marks invalid are
+/// written as zero, which is how libtiff's own LERC codec reads them back:
+/// the TIFF encoder always marks every pixel valid, so a mask only appears in
+/// blobs that came from somewhere else.
+fn decode_lerc_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: &BlockCodecInfo,
+) -> Result<Vec<u8>, DecodeError> {
+    use std::io::Read;
+
+    // GDAL's LERC_DEFLATE / LERC_ZSTD put a second codec around the blob.
+    let blob = match info.lerc_additional_compression {
+        0 => std::borrow::Cow::Borrowed(block),
+        1 => {
+            let mut inflated = Vec::new();
+            flate2::read::ZlibDecoder::new(block)
+                .read_to_end(&mut inflated)
+                .map_err(|e| {
+                    DecodeError::new(format!("{}: LERC Deflate wrapper failed: {}", context, e))
+                })?;
+            std::borrow::Cow::Owned(inflated)
+        }
+        2 => std::borrow::Cow::Owned(decompress_strip_or_tile(
+            block,
+            50000,
+            expected_len,
+            context,
+        )?),
+        other => {
+            return Err(DecodeError::new(format!(
+                "{}: LERC additional compression {} is not supported",
+                context, other
+            )))
+        }
+    };
+
+    let decoded = lerc_reader::decode_to_f64(&blob)
+        .map_err(|e| DecodeError::new(format!("{}: LERC decode failed: {}", context, e)))?;
+    #[allow(clippy::manual_div_ceil)] // The u32 tag plus 7 may overflow on wasm32.
+    let bytes_per_sample = (info.bits_per_sample as usize + 7) / 8;
+    if decoded.pixels.len().saturating_mul(bytes_per_sample) < expected_len {
+        return Err(DecodeError::new(format!(
+            "{}: LERC block holds {} samples ({} bytes), expected {}",
+            context,
+            decoded.pixels.len(),
+            decoded.pixels.len() * bytes_per_sample,
+            expected_len
+        )));
+    }
+
+    let mut out = Vec::with_capacity(decoded.pixels.len() * bytes_per_sample);
+    let mask = decoded.mask.as_deref();
+    let depth = decoded.info.depth.max(1) as usize;
+    for (index, value) in decoded.pixels.iter().enumerate() {
+        // The mask is one byte per PIXEL; a multi-band blob stores `depth`
+        // values per pixel, so several samples share one mask entry.
+        let valid = mask.is_none_or(|m| m.get(index / depth).copied().unwrap_or(1) != 0);
+        let value = if valid { *value } else { 0.0 };
+        match (info.sample_format, info.bits_per_sample) {
+            (3, 32) => out.extend_from_slice(&to_file_order_4(
+                (value as f32).to_bits(),
+                info.little_endian,
+            )),
+            (3, 64) => {
+                let bits = value.to_bits();
+                if info.little_endian {
+                    out.extend_from_slice(&bits.to_le_bytes());
+                } else {
+                    out.extend_from_slice(&bits.to_be_bytes());
+                }
+            }
+            (2, 8) => out.push((value as i8) as u8),
+            (2, 16) => {
+                out.extend_from_slice(&to_file_order_2((value as i16) as u16, info.little_endian))
+            }
+            (2, 32) => {
+                out.extend_from_slice(&to_file_order_4((value as i32) as u32, info.little_endian))
+            }
+            (_, 8) => out.push(value as u8),
+            (_, 16) => out.extend_from_slice(&to_file_order_2(value as u16, info.little_endian)),
+            (_, 32) => out.extend_from_slice(&to_file_order_4(value as u32, info.little_endian)),
+            (format, bits) => {
+                return Err(DecodeError::new(format!(
+                    "{}: LERC with sample format {} at {} bits is not supported",
+                    context, format, bits
+                )))
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "codec-jpeg2000")]
+/// Decode one JPEG 2000-compressed strip/tile.
+///
+/// `decode_native` is deliberate: this crate's other entry point returns 8-bit
+/// RGBA for display, which would silently throw away half of a 16-bit
+/// scientific image.
+fn decode_jpeg2000_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: &BlockCodecInfo,
+) -> Result<Vec<u8>, DecodeError> {
+    let settings = dicom_toolkit_jpeg2000::DecodeSettings::default();
+    let image = dicom_toolkit_jpeg2000::Image::new(block, &settings)
+        .map_err(|e| DecodeError::new(format!("{}: JPEG 2000 header: {:?}", context, e)))?;
+    let raw = image
+        .decode_native()
+        .map_err(|e| DecodeError::new(format!("{}: JPEG 2000 decode failed: {:?}", context, e)))?;
+    let mut data = raw.data;
+
+    // An Aperio 33003 block holds YCbCr, which the codestream does not convert
+    // for us; the TIFF says so through PhotometricInterpretation 6.
+    if info.ycbcr && raw.num_components >= 3 && raw.bytes_per_sample == 1 {
+        ycbcr_to_rgb_in_place(&mut data, raw.num_components as usize);
+    }
+
+    // The crate returns native little-endian samples; a big-endian TIFF wants
+    // them the other way round.
+    if raw.bytes_per_sample == 2 && !info.little_endian {
+        for pair in data.chunks_exact_mut(2) {
+            pair.swap(0, 1);
+        }
+    }
+    if data.len() < expected_len {
+        return Err(DecodeError::new(format!(
+            "{}: JPEG 2000 block holds {} bytes, expected {}",
+            context,
+            data.len(),
+            expected_len
+        )));
+    }
+    Ok(data)
+}
+
+#[cfg(feature = "codec-jpegxr")]
+/// Decode one JPEG XR-compressed strip/tile.
+///
+/// The decoder returns rows padded to its own stride and samples in the
+/// machine's little-endian order; a TIFF strip is neither padded nor
+/// necessarily little-endian.
+fn decode_jpegxr_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: &BlockCodecInfo,
+) -> Result<Vec<u8>, DecodeError> {
+    let decoded = crate::formats::jpegxr::decode_jpegxr_pixels(block, context)?;
+    let bytes_per_sample = (decoded.bits_per_sample as usize).div_ceil(8);
+    let mut data = decoded.pixels;
+    if bytes_per_sample > 1 && !info.little_endian {
+        for sample in data.chunks_exact_mut(bytes_per_sample) {
+            sample.reverse();
+        }
+    }
+    if data.len() < expected_len {
+        return Err(DecodeError::new(format!(
+            "{}: JPEG XR block holds {} bytes, expected {}",
+            context,
+            data.len(),
+            expected_len
+        )));
+    }
+    Ok(data)
+}
+
+#[cfg_attr(
+    not(any(
+        feature = "codec-lerc",
+        feature = "codec-jpeg2000",
+        feature = "codec-jpegxr",
+        feature = "jxl"
+    )),
+    allow(dead_code)
+)]
+/// CCIR 601-1 / JFIF inverse transform, in place over interleaved 8-bit
+/// samples. The same coefficients the subsampled-YCbCr path uses, which is
+/// what TIFF 6.0 specifies for the default YCbCrCoefficients.
+#[cfg_attr(not(feature = "codec-jpeg2000"), allow(dead_code))]
+fn ycbcr_to_rgb_in_place(data: &mut [u8], channels: usize) {
+    for pixel in data.chunks_exact_mut(channels) {
+        let y = pixel[0] as f32;
+        let cb = pixel[1] as f32 - 128.0;
+        let cr = pixel[2] as f32 - 128.0;
+        pixel[0] = (y + 1.402 * cr).clamp(0.0, 255.0) as u8;
+        pixel[1] = (y - 0.344_136 * cb - 0.714_136 * cr).clamp(0.0, 255.0) as u8;
+        pixel[2] = (y + 1.772 * cb).clamp(0.0, 255.0) as u8;
+    }
+}
+
+#[cfg_attr(
+    not(any(
+        feature = "codec-lerc",
+        feature = "codec-jpeg2000",
+        feature = "codec-jpegxr",
+        feature = "jxl"
+    )),
+    allow(dead_code)
+)]
+fn to_file_order_2(value: u16, little_endian: bool) -> [u8; 2] {
+    if little_endian {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    }
+}
+
+#[cfg_attr(
+    not(any(
+        feature = "codec-lerc",
+        feature = "codec-jpeg2000",
+        feature = "codec-jpegxr",
+        feature = "jxl"
+    )),
+    allow(dead_code)
+)]
+fn to_file_order_4(value: u32, little_endian: bool) -> [u8; 4] {
+    if little_endian {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
     }
 }
 
@@ -302,7 +760,7 @@ fn unpack_row_u64(
     little_endian: bool,
 ) -> Vec<u64> {
     let mut out = Vec::with_capacity(samples_per_row);
-    if bits_per_sample % 8 == 0 {
+    if bits_per_sample.is_multiple_of(8) {
         let width = (bits_per_sample / 8) as usize;
         for index in 0..samples_per_row {
             let start = index * width;
@@ -323,7 +781,11 @@ fn unpack_row_u64(
         }
         return out;
     }
-    let mask = if bits_per_sample >= 64 { u64::MAX } else { (1u64 << bits_per_sample) - 1 };
+    let mask = if bits_per_sample >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits_per_sample) - 1
+    };
     let mut bit_buf: u64 = 0;
     let mut bit_count: u32 = 0;
     let mut byte_idx = 0usize;
@@ -337,7 +799,11 @@ fn unpack_row_u64(
         let shift = bit_count - bits_per_sample;
         out.push((bit_buf >> shift) & mask);
         bit_count -= bits_per_sample;
-        bit_buf &= if bit_count == 0 { 0 } else { (1u64 << bit_count) - 1 };
+        bit_buf &= if bit_count == 0 {
+            0
+        } else {
+            (1u64 << bit_count) - 1
+        };
     }
     out
 }
@@ -351,7 +817,11 @@ fn apply_horizontal_predictor2_u64(
     channels: usize,
     bits_per_sample: u32,
 ) {
-    let mask = if bits_per_sample >= 64 { u64::MAX } else { (1u64 << bits_per_sample) - 1 };
+    let mask = if bits_per_sample >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits_per_sample) - 1
+    };
     for x in 1..row_width {
         for c in 0..channels {
             let idx = x * channels + c;
@@ -420,7 +890,10 @@ pub(crate) fn try_decode_subbit_strips(
         // tiff crate produces its usual (clear) "unsupported color type" error.
         return Ok(None);
     }
-    if compression != 1 && compression != 5 && compression != 8 && compression != 32946 {
+    // ZSTD is in this list because `decode_zstd` cannot help here: it rebuilds
+    // the raster as an uncompressed TIFF, which the tiff crate then rejects for
+    // a 9..=15-bit color type. Such files are routed straight to this path.
+    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000) {
         return Ok(None);
     }
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
@@ -429,7 +902,7 @@ pub(crate) fn try_decode_subbit_strips(
         ));
     }
     if predictor != 1 && predictor != 2 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Sub-16-bit TIFF: predictor {} is not supported",
             predictor
         )));
@@ -446,7 +919,7 @@ pub(crate) fn try_decode_subbit_strips(
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
     if sample_format != 1 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Sub-16-bit TIFF: sample format {} is not supported (only unsigned integer)",
             sample_format
         )));
@@ -466,6 +939,7 @@ pub(crate) fn try_decode_subbit_strips(
         .max(1);
 
     let samples_per_row = (width as usize).saturating_mul(channels as usize);
+    #[allow(clippy::manual_div_ceil)] // Packed-row multiplication and addition may overflow usize.
     let row_bytes = (samples_per_row * bits_per_sample as usize + 7) / 8;
     let max_value = (1u32 << bits_per_sample) - 1;
 
@@ -490,7 +964,7 @@ pub(crate) fn try_decode_subbit_strips(
         let decompressed =
             decompress_strip_or_tile(strip, compression, expected_bytes, "Sub-16-bit TIFF")?;
         if decompressed.len() < expected_bytes {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "Sub-16-bit TIFF: strip decompressed to {} bytes, expected at least {}",
                 decompressed.len(),
                 expected_bytes
@@ -516,7 +990,7 @@ pub(crate) fn try_decode_subbit_strips(
     }
 
     if rows_decoded != height {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Sub-16-bit TIFF: decoded {} of {} rows",
             rows_decoded, height
         )));
@@ -589,8 +1063,22 @@ pub(crate) fn try_decode_general_strips_tiles(
     // (`try_decode_subbit_strips`); leave those alone. Tiled layouts of the
     // same depths have no other handler, so they are claimed here.
     let subbit_strip_path_handles = !is_tiled && (9..=15).contains(&bits_per_sample);
+    // TILED ZSTD has no other handler: `decode_zstd` rebuilds a single-strip
+    // TIFF and so only understands strip layouts, and the tiff crate's own
+    // zstd support is a C dependency the WASM build cannot use. Cloud-optimized
+    // GeoTIFFs are tiled by definition, so this is the common shape in the
+    // wild. Strip ZSTD keeps using `decode_zstd`.
+    //
+    // LERC, LZMA, PNG-in-TIFF, JPEG 2000 and JPEG XR have no handler at all
+    // outside this path — the tiff crate knows none of them — so every layout
+    // of them is claimed here, strips included.
+    let block_only_codec = matches!(
+        compression,
+        34887 | 34925 | 34933 | 34712 | 33003 | 33004 | 33005 | 34934 | 22610 | 50002
+    );
     let claim = planar_configuration == 2
-        || (is_tiled && compression == 5)
+        || (is_tiled && matches!(compression, 5 | 50000))
+        || block_only_codec
         || (odd_depth && !subbit_strip_path_handles);
     if !claim || bits_per_sample <= 1 {
         return Ok(None);
@@ -610,27 +1098,30 @@ pub(crate) fn try_decode_general_strips_tiles(
 
     const CTX: &str = "Planar/tiled TIFF";
 
-    if bits_per_sample == 0 || bits_per_sample > 64 || (bits_per_sample > 32 && bits_per_sample != 64) {
-        return Err(DecodeError::new(&format!(
+    if bits_per_sample == 0
+        || bits_per_sample > 64
+        || (bits_per_sample > 32 && bits_per_sample != 64)
+    {
+        return Err(DecodeError::new(format!(
             "{}: {}-bit samples are not supported",
             CTX, bits_per_sample
         )));
     }
-    if compression != 1 && compression != 5 && compression != 8 && compression != 32946 {
-        return Err(DecodeError::new(&format!(
+    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000) && !block_only_codec {
+        return Err(DecodeError::new(format!(
             "{}: compression {} is not supported",
             CTX, compression
         )));
     }
-    if predictor != 1 && predictor != 2 {
-        return Err(DecodeError::new(&format!(
+    if !matches!(predictor, 1..=3) {
+        return Err(DecodeError::new(format!(
             "{}: predictor {} is not supported",
             CTX, predictor
         )));
     }
     let fill_order = decoder.get_tag_u32(Tag::FillOrder).unwrap_or(1);
     if fill_order != 1 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: FillOrder 2 (LSB-first) is not supported",
             CTX
         )));
@@ -640,23 +1131,53 @@ pub(crate) fn try_decode_general_strips_tiles(
         .ok()
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
-    // 1 = unsigned, 2 = signed, 3 = IEEE float. Float only exists at 32/64 bits.
-    if !matches!(sample_format, 1 | 2 | 3) || (sample_format == 3 && !matches!(bits_per_sample, 32 | 64)) {
-        return Err(DecodeError::new(&format!(
+    // 1 = unsigned, 2 = signed, 3 = IEEE float. Half floats are real TIFF —
+    // scientific data uses them — and every other path here already reads them
+    // (`strip_bytes_to_f32`, `float_predictor_plan`, the ZSTD path). Leaving 16
+    // out made a float16 image decode fine under LZW or ZSTD and fail under any
+    // block-only codec, which is a difference no file property justifies.
+    if !matches!(sample_format, 1..=3)
+        || (sample_format == 3 && !matches!(bits_per_sample, 16 | 32 | 64))
+    {
+        return Err(DecodeError::new(format!(
             "{}: sample format {} at {} bits is not supported",
             CTX, sample_format, bits_per_sample
         )));
     }
-    // Differencing a float sample as an integer would corrupt it; predictor 3
-    // (floating-point predictor) is a different algorithm handled elsewhere.
-    if sample_format == 3 && predictor != 1 {
-        return Err(DecodeError::new(&format!(
-            "{}: predictor {} on float samples is not supported here",
-            CTX, predictor
+    // Differencing a float sample as an integer would corrupt it: predictor 2
+    // is defined for integer samples only, and predictor 3 (the floating-point
+    // predictor, undone per block below) only for float ones.
+    if sample_format == 3 && predictor == 2 {
+        return Err(DecodeError::new(format!(
+            "{}: horizontal predictor on float samples is not supported",
+            CTX
+        )));
+    }
+    if predictor == 3 && (sample_format != 3 || !matches!(bits_per_sample, 16 | 32 | 64)) {
+        return Err(DecodeError::new(format!(
+            "{}: the floating-point predictor is only supported on 16/32/64-bit float samples",
+            CTX
         )));
     }
     // Multi-byte samples are stored in the file's byte order.
     let little_endian = data.first() == Some(&b'I');
+
+    // Tag 50674 (LercParameters) is [version, additional compression]; the
+    // second value names the codec GDAL wrapped the LERC blob in.
+    let codec_info = BlockCodecInfo {
+        bits_per_sample,
+        sample_format,
+        little_endian,
+        lerc_additional_compression: decoder
+            .get_tag_u32_vec(Tag::Unknown(50674))
+            .ok()
+            .and_then(|values| values.get(1).copied())
+            .unwrap_or(0),
+        ycbcr: decoder
+            .get_tag_u32(Tag::PhotometricInterpretation)
+            .map(|value| value == 6)
+            .unwrap_or(false),
+    };
 
     let planes = if planar_configuration == 2 {
         channels
@@ -676,15 +1197,15 @@ pub(crate) fn try_decode_general_strips_tiles(
     // rows/columns past width/height are dropped below when assembling the
     // output.
     let (block_width, block_height, blocks_across, blocks_down, rows_per_strip) = if is_tiled {
-        let across = ((width as u64) + tile_width as u64 - 1) / tile_width as u64;
-        let down = ((height as u64) + tile_length as u64 - 1) / tile_length as u64;
+        let across = (width as u64).div_ceil(tile_width as u64);
+        let down = (height as u64).div_ceil(tile_length as u64);
         (tile_width, tile_length, across as u32, down as u32, 0u32)
     } else {
         let rps = decoder
             .get_tag_u32(Tag::RowsPerStrip)
             .unwrap_or(height)
             .max(1);
-        let down = ((height as u64) + rps as u64 - 1) / rps as u64;
+        let down = (height as u64).div_ceil(rps as u64);
         (width, rps, 1u32, down as u32, rps)
     };
     let blocks_per_plane = (blocks_across as u64) * (blocks_down as u64);
@@ -694,19 +1215,19 @@ pub(crate) fn try_decode_general_strips_tiles(
     } else {
         decoder.get_tag_u64_vec(Tag::StripOffsets)
     })
-    .map_err(|e| DecodeError::new(&format!("{}: missing offsets: {}", CTX, e)))?;
+    .map_err(|e| DecodeError::new(format!("{}: missing offsets: {}", CTX, e)))?;
     let counts = (if is_tiled {
         decoder.get_tag_u64_vec(Tag::TileByteCounts)
     } else {
         decoder.get_tag_u64_vec(Tag::StripByteCounts)
     })
-    .map_err(|e| DecodeError::new(&format!("{}: missing byte counts: {}", CTX, e)))?;
+    .map_err(|e| DecodeError::new(format!("{}: missing byte counts: {}", CTX, e)))?;
 
     let expected_blocks = blocks_per_plane
         .checked_mul(planes as u64)
-        .ok_or_else(|| DecodeError::new(&format!("{}: block count overflow", CTX)))?;
+        .ok_or_else(|| DecodeError::new(format!("{}: block count overflow", CTX)))?;
     if offsets.len() as u64 != expected_blocks || counts.len() as u64 != expected_blocks {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: expected {} strip/tile offsets, found {}",
             CTX,
             expected_blocks,
@@ -715,8 +1236,13 @@ pub(crate) fn try_decode_general_strips_tiles(
     }
 
     let samples_per_row = (block_width as usize) * (channels_per_block as usize);
+    #[allow(clippy::manual_div_ceil)] // Packed-row multiplication and addition may overflow usize.
     let row_bytes = (samples_per_row * bits_per_sample as usize + 7) / 8;
     let mut out: Vec<u64> = vec![0u64; (width as usize) * (height as usize) * (channels as usize)];
+
+    // Scratch buffers for the floating-point predictor, reused across rows.
+    let mut fp_planes: Vec<u8> = Vec::new();
+    let mut fp_samples: Vec<u8> = Vec::new();
 
     let mut block_idx = 0usize;
     for plane in 0..planes {
@@ -729,7 +1255,7 @@ pub(crate) fn try_decode_general_strips_tiles(
                 let start = offset as usize;
                 let end = start.saturating_add(count as usize);
                 if end > data.len() {
-                    return Err(DecodeError::new(&format!(
+                    return Err(DecodeError::new(format!(
                         "{}: strip/tile byte range out of bounds",
                         CTX
                     )));
@@ -755,10 +1281,22 @@ pub(crate) fn try_decode_general_strips_tiles(
                 // bottom of the image.
                 let rows_present = if is_tiled { block_height } else { valid_rows };
                 let expected_bytes = row_bytes.saturating_mul(rows_present as usize);
-                let decompressed =
-                    decompress_strip_or_tile(block_bytes, compression, expected_bytes, CTX)?;
+                // A byte count of zero marks a block that was never written
+                // (GDAL's SPARSE_OK). libtiff reads those as all-zero pixels,
+                // and there is no compressed stream to hand to a codec.
+                let decompressed = if count == 0 {
+                    vec![0u8; expected_bytes]
+                } else {
+                    decompress_block(
+                        block_bytes,
+                        compression,
+                        expected_bytes,
+                        CTX,
+                        Some(&codec_info),
+                    )?
+                };
                 if decompressed.len() < expected_bytes {
-                    return Err(DecodeError::new(&format!(
+                    return Err(DecodeError::new(format!(
                         "{}: block decompressed to {} bytes, expected at least {}",
                         CTX,
                         decompressed.len(),
@@ -771,8 +1309,33 @@ pub(crate) fn try_decode_general_strips_tiles(
                         continue;
                     }
                     let row = &decompressed[row_idx * row_bytes..(row_idx + 1) * row_bytes];
+                    // Predictor 3 stores each row as byte planes (all the
+                    // samples' first bytes, then all their second bytes, ...)
+                    // with the differencing applied across those raw bytes.
+                    // Undoing it yields big-endian samples regardless of the
+                    // file's byte order, which is why the unpack below is told
+                    // so. Rows are independent, so a skipped padding row costs
+                    // nothing here.
+                    let (row, row_is_little_endian) = if predictor == 3 {
+                        let bytes_per_sample = bits_per_sample as usize / 8;
+                        fp_planes.clear();
+                        fp_planes.extend_from_slice(row);
+                        for i in 1..row_bytes {
+                            fp_planes[i] = fp_planes[i].wrapping_add(fp_planes[i - 1]);
+                        }
+                        fp_samples.resize(row_bytes, 0);
+                        for sample in 0..samples_per_row {
+                            for byte in 0..bytes_per_sample {
+                                fp_samples[sample * bytes_per_sample + byte] =
+                                    fp_planes[byte * samples_per_row + sample];
+                            }
+                        }
+                        (fp_samples.as_slice(), false)
+                    } else {
+                        (row, little_endian)
+                    };
                     let mut row_values =
-                        unpack_row_u64(row, samples_per_row, bits_per_sample, little_endian);
+                        unpack_row_u64(row, samples_per_row, bits_per_sample, row_is_little_endian);
 
                     if predictor == 2 {
                         apply_horizontal_predictor2_u64(
@@ -808,16 +1371,20 @@ pub(crate) fn try_decode_general_strips_tiles(
     // widen to the next one up; the reported `bits_per_sample` still describes
     // the source, so normalization keeps using the true type maximum.
     Ok(Some(match (sample_format, bits_per_sample) {
-        (3, 32) => DecodingResult::F32(
-            out.into_iter().map(|v| f32::from_bits(v as u32)).collect(),
+        // No F16 carrier exists, and none is wanted: everything downstream
+        // reads half floats as f32 while still reporting 16 bits, which is what
+        // the tiff crate's own half-float path produces.
+        (3, 16) => DecodingResult::F32(
+            out.into_iter()
+                .map(|v| crate::formats::half::f16_to_f32(v as u16))
+                .collect(),
         ),
+        (3, 32) => DecodingResult::F32(out.into_iter().map(|v| f32::from_bits(v as u32)).collect()),
         (3, 64) => DecodingResult::F64(out.into_iter().map(f64::from_bits).collect()),
         (2, bits) => {
             // Sign-extend from the source width before widening.
             let shift = 64 - bits;
-            let signed = out
-                .into_iter()
-                .map(|v| ((v << shift) as i64) >> shift);
+            let signed = out.into_iter().map(|v| ((v << shift) as i64) >> shift);
             if bits <= 8 {
                 DecodingResult::I8(signed.map(|v| v as i8).collect())
             } else if bits <= 16 {
@@ -826,15 +1393,9 @@ pub(crate) fn try_decode_general_strips_tiles(
                 DecodingResult::I32(signed.map(|v| v as i32).collect())
             }
         }
-        (_, bits) if bits <= 8 => {
-            DecodingResult::U8(out.into_iter().map(|v| v as u8).collect())
-        }
-        (_, bits) if bits <= 16 => {
-            DecodingResult::U16(out.into_iter().map(|v| v as u16).collect())
-        }
-        (_, bits) if bits <= 32 => {
-            DecodingResult::U32(out.into_iter().map(|v| v as u32).collect())
-        }
+        (_, bits) if bits <= 8 => DecodingResult::U8(out.into_iter().map(|v| v as u8).collect()),
+        (_, bits) if bits <= 16 => DecodingResult::U16(out.into_iter().map(|v| v as u16).collect()),
+        (_, bits) if bits <= 32 => DecodingResult::U32(out.into_iter().map(|v| v as u32).collect()),
         _ => DecodingResult::U64(out),
     }))
 }
@@ -850,12 +1411,11 @@ pub(crate) fn decode_zstd(
     original: &[u8],
     decoder: &mut Decoder<Cursor<&[u8]>>,
 ) -> Result<DecodingResult, DecodeError> {
-    use std::io::Read;
     use tiff::tags::Tag;
 
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
         return Err(DecodeError::new(
-            "ZSTD: tiled TIFFs are not supported by the pure-Rust path",
+            "ZSTD: tiled TIFFs are handled by the block decoder, not here",
         ));
     }
     let planar = decoder.get_tag_u32(Tag::PlanarConfiguration).unwrap_or(1);
@@ -867,13 +1427,13 @@ pub(crate) fn decode_zstd(
 
     let (width, height) = decoder
         .dimensions()
-        .map_err(|e| DecodeError::new(&format!("ZSTD: dimensions: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("ZSTD: dimensions: {}", e)))?;
     let offsets = decoder
         .get_tag_u64_vec(Tag::StripOffsets)
-        .map_err(|e| DecodeError::new(&format!("ZSTD: StripOffsets: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("ZSTD: StripOffsets: {}", e)))?;
     let counts = decoder
         .get_tag_u64_vec(Tag::StripByteCounts)
-        .map_err(|e| DecodeError::new(&format!("ZSTD: StripByteCounts: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("ZSTD: StripByteCounts: {}", e)))?;
     let spp = decoder.get_tag_u32(Tag::SamplesPerPixel).unwrap_or(1);
     let predictor = decoder.get_tag_u32(Tag::Predictor).unwrap_or(1);
     let photometric = decoder
@@ -889,17 +1449,36 @@ pub(crate) fn decode_zstd(
         .unwrap_or_else(|_| vec![1; spp as usize]);
 
     // Decompress every strip with pure-Rust ruzstd, concatenated in row order.
+    // Knowing each strip's decompressed size lets a strip that was never
+    // written (byte count 0, GDAL's SPARSE_OK) be filled with zeros, the way
+    // libtiff reads it.
+    let rows_per_strip = decoder
+        .get_tag_u32(Tag::RowsPerStrip)
+        .unwrap_or(height)
+        .max(1);
+    let bits_per_pixel: u64 = bits.iter().map(|b| *b as u64).sum();
+    #[allow(clippy::manual_div_ceil)] // Pixel-bit multiplication and addition may overflow u64.
+    let row_bytes = ((width as u64 * bits_per_pixel + 7) / 8) as usize;
     let mut raster: Vec<u8> = Vec::new();
-    for (off, cnt) in offsets.iter().zip(counts.iter()) {
+    for (index, (off, cnt)) in offsets.iter().zip(counts.iter()).enumerate() {
         let start = *off as usize;
         let end = start.saturating_add(*cnt as usize);
         if end > original.len() {
             return Err(DecodeError::new("ZSTD: strip byte range out of bounds"));
         }
-        let mut dec = ruzstd::decoding::StreamingDecoder::new(Cursor::new(&original[start..end]))
-            .map_err(|e| DecodeError::new(&format!("ZSTD: decoder init: {:?}", e)))?;
-        dec.read_to_end(&mut raster)
-            .map_err(|e| DecodeError::new(&format!("ZSTD: decompress: {:?}", e)))?;
+        let first_row = (index as u64) * rows_per_strip as u64;
+        let rows = (rows_per_strip as u64).min((height as u64).saturating_sub(first_row)) as usize;
+        let expected = rows.saturating_mul(row_bytes);
+        if *cnt == 0 {
+            raster.resize(raster.len() + expected, 0);
+            continue;
+        }
+        raster.extend_from_slice(&decompress_strip_or_tile(
+            &original[start..end],
+            50000,
+            expected,
+            "ZSTD",
+        )?);
     }
 
     // Match the rebuilt TIFF's byte order to the original so multi-byte samples
@@ -916,10 +1495,15 @@ pub(crate) fn decode_zstd(
         predictor,
         &raster,
     );
+    // Unlimited, like every other decoder this crate builds: the tiff crate's
+    // default caps the buffer it will allocate, and the rebuilt file is the
+    // WHOLE image in one strip, so a large GeoTIFF failed here with "decoder
+    // limits exceeded" while the same pixels decoded fine tiled.
     let mut d = Decoder::new(Cursor::new(rebuilt.as_slice()))
-        .map_err(|e| DecodeError::new(&format!("ZSTD: rebuilt decoder: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("ZSTD: rebuilt decoder: {}", e)))?
+        .with_limits(tiff::decoder::Limits::unlimited());
     d.read_image()
-        .map_err(|e| DecodeError::new(&format!("ZSTD: rebuilt read_image: {}", e)))
+        .map_err(|e| DecodeError::new(format!("ZSTD: rebuilt read_image: {}", e)))
 }
 
 /// Decode chunky, strip-based **floating-point** samples that use TIFF
@@ -953,39 +1537,108 @@ pub struct FloatStripPlan {
     pub predictor: u32,
     /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
     pub sample_format: u32,
+    /// TIFF PlanarConfiguration: 1 = chunky, 2 = one block per channel.
+    pub planar_configuration: u32,
+    /// TIFF Orientation tag. Range decoding produces stored rows; worker-side
+    /// orchestration can transform each range directly into its final band.
+    pub orientation: u32,
+    /// Raw TIFF PhotometricInterpretation tag (1 gray, 2 RGB, 5 CMYK).
+    pub photometric_interpretation: u32,
     /// File byte order, which is how predictor 1 and 2 samples are stored.
     /// Predictor 3 always reassembles to big-endian regardless.
     pub little_endian: bool,
+    /// Rows covered by one UNIT of work: `RowsPerStrip` for a stripped file,
+    /// `TileLength` for a tiled one.
     pub rows_per_strip: u32,
+    /// `TileWidth`/`TileLength`, both zero for a stripped file.
+    pub tile_width: u32,
+    pub tile_length: u32,
+    /// Tiles per tile row; 1 for a stripped file.
+    pub blocks_across: u32,
+    /// Tag 50674's second value, for LERC blocks.
+    pub lerc_additional_compression: u32,
+    /// Byte offset of each BLOCK (strip, or tile in row-major order).
     pub offsets: Vec<u64>,
+    /// Compressed length of each block.
     pub counts: Vec<u64>,
 }
 
 impl FloatStripPlan {
+    pub fn is_tiled(&self) -> bool {
+        self.tile_width > 0 && self.tile_length > 0
+    }
+    /// Blocks making up one unit of work: a strip is one block, a tile row is
+    /// one block per tile column. A unit is always a full-width band of the
+    /// image, which is what lets a worker return rows the caller can place
+    /// with a single offset.
+    pub fn blocks_per_unit(&self) -> usize {
+        if self.planar_configuration == 2 {
+            self.channels as usize
+        } else if self.is_tiled() {
+            (self.blocks_across as usize).max(1)
+        } else {
+            1
+        }
+    }
+    /// Number of units of work — strips, or tile ROWS.
     pub fn strip_count(&self) -> usize {
-        self.offsets.len()
+        self.offsets.len() / self.blocks_per_unit().max(1)
     }
     pub fn row_bytes(&self) -> usize {
         (self.width as usize) * (self.channels as usize) * (self.bits_per_sample as usize / 8)
     }
-    /// First image row covered by `strip`.
-    pub fn first_row(&self, strip: usize) -> usize {
-        strip * self.rows_per_strip as usize
+    /// Bytes in one row of a single block: the full image width for a strip,
+    /// `TileWidth` for a tile (edge tiles are padded to that width).
+    pub fn block_row_bytes(&self) -> usize {
+        if self.planar_configuration == 2 {
+            (self.width as usize) * (self.bits_per_sample as usize / 8)
+        } else if self.is_tiled() {
+            (self.tile_width as usize)
+                * (self.channels as usize)
+                * (self.bits_per_sample as usize / 8)
+        } else {
+            self.row_bytes()
+        }
     }
-    /// Rows actually covered by `strip` (the last strip may be short).
-    pub fn rows_in(&self, strip: usize) -> usize {
-        let first = self.first_row(strip);
+    /// First image row covered by `unit`.
+    pub fn first_row(&self, unit: usize) -> usize {
+        unit * self.rows_per_strip as usize
+    }
+    /// Rows actually covered by `unit` (the last one may be short).
+    pub fn rows_in(&self, unit: usize) -> usize {
+        let first = self.first_row(unit);
         if first >= self.height as usize {
             0
         } else {
             (self.rows_per_strip as usize).min(self.height as usize - first)
         }
     }
+    pub(crate) fn codec_info(&self) -> BlockCodecInfo {
+        BlockCodecInfo {
+            bits_per_sample: self.bits_per_sample,
+            sample_format: self.sample_format,
+            little_endian: self.little_endian,
+            lerc_additional_compression: self.lerc_additional_compression,
+            // The plan is only handed out for photometric 1 and 2, so a block
+            // reached through it never carries YCbCr.
+            ycbcr: false,
+        }
+    }
 }
 
-/// Read the tags describing a predictor-3 float strip layout, or `None` when
-/// this file is not that shape. Same guards as
-/// `try_decode_float_predictor_strips`, which is built on top of it.
+/// Read the tags describing a byte-aligned chunky layout that can be decoded
+/// one unit at a time — a strip, or a whole tile ROW — or `None` when the file
+/// is not that shape.
+///
+/// This is what makes parallel decoding possible: every unit is a full-width
+/// band of the image, so a worker handed only that unit's compressed bytes can
+/// return rows the caller drops in at one offset. Tiles qualify a tile row at
+/// a time for exactly that reason; a single tile would not, since it covers
+/// only part of each row it touches.
+///
+/// `try_decode_float_predictor_strips` is built on top of this and applies
+/// narrower guards of its own — it predates tiles and the block-only codecs,
+/// and widening it is not needed for the single-threaded path.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn float_predictor_plan(
     data: &[u8],
@@ -997,10 +1650,12 @@ pub(crate) fn float_predictor_plan(
     compression: u32,
     predictor: u32,
     planar_configuration: u32,
+    orientation: u32,
+    photometric_interpretation: u32,
 ) -> Option<FloatStripPlan> {
     use tiff::tags::Tag;
 
-    if planar_configuration != 1 || !matches!(predictor, 1..=3) {
+    if !matches!(planar_configuration, 1 | 2) || !matches!(predictor, 1..=3) {
         return None;
     }
     // Byte-aligned widths only. Sub-byte and 9..15-bit shapes have their own
@@ -1008,7 +1663,30 @@ pub(crate) fn float_predictor_plan(
     if !matches!(bits_per_sample, 8 | 16 | 32 | 64) {
         return None;
     }
-    if !matches!(compression, 1 | 5 | 8 | 32946) {
+    // Every codec `decompress_block` implements IN THIS BUILD. LERC and PNG
+    // hand back typed values rather than the strip's bytes, which is why the
+    // plan carries the sample layout they need to re-serialize against.
+    //
+    // Planning only parses the IFD, but it must not advertise a codec that the
+    // selected parallel worker module cannot decode. Embedded JPEG XL takes
+    // the whole-container retry path through its dedicated module instead.
+    let supported = matches!(
+        compression,
+        1 | 5
+            | 8
+            | 32946
+            | 50000
+            | 34933
+            | 34925
+            | 34887
+            | 34712
+            | 33003
+            | 33004
+            | 33005
+            | 34934
+            | 22610
+    );
+    if !supported {
         return None;
     }
     let sample_format = decoder
@@ -1022,25 +1700,72 @@ pub(crate) fn float_predictor_plan(
     if predictor == 3 && (sample_format != 3 || !matches!(bits_per_sample, 16 | 32 | 64)) {
         return None;
     }
-    if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
+    let little_endian = tiff_is_little_endian(data)?;
+    let tile_width = decoder.get_tag_u32(Tag::TileWidth).unwrap_or(0);
+    let tile_length = decoder.get_tag_u32(Tag::TileLength).unwrap_or(0);
+    let is_tiled = tile_width > 0 && tile_length > 0;
+
+    if is_tiled && planar_configuration == 2 {
+        // Separate tiled planes need both a channel and a tile-column axis.
+        // Keep that uncommon shape on the established whole-image decoder.
         return None;
     }
-    let little_endian = tiff_is_little_endian(data)?;
-    let offsets = match decoder.get_tag_u64_vec(Tag::StripOffsets) {
-        Ok(value) if !value.is_empty() => value,
-        _ => return None,
+    let (mut offsets, mut counts, rows_per_unit, blocks_across) = if is_tiled {
+        let offsets = match decoder.get_tag_u64_vec(Tag::TileOffsets) {
+            Ok(value) if !value.is_empty() => value,
+            _ => return None,
+        };
+        let counts = match decoder.get_tag_u64_vec(Tag::TileByteCounts) {
+            Ok(value) if value.len() == offsets.len() => value,
+            _ => return None,
+        };
+        let across = (width as u64).div_ceil(tile_width as u64) as u32;
+        let down = (height as u64).div_ceil(tile_length as u64) as u32;
+        // The tiles must be exactly the row-major grid this assumes; anything
+        // else (a missing tile, a second plane) is not this path's to guess at.
+        if across == 0 || offsets.len() as u64 != (across as u64) * (down as u64) {
+            return None;
+        }
+        (offsets, counts, tile_length as u64, across)
+    } else {
+        let offsets = match decoder.get_tag_u64_vec(Tag::StripOffsets) {
+            Ok(value) if !value.is_empty() => value,
+            _ => return None,
+        };
+        let counts = match decoder.get_tag_u64_vec(Tag::StripByteCounts) {
+            Ok(value) if value.len() == offsets.len() => value,
+            _ => return None,
+        };
+        let rows_per_strip = decoder
+            .get_tag_u64_vec(Tag::RowsPerStrip)
+            .ok()
+            .and_then(|values| values.first().copied())
+            .unwrap_or(height as u64);
+        (offsets, counts, rows_per_strip, 1)
     };
-    let counts = match decoder.get_tag_u64_vec(Tag::StripByteCounts) {
-        Ok(value) if value.len() == offsets.len() => value,
-        _ => return None,
-    };
-    let rows_per_strip = decoder
-        .get_tag_u64_vec(Tag::RowsPerStrip)
-        .ok()
-        .and_then(|values| values.first().copied())
-        .unwrap_or(height as u64);
-    if rows_per_strip == 0 {
+    if rows_per_unit == 0 {
         return None;
+    }
+    if planar_configuration == 2 {
+        let strips_per_plane = (height as u64).div_ceil(rows_per_unit) as usize;
+        let channel_count = channels as usize;
+        if channel_count == 0 || offsets.len() != strips_per_plane * channel_count {
+            return None;
+        }
+        // TIFF stores separate planes plane-major. Reorder only the small IFD
+        // tables to band-major so one unit contains all channel blocks for the
+        // same rows and can be assembled at a single output offset.
+        let mut band_offsets = Vec::with_capacity(offsets.len());
+        let mut band_counts = Vec::with_capacity(counts.len());
+        for strip in 0..strips_per_plane {
+            for channel in 0..channel_count {
+                let index = channel * strips_per_plane + strip;
+                band_offsets.push(offsets[index]);
+                band_counts.push(counts[index]);
+            }
+        }
+        offsets = band_offsets;
+        counts = band_counts;
     }
     Some(FloatStripPlan {
         width,
@@ -1050,8 +1775,19 @@ pub(crate) fn float_predictor_plan(
         compression,
         predictor,
         sample_format,
+        planar_configuration,
+        orientation,
+        photometric_interpretation,
         little_endian,
-        rows_per_strip: rows_per_strip as u32,
+        rows_per_strip: rows_per_unit as u32,
+        tile_width: if is_tiled { tile_width } else { 0 },
+        tile_length: if is_tiled { tile_length } else { 0 },
+        blocks_across,
+        lerc_additional_compression: decoder
+            .get_tag_u32_vec(Tag::Unknown(50674))
+            .ok()
+            .and_then(|values| values.get(1).copied())
+            .unwrap_or(0),
         offsets,
         counts,
     })
@@ -1067,13 +1803,31 @@ pub(crate) fn decode_float_predictor_strip(
     rows: usize,
     out: &mut [u8],
 ) -> Result<(), DecodeError> {
-    let row_bytes = plan.row_bytes();
+    decode_block_rows(block, plan, plan.width as usize, rows, out)
+}
+
+/// The same work for a block that is only `block_width` columns wide — a TILE.
+/// Predictors run along a block's own rows, not the image's, so the width has
+/// to be the block's for the differencing and the byte planes to line up.
+pub(crate) fn decode_block_rows(
+    block: &[u8],
+    plan: &FloatStripPlan,
+    block_width: usize,
+    rows: usize,
+    out: &mut [u8],
+) -> Result<(), DecodeError> {
     let bytes_per_sample = plan.bits_per_sample as usize / 8;
-    let samples_per_row = (plan.width as usize) * (plan.channels as usize);
+    let samples_per_row = block_width * (plan.channels as usize);
+    let row_bytes = samples_per_row * bytes_per_sample;
     let expected = rows * row_bytes;
 
-    let mut decompressed =
-        decompress_strip_or_tile(block, plan.compression, expected, "Strip decode")?;
+    let mut decompressed = decompress_block(
+        block,
+        plan.compression,
+        expected,
+        "Strip decode",
+        Some(&plan.codec_info()),
+    )?;
     if decompressed.len() < expected {
         return Err(DecodeError::new(
             "Strip decode: strip shorter than its declared geometry",
@@ -1122,6 +1876,134 @@ pub(crate) fn decode_float_predictor_strip(
     Ok(())
 }
 
+/// Decode one UNIT of work into `band`, the full-width rows it covers.
+///
+/// A strip is one block spanning the whole width, so it lands in `band`
+/// directly. A tile row is `blocks_across` blocks side by side, each padded by
+/// the encoder to the full tile size: the tile is decoded on its own (so its
+/// predictor runs along the tile's rows) and then the part that is inside the
+/// image is copied across. `band` must be exactly `rows * plan.row_bytes()`.
+pub(crate) fn decode_unit_into(
+    blocks: &[&[u8]],
+    plan: &FloatStripPlan,
+    unit: usize,
+    rows: usize,
+    band: &mut [u8],
+) -> Result<(), DecodeError> {
+    if plan.planar_configuration == 2 {
+        let bytes_per_sample = plan.bits_per_sample as usize / 8;
+        let plane_row_bytes = plan.width as usize * bytes_per_sample;
+        let mut plane_plan = plan.clone();
+        plane_plan.channels = 1;
+        plane_plan.planar_configuration = 1;
+        let mut plane = vec![0u8; rows * plane_row_bytes];
+        for (channel, block) in blocks.iter().enumerate() {
+            decode_float_predictor_strip(block, &plane_plan, rows, &mut plane)?;
+            for pixel in 0..rows * plan.width as usize {
+                let source = pixel * bytes_per_sample;
+                let destination = (pixel * plan.channels as usize + channel) * bytes_per_sample;
+                band[destination..destination + bytes_per_sample]
+                    .copy_from_slice(&plane[source..source + bytes_per_sample]);
+            }
+        }
+        return Ok(());
+    }
+    if !plan.is_tiled() {
+        let block = blocks
+            .first()
+            .ok_or_else(|| DecodeError::new("Strip range: missing strip bytes"))?;
+        return decode_float_predictor_strip(block, plan, rows, band);
+    }
+
+    let row_bytes = plan.row_bytes();
+    let tile_row_bytes = plan.block_row_bytes();
+    let bytes_per_sample = plan.bits_per_sample as usize / 8;
+    let tile_length = plan.tile_length as usize;
+    let tile_width = plan.tile_width as usize;
+    let first_row = plan.first_row(unit);
+    let mut tile = vec![0u8; tile_length * tile_row_bytes];
+
+    for (column, block) in blocks.iter().enumerate() {
+        let image_col = column * tile_width;
+        if image_col >= plan.width as usize {
+            break;
+        }
+        // An edge tile still carries a full tile's rows and columns: the
+        // encoder pads it, and the padding is dropped when copying out.
+        if block.is_empty() {
+            // A tile a sparse GeoTIFF never wrote reads as zeros, as in libtiff.
+            tile.iter_mut().for_each(|byte| *byte = 0);
+        } else {
+            decode_block_rows(block, plan, tile_width, tile_length, &mut tile)?;
+        }
+
+        let valid_cols = tile_width.min(plan.width as usize - image_col);
+        let copy_bytes = valid_cols * (plan.channels as usize) * bytes_per_sample;
+        let dst_col_offset = image_col * (plan.channels as usize) * bytes_per_sample;
+        for row in 0..rows.min(plan.height as usize - first_row) {
+            let src = &tile[row * tile_row_bytes..row * tile_row_bytes + copy_bytes];
+            let dst_start = row * row_bytes + dst_col_offset;
+            band[dst_start..dst_start + copy_bytes].copy_from_slice(src);
+        }
+    }
+    Ok(())
+}
+
+/// Decode the units `[first_unit, first_unit + units)` from `blob`, the
+/// concatenated compressed bytes of every block those units cover, and return
+/// the full-width rows they make up.
+///
+/// Shared by the two public range entry points, which differ only in what they
+/// turn the bytes into afterwards.
+pub(crate) fn decode_unit_range(
+    blob: &[u8],
+    counts: &[u32],
+    first_unit: u32,
+    plan: &FloatStripPlan,
+) -> Result<Vec<u8>, DecodeError> {
+    let row_bytes = plan.row_bytes();
+    let blocks_per_unit = plan.blocks_per_unit();
+    let first = first_unit as usize;
+    let units = counts.len() / blocks_per_unit.max(1);
+
+    let mut rows_total = 0usize;
+    for index in 0..units {
+        rows_total += plan.rows_in(first + index);
+    }
+    let mut raster = vec![0u8; rows_total * row_bytes];
+
+    let mut in_pos = 0usize;
+    let mut out_pos = 0usize;
+    for index in 0..units {
+        let rows = plan.rows_in(first + index);
+        if rows == 0 {
+            break;
+        }
+        let mut blocks: Vec<&[u8]> = Vec::with_capacity(blocks_per_unit);
+        for block in 0..blocks_per_unit {
+            let count = counts[index * blocks_per_unit + block] as usize;
+            let end = in_pos
+                .checked_add(count)
+                .filter(|end| *end <= blob.len())
+                .ok_or_else(|| {
+                    DecodeError::new("Strip range: compressed blob is shorter than its counts")
+                })?;
+            blocks.push(&blob[in_pos..end]);
+            in_pos = end;
+        }
+        decode_unit_into(
+            &blocks,
+            plan,
+            first + index,
+            rows,
+            &mut raster[out_pos..out_pos + rows * row_bytes],
+        )?;
+        out_pos += rows * row_bytes;
+    }
+    raster.truncate(out_pos);
+    Ok(raster)
+}
+
 /// Undo TIFF predictor 2 for one row, in place, for byte-aligned sample widths.
 /// Each sample is added to the sample `channels` positions earlier, wrapping at
 /// the sample width, and samples are stored in the file's byte order.
@@ -1166,32 +2048,6 @@ fn undo_horizontal_predictor_row(
 ///
 /// Predictor 3 leaves samples big-endian (the byte planes are MSB-first by
 /// definition); predictors 1 and 2 leave them in the file's byte order.
-/// IEEE 754 binary16 -> binary32. Written out rather than pulling in `half`,
-/// which is only an indirect dependency here.
-#[inline]
-fn half_bits_to_f32(bits: u16) -> f32 {
-    let sign = ((bits >> 15) as u32) << 31;
-    let exponent = ((bits >> 10) & 0x1f) as u32;
-    let mantissa = (bits & 0x3ff) as u32;
-    let out = match exponent {
-        // Zero and subnormals: renormalize into a binary32 exponent.
-        0 => {
-            if mantissa == 0 {
-                sign
-            } else {
-                let shift = mantissa.leading_zeros() - 21;
-                let exponent = 127 - 15 - shift;
-                let mantissa = (mantissa << (shift + 1)) & 0x3ff;
-                sign | (exponent << 23) | (mantissa << 13)
-            }
-        }
-        // Infinity and NaN.
-        31 => sign | 0x7f80_0000 | (mantissa << 13),
-        _ => sign | ((exponent + 127 - 15) << 23) | (mantissa << 13),
-    };
-    f32::from_bits(out)
-}
-
 pub(crate) fn strip_bytes_to_f32(raster: &[u8], plan: &FloatStripPlan) -> Vec<f32> {
     let big_endian = plan.predictor == 3 || !plan.little_endian;
     let bytes_per_sample = plan.bits_per_sample as usize / 8;
@@ -1217,7 +2073,9 @@ pub(crate) fn strip_bytes_to_f32(raster: &[u8], plan: &FloatStripPlan) -> Vec<f3
     match (bytes_per_sample, plan.sample_format) {
         (1, 2) => raster.iter().map(|v| *v as i8 as f32).collect(),
         (1, _) => raster.iter().map(|v| *v as f32).collect(),
-        (2, 3) => map!(2, |a| half_bits_to_f32(u16::from_le_bytes(a))),
+        (2, 3) => map!(2, |a| crate::formats::half::f16_to_f32(u16::from_le_bytes(
+            a
+        ))),
         (2, 2) => map!(2, |a| i16::from_le_bytes(a) as f32),
         (2, _) => map!(2, |a| u16::from_le_bytes(a) as f32),
         (4, 3) => map!(4, f32::from_le_bytes),
@@ -1265,15 +2123,21 @@ pub(crate) fn try_decode_float_predictor_strips(
         compression,
         predictor,
         planar_configuration,
+        1,
+        1,
     ) {
         Some(plan) => plan,
         None => return Ok(None),
     };
     // The plan is broader than this function: it also describes predictor 1 and
-    // 2 layouts and 16-bit floats, which the strip-parallel API handles. The
-    // reassembly below reads big-endian f32/f64, so anything else must be
-    // declined here or it would silently reinterpret the bytes.
+    // 2 layouts, 16-bit floats, TILED layouts and the block-only codecs, all of
+    // which the strip-parallel API handles and the loop below does not — it
+    // walks strips and reads big-endian f32/f64. Anything else must be declined
+    // here or it would silently reinterpret the bytes.
     if plan.predictor != 3 || !matches!(plan.bits_per_sample, 32 | 64) {
+        return Ok(None);
+    }
+    if plan.is_tiled() || !matches!(plan.compression, 1 | 5 | 8 | 32946) {
         return Ok(None);
     }
 
@@ -1319,3 +2183,22 @@ pub(crate) fn try_decode_float_predictor_strips(
     }))
 }
 
+#[cfg(all(test, feature = "codec-lzma"))]
+mod tests {
+    use super::decompress_block;
+
+    #[test]
+    fn lzma_decodes_standard_xz_delta_filter_chain() {
+        // Python lzma FORMAT_XZ: Delta(dist=3) followed by LZMA2. This is the
+        // same filter chain libtiff writes for LZMA + horizontal predictor.
+        let encoded = [
+            0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x04, 0xe6, 0xd6, 0xb4, 0x46, 0x02, 0x01,
+            0x03, 0x01, 0x02, 0x21, 0x01, 0x16, 0xf2, 0xe8, 0xcd, 0x44, 0x01, 0x00, 0x05, 0x4b,
+            0x3a, 0x2a, 0x02, 0x02, 0x02, 0x00, 0x00, 0x00, 0x96, 0x3e, 0xab, 0x28, 0x30, 0x07,
+            0xf7, 0xde, 0x00, 0x01, 0x1e, 0x06, 0xc1, 0x2f, 0xa4, 0x1d, 0x1f, 0xb6, 0xf3, 0x7d,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x59, 0x5a,
+        ];
+        let decoded = decompress_block(&encoded, 34925, 6, "test", None).unwrap();
+        assert_eq!(decoded, [75, 58, 42, 77, 60, 44]);
+    }
+}

@@ -296,4 +296,3 @@ fn parse_number(chars: &[char], pos: &mut usize) -> Result<JsonValue, String> {
         .map(JsonValue::Num)
         .map_err(|_| format!("invalid JSON number '{}'", s))
 }
-

@@ -86,3 +86,12 @@ pub(crate) fn convert_cmyk_to_rgb(result: DecodingResult, channels: u32) -> (Dec
     }
 }
 
+/// The strip-parallel wire path operates on native sample bytes. Keep its
+/// common unsigned-8 CMYK conversion anchored to the exact same implementation
+/// as the whole-image decoder instead of duplicating the color math in JS.
+pub(crate) fn convert_cmyk_u8_to_rgb(data: Vec<u8>, channels: u32) -> (Vec<u8>, u32) {
+    match convert_cmyk_to_rgb(DecodingResult::U8(data), channels) {
+        (DecodingResult::U8(converted), converted_channels) => (converted, converted_channels),
+        _ => unreachable!("U8 CMYK conversion must preserve the U8 variant"),
+    }
+}

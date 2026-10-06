@@ -9,7 +9,7 @@ use std::mem;
 /// each named `Option<T>` field on `ImageAttributes`/`LayerAttributes` plus
 /// the crate's own catch-all `other` maps for custom/vendor attributes, so
 /// nothing an EXR file carries is left out.
-fn extract_exr_tags_json(
+pub(crate) fn extract_exr_tags_json(
     image_attrs: &exr::meta::header::ImageAttributes,
     layer_attrs: &exr::meta::header::LayerAttributes,
 ) -> String {
@@ -111,6 +111,178 @@ fn extract_exr_tags_json(
     format!("[{}]", out.join(","))
 }
 
+/// Compressed-block plan for the common scientific EXR shape that can be
+/// decoded by the webview's shared WASM worker pool in parallel.
+///
+/// Keep this deliberately narrow. The ordinary `exr` crate decoder remains
+/// the compatibility path for multipart, tiled, deep, multi-channel, half,
+/// uint, subsampled, and non-ZIP16 images.
+pub(crate) fn zip_f32_plan(data: &[u8]) -> Result<Option<crate::ExrZipPlan>, DecodeError> {
+    use exr::block::chunk::{CompressedBlock, CompressedScanLineBlock};
+    use exr::meta::attribute::{LineOrder, SampleType};
+    use exr::prelude::Compression;
+
+    let reader = exr::block::read(Cursor::new(data), false)
+        .map_err(|e| DecodeError::new(format!("Failed to read EXR header: {e}")))?;
+    let metadata = reader.meta_data();
+    if metadata.headers.len() != 1 {
+        return Ok(None);
+    }
+    let header = &metadata.headers[0];
+    if header.deep
+        || metadata.requirements.is_single_layer_and_tiled
+        || header.compression != Compression::ZIP16
+        || header.line_order != LineOrder::Increasing
+        || header.channels.list.len() != 1
+    {
+        return Ok(None);
+    }
+    let channel = &header.channels.list[0];
+    if channel.sample_type != SampleType::F32 || channel.sampling.0 != 1 || channel.sampling.1 != 1
+    {
+        return Ok(None);
+    }
+
+    let width = header.layer_size.0;
+    let height = header.layer_size.1;
+    if width == 0 || height == 0 || width.checked_mul(height).is_none() {
+        return Ok(None);
+    }
+    let data_y = header.own_attributes.layer_position.1;
+    let all_tags_json = extract_exr_tags_json(&header.shared_attributes, &header.own_attributes);
+    let channel_name = channel.name.to_string();
+
+    let chunks = reader
+        .all_chunks(false)
+        .map_err(|e| DecodeError::new(format!("Failed to read EXR chunk table: {e}")))?;
+    let chunk_capacity = chunks.len();
+    let mut compressed = Vec::with_capacity(data.len().saturating_sub(1024));
+    let mut counts = Vec::with_capacity(chunk_capacity);
+    let mut y_coordinates = Vec::with_capacity(chunk_capacity);
+    for chunk in chunks {
+        let chunk =
+            chunk.map_err(|e| DecodeError::new(format!("Failed to read EXR chunk: {e}")))?;
+        if chunk.layer_index != 0 {
+            return Ok(None);
+        }
+        let CompressedBlock::ScanLine(CompressedScanLineBlock {
+            y_coordinate,
+            compressed_pixels_le,
+        }) = chunk.compressed_block
+        else {
+            return Ok(None);
+        };
+        let count = u32::try_from(compressed_pixels_le.len())
+            .map_err(|_| DecodeError::new("EXR compressed block is too large"))?;
+        y_coordinates.push(y_coordinate);
+        counts.push(count);
+        compressed.extend_from_slice(&compressed_pixels_le);
+    }
+    if counts.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(crate::ExrZipPlan {
+        width: width as u32,
+        height: height as u32,
+        data_y,
+        channel_name,
+        compressed,
+        counts,
+        y_coordinates,
+        all_tags_json,
+    }))
+}
+
+/// Inflate a contiguous group of one-channel Float32 ZIP16 blocks. The caller
+/// distributes disjoint groups across Web Workers and concatenates the raw
+/// little-endian float bytes in row order.
+pub(crate) fn decode_zip_f32_blocks(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+) -> Result<Vec<u8>, DecodeError> {
+    if counts.len() != rows.len() || width == 0 {
+        return Err(DecodeError::new("Invalid EXR ZIP block range"));
+    }
+    let total_rows = rows.iter().try_fold(0usize, |sum, &value| {
+        sum.checked_add(value as usize)
+            .ok_or_else(|| DecodeError::new("EXR ZIP row count overflow"))
+    })?;
+    let total_bytes = total_rows
+        .checked_mul(width as usize)
+        .and_then(|value| value.checked_mul(4))
+        .ok_or_else(|| DecodeError::new("EXR ZIP output size overflow"))?;
+    let mut output = Vec::with_capacity(total_bytes);
+    let mut input_offset = 0usize;
+
+    for (&count, &row_count) in counts.iter().zip(rows) {
+        let input_end = input_offset
+            .checked_add(count as usize)
+            .filter(|&end| end <= blob.len())
+            .ok_or_else(|| DecodeError::new("EXR ZIP block exceeds its compressed range"))?;
+        let expected = (row_count as usize)
+            .checked_mul(width as usize)
+            .and_then(|value| value.checked_mul(4))
+            .ok_or_else(|| DecodeError::new("EXR ZIP block size overflow"))?;
+        let source = &blob[input_offset..input_end];
+        let mut bytes = if source.len() == expected {
+            source.to_vec()
+        } else {
+            let options = zune_inflate::DeflateOptions::default()
+                .set_limit(expected)
+                .set_size_hint(expected);
+            let mut decoder = zune_inflate::DeflateDecoder::new_with_options(source, options);
+            decoder
+                .decode_zlib()
+                .map_err(|_| DecodeError::new("Malformed EXR ZIP block"))?
+        };
+        if bytes.len() != expected {
+            return Err(DecodeError::new(
+                "EXR ZIP block decompressed to the wrong size",
+            ));
+        }
+        if source.len() != expected {
+            exr_zip_differences_to_samples(&mut bytes);
+            exr_zip_interleave_byte_blocks(&mut bytes);
+        }
+        output.extend_from_slice(&bytes);
+        input_offset = input_end;
+    }
+    if input_offset != blob.len() {
+        return Err(DecodeError::new(
+            "EXR ZIP range contains trailing compressed bytes",
+        ));
+    }
+    Ok(output)
+}
+
+fn exr_zip_differences_to_samples(bytes: &mut [u8]) {
+    if bytes.len() < 2 {
+        return;
+    }
+    let mut previous = bytes[0] as i16;
+    for byte in &mut bytes[1..] {
+        let sample = (previous + *byte as i16 - 128) as u8;
+        *byte = sample;
+        previous = sample as i16;
+    }
+}
+
+fn exr_zip_interleave_byte_blocks(bytes: &mut [u8]) {
+    let separated = bytes.to_vec();
+    let split = separated.len().div_ceil(2);
+    let (first, second) = separated.split_at(split);
+    for index in 0..second.len() {
+        bytes[index * 2] = first[index];
+        bytes[index * 2 + 1] = second[index];
+    }
+    if first.len() > second.len() {
+        bytes[bytes.len() - 1] = first[first.len() - 1];
+    }
+}
+
 pub(crate) fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, DecodeError> {
     use exr::prelude::*;
 
@@ -123,7 +295,7 @@ pub(crate) fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, DecodeError> {
         .first_valid_layer()
         .all_attributes()
         .from_buffered(cursor)
-        .map_err(|e| DecodeError::new(&format!("Failed to decode EXR: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Failed to decode EXR: {}", e)))?;
     let read_time = crate::time::now_ms() - start_time;
     let pack_start = crate::time::now_ms();
 
@@ -363,4 +535,3 @@ fn fill_exr_interleaved_channel(
         out[i * output_channels + out_channel] = value;
     }
 }
-
