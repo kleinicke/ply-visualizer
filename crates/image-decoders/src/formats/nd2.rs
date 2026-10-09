@@ -24,7 +24,7 @@
 
 use super::half::f16_to_f32;
 use super::json_value::{push_opt, to_json_string, JsonValue};
-use super::scientific_common::{get_slice, ScientificParsed};
+use super::scientific_common::{get_slice, is_need_range, ScientificParsed, SparseFile};
 use crate::DecodeError;
 use std::collections::HashMap;
 
@@ -433,27 +433,115 @@ fn unwrap_root<'a>(tree: &'a Lv, name: &str) -> &'a Lv {
 // Chunk map
 // ---------------------------------------------------------------------------
 
-/// A chunk-map entry. Only the offset is kept: the authoritative payload
-/// length lives in the chunk's own header, and the two disagree in files
-/// written by an interrupted acquisition.
+/// A chunk-map entry. The authoritative payload length lives in the chunk's
+/// own header, and the two disagree in files written by an interrupted
+/// acquisition; the map's `length` is only used as a hint for how many bytes
+/// to request at once from a partially read file.
 struct Chunk {
     offset: u64,
+    length: u64,
+}
+
+/// Slack added to a chunk-map length when requesting a whole chunk, so the
+/// header, name and payload arrive together whatever the length covers.
+const CHUNK_FETCH_SLACK: usize = 4096;
+/// How much of the file's end is requested first: the trailer plus, usually,
+/// the whole chunk map.
+const TAIL_FETCH: usize = 64 * 1024;
+/// Metadata chunks closer together than this are fetched in one request.
+const METADATA_SPAN_LIMIT: usize = 2 * 1024 * 1024;
+
+fn u32_at(file: &SparseFile<'_>, offset: usize, want: usize) -> Result<u32, DecodeError> {
+    let bytes = file.slice_want(offset, 4, want, "ND2")?;
+    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+fn u64_at(file: &SparseFile<'_>, offset: usize, want: usize) -> Result<u64, DecodeError> {
+    let bytes = file.slice_want(offset, 8, want, "ND2")?;
+    let mut array = [0u8; 8];
+    array.copy_from_slice(bytes);
+    Ok(u64::from_le_bytes(array))
+}
+
+/// Bytes to request when a chunk is missing: the map's length plus the
+/// 16-byte header, the name and slack.
+fn chunk_want(chunk: &Chunk) -> usize {
+    usize::try_from(chunk.length)
+        .unwrap_or(0)
+        .saturating_add(16 + CHUNK_FETCH_SLACK)
 }
 
 /// Read the payload of the chunk whose header starts at `position`.
-fn chunk_payload(data: &[u8], position: u64) -> Result<&[u8], DecodeError> {
+///
+/// `want` is how many bytes from the header on to request when they are
+/// missing; the payload itself is bounded by the header's own length.
+fn chunk_payload<'a>(
+    file: &SparseFile<'a>,
+    position: u64,
+    want: usize,
+) -> Result<&'a [u8], DecodeError> {
     let start = u64_to_usize(position, "chunk offset")?;
-    let magic = u32_le(data, start)?;
+    let magic = u32_at(file, start, want)?;
     if magic != CHUNK_MAGIC {
         return Err(DecodeError::new(format!(
             "Bad ND2 chunk magic 0x{:08X} at offset {}",
             magic, position
         )));
     }
-    let name_length = u64_to_usize(u32_le(data, add(start, 4)?)? as u64, "chunk name length")?;
-    let data_length = u64_to_usize(u64_le(data, add(start, 8)?)?, "chunk length")?;
+    let name_length = u64_to_usize(
+        u64::from(u32_at(file, add(start, 4)?, 4)?),
+        "chunk name length",
+    )?;
+    let data_length = u64_to_usize(u64_at(file, add(start, 8)?, 8)?, "chunk length")?;
     let payload_start = add(add(start, 16)?, name_length)?;
-    get_slice(data, payload_start, data_length, "ND2 chunk")
+    file.slice(payload_start, data_length, "ND2 chunk")
+}
+
+/// A metadata chunk that is optional: any failure but a request for more
+/// bytes means "absent", exactly as the whole-file decoder treats it.
+fn optional_payload<'a>(
+    file: &SparseFile<'a>,
+    chunk: Option<&Chunk>,
+) -> Result<Option<&'a [u8]>, DecodeError> {
+    let Some(chunk) = chunk else {
+        return Ok(None);
+    };
+    match chunk_payload(file, chunk.offset, chunk_want(chunk)) {
+        Ok(payload) => Ok(Some(payload)),
+        Err(error) if is_need_range(&error) => Err(error),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Ask for the metadata chunks that sit close together (they are written back
+/// to back) in one request per group, so they cost one round trip per group,
+/// not one per chunk. Purely an optimisation: failures other than "bytes not
+/// read yet" are ignored and left to the real reads.
+fn prefetch_metadata(file: &SparseFile<'_>, chunks: &[Option<&Chunk>]) -> Result<(), DecodeError> {
+    let mut spans: Vec<(usize, usize)> = chunks
+        .iter()
+        .flatten()
+        .filter_map(|chunk| {
+            let start = usize::try_from(chunk.offset).ok()?;
+            let end = start.saturating_add(chunk_want(chunk)).min(file.len());
+            (start < end).then_some((start, end))
+        })
+        .collect();
+    spans.sort_unstable();
+    let mut groups: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in spans {
+        match groups.last_mut() {
+            Some(group) if end - group.0 <= METADATA_SPAN_LIMIT => group.1 = group.1.max(end),
+            _ => groups.push((start, end)),
+        }
+    }
+    for (start, end) in groups {
+        match file.slice(start, end - start, "ND2 chunk") {
+            Err(error) if is_need_range(&error) => return Err(error),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Parse the chunk map into `name -> (offset, length)`.
@@ -479,11 +567,11 @@ fn parse_chunk_map(map: &[u8]) -> HashMap<String, Chunk> {
         let Ok(chunk_length) = u64_le(map, name_end + 8) else {
             break;
         };
-        let _ = chunk_length;
         chunks.insert(
             name,
             Chunk {
                 offset: chunk_offset,
+                length: chunk_length,
             },
         );
         offset = name_end + 16;
@@ -730,10 +818,30 @@ pub(crate) fn decode_nd2_impl(
     data: &[u8],
     options_json: &str,
 ) -> Result<ScientificParsed, DecodeError> {
-    if data.len() < 64 {
+    decode_nd2_sparse(&SparseFile::whole(data), options_json)
+}
+
+/// Decode from a file of which only some ranges are present. Every byte is
+/// read through `file` by absolute offset; a read of bytes not present yet
+/// fails with a `[need-range:OFFSET:LENGTH]` error (see [`SparseFile`]), and
+/// the caller supplies that range and calls again.
+pub(crate) fn decode_nd2_sparse(
+    file: &SparseFile<'_>,
+    options_json: &str,
+) -> Result<ScientificParsed, DecodeError> {
+    let size = file.len();
+    if size < 64 {
         return Err(DecodeError::new("ND2 file is truncated"));
     }
-    if u32_le(data, 0)? != CHUNK_MAGIC {
+    // The head is only checked when it is already present: a file with a valid
+    // trailer is a chunk file, and the head is fetched solely to tell a legacy
+    // file (no valid trailer) from an invalid one.
+    let head_magic = match u32_at(file, 0, 4) {
+        Ok(magic) => Some(magic),
+        Err(error) if is_need_range(&error) => None,
+        Err(error) => return Err(error),
+    };
+    if head_magic.is_some_and(|magic| magic != CHUNK_MAGIC) {
         // Legacy (pre-2012) ND2 is a different container that does not carry
         // the chunk magic at all. Say so rather than calling the file invalid:
         // it is a real ND2, just one this decoder does not read.
@@ -742,16 +850,26 @@ pub(crate) fn decode_nd2_impl(
         ));
     }
     // The trailer is the 32-byte signature followed by the 8-byte map offset.
-    let signature_start = data.len() - 40;
-    let signature =
-        String::from_utf8_lossy(&data[signature_start..signature_start + MAP_SIGNATURE.len()]);
+    let signature_start = size - 40;
+    // Ask for a generous tail so a small chunk map comes along.
+    let tail_start = size.saturating_sub(TAIL_FETCH);
+    let tail = file.slice(tail_start, size - tail_start, "ND2")?;
+    let trailer = &tail[signature_start - tail_start..];
+    let signature = String::from_utf8_lossy(&trailer[..MAP_SIGNATURE.len()]);
     if signature != MAP_SIGNATURE {
+        if head_magic.is_none() && u32_at(file, 0, 4)? != CHUNK_MAGIC {
+            return Err(DecodeError::new(
+                "This is a legacy (pre-2012) ND2 file; only modern chunk-based ND2 files are supported",
+            ));
+        }
         return Err(DecodeError::new(
             "ND2 file has no chunk map; only modern (Ver3.0+) ND2 files are supported",
         ));
     }
-    let map_position = u64_le(data, data.len() - 8)?;
-    let map_bytes = chunk_payload(data, map_position)?;
+    let map_position = u64_at(file, size - 8, 8)?;
+    // The chunk map is the last chunk: request everything from it to the end.
+    let map_want = size.saturating_sub(usize::try_from(map_position).unwrap_or(size));
+    let map_bytes = chunk_payload(file, map_position, map_want)?;
     let chunks = parse_chunk_map(map_bytes);
     if chunks.is_empty() {
         return Err(DecodeError::new("ND2 chunk map is empty"));
@@ -762,7 +880,22 @@ pub(crate) fn decode_nd2_impl(
     // --- Geometry --------------------------------------------------------
     let attributes_chunk = find_chunk(&chunks, "ImageAttributes")
         .ok_or_else(|| DecodeError::new("ND2 file has no image attributes chunk"))?;
-    let attributes_tree = metadata_tree(chunk_payload(data, attributes_chunk.offset)?);
+    // The metadata chunks are independent of each other: request them together
+    // before anything that depends on what they say.
+    prefetch_metadata(
+        file,
+        &[
+            Some(attributes_chunk),
+            find_chunk(&chunks, "ImageMetadata"),
+            find_chunk(&chunks, "ImageCalibration"),
+            find_chunk(&chunks, "ImageMetadataSeq"),
+        ],
+    )?;
+    let attributes_tree = metadata_tree(chunk_payload(
+        file,
+        attributes_chunk.offset,
+        chunk_want(attributes_chunk),
+    )?);
     let attributes = unwrap_root(&attributes_tree, "SLxImageAttributes");
 
     let width = attributes
@@ -825,7 +958,7 @@ pub(crate) fn decode_nd2_impl(
     };
 
     // --- Frames ----------------------------------------------------------
-    let mut frames: Vec<(usize, u64)> = Vec::new();
+    let mut frames: Vec<(usize, u64, u64)> = Vec::new();
     for (name, chunk) in &chunks {
         let Some(rest) = name.strip_prefix("ImageDataSeq|") else {
             continue;
@@ -833,12 +966,12 @@ pub(crate) fn decode_nd2_impl(
         let Ok(index) = rest.trim_end_matches('!').parse::<usize>() else {
             continue;
         };
-        frames.push((index, chunk.offset));
+        frames.push((index, chunk.offset, chunk.length));
     }
     if frames.is_empty() {
         return Err(DecodeError::new("ND2 file contains no image frames"));
     }
-    frames.sort_by_key(|(index, _)| *index);
+    frames.sort_by_key(|(index, _, _)| *index);
     let stored_frame_count = frames.len();
 
     // `uiSequenceCount` describes the acquisition that was planned. A run
@@ -853,9 +986,8 @@ pub(crate) fn decode_nd2_impl(
         .unwrap_or(stored_frame_count);
     let frame_count = planned_count.min(stored_frame_count);
 
-    let experiment = find_chunk(&chunks, "ImageMetadata")
-        .and_then(|chunk| chunk_payload(data, chunk.offset).ok())
-        .map(metadata_tree);
+    let experiment =
+        optional_payload(file, find_chunk(&chunks, "ImageMetadata"))?.map(metadata_tree);
     let axes = match &experiment {
         Some(tree) => axis_model(tree, frame_count),
         None => Vec::new(),
@@ -890,11 +1022,15 @@ pub(crate) fn decode_nd2_impl(
         .max(0)
         .min(channels as i64 - 1) as usize;
 
-    let (_, frame_offset) = frames
+    let (_, frame_offset, frame_length) = frames
         .get(frame_index)
         .copied()
         .ok_or_else(|| DecodeError::new("ND2 frame index is out of range"))?;
-    let payload = chunk_payload(data, frame_offset)?;
+    let frame_chunk = Chunk {
+        offset: frame_offset,
+        length: frame_length,
+    };
+    let payload = chunk_payload(file, frame_offset, chunk_want(&frame_chunk))?;
     // Every frame payload opens with an f64 acquisition timestamp.
     let pixels = get_slice(payload, 8, payload.len().saturating_sub(8), "ND2 frame")?;
     let timestamp_ms = f64_le(payload, 0).unwrap_or(f64::NAN);
@@ -930,9 +1066,8 @@ pub(crate) fn decode_nd2_impl(
     }
 
     // --- Metadata --------------------------------------------------------
-    let calibration = find_chunk(&chunks, "ImageCalibration")
-        .and_then(|chunk| chunk_payload(data, chunk.offset).ok())
-        .map(metadata_tree);
+    let calibration =
+        optional_payload(file, find_chunk(&chunks, "ImageCalibration"))?.map(metadata_tree);
     let micrometres_per_pixel = calibration
         .as_ref()
         .and_then(|tree| unwrap_root(tree, "SLxCalibration").get("dCalibration"))
@@ -945,7 +1080,7 @@ pub(crate) fn decode_nd2_impl(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    let channel_names = channel_names(&chunks, data, channels);
+    let channel_names = channel_names(&chunks, file, channels)?;
 
     // `labels` present => the options are NAMED and the viewer renders a
     // choice; absent => a homogeneous axis and it renders a scrub. Every
@@ -1058,10 +1193,14 @@ pub(crate) fn decode_nd2_impl(
 /// Channel names from `ImageMetadataSeqLV|0`, where each plane's descriptor
 /// carries the probe or filter name. Falls back to positional names so the
 /// selector always has a label.
-fn channel_names(chunks: &HashMap<String, Chunk>, data: &[u8], channels: usize) -> Vec<String> {
+fn channel_names(
+    chunks: &HashMap<String, Chunk>,
+    file: &SparseFile<'_>,
+    channels: usize,
+) -> Result<Vec<String>, DecodeError> {
     let mut names: Vec<String> = Vec::new();
-    if let Some(chunk) = find_chunk(chunks, "ImageMetadataSeq") {
-        if let Ok(payload) = chunk_payload(data, chunk.offset) {
+    {
+        if let Some(payload) = optional_payload(file, find_chunk(chunks, "ImageMetadataSeq"))? {
             let tree = metadata_tree(payload);
             let root = unwrap_root(&tree, "SLxPictureMetadata");
             if let Some(Lv::Map(planes)) = root.path(&["sPicturePlanes", "sPlaneNew"]) {
@@ -1076,7 +1215,7 @@ fn channel_names(chunks: &HashMap<String, Chunk>, data: &[u8], channels: usize) 
                         Some(text) => names.push(text.to_string()),
                         // An unnamed plane makes the whole set unnamed: a
                         // synthesized "Channel 2" is not a name.
-                        None => return Vec::new(),
+                        None => return Ok(Vec::new()),
                     }
                 }
             }
@@ -1085,7 +1224,169 @@ fn channel_names(chunks: &HashMap<String, Chunk>, data: &[u8], channels: usize) 
     names.truncate(channels);
     // Partial naming is no naming: report all or nothing.
     if names.len() != channels {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    names
+    Ok(names)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    fn collect_nd2(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_nd2(&path, out);
+            } else if path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("nd2"))
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Parse `[need-range:OFFSET:LENGTH]` out of a request error.
+    fn parse_need(error: &DecodeError) -> (usize, usize) {
+        let text = error.to_string();
+        let inner = text
+            .strip_prefix("[need-range:")
+            .and_then(|rest| rest.split(']').next())
+            .expect("need-range marker");
+        let (offset, length) = inner.split_once(':').expect("offset:length");
+        (offset.parse().unwrap(), length.parse().unwrap())
+    }
+
+    /// The viewer's loop: decode, on a missing range read exactly that range
+    /// from the real file, retry. Returns the result, the number of decode
+    /// calls and the bytes fetched.
+    fn run_sparse(
+        file: &[u8],
+        options: &str,
+    ) -> (Result<ScientificParsed, DecodeError>, usize, usize) {
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        let mut fetched = 0usize;
+        for iteration in 1..=64 {
+            let pieces = ranges
+                .iter()
+                .map(|&(offset, length)| (offset, &file[offset..offset + length]))
+                .collect();
+            let result = decode_nd2_sparse(&SparseFile::new(file.len(), pieces), options);
+            match result {
+                Err(ref error) if is_need_range(error) => {
+                    let (offset, length) = parse_need(error);
+                    assert!(
+                        offset + length <= file.len() && length > 0,
+                        "bad range {offset}:{length}"
+                    );
+                    if std::env::var("ND2_TRACE").is_ok() {
+                        eprintln!("  need {offset}:{length}");
+                    }
+                    ranges.push((offset, length));
+                    fetched += length;
+                }
+                other => return (other, iteration, fetched),
+            }
+        }
+        panic!("decode_nd2_sparse did not settle in 64 iterations");
+    }
+
+    fn assert_same(
+        label: &str,
+        whole: &Result<ScientificParsed, DecodeError>,
+        sparse: &Result<ScientificParsed, DecodeError>,
+    ) {
+        match (whole, sparse) {
+            (Ok(a), Ok(b)) => {
+                assert_eq!(
+                    (a.width, a.height, a.channels),
+                    (b.width, b.height, b.channels),
+                    "{label}"
+                );
+                assert_eq!(a.bits_per_sample, b.bits_per_sample, "{label}");
+                assert_eq!(a.sample_format, b.sample_format, "{label}");
+                assert_eq!(a.type_min.to_bits(), b.type_min.to_bits(), "{label}");
+                assert_eq!(a.type_max.to_bits(), b.type_max.to_bits(), "{label}");
+                assert_eq!(a.source_numeric_type, b.source_numeric_type, "{label}");
+                assert_eq!(a.metadata_json, b.metadata_json, "{label}");
+                assert_eq!(a.data.len(), b.data.len(), "{label}");
+                assert!(
+                    a.data
+                        .iter()
+                        .zip(&b.data)
+                        .all(|(x, y)| x.to_bits() == y.to_bits()),
+                    "{label}: pixel data differs"
+                );
+            }
+            (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string(), "{label}"),
+            _ => panic!("{label}: whole-file and sparse results disagree"),
+        }
+    }
+
+    /// Last value of each selector axis, as separate option sets.
+    fn plane_options(metadata_json: &str) -> Vec<String> {
+        let mut options = vec!["{}".to_string()];
+        let Some(start) = metadata_json.find("\"selectors\":[") else {
+            return options;
+        };
+        let rest = &metadata_json[start..];
+        let end = rest.find("],\"selectedIndices\"").unwrap_or(rest.len());
+        let mut cursor = &rest[..end];
+        while let Some(at) = cursor.find("\"name\":\"") {
+            cursor = &cursor[at + 8..];
+            let name = cursor.split('"').next().unwrap_or("").to_string();
+            let Some(size_at) = cursor.find("\"size\":") else {
+                break;
+            };
+            let size: usize = cursor[size_at + 7..]
+                .split(|c: char| !c.is_ascii_digit())
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(1);
+            if size > 1 {
+                options.push(format!("{{\"indices\":{{\"{}\":{}}}}}", name, size - 1));
+            }
+        }
+        options
+    }
+
+    // The percentage in the report line is display-only; file sizes are far below f64's 52-bit mantissa.
+    #[allow(clippy::cast_precision_loss)]
+    #[test]
+    fn sparse_decode_matches_whole_file_on_corpus() {
+        let Ok(corpus) = std::env::var("ND2_CORPUS") else {
+            eprintln!("ND2_CORPUS not set; skipping the ranged ND2 corpus test");
+            return;
+        };
+        let mut files = Vec::new();
+        collect_nd2(Path::new(&corpus), &mut files);
+        files.sort();
+        assert!(!files.is_empty(), "no .nd2 files under {corpus}");
+        for path in files {
+            let file = std::fs::read(&path).unwrap();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let default_whole = decode_nd2_impl(&file, "{}");
+            let options = match &default_whole {
+                Ok(parsed) => plane_options(&parsed.metadata_json),
+                Err(_) => vec!["{}".to_string()],
+            };
+            for option in options {
+                let whole = decode_nd2_impl(&file, &option);
+                let (sparse, iterations, fetched) = run_sparse(&file, &option);
+                let label = format!("{name} {option}");
+                assert_same(&label, &whole, &sparse);
+                println!(
+                    "{label}: {iterations} iterations, fetched {fetched} of {} bytes ({:.2}%){}",
+                    file.len(),
+                    100.0 * fetched as f64 / file.len() as f64,
+                    if whole.is_err() { " [error case]" } else { "" }
+                );
+            }
+        }
+    }
 }

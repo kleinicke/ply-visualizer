@@ -140,11 +140,13 @@ pub(crate) fn decode_jxl_impl(data: &[u8]) -> Result<ScientificParsed, DecodeErr
     // decoder needs exactly one output buffer: alpha would otherwise be
     // delivered twice, and depth/spot channels have no place in a single
     // rendered image.
-    decoder.set_pixel_format(JxlPixelFormat {
-        color_type,
-        color_data_format: Some(output.format),
-        extra_channel_format: basic_info.extra_channels.iter().map(|_| None).collect(),
-    });
+    decoder
+        .set_pixel_format(JxlPixelFormat {
+            color_type,
+            color_data_format: Some(output.format),
+            extra_channel_format: basic_info.extra_channels.iter().map(|_| None).collect(),
+        })
+        .map_err(|e| fail("pixel format selection", e))?;
 
     let decoder = match decoder
         .process(&mut input, None)

@@ -788,6 +788,713 @@ fn js_round(x: f64) -> f64 {
 // Main decode
 // ---------------------------------------------------------------------------
 
+/// A count or position as a JSON number. JSON numbers are f64 by design and
+/// file positions and pixel counts stay far below 2^53.
+#[allow(clippy::cast_precision_loss)]
+fn num_usize(v: usize) -> JsonValue {
+    JsonValue::Num(v as f64)
+}
+
+/// Like [`num_usize`], for signed positions and sizes.
+#[allow(clippy::cast_precision_loss)]
+fn num_i64(v: i64) -> JsonValue {
+    JsonValue::Num(v as f64)
+}
+
+/// A JSON number as `i64`. The float-to-int cast saturates and maps NaN to 0,
+/// which is the intended handling of out-of-range option values.
+#[allow(clippy::cast_possible_truncation)]
+fn f64_to_i64(v: f64) -> i64 {
+    v as i64
+}
+
+/// A JSON number as `usize`; negative values and NaN become 0, oversized ones
+/// saturate (the float-to-int cast semantics are the intended handling).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn f64_to_usize(v: f64) -> usize {
+    v as usize
+}
+
+/// A JSON number as `u32`, with the same saturating semantics.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn f64_to_u32(v: f64) -> u32 {
+    v as u32
+}
+
+/// A `usize` as `i64`, saturating. Every caller passes a size that came from an
+/// `i64` extent or an in-memory length, so saturation is unreachable.
+fn to_i64(v: usize) -> i64 {
+    i64::try_from(v).unwrap_or(i64::MAX)
+}
+
+/// An `i64` known to be non-negative and in range as `usize` (0 otherwise).
+fn non_negative_usize(v: i64) -> usize {
+    usize::try_from(v).unwrap_or(0)
+}
+
+/// The subblocks and geometry of one plane (a Z/C/T/... coordinate).
+struct CziPlane {
+    pixel_type: PixelTypeInfo,
+    pixel_type_id: i32,
+    axis_order: Vec<String>,
+    axes: HashMap<String, (i64, i64)>,
+    requested: HashMap<String, i64>,
+    /// Full-resolution subblocks of this plane, in directory order.
+    full: Vec<usize>,
+    /// Stored pyramid subblocks of this plane by reduction factor.
+    levels: Vec<(u32, Vec<usize>)>,
+    full_entry_count: usize,
+    min_x: i64,
+    min_y: i64,
+    width: usize,
+    height: usize,
+}
+
+/// Reduction factor of a subblock: logical size over stored size.
+fn entry_factor(entry: &CziDirectoryEntry) -> Option<u32> {
+    let x = find_dim(&entry.dimensions, "X")?;
+    let y = find_dim(&entry.dimensions, "Y")?;
+    if x.size == x.stored_size && y.size == y.stored_size {
+        return Some(1);
+    }
+    if x.stored_size <= 0 || x.size <= 0 {
+        return None;
+    }
+    let factor = (f64::from(x.size) / f64::from(x.stored_size)).round();
+    if (2.0..=65536.0).contains(&factor) {
+        Some(f64_to_u32(factor))
+    } else {
+        None
+    }
+}
+
+fn entry_matches(
+    entry: &CziDirectoryEntry,
+    axis_order: &[String],
+    requested: &HashMap<String, i64>,
+) -> bool {
+    axis_order.iter().all(|name| {
+        let value = requested[name];
+        match find_dim(&entry.dimensions, name) {
+            None => true,
+            Some(dim) => {
+                let start = i64::from(dim.start);
+                let end = start + i64::from(dim.size).max(1);
+                value >= start && value < end
+            }
+        }
+    })
+}
+
+/// Axis names and (min, max) extents across the full-resolution subblocks,
+/// spatial axes and the mosaic axis excluded. Order matches TS object
+/// insertion order (first-seen axis name wins position).
+fn plane_axes(
+    all: &[CziDirectoryEntry],
+    full_entries: &[usize],
+) -> (Vec<String>, HashMap<String, (i64, i64)>) {
+    let mut axis_order: Vec<String> = Vec::new();
+    let mut axes: HashMap<String, (i64, i64)> = HashMap::new(); // name -> (min, max)
+    for &index in full_entries {
+        for (name, dim) in &all[index].dimensions {
+            if name == "X" || name == "Y" {
+                continue;
+            }
+            let lo = i64::from(dim.start);
+            let hi = i64::from(dim.start) + i64::from(dim.size).max(1) - 1;
+            if let Some(range) = axes.get_mut(name) {
+                range.0 = range.0.min(lo);
+                range.1 = range.1.max(hi);
+            } else {
+                axis_order.push(name.clone());
+                axes.insert(name.clone(), (lo, hi));
+            }
+        }
+    }
+    // Mosaic tiles share a coordinate, so M selects nothing the user cares about.
+    axes.remove("M");
+    axis_order.retain(|n| n != "M");
+    (axis_order, axes)
+}
+
+/// Top-left corner and size of the area the `full` subblocks cover.
+fn plane_extent(
+    all: &[CziDirectoryEntry],
+    full: &[usize],
+) -> Result<(i64, i64, usize, usize), DecodeError> {
+    let mut min_x = i64::MAX;
+    let mut min_y = i64::MAX;
+    let mut max_x = i64::MIN;
+    let mut max_y = i64::MIN;
+    for &index in full {
+        let entry = &all[index];
+        // Guaranteed present: `entry_factor` requires X and Y.
+        let x = find_dim(&entry.dimensions, "X")
+            .ok_or_else(|| DecodeError::new("CZI subblock is missing the X dimension"))?;
+        let y = find_dim(&entry.dimensions, "Y")
+            .ok_or_else(|| DecodeError::new("CZI subblock is missing the Y dimension"))?;
+        min_x = min_x.min(i64::from(x.start));
+        min_y = min_y.min(i64::from(y.start));
+        max_x = max_x.max(i64::from(x.start) + i64::from(x.size));
+        max_y = max_y.max(i64::from(y.start) + i64::from(y.size));
+    }
+    let width_i64 = max_x - min_x;
+    let height_i64 = max_y - min_y;
+    if !(width_i64 > 0 && height_i64 > 0) {
+        return Err(DecodeError::new("CZI plane has an empty extent"));
+    }
+    Ok((
+        min_x,
+        min_y,
+        i64_to_usize(width_i64, "plane width")?,
+        i64_to_usize(height_i64, "plane height")?,
+    ))
+}
+
+/// Choose the plane `options` asks for. Mirrors the plane selection of TS
+/// `parseCzi()`; pyramid subblocks are collected per factor beside it.
+fn select_plane(
+    all: &[CziDirectoryEntry],
+    options: &DecodeOptions,
+) -> Result<CziPlane, DecodeError> {
+    // Pyramid levels store a downscaled copy of the same coordinate; the
+    // plane's axes and extent come from the full-resolution subblocks.
+    let full_entries: Vec<usize> = (0..all.len())
+        .filter(|&index| entry_factor(&all[index]) == Some(1))
+        .collect();
+    if full_entries.is_empty() {
+        return Err(DecodeError::new(
+            "CZI file contains no full-resolution subblocks",
+        ));
+    }
+
+    let base_pixel_type_id = all[full_entries[0]].pixel_type;
+    let pixel_type = pixel_type_info(base_pixel_type_id).ok_or_else(|| {
+        DecodeError::new(format!("Unsupported CZI pixel type: {base_pixel_type_id}"))
+    })?;
+
+    let (axis_order, axes) = plane_axes(all, &full_entries);
+
+    let mut requested: HashMap<String, i64> = HashMap::new();
+    for name in &axis_order {
+        let (min, max) = axes[name];
+        let wanted = options.indices.get(name).copied().unwrap_or(f64::NAN);
+        let offset = if wanted.is_finite() {
+            f64_to_i64(js_round(wanted))
+        } else {
+            0
+        };
+        let value = (min + offset).max(min).min(max);
+        requested.insert(name.clone(), value);
+    }
+
+    let full: Vec<usize> = full_entries
+        .iter()
+        .copied()
+        .filter(|&index| entry_matches(&all[index], &axis_order, &requested))
+        .collect();
+    if full.is_empty() {
+        return Err(DecodeError::new(
+            "No CZI subblock matches the requested plane",
+        ));
+    }
+
+    let mut levels: Vec<(u32, Vec<usize>)> = Vec::new();
+    for (index, entry) in all.iter().enumerate() {
+        let Some(factor) = entry_factor(entry) else {
+            continue;
+        };
+        if factor < 2
+            || entry.pixel_type != base_pixel_type_id
+            || !entry_matches(entry, &axis_order, &requested)
+        {
+            continue;
+        }
+        match levels.iter_mut().find(|(f, _)| *f == factor) {
+            Some((_, list)) => list.push(index),
+            None => levels.push((factor, vec![index])),
+        }
+    }
+    levels.sort_by_key(|(factor, _)| *factor);
+
+    let (min_x, min_y, width, height) = plane_extent(all, &full)?;
+    Ok(CziPlane {
+        pixel_type,
+        pixel_type_id: base_pixel_type_id,
+        axis_order,
+        axes,
+        requested,
+        full,
+        levels,
+        full_entry_count: full_entries.len(),
+        min_x,
+        min_y,
+        width,
+        height,
+    })
+}
+
+/// Reject subblocks this build cannot decode before any raster is allocated.
+/// A large mosaic of compressed subblocks would otherwise try to reserve the
+/// whole plane first, and on wasm32 (32-bit usize) that allocation aborts the
+/// module with a capacity overflow panic instead of returning the
+/// "unsupported codec" message the native build produces. Same inputs must
+/// give the same answer on both targets.
+fn validate_codecs(
+    all: &[CziDirectoryEntry],
+    tiles: &[usize],
+    pixel_type_id: i32,
+) -> Result<(), DecodeError> {
+    for &index in tiles {
+        let entry = &all[index];
+        if entry.compression == 4 {
+            #[cfg(not(feature = "codec-jpegxr"))]
+            return Err(super::external_codec::needed("JPEG XR", "CZI subblock"));
+        } else if !matches!(entry.compression, 0 | 1 | 2 | 5 | 6 | 7) {
+            let codec = compression_name(entry.compression);
+            return Err(DecodeError::new(format!(
+                "CZI subblocks compressed with {codec} are not supported; uncompressed, JPEG, \
+                 LZW, Zstd-0/Zstd-1 and CHUNKED subblocks decode"
+            )));
+        }
+        if entry.pixel_type != pixel_type_id {
+            return Err(DecodeError::new("Mixed pixel types in one CZI plane"));
+        }
+    }
+    Ok(())
+}
+
+/// A rectangle of the plane, in full-resolution pixels from the plane's
+/// top-left corner, sampled every `factor` pixels: output pixel (ox, oy)
+/// shows plane pixel (x + ox * factor, y + oy * factor).
+#[derive(Clone, Copy)]
+struct CziRegion {
+    x: i64,
+    y: i64,
+    width: usize,
+    height: usize,
+    factor: u32,
+}
+
+impl CziRegion {
+    fn output_size(&self) -> (usize, usize) {
+        let f = self.factor as usize;
+        (self.width.div_ceil(f), self.height.div_ceil(f))
+    }
+}
+
+/// Subblocks of `tiles` whose logical rectangle meets `region`.
+fn tiles_in_region(
+    all: &[CziDirectoryEntry],
+    plane: &CziPlane,
+    tiles: &[usize],
+    region: &CziRegion,
+) -> Vec<usize> {
+    let x0 = plane.min_x + region.x;
+    let y0 = plane.min_y + region.y;
+    let x1 = x0 + to_i64(region.width);
+    let y1 = y0 + to_i64(region.height);
+    tiles
+        .iter()
+        .copied()
+        .filter(|&index| {
+            let entry = &all[index];
+            match (
+                find_dim(&entry.dimensions, "X"),
+                find_dim(&entry.dimensions, "Y"),
+            ) {
+                (Some(x), Some(y)) => {
+                    let sx = i64::from(x.start);
+                    let sy = i64::from(y.start);
+                    sx < x1 && sx + i64::from(x.size) > x0 && sy < y1 && sy + i64::from(y.size) > y0
+                }
+                _ => false,
+            }
+        })
+        .collect()
+}
+
+/// The stored level a region at `factor` reads: the coarsest stored factor
+/// that is not coarser than asked for (full resolution when none is).
+fn source_level(plane: &CziPlane, factor: u32) -> (u32, &[usize]) {
+    let mut best: (u32, &[usize]) = (1, &plane.full);
+    for (level, tiles) in &plane.levels {
+        if *level <= factor && *level > best.0 {
+            best = (*level, tiles);
+        }
+    }
+    best
+}
+
+/// Where a subblock's pixels sit in its segment bytes, and their stored size.
+struct SubblockLayout<'a> {
+    segment_data_start: usize,
+    pixels_start: usize,
+    dim_x: &'a CziDimension,
+    dim_y: &'a CziDimension,
+    tile_width: usize,
+    tile_height: usize,
+    stride: usize,
+    total_needed: usize,
+}
+
+/// Parse the header of the subblock segment at the start of `data`.
+fn locate_subblock<'a>(
+    entry: &'a CziDirectoryEntry,
+    data: &[u8],
+    pixel_type: &PixelTypeInfo,
+) -> Result<SubblockLayout<'a>, DecodeError> {
+    let channels = pixel_type.channels as usize;
+    let bytes_per_channel = pixel_type.bytes_per_channel as usize;
+    let segment = czi_segment(data, 0)?;
+    if segment.id != "ZISRAWSUBBLOCK" {
+        return Err(DecodeError::new(format!(
+            "Expected ZISRAWSUBBLOCK at {}, found \"{}\"",
+            entry.file_position, segment.id
+        )));
+    }
+    let metadata_size = i32_le(data, segment.data_start)?;
+    let inline_entry = czi_directory_entry(data, add(segment.data_start, 16)?)?;
+    // The fixed part of a subblock header is padded to at least 256 bytes.
+    let fixed_size = add(16, inline_entry.byte_length)?.max(256);
+    let meta_extra = usize::try_from(metadata_size).unwrap_or(0);
+    let pixels_start = add(add(segment.data_start, fixed_size)?, meta_extra)?;
+
+    let dim_x = find_dim(&entry.dimensions, "X")
+        .ok_or_else(|| DecodeError::new("CZI subblock is missing the X dimension"))?;
+    let dim_y = find_dim(&entry.dimensions, "Y")
+        .ok_or_else(|| DecodeError::new("CZI subblock is missing the Y dimension"))?;
+    let tile_width = usize::try_from(dim_x.stored_size.max(0)).unwrap_or(0);
+    let tile_height = usize::try_from(dim_y.stored_size.max(0)).unwrap_or(0);
+    let stride = mul(mul(tile_width, channels)?, bytes_per_channel)?;
+    let total_needed = mul(stride, tile_height)?;
+    // Only an UNCOMPRESSED subblock occupies its full pixel size in the
+    // file; a compressed one is smaller, and its own range is checked
+    // against the subblock's declared data size by the caller.
+    if entry.compression == 0
+        && pixels_start
+            .checked_add(total_needed)
+            .is_none_or(|end| end > data.len())
+    {
+        return Err(DecodeError::new("CZI subblock data is truncated"));
+    }
+    Ok(SubblockLayout {
+        segment_data_start: segment.data_start,
+        pixels_start,
+        dim_x,
+        dim_y,
+        tile_width,
+        tile_height,
+        stride,
+        total_needed,
+    })
+}
+
+/// Decompress the payload of a compressed subblock whose header `layout` describes.
+fn decompress_subblock(
+    entry: &CziDirectoryEntry,
+    data: &[u8],
+    layout: &SubblockLayout<'_>,
+    pixel_type: &PixelTypeInfo,
+) -> Result<DecodedCziSubblock, DecodeError> {
+    let data_size = i64_to_usize(
+        i64_le(data, add(layout.segment_data_start, 8)?)?,
+        "subblock size",
+    )?;
+    let end = add(layout.pixels_start, data_size)?;
+    if end > data.len() {
+        return Err(DecodeError::new("CZI subblock data is truncated"));
+    }
+    let decompressed = decode_czi_subblock(
+        &data[layout.pixels_start..end],
+        entry.compression,
+        layout.total_needed,
+        pixel_type,
+        layout.tile_width,
+        layout.tile_height,
+    )?;
+    if decompressed.pixels.len() < layout.total_needed {
+        return Err(DecodeError::new(format!(
+            "CZI subblock decompressed to {} bytes, expected {}",
+            decompressed.pixels.len(),
+            layout.total_needed
+        )));
+    }
+    Ok(decompressed)
+}
+
+/// Decode `tiles` (each with its segment's bytes, starting at the segment
+/// header) into `region`. Later subblocks overwrite earlier ones where mosaic
+/// tiles overlap, as in the file's directory order. A subblock's stored pixel
+/// for plane pixel X is `(X - start) * stored / size`, so full-resolution
+/// tiles at factor 1 are copied 1:1 and pyramid tiles are sampled nearest.
+fn compose_region(
+    all: &[CziDirectoryEntry],
+    plane: &CziPlane,
+    tiles: &[(usize, &[u8])],
+    region: &CziRegion,
+) -> Result<Vec<f32>, DecodeError> {
+    let pixel_type = &plane.pixel_type;
+    let channels = pixel_type.channels as usize;
+    let bytes_per_channel = pixel_type.bytes_per_channel as usize;
+    let (out_width, out_height) = region.output_size();
+    let factor = i64::from(region.factor);
+
+    let pixel_count = mul(mul(out_width, out_height)?, channels)?;
+    // `vec![0f32; n]` panics on a request the allocator cannot express; a plane
+    // too large for the target must be a decode error, never an abort.
+    let mut out: Vec<f32> = Vec::new();
+    out.try_reserve_exact(pixel_count).map_err(|_| {
+        DecodeError::new(format!(
+            "CZI plane is too large to decode on this target: {out_width}x{out_height}x{channels} samples"
+        ))
+    })?;
+    out.resize(pixel_count, 0.0);
+
+    let origin_x = plane.min_x + region.x;
+    let origin_y = plane.min_y + region.y;
+
+    for &(index, data) in tiles {
+        let entry = &all[index];
+        let layout = locate_subblock(entry, data, pixel_type)?;
+        let SubblockLayout {
+            pixels_start,
+            dim_x,
+            dim_y,
+            tile_width,
+            tile_height,
+            stride,
+            ..
+        } = layout;
+
+        // The output pixels this subblock covers.
+        let start_x = i64::from(dim_x.start);
+        let start_y = i64::from(dim_y.start);
+        let size_x = i64::from(dim_x.size).max(1);
+        let size_y = i64::from(dim_y.size).max(1);
+        let first = |start: i64, origin: i64| -> i64 {
+            (start - origin).max(0).div_euclid(factor)
+                + i64::from((start - origin).max(0) % factor != 0)
+        };
+        let first_col = first(start_x, origin_x);
+        let first_row = first(start_y, origin_y);
+        let end_col =
+            ((start_x + size_x - origin_x + factor - 1).div_euclid(factor)).min(to_i64(out_width));
+        let end_row =
+            ((start_y + size_y - origin_y + factor - 1).div_euclid(factor)).min(to_i64(out_height));
+        if first_col >= end_col || first_row >= end_row || tile_width == 0 || tile_height == 0 {
+            continue;
+        }
+
+        // A compressed subblock is decompressed into its own buffer; an
+        // uncompressed one is read straight out of the file. Either way the
+        // loop below sees `tile` starting at `tile_start`.
+        let decompressed;
+        let (tile, tile_start, tile_is_rgb) = if entry.compression == 0 {
+            (data, pixels_start, false)
+        } else {
+            decompressed = decompress_subblock(entry, data, &layout, pixel_type)?;
+            (
+                decompressed.pixels.as_slice(),
+                0usize,
+                decompressed.rgb_order,
+            )
+        };
+
+        let stored_x = to_i64(tile_width);
+        let stored_y = to_i64(tile_height);
+        for out_y in first_row..end_row {
+            let plane_y = origin_y + out_y * factor;
+            let row = non_negative_usize(
+                ((plane_y - start_y) * stored_y / size_y).clamp(0, stored_y - 1),
+            );
+            let source_row = add(tile_start, mul(row, stride)?)?;
+            let target_row = mul(mul(non_negative_usize(out_y), out_width)?, channels)?;
+            for out_x in first_col..end_col {
+                let plane_x = origin_x + out_x * factor;
+                let col = non_negative_usize(
+                    ((plane_x - start_x) * stored_x / size_x).clamp(0, stored_x - 1),
+                );
+                let source = add(source_row, mul(col, channels * bytes_per_channel)?)?;
+                let target = add(target_row, non_negative_usize(out_x) * channels)?;
+                for channel in 0..channels {
+                    let sample_offset = add(source, mul(channel, bytes_per_channel)?)?;
+                    let value = read_sample(tile, plane.pixel_type_id, sample_offset)?;
+                    // BGR(A) types are stored channel-reversed for the colour triple.
+                    let index = if pixel_type.bgr && !tile_is_rgb && channel < 3 {
+                        2 - channel
+                    } else {
+                        channel
+                    };
+                    if let Some(slot) = out.get_mut(target + index) {
+                        // Samples are held as f32 by design; f64 sources round.
+                        #[allow(clippy::cast_possible_truncation)]
+                        let sample = value as f32;
+                        *slot = sample;
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The plane's metadata JSON: XML fields plus the selector description.
+fn plane_metadata(
+    plane: &CziPlane,
+    xml_metadata: Vec<(String, JsonValue)>,
+    tile_count: usize,
+) -> String {
+    let axes = &plane.axes;
+    let requested = &plane.requested;
+    let selectors: Vec<(String, i64, i64)> = CZI_AXIS_ORDER
+        .iter()
+        .map(|s| (*s).to_owned())
+        .chain(
+            plane
+                .axis_order
+                .iter()
+                .filter(|n| !CZI_AXIS_ORDER.contains(&n.as_str()))
+                .cloned(),
+        )
+        .filter(|name| axes.contains_key(name))
+        .filter_map(|name| {
+            let (min, max) = axes[&name];
+            let size = max - min + 1;
+            if size > 1 {
+                Some((name.clone(), size, requested[&name] - min))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let channel_index = axes
+        .get("C")
+        .map_or(0, |(min, _)| requested.get("C").copied().unwrap_or(0) - min);
+    let channel_names: Option<Vec<String>> = xml_metadata
+        .iter()
+        .find(|(k, _)| k == "channelNames")
+        .and_then(|(_, v)| match v {
+            JsonValue::Arr(items) => Some(
+                items
+                    .iter()
+                    .filter_map(|i| i.as_str().map(str::to_owned))
+                    .collect(),
+            ),
+            _ => None,
+        });
+    let channel_name = channel_names.as_ref().and_then(|names| {
+        usize::try_from(channel_index)
+            .ok()
+            .and_then(|index| names.get(index).cloned())
+    });
+
+    let mut fields: Vec<(String, JsonValue)> = xml_metadata;
+    fields.push(("format".to_string(), JsonValue::Str("CZI".to_string())));
+    fields.push((
+        "pixelTypeName".to_string(),
+        JsonValue::Str(plane.pixel_type.name.to_string()),
+    ));
+    fields.push((
+        "subBlockCount".to_string(),
+        num_usize(plane.full_entry_count),
+    ));
+    fields.push(("tileCount".to_string(), num_usize(tile_count)));
+    fields.push((
+        "selectors".to_string(),
+        JsonValue::Arr(
+            selectors
+                .iter()
+                .map(|(name, size, value)| {
+                    let mut entry = vec![
+                        ("name".to_string(), JsonValue::Str(name.clone())),
+                        ("size".to_string(), num_i64(*size)),
+                        ("value".to_string(), num_i64(*value)),
+                    ];
+                    // A selector whose options the FILE names carries them here.
+                    // The viewer has one rule — named options are a choice,
+                    // unnamed ones are an axis — and no knowledge of formats, so
+                    // every decoder must answer this question itself.
+                    if name == "C" {
+                        if let Some(names) = channel_names.as_ref() {
+                            if usize::try_from(*size).is_ok_and(|size| names.len() == size) {
+                                entry.push((
+                                    "labels".to_string(),
+                                    JsonValue::Arr(
+                                        names.iter().map(|n| JsonValue::Str(n.clone())).collect(),
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                    JsonValue::Obj(entry)
+                })
+                .collect(),
+        ),
+    ));
+    fields.push((
+        "selectedIndices".to_string(),
+        JsonValue::Obj(
+            selectors
+                .iter()
+                .map(|(name, _, value)| (name.clone(), num_i64(*value)))
+                .collect(),
+        ),
+    ));
+    push_opt(&mut fields, "channelName", channel_name.map(JsonValue::Str));
+    to_json_string(&JsonValue::Obj(fields))
+}
+
+fn parsed(
+    plane: &CziPlane,
+    width: usize,
+    height: usize,
+    metadata_json: String,
+    data: Vec<f32>,
+) -> Result<ScientificParsed, DecodeError> {
+    let pixel_type = &plane.pixel_type;
+    let too_large = || DecodeError::new("CZI: image dimension out of range");
+    Ok(ScientificParsed {
+        width: u32::try_from(width).map_err(|_| too_large())?,
+        height: u32::try_from(height).map_err(|_| too_large())?,
+        channels: pixel_type.channels,
+        bits_per_sample: pixel_type.bits_per_sample,
+        sample_format: pixel_type.sample_format,
+        type_min: pixel_type.type_min,
+        type_max: pixel_type.type_max,
+        source_numeric_type: pixel_type.source_numeric_type.to_string(),
+        metadata_json,
+        data,
+    })
+}
+
+/// XML metadata fields of a ZISRAWMETADATA segment (starting at its header).
+fn metadata_fields(segment_bytes: &[u8]) -> Result<Vec<(String, JsonValue)>, DecodeError> {
+    if segment_bytes.len() < 36 {
+        return Ok(Vec::new());
+    }
+    let segment = czi_segment(segment_bytes, 0)?;
+    if segment.id != "ZISRAWMETADATA" {
+        return Ok(Vec::new());
+    }
+    let xml_size = i32_le(segment_bytes, segment.data_start)?;
+    if xml_size <= 0 {
+        return Ok(Vec::new());
+    }
+    // Fixed part of the metadata segment is 256 bytes; the XML follows.
+    let start = add(segment.data_start, 256)?;
+    if start >= segment_bytes.len() {
+        return Ok(Vec::new());
+    }
+    let end = start
+        .checked_add(usize::try_from(xml_size).unwrap_or(0))
+        .unwrap_or(segment_bytes.len())
+        .min(segment_bytes.len());
+    let xml = String::from_utf8_lossy(&segment_bytes[start..end]);
+    Ok(czi_xml_metadata(&xml))
+}
+
 /// Decode a Zeiss CZI plane. Mirrors TS `parseCzi()`.
 pub(crate) fn decode_czi_impl(
     data: &[u8],
@@ -809,397 +1516,339 @@ pub(crate) fn decode_czi_impl(
     let metadata_position = i64_le(data, add(header, 0x3c)?)?;
 
     let mut xml_metadata: Vec<(String, JsonValue)> = Vec::new();
-    if metadata_position > 0 && metadata_position + 32 < data.len() as i64 {
-        let segment = czi_segment(data, metadata_position)?;
-        if segment.id == "ZISRAWMETADATA" {
-            let xml_size = i32_le(data, segment.data_start)?;
-            if xml_size > 0 {
-                // Fixed part of the metadata segment is 256 bytes; the XML follows.
-                let start = add(segment.data_start, 256)?;
-                if start < data.len() {
-                    let end = start
-                        .checked_add(xml_size as usize)
-                        .unwrap_or(data.len())
-                        .min(data.len());
-                    let xml = String::from_utf8_lossy(&data[start..end]);
-                    xml_metadata = czi_xml_metadata(&xml);
-                }
-            }
-        }
+    if metadata_position > 0 && metadata_position + 32 < to_i64(data.len()) {
+        let start = i64_to_usize(metadata_position, "metadata position")?;
+        xml_metadata = metadata_fields(&data[start..])?;
     }
 
-    let all_entries = czi_subblock_entries(data, directory_position)?;
-    if all_entries.is_empty() {
+    let all = czi_subblock_entries(data, directory_position)?;
+    if all.is_empty() {
         return Err(DecodeError::new("CZI file contains no image subblocks"));
     }
-    // Pyramid levels store a downscaled copy of the same coordinate; keep full res.
-    let entries: Vec<CziDirectoryEntry> = all_entries
-        .into_iter()
-        .filter(|entry| {
-            let x = find_dim(&entry.dimensions, "X");
-            let y = find_dim(&entry.dimensions, "Y");
-            match (x, y) {
-                (Some(x), Some(y)) => x.size == x.stored_size && y.size == y.stored_size,
-                _ => false,
-            }
-        })
-        .collect();
-    if entries.is_empty() {
-        return Err(DecodeError::new(
-            "CZI file contains no full-resolution subblocks",
-        ));
-    }
-
-    let base_pixel_type_id = entries[0].pixel_type;
-    let pixel_type = pixel_type_info(base_pixel_type_id).ok_or_else(|| {
-        DecodeError::new(format!(
-            "Unsupported CZI pixel type: {}",
-            base_pixel_type_id
-        ))
-    })?;
-
-    // Axis extents across every subblock, spatial axes excluded. Order
-    // matches TS object insertion order (first-seen axis name wins position).
-    let mut axis_order: Vec<String> = Vec::new();
-    let mut axes: HashMap<String, (i64, i64)> = HashMap::new(); // name -> (min, max)
-    for entry in &entries {
-        for (name, dim) in &entry.dimensions {
-            if name == "X" || name == "Y" {
-                continue;
-            }
-            let lo = dim.start as i64;
-            let hi = dim.start as i64 + (dim.size as i64).max(1) - 1;
-            match axes.get_mut(name) {
-                Some(range) => {
-                    range.0 = range.0.min(lo);
-                    range.1 = range.1.max(hi);
-                }
-                None => {
-                    axis_order.push(name.clone());
-                    axes.insert(name.clone(), (lo, hi));
-                }
-            }
-        }
-    }
-    // Mosaic tiles share a coordinate, so M selects nothing the user cares about.
-    axes.remove("M");
-    axis_order.retain(|n| n != "M");
-
-    let mut requested: HashMap<String, i64> = HashMap::new();
-    for name in &axis_order {
-        let (min, max) = axes[name];
-        let wanted = options.indices.get(name).copied().unwrap_or(f64::NAN);
-        let offset = if wanted.is_finite() {
-            js_round(wanted) as i64
-        } else {
-            0
-        };
-        let value = (min + offset).max(min).min(max);
-        requested.insert(name.clone(), value);
-    }
-
-    let selected: Vec<&CziDirectoryEntry> = entries
-        .iter()
-        .filter(|entry| {
-            axis_order.iter().all(|name| {
-                let value = requested[name];
-                match find_dim(&entry.dimensions, name) {
-                    None => true,
-                    Some(dim) => {
-                        let start = dim.start as i64;
-                        let end = start + (dim.size as i64).max(1);
-                        value >= start && value < end
-                    }
-                }
-            })
-        })
-        .collect();
-    if selected.is_empty() {
-        return Err(DecodeError::new(
-            "No CZI subblock matches the requested plane",
-        ));
-    }
-
-    let mut min_x = i64::MAX;
-    let mut min_y = i64::MAX;
-    let mut max_x = i64::MIN;
-    let mut max_y = i64::MIN;
-    for entry in &selected {
-        // Guaranteed present: `entries` was filtered to require X and Y above.
-        let x = find_dim(&entry.dimensions, "X")
-            .ok_or_else(|| DecodeError::new("CZI subblock is missing the X dimension"))?;
-        let y = find_dim(&entry.dimensions, "Y")
-            .ok_or_else(|| DecodeError::new("CZI subblock is missing the Y dimension"))?;
-        min_x = min_x.min(x.start as i64);
-        min_y = min_y.min(y.start as i64);
-        max_x = max_x.max(x.start as i64 + x.size as i64);
-        max_y = max_y.max(y.start as i64 + y.size as i64);
-    }
-    let width_i64 = max_x - min_x;
-    let height_i64 = max_y - min_y;
-    if !(width_i64 > 0 && height_i64 > 0) {
-        return Err(DecodeError::new("CZI plane has an empty extent"));
-    }
-    let width = i64_to_usize(width_i64, "plane width")?;
-    let height = i64_to_usize(height_i64, "plane height")?;
-    let channels = pixel_type.channels as usize;
-    let bytes_per_channel = pixel_type.bytes_per_channel as usize;
-
-    // Validate BEFORE allocating the raster. A large mosaic of compressed
-    // subblocks would otherwise try to reserve the whole plane first, and on
-    // wasm32 (32-bit usize) that allocation aborts the module with a capacity
-    // overflow panic instead of returning the "unsupported codec" message the
-    // native build produces from the loop below. Same inputs must give the
-    // same answer on both targets.
-    for entry in &selected {
-        if entry.compression == 4 {
-            #[cfg(not(feature = "codec-jpegxr"))]
-            return Err(super::external_codec::needed("JPEG XR", "CZI subblock"));
-        } else if !matches!(entry.compression, 0 | 1 | 2 | 5 | 6 | 7) {
-            let codec = compression_name(entry.compression);
+    let plane = select_plane(&all, &options)?;
+    validate_codecs(&all, &plane.full, plane.pixel_type_id)?;
+    let region = CziRegion {
+        x: 0,
+        y: 0,
+        width: plane.width,
+        height: plane.height,
+        factor: 1,
+    };
+    let mut tiles: Vec<(usize, &[u8])> = Vec::with_capacity(plane.full.len());
+    for &index in &plane.full {
+        let position = all[index].file_position;
+        let start = i64_to_usize(position, "segment position")?;
+        if position < 0 || start.checked_add(32).is_none_or(|end| end > data.len()) {
             return Err(DecodeError::new(format!(
-                "CZI subblocks compressed with {} are not supported; uncompressed, JPEG, \
-                 LZW, Zstd-0/Zstd-1 and CHUNKED subblocks decode",
-                codec
+                "CZI segment out of range at {position}"
             )));
         }
-        if entry.pixel_type != base_pixel_type_id {
-            return Err(DecodeError::new("Mixed pixel types in one CZI plane"));
-        }
+        tiles.push((index, &data[start..]));
     }
+    let out = compose_region(&all, &plane, &tiles, &region)?;
+    let metadata_json = plane_metadata(&plane, xml_metadata, plane.full.len());
+    parsed(&plane, plane.width, plane.height, metadata_json, out)
+}
 
-    let pixel_count = mul(mul(width, height)?, channels)?;
-    // `vec![0f32; n]` panics on a request the allocator cannot express; a plane
-    // too large for the target must be a decode error, never an abort.
-    let mut out: Vec<f32> = Vec::new();
-    out.try_reserve_exact(pixel_count).map_err(|_| {
-        DecodeError::new(format!(
-            "CZI plane is too large to decode on this target: {}x{}x{} samples",
-            width, height, channels
+// ---------------------------------------------------------------------------
+// Ranged access: the viewer reads only the header, the directory and the
+// subblocks a view needs, instead of the whole file.
+// ---------------------------------------------------------------------------
+
+/// Directory entries of a ZISRAWDIRECTORY segment (starting at its header).
+fn directory_entries(directory: &[u8]) -> Result<Vec<CziDirectoryEntry>, DecodeError> {
+    let segment = czi_segment(directory, 0)?;
+    if segment.id != "ZISRAWDIRECTORY" {
+        return Err(DecodeError::new("CZI directory segment not found"));
+    }
+    let count = i32_le(directory, segment.data_start)?;
+    if count <= 0 {
+        return Err(DecodeError::new("CZI file contains no image subblocks"));
+    }
+    // EntryCount (4 bytes) is followed by 124 reserved bytes.
+    let mut offset = add(segment.data_start, 128)?;
+    let mut entries = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
+    for _ in 0..count {
+        let entry = czi_directory_entry(directory, offset)?;
+        offset = add(offset, entry.byte_length)?;
+        entries.push(entry);
+    }
+    Ok(entries)
+}
+
+struct RangedOptions {
+    decode: DecodeOptions,
+    factor: u32,
+    region: Option<(i64, i64, usize, usize)>,
+    file_size: i64,
+    boundaries: Vec<i64>,
+    /// Only the subblocks at these file positions (one pool job per tile).
+    positions: Option<Vec<i64>>,
+}
+
+fn parse_ranged_options(options_json: &str) -> RangedOptions {
+    let decode = parse_options(options_json);
+    let root = super::json_value::parse(options_json).ok();
+    let number = |key: &str| {
+        root.as_ref()
+            .and_then(|r| r.get(key))
+            .and_then(JsonValue::as_num)
+    };
+    let region = root.as_ref().and_then(|r| r.get("rect")).and_then(|rect| {
+        let field = |key: &str| rect.get(key).and_then(JsonValue::as_num);
+        Some((
+            f64_to_i64(field("x")?),
+            f64_to_i64(field("y")?),
+            f64_to_usize(field("width")?.max(0.0)),
+            f64_to_usize(field("height")?.max(0.0)),
         ))
-    })?;
-    out.resize(pixel_count, 0.0);
-
-    for entry in &selected {
-        let segment = czi_segment(data, entry.file_position)?;
-        if segment.id != "ZISRAWSUBBLOCK" {
-            return Err(DecodeError::new(format!(
-                "Expected ZISRAWSUBBLOCK at {}, found \"{}\"",
-                entry.file_position, segment.id
-            )));
-        }
-        let metadata_size = i32_le(data, segment.data_start)?;
-        let inline_entry = czi_directory_entry(data, add(segment.data_start, 16)?)?;
-        // The fixed part of a subblock header is padded to at least 256 bytes.
-        let fixed_size = add(16, inline_entry.byte_length)?.max(256);
-        let meta_extra = if metadata_size > 0 {
-            metadata_size as usize
-        } else {
-            0
-        };
-        let pixels_start = add(add(segment.data_start, fixed_size)?, meta_extra)?;
-
-        let dim_x = find_dim(&entry.dimensions, "X")
-            .ok_or_else(|| DecodeError::new("CZI subblock is missing the X dimension"))?;
-        let dim_y = find_dim(&entry.dimensions, "Y")
-            .ok_or_else(|| DecodeError::new("CZI subblock is missing the Y dimension"))?;
-        let tile_width = (dim_x.size.max(0)) as usize;
-        let tile_height = (dim_y.size.max(0)) as usize;
-        let stride = mul(mul(tile_width, channels)?, bytes_per_channel)?;
-        let total_needed = mul(stride, tile_height)?;
-        // Only an UNCOMPRESSED subblock occupies its full pixel size in the
-        // file; a compressed one is smaller, and its own range is checked
-        // against the subblock's declared data size below.
-        if entry.compression == 0
-            && pixels_start
-                .checked_add(total_needed)
-                .map(|end| end > data.len())
-                .unwrap_or(true)
-        {
-            return Err(DecodeError::new("CZI subblock data is truncated"));
-        }
-
-        let origin_x = i64_to_usize(dim_x.start as i64 - min_x, "tile origin")?;
-        let origin_y = i64_to_usize(dim_y.start as i64 - min_y, "tile origin")?;
-
-        // A compressed subblock is decompressed into its own buffer; an
-        // uncompressed one is read straight out of the file. Either way the
-        // row loop below sees `tile` starting at `tile_start`.
-        let decompressed;
-        let (tile, tile_start, tile_is_rgb) = if entry.compression == 0 {
-            (data, pixels_start, false)
-        } else {
-            let data_size =
-                i64_to_usize(i64_le(data, add(segment.data_start, 8)?)?, "subblock size")?;
-            let end = add(pixels_start, data_size)?;
-            if end > data.len() {
-                return Err(DecodeError::new("CZI subblock data is truncated"));
-            }
-            decompressed = decode_czi_subblock(
-                &data[pixels_start..end],
-                entry.compression,
-                total_needed,
-                &pixel_type,
-                tile_width,
-                tile_height,
-            )?;
-            if decompressed.pixels.len() < total_needed {
-                return Err(DecodeError::new(format!(
-                    "CZI subblock decompressed to {} bytes, expected {}",
-                    decompressed.pixels.len(),
-                    total_needed
-                )));
-            }
-            (
-                decompressed.pixels.as_slice(),
-                0usize,
-                decompressed.rgb_order,
-            )
-        };
-
-        for row in 0..tile_height {
-            let source_row = add(tile_start, mul(row, stride)?)?;
-            let target_row = mul(add(origin_y, row)?, width)?;
-            let target_row = add(target_row, origin_x)?;
-            let target_row = mul(target_row, channels)?;
-            let mut source = source_row;
-            let mut target = target_row;
-            for _col in 0..tile_width {
-                for channel in 0..channels {
-                    let sample_offset = add(source, mul(channel, bytes_per_channel)?)?;
-                    let value = read_sample(tile, entry.pixel_type, sample_offset)?;
-                    // BGR(A) types are stored channel-reversed for the colour triple.
-                    let index = if pixel_type.bgr && !tile_is_rgb && channel < 3 {
-                        2 - channel
-                    } else {
-                        channel
-                    };
-                    if let Some(slot) = out.get_mut(target + index) {
-                        *slot = value as f32;
-                    }
-                }
-                source = add(source, mul(channels, bytes_per_channel)?)?;
-                target = add(target, channels)?;
-            }
-        }
-    }
-
-    // --- Metadata --------------------------------------------------------
-    let selectors: Vec<(String, i64, i64)> = CZI_AXIS_ORDER
-        .iter()
-        .map(|s| s.to_string())
-        .chain(
-            axis_order
-                .iter()
-                .filter(|n| !CZI_AXIS_ORDER.contains(&n.as_str()))
-                .cloned(),
-        )
-        .filter(|name| axes.contains_key(name))
-        .filter_map(|name| {
-            let (min, max) = axes[&name];
-            let size = max - min + 1;
-            if size > 1 {
-                Some((name.clone(), size, requested[&name] - min))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let channel_index = axes
-        .get("C")
-        .map(|(min, _)| requested.get("C").copied().unwrap_or(0) - min)
-        .unwrap_or(0);
-    let channel_names: Option<Vec<String>> = xml_metadata
-        .iter()
-        .find(|(k, _)| k == "channelNames")
-        .and_then(|(_, v)| match v {
+    });
+    let boundaries = root
+        .as_ref()
+        .and_then(|r| r.get("boundaries"))
+        .and_then(|v| match v {
             JsonValue::Arr(items) => Some(
                 items
                     .iter()
-                    .filter_map(|i| i.as_str().map(|s| s.to_string()))
+                    .filter_map(JsonValue::as_num)
+                    .map(f64_to_i64)
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let positions = root
+        .as_ref()
+        .and_then(|r| r.get("positions"))
+        .and_then(|v| match v {
+            JsonValue::Arr(items) => Some(
+                items
+                    .iter()
+                    .filter_map(JsonValue::as_num)
+                    .map(f64_to_i64)
                     .collect(),
             ),
             _ => None,
         });
-    let channel_name = channel_names.as_ref().and_then(|names| {
-        if channel_index >= 0 {
-            names.get(channel_index as usize).cloned()
-        } else {
-            None
+    RangedOptions {
+        decode,
+        factor: number("factor").map_or(1, |f| f64_to_u32(f.max(1.0).round())),
+        region,
+        file_size: number("fileSize").map_or(i64::MAX, f64_to_i64),
+        boundaries,
+        positions,
+    }
+}
+
+/// Where the directory and the metadata start, from the file's first 512 bytes.
+pub(crate) fn czi_header_json(head: &[u8]) -> Result<String, DecodeError> {
+    if head.len() < 0x50 + 32 || ascii(head, 0, 10) != "ZISRAWFILE" {
+        return Err(DecodeError::new("Invalid CZI signature"));
+    }
+    let header = czi_segment(head, 0)?.data_start;
+    let file_part = i32_le(head, add(header, 0x30)?)?;
+    if file_part != 0 {
+        return Err(DecodeError::new(
+            "Multi-file CZI sets are not supported; open the master file (part 0)",
+        ));
+    }
+    let directory = i64_le(head, add(header, 0x34)?)?;
+    let metadata = i64_le(head, add(header, 0x3c)?)?;
+    // 0x44 is UpdatePending (i32); the attachment directory follows it.
+    let attachments = i64_le(head, add(header, 0x48)?).unwrap_or(0);
+    Ok(to_json_string(&JsonValue::Obj(vec![
+        ("directoryPosition".to_string(), num_i64(directory)),
+        ("metadataPosition".to_string(), num_i64(metadata)),
+        (
+            "attachmentDirectoryPosition".to_string(),
+            num_i64(attachments),
+        ),
+    ])))
+}
+
+/// The plane `options` selects: its full size, the stored pyramid factors,
+/// whether it needs the JPEG XR decoder, and its metadata.
+pub(crate) fn czi_layout_json(
+    directory: &[u8],
+    metadata: &[u8],
+    options_json: &str,
+) -> Result<String, DecodeError> {
+    let options = parse_ranged_options(options_json);
+    let all = directory_entries(directory)?;
+    let plane = select_plane(&all, &options.decode)?;
+    let mut factors = vec![1u32];
+    factors.extend(plane.levels.iter().map(|(factor, _)| *factor));
+    let needs_jpegxr = plane
+        .full
+        .iter()
+        .chain(plane.levels.iter().flat_map(|(_, tiles)| tiles.iter()))
+        .any(|&index| all[index].compression == 4);
+    let metadata_json = plane_metadata(&plane, metadata_fields(metadata)?, plane.full.len());
+    let pixel_type = &plane.pixel_type;
+    Ok(to_json_string(&JsonValue::Obj(vec![
+        ("width".to_string(), num_usize(plane.width)),
+        ("height".to_string(), num_usize(plane.height)),
+        (
+            "channels".to_string(),
+            JsonValue::Num(f64::from(pixel_type.channels)),
+        ),
+        (
+            "bitsPerSample".to_string(),
+            JsonValue::Num(f64::from(pixel_type.bits_per_sample)),
+        ),
+        (
+            "sampleFormat".to_string(),
+            JsonValue::Num(f64::from(pixel_type.sample_format)),
+        ),
+        ("typeMin".to_string(), JsonValue::Num(pixel_type.type_min)),
+        ("typeMax".to_string(), JsonValue::Num(pixel_type.type_max)),
+        (
+            "sourceNumericType".to_string(),
+            JsonValue::Str(pixel_type.source_numeric_type.to_string()),
+        ),
+        (
+            "factors".to_string(),
+            JsonValue::Arr(
+                factors
+                    .iter()
+                    .map(|f| JsonValue::Num(f64::from(*f)))
+                    .collect(),
+            ),
+        ),
+        ("needsJpegXr".to_string(), JsonValue::Bool(needs_jpegxr)),
+        ("metadataJson".to_string(), JsonValue::Str(metadata_json)),
+    ])))
+}
+
+/// The region (or the whole plane) `options` asks for, the stored level it
+/// reads and the byte range of each subblock: from its position to the next
+/// known segment (`boundaries`, the directory, metadata) or the file's end.
+fn region_for(plane: &CziPlane, options: &RangedOptions) -> CziRegion {
+    let (x, y, width, height) = options.region.unwrap_or((0, 0, plane.width, plane.height));
+    let x = x.clamp(0, to_i64(plane.width));
+    let y = y.clamp(0, to_i64(plane.height));
+    CziRegion {
+        x,
+        y,
+        width: width.min(plane.width - non_negative_usize(x)).max(1),
+        height: height.min(plane.height - non_negative_usize(y)).max(1),
+        factor: options.factor.max(1),
+    }
+}
+
+/// The subblocks a region reads, in directory order: those of its source
+/// level that meet it, narrowed to `positions` when the caller asks for some.
+fn planned_tiles(
+    all: &[CziDirectoryEntry],
+    plane: &CziPlane,
+    region: &CziRegion,
+    options: &RangedOptions,
+) -> (u32, Vec<usize>) {
+    let (level, level_tiles) = source_level(plane, region.factor);
+    let mut tiles = tiles_in_region(all, plane, level_tiles, region);
+    if let Some(positions) = &options.positions {
+        tiles.retain(|&index| positions.contains(&all[index].file_position));
+    }
+    (level, tiles)
+}
+
+pub(crate) fn czi_region_plan_json(
+    directory: &[u8],
+    options_json: &str,
+) -> Result<String, DecodeError> {
+    let options = parse_ranged_options(options_json);
+    let all = directory_entries(directory)?;
+    let plane = select_plane(&all, &options.decode)?;
+    let region = region_for(&plane, &options);
+    let (level, tiles) = planned_tiles(&all, &plane, &region, &options);
+    validate_codecs(&all, &tiles, plane.pixel_type_id)?;
+
+    let mut starts: Vec<i64> = all.iter().map(|entry| entry.file_position).collect();
+    starts.extend(options.boundaries.iter().copied());
+    starts.sort_unstable();
+    starts.dedup();
+    let (width, height) = region.output_size();
+    let ranges: Vec<JsonValue> = tiles
+        .iter()
+        .map(|&index| {
+            let position = all[index].file_position;
+            let next = starts
+                .iter()
+                .copied()
+                .find(|&start| start > position)
+                .unwrap_or(options.file_size)
+                .min(options.file_size);
+            JsonValue::Arr(vec![num_i64(position), num_i64((next - position).max(32))])
+        })
+        .collect();
+    // Each subblock's logical rectangle, from the plane's top-left.
+    let rects: Vec<JsonValue> = tiles
+        .iter()
+        .map(|&index| {
+            let dims = &all[index].dimensions;
+            let x = find_dim(dims, "X").copied().unwrap_or(CziDimension {
+                start: 0,
+                size: 0,
+                stored_size: 0,
+            });
+            let y = find_dim(dims, "Y").copied().unwrap_or(CziDimension {
+                start: 0,
+                size: 0,
+                stored_size: 0,
+            });
+            JsonValue::Arr(vec![
+                num_i64(i64::from(x.start) - plane.min_x),
+                num_i64(i64::from(y.start) - plane.min_y),
+                num_i64(i64::from(x.size)),
+                num_i64(i64::from(y.size)),
+            ])
+        })
+        .collect();
+    Ok(to_json_string(&JsonValue::Obj(vec![
+        ("width".to_string(), num_usize(width)),
+        ("height".to_string(), num_usize(height)),
+        ("sourceFactor".to_string(), JsonValue::Num(f64::from(level))),
+        ("ranges".to_string(), JsonValue::Arr(ranges)),
+        ("rects".to_string(), JsonValue::Arr(rects)),
+    ])))
+}
+
+/// Decode a region from the subblocks `czi_region_plan_json` listed, passed
+/// back as one buffer of their byte ranges (`offsets[i]` is where the i-th
+/// range starts in `blob`, in plan order).
+pub(crate) fn decode_czi_region_impl(
+    directory: &[u8],
+    options_json: &str,
+    blob: &[u8],
+    offsets: &[u32],
+) -> Result<ScientificParsed, DecodeError> {
+    let options = parse_ranged_options(options_json);
+    let all = directory_entries(directory)?;
+    let plane = select_plane(&all, &options.decode)?;
+    let region = region_for(&plane, &options);
+    let (_, tiles) = planned_tiles(&all, &plane, &region, &options);
+    if tiles.len() != offsets.len() {
+        return Err(DecodeError::new(format!(
+            "CZI region expects {} subblocks, received {}",
+            tiles.len(),
+            offsets.len()
+        )));
+    }
+    validate_codecs(&all, &tiles, plane.pixel_type_id)?;
+    let mut parts: Vec<(usize, &[u8])> = Vec::with_capacity(tiles.len());
+    for (i, &index) in tiles.iter().enumerate() {
+        let start = offsets[i] as usize;
+        let end = offsets.get(i + 1).map_or(blob.len(), |&next| next as usize);
+        if start > end || end > blob.len() {
+            return Err(DecodeError::new(
+                "CZI region subblock range is out of bounds",
+            ));
         }
-    });
-
-    let mut fields: Vec<(String, JsonValue)> = xml_metadata;
-    fields.push(("format".to_string(), JsonValue::Str("CZI".to_string())));
-    fields.push((
-        "pixelTypeName".to_string(),
-        JsonValue::Str(pixel_type.name.to_string()),
-    ));
-    fields.push((
-        "subBlockCount".to_string(),
-        JsonValue::Num(entries.len() as f64),
-    ));
-    fields.push((
-        "tileCount".to_string(),
-        JsonValue::Num(selected.len() as f64),
-    ));
-    fields.push((
-        "selectors".to_string(),
-        JsonValue::Arr(
-            selectors
-                .iter()
-                .map(|(name, size, value)| {
-                    let mut entry = vec![
-                        ("name".to_string(), JsonValue::Str(name.clone())),
-                        ("size".to_string(), JsonValue::Num(*size as f64)),
-                        ("value".to_string(), JsonValue::Num(*value as f64)),
-                    ];
-                    // A selector whose options the FILE names carries them here.
-                    // The viewer has one rule — named options are a choice,
-                    // unnamed ones are an axis — and no knowledge of formats, so
-                    // every decoder must answer this question itself.
-                    if name == "C" {
-                        if let Some(names) = channel_names.as_ref() {
-                            if names.len() == *size as usize {
-                                entry.push((
-                                    "labels".to_string(),
-                                    JsonValue::Arr(
-                                        names.iter().map(|n| JsonValue::Str(n.clone())).collect(),
-                                    ),
-                                ));
-                            }
-                        }
-                    }
-                    JsonValue::Obj(entry)
-                })
-                .collect(),
-        ),
-    ));
-    fields.push((
-        "selectedIndices".to_string(),
-        JsonValue::Obj(
-            selectors
-                .iter()
-                .map(|(name, _, value)| (name.clone(), JsonValue::Num(*value as f64)))
-                .collect(),
-        ),
-    ));
-    push_opt(&mut fields, "channelName", channel_name.map(JsonValue::Str));
-    let metadata_json = to_json_string(&JsonValue::Obj(fields));
-
-    Ok(ScientificParsed {
-        width: width as u32,
-        height: height as u32,
-        channels: pixel_type.channels,
-        bits_per_sample: pixel_type.bits_per_sample,
-        sample_format: pixel_type.sample_format,
-        type_min: pixel_type.type_min,
-        type_max: pixel_type.type_max,
-        source_numeric_type: pixel_type.source_numeric_type.to_string(),
-        metadata_json,
-        data: out,
-    })
+        parts.push((index, &blob[start..end]));
+    }
+    let out = compose_region(&all, &plane, &parts, &region)?;
+    let (width, height) = region.output_size();
+    parsed(&plane, width, height, String::from("{}"), out)
 }
 
 #[cfg(test)]

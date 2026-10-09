@@ -58,7 +58,7 @@ let compiledModule: WebAssembly.Module | null | undefined;
  * shared module, what any worker optimizes stays available to the next.
  * Null when the web build is missing; workers then load the crate themselves.
  */
-function sharedModule(): WebAssembly.Module | null {
+export function sharedModule(): WebAssembly.Module | null {
   if (compiledModule === undefined) {
     try {
       const file = webWasmPath();

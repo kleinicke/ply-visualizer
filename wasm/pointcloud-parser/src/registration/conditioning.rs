@@ -18,6 +18,8 @@
 
 use std::collections::HashMap;
 
+use super::point_index::CellHasherBuilder;
+
 use super::linalg::symmetric_eigen;
 use super::point_index::robust_extent;
 
@@ -53,7 +55,11 @@ pub fn position_conditioning(points: &[f32], cell: f64) -> f64 {
         (robust_extent(points, 100_000) * EXTENT_TO_CELL).max(1e-3)
     };
 
-    let mut cells: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
+    // A fixed hasher, not the randomly seeded default: the patches are summed
+    // in iteration order, and with a random seed the reported conditioning
+    // differed in its last digits from one run to the next.
+    let mut cells: HashMap<(i64, i64, i64), Vec<usize>, CellHasherBuilder> =
+        HashMap::with_hasher(CellHasherBuilder);
     for index in 0..count {
         let key = (
             (points[index * 3] as f64 / cell).floor() as i64,

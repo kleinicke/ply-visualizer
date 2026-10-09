@@ -302,6 +302,17 @@ test('depth worker cancellation skips queued jobs, stops active work and recover
     });
     const params = { cameraModel: 'pinhole-ideal', depthType: 'orthogonal', fx: 1 };
     const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+    // Starting a worker is asynchronous (the page compiles the kernel once and
+    // hands it over), so wait for the post itself rather than one tick.
+    const posted = async (count: number) => {
+      for (let i = 0; i < 500; i++) {
+        if (workers.reduce((sum, worker) => sum + worker.messages.length, 0) >= count) {
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      throw new Error(`expected ${count} posted depth jobs`);
+    };
     try {
       const active = new AbortController(),
         queued = new AbortController();
@@ -312,23 +323,24 @@ test('depth worker cancellation skips queued jobs, stops active work and recover
         .processDepthToPointCloud(new ArrayBuffer(4), 'same.pfm', params, undefined, queued.signal)
         .catch((e: Error) => e.name);
       const next = client.processDepthToPointCloud(new ArrayBuffer(4), 'same.pfm', params);
-      await tick();
+      await posted(1);
       queued.abort();
       active.abort();
+      await posted(2);
       await tick();
       const started = workers.reduce((sum, worker) => sum + worker.messages.length, 0);
       workers.at(-1).finish();
       const completed = await next;
       const firstKey = workers.at(-1).messages[0].cacheKey;
       const other = client.processDepthToPointCloud(new ArrayBuffer(4), 'same.pfm', params);
-      await tick();
+      await posted(3);
       const secondKey = workers.at(-1).messages.at(-1).cacheKey;
       workers.at(-1).finish();
       await other;
       const pending = client
         .processDepthToPointCloud(new ArrayBuffer(4), 'pending.pfm', params)
         .catch((e: Error) => e.name);
-      await tick();
+      await posted(4);
       client.dispose();
       return {
         first: await first,

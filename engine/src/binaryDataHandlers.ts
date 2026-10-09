@@ -2,8 +2,8 @@ import { SpatialData } from './interfaces';
 import { PerfTimer } from './utils/perfLog';
 import { noteContainerScanLoaded } from './utils/containerPerf';
 import {
+  parsePlyBytes,
   parsePlyFromResponse,
-  parsePlyWasm,
   warmUpPlyParser,
   type PlyParseResult,
 } from './parsers/pointcloudWasm';
@@ -185,7 +185,7 @@ export async function handleUltimateRawBinaryData(
   // second binary PLY decoder, with its own idea of splat colour and scalar
   // fields, sitting a message boundary away from the first.
   const rawData = message.rawBinaryData ? new Uint8Array(message.rawBinaryData) : null;
-  const parsed = preparsed ?? (await parsePlyWasm(rawData!));
+  const parsed = preparsed ?? (await parsePlyBytes(rawData!));
   const isSplat = parsed.isGaussianSplat;
 
   const parseTime = performance.now();

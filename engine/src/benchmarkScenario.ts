@@ -34,6 +34,12 @@ export async function runBenchmarkScenario(
     case 'alignAll':
       await alignAllTo(host, anchorIndex);
       return;
+    case 'alignAllNested':
+      await alignAllTo(host, anchorIndex, { nested: true });
+      return;
+    case 'alignAllComplex':
+      await alignAllTo(host, anchorIndex, { complex: true });
+      return;
     case 'refineAll':
       await alignAllTo(host, anchorIndex, { refineOnly: true });
       return;
@@ -47,6 +53,19 @@ export async function runBenchmarkScenario(
         return;
       }
       runStationPipeline(host, archiveIndex, step === 'registerAndRecolorAll');
+      return;
+    }
+    case 'reapplyDepth': {
+      // What every depth-parameter change runs: the cached decode, a fresh
+      // projection and the geometry swap (PERF[depth/reapply]).
+      const depthIndex = (host.fileEntries.all as any[]).findIndex(
+        entry => !!entry.spatial?.data.depthSource
+      );
+      if (depthIndex < 0) {
+        perfLog(`⏱️ PERF[benchmark/skipped] ${step}: no depth image is loaded`);
+        return;
+      }
+      await host.applyDepthSettings(depthIndex);
       return;
     }
     default:

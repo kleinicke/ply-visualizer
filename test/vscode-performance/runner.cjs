@@ -38,9 +38,14 @@ const PERF_LINE = /PERF\[([^\]]+)\][^\r\n]*?total ([0-9.]+)\s*ms([^\r\n]*)/g;
 const STEP_COMPLETION = {
   open: () => true,
   alignAll: tag => tag.startsWith('registration/align-all') || tag.startsWith('benchmark/skipped'),
+  alignAllNested: tag =>
+    tag.startsWith('registration/align-all-nested') || tag.startsWith('benchmark/skipped'),
+  alignAllComplex: tag =>
+    tag.startsWith('registration/align-all-complex') || tag.startsWith('benchmark/skipped'),
   refineAll: tag =>
     tag.startsWith('registration/refine-all') || tag.startsWith('benchmark/skipped'),
   recolorAll: tag => tag.startsWith('x3a/recolour-all') || tag.startsWith('benchmark/skipped'),
+  reapplyDepth: tag => tag.startsWith('depth/reapply') || tag.startsWith('benchmark/skipped'),
   registerAndRecolorAll: tag =>
     tag.startsWith('x3a/auto-match+recolour-all') || tag.startsWith('benchmark/skipped'),
 };

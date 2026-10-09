@@ -1,6 +1,7 @@
 import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata } from '../types';
 import { Rgb24Converter } from './Rgb24Reader';
 import { decodeTiffWasm } from './tiffWasm';
+import { decodeTiffInStrips } from '../depthProjectionPool';
 
 export interface TifDepthConfig {
   rgb24ConversionMode?: 'shift' | 'multiply' | 'red' | 'green' | 'blue';
@@ -30,7 +31,11 @@ export class TifReader implements DepthReader {
   }
 
   async read(arrayBuffer: ArrayBuffer): Promise<DepthReaderResult> {
-    const wasm = await decodeTiffWasm(arrayBuffer);
+    // Large stripped files decode on the projection pool, a run of strips per
+    // worker; anything else (or a page without workers) in one call.
+    const wasm =
+      (await decodeTiffInStrips(new Uint8Array(arrayBuffer))) ??
+      (await decodeTiffWasm(arrayBuffer));
     if (!wasm) {
       throw new Error(
         'Failed to read TIF file: the WASM TIFF decoder is unavailable. ' +

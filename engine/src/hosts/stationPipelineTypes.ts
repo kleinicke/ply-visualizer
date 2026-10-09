@@ -20,6 +20,8 @@ export interface StationPipelineMessage {
   error?: string;
   /** A scan finished; more are still coming, so the run stays busy. */
   partial?: boolean;
+  /** The user stopped the run; scans coloured so far keep their colour. */
+  cancelled?: boolean;
 }
 
 export interface LoadTimeColorUpdate {

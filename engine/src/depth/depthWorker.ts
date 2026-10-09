@@ -2,6 +2,11 @@ import { CameraParams, DepthConversionResult } from '../interfaces';
 import { DecodedDepthImage, DepthConverter } from './DepthConverter';
 import { applyColorToDepthResult } from './applyColorToDepthResult';
 import { ensureTiffWasmGlueLoaded, initTiffWasm } from './readers/tiffWasm';
+import { adoptWorkerPublicPath } from '../utils/webviewWorker';
+
+// This worker starts the projection pool's workers; their chunk URLs must
+// point at the bundle even when this worker runs from a blob.
+adoptWorkerPublicPath();
 
 interface DepthWorkerRequest {
   id: number;
@@ -12,6 +17,7 @@ interface DepthWorkerRequest {
   colorImageData?: ImageData;
   tiffWasmGlueUrl?: string;
   tiffWasmUrl?: string;
+  tiffWasmModule?: WebAssembly.Module;
 }
 
 interface DepthWorkerSuccess {
@@ -73,6 +79,12 @@ self.onmessage = async (event: MessageEvent<DepthWorkerRequest>) => {
     if (message.tiffWasmUrl) {
       (globalThis as any).__TIFF_WASM_URL__ = message.tiffWasmUrl;
     }
+    if (message.tiffWasmGlueUrl) {
+      (globalThis as any).__TIFF_WASM_GLUE_URL__ = message.tiffWasmGlueUrl;
+    }
+    if (message.tiffWasmModule) {
+      (globalThis as any).__TIFF_WASM_MODULE__ = message.tiffWasmModule;
+    }
     ensureTiffWasmGlueLoaded(message.tiffWasmGlueUrl);
     await initTiffWasm();
 
@@ -94,6 +106,9 @@ self.onmessage = async (event: MessageEvent<DepthWorkerRequest>) => {
       projectMs: performance.now() - projectStart,
       decodeCached: wasCached,
       info: decoded.meta?.decodeInfo,
+      thread: 'worker',
+      bands: (result as { bands?: number }).bands,
+      phases: (result as { phases?: string }).phases,
     };
 
     if (message.colorImageData) {

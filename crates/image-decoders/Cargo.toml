@@ -51,6 +51,7 @@ all-formats = [
     "jpeg",
     "pfm",
     "sgi",
+    "psd",
     "netpbm",
     "npy",
     "fits",
@@ -92,7 +93,7 @@ codec-lerc = ["dep:lerc-reader"]
 codec-lzma = ["dep:xz4rust"]
 codec-webp = ["tiff?/webp"]
 
-tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:png"]
+tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-inflate", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:png"]
 exr = ["dep:exr", "dep:zune-inflate"]
 png = ["dep:png"]
 hdr = []
@@ -109,6 +110,8 @@ jpeg2000 = ["codec-jpeg2000"]
 jxl = ["dep:jxl"]
 jpeg = ["dep:zune-jpeg"]
 sgi = []
+# The merged image of 8-bit RGB Photoshop documents, in parallel row ranges.
+psd = []
 pfm = []
 netpbm = []
 npy = []
@@ -145,7 +148,7 @@ dicom-toolkit-jpeg2000 = { version = "0.5", optional = true }
 # Vendored at crates/jpegxr because the published crate decodes only through a
 # temporary file, which WebAssembly has nowhere to put. See its VENDORING.md.
 jpegxr-wasm = { path = "../jpegxr", optional = true }
-jxl = { version = "0.6", optional = true }
+jxl = { version = "0.7", optional = true }
 pure_jpegls = { version = "2.0", optional = true }
 pure_jpegli = { version = "2.0", optional = true }
 weezl = { version = "0.1.12", optional = true }

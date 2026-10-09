@@ -243,6 +243,75 @@ export class PlyResult {
 }
 
 /**
+ * A binary point cloud decoded while it is still arriving.
+ *
+ * `parse_ply_at` needs the whole file in wasm memory before it starts, so a
+ * 341 MB cloud sat in the heap next to its own decoded arrays - about twice
+ * the file - and wasm memory never shrinks, so the page kept that high-water
+ * mark for its whole life. On a machine already in swap that was the
+ * difference between four and nineteen seconds. This takes the vertex records
+ * a chunk at a time, as the fetch delivers them, into a scratch buffer, and
+ * decodes them with the same loops into chunk-sized outputs that the caller
+ * copies straight into the final arrays. The decode then overlaps the
+ * transfer, and the heap stays a few megabytes.
+ *
+ * Only fixed-stride binary vertex records with no faces qualify; anything
+ * else (ASCII, meshes, list properties) returns `None` from `open` and goes
+ * through `parse_ply_at`.
+ */
+export class PlyVertexStream {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * [min_x, min_y, min_z, max_x, max_y, max_z] over everything decoded.
+     */
+    bbox(): Float32Array;
+    colors_ptr(): number;
+    /**
+     * Decode the first `records` records of the scratch buffer; returns how
+     * many were decoded (never more than the header declared). The outputs
+     * are then readable at the `*_ptr` addresses, `records` vertices long.
+     */
+    decode(records: number): number;
+    /**
+     * Where the caller writes the next records: room for `chunk_records`.
+     * Valid until the next call into the module.
+     */
+    input_ptr(): number;
+    intensity_ptr(): number;
+    normals_ptr(): number;
+    /**
+     * `head` is the start of the file, through `end_header`. Undefined when
+     * the file cannot be streamed (see the type).
+     */
+    static open(head: Uint8Array): PlyVertexStream | undefined;
+    positions_ptr(): number;
+    scalar_ptr(index: number): number;
+    /**
+     * Records the scratch buffer holds; feed at most this many per `decode`.
+     */
+    readonly chunk_records: number;
+    readonly data_start: number;
+    /**
+     * Vertices decoded so far.
+     */
+    readonly decoded: number;
+    /**
+     * The first vertex (1-based) with a non-finite coordinate, or 0.
+     */
+    readonly first_non_finite: number;
+    readonly has_colors: boolean;
+    readonly has_intensity: boolean;
+    readonly has_normals: boolean;
+    readonly is_gaussian_splat: boolean;
+    readonly metadata_json: string;
+    readonly scalar_field_names: string[];
+    readonly stride: number;
+    readonly vertex_count: number;
+}
+
+/**
  * Parsed point cloud, returned to JS. Large buffers are moved out with the
  * `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.
  */
@@ -778,6 +847,7 @@ export interface InitOutput {
     readonly __wbg_nrrdvolume_free: (a: number, b: number) => void;
     readonly __wbg_objresult_free: (a: number, b: number) => void;
     readonly __wbg_plyresult_free: (a: number, b: number) => void;
+    readonly __wbg_plyvertexstream_free: (a: number, b: number) => void;
     readonly __wbg_pointcloudresult_free: (a: number, b: number) => void;
     readonly __wbg_registrationresult_free: (a: number, b: number) => void;
     readonly __wbg_stonexcolourresult_free: (a: number, b: number) => void;
@@ -901,6 +971,27 @@ export interface InitOutput {
     readonly plyresult_scalar_field_names: (a: number) => [number, number];
     readonly plyresult_take_scalar_at: (a: number, b: number) => [number, number];
     readonly plyresult_vertex_count: (a: number) => number;
+    readonly plyvertexstream_bbox: (a: number) => [number, number];
+    readonly plyvertexstream_chunk_records: (a: number) => number;
+    readonly plyvertexstream_colors_ptr: (a: number) => number;
+    readonly plyvertexstream_data_start: (a: number) => number;
+    readonly plyvertexstream_decode: (a: number, b: number) => number;
+    readonly plyvertexstream_decoded: (a: number) => number;
+    readonly plyvertexstream_first_non_finite: (a: number) => number;
+    readonly plyvertexstream_has_colors: (a: number) => number;
+    readonly plyvertexstream_has_intensity: (a: number) => number;
+    readonly plyvertexstream_has_normals: (a: number) => number;
+    readonly plyvertexstream_input_ptr: (a: number) => number;
+    readonly plyvertexstream_intensity_ptr: (a: number) => number;
+    readonly plyvertexstream_is_gaussian_splat: (a: number) => number;
+    readonly plyvertexstream_metadata_json: (a: number) => [number, number];
+    readonly plyvertexstream_normals_ptr: (a: number) => number;
+    readonly plyvertexstream_open: (a: number, b: number) => number;
+    readonly plyvertexstream_positions_ptr: (a: number) => number;
+    readonly plyvertexstream_scalar_field_names: (a: number) => [number, number];
+    readonly plyvertexstream_scalar_ptr: (a: number, b: number) => number;
+    readonly plyvertexstream_stride: (a: number) => number;
+    readonly plyvertexstream_vertex_count: (a: number) => number;
     readonly point_distances: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly pointcloudresult_bbox: (a: number) => [number, number];
     readonly pointcloudresult_has_colors: (a: number) => number;

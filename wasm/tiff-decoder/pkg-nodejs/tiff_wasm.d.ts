@@ -43,14 +43,36 @@ export function decode_colmap_depth(bytes: Uint8Array): Float32Array;
  */
 export function decode_depth_pfm(bytes: Uint8Array): DepthRaster;
 export function decode_tiff_page_fast(data: Uint8Array, page_index: number): TiffResult;
+/**
+ * # Errors
+ *
+ * A malformed EXR header.
+ */
+export function exr_zip_plan(data: Uint8Array): ExrZipPlanJs | undefined;
 export function decode_tiff(data: Uint8Array): TiffResult;
 export function decode_png_samples_fast(data: Uint8Array): PngResult;
+export function tiff_strip_plan(data: Uint8Array): TiffStripPlan | undefined;
 export function extract_exif_tags(data: Uint8Array): string;
+/**
+ * Decode strips `first_strip..first_strip + counts.len()` from their
+ * concatenated compressed bytes, as the f32 samples `decode_tiff_fast`
+ * produces for those rows. `fields` comes from `TiffStripPlan::fields`.
+ */
+export function decode_tiff_strip_range(blob: Uint8Array, counts: Uint32Array, first_strip: number, fields: Float64Array): Float32Array;
 export function decode_tiff_page(data: Uint8Array, page_index: number): TiffResult;
 export function decode_exr_fast(data: Uint8Array): ExrResult;
 export function tiff_page_count(data: Uint8Array): number;
 export function decode_png16_fast(data: Uint8Array): PngResult;
 export function decode_tiff_fast(data: Uint8Array): TiffResult;
+/**
+ * Blocks `counts` (with `rows` scanlines each) of a ZIP16 EXR, as the
+ * interleaved displayed channels `decode_exr_fast` returns for those rows.
+ *
+ * # Errors
+ *
+ * Malformed or truncated blocks, or a selection outside the channels.
+ */
+export function decode_exr_zip_blocks(blob: Uint8Array, counts: Uint32Array, rows: Uint32Array, width: number, kinds: Uint32Array, selection: Int32Array): Float32Array;
 export class DepthProjectResult {
   private constructor();
   free(): void;
@@ -93,6 +115,34 @@ export class ExrResult {
   readonly data_max: number;
   readonly data_min: number;
   readonly data_type: number;
+}
+/**
+ * A ZIP16 scanline EXR's compressed blocks and channel layout, for decoding
+ * it in row ranges on several workers (`decode_exr_zip_blocks`). Ported from
+ * the image viewer's adapter; undefined for every other EXR layout.
+ */
+export class ExrZipPlanJs {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  /**
+   * Move the compressed blocks out, back to back in file order.
+   */
+  take_compressed(): Uint8Array;
+  /**
+   * Each channel's pixel type: 0 u32, 1 half, 2 float.
+   */
+  readonly channel_kinds: Uint32Array;
+  readonly y_coordinates: Int32Array;
+  readonly displayed_names: string[];
+  readonly width: number;
+  readonly counts: Uint32Array;
+  readonly data_y: number;
+  readonly height: number;
+  /**
+   * The displayed channels as indices into the file's channels (-1: absent).
+   */
+  readonly selection: Int32Array;
 }
 export class NormalizeDepthResult {
   private constructor();
@@ -152,4 +202,39 @@ export class TiffResult {
   readonly max_value: number;
   readonly min_value: number;
   readonly predictor: number;
+}
+/**
+ * A stripped TIFF's block table and layout, for decoding it in row ranges on
+ * several workers (`decode_tiff_strip_range`). Undefined for files the
+ * range decoder does not cover; those take `decode_tiff_fast`.
+ */
+export class TiffStripPlan {
+  private constructor();
+  free(): void;
+  [Symbol.dispose](): void;
+  /**
+   * Compressed length of each strip.
+   */
+  counts(): Float64Array;
+  /**
+   * The layout as numbers, to rebuild the plan in another worker.
+   */
+  fields(): Float64Array;
+  /**
+   * Byte offset of each strip within the file.
+   */
+  offsets(): Float64Array;
+  readonly compression: number;
+  readonly sample_format: number;
+  readonly rows_per_strip: number;
+  readonly bits_per_sample: number;
+  readonly width: number;
+  readonly height: number;
+  readonly channels: number;
+  readonly predictor: number;
+  /**
+   * True for a plain chunky, top-left, non-CMYK strip layout: the one shape
+   * whose ranges simply stack into the image.
+   */
+  readonly stackable: boolean;
 }

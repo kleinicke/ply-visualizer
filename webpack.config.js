@@ -128,6 +128,14 @@ module.exports = [
       splitChunks: false,
     },
     module: {
+      parser: {
+        javascript: {
+          // Workers that must also start inside a VS Code webview are created
+          // through utils/webviewWorker.ts; see there. The import path is the
+          // one every depth module uses.
+          worker: ['...', 'WorkerScript from ../utils/webviewWorker'],
+        },
+      },
       rules: [
         {
           // Matches both `.svelte` components and `.svelte.ts`/`.svelte.js`

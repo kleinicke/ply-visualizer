@@ -173,6 +173,49 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
     );
   });
 
+  test('Should add an ASCII PLY point cloud through the Rust stream parser', async () => {
+    const fileName = `add-ascii-ply-test-${process.pid}-${Date.now()}.ply`;
+    const filePath = path.join(os.tmpdir(), fileName);
+    fs.writeFileSync(
+      filePath,
+      'ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\n' +
+        'property float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\n' +
+        'end_header\n1 2 3 255 0 0\n-4 5 -6 0 128 255\n'
+    );
+
+    const messages: any[] = [];
+    const host = {
+      getShortPath: (value: string) => path.basename(value),
+      logPerf: () => undefined,
+      setLoadStartedAt: () => undefined,
+      tryAutoLoadMtl: async () => undefined,
+    };
+    const webviewPanel = {
+      webview: {
+        postMessage: async (message: any) => {
+          messages.push(message);
+          return true;
+        },
+      },
+    } as unknown as vscode.WebviewPanel;
+
+    try {
+      await handleAddFileFromPath(host, webviewPanel, filePath);
+    } finally {
+      fs.unlinkSync(filePath);
+    }
+
+    // Not the JavaScript parser's spatialData: the same point payload an
+    // opened ASCII PLY gets, marked as an addition to the scene.
+    const added = messages.find(message => message.type === 'xyzVariantData');
+    assert.ok(added, 'ASCII PLY should arrive as parsed point data');
+    assert.strictEqual(added.isAddFile, true);
+    assert.strictEqual(added.parseMode, 'wasm-stream');
+    assert.strictEqual(added.data.vertexCount, 2);
+    assert.deepStrictEqual(Array.from(added.data.positionsArray), [1, 2, 3, -4, 5, -6]);
+    assert.deepStrictEqual(Array.from(added.data.colorsArray), [255, 0, 0, 0, 128, 255]);
+  });
+
   test('Should add a KITTI BIN file to an existing scene', async () => {
     const fileName = `add-kitti-test-${process.pid}-${Date.now()}.bin`;
     const filePath = path.join(os.tmpdir(), fileName);

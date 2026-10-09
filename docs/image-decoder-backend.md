@@ -1,7 +1,7 @@
 # Vendored image decoder backend
 
 `crates/image-decoders` is copied from the neighboring `tiff-visualizer`
-repository at commit `a831056`. The optional JPEG XR dependency in
+repository at commit `ed3c7ed`. The optional JPEG XR dependency in
 `crates/jpegxr` comes from the same commit; its license and in-memory decoding
 patches are documented in `crates/jpegxr/VENDORING.md`.
 

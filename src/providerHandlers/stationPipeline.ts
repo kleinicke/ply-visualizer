@@ -24,6 +24,24 @@ import { stonexCameraProjector } from '../wasmCameraModels';
 import { readFileFast } from './binaryTransfer';
 import { logStonexPhases } from './documentLoader';
 
+/** Panels whose running colour pass the user asked to stop. */
+const cancelRequests = new WeakSet<vscode.WebviewPanel>();
+
+/**
+ * Stop the panel's colour pass at its next step: the parse reports progress
+ * and finished scans through callbacks, and a cancelled run throws out of the
+ * next one. Scans already published keep their colour.
+ */
+export function cancelStationPipeline(webviewPanel: vscode.WebviewPanel): void {
+  cancelRequests.add(webviewPanel);
+}
+
+function cancelledError(): Error {
+  const error = new Error('Colouring cancelled.');
+  error.name = 'AbortError';
+  return error;
+}
+
 export interface StationPipelineHost {
   logPerf(line: string): void;
 }
@@ -45,11 +63,19 @@ export async function handleStationPipeline(
   // The pipeline takes minutes on a large archive, so every step it announces
   // goes to the panel. Without this the button just says "Working..." and there
   // is no way to tell slow from stuck.
-  const notify = (message: string) =>
+  cancelRequests.delete(webviewPanel);
+  const throwIfCancelled = () => {
+    if (cancelRequests.has(webviewPanel)) {
+      throw cancelledError();
+    }
+  };
+  const notify = (message: string) => {
+    throwIfCancelled();
     void sendToWebview(webviewPanel, {
       type: 'stationPipelineProgress',
       message: message.replace(/^Stonex X3A: /, ''),
     });
+  };
 
   try {
     const startedAt = performance.now();
@@ -61,6 +87,7 @@ export async function handleStationPipeline(
     const parsed = await parser.parseAll(bytes, path.basename(documentPath), notify, {
       ...options,
       onScanColored: async update => {
+        throwIfCancelled();
         const scanName = `${update.scanStem}.x3r`;
         const delivered = await sendToWebview(webviewPanel, {
           type: 'stationPipelineResult',
@@ -148,9 +175,13 @@ export async function handleStationPipeline(
         `(${parsed.length} scans)`
     );
   } catch (error) {
+    const cancelled = error instanceof Error && error.name === 'AbortError';
     sendToWebview(webviewPanel, {
       type: 'stationPipelineResult',
       error: error instanceof Error ? error.message : String(error),
+      cancelled,
     });
+  } finally {
+    cancelRequests.delete(webviewPanel);
   }
 }

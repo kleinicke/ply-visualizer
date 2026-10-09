@@ -1245,6 +1245,219 @@ if (Symbol.dispose) PlyResult.prototype[Symbol.dispose] = PlyResult.prototype.fr
 exports.PlyResult = PlyResult;
 
 /**
+ * A binary point cloud decoded while it is still arriving.
+ *
+ * `parse_ply_at` needs the whole file in wasm memory before it starts, so a
+ * 341 MB cloud sat in the heap next to its own decoded arrays - about twice
+ * the file - and wasm memory never shrinks, so the page kept that high-water
+ * mark for its whole life. On a machine already in swap that was the
+ * difference between four and nineteen seconds. This takes the vertex records
+ * a chunk at a time, as the fetch delivers them, into a scratch buffer, and
+ * decodes them with the same loops into chunk-sized outputs that the caller
+ * copies straight into the final arrays. The decode then overlaps the
+ * transfer, and the heap stays a few megabytes.
+ *
+ * Only fixed-stride binary vertex records with no faces qualify; anything
+ * else (ASCII, meshes, list properties) returns `None` from `open` and goes
+ * through `parse_ply_at`.
+ */
+class PlyVertexStream {
+    static __wrap(ptr) {
+        const obj = Object.create(PlyVertexStream.prototype);
+        obj.__wbg_ptr = ptr;
+        PlyVertexStreamFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        PlyVertexStreamFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_plyvertexstream_free(ptr, 0);
+    }
+    /**
+     * [min_x, min_y, min_z, max_x, max_y, max_z] over everything decoded.
+     * @returns {Float32Array}
+     */
+    bbox() {
+        const ret = wasm.plyvertexstream_bbox(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Records the scratch buffer holds; feed at most this many per `decode`.
+     * @returns {number}
+     */
+    get chunk_records() {
+        const ret = wasm.plyvertexstream_chunk_records(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    colors_ptr() {
+        const ret = wasm.plyvertexstream_colors_ptr(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get data_start() {
+        const ret = wasm.plyvertexstream_data_start(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Decode the first `records` records of the scratch buffer; returns how
+     * many were decoded (never more than the header declared). The outputs
+     * are then readable at the `*_ptr` addresses, `records` vertices long.
+     * @param {number} records
+     * @returns {number}
+     */
+    decode(records) {
+        const ret = wasm.plyvertexstream_decode(this.__wbg_ptr, records);
+        return ret >>> 0;
+    }
+    /**
+     * Vertices decoded so far.
+     * @returns {number}
+     */
+    get decoded() {
+        const ret = wasm.plyvertexstream_decoded(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * The first vertex (1-based) with a non-finite coordinate, or 0.
+     * @returns {number}
+     */
+    get first_non_finite() {
+        const ret = wasm.plyvertexstream_first_non_finite(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get has_colors() {
+        const ret = wasm.plyvertexstream_has_colors(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get has_intensity() {
+        const ret = wasm.plyvertexstream_has_intensity(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get has_normals() {
+        const ret = wasm.plyvertexstream_has_normals(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Where the caller writes the next records: room for `chunk_records`.
+     * Valid until the next call into the module.
+     * @returns {number}
+     */
+    input_ptr() {
+        const ret = wasm.plyvertexstream_input_ptr(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    intensity_ptr() {
+        const ret = wasm.plyvertexstream_intensity_ptr(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get is_gaussian_splat() {
+        const ret = wasm.plyvertexstream_is_gaussian_splat(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {string}
+     */
+    get metadata_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.plyvertexstream_metadata_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    normals_ptr() {
+        const ret = wasm.plyvertexstream_normals_ptr(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * `head` is the start of the file, through `end_header`. Undefined when
+     * the file cannot be streamed (see the type).
+     * @param {Uint8Array} head
+     * @returns {PlyVertexStream | undefined}
+     */
+    static open(head) {
+        const ptr0 = passArray8ToWasm0(head, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.plyvertexstream_open(ptr0, len0);
+        return ret === 0 ? undefined : PlyVertexStream.__wrap(ret);
+    }
+    /**
+     * @returns {number}
+     */
+    positions_ptr() {
+        const ret = wasm.plyvertexstream_positions_ptr(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {string[]}
+     */
+    get scalar_field_names() {
+        const ret = wasm.plyvertexstream_scalar_field_names(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @param {number} index
+     * @returns {number}
+     */
+    scalar_ptr(index) {
+        const ret = wasm.plyvertexstream_scalar_ptr(this.__wbg_ptr, index);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get stride() {
+        const ret = wasm.plyvertexstream_stride(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get vertex_count() {
+        const ret = wasm.plyvertexstream_vertex_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) PlyVertexStream.prototype[Symbol.dispose] = PlyVertexStream.prototype.free;
+exports.PlyVertexStream = PlyVertexStream;
+
+/**
  * Parsed point cloud, returned to JS. Large buffers are moved out with the
  * `take_*` methods (no clone) the way wasm-bindgen marshals `Vec<T>`.
  */
@@ -3103,6 +3316,9 @@ const ObjResultFinalization = (typeof FinalizationRegistry === 'undefined')
 const PlyResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_plyresult_free(ptr, 1));
+const PlyVertexStreamFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_plyvertexstream_free(ptr, 1));
 const PointCloudResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_pointcloudresult_free(ptr, 1));

@@ -153,6 +153,47 @@ export function ensureTiffWasmGlueLoaded(glueUrl?: string): boolean {
   }
 }
 
+let modulePromise: Promise<WebAssembly.Module | null> | null = null;
+
+/**
+ * The kernel, compiled once and shared with every depth worker.
+ *
+ * Each worker used to fetch and compile its own copy. Besides the repeated
+ * compile, V8 tiers wasm up per compiled module and never swaps the code of a
+ * call that is already running, so a fresh worker ran its one big band on
+ * baseline code. A module compiled here and handed to the workers carries
+ * whatever any of them has optimized. Inside a VS Code webview a blob worker
+ * also cannot fetch the binary itself (utils/webviewWorker.ts). A worker that
+ * received a module (`__TIFF_WASM_MODULE__`) uses that one.
+ */
+export function tiffWasmModule(): Promise<WebAssembly.Module | null> {
+  if (modulePromise) {
+    return modulePromise;
+  }
+  const handed = (globalThis as any).__TIFF_WASM_MODULE__ as WebAssembly.Module | undefined;
+  if (handed) {
+    modulePromise = Promise.resolve(handed);
+    return modulePromise;
+  }
+  const url = (globalThis as any).__TIFF_WASM_URL__;
+  if (!url) {
+    return Promise.resolve(null);
+  }
+  modulePromise = (async () => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        return null;
+      }
+      return await WebAssembly.compile(await response.arrayBuffer());
+    } catch (error) {
+      console.warn('[TiffWasm] could not compile the kernel:', error);
+      return null;
+    }
+  })();
+  return modulePromise;
+}
+
 /** Initialize the WASM module once. Resolves false if unavailable (→ fallback). */
 export async function initTiffWasm(): Promise<boolean> {
   if (initPromise) {
@@ -165,13 +206,14 @@ export async function initTiffWasm(): Promise<boolean> {
       if (!wasmApi) {
         return false;
       }
+      const module = await tiffWasmModule();
       const url = (globalThis as any).__TIFF_WASM_URL__;
-      if (!url) {
+      if (!module && !url) {
         return false;
       }
       // Object form is the non-deprecated wasm-bindgen init signature; a bare
       // string still works but logs a deprecation warning.
-      await wasmApi({ module_or_path: url });
+      await wasmApi({ module_or_path: module ?? url });
       ready = typeof wasmApi.decode_tiff_fast === 'function';
       return ready;
     } catch (error) {
@@ -253,6 +295,120 @@ export function projectDepthWasmSync(
  * must also pre-shift the principal point (`cy - rowOffset`), because the rays
  * are computed from row indices within the slice it hands over.
  */
+/** A stripped TIFF's layout and block table (`TiffStripPlan` in the adapter). */
+export interface TiffStripPlanInfo {
+  width: number;
+  height: number;
+  channels: number;
+  bitsPerSample: number;
+  sampleFormat: number;
+  compression: number;
+  predictor: number;
+  stackable: boolean;
+  offsets: Float64Array;
+  counts: Float64Array;
+  fields: Float64Array;
+}
+
+/** Null when the module is not ready or the file is not a plain strip layout. */
+export function tiffStripPlanSync(bytes: Uint8Array): TiffStripPlanInfo | null {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.tiff_strip_plan !== 'function') {
+    return null;
+  }
+  const plan = wasmApi.tiff_strip_plan(bytes);
+  if (!plan) {
+    return null;
+  }
+  try {
+    return {
+      width: plan.width,
+      height: plan.height,
+      channels: plan.channels,
+      bitsPerSample: plan.bits_per_sample,
+      sampleFormat: plan.sample_format,
+      compression: plan.compression,
+      predictor: plan.predictor,
+      stackable: plan.stackable,
+      offsets: new Float64Array(plan.offsets()),
+      counts: new Float64Array(plan.counts()),
+      fields: new Float64Array(plan.fields()),
+    };
+  } finally {
+    plan.free?.();
+  }
+}
+
+/** A ZIP16 EXR's blocks and layout (`ExrZipPlanJs` in the adapter). */
+export interface ExrZipPlanInfo {
+  width: number;
+  height: number;
+  dataY: number;
+  kinds: Uint32Array;
+  selection: Int32Array;
+  displayedChannels: string[];
+  counts: Uint32Array;
+  yCoordinates: Int32Array;
+  compressed: Uint8Array;
+}
+
+/** Null when the module is not ready or the EXR is not a ZIP16 scanline file. */
+export function exrZipPlanSync(bytes: Uint8Array): ExrZipPlanInfo | null {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.exr_zip_plan !== 'function') {
+    return null;
+  }
+  const plan = wasmApi.exr_zip_plan(bytes);
+  if (!plan) {
+    return null;
+  }
+  try {
+    return {
+      width: plan.width,
+      height: plan.height,
+      dataY: plan.data_y,
+      kinds: new Uint32Array(plan.channel_kinds),
+      selection: new Int32Array(plan.selection),
+      displayedChannels: Array.from(plan.displayed_names as string[]),
+      counts: new Uint32Array(plan.counts),
+      yCoordinates: new Int32Array(plan.y_coordinates),
+      compressed: new Uint8Array(plan.take_compressed()),
+    };
+  } finally {
+    plan.free?.();
+  }
+}
+
+/** A run of ZIP16 blocks, as the interleaved channels `decode_exr_fast` gives. */
+export function decodeExrZipBlocksSync(
+  blob: Uint8Array,
+  counts: Uint32Array,
+  rows: Uint32Array,
+  width: number,
+  kinds: Uint32Array,
+  selection: Int32Array
+): Float32Array {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.decode_exr_zip_blocks !== 'function') {
+    throw new Error('EXR block decoding is unavailable in this build');
+  }
+  return wasmApi.decode_exr_zip_blocks(blob, counts, rows, width, kinds, selection);
+}
+
+/** One run of strips, decoded to the f32 samples `decode_tiff_fast` gives. */
+export function decodeTiffStripRangeSync(
+  blob: Uint8Array,
+  counts: Uint32Array,
+  firstStrip: number,
+  fields: Float64Array
+): Float32Array {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.decode_tiff_strip_range !== 'function') {
+    throw new Error('TIFF strip decoding is unavailable in this build');
+  }
+  return wasmApi.decode_tiff_strip_range(blob, counts, firstStrip, fields);
+}
+
 export function projectDepthBandWasmSync(
   data: Float32Array,
   width: number,

@@ -190,6 +190,11 @@ export interface DepthConversionResult {
     decodeCached?: boolean;
     /** Decoded layout description from the reader (DepthMetadata.decodeInfo). */
     info?: string;
+    /** Where the conversion ran, and in how many projection bands. */
+    thread?: 'worker' | 'main';
+    bands?: number;
+    /** The projection's own breakdown (normalize, range, split, bands, join). */
+    phases?: string;
   };
 }
 

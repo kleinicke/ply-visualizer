@@ -87,6 +87,9 @@ export class DepthConverter {
         decodeMs,
         projectMs: performance.now() - projectStart,
         info: decoded.meta?.decodeInfo,
+        thread: 'main',
+        bands: (result as { bands?: number }).bands,
+        phases: (result as { phases?: string }).phases,
       };
 
       console.log(`TIF to PLY conversion complete: ${result.pointCount} points`);
@@ -209,7 +212,9 @@ export class DepthConverter {
       depthScale: cameraParams.depthScale,
       depthBias: cameraParams.depthBias,
     };
+    const normalizeStarted = performance.now();
     const norm = normalizeDepth(image, normalizationMeta);
+    const normalizeMs = performance.now() - normalizeStarted;
 
     // Prepare projection parameters
     const projectionParams = {
@@ -259,6 +264,7 @@ export class DepthConverter {
     signal?.throwIfAborted();
     const result = await projectToPointCloudParallel(norm, projectionParams);
     signal?.throwIfAborted();
+    result.phases = `normalize ${normalizeMs.toFixed(0)}${result.phases ? ` · ${result.phases}` : ''}`;
 
     if (result.projectionDiagnostics?.rejectedCount) {
       console.warn(

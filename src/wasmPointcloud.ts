@@ -63,7 +63,15 @@ function load(): any {
       typeof __non_webpack_require__ !== 'undefined'
         ? __non_webpack_require__
         : createRequire(__filename);
-    mod = req(path.join(__dirname, 'wasm', 'pointcloud-parser', 'pointcloud_parser.js'));
+    // The bundle has the package copied beside it; `tsc`'s out/src (the
+    // integration tests) reaches the built package in the repository, as
+    // providerHandlers/pointcloudWebGlue.ts does for the web build.
+    const candidates = [
+      path.join(__dirname, 'wasm', 'pointcloud-parser', 'pointcloud_parser.js'),
+      path.join(__dirname, '..', '..', 'wasm', 'pointcloud-parser', 'pkg', 'pointcloud_parser.js'),
+    ];
+    const file = candidates.find(candidate => fs.existsSync(candidate)) ?? candidates[0];
+    mod = req(file);
   } catch (error) {
     console.warn('[pointcloud-wasm] module unavailable, using JS parsers:', error);
     mod = null;

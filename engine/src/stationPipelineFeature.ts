@@ -322,6 +322,10 @@ export function handleStationPipelineResult(
       scan.colored = true;
     }
   }
+  if (message.cancelled) {
+    stationPipelineUi.message = 'Colouring cancelled; scans finished before it keep their colour.';
+    return;
+  }
   if (message.error) {
     stationPipelineUi.message = `Station pipeline failed: ${message.error}`;
     return;

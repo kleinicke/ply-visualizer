@@ -197,6 +197,17 @@ async function applyDepthSettingsInner(
       signal
     );
     perf.mark('worker');
+    const timings = result.timings;
+    if (timings) {
+      perf.note(timings.decodeCached ? 'decode(cached)' : 'decode', timings.decodeMs.toFixed(0));
+      perf.note('project', timings.projectMs.toFixed(0));
+      if (timings.thread) {
+        perf.note('on', `${timings.thread}${timings.bands ? `/${timings.bands} bands` : ''}`);
+      }
+      if (timings.phases) {
+        perf.note('stages', timings.phases);
+      }
+    }
     if (!current()) {
       return;
     }

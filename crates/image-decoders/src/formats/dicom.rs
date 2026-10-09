@@ -754,6 +754,44 @@ fn decode_native_frame(
     Ok(raw)
 }
 
+/// `decode_native_frame` then `rescale`, through `rescaled_samples` for 8-
+/// and 16-bit integer Pixel Data fully inside the file. None otherwise.
+fn native_rescaled_samples(
+    context: &DicomContext,
+    info: &DicomImageInfo,
+    safe_frame: u32,
+    sample_count: usize,
+) -> Option<Vec<f32>> {
+    if context.pixel_tag != PIXEL_DATA {
+        return None;
+    }
+    let width = (info.bits_allocated / 8) as usize;
+    let frame_bytes = sample_count.checked_mul(width)?;
+    if (context.pixel_length as usize) < frame_bytes.checked_mul(safe_frame as usize + 1)? {
+        return None;
+    }
+    let start = context
+        .pixel_offset
+        .checked_add(frame_bytes.checked_mul(safe_frame as usize)?)?;
+    let samples = info.samples as usize;
+    let pixels = (info.rows as usize) * (info.columns as usize);
+    let planar = info.planar == 1 && samples > 1;
+    rescaled_samples(
+        info,
+        context.data,
+        start,
+        sample_count,
+        context.encoding.little,
+        |i| {
+            if planar {
+                (i % samples) * pixels + i / samples
+            } else {
+                i
+            }
+        },
+    )
+}
+
 type FragmentRanges = Vec<(usize, usize)>;
 
 /// Locate the fragments of encapsulated Pixel Data.
@@ -1046,7 +1084,7 @@ fn decode_own_codec_frame(
     info: &DicomImageInfo,
     frame: u32,
     codec: CompressedCodec,
-) -> Result<Vec<f64>, DecodeError> {
+) -> Result<Vec<u8>, DecodeError> {
     let encoded = encapsulated_frame_bytes(context.data, context.pixel_offset, frame, info.frames)?;
     let width = info.columns;
     let height = info.rows;
@@ -1182,23 +1220,98 @@ fn decode_own_codec_frame(
         )?,
     };
 
-    let sample_count = (width as usize)
-        .checked_mul(height as usize)
-        .and_then(|v| v.checked_mul(info.samples as usize))
-        .ok_or_else(|| DecodeError::new("DICOM: dimensions overflow"))?;
-    let mut raw = Vec::with_capacity(sample_count);
-    for index in 0..sample_count {
-        raw.push(read_sample(
-            &bytes,
-            0x7fe0_0010,
-            true,
-            index * bytes_per_sample,
+    Ok(bytes)
+}
+
+/// Pixel Data stored as words (OW): the tag every integer frame is read as.
+const PIXEL_DATA: u32 = 0x7fe0_0010;
+
+/// The rescaled output sample of every raw 8- or 16-bit code: `read_sample`'s
+/// value times Rescale Slope plus Intercept, as f32 — exactly what the
+/// per-sample path computes, so looking samples up changes no value. None
+/// for other widths.
+fn rescaled_lut(info: &DicomImageInfo, little: bool) -> Option<Vec<f32>> {
+    let codes: u32 = match info.bits_allocated {
+        8 => 256,
+        16 => 65536,
+        _ => return None,
+    };
+    let mut lut = Vec::with_capacity(codes as usize);
+    for code in 0..codes {
+        #[allow(clippy::cast_possible_truncation)] // code < 2^16, and < 2^8 for bytes
+        let (word, byte) = (code as u16, [code as u8]);
+        let pair = if little {
+            word.to_le_bytes()
+        } else {
+            word.to_be_bytes()
+        };
+        let source: &[u8] = if info.bits_allocated == 8 {
+            &byte
+        } else {
+            &pair
+        };
+        let raw = read_sample(
+            source,
+            PIXEL_DATA,
+            little,
+            0,
             info.bits_allocated,
             info.bits_stored,
             info.signed,
-        )?);
+        )
+        .ok()?;
+        #[allow(clippy::cast_possible_truncation)] // the f32 output is the decoder's carrier
+        lut.push((raw * info.slope + info.intercept) as f32);
     }
-    Ok(raw)
+    Some(lut)
+}
+
+/// Rescaled f32 samples of `count` integer samples stored from `bytes[start..]`
+/// (`index_of` maps an output sample to its stored position, for planar
+/// frames), through `rescaled_lut`. None when the widths are not 8 or 16
+/// bits or the bytes are short, so the caller reads them one by one (and
+/// reports the truncation the usual way).
+fn rescaled_samples(
+    info: &DicomImageInfo,
+    bytes: &[u8],
+    start: usize,
+    count: usize,
+    little: bool,
+    index_of: impl Fn(usize) -> usize,
+) -> Option<Vec<f32>> {
+    let width = (info.bits_allocated / 8) as usize;
+    let end = count.checked_mul(width)?.checked_add(start)?;
+    if end > bytes.len() {
+        return None;
+    }
+    let lut = rescaled_lut(info, little)?;
+    let stored = &bytes[start..end];
+    Some(if width == 1 {
+        (0..count)
+            .map(|i| lut[usize::from(stored[index_of(i)])])
+            .collect()
+    } else {
+        (0..count)
+            .map(|i| {
+                let at = index_of(i) * 2;
+                let pair = [stored[at], stored[at + 1]];
+                let code = if little {
+                    u16::from_le_bytes(pair)
+                } else {
+                    u16::from_be_bytes(pair)
+                };
+                lut[usize::from(code)]
+            })
+            .collect()
+    })
+}
+
+/// The general path: each sample through `read_sample`, then rescaled.
+fn rescale(raw: &[f64], info: &DicomImageInfo) -> Vec<f32> {
+    #[allow(clippy::cast_possible_truncation)] // the f32 output is the decoder's carrier
+    raw.iter()
+        .map(|&r| (r * info.slope + info.intercept) as f32)
+        .collect()
 }
 
 /// Inflate a Deflated Explicit VR Little Endian dataset (transfer syntax
@@ -1259,8 +1372,31 @@ pub(crate) fn decode_dicom_impl(
     let info = dicom_image_info(&context)?;
     let safe_frame = frame_index.min(info.frames.saturating_sub(1));
 
-    let (raw, photometric) = if let Some(codec) = context.encoding.compressed {
-        let raw = decode_own_codec_frame(&context, &info, safe_frame, codec)?;
+    let sample_count = (info.columns as usize)
+        .checked_mul(info.rows as usize)
+        .and_then(|v| v.checked_mul(info.samples as usize))
+        .ok_or_else(|| DecodeError::new("DICOM: dimensions overflow"))?;
+    let (mut output, photometric) = if let Some(codec) = context.encoding.compressed {
+        let bytes = decode_own_codec_frame(&context, &info, safe_frame, codec)?;
+        let output =
+            if let Some(output) = rescaled_samples(&info, &bytes, 0, sample_count, true, |i| i) {
+                output
+            } else {
+                let width = (info.bits_allocated / 8) as usize;
+                let mut raw = Vec::with_capacity(sample_count);
+                for index in 0..sample_count {
+                    raw.push(read_sample(
+                        &bytes,
+                        PIXEL_DATA,
+                        true,
+                        index * width,
+                        info.bits_allocated,
+                        info.bits_stored,
+                        info.signed,
+                    )?);
+                }
+                rescale(&raw, &info)
+            };
         // Baseline JPEG stores colour as YCbCr and the decoder converts it, so
         // what comes back is RGB whatever the dataset declared. Every other
         // codec here carries no colour transform of its own, so the dataset's
@@ -1275,18 +1411,15 @@ pub(crate) fn decode_dicom_impl(
         } else {
             info.photometric.clone()
         };
-        (raw, photometric)
+        (output, photometric)
     } else {
-        (
-            decode_native_frame(&context, &info, safe_frame)?,
-            info.photometric.clone(),
-        )
+        let output = native_rescaled_samples(&context, &info, safe_frame, sample_count)
+            .map_or_else(
+                || decode_native_frame(&context, &info, safe_frame).map(|raw| rescale(&raw, &info)),
+                Ok,
+            )?;
+        (output, info.photometric.clone())
     };
-
-    let mut output: Vec<f32> = raw
-        .iter()
-        .map(|&r| (r * info.slope + info.intercept) as f32)
-        .collect();
 
     if photometric == "MONOCHROME1" {
         let mut min = f32::INFINITY;

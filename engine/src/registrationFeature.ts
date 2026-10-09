@@ -22,6 +22,7 @@ import {
   registerPair,
   registrationBackend,
   type UpAxis,
+  registrationConcurrency,
 } from './registration';
 
 export interface RegistrationHost {
@@ -1895,92 +1896,130 @@ async function growFromAnchor(
       };
       const scored: Scored[] = [];
 
-      for (const fileIndex of [...remaining]) {
-        const name = host.spatialFiles[fileIndex]?.fileName ?? `File ${fileIndex + 1}`;
-        const entry = entryFor(fileIndex);
-        if (entry) {
-          entry.state = 'running';
+      // The candidates of one sweep are independent - each is matched
+      // against the same union of placed clouds - so they are solved a batch
+      // at a time on the host's workers and then taken in their original
+      // order, with the original stopping rule. A solve past the point where
+      // that rule stops is wasted but has no effect, so the walk places
+      // exactly what the one-at-a-time walk did.
+      //
+      // The first candidate goes alone: when it clears the bar - the usual
+      // case - the sweep stops there, and solving its neighbours alongside
+      // only slowed it down (5.3 s against 4.8 s on a six-scan archive).
+      const order = [...remaining];
+      let stopSweep = false;
+      for (let first = 0; first < order.length && !stopSweep;) {
+        const batch = order.slice(first, first + (first === 0 ? 1 : registrationConcurrency()));
+        first += batch.length;
+        for (const fileIndex of batch) {
+          const entry = entryFor(fileIndex);
+          if (entry) {
+            entry.state = 'running';
+          }
         }
+        const names = batch.map(
+          fileIndex => host.spatialFiles[fileIndex]?.fileName ?? `File ${fileIndex + 1}`
+        );
         // Each pass places exactly one cloud, so the run is at most one pass
         // per target and the total is knowable up front. "Sweep 7" on its own
         // says nothing about how much is left.
-        registrationState.status =
-          `Placing ${placed.length} of ${targets.length} · trying ${name} against ` +
-          `${placed.length} placed cloud${placed.length === 1 ? '' : 's'}...`;
+        registrationState.status = `Placing ${placed.length} of ${targets.length} · trying ${
+          names.length === 1 ? names[0] : `${names.length} clouds`
+        } against ${placed.length} placed cloud${placed.length === 1 ? '' : 's'}...`;
         await new Promise(resolve => setTimeout(resolve, 0));
         if (!guard()) {
           return;
         }
 
-        attempts.set(fileIndex, (attempts.get(fileIndex) ?? 0) + 1);
-        const source = worldPoints(host, fileIndex);
-        if (!source) {
-          remaining.delete(fileIndex);
-          if (entry) {
-            entry.state = 'failed';
-            entry.detail = 'no point data';
-          }
-          registrationState.alignDone = targets.length - remaining.size;
-          continue;
-        }
-        sampledPoints += source.length / 3;
-
-        let result: Awaited<ReturnType<typeof registerPair>> = null;
         const matchStarted = performance.now();
-        try {
-          result = await registerPair(
-            source,
-            target.slice(),
-            {
-              coarse: { upAxis: registrationState.upAxis as UpAxis },
-              extraStarts: rank ? inheritedStarts(host, placed, fileIndex) : undefined,
-            },
-            guard.signal
-          );
-          if (!guard()) {
-            return;
+        const outcomes = await Promise.all(
+          batch.map(async fileIndex => {
+            const source = worldPoints(host, fileIndex);
+            if (!source) {
+              return { fileIndex, source, result: null, error: undefined as unknown };
+            }
+            try {
+              const result = await registerPair(
+                source,
+                target.slice(),
+                {
+                  coarse: { upAxis: registrationState.upAxis as UpAxis },
+                  extraStarts: rank ? inheritedStarts(host, placed, fileIndex) : undefined,
+                },
+                guard.signal
+              );
+              return { fileIndex, source, result, error: undefined as unknown };
+            } catch (error) {
+              return { fileIndex, source, result: null, error };
+            }
+          })
+        );
+        matchingMs += performance.now() - matchStarted;
+        if (!guard()) {
+          return;
+        }
+
+        let taken = 0;
+        for (const { fileIndex, source, result, error } of outcomes) {
+          taken++;
+          const entry = entryFor(fileIndex);
+          attempts.set(fileIndex, (attempts.get(fileIndex) ?? 0) + 1);
+          if (!source) {
+            remaining.delete(fileIndex);
+            if (entry) {
+              entry.state = 'failed';
+              entry.detail = 'no point data';
+            }
+            registrationState.alignDone = targets.length - remaining.size;
+            continue;
           }
-        } catch (error) {
-          if (!guard()) {
-            return;
-          }
-          if (entry) {
+          sampledPoints += source.length / 3;
+          if (error !== undefined && entry) {
             entry.state = 'queued';
             entry.detail = describeFailure(error);
           }
-        } finally {
-          matchingMs += performance.now() - matchStarted;
-        }
 
-        if (!result?.icp || result.icp.fitness < acceptFitness || result.icp.inlierCount < 30) {
-          // Not failed — just not yet. The union grows with every placement, so
-          // the same cloud may match on a later sweep.
+          if (!result?.icp || result.icp.fitness < acceptFitness || result.icp.inlierCount < 30) {
+            // Not failed — just not yet. The union grows with every placement, so
+            // the same cloud may match on a later sweep.
+            if (entry) {
+              entry.state = 'queued';
+              entry.detail = result?.icp
+                ? `${(result.icp.fitness * 100).toFixed(1)}% overlap so far`
+                : error !== undefined
+                  ? entry.detail
+                  : 'no match yet';
+            }
+            continue;
+          }
+
+          // A cloud that cannot feel its own position goes last. Left to the
+          // sweep it slides along its wall, and its overlap rises as it does, so
+          // ranking on score alone actively prefers the wrong pose. Waiting costs
+          // a sweep and usually buys an inherited pose that is exactly right.
+          const trustworthy =
+            result.startedFrom === 'given' ||
+            result.sourceConditioning >= WELL_CONDITIONED_POSITION;
+          scored.push({ fileIndex, result, trustworthy });
           if (entry) {
             entry.state = 'queued';
-            entry.detail = result?.icp
-              ? `${(result.icp.fitness * 100).toFixed(1)}% overlap so far`
-              : 'no match yet';
+            entry.detail = trustworthy
+              ? `${(result.icp.fitness * 100).toFixed(0)}% overlap`
+              : `${(result.icp.fitness * 100).toFixed(0)}% overlap · could slide, waiting`;
           }
-          continue;
+          // Nested commits to the first cloud over the bar, which is what makes
+          // it cheap and what makes its outcome depend on file order.
+          if (!rank || (trustworthy && result.icp.fitness >= CONFIDENT_FITNESS)) {
+            stopSweep = true;
+            break;
+          }
         }
-
-        // A cloud that cannot feel its own position goes last. Left to the
-        // sweep it slides along its wall, and its overlap rises as it does, so
-        // ranking on score alone actively prefers the wrong pose. Waiting costs
-        // a sweep and usually buys an inherited pose that is exactly right.
-        const trustworthy =
-          result.startedFrom === 'given' || result.sourceConditioning >= WELL_CONDITIONED_POSITION;
-        scored.push({ fileIndex, result, trustworthy });
-        if (entry) {
-          entry.state = 'queued';
-          entry.detail = trustworthy
-            ? `${(result.icp.fitness * 100).toFixed(0)}% overlap`
-            : `${(result.icp.fitness * 100).toFixed(0)}% overlap · could slide, waiting`;
-        }
-        // Nested commits to the first cloud over the bar, which is what makes
-        // it cheap and what makes its outcome depend on file order.
-        if (!rank || (trustworthy && result.icp.fitness >= CONFIDENT_FITNESS)) {
-          break;
+        // Solved but past the stopping point: as if never tried this sweep.
+        for (const { fileIndex } of outcomes.slice(taken)) {
+          const entry = entryFor(fileIndex);
+          if (entry?.state === 'running') {
+            entry.state = 'queued';
+          }
         }
       }
 
@@ -2046,7 +2085,7 @@ async function growFromAnchor(
       }
     }
 
-    registrationState.result = `Placed ${aligned} of ${targets.length} clouds in ${sweeps} sweep${sweeps === 1 ? '' : 's'} · ${registrationBackend()}`;
+    registrationState.result = `Placed ${aligned} of ${targets.length} clouds in ${sweeps} sweep${sweeps === 1 ? '' : 's'}, ${((performance.now() - startedAt) / 1000).toFixed(1)} s · ${registrationBackend()}`;
   } finally {
     const followStarted = performance.now();
     followStations(host);
@@ -2157,7 +2196,11 @@ export async function alignAllTo(
   alignAllUndo = { registry: host.fileEntries, transforms: undoAll };
   registrationState.canUndoAll = false;
   try {
-    for (let position = 0; position < targets.length; position++) {
+    // Every pair is registered against the anchor on its own (a star), so
+    // they run side by side on the host's solver workers; the rows tick as
+    // each one lands, in whatever order that is.
+    let running = 0;
+    const alignOne = async (position: number): Promise<'stop' | void> => {
       const fileIndex = targets[position];
       const name = host.spatialFiles[fileIndex]?.fileName ?? `File ${fileIndex + 1}`;
       const finish = (state: 'aligned' | 'failed', detail: string) => {
@@ -2166,36 +2209,31 @@ export async function alignAllTo(
           entry.state = state;
           entry.detail = detail;
         }
-        registrationState.alignDone = position + 1;
+        registrationState.alignDone++;
       };
-      const running = registrationState.alignEntries[position];
-      if (running) {
-        running.state = 'running';
+      const row = registrationState.alignEntries[position];
+      if (row) {
+        row.state = 'running';
       }
-      registrationState.status = `${refineOnly ? 'Refining' : 'Aligning'} ${name} (${
-        position + 1
-      }/${targets.length})...`;
-      await new Promise(resolve => setTimeout(resolve, 0));
-      if (!guard()) {
-        return;
-      }
-
-      const samplingStarted = performance.now();
-      const source = worldPoints(host, fileIndex);
-      samplingMs += performance.now() - samplingStarted;
-      if (!source) {
-        finish('failed', 'no point data');
-        continue;
-      }
-      sampledPoints += source.length / 3;
-
+      running++;
+      registrationState.status = `${refineOnly ? 'Refining' : 'Aligning'} ${
+        running > 1 ? `${running} clouds at once` : name
+      }...`;
       try {
-        // A fresh copy of the anchor each time: the worker path transfers the
-        // buffers it is given, so a shared one would be detached after the
-        // first pair.
-        const matchingStarted = performance.now();
+        const samplingStarted = performance.now();
+        const source = worldPoints(host, fileIndex);
+        samplingMs += performance.now() - samplingStarted;
+        if (!source) {
+          finish('failed', 'no point data');
+          return;
+        }
+        sampledPoints += source.length / 3;
+
         let result: Awaited<ReturnType<typeof registerPair>>;
         try {
+          // A fresh copy of the anchor each time: the worker path transfers the
+          // buffers it is given, so a shared one would be detached after the
+          // first pair.
           result = await registerPair(
             source,
             anchor.slice(),
@@ -2205,18 +2243,22 @@ export async function alignAllTo(
             guard.signal
           );
           if (!guard()) {
-            return;
+            return 'stop';
           }
-        } finally {
-          matchingMs += performance.now() - matchingStarted;
+        } catch (error) {
+          if (!guard()) {
+            return 'stop';
+          }
+          finish('failed', describeFailure(error));
+          return;
         }
         if (!result?.icp) {
           finish('failed', refineOnly ? 'nothing to refine against' : 'no match found');
-          continue;
+          return;
         }
         if (result.icp.fitness < 0.03 || result.icp.inlierCount < 30) {
           finish('failed', `only ${(result.icp.fitness * 100).toFixed(1)}% overlap; excluded`);
-          continue;
+          return;
         }
 
         const applyStarted = performance.now();
@@ -2237,20 +2279,40 @@ export async function alignAllTo(
           `RMS ${result.icp.inlierRmse.toFixed(3)} · overlap ${(result.icp.fitness * 100).toFixed(0)}%` +
             (Number.isFinite(margin) && margin < 1.2 ? ' · ambiguous, check it' : '')
         );
-      } catch (error) {
-        if (!guard()) {
-          return;
-        }
-        finish('failed', describeFailure(error));
+        host.requestRender();
+      } finally {
+        running--;
       }
-      host.requestRender();
+    };
+
+    const lanesStarted = performance.now();
+    const samplingBefore = samplingMs;
+    const applyBefore = applyMs;
+    let next = 0;
+    let stopped = false;
+    const lane = async () => {
+      while (!stopped && next < targets.length) {
+        if ((await alignOne(next++)) === 'stop') {
+          stopped = true;
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(registrationConcurrency(), targets.length) }, lane)
+    );
+    // Wall time, not the sum of overlapping solves, so the phases still add up.
+    matchingMs =
+      performance.now() - lanesStarted - (samplingMs - samplingBefore) - (applyMs - applyBefore);
+    if (stopped || !guard()) {
+      return;
     }
 
     registrationState.result = `${refineOnly ? 'Refined' : 'Aligned'} ${aligned} of ${
       targets.length
-    } clouds to ${
-      host.spatialFiles[anchorIndex]?.fileName ?? 'the anchor'
-    } · ${registrationBackend()}`;
+    } clouds to ${host.spatialFiles[anchorIndex]?.fileName ?? 'the anchor'} in ${(
+      (performance.now() - startedAt) /
+      1000
+    ).toFixed(1)} s · ${registrationBackend()}`;
   } finally {
     const followStarted = performance.now();
     followStations(host);

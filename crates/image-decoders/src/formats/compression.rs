@@ -49,6 +49,31 @@ pub(crate) fn decode_tiff_lzw(
     Ok(out)
 }
 
+/// Inflate one zlib stream (a TIFF Deflate strip or tile).
+///
+/// zune-inflate decodes the whole stream in one pass into a buffer sized from
+/// the block geometry, which is markedly faster than flate2's streaming reader
+/// (a 32 KiB window plus repeated `Vec` growth). Any error retries through
+/// flate2 so that malformed streams fail, or succeed, exactly as before.
+#[cfg(feature = "tiff")]
+pub(crate) fn inflate_zlib(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+) -> Result<Vec<u8>, DecodeError> {
+    use std::io::Read;
+
+    let options = zune_inflate::DeflateOptions::default().set_size_hint(expected_len);
+    if let Ok(out) = zune_inflate::DeflateDecoder::new_with_options(block, options).decode_zlib() {
+        return Ok(out);
+    }
+    let mut buf = Vec::with_capacity(expected_len);
+    flate2::read::ZlibDecoder::new(block)
+        .read_to_end(&mut buf)
+        .map_err(|e| DecodeError::new(format!("{context}: Deflate decode failed: {e}")))?;
+    Ok(buf)
+}
+
 /// Decode an LZ4 raw block (not an LZ4 frame) into its declared size.
 /// CZI CHUNKED stores independently compressed raw LZ4 blocks.
 #[cfg(feature = "czi")]

@@ -15,6 +15,8 @@
  * offset (for the returned pixel coordinates).
  */
 import {
+  decodeExrZipBlocksSync,
+  decodeTiffStripRangeSync,
   ensureTiffWasmGlueLoaded,
   initTiffWasm,
   projectDepthBandWasmSync,
@@ -29,9 +31,37 @@ workerScope.onmessage = async (event: MessageEvent<DepthBandRequest>) => {
     if (request.tiffWasmUrl) {
       (globalThis as any).__TIFF_WASM_URL__ = request.tiffWasmUrl;
     }
+    if (request.tiffWasmModule) {
+      (globalThis as any).__TIFF_WASM_MODULE__ = request.tiffWasmModule;
+    }
     ensureTiffWasmGlueLoaded(request.tiffWasmGlueUrl);
     if (!(await initTiffWasm())) {
       throw new Error('Depth projection worker could not start the camera-model kernel');
+    }
+
+    if (request.strips) {
+      // The pool's other job: a run of TIFF strips, decoded (see
+      // `decodeTiffInStrips`).
+      const { blob, counts, firstStrip, fields } = request.strips;
+      const samples = decodeTiffStripRangeSync(new Uint8Array(blob), counts, firstStrip, fields);
+      const response: DepthBandResponse = { id: request.id, ok: true, samples };
+      workerScope.postMessage(response, [samples.buffer]);
+      return;
+    }
+
+    if (request.exrBlocks) {
+      const { blob, counts, rows, width, kinds, selection } = request.exrBlocks;
+      const samples = decodeExrZipBlocksSync(
+        new Uint8Array(blob),
+        counts,
+        rows,
+        width,
+        kinds,
+        selection
+      );
+      const response: DepthBandResponse = { id: request.id, ok: true, samples };
+      workerScope.postMessage(response, [samples.buffer]);
+      return;
     }
 
     const band = projectDepthBandWasmSync(

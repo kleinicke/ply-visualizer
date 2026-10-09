@@ -7,6 +7,9 @@
 - open remote files
 - Provide AI Agents the commands to use the tools
 - Much faster loading of non-depth files: text point clouds (XYZ, PTS, ASCII PLY/PCD), LAS/LAZ and multi-scan E57 decode on several threads; STL, OBJ and OFF decode in Rust (large STL/OBJ meshes now load at all); quicker binary PLY/PCD and less work per load in the viewer
+- Depth images convert on worker threads inside VS Code too (they ran on the UI thread before): a 26-megapixel TIFF opens in under a second instead of 8-15 s, large TIFFs and ZIP-compressed EXRs decode on several threads, and changing depth settings no longer decodes the file again
+- Binary PLY point clouds are decoded while they stream in, using far less memory (a 341 MB cloud: ~1.7 s instead of 4-19 s); ASCII PLY clouds added with "+ Add Point Cloud" use the same fast parser as opened ones
+- Align all is about five times faster (pairs run side by side, faster coarse search); each result row gets Fix and Refine buttons, the run reports its duration, Escape cancels it, and the up axis sits next to the align buttons; archive colouring can be cancelled
 
 ## [1.8.0] - 2026-08-28
 

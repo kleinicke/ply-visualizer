@@ -414,6 +414,12 @@ function dispatch(
   settings: unknown,
   signal?: AbortSignal
 ): Promise<RegistrationResult | null> {
+  // The extension host queues requests itself and runs several at once on
+  // its own workers, each cancellable alone; only the in-page worker needs
+  // its callers lined up.
+  if (extensionPostMessage) {
+    return dispatchNow(kind, source, target, settings, signal);
+  }
   const result = dispatchTail.then(() => dispatchNow(kind, source, target, settings, signal));
   dispatchTail = result.catch(() => {});
   if (!signal) {
@@ -528,6 +534,14 @@ export function registrationBackend(): 'extension host' | 'worker' | 'in page' |
     return 'worker';
   }
   return workerUnavailable ? 'in page' : 'not started';
+}
+
+/**
+ * How many pairs are worth solving at once: the extension host runs them on a
+ * small pool of workers; the browser has one worker (or none).
+ */
+export function registrationConcurrency(): number {
+  return extensionPostMessage ? 6 : 1;
 }
 
 export function registerPair(

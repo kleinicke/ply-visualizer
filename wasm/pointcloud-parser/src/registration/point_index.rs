@@ -204,7 +204,10 @@ pub fn voxel_downsample(points: &[f32], voxel_size: f64) -> Vec<f32> {
         }
     }
 
-    let mut buckets: HashMap<(i64, i64, i64), (f64, f64, f64, u32)> = HashMap::new();
+    // The keys are sorted below, so the hasher cannot change the output; the
+    // default SipHash was a visible share of every ICP level's preparation.
+    let mut buckets: HashMap<(i64, i64, i64), (f64, f64, f64, u32), CellHasherBuilder> =
+        HashMap::with_hasher(CellHasherBuilder);
     for i in 0..count {
         let (x, y, z) = (
             points[i * 3] as f64,

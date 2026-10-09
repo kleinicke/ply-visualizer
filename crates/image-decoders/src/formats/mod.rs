@@ -65,6 +65,8 @@ pub(crate) mod npy;
 pub(crate) mod pfm;
 #[cfg(feature = "png")]
 pub(crate) mod png;
+#[cfg(feature = "psd")]
+pub(crate) mod psd;
 #[cfg(any(
     feature = "jpeg2000",
     feature = "jpegxr",

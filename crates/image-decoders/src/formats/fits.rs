@@ -376,6 +376,8 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, DecodeEr
                 let row_bytes = width
                     .checked_mul(4)
                     .ok_or_else(|| DecodeError::new("FITS: row size overflow"))?;
+                #[allow(clippy::float_cmp)] // exact header values, not computed ones
+                let identity = scale == 1.0 && zero == 0.0 && blank.is_none();
                 for y in 0..height {
                     let src_y = height - 1 - y;
                     let row_start = data_offset
@@ -387,6 +389,21 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, DecodeEr
                         .ok_or_else(|| DecodeError::new("FITS: offset overflow"))?;
                     let row = get_slice(data, row_start, row_bytes, "FITS")?;
                     let out_row = &mut out[y * width..(y + 1) * width];
+                    if identity {
+                        // BSCALE 1, BZERO 0, no BLANK: a byte swap. `v + 0.0`
+                        // is exactly `zero + scale * v` here for every non-NaN
+                        // (including -0 becoming +0), and NaN keeps the
+                        // original arithmetic so its bits cannot change.
+                        for (dst, bytes) in out_row.iter_mut().zip(row.chunks_exact(4)) {
+                            let v = f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                            // The general path's own f64 -> f32 conversion, so a
+                            // NaN comes out with exactly the bits it did before.
+                            #[allow(clippy::cast_possible_truncation)]
+                            let original = |v: f32| (zero + scale * f64::from(v)) as f32;
+                            *dst = if v.is_nan() { original(v) } else { v + 0.0 };
+                        }
+                        continue;
+                    }
                     for (dst, bytes) in out_row.iter_mut().zip(row.chunks_exact(4)) {
                         let stored =
                             f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64;

@@ -42,7 +42,9 @@ pub use formats::tiff::region::{TiffRegion, TiffRegionResult};
 pub use pipeline::stats;
 
 #[cfg(feature = "czi")]
-use formats::czi::decode_czi_impl;
+use formats::czi::{
+    czi_header_json, czi_layout_json, czi_region_plan_json, decode_czi_impl, decode_czi_region_impl,
+};
 #[cfg(feature = "dicom")]
 use formats::dicom::decode_dicom_impl;
 #[cfg(feature = "exr")]
@@ -52,9 +54,9 @@ use formats::fits::decode_fits_impl;
 #[cfg(feature = "hdr")]
 use formats::hdr::decode_hdr_impl;
 #[cfg(feature = "lif")]
-use formats::lif::decode_lif_impl;
+use formats::lif::{decode_lif_impl, decode_lif_sparse};
 #[cfg(feature = "nd2")]
-use formats::nd2::decode_nd2_impl;
+use formats::nd2::{decode_nd2_impl, decode_nd2_sparse};
 #[cfg(feature = "netcdf")]
 use formats::netcdf::decode_netcdf_impl;
 #[cfg(feature = "netpbm")]
@@ -156,6 +158,14 @@ pub struct ExrZipPlan {
     pub height: u32,
     pub data_y: i32,
     pub channel_name: String,
+    /// Every channel, in the file's (block) order.
+    pub channel_names: Vec<String>,
+    /// Each channel's pixel type: 0 u32, 1 half, 2 float.
+    pub channel_kinds: Vec<u32>,
+    /// The displayed channels as indices into `channel_names` (-1: absent,
+    /// shown as 1.0), as `decode_exr_fast` selects them.
+    pub selection: Vec<i32>,
+    pub displayed_names: Vec<String>,
     pub compressed: Vec<u8>,
     pub counts: Vec<u32>,
     pub y_coordinates: Vec<i32>,
@@ -761,6 +771,41 @@ impl TiffResult {
         0
     }
 
+    /// The samples split into channel planes, plane after plane, without
+    /// moving them: bytes for carriers 1 (u8) and 3 (u16), empty otherwise or
+    /// for a single channel. Read before `take_data_as_*`.
+    #[must_use]
+    pub fn planes_as_bytes(&self) -> Vec<u8> {
+        let channels = self.channels as usize;
+        match self.sample_kind() {
+            1 if channels > 1 => split_sample_planes(&self.data, channels, 1),
+            3 if channels > 1 => split_sample_planes(&self.data, channels, 2),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The f32 samples split into channel planes (carrier 0), plane after
+    /// plane; empty for a single channel or another carrier.
+    #[must_use]
+    pub fn planes_as_f32(&self) -> Vec<f32> {
+        let channels = self.channels as usize;
+        if channels < 2 || self.sample_kind() != 0 || self.data_f32.is_empty() {
+            return Vec::new();
+        }
+        let pixels = self.data_f32.len() / channels;
+        let mut planes = vec![0f32; pixels * channels];
+        for (channel, plane) in planes
+            .chunks_exact_mut(pixels.max(1))
+            .enumerate()
+            .take(channels)
+        {
+            for (pixel, out) in plane.iter_mut().enumerate() {
+                *out = self.data_f32[pixel * channels + channel];
+            }
+        }
+        planes
+    }
+
     pub fn data_len(&self) -> usize {
         match self.sample_kind() {
             1 => self.data.len(),
@@ -1085,22 +1130,86 @@ pub fn tiff_preview_reduction(data: &[u8]) -> u32 {
     reduction
 }
 
-/// Generate a nearest-sample overview without allocating the full raster.
-/// Full-image finite min/max are accumulated while each stored block is read
-/// once. The original file remains authoritative for region/picker requests.
+/// Everything a bounded preview reports except its pixels and range, with the
+/// plan and reduction that produce them.
 #[cfg(feature = "tiff")]
-pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
-    use formats::tiff::region::{decode_region, TiffRegion};
+fn tiff_preview_shell(
+    data: &[u8],
+) -> Result<(TiffResult, formats::tiff::strips::FloatStripPlan, u32), DecodeError> {
     let reduction = tiff_preview_reduction(data);
     if reduction == 0 {
         return Err(DecodeError::new("TIFF has no bounded preview route"));
     }
-    let plan = formats::tiff::float_strip_plan_for(data).unwrap();
+    let plan = formats::tiff::float_strip_plan_for(data)
+        .ok_or_else(|| DecodeError::new("TIFF has no bounded preview route"))?;
     let width = plan.width.div_ceil(reduction);
     let height = plan.height.div_ceil(reduction);
-    let mut pixels = vec![0.0f32; width as usize * height as usize];
-    let mut min = f64::INFINITY;
-    let mut max = f64::NEG_INFINITY;
+    let meta = formats::tiff::strip_metadata_for(data)?;
+    let directory = format!(
+        "{},{{\"index\":1,\"width\":{},\"height\":{},\"samplesPerPixel\":1,\"kind\":\"overview\",\"parent\":0,\"reduction\":{},\"blockWidth\":{},\"blockHeight\":{},\"generated\":true}}]",
+        meta.page_directory_json.trim_end().trim_end_matches(']'), width, height, reduction, width, height
+    );
+    let result = TiffResult {
+        width,
+        height,
+        channels: 1,
+        bits_per_sample: 32,
+        sample_format: 3,
+        compression: plan.compression,
+        predictor: plan.predictor,
+        photometric_interpretation: 1,
+        planar_configuration: 1,
+        rows_per_strip: plan.rows_per_strip,
+        strip_count: u32::try_from(plan.offsets.len()).unwrap_or(u32::MAX),
+        strip_byte_count_total: plan.counts.iter().sum(),
+        strip_byte_count_max: *plan.counts.iter().max().unwrap_or(&0),
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        tile_count: 0,
+        direct_decode: false,
+        data: Vec::new(),
+        data_f32: Vec::new(),
+        min_value: f64::INFINITY,
+        max_value: f64::NEG_INFINITY,
+        timing_metadata_ms: 0.0,
+        timing_decode_ms: 0.0,
+        timing_convert_ms: 0.0,
+        timing_stats_ms: 0.0,
+        timing_pack_ms: 0.0,
+        all_tags_json: meta.all_tags_json,
+        ome_xml: meta.ome_xml,
+        geo_json: meta.geo_json,
+        page_directory_json: directory,
+    };
+    Ok((result, plan, reduction))
+}
+
+/// `decode_tiff_preview` without its pixels and range: what a caller that
+/// decodes those itself (the strip pool, `decode_tiff_preview_range`) reports.
+///
+/// # Errors
+///
+/// A TIFF with no bounded preview route.
+#[cfg(feature = "tiff")]
+pub fn tiff_preview_header(data: &[u8]) -> Result<TiffResult, DecodeError> {
+    tiff_preview_shell(data).map(|(result, _, _)| result)
+}
+
+/// Generate a nearest-sample overview without allocating the full raster.
+/// Full-image finite min/max are accumulated while each stored block is read
+/// once. The original file remains authoritative for region/picker requests.
+///
+/// # Errors
+///
+/// A TIFF with no bounded preview route, or a block that fails to decode.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
+    use formats::tiff::region::{decode_region, TiffRegion};
+    let (mut result, plan, reduction) = tiff_preview_shell(data)?;
+    let width = result.width;
+    let mut pixels = vec![0.0f32; width as usize * result.height as usize];
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
     let bw = if plan.is_tiled() {
         plan.tile_width
     } else {
@@ -1124,11 +1233,12 @@ pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
                     height: bh,
                 },
             )?;
-            for &value in &region.data_f32 {
-                if value.is_finite() {
-                    min = min.min(value as f64);
-                    max = max.max(value as f64);
-                }
+            let (low, high, _) = pipeline::stats::finite_range_mono_f32(&region.data_f32);
+            if low < min {
+                min = low;
+            }
+            if high > max {
+                max = high;
             }
             // Grid anchored at source pixel (0,0), including partial edge blocks.
             for sy in ((y.div_ceil(reduction) * reduction)..y + region.region.height)
@@ -1143,42 +1253,97 @@ pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
             }
         }
     }
-    let meta = formats::tiff::strip_metadata_for(data)?;
-    let directory = format!(
-        "{},{{\"index\":1,\"width\":{},\"height\":{},\"samplesPerPixel\":1,\"kind\":\"overview\",\"parent\":0,\"reduction\":{},\"blockWidth\":{},\"blockHeight\":{},\"generated\":true}}]",
-        meta.page_directory_json.trim_end().trim_end_matches(']'), width, height, reduction, width, height
-    );
-    Ok(TiffResult {
-        width,
-        height,
-        channels: 1,
-        bits_per_sample: 32,
-        sample_format: 3,
-        compression: plan.compression,
-        predictor: plan.predictor,
-        photometric_interpretation: 1,
-        planar_configuration: 1,
-        rows_per_strip: plan.rows_per_strip,
-        strip_count: plan.offsets.len() as u32,
-        strip_byte_count_total: plan.counts.iter().sum(),
-        strip_byte_count_max: *plan.counts.iter().max().unwrap_or(&0),
-        tile_width: plan.tile_width,
-        tile_length: plan.tile_length,
-        tile_count: 0,
-        direct_decode: false,
-        data: Vec::new(),
-        data_f32: pixels,
-        min_value: min,
-        max_value: max,
-        timing_metadata_ms: 0.0,
-        timing_decode_ms: 0.0,
-        timing_convert_ms: 0.0,
-        timing_stats_ms: 0.0,
-        timing_pack_ms: 0.0,
-        all_tags_json: meta.all_tags_json,
-        ome_xml: meta.ome_xml,
-        geo_json: meta.geo_json,
-        page_directory_json: directory,
+    result.data_f32 = pixels;
+    result.min_value = f64::from(min);
+    result.max_value = f64::from(max);
+    Ok(result)
+}
+
+/// One strip range's share of a bounded preview: the preview rows that fall in
+/// these units, and the finite min/max of every sample the units hold.
+#[cfg(feature = "tiff")]
+pub struct TiffPreviewRange {
+    pub data: Vec<f32>,
+    pub min: f32,
+    pub max: f32,
+}
+
+/// The bounded preview of the units `[first_strip, ...)`, decoded unit by unit
+/// so a worker never holds more than one unit at full resolution. The same
+/// nearest-sample grid as `decode_tiff_preview`, anchored at source pixel
+/// (0,0); concatenating the ranges in order gives its pixels exactly.
+///
+/// # Errors
+///
+/// A malformed or truncated range.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_preview_range(
+    blob: &[u8],
+    counts: &[u32],
+    first_strip: u32,
+    plan: &TiffFloatStripPlan,
+    reduction: u32,
+) -> Result<TiffPreviewRange, DecodeError> {
+    use formats::tiff::strips::{decode_unit_into, strip_bytes_to_f32};
+    if reduction == 0 || plan.channels != 1 || plan.bits_per_sample != 32 || plan.sample_format != 3
+    {
+        return Err(DecodeError::new(
+            "Preview range: not a single-channel float32 preview",
+        ));
+    }
+    let inner = inner_plan(plan);
+    let width = plan.width as usize;
+    let step = reduction as usize;
+    let row_bytes = inner.row_bytes();
+    let blocks_per_unit = inner.blocks_per_unit().max(1);
+    let units = counts.len() / blocks_per_unit;
+    let mut out = Vec::new();
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    let mut band = Vec::new();
+    let mut in_pos = 0usize;
+    for index in 0..units {
+        let unit = first_strip as usize + index;
+        let rows = inner.rows_in(unit);
+        if rows == 0 {
+            break;
+        }
+        let mut blocks: Vec<&[u8]> = Vec::with_capacity(blocks_per_unit);
+        for block in 0..blocks_per_unit {
+            let count = counts[index * blocks_per_unit + block] as usize;
+            let end = in_pos
+                .checked_add(count)
+                .filter(|end| *end <= blob.len())
+                .ok_or_else(|| {
+                    DecodeError::new("Preview range: compressed blob is shorter than its counts")
+                })?;
+            blocks.push(&blob[in_pos..end]);
+            in_pos = end;
+        }
+        band.clear();
+        band.resize(rows * row_bytes, 0);
+        decode_unit_into(&blocks, &inner, unit, rows, &mut band)?;
+        let samples = strip_bytes_to_f32(&band, &inner);
+        let (low, high, _) = pipeline::stats::finite_range_mono_f32(&samples);
+        if low < min {
+            min = low;
+        }
+        if high > max {
+            max = high;
+        }
+        let first_row = inner.first_row(unit);
+        for local in 0..rows {
+            if !(first_row + local).is_multiple_of(step) {
+                continue;
+            }
+            let row = &samples[local * width..(local + 1) * width];
+            out.extend(row.iter().step_by(step));
+        }
+    }
+    Ok(TiffPreviewRange {
+        data: out,
+        min,
+        max,
     })
 }
 
@@ -1236,6 +1401,21 @@ pub fn decode_exr_fast(data: &[u8]) -> Result<ExrResult, DecodeError> {
 }
 
 #[cfg(feature = "png")]
+pub use formats::png::PngRgba8;
+
+/// A PNG as 8-bit RGBA, identical to UPNG's `toRGBA8` for every PNG it
+/// accepts (see the format module).
+///
+/// # Errors
+///
+/// Malformed PNGs, animated PNGs, and grayscale or interlaced images below
+/// 8 bits.
+#[cfg(feature = "png")]
+pub fn decode_png_rgba8(data: &[u8]) -> Result<PngRgba8, DecodeError> {
+    formats::png::decode_png_rgba8_impl(data)
+}
+
+#[cfg(feature = "png")]
 pub fn decode_png16_fast(data: &[u8]) -> Result<PngResult, DecodeError> {
     decode_png16_impl(data)
 }
@@ -1243,6 +1423,63 @@ pub fn decode_png16_fast(data: &[u8]) -> Result<PngResult, DecodeError> {
 #[cfg(feature = "hdr")]
 pub fn decode_hdr_fast(data: &[u8]) -> Result<HdrResult, DecodeError> {
     decode_hdr_impl(data)
+}
+
+#[cfg(feature = "hdr")]
+pub use formats::hdr::HdrScanlinePlan;
+
+/// Where each scanline of an HDR file starts, for decoding scanline ranges in
+/// parallel with `decode_hdr_rows`.
+///
+/// # Errors
+///
+/// The same header and RLE errors as `decode_hdr_fast`.
+#[cfg(feature = "hdr")]
+pub fn hdr_scanline_plan(data: &[u8]) -> Result<HdrScanlinePlan, DecodeError> {
+    formats::hdr::hdr_scanline_plan(data)
+}
+
+/// Decode `rows` consecutive HDR scanlines (exactly their bytes) to RGB f32,
+/// identical to the same rows of `decode_hdr_fast`.
+///
+/// # Errors
+///
+/// Malformed or truncated scanlines.
+#[cfg(feature = "hdr")]
+pub fn decode_hdr_rows(blob: &[u8], width: u32, rows: u32) -> Result<Vec<f32>, DecodeError> {
+    formats::hdr::decode_hdr_rows(blob, width as usize, rows as usize)
+}
+
+#[cfg(feature = "psd")]
+pub use formats::psd::{PsdCompositePlan, PsdRowLayout};
+
+/// Where each row of an 8-bit RGB or grayscale Photoshop composite starts, for decoding
+/// row ranges in parallel with `decode_psd_composite_rows`.
+///
+/// # Errors
+///
+/// Not an 8-bit RGB or grayscale PSD/PSB with a raw or `PackBits` composite,
+/// or truncated.
+#[cfg(feature = "psd")]
+pub fn psd_composite_plan(data: &[u8]) -> Result<PsdCompositePlan, DecodeError> {
+    formats::psd::psd_composite_plan(data)
+}
+
+/// Decode `rows` composite rows to RGBA, byte for byte what ag-psd produces.
+/// `blob` holds the rows of each planned channel in turn, `counts` their
+/// lengths in the same order.
+///
+/// # Errors
+///
+/// Counts that do not match the blob, or a row that does not fill the width.
+#[cfg(feature = "psd")]
+pub fn decode_psd_composite_rows(
+    blob: &[u8],
+    counts: &[u32],
+    rows: u32,
+    layout: &PsdRowLayout,
+) -> Result<Vec<u8>, DecodeError> {
+    formats::psd::decode_psd_composite_rows(blob, counts, rows as usize, layout)
 }
 
 /// Decode a Portable Float Map (PFM). `top_down` requests a vertical flip so
@@ -1363,6 +1600,48 @@ pub fn decode_czi_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
     Ok(decode_czi_impl(data, options_json)?.into())
 }
 
+/// Ranged CZI access, step 1: the directory and metadata positions, from
+/// the file's first 512 bytes. See `czi_layout`.
+#[cfg(feature = "czi")]
+pub fn czi_header(head: &[u8]) -> Result<String, DecodeError> {
+    czi_header_json(head)
+}
+
+/// Ranged CZI access, step 2: from the ZISRAWDIRECTORY and ZISRAWMETADATA
+/// segments (each from its segment header; metadata may be empty), the plane
+/// `options_json` selects: size, channels, numeric domain, stored pyramid
+/// `factors` (1 first), `needsJpegXr` and the plane's `metadataJson`.
+#[cfg(feature = "czi")]
+pub fn czi_layout(
+    directory: &[u8],
+    metadata: &[u8],
+    options_json: &str,
+) -> Result<String, DecodeError> {
+    czi_layout_json(directory, metadata, options_json)
+}
+
+/// Ranged CZI access, step 3: the subblock byte ranges a region needs.
+/// `options_json` adds to the plane indices `factor` (output pixel spacing in
+/// full-resolution pixels), `rect` (full-resolution, from the plane's
+/// top-left; the whole plane when absent), `fileSize` and `boundaries`
+/// (other known segment starts, e.g. directory and metadata).
+#[cfg(feature = "czi")]
+pub fn czi_region_plan(directory: &[u8], options_json: &str) -> Result<String, DecodeError> {
+    czi_region_plan_json(directory, options_json)
+}
+
+/// Ranged CZI access, step 4: decode the planned region from the planned
+/// ranges, concatenated in `blob` with each one's start in `offsets`.
+#[cfg(feature = "czi")]
+pub fn decode_czi_region(
+    directory: &[u8],
+    options_json: &str,
+    blob: &[u8],
+    offsets: &[u32],
+) -> Result<DecodedArray, DecodeError> {
+    Ok(decode_czi_region_impl(directory, options_json, blob, offsets)?.into())
+}
+
 /// Decode one plane of a Nikon ND2. `options_json` is the same
 /// `{ indices?: Record<string, number> }` shape CZI uses, selecting the
 /// T/P/Z/C coordinate. Only modern (chunk-based) uncompressed ND2 decodes;
@@ -1378,6 +1657,77 @@ pub fn decode_nd2_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
 #[cfg(feature = "lif")]
 pub fn decode_lif_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, DecodeError> {
     Ok(decode_lif_impl(data, options_json)?.into())
+}
+
+/// The pieces of a partially read file as a `SparseFile`: `blob` holds them
+/// back to back, `lengths[i]` bytes each, read from file offset `offsets[i]`.
+#[cfg(any(feature = "nd2", feature = "lif"))]
+fn sparse_pieces<'a>(
+    blob: &'a [u8],
+    offsets: &[f64],
+    lengths: &[u32],
+    file_size: f64,
+) -> Result<formats::scientific_common::SparseFile<'a>, DecodeError> {
+    let as_usize = |value: f64, what: &str| -> Result<usize, DecodeError> {
+        if value.is_finite() && value >= 0.0 && value <= usize::MAX as f64 && value.fract() == 0.0 {
+            // Checked just above: a non-negative integer within usize.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            Ok(value as usize)
+        } else {
+            Err(DecodeError::new(format!(
+                "Ranged read: invalid {what} {value}"
+            )))
+        }
+    };
+    if offsets.len() != lengths.len() {
+        return Err(DecodeError::new(
+            "Ranged read: offsets and lengths disagree",
+        ));
+    }
+    let mut pieces = Vec::with_capacity(offsets.len());
+    let mut at = 0usize;
+    for (&offset, &length) in offsets.iter().zip(lengths) {
+        let length =
+            usize::try_from(length).map_err(|_| DecodeError::new("Ranged read: piece too long"))?;
+        let end = at
+            .checked_add(length)
+            .filter(|&end| end <= blob.len())
+            .ok_or_else(|| DecodeError::new("Ranged read: pieces exceed the buffer"))?;
+        pieces.push((as_usize(offset, "offset")?, &blob[at..end]));
+        at = end;
+    }
+    Ok(formats::scientific_common::SparseFile::new(
+        as_usize(file_size, "file size")?,
+        pieces,
+    ))
+}
+
+/// `decode_nd2_fast` on a partially read file (see `sparse_pieces`). A plane
+/// needing bytes not supplied fails with `[need-range:OFFSET:LENGTH]`; the
+/// page reads that range and retries (media/modules/ranged-source.ts).
+#[cfg(feature = "nd2")]
+pub fn decode_nd2_ranged(
+    blob: &[u8],
+    offsets: &[f64],
+    lengths: &[u32],
+    file_size: f64,
+    options_json: &str,
+) -> Result<DecodedArray, DecodeError> {
+    let file = sparse_pieces(blob, offsets, lengths, file_size)?;
+    Ok(decode_nd2_sparse(&file, options_json)?.into())
+}
+
+/// `decode_lif_fast` on a partially read file; see `decode_nd2_ranged`.
+#[cfg(feature = "lif")]
+pub fn decode_lif_ranged(
+    blob: &[u8],
+    offsets: &[f64],
+    lengths: &[u32],
+    file_size: f64,
+    options_json: &str,
+) -> Result<DecodedArray, DecodeError> {
+    let file = sparse_pieces(blob, offsets, lengths, file_size)?;
+    Ok(decode_lif_sparse(&file, options_json)?.into())
 }
 
 /// Decode a Becker & Hickl SDT TCSPC histogram image. `options_json` selects
@@ -1414,6 +1764,43 @@ pub fn decode_exr_zip_f32_blocks(
     width: u32,
 ) -> Result<Vec<u8>, DecodeError> {
     formats::exr::decode_zip_f32_blocks(blob, counts, rows, width)
+}
+
+/// Rows of a multi-channel ZIP16 EXR (channel pixel types `kinds`), the
+/// plan's `selection` interleaved as `decode_exr_fast` returns it, and their
+/// display range.
+///
+/// # Errors
+///
+/// Malformed or truncated blocks, or a selection outside the channels.
+#[cfg(feature = "exr")]
+pub fn decode_exr_zip_f32_blocks_selected(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+    kinds: &[u32],
+    selection: &[i32],
+) -> Result<(Vec<f32>, f64, f64), DecodeError> {
+    formats::exr::decode_zip_f32_blocks_selected(blob, counts, rows, width, kinds, selection)
+}
+
+/// `decode_exr_zip_f32_blocks` plus the finite min/max of the samples, the
+/// same scan the strip workers used to run in JavaScript.
+///
+/// # Errors
+///
+/// As `decode_exr_zip_f32_blocks`.
+#[cfg(feature = "exr")]
+pub fn decode_exr_zip_f32_blocks_with_range(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+) -> Result<RawStripRange, DecodeError> {
+    let data = decode_exr_zip_f32_blocks(blob, counts, rows, width)?;
+    let range = Some(raw_range_f32_le(&data));
+    Ok(RawStripRange { data, range })
 }
 #[cfg(feature = "fits")]
 pub use decode_fits_fast as decode_fits;
@@ -1480,6 +1867,9 @@ pub struct TiffFloatStripPlan {
     pub offsets: Vec<u64>,
     /// Compressed length of each block.
     pub counts: Vec<u64>,
+    /// `JPEGTables` (tag 347) for compression 7; empty otherwise. Callers that
+    /// slice blocks for workers complete each block with these.
+    pub jpeg_tables: Vec<u8>,
 }
 
 #[cfg(feature = "tiff")]
@@ -1503,6 +1893,7 @@ pub fn tiff_float_strip_plan(data: &[u8]) -> Option<TiffFloatStripPlan> {
         lerc_additional_compression: plan.lerc_additional_compression,
         offsets: plan.offsets,
         counts: plan.counts,
+        jpeg_tables: plan.jpeg_tables,
     })
 }
 
@@ -1556,6 +1947,7 @@ fn inner_plan(plan: &TiffFloatStripPlan) -> formats::tiff::strips::FloatStripPla
         // table is only needed by the caller doing the slicing.
         offsets: Vec::new(),
         counts: Vec::new(),
+        jpeg_tables: plan.jpeg_tables.clone(),
     }
 }
 
@@ -1605,7 +1997,8 @@ pub fn decode_tiff_strip_range_raw(
     let mut raster = formats::tiff::strips::decode_unit_range(blob, counts, first_strip, &inner)?;
 
     let bytes_per_sample = (plan.bits_per_sample / 8) as usize;
-    let big_endian = plan.predictor == 3 || !plan.little_endian;
+    // Predictor 3 already yields little-endian samples.
+    let big_endian = plan.predictor != 3 && !plan.little_endian;
     if big_endian && bytes_per_sample > 1 {
         for sample in raster.chunks_exact_mut(bytes_per_sample) {
             sample.reverse();
@@ -1615,6 +2008,171 @@ pub fn decode_tiff_strip_range_raw(
         raster = formats::tiff::convert_cmyk_u8_to_rgb(raster, plan.channels).0;
     }
     Ok(raster)
+}
+
+/// `decode_tiff_strip_range_raw`, plus the range's sample min/max.
+///
+/// The strip workers used to scan every decoded sample in JavaScript for this,
+/// at roughly 2 ns a sample: about a third of the decode itself on a large
+/// float image. The scan has the same semantics here: every sample of every
+/// channel, finite values only, `(inf, -inf)` when there are none. `None` for a
+/// carrier the raw path does not produce, in which case the caller scans.
+///
+/// # Errors
+///
+/// As `decode_tiff_strip_range_raw`: a malformed or truncated strip range.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_strip_range_raw_with_range(
+    blob: &[u8],
+    counts: &[u32],
+    first_strip: u32,
+    plan: &TiffFloatStripPlan,
+) -> Result<RawStripRange, DecodeError> {
+    let data = decode_tiff_strip_range_raw(blob, counts, first_strip, plan)?;
+    let range = match (plan.bits_per_sample, plan.sample_format) {
+        (8, 1) => Some(raw_range_u8(&data)),
+        (16, 1) => Some(raw_range_u16_le(&data)),
+        (32, 3) => Some(raw_range_f32_le(&data)),
+        _ => None,
+    };
+    Ok(RawStripRange { data, range })
+}
+
+/// A strip range's native little-endian sample bytes and their finite
+/// `(min, max)`, or `None` for a carrier without a Rust-side scan.
+#[cfg(any(feature = "tiff", feature = "exr"))]
+pub struct RawStripRange {
+    pub data: Vec<u8>,
+    pub range: Option<(f64, f64)>,
+}
+
+/// Split interleaved samples of `bytes_per_sample` bytes into `channels`
+/// planes, laid out plane after plane in one buffer.
+///
+/// The strip workers need per-channel planes as well as the interleaved band;
+/// this is the same gather the JavaScript split did, at a fraction of its cost.
+#[cfg(feature = "tiff")]
+#[must_use]
+pub fn split_sample_planes(
+    interleaved: &[u8],
+    channels: usize,
+    bytes_per_sample: usize,
+) -> Vec<u8> {
+    let mut planes = vec![0u8; interleaved.len()];
+    if channels < 2 || bytes_per_sample == 0 {
+        planes.copy_from_slice(interleaved);
+        return planes;
+    }
+    let pixel_bytes = channels * bytes_per_sample;
+    let pixels = interleaved.len() / pixel_bytes;
+    let plane_bytes = pixels * bytes_per_sample;
+    macro_rules! split {
+        ($n:expr) => {{
+            for (channel, plane) in planes
+                .chunks_exact_mut(plane_bytes)
+                .enumerate()
+                .take(channels)
+            {
+                let offset = channel * $n;
+                for (dst, pixel) in plane
+                    .chunks_exact_mut($n)
+                    .zip(interleaved.chunks_exact(pixel_bytes))
+                {
+                    dst.copy_from_slice(&pixel[offset..offset + $n]);
+                }
+            }
+        }};
+    }
+    match bytes_per_sample {
+        1 => split!(1),
+        2 => split!(2),
+        4 => split!(4),
+        8 => split!(8),
+        _ => planes.copy_from_slice(interleaved),
+    }
+    planes
+}
+
+#[cfg(feature = "tiff")]
+fn raw_range_u8(raster: &[u8]) -> (f64, f64) {
+    match (raster.iter().min(), raster.iter().max()) {
+        (Some(&min), Some(&max)) => (f64::from(min), f64::from(max)),
+        _ => (f64::INFINITY, f64::NEG_INFINITY),
+    }
+}
+
+#[cfg(feature = "tiff")]
+fn raw_range_u16_le(raster: &[u8]) -> (f64, f64) {
+    let mut min = u16::MAX;
+    let mut max = u16::MIN;
+    for pair in raster.chunks_exact(2) {
+        let value = u16::from_le_bytes([pair[0], pair[1]]);
+        min = min.min(value);
+        max = max.max(value);
+    }
+    if raster.len() < 2 {
+        return (f64::INFINITY, f64::NEG_INFINITY);
+    }
+    (f64::from(min), f64::from(max))
+}
+
+/// Finite min/max of little-endian f32 samples. Plain `<`/`>` comparisons skip
+/// NaN and vectorize; an infinity that wins either side is corrected by a
+/// second, finite-only pass, which only such (rare) images pay for.
+#[cfg(any(feature = "tiff", feature = "exr"))]
+fn raw_range_f32_le(raster: &[u8]) -> (f64, f64) {
+    const LANES: usize = 8;
+    let mut mins = [f32::INFINITY; LANES];
+    let mut maxs = [f32::NEG_INFINITY; LANES];
+    let mut blocks = raster.chunks_exact(4 * LANES);
+    for block in &mut blocks {
+        for lane in 0..LANES {
+            let at = lane * 4;
+            let value =
+                f32::from_le_bytes([block[at], block[at + 1], block[at + 2], block[at + 3]]);
+            if value < mins[lane] {
+                mins[lane] = value;
+            }
+            if value > maxs[lane] {
+                maxs[lane] = value;
+            }
+        }
+    }
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    for lane in 0..LANES {
+        if mins[lane] < min {
+            min = mins[lane];
+        }
+        if maxs[lane] > max {
+            max = maxs[lane];
+        }
+    }
+    for sample in blocks.remainder().chunks_exact(4) {
+        let value = f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]);
+        if value < min {
+            min = value;
+        }
+        if value > max {
+            max = value;
+        }
+    }
+    if min.is_infinite() || max.is_infinite() {
+        min = f32::INFINITY;
+        max = f32::NEG_INFINITY;
+        for sample in raster.chunks_exact(4) {
+            let value = f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]);
+            if value.is_finite() {
+                if value < min {
+                    min = value;
+                }
+                if value > max {
+                    max = value;
+                }
+            }
+        }
+    }
+    (f64::from(min), f64::from(max))
 }
 
 #[cfg(feature = "tiff")]
@@ -1633,4 +2191,89 @@ pub fn decode_sgi_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
 #[cfg(feature = "png")]
 pub fn decode_png_samples_fast(data: &[u8]) -> Result<PngResult, DecodeError> {
     formats::png::decode_png_samples_impl(data, true)
+}
+
+#[cfg(all(test, feature = "tiff"))]
+mod raw_range_tests {
+    use super::{raw_range_f32_le, raw_range_u16_le, raw_range_u8};
+
+    /// The JavaScript scan the strip workers used: in order, `<`/`>` only,
+    /// redone finite-only when NaN or an infinite extreme turned up.
+    fn js_scan(values: &[f32]) -> (f64, f64) {
+        let (mut min, mut max, mut non_finite) = (f32::INFINITY, f32::NEG_INFINITY, false);
+        for &v in values {
+            if v < min {
+                min = v;
+            }
+            if v > max {
+                max = v;
+            }
+            non_finite |= v.is_nan();
+        }
+        if non_finite || !min.is_finite() || !max.is_finite() {
+            min = f32::INFINITY;
+            max = f32::NEG_INFINITY;
+            for &v in values.iter().filter(|v| v.is_finite()) {
+                if v < min {
+                    min = v;
+                }
+                if v > max {
+                    max = v;
+                }
+            }
+        }
+        (f64::from(min), f64::from(max))
+    }
+
+    fn le(values: &[f32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn f32_range_matches_the_javascript_scan() {
+        let cases: Vec<Vec<f32>> = vec![
+            vec![],
+            vec![f32::NAN],
+            vec![f32::INFINITY, f32::NEG_INFINITY, f32::NAN],
+            vec![3.0],
+            (0..37u8).map(|i| f32::from(i) - 18.5).collect(),
+            (0..64u8)
+                .map(|i| if i % 5 == 0 { f32::NAN } else { f32::from(i) })
+                .collect(),
+            (0..65u8)
+                .map(|i| {
+                    if i == 40 {
+                        f32::INFINITY
+                    } else {
+                        -f32::from(i)
+                    }
+                })
+                .collect(),
+            (0..19u8)
+                .map(|i| {
+                    if i == 3 {
+                        f32::NEG_INFINITY
+                    } else {
+                        f32::from(i) * 0.25
+                    }
+                })
+                .collect(),
+            vec![f32::MAX, f32::MIN, f32::MIN_POSITIVE, -f32::MIN_POSITIVE],
+        ];
+        for case in cases {
+            assert_eq!(raw_range_f32_le(&le(&case)), js_scan(&case), "{case:?}");
+        }
+    }
+
+    #[test]
+    fn integer_ranges_cover_every_sample() {
+        assert_eq!(raw_range_u8(&[]), (f64::INFINITY, f64::NEG_INFINITY));
+        assert_eq!(raw_range_u8(&[7, 255, 0, 9]), (0.0, 255.0));
+        assert_eq!(raw_range_u16_le(&[]), (f64::INFINITY, f64::NEG_INFINITY));
+        let words: Vec<u8> = [513u16, 2, 65535, 40]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        assert_eq!(raw_range_u16_le(&words), (2.0, 65535.0));
+    }
 }

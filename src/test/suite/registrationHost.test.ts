@@ -129,7 +129,10 @@ suite('Registration extension-host bridge', () => {
     }
   });
 
-  test('cancelling a queued client request leaves the active request alone', async () => {
+  // The extension host queues and runs several requests itself (align-all
+  // solves its pairs side by side), so the client sends each at once and a
+  // cancellation names exactly the request it cancels.
+  test('cancelling one client request leaves the other in flight alone', async () => {
     const messages: any[] = [];
     configureRegistrationExtensionHost(message => messages.push(message));
     try {
@@ -141,7 +144,11 @@ suite('Registration extension-host bridge', () => {
       const rejected = assert.rejects(queued, { name: 'AbortError' });
       controller.abort();
       await rejected;
-      assert.strictEqual(messages.length, 1);
+      assert.deepStrictEqual(
+        messages.map(message => message.type),
+        ['registrationRequest', 'registrationRequest', 'registrationCancel']
+      );
+      assert.strictEqual(messages[2].id, messages[1].id);
       handleRegistrationExtensionResult({ id: messages[0].id, matrix: null });
       assert.strictEqual(await first, null);
     } finally {

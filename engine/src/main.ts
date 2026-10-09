@@ -175,15 +175,22 @@ import { SectionPlaneManager } from './visualization/sectionPlanes';
 import type { VolumeData } from './parsers/nrrdParser';
 import { normalizeDepth, projectToPointCloud } from './depth/DepthProjector';
 import {
+  decodeExrWasm,
+  decodeTiffWasm,
   initTiffWasm,
   projectDepthBandWasmSync,
   projectDepthWasmSync,
 } from './depth/readers/tiffWasm';
-import { projectDepthInBands } from './depth/depthProjectionPool';
+import {
+  decodeExrInBlocks,
+  decodeTiffInStrips,
+  projectDepthInBands,
+} from './depth/depthProjectionPool';
 import { registrationState } from './state/registration.svelte';
 import {
   inspectNpyWasm,
   isNpyPointCloudShape,
+  parsePlyBytes,
   parsePlyFromResponse,
   parsePlyWasm,
   readNpyWasm,
@@ -197,6 +204,7 @@ import { buildVolumeVoxelsAsync } from './visualization/volumeVoxels';
 // As early as the bundle allows: a binary PLY the extension named in the page
 // starts streaming into the parser while the viewer below initialises.
 binaryDataHandlers.startPlyPrefetch((window as any).__PLY_PREFETCH__);
+depthConversionPipeline.startDepthPrefetch((window as any).__DEPTH_PREFETCH__);
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
@@ -4306,7 +4314,11 @@ export class PointCloudVisualizer {
 // Test hook, same reason as __plyContainerPerf: the zero-copy PLY route runs
 // only when the extension host hands the webview a URI to fetch, so a browser
 // spec has no other way to reach it.
-(window as any).__plyParsePly = { parsePlyFromResponse, parsePlyWasm };
+(window as any).__plyParsePly = {
+  parsePlyBytes,
+  parsePlyFromResponse,
+  parsePlyWasm,
+};
 // Same reason: the NumPy reader's dtype and shape handling is worth testing
 // directly, not only through a depth panel that shows one pixel of the result.
 (window as any).__plyNpy = { inspectNpyWasm, isNpyPointCloudShape, readNpyWasm };
@@ -4324,7 +4336,13 @@ export class PointCloudVisualizer {
   projectDepthBandWasmSync,
 };
 // The pool itself, so a benchmark can time it against the single pass.
-(window as any).__plyDepthPool = { projectDepthInBands };
+(window as any).__plyDepthPool = {
+  projectDepthInBands,
+  decodeTiffInStrips,
+  decodeTiffWasm,
+  decodeExrInBlocks,
+  decodeExrWasm,
+};
 // The picking workflow's live counters, so a test can assert what a real
 // double-click did rather than calling the handler behind it.
 (window as any).__plyRegistrationState = registrationState;

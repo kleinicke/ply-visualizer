@@ -4,6 +4,9 @@ import { isSceneModel } from '../../engine/src/models/modelFormats';
 import { sendSceneModel } from './sceneModels';
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
+import { sendStreamedTextCloud } from './documentLoader';
+import { streamParseFile } from '../wasmPointcloud';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
 import {
   parseObjWasm,
@@ -49,6 +52,74 @@ export interface AddFileHost {
     parsedObjData: any,
     fileIndex: number
   ): Promise<void>;
+}
+
+/**
+ * Add an ASCII PLY point cloud through the threaded text parser, streaming its
+ * parts in as the open path does. False when the file is binary, a mesh, or
+ * otherwise not a plain text cloud; the caller then takes its whole-file path.
+ */
+async function streamAsciiPlyCloud(
+  host: AddFileHost,
+  webviewPanel: vscode.WebviewPanel,
+  fileUri: vscode.Uri
+): Promise<boolean> {
+  if (fileUri.scheme !== 'file') {
+    return false;
+  }
+  try {
+    const handle = await fs.promises.open(fileUri.fsPath, 'r');
+    let head: Uint8Array;
+    try {
+      const buffer = Buffer.alloc(65536);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      head = buffer.subarray(0, bytesRead);
+    } finally {
+      await handle.close();
+    }
+    if (isPlyBinary(head)) {
+      return false;
+    }
+    const startedAt = Date.now();
+    host.setLoadStartedAt(startedAt);
+    const threaded = await sendStreamedTextCloud(
+      {
+        getShortPath: filePath => host.getShortPath(filePath),
+        logPerf: line => host.logPerf(line),
+        getCurrentLoadStartedAt: () => startedAt,
+      },
+      webviewPanel,
+      fileUri,
+      'ply',
+      'auto',
+      'ply',
+      'ply',
+      performance.now(),
+      true
+    );
+    if (threaded) {
+      return true;
+    }
+    // Below the threaded parser's size floor: the same single-thread Rust
+    // stream parse the open path uses, rather than the JavaScript parser.
+    const streamed = await streamParseFile(fileUri.fsPath, 'ply');
+    if (!streamed) {
+      return false;
+    }
+    await sendToWebview(webviewPanel, {
+      type: 'xyzVariantData',
+      fileName: path.basename(fileUri.fsPath),
+      shortPath: host.getShortPath(fileUri.fsPath),
+      fileSizeInBytes: fs.statSync(fileUri.fsPath).size,
+      data: streamed,
+      variant: 'ply',
+      parseMode: 'wasm-stream',
+      isAddFile: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function decodeLidarData(
@@ -207,6 +278,12 @@ export async function handleAddFile(
 
         // Handle PLY files (existing logic)
         if (fileExtension === '.ply') {
+          // An ASCII point cloud parses on the decoder threads and streams in,
+          // as when it is opened; the whole-file paths below are for binary
+          // PLY and for what the stream declines (meshes).
+          if (await streamAsciiPlyCloud(host, webviewPanel, files[i])) {
+            continue;
+          }
           // Read file data
           const spatialData = await vscode.workspace.fs.readFile(files[i]);
 
@@ -555,6 +632,9 @@ export async function handleAddFileFromPath(
       return;
     }
     if (ext === '.ply') {
+      if (await streamAsciiPlyCloud(host, webviewPanel, fileUri)) {
+        return;
+      }
       const spatialData = await vscode.workspace.fs.readFile(fileUri);
       const parser = new PlyParser();
       const isBinary = isPlyBinary(spatialData);

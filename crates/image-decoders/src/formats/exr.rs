@@ -133,13 +133,40 @@ pub(crate) fn zip_f32_plan(data: &[u8]) -> Result<Option<crate::ExrZipPlan>, Dec
         || metadata.requirements.is_single_layer_and_tiled
         || header.compression != Compression::ZIP16
         || header.line_order != LineOrder::Increasing
-        || header.channels.list.len() != 1
+        || header.channels.list.is_empty()
     {
         return Ok(None);
     }
-    let channel = &header.channels.list[0];
-    if channel.sample_type != SampleType::F32 || channel.sampling.0 != 1 || channel.sampling.1 != 1
+    // Every channel, displayed or not, must be full resolution: the blocks are
+    // then rows of `width` samples per channel, one channel after another.
+    if header
+        .channels
+        .list
+        .iter()
+        .any(|channel| channel.sampling.0 != 1 || channel.sampling.1 != 1)
     {
+        return Ok(None);
+    }
+    let channel_kinds: Vec<u32> = header
+        .channels
+        .list
+        .iter()
+        .map(|channel| match channel.sample_type {
+            SampleType::U32 => EXR_U32,
+            SampleType::F16 => EXR_F16,
+            SampleType::F32 => EXR_F32,
+        })
+        .collect();
+    let channel = &header.channels.list[0];
+    let channel_names: Vec<String> = header
+        .channels
+        .list
+        .iter()
+        .map(|channel| channel.name.to_string())
+        .collect();
+    // The same channels, in the same order, as `decode_exr_impl` shows.
+    let selection = select_exr_display_channels(&channel_names);
+    if selection.source_indices.is_empty() {
         return Ok(None);
     }
 
@@ -187,6 +214,14 @@ pub(crate) fn zip_f32_plan(data: &[u8]) -> Result<Option<crate::ExrZipPlan>, Dec
         height: height as u32,
         data_y,
         channel_name,
+        channel_names,
+        channel_kinds,
+        selection: selection
+            .source_indices
+            .iter()
+            .map(|index| index.map_or(-1, |index| i32::try_from(index).unwrap_or(-1)))
+            .collect(),
+        displayed_names: selection.displayed_names,
         compressed,
         counts,
         y_coordinates,
@@ -203,7 +238,33 @@ pub(crate) fn decode_zip_f32_blocks(
     rows: &[u32],
     width: u32,
 ) -> Result<Vec<u8>, DecodeError> {
-    if counts.len() != rows.len() || width == 0 {
+    let row_bytes = (width as usize)
+        .checked_mul(4)
+        .ok_or_else(|| DecodeError::new("EXR ZIP output size overflow"))?;
+    decode_zip_blocks(blob, counts, rows, row_bytes)
+}
+
+/// EXR pixel types, as the file stores them.
+pub(crate) const EXR_U32: u32 = 0;
+pub(crate) const EXR_F16: u32 = 1;
+pub(crate) const EXR_F32: u32 = 2;
+
+fn exr_sample_bytes(kind: u32) -> usize {
+    if kind == EXR_F16 {
+        2
+    } else {
+        4
+    }
+}
+
+/// Inflate ZIP16 blocks of `row_bytes`-byte rows, returning those rows' bytes.
+fn decode_zip_blocks(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    row_bytes: usize,
+) -> Result<Vec<u8>, DecodeError> {
+    if counts.len() != rows.len() || row_bytes == 0 {
         return Err(DecodeError::new("Invalid EXR ZIP block range"));
     }
     let total_rows = rows.iter().try_fold(0usize, |sum, &value| {
@@ -211,8 +272,7 @@ pub(crate) fn decode_zip_f32_blocks(
             .ok_or_else(|| DecodeError::new("EXR ZIP row count overflow"))
     })?;
     let total_bytes = total_rows
-        .checked_mul(width as usize)
-        .and_then(|value| value.checked_mul(4))
+        .checked_mul(row_bytes)
         .ok_or_else(|| DecodeError::new("EXR ZIP output size overflow"))?;
     let mut output = Vec::with_capacity(total_bytes);
     let mut input_offset = 0usize;
@@ -223,8 +283,7 @@ pub(crate) fn decode_zip_f32_blocks(
             .filter(|&end| end <= blob.len())
             .ok_or_else(|| DecodeError::new("EXR ZIP block exceeds its compressed range"))?;
         let expected = (row_count as usize)
-            .checked_mul(width as usize)
-            .and_then(|value| value.checked_mul(4))
+            .checked_mul(row_bytes)
             .ok_or_else(|| DecodeError::new("EXR ZIP block size overflow"))?;
         let source = &blob[input_offset..input_end];
         let mut bytes = if source.len() == expected {
@@ -256,6 +315,90 @@ pub(crate) fn decode_zip_f32_blocks(
         ));
     }
     Ok(output)
+}
+
+/// Rows of a multi-channel ZIP16 image as `decode_exr_impl` shows them: the
+/// `selection` (indices into the file's channel order; -1 for a missing
+/// channel, filled with 1.0) interleaved per pixel as f32 (half floats and
+/// integers converted as `decode_exr_impl` converts them), with
+/// `compute_min_max_f32`'s range over them. The ranges of row bands merge by
+/// min and max into the whole image's range.
+pub(crate) fn decode_zip_f32_blocks_selected(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+    kinds: &[u32],
+    selection: &[i32],
+) -> Result<(Vec<f32>, f64, f64), DecodeError> {
+    if selection.is_empty()
+        || kinds.iter().any(|&kind| kind > EXR_F32)
+        || selection
+            .iter()
+            .any(|&index| usize::try_from(index).is_ok_and(|index| index >= kinds.len()))
+    {
+        return Err(DecodeError::new("Invalid EXR channel selection"));
+    }
+    let width = width as usize;
+    // Where each channel's run of `width` samples starts within a row.
+    let mut plane_starts = Vec::with_capacity(kinds.len());
+    let mut row_bytes = 0usize;
+    for &kind in kinds {
+        plane_starts.push(row_bytes);
+        row_bytes = width
+            .checked_mul(exr_sample_bytes(kind))
+            .and_then(|bytes| row_bytes.checked_add(bytes))
+            .ok_or_else(|| DecodeError::new("EXR ZIP output size overflow"))?;
+    }
+    let bytes = decode_zip_blocks(blob, counts, rows, row_bytes)?;
+    let total_rows = bytes.len() / row_bytes;
+    let out_channels = selection.len();
+    let mut output = vec![0.0f32; total_rows * width * out_channels];
+    for row in 0..total_rows {
+        let source_row = &bytes[row * row_bytes..(row + 1) * row_bytes];
+        let target_row = &mut output[row * width * out_channels..(row + 1) * width * out_channels];
+        for (out_channel, &index) in selection.iter().enumerate() {
+            // A negative index is a channel the file lacks: shown as 1.0.
+            let Ok(index) = usize::try_from(index) else {
+                for x in 0..width {
+                    target_row[x * out_channels + out_channel] = 1.0;
+                }
+                continue;
+            };
+            let kind = kinds[index];
+            let start = plane_starts[index];
+            let plane = &source_row[start..start + width * exr_sample_bytes(kind)];
+            let targets = target_row
+                .iter_mut()
+                .skip(out_channel)
+                .step_by(out_channels);
+            if kind == EXR_F16 {
+                for (target, sample) in targets.zip(plane.chunks_exact(2)) {
+                    *target =
+                        exr::prelude::f16::from_bits(u16::from_le_bytes([sample[0], sample[1]]))
+                            .to_f32();
+                }
+            } else if kind == EXR_F32 {
+                for (target, sample) in targets.zip(plane.chunks_exact(4)) {
+                    *target = f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]);
+                }
+            } else {
+                #[allow(clippy::cast_precision_loss)] // as decode_exr_impl converts integers
+                for (target, sample) in targets.zip(plane.chunks_exact(4)) {
+                    *target =
+                        u32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]) as f32;
+                }
+            }
+        }
+    }
+    #[allow(clippy::cast_possible_truncation)] // bounded by the decoded image size
+    let (min, max) = crate::pipeline::stats::compute_min_max_f32(
+        &output,
+        width as u32,
+        total_rows as u32,
+        out_channels as u32,
+    );
+    Ok((output, min, max))
 }
 
 fn exr_zip_differences_to_samples(bytes: &mut [u8]) {

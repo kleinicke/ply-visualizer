@@ -50,10 +50,60 @@ export interface DepthConversionPipelineHost {
   triggerDatasetCalibrationLoading(sceneMetadata: any): Promise<void>;
 }
 
+let depthPrefetch: { uri: string; bytes: Promise<ArrayBuffer> } | null = null;
+
+/**
+ * Start fetching the depth image this webview was opened for, while the viewer
+ * boots (the extension names it in `__DEPTH_PREFETCH__`). The extension then
+ * sends only the URI; posting the bytes after the viewer was ready used to put
+ * the whole transfer behind the boot.
+ */
+export function startDepthPrefetch(uri: unknown): void {
+  if (typeof uri !== 'string' || !uri || depthPrefetch) {
+    return;
+  }
+  const bytes = fetch(uri).then(response => {
+    if (!response.ok) {
+      throw new Error(`fetch failed: ${response.status}`);
+    }
+    return response.arrayBuffer();
+  });
+  bytes.catch(() => undefined);
+  depthPrefetch = { uri, bytes };
+}
+
+/** The prefetched bytes for `uri`, or a fresh fetch; null when neither works. */
+async function fetchDepthBytes(uri: string): Promise<ArrayBuffer | null> {
+  const prefetched = depthPrefetch?.uri === uri ? depthPrefetch.bytes : null;
+  depthPrefetch = null;
+  try {
+    if (prefetched) {
+      return await prefetched;
+    }
+  } catch {
+    // Fall through to one more attempt.
+  }
+  try {
+    const response = await fetch(uri);
+    return response.ok ? await response.arrayBuffer() : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function handleDepthData(
   host: DepthConversionPipelineHost,
   message: any
 ): Promise<void> {
+  if (!message.data && typeof message.fileUri === 'string') {
+    const bytes = await fetchDepthBytes(message.fileUri);
+    if (!bytes) {
+      // The extension reads the file and sends the bytes instead.
+      host.vscode.postMessage({ type: 'depthFetchFailed', fileName: message.fileName });
+      return;
+    }
+    message = { ...message, data: bytes };
+  }
   try {
     console.log('Received depth data for processing:', message.fileName);
 
@@ -290,6 +340,12 @@ export async function processDepthWithParams(
     }
     if (timings.info) {
       perf.note('layout', timings.info);
+    }
+    if (timings.thread) {
+      perf.note('on', `${timings.thread}${timings.bands ? `/${timings.bands} bands` : ''}`);
+    }
+    if (timings.phases) {
+      perf.note('stages', timings.phases);
     }
   } else {
     perf.add('convert', convertMs);

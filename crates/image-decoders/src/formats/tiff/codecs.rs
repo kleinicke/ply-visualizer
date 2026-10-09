@@ -109,7 +109,7 @@ pub(crate) fn build_uncompressed_tiff(
 /// Reconstruct a complete JPEG datastream from the optional shared JPEGTables
 /// and one strip's image data (the TIFF Technote 2 abbreviated-stream layout):
 /// a single SOI, then the tables, then the strip's frame.
-fn build_jpeg(tables: Option<&[u8]>, strip: &[u8]) -> Vec<u8> {
+pub(crate) fn build_jpeg(tables: Option<&[u8]>, strip: &[u8]) -> Vec<u8> {
     match tables {
         Some(t) => {
             let t = if t.ends_with(&[0xFF, 0xD9]) {
@@ -134,22 +134,22 @@ fn build_jpeg(tables: Option<&[u8]>, strip: &[u8]) -> Vec<u8> {
 /// Decode a JPEG-compressed YCbCr TIFF (compression 7, photometric 6) by
 /// decoding each strip's JPEG directly with zune-jpeg. The tiff crate applies a
 /// second YCbCr->RGB conversion on top of zune-jpeg's already-RGB output, which
-/// tints the image; decoding the strips ourselves avoids that. Tiled images are
-/// not handled here.
+/// tints the image; decoding the strips ourselves avoids that. Tiled images
+/// are decoded a tile row at a time through the same block decoder the strip
+/// pool uses.
 pub(crate) fn decode_jpeg_ycbcr(
     data: &[u8],
     decoder: &mut Decoder<Cursor<&[u8]>>,
     width: u32,
     height: u32,
     orientation: TiffOrientation,
+    page_index: u32,
 ) -> Result<TiffResult, DecodeError> {
     use tiff::tags::Tag;
     use zune_jpeg::JpegDecoder;
 
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
-        return Err(DecodeError::new(
-            "JPEG: tiled YCbCr JPEG is not supported by the direct path",
-        ));
+        return decode_jpeg_ycbcr_tiled(data, width, height, orientation, page_index);
     }
     let offsets = decoder
         .get_tag_u64_vec(Tag::StripOffsets)
@@ -223,6 +223,85 @@ pub(crate) fn decode_jpeg_ycbcr(
         data_f32: Vec::new(),
         min_value: min as f64,
         max_value: max as f64,
+        timing_metadata_ms: 0.0,
+        timing_decode_ms: 0.0,
+        timing_convert_ms: 0.0,
+        timing_stats_ms: 0.0,
+        timing_pack_ms: 0.0,
+        all_tags_json: extract_all_tags_json(data),
+        ome_xml: extract_ome_xml(data),
+        geo_json: extract_geo_json(data, 0),
+        page_directory_json: pages::page_directory_json(data),
+    })
+}
+
+/// Tiled JPEG YCbCr: every tile row decoded with `decode_unit_into`, which
+/// completes each tile with the `JPEGTables`, decodes it to RGB and crops the
+/// edge tiles' padding.
+fn decode_jpeg_ycbcr_tiled(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    orientation: TiffOrientation,
+    page_index: u32,
+) -> Result<TiffResult, DecodeError> {
+    use super::strips::decode_unit_into;
+    let plan = super::float_strip_plan_for_page(data, page_index)
+        .ok_or_else(|| DecodeError::new("JPEG: unsupported tiled JPEG layout"))?;
+    let row_bytes = plan.row_bytes();
+    let mut rgb = vec![0u8; row_bytes * height as usize];
+    let blocks_per_unit = plan.blocks_per_unit();
+    for unit in 0..plan.strip_count() {
+        let rows = plan.rows_in(unit);
+        if rows == 0 {
+            break;
+        }
+        let mut blocks: Vec<&[u8]> = Vec::with_capacity(blocks_per_unit);
+        for block in 0..blocks_per_unit {
+            let index = unit * blocks_per_unit + block;
+            let start = usize::try_from(plan.offsets[index])
+                .map_err(|_| DecodeError::new("JPEG: tile offset out of range"))?;
+            let end = start
+                .checked_add(usize::try_from(plan.counts[index]).unwrap_or(usize::MAX))
+                .filter(|end| *end <= data.len())
+                .ok_or_else(|| DecodeError::new("JPEG: tile byte range out of bounds"))?;
+            blocks.push(&data[start..end]);
+        }
+        let first = plan.first_row(unit) * row_bytes;
+        decode_unit_into(
+            &blocks,
+            &plan,
+            unit,
+            rows,
+            &mut rgb[first..first + rows * row_bytes],
+        )?;
+    }
+    let (rgb, out_width, out_height, channels) =
+        finalize_decode_bytes(rgb, width, height, 3, 2, orientation);
+    let (min, max) = compute_stats_u8(&rgb);
+    let tile_count = u32::try_from(plan.counts.len()).unwrap_or(u32::MAX);
+    Ok(TiffResult {
+        width: out_width,
+        height: out_height,
+        channels,
+        bits_per_sample: 8,
+        sample_format: 1,
+        compression: 7,
+        predictor: 1,
+        photometric_interpretation: 2,
+        planar_configuration: 1,
+        rows_per_strip: plan.tile_length,
+        strip_count: tile_count,
+        strip_byte_count_total: plan.counts.iter().copied().sum::<u64>(),
+        strip_byte_count_max: plan.counts.iter().copied().max().unwrap_or(0),
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        tile_count,
+        direct_decode: false,
+        data: rgb,
+        data_f32: Vec::new(),
+        min_value: f64::from(min),
+        max_value: f64::from(max),
         timing_metadata_ms: 0.0,
         timing_decode_ms: 0.0,
         timing_convert_ms: 0.0,

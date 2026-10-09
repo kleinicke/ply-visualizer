@@ -362,7 +362,8 @@ pub(crate) fn decode_tiff_impl(
     // converted RGB output (a double conversion), which tints grayscale-stored
     // images. Decode the JPEG strips directly with zune-jpeg, which is correct.
     if compression == 7 && photometric_interpretation == 6 {
-        let mut result = decode_jpeg_ycbcr(data, &mut decoder, width, height, orientation)?;
+        let mut result =
+            decode_jpeg_ycbcr(data, &mut decoder, width, height, orientation, page_index)?;
         result.all_tags_json = extract_page_tags_json(data, page_index);
         return Ok(result);
     }
@@ -1081,7 +1082,18 @@ pub(crate) fn float_strip_plan_for_page(
         decoder.seek_to_image(page_index as usize).ok()?;
     }
     let (width, height) = decoder.dimensions().ok()?;
-    let color_type = decoder.colortype().ok()?;
+    // JPEG-compressed YCbCr is RGB once its codec has decoded it; the tiff
+    // crate's color type (which rejects subsampling) does not apply to it.
+    let jpeg_ycbcr_tags = decoder.get_tag_u64(tiff::tags::Tag::Compression).ok() == Some(7)
+        && decoder
+            .get_tag_u64(tiff::tags::Tag::PhotometricInterpretation)
+            .ok()
+            == Some(6);
+    let color_type = if jpeg_ycbcr_tags {
+        tiff::ColorType::RGB(8)
+    } else {
+        decoder.colortype().ok()?
+    };
     match color_type {
         tiff::ColorType::Gray(_)
         | tiff::ColorType::GrayA(_)
@@ -1130,7 +1142,17 @@ pub(crate) fn float_strip_plan_for_page(
         .unwrap_or(1) as u32;
     let parallel_cmyk =
         photometric == 5 && channels == 4 && bits_per_sample == 8 && planar_configuration == 1;
-    if photometric != 1 && photometric != 2 && !parallel_cmyk {
+    // JPEG-compressed YCbCr decodes to RGB inside the codec, so its blocks
+    // are ordinary 8-bit RGB once decoded.
+    let jpeg_ycbcr = photometric == 6
+        && compression == 7
+        && channels == 3
+        && bits_per_sample == 8
+        && planar_configuration == 1;
+    if photometric != 1 && photometric != 2 && !parallel_cmyk && !jpeg_ycbcr {
+        return None;
+    }
+    if compression == 7 && !jpeg_ycbcr {
         return None;
     }
     let orientation = decoder

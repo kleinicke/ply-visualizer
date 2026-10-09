@@ -49,7 +49,9 @@ this repository.
   scriptable beyond loading —
   `STEPS=open,alignAll,recolorAll FILES=testfiles/lidar/Abschnitt_A.x3a node scripts/benchmark-vscode.mjs`
   opens an archive, aligns every scan to the first, and recolours from the
-  cameras, timing each step from the extension's own log.
+  cameras, timing each step from the extension's own log. `reapplyDepth` times a
+  depth-settings change; `alignAllNested`/`alignAllComplex` the growing
+  strategies.
 
 - **F5** launches the Extension Development Host for manual testing. Test data
   lives in `testfiles/`, organized by format (`ply/`, `stl/`, `obj/`, `np/`,
@@ -83,6 +85,7 @@ this repository.
 | File detection/handling     | `engine/src/fileHandler.ts`                                                                                                             |
 | Webview UI                  | Svelte 5 component in `engine/src/components/` reading `engine/src/state/*.svelte.js` — never new HTML-string generators                |
 | Rendering helpers           | `engine/src/visualization/`                                                                                                             |
+| Webview workers             | `spawnWorker` in `engine/src/utils/webviewWorker.ts`, imported as `../utils/webviewWorker` (see its header)                             |
 | Extension-host decoding     | Worker pool `src/providerHandlers/parsePool.ts` + `parseWorker.ts`; parallel splits in `parallelTextParse.ts` / `parallelLidarParse.ts` |
 | Scan alignment / solvers    | `engine/src/registration/` (pure math, no DOM); host glue in `engine/src/registrationFeature.ts`                                        |
 | Themes                      | `engine/src/themes/`                                                                                                                    |

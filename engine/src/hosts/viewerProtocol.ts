@@ -1,5 +1,12 @@
 import { validateSpatialData } from '../visualization/validateSpatialData';
-export type BenchmarkStep = 'alignAll' | 'refineAll' | 'recolorAll' | 'registerAndRecolorAll';
+export type BenchmarkStep =
+  | 'alignAll'
+  | 'refineAll'
+  | 'recolorAll'
+  | 'registerAndRecolorAll'
+  | 'alignAllNested'
+  | 'alignAllComplex'
+  | 'reapplyDepth';
 import type { LoadTimeColorUpdate, StationPipelineUpdate } from './stationPipelineTypes';
 import type { SpatialData, PointDataPayload } from '../interfaces';
 import { readFileDataMessage } from '../formats/fileMessage';
@@ -48,7 +55,16 @@ const optional =
     value === undefined || guard(value);
 const boolean: Guard<boolean> = (v): v is boolean => typeof v === 'boolean';
 const step: Guard<BenchmarkStep> = (v): v is BenchmarkStep =>
-  string(v) && ['alignAll', 'refineAll', 'recolorAll', 'registerAndRecolorAll'].includes(v);
+  string(v) &&
+  [
+    'alignAll',
+    'refineAll',
+    'recolorAll',
+    'registerAndRecolorAll',
+    'alignAllNested',
+    'alignAllComplex',
+    'reapplyDepth',
+  ].includes(v);
 const loadColors: Guard<LoadTimeColorUpdate[]> = (v): v is LoadTimeColorUpdate[] =>
   Array.isArray(v) &&
   v.every(x => object(x) && string(x.scanName) && x.colors instanceof Uint8Array);
@@ -81,6 +97,7 @@ const schemas = {
     error: optional(string),
     summary: optional(string),
     partial: optional(boolean),
+    cancelled: optional(boolean),
   },
   spatialData: { data: oneOrMany },
   multiSpatialData: { data: oneOrMany },
@@ -101,7 +118,8 @@ const schemas = {
   largeFileChunk: { chunkIndex: index, startIndex: index },
   largeFileComplete: { fileName: string },
   cancelLargeFile: { fileName: string },
-  depthData: { data: binary, fileName: string },
+  // Either the bytes, or the URI the page has been prefetching them from.
+  depthData: { data: optional(binary), fileUri: optional(string), fileName: string },
   objData: { data: object },
   stlData: { data: object },
   xyzData: { data: object },
@@ -192,6 +210,8 @@ const hostSchemas = {
   cadDecodeRequest: { requestId: string, bytes: binary, format: string },
   splatContainerFetchFailed: { docUri: string, fileName: string },
   stationPipeline: { options: optional(object) },
+  stationPipelineCancel: {},
+  depthFetchFailed: { fileName: optional(string) },
   addFile: {},
   removeFile: { fileIndex: index, entryId: optional(index) },
   requestCameraParams: { requestId: optional(string) },

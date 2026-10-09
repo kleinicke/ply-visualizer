@@ -100,6 +100,96 @@ pub(crate) fn get_slice<'a>(
     data.get(offset..end).ok_or_else(|| oob_generic(context))
 }
 
+/// Marker of the error a [`SparseFile`] read returns for bytes the caller has
+/// not supplied yet: `[need-range:OFFSET:LENGTH]`. The page reads that range
+/// and calls the decoder again (`media/modules/ranged-source.ts`).
+#[allow(dead_code)] // absent from builds without a ranged decoder
+pub(crate) const NEED_RANGE_MARKER: &str = "[need-range:";
+
+/// The bytes of a file of known size of which only some ranges are present,
+/// addressed by absolute file offset. A decoder written against it reads a
+/// whole file (one piece) and a ranged one alike: a read outside the file
+/// fails exactly like [`get_slice`], a read inside it that no piece contains
+/// fails with a [`NEED_RANGE_MARKER`] error naming the range to fetch.
+#[allow(dead_code)] // absent from builds without a ranged decoder
+pub(crate) struct SparseFile<'a> {
+    size: usize,
+    /// `(file offset, bytes)`, sorted by offset.
+    pieces: Vec<(usize, &'a [u8])>,
+}
+
+#[allow(dead_code)] // absent from builds without a ranged decoder
+impl<'a> SparseFile<'a> {
+    /// A whole file in memory.
+    pub(crate) fn whole(data: &'a [u8]) -> Self {
+        Self {
+            size: data.len(),
+            pieces: vec![(0, data)],
+        }
+    }
+
+    /// `size` bytes of which `pieces` (file offset, bytes) are present.
+    pub(crate) fn new(size: usize, mut pieces: Vec<(usize, &'a [u8])>) -> Self {
+        pieces.sort_by_key(|(offset, _)| *offset);
+        Self { size, pieces }
+    }
+
+    /// The file's size (not the bytes present).
+    pub(crate) fn len(&self) -> usize {
+        self.size
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
+    /// `len` bytes at `offset`. When they are missing, ask for at least
+    /// `want` bytes from `offset` (clamped to the file), so one fetch can
+    /// cover what usually follows, e.g. a whole chunk after its header.
+    pub(crate) fn slice_want(
+        &self,
+        offset: usize,
+        len: usize,
+        want: usize,
+        context: &str,
+    ) -> Result<&'a [u8], DecodeError> {
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(|| oob_generic(context))?;
+        if end > self.size {
+            return Err(oob_generic(context));
+        }
+        // The last piece starting at or before `offset` is the only candidate
+        // besides earlier, longer pieces; check from there backwards.
+        let after = self.pieces.partition_point(|(start, _)| *start <= offset);
+        for &(start, bytes) in self.pieces[..after].iter().rev() {
+            if start + bytes.len() >= end {
+                return Ok(&bytes[offset - start..end - start]);
+            }
+        }
+        let wanted = len.max(want).min(self.size - offset);
+        Err(DecodeError::new(format!(
+            "{NEED_RANGE_MARKER}{offset}:{wanted}] {context}: bytes not read yet"
+        )))
+    }
+
+    /// `len` bytes at `offset`; see [`SparseFile::slice_want`].
+    pub(crate) fn slice(
+        &self,
+        offset: usize,
+        len: usize,
+        context: &str,
+    ) -> Result<&'a [u8], DecodeError> {
+        self.slice_want(offset, len, len, context)
+    }
+}
+
+/// Whether `error` is a [`SparseFile`] request for more bytes.
+#[allow(dead_code)] // absent from builds without a ranged decoder
+pub(crate) fn is_need_range(error: &DecodeError) -> bool {
+    error.to_string().starts_with(NEED_RANGE_MARKER)
+}
+
 /// `Math.ceil(n / 4) * 4`, computed with checked arithmetic (no usize
 /// overflow on 32-bit wasm targets, no panics on adversarial sizes).
 #[allow(dead_code)] // absent from narrow TIFF+DICOM+JXL builds

@@ -28,20 +28,28 @@
 
 use super::half::f16_to_f32;
 use super::json_value::{push_opt, to_json_string, JsonValue};
-use super::scientific_common::{get_slice, ScientificParsed};
+use super::scientific_common::{get_slice, ScientificParsed, SparseFile};
 use crate::DecodeError;
 use std::collections::HashMap;
 
 const TEST_CODE: u32 = 0x70;
 const MARKER: u8 = 0x2A;
 
-fn u32_le(data: &[u8], offset: usize) -> Result<u32, DecodeError> {
-    let bytes = get_slice(data, offset, 4, "LIF")?;
+/// Bytes requested past a header field when it is missing, so one fetch
+/// also covers the rest of that header (the name follows the size fields).
+const HEADER_WANT: usize = 4096;
+
+/// First fetch of a ranged read: the signature, the XML length and, for most
+/// files, the whole XML header.
+const PREFETCH: usize = 64 * 1024;
+
+fn u32_le(data: &SparseFile<'_>, offset: usize) -> Result<u32, DecodeError> {
+    let bytes = data.slice_want(offset, 4, HEADER_WANT, "LIF")?;
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
-fn u64_le(data: &[u8], offset: usize) -> Result<u64, DecodeError> {
-    let bytes = get_slice(data, offset, 8, "LIF")?;
+fn u64_le(data: &SparseFile<'_>, offset: usize) -> Result<u64, DecodeError> {
+    let bytes = data.slice_want(offset, 8, HEADER_WANT, "LIF")?;
     Ok(u64::from_le_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
     ]))
@@ -62,8 +70,11 @@ fn u64_to_usize(value: u64, what: &str) -> Result<usize, DecodeError> {
 }
 
 /// Read `units` UTF-16LE code units as a `String`.
-fn utf16_at(data: &[u8], offset: usize, units: usize) -> Result<String, DecodeError> {
-    let bytes = get_slice(data, offset, mul(units, 2)?, "LIF name")?;
+fn utf16_at(data: &SparseFile<'_>, offset: usize, units: usize) -> Result<String, DecodeError> {
+    let len = mul(units, 2)?;
+    // Ask for the header that follows the text too: for the XML that is the
+    // first memory block's header, for a block name nothing is wasted.
+    let bytes = data.slice_want(offset, len, len.saturating_add(HEADER_WANT), "LIF name")?;
     let code_units: Vec<u16> = bytes
         .chunks_exact(2)
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
@@ -422,10 +433,28 @@ pub(crate) fn decode_lif_impl(
     data: &[u8],
     options_json: &str,
 ) -> Result<ScientificParsed, DecodeError> {
-    if data.len() < 16 || u32_le(data, 0)? != TEST_CODE {
+    decode_lif_sparse(&SparseFile::whole(data), options_json)
+}
+
+/// Decode from a file of which only some ranges are present. Reads, in order:
+/// the XML header, each memory block's header (never its payload) and the one
+/// contiguous byte range the selected plane touches. A missing range surfaces
+/// as a `[need-range:OFFSET:LENGTH]` error; supplying it and retrying
+/// converges. With a whole file the result and errors are those of a plain
+/// slice-based decoder.
+pub(crate) fn decode_lif_sparse(
+    data: &SparseFile<'_>,
+    options_json: &str,
+) -> Result<ScientificParsed, DecodeError> {
+    if data.len() < 16 {
         return Err(DecodeError::new("Invalid LIF signature"));
     }
-    if *get_slice(data, 8, 1, "LIF header")?.first().unwrap_or(&0) != MARKER {
+    // One round trip for the signature and (usually) the whole XML header.
+    data.slice_want(0, 13, PREFETCH, "LIF")?;
+    if u32_le(data, 0)? != TEST_CODE {
+        return Err(DecodeError::new("Invalid LIF signature"));
+    }
+    if *data.slice(8, 1, "LIF header")?.first().unwrap_or(&0) != MARKER {
         return Err(DecodeError::new("LIF header is missing its 0x2A marker"));
     }
     let xml_units = u64_to_usize(u32_le(data, 9)? as u64, "header length")?;
@@ -446,7 +475,8 @@ pub(crate) fn decode_lif_impl(
         }
         // [u32 testcode][u32 length][u8 0x2A][size][u8 0x2A][u32 name_units][name]
         let mut offset = add(cursor, 8)?;
-        if *get_slice(data, offset, 1, "LIF block")?
+        if *data
+            .slice_want(offset, 1, HEADER_WANT, "LIF block")?
             .first()
             .unwrap_or(&0)
             != MARKER
@@ -463,7 +493,8 @@ pub(crate) fn decode_lif_impl(
             offset = add(offset, 4)?;
             value
         };
-        if *get_slice(data, offset, 1, "LIF block")?
+        if *data
+            .slice_want(offset, 1, HEADER_WANT, "LIF block")?
             .first()
             .unwrap_or(&0)
             != MARKER
@@ -614,12 +645,54 @@ pub(crate) fn decode_lif_impl(
     let (block_offset, block_size) = *blocks
         .get(&series.memory_block)
         .ok_or_else(|| DecodeError::new("LIF series references a missing memory block"))?;
-    let block = get_slice(data, block_offset, block_size, "LIF memory block")?;
+    // The memory block must lie inside the file, as for a whole-file slice.
+    if block_offset
+        .checked_add(block_size)
+        .is_none_or(|end| end > data.len())
+    {
+        data.slice(block_offset, block_size, "LIF memory block")?;
+    }
 
     // --- Assemble --------------------------------------------------------
     let mut out = vec![0f32; mul(mul(width, height)?, output_channels)?];
     let row_stride = height_dim.bytes_inc;
     let column_stride = width_dim.bytes_inc;
+    let used_channels: Vec<usize> = if is_rgb {
+        vec![0, 1, 2]
+    } else {
+        vec![requested_channel]
+    };
+
+    // A sample's block offset is affine in (row, column) with non-negative
+    // strides, so the plane touches [first, last + width of a sample) with the
+    // extremes at the corners of the coordinate box and the channel offsets.
+    let channel_offsets = used_channels.iter().map(|&c| series.channels[c].bytes_inc);
+    let extent = (|| -> Result<(usize, usize), DecodeError> {
+        let far = add(
+            add(plane_offset, mul(height - 1, row_stride)?)?,
+            mul(width - 1, column_stride)?,
+        )?;
+        let low = add(plane_offset, channel_offsets.clone().min().unwrap_or(0))?;
+        let high = add(far, channel_offsets.clone().max().unwrap_or(0))?;
+        Ok((low, add(high, bytes_per_sample)?))
+    })();
+    let (base_offset, plane_bytes) = match extent {
+        Ok((_, end)) if end > block_size => {
+            // The farthest sample is outside the block: the first such sample
+            // fails with the pixel-bounds error.
+            return Err(get_slice(&[], 0, 1, "LIF pixel").unwrap_err());
+        }
+        Ok((low, end)) => (low, end - low),
+        // Offset arithmetic overflows: read the whole block and let the
+        // per-sample loop report whichever error it reaches first.
+        Err(_) => (0, block_size),
+    };
+    let block = data.slice(
+        add(block_offset, base_offset)?,
+        plane_bytes,
+        "LIF memory block",
+    )?;
+    // `read_sample` addresses the fetched piece, so rebase every offset.
     for row in 0..height {
         let row_base = add(plane_offset, mul(row, row_stride)?)?;
         let target_row = mul(mul(row, width)?, output_channels)?;
@@ -629,11 +702,12 @@ pub(crate) fn decode_lif_impl(
                 for channel in 0..3 {
                     let offset = add(base, series.channels[channel].bytes_inc)?;
                     out[target_row + column * 3 + channel] =
-                        read_sample(block, offset, bytes_per_sample, is_float)?;
+                        read_sample(block, offset - base_offset, bytes_per_sample, is_float)?;
                 }
             } else {
                 let offset = add(base, series.channels[requested_channel].bytes_inc)?;
-                out[target_row + column] = read_sample(block, offset, bytes_per_sample, is_float)?;
+                out[target_row + column] =
+                    read_sample(block, offset - base_offset, bytes_per_sample, is_float)?;
             }
         }
     }
@@ -790,4 +864,155 @@ fn read_sample(
         (4, false) => u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]) as f32,
         _ => return Err(DecodeError::new("Unsupported LIF sample width")),
     })
+}
+
+#[cfg(test)]
+// Test-only diagnostics print ratios and build option JSON from small sizes.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    fn find_lifs(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                find_lifs(&path, out);
+            } else if path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("lif"))
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Decode like the viewer: start with nothing, add each requested range,
+    /// retry. Returns the result, the round trips and the bytes fetched.
+    fn simulate(
+        file: &[u8],
+        options: &str,
+    ) -> (Result<ScientificParsed, DecodeError>, usize, usize) {
+        let mut pieces: Vec<(usize, Vec<u8>)> = Vec::new();
+        let mut fetched = 0usize;
+        for iteration in 0..256 {
+            let result = {
+                let refs = pieces.iter().map(|(o, b)| (*o, b.as_slice())).collect();
+                decode_lif_sparse(&SparseFile::new(file.len(), refs), options)
+            };
+            match result {
+                Err(error) if super::super::scientific_common::is_need_range(&error) => {
+                    let text = error.to_string();
+                    let body = &text["[need-range:".len()..text.find(']').unwrap()];
+                    let (offset, length) = body.split_once(':').unwrap();
+                    let (offset, length): (usize, usize) =
+                        (offset.parse().unwrap(), length.parse().unwrap());
+                    pieces.push((offset, file[offset..offset + length].to_vec()));
+                    fetched += length;
+                }
+                other => return (other, iteration + 1, fetched),
+            }
+        }
+        panic!("no convergence in 256 iterations for {options}");
+    }
+
+    fn assert_same(file: &[u8], options: &str) -> (usize, usize, Option<String>) {
+        let whole = decode_lif_impl(file, options);
+        let (sparse, trips, fetched) = simulate(file, options);
+        match (&whole, &sparse) {
+            (Ok(a), Ok(b)) => {
+                assert_eq!(
+                    (a.width, a.height, a.channels),
+                    (b.width, b.height, b.channels)
+                );
+                assert_eq!(a.bits_per_sample, b.bits_per_sample);
+                assert_eq!(a.sample_format, b.sample_format);
+                assert_eq!(a.type_min.to_bits(), b.type_min.to_bits());
+                assert_eq!(a.type_max.to_bits(), b.type_max.to_bits());
+                assert_eq!(a.source_numeric_type, b.source_numeric_type);
+                assert_eq!(a.metadata_json, b.metadata_json);
+                assert_eq!(a.data.len(), b.data.len());
+                assert!(
+                    a.data
+                        .iter()
+                        .zip(&b.data)
+                        .all(|(x, y)| x.to_bits() == y.to_bits()),
+                    "pixel mismatch for {options}"
+                );
+            }
+            (Err(a), Err(b)) => assert_eq!(a.to_string(), b.to_string()),
+            _ => panic!(
+                "whole/sparse disagree for {options}: {:?} vs {:?}",
+                whole.is_ok(),
+                sparse.is_ok()
+            ),
+        }
+        let metadata = whole.ok().map(|p| p.metadata_json);
+        (trips, fetched, metadata)
+    }
+
+    fn last_selector_options(metadata: &str) -> Vec<String> {
+        // Options selecting the last value of each selector axis, one axis at
+        // a time, from the `selectors` array of the metadata.
+        let Ok(root) = super::super::json_value::parse(metadata) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(JsonValue::Arr(selectors)) = root.get("selectors") {
+            for selector in selectors {
+                let name = selector.get("name").and_then(|v| v.as_str());
+                let size = selector.get("size").and_then(JsonValue::as_num);
+                if let (Some(name), Some(size)) = (name, size) {
+                    out.push(format!(r#"{{"indices":{{"{name}":{}}}}}"#, size as i64 - 1));
+                }
+            }
+        }
+        out
+    }
+
+    fn check_file(path: &Path) {
+        let file = std::fs::read(path).unwrap();
+        let mut option_sets = vec![String::new()];
+        let (trips, fetched, metadata) = assert_same(&file, "");
+        println!(
+            "{}: default plane: {trips} round trips, {fetched} of {} bytes ({:.3}%)",
+            path.display(),
+            file.len(),
+            fetched as f64 * 100.0 / file.len() as f64
+        );
+        if let Some(metadata) = metadata {
+            option_sets.extend(last_selector_options(&metadata));
+        }
+        for options in option_sets.iter().skip(1) {
+            let (trips, fetched, _) = assert_same(&file, options);
+            println!("    {options}: {trips} round trips, {fetched} bytes");
+        }
+    }
+
+    #[test]
+    fn sparse_decode_matches_whole_file_for_corpus() {
+        let Ok(dir) = std::env::var("LIF_CORPUS") else {
+            println!("LIF_CORPUS not set; skipping the sparse LIF corpus test");
+            return;
+        };
+        let mut files = Vec::new();
+        find_lifs(Path::new(&dir), &mut files);
+        files.sort();
+        assert!(!files.is_empty(), "no .lif files under {dir}");
+        for path in files {
+            check_file(&path);
+        }
+    }
+
+    #[test]
+    fn sparse_decode_matches_whole_file_for_repo_sample() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-samples/scientific/synthetic-stack.lif");
+        if path.exists() {
+            check_file(&path);
+        }
+    }
 }

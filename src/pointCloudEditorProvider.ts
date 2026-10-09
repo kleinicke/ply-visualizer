@@ -26,12 +26,16 @@ import {
   handleDroppedFilesFromWebview,
   type AddFileHost,
 } from './providerHandlers/addFileHandlers';
-import { handleStationPipeline } from './providerHandlers/stationPipeline';
+import { cancelStationPipeline, handleStationPipeline } from './providerHandlers/stationPipeline';
 import {
   handleRegistrationRequest,
   cancelRegistrationRequest,
 } from './providerHandlers/registration';
-import { loadDocumentContent, type DocumentLoaderHost } from './providerHandlers/documentLoader';
+import {
+  loadDocumentContent,
+  sendDepthImage,
+  type DocumentLoaderHost,
+} from './providerHandlers/documentLoader';
 import { createWebviewReadyGate, type WebviewReadyGate } from './providerHandlers/webviewReadyGate';
 import { clearVolume, reextractVolume } from './providerHandlers/volumeSessions';
 
@@ -316,6 +320,19 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           // silently, leaving the old point geometry on screen.
           await reextractVolume(message.sessionId, webviewPanel, message);
           break;
+        case 'depthFetchFailed':
+          // The page could not fetch the depth image itself; send the bytes.
+          {
+            const documentPath = this.panelToPath.get(webviewPanel);
+            if (documentPath) {
+              await sendDepthImage(
+                this.documentLoaderHost,
+                vscode.Uri.file(documentPath),
+                webviewPanel
+              );
+            }
+          }
+          break;
         case 'plyFetchFailed':
           await this.handlePlyFetchFallback(message);
           break;
@@ -327,6 +344,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           break;
         case 'splatContainerFetchFailed':
           await resendSplatContainerBytes(webviewPanel, message);
+          break;
+        case 'stationPipelineCancel':
+          cancelStationPipeline(webviewPanel);
           break;
         case 'stationPipeline':
           await handleStationPipeline(
@@ -430,11 +450,13 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // Show UI immediately. Reading/parsing starts in parallel below, while
     // The transport queues outbound messages until webviewReady.
+    const depthPrefetchUri = depthImagePrefetchUri(document.uri, webviewPanel.webview);
     webviewPanel.webview.html = this.getHtmlForWebview(
       webviewPanel.webview,
       fileType?.extension === 'ply'
         ? binaryPlyPrefetchUri(document.uri, webviewPanel.webview)
-        : undefined
+        : undefined,
+      depthPrefetchUri
     );
 
     if (document.uri.scheme === 'viz3d-agent') {
@@ -482,6 +504,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       void (async () => {
         try {
           await loadDocumentContent(this.documentLoaderHost, document.uri, webviewPanel, {
+            depthPrefetchUri,
             fileType,
             isDepthFile,
             isPfmFile,
@@ -708,7 +731,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     }
   }
 
-  private getHtmlForWebview(webview: vscode.Webview, plyPrefetchUri?: string): string {
+  private getHtmlForWebview(
+    webview: vscode.Webview,
+    plyPrefetchUri?: string,
+    depthPrefetchUri?: string
+  ): string {
     // Read the shared index.html file (single source of truth)
     const htmlPath = vscode.Uri.joinPath(this.context.extensionUri, 'engine', 'index.html');
     const htmlPathOnDisk = htmlPath.fsPath;
@@ -797,9 +824,13 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       .get<boolean>('experimentalWebGPU', false);
     // A local binary PLY is fetched by the page itself; naming it here lets
     // that fetch start while the viewer boots (see startPlyPrefetch).
-    const prefetch = plyPrefetchUri
-      ? `window.__PLY_PREFETCH__ = ${JSON.stringify(plyPrefetchUri)};\n      `
-      : '';
+    const prefetch =
+      (plyPrefetchUri
+        ? `window.__PLY_PREFETCH__ = ${JSON.stringify(plyPrefetchUri)};\n      `
+        : '') +
+      (depthPrefetchUri
+        ? `window.__DEPTH_PREFETCH__ = ${JSON.stringify(depthPrefetchUri)};\n      `
+        : '');
     html = html.replace(
       /window\.__TIFF_WASM_URL__ = '/,
       `window.__PLY_WEBGPU__ = ${useWebGPU};\n      ${prefetch}window.__TIFF_WASM_URL__ = '`
@@ -1494,6 +1525,17 @@ function getNonce(): string {
  * it boots; undefined for ASCII PLYs (parsed in the extension host) and for
  * anything not on disk. Reads only the header's first kilobyte.
  */
+/**
+ * A local depth image is fetched by the page itself while the viewer boots,
+ * like a binary PLY: posting tens of megabytes only after the webview is ready
+ * put the whole transfer behind the boot (see `startDepthPrefetch`).
+ */
+function depthImagePrefetchUri(uri: vscode.Uri, webview: vscode.Webview): string | undefined {
+  return uri.scheme === 'file' && /\.(tiff?|pfm|exr|png)$/i.test(uri.fsPath)
+    ? webview.asWebviewUri(uri).toString()
+    : undefined;
+}
+
 function binaryPlyPrefetchUri(uri: vscode.Uri, webview: vscode.Webview): string | undefined {
   if (uri.scheme !== 'file') {
     return undefined;

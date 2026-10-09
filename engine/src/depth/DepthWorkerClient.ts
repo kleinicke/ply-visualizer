@@ -1,7 +1,9 @@
 import { CameraParams, DepthConversionResult } from '../interfaces';
 import { DepthConverter } from './DepthConverter';
 import { applyColorToDepthResult } from './applyColorToDepthResult';
-import { initTiffWasm } from './readers/tiffWasm';
+import { initTiffWasm, tiffWasmModule } from './readers/tiffWasm';
+import { spawnWorker, WorkerScript } from '../utils/webviewWorker';
+import { bandWorkerScript } from './depthProjectionPool';
 
 interface PendingRequest {
   resolve: (result: DepthConversionResult) => void;
@@ -15,19 +17,32 @@ interface WorkerResponse {
   error?: string;
 }
 
-function decodeConfigKey(cameraParams: CameraParams): string {
+/**
+ * The settings that change the decoded image, and nothing else: anything more
+ * and a parameter change that only touches the projection decodes the file
+ * again. Only PNG reads its scale factor (the depth panel sends one for every
+ * file, the first load does not), and only PNG and TIFF read the RGB24 ones.
+ */
+function decodeConfigKey(fileName: string, cameraParams: CameraParams): string {
+  const isPng = /\.png$/i.test(fileName);
+  if (!isPng && !/\.tiff?$/i.test(fileName)) {
+    return '';
+  }
+  // Defaulted exactly as DepthConverter.decodeDepthImage defaults them.
   return JSON.stringify({
-    pngScaleFactor: cameraParams.pngScaleFactor ?? null,
-    rgb24ConversionMode: cameraParams.rgb24ConversionMode ?? 'shift',
-    rgb24ScaleFactor: cameraParams.rgb24ScaleFactor ?? 1000,
+    pngScaleFactor: isPng ? cameraParams.pngScaleFactor || 1000 : null,
+    rgb24ConversionMode: cameraParams.rgb24ConversionMode || 'shift',
+    rgb24ScaleFactor: cameraParams.rgb24ScaleFactor || 1000,
     rgb24InvalidValue: cameraParams.rgb24InvalidValue ?? null,
   });
 }
 
 export class DepthWorkerClient {
-  private worker: Worker | null | undefined;
+  private worker: Promise<Worker | null> | undefined;
   private nextRequestId = 1;
   private pending = new Map<number, PendingRequest>();
+  /** Workers that reported an error; nothing is posted to them again. */
+  private brokenWorkers = new WeakSet<Worker>();
   private primedCacheKeys = new Set<string>();
   private sourceIds = new WeakMap<ArrayBuffer, number>();
   private nextSourceId = 1;
@@ -43,7 +58,7 @@ export class DepthWorkerClient {
   }
 
   private resetWorker(): void {
-    this.worker?.terminate();
+    void this.worker?.then(worker => worker?.terminate());
     this.worker = undefined;
     this.primedCacheKeys.clear();
   }
@@ -76,13 +91,16 @@ export class DepthWorkerClient {
     colorImageData: ImageData | undefined,
     signal: AbortSignal
   ): Promise<DepthConversionResult> {
-    const worker = this.getWorker();
-    if (!worker) {
+    const [worker, tiffWasm] = await Promise.all([this.getWorker(), tiffWasmModule()]);
+    signal.throwIfAborted();
+    // A worker that failed while it was starting (its script did not load or
+    // did not parse) is dead: a request posted to it would never be answered.
+    if (!worker || this.brokenWorkers.has(worker)) {
       return this.processOnMainThread(depthData, fileName, cameraParams, colorImageData, signal);
     }
 
     const id = this.nextRequestId++;
-    const configKey = decodeConfigKey(cameraParams);
+    const configKey = decodeConfigKey(fileName, cameraParams);
     let sourceId = this.sourceIds.get(depthData);
     if (sourceId === undefined) {
       sourceId = this.nextSourceId++;
@@ -122,6 +140,7 @@ export class DepthWorkerClient {
             colorImageData,
             tiffWasmGlueUrl: (globalThis as any).__TIFF_WASM_GLUE_URL__,
             tiffWasmUrl: (globalThis as any).__TIFF_WASM_URL__,
+            tiffWasmModule: tiffWasm ?? undefined,
           },
           copiedDepthData ? [copiedDepthData] : []
         );
@@ -139,16 +158,25 @@ export class DepthWorkerClient {
       });
   }
 
-  private getWorker(): Worker | null {
-    if (this.worker !== undefined) {
-      return this.worker;
-    }
+  private getWorker(): Promise<Worker | null> {
+    this.worker ??= this.startWorker();
+    return this.worker;
+  }
 
+  private async startWorker(): Promise<Worker | null> {
     try {
-      this.worker = new Worker(new URL('./depthWorker.ts', import.meta.url), {
-        name: 'depth-conversion-worker',
-      });
-      this.worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+      const glueUrl = (globalThis as any).__TIFF_WASM_GLUE_URL__ as string | undefined;
+      // @ts-ignore -- the extension-host tsconfig type-checks shared depth files
+      // as CommonJS, while this expression is emitted only by the web bundle.
+      const worker = await spawnWorker(
+        new WorkerScript(new URL('./depthWorker.ts', import.meta.url)),
+        {
+          name: 'depth-conversion-worker',
+          scripts: glueUrl ? [new URL(glueUrl, location.href).href] : [],
+          nested: [bandWorkerScript()],
+        }
+      );
+      worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
         const response = event.data;
         const pending = this.pending.get(response.id);
         if (!pending) {
@@ -161,19 +189,19 @@ export class DepthWorkerClient {
           pending.reject(new Error(response.error || 'Depth worker failed'));
         }
       };
-      this.worker.onerror = event => {
+      worker.onerror = event => {
+        this.brokenWorkers.add(worker);
         const error = new Error(event.message || 'Depth worker error');
         for (const pending of this.pending.values()) {
           pending.reject(error);
         }
         this.pending.clear();
       };
+      return worker;
     } catch (error) {
       console.warn('[DepthWorker] unavailable, using main-thread processing:', error);
-      this.worker = null;
+      return null;
     }
-
-    return this.worker;
   }
 
   private async processOnMainThread(

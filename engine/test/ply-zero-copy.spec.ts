@@ -68,6 +68,8 @@ test('streaming into wasm memory parses identically to handing over the bytes', 
 }) => {
   await page.goto('/');
   await page.waitForSelector('#three-canvas');
+  // The test hooks are attached at the end of the bundle's evaluation.
+  await page.waitForFunction(() => (window as any).__plyParsePly !== undefined);
 
   const both = await page.evaluate(async () => {
     const { parsePlyFromResponse, parsePlyWasm } = (window as any).__plyParsePly;
@@ -105,6 +107,8 @@ test('streaming into wasm memory parses identically to handing over the bytes', 
 test('a response with no content-length still parses, via the copying path', async ({ page }) => {
   await page.goto('/');
   await page.waitForSelector('#three-canvas');
+  // The test hooks are attached at the end of the bundle's evaluation.
+  await page.waitForFunction(() => (window as any).__plyParsePly !== undefined);
 
   const result = await page.evaluate(async () => {
     const { parsePlyFromResponse } = (window as any).__plyParsePly;
@@ -119,4 +123,104 @@ test('a response with no content-length still parses, via the copying path', asy
   });
 
   expect(result).toBe(64);
+});
+
+test('a binary point cloud decoded while it streams equals the whole-file parse', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForSelector('#three-canvas');
+  // The test hooks are attached at the end of the bundle's evaluation.
+  await page.waitForFunction(() => (window as any).__plyParsePly !== undefined);
+
+  const outcome = await page.evaluate(async () => {
+    const { parsePlyBytes, parsePlyFromResponse, parsePlyWasm } = (window as any).__plyParsePly;
+    // Enough vertices for several 4 MB scratch buffers, and every attribute
+    // the stream copies out: colours, normals, intensity and a scalar field.
+    const vertices = 300_000;
+    const header = new TextEncoder().encode(
+      'ply\nformat binary_little_endian 1.0\ncomment streamed fixture\n' +
+        `element vertex ${vertices}\n` +
+        'property float x\nproperty float y\nproperty float z\n' +
+        'property float nx\nproperty float ny\nproperty float nz\n' +
+        'property uchar red\nproperty uchar green\nproperty uchar blue\n' +
+        'property float intensity\nproperty float quality\nend_header\n'
+    );
+    const stride = 35;
+    const bytes = new Uint8Array(header.length + vertices * stride);
+    bytes.set(header);
+    const view = new DataView(bytes.buffer);
+    for (let i = 0; i < vertices; i++) {
+      const at = header.length + i * stride;
+      view.setFloat32(at, i * 0.5, true);
+      view.setFloat32(at + 4, -i, true);
+      view.setFloat32(at + 8, Math.sin(i), true);
+      view.setFloat32(at + 12, 0, true);
+      view.setFloat32(at + 16, 1, true);
+      view.setFloat32(at + 20, Math.cos(i), true);
+      bytes[at + 24] = i % 256;
+      bytes[at + 25] = (i * 3) % 256;
+      bytes[at + 26] = 7;
+      view.setFloat32(at + 27, i / 7, true);
+      view.setFloat32(at + 31, -i / 3, true);
+    }
+    // Odd piece sizes, so records and even the header straddle chunks.
+    const respond = (body: Uint8Array) => {
+      let at = 0;
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (at >= body.length) {
+            controller.close();
+            return;
+          }
+          const size = at === 0 ? 37 : 65_537;
+          controller.enqueue(body.slice(at, at + size));
+          at += size;
+        },
+      });
+      return new Response(stream, { headers: { 'content-length': String(body.length) } });
+    };
+    const digest = (array: ArrayBufferView | null) => {
+      if (!array) {
+        return null;
+      }
+      const raw = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+      let hash = 0x811c9dc5;
+      for (let i = 0; i < raw.length; i++) {
+        hash = Math.imul(hash ^ raw[i], 0x01000193) >>> 0;
+      }
+      return hash;
+    };
+    const shape = (r: any) => ({
+      vertexCount: r.vertexCount,
+      faceCount: r.faceCount,
+      flags: [r.hasColors, r.hasNormals, r.hasIntensity, r.isGaussianSplat],
+      format: r.format,
+      comments: r.comments,
+      positions: digest(r.positionsArray),
+      colors: digest(r.colorsArray),
+      normals: digest(r.normalsArray),
+      intensity: digest(r.intensityArray),
+      fields: Object.keys(r.scalarFields).sort(),
+      quality: digest(r.scalarFields.quality),
+      indices: r.indicesArray,
+    });
+    const streamed = shape(await parsePlyFromResponse(respond(bytes)));
+    const whole = shape(await parsePlyWasm(bytes));
+    // Bytes posted by the host take the same chunked decoder.
+    const posted = shape(await parsePlyBytes(bytes));
+    let truncated = '';
+    try {
+      await parsePlyFromResponse(respond(bytes.subarray(0, bytes.length - 100)));
+    } catch (error) {
+      truncated = String(error);
+    }
+    return { streamed, whole, posted, truncated };
+  });
+
+  expect(outcome.streamed).toEqual(outcome.whole);
+  expect(outcome.posted).toEqual(outcome.whole);
+  expect(outcome.streamed.vertexCount).toBe(300_000);
+  expect(outcome.streamed.fields).toEqual(['intensity', 'quality']);
+  expect(outcome.truncated).toContain('truncated');
 });

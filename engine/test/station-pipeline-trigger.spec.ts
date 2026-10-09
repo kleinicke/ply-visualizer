@@ -99,6 +99,16 @@ test.describe('Station pipeline trigger', () => {
     // cannot be started on top of the first.
     await expect(panel.locator('.global-align-recolor')).toBeDisabled();
 
+    // A long run can be stopped: the button appears while it runs and asks the
+    // host to stop at the next scan.
+    await panel.locator('.station-pipeline-cancel').click();
+    sent = await page.evaluate(() => (window as any).__sent);
+    expect(sent.map((message: any) => message.type)).toEqual([
+      'stationPipeline',
+      'stationPipelineCancel',
+    ]);
+    await expect(panel.locator('.align-message')).toContainText('Cancelling');
+
     // The inbound half — `stationPipelineResult` coming back from the host —
     // cannot be exercised here: main.ts only installs its message listener when
     // it is really running in a webview, so a dispatched MessageEvent lands

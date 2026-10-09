@@ -121,6 +121,18 @@ function visibleArchiveStems(host: any, archiveName: string, fallbackIndex: numb
  * @param register when true the host re-derives the alignment itself and
  *   discards what is on screen; when false the current transforms are sent.
  */
+/**
+ * Ask the host to stop the colour run. It stops at the next scan boundary and
+ * answers with a cancelled result, which ends the run here like any other.
+ */
+export function cancelStationPipeline(host: any): void {
+  if (!stationPipelineUi.busy || !host.vscode) {
+    return;
+  }
+  stationPipelineUi.message = 'Cancelling after the current step...';
+  host.vscode.postMessage({ type: 'stationPipelineCancel' });
+}
+
 export function runStationPipeline(host: any, fileIndex: number, register: boolean): void {
   const archiveName = archiveNameOf(host, fileIndex);
   if (!archiveName || !host.vscode) {

@@ -245,18 +245,16 @@ pub fn compute_image_range_f32(data: &[f32], width: u32, height: u32, channels: 
     // generic chunks/take iterator and per-sample f32->f64 conversion in this
     // bandwidth-bound path; every representable source extreme remains exact
     // when converted to f64 once at the end.
-    if stride == 1 {
-        let present = pixels.min(data.len());
-        for &value in &data[..present] {
-            if value.is_finite() {
-                min = min.min(value);
-                max = max.max(value);
-                valid_count += 1;
-            } else {
-                non_finite_count += 1;
-            }
-        }
-        non_finite_count += pixels.saturating_sub(present);
+    if stride == 1 || stride == scanned {
+        // Every sample is scanned (mono, or RGB): one flat pass. Samples past
+        // the end of a short buffer count as non-finite, as below.
+        let expected = pixels.saturating_mul(stride.max(1));
+        let present = expected.min(data.len());
+        let (lo, hi, finite) = finite_range_mono_f32(&data[..present]);
+        min = lo;
+        max = hi;
+        valid_count = finite;
+        non_finite_count = present - finite + expected.saturating_sub(present);
     } else {
         for pixel in data.chunks(stride.max(1)).take(pixels) {
             for &value in pixel.iter().take(scanned) {
@@ -288,6 +286,56 @@ pub fn compute_image_range_f32(data: &[f32], width: u32, height: u32, channels: 
     }
 }
 
+/// Finite min/max and finite count of `data`, branch-free so it vectorizes.
+///
+/// Eight independent lanes, each replacing a non-finite sample by the
+/// identity of the reduction (`+inf` for min, `-inf` for max) through a select
+/// rather than a branch, and counting finite samples with an integer test of
+/// the exponent bits. The per-sample branch it replaces kept LLVM from
+/// vectorizing and dominated the decode of large float arrays.
+pub(crate) fn finite_range_mono_f32(data: &[f32]) -> (f32, f32, usize) {
+    const LANES: usize = 8;
+    const EXPONENT: u32 = 0x7f80_0000;
+    let mut mins = [f32::INFINITY; LANES];
+    let mut maxs = [f32::NEG_INFINITY; LANES];
+    let mut finite = [0u32; LANES];
+    let mut blocks = data.chunks_exact(LANES);
+    for block in &mut blocks {
+        for lane in 0..LANES {
+            let value = block[lane];
+            let is_finite = value.to_bits() & EXPONENT != EXPONENT;
+            finite[lane] += u32::from(is_finite);
+            let low = if is_finite { value } else { f32::INFINITY };
+            let high = if is_finite { value } else { f32::NEG_INFINITY };
+            mins[lane] = if low < mins[lane] { low } else { mins[lane] };
+            maxs[lane] = if high > maxs[lane] { high } else { maxs[lane] };
+        }
+    }
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    let mut count: usize = finite.iter().map(|&lane| lane as usize).sum();
+    for lane in 0..LANES {
+        if mins[lane] < min {
+            min = mins[lane];
+        }
+        if maxs[lane] > max {
+            max = maxs[lane];
+        }
+    }
+    for &value in blocks.remainder() {
+        if value.is_finite() {
+            count += 1;
+            if value < min {
+                min = value;
+            }
+            if value > max {
+                max = value;
+            }
+        }
+    }
+    (min, max, count)
+}
+
 pub fn compute_image_range_uint<T>(data: &[T], width: u32, height: u32, channels: u32) -> ImageRange
 where
     T: Copy + Into<u32>,
@@ -295,18 +343,34 @@ where
     let pixels = (width as usize).saturating_mul(height as usize);
     let stride = channels as usize;
     let scanned = scan_channels(channels) as usize;
-    let mut min = f64::INFINITY;
-    let mut max = f64::NEG_INFINITY;
+    // Integer min/max, converted to f64 once at the end: the per-sample f64
+    // conversion through a chunk iterator could not vectorize.
+    let mut low = u32::MAX;
+    let mut high = u32::MIN;
     let mut valid_count = 0usize;
-
-    for pixel in data.chunks(stride.max(1)).take(pixels) {
-        for &value in pixel.iter().take(scanned) {
-            let value = value.into() as f64;
-            min = min.min(value);
-            max = max.max(value);
-            valid_count += 1;
+    if stride <= 1 || stride == scanned {
+        let present = &data[..pixels.saturating_mul(stride.max(1)).min(data.len())];
+        for &value in present {
+            let value: u32 = value.into();
+            low = low.min(value);
+            high = high.max(value);
+        }
+        valid_count = present.len();
+    } else {
+        for pixel in data.chunks(stride).take(pixels) {
+            for &value in pixel.iter().take(scanned) {
+                let value: u32 = value.into();
+                low = low.min(value);
+                high = high.max(value);
+                valid_count += 1;
+            }
         }
     }
+    let (min, max) = if valid_count == 0 {
+        (f64::INFINITY, f64::NEG_INFINITY)
+    } else {
+        (f64::from(low), f64::from(high))
+    };
 
     ImageRange {
         min,

@@ -186,9 +186,16 @@ fn rasterize(
         if ia >= 0.0 && ia < n as f64 && ib >= 0.0 && ib < n as f64 {
             let index = ib as usize * n + ia as usize;
             if vertical {
+                // Comparisons, not `f64::min`/`max`: wasm has no instruction
+                // with their NaN semantics, so those are libm calls per point.
+                // A NaN compares false here and is ignored, as before.
                 let up = points[i * 3 + up_index] as f64;
-                min_up[index] = min_up[index].min(up);
-                max_up[index] = max_up[index].max(up);
+                if up < min_up[index] {
+                    min_up[index] = up;
+                }
+                if up > max_up[index] {
+                    max_up[index] = up;
+                }
             } else {
                 grid[index] += 1.0;
             }
@@ -263,22 +270,36 @@ fn correlate_peaks(
     // "alternatives" and the shortlist describes a single hypothesis.
     let separation = (n as i64 / 16).max(3);
 
+    // The tallest cell not near a peak already taken, `wanted` times. This is
+    // exactly the first `wanted` survivors of walking every cell in descending
+    // order (ties by index, as a stable sort leaves them), without sorting
+    // all n*n cells for the one or two peaks a yaw needs - that sort was most
+    // of the cost of a sweep evaluation.
     let mut found: Vec<(i64, i64, f64)> = Vec::with_capacity(wanted.max(1));
-    let mut order: Vec<usize> = (0..re.len()).collect();
-    order.sort_by(|&x, &y| re[y].total_cmp(&re[x]));
-    for index in order {
-        if found.len() >= wanted.max(1) {
+    while found.len() < wanted.max(1) {
+        let mut best: Option<usize> = None;
+        for (index, value) in re.iter().enumerate() {
+            if best.is_some_and(|current| value.total_cmp(&re[current]).is_le()) {
+                continue;
+            }
+            let a = unwrap((index % n) as i64);
+            let b = unwrap((index / n) as i64);
+            if found
+                .iter()
+                .any(|&(fa, fb, _)| (fa - a).abs() <= separation && (fb - b).abs() <= separation)
+            {
+                continue;
+            }
+            best = Some(index);
+        }
+        let Some(index) = best else {
             break;
-        }
-        let a = unwrap((index % n) as i64);
-        let b = unwrap((index / n) as i64);
-        if found
-            .iter()
-            .any(|&(fa, fb, _)| (fa - a).abs() <= separation && (fb - b).abs() <= separation)
-        {
-            continue;
-        }
-        found.push((a, b, re[index]));
+        };
+        found.push((
+            unwrap((index % n) as i64),
+            unwrap((index / n) as i64),
+            re[index],
+        ));
     }
     found
 }

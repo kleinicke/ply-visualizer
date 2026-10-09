@@ -5,6 +5,7 @@
   import { viewerState } from '../state/viewer.svelte';
   import * as registration from '../registrationFeature';
   import {
+    cancelStationPipeline,
     canRunStationPipeline,
     firstArchiveScanIndex,
     runStationPipeline,
@@ -48,6 +49,37 @@
     registration.beginGroupSession(host, moving, fixed);
     registration.startGuidedMatching(host, false);
   }
+  /**
+   * Opens the single-pair workspace on one row of the last run: that cloud
+   * moves, the reference stays. A failed or doubtful row is exactly the pair
+   * the user would otherwise have to find again in two dropdowns.
+   */
+  function openRow(entryId: number): boolean {
+    const moving = host.fileEntries.indexOf(entryId);
+    if (moving < 0 || moving === anchorIndex || registrationState.busy) return false;
+    singleFixed = host.fileEntries.require(anchorIndex).id;
+    showSingle = true;
+    registration.beginSession(host, moving, anchorIndex);
+    return true;
+  }
+  function fixRow(entryId: number) {
+    if (openRow(entryId)) registration.startGuidedMatching(host, false);
+  }
+  async function refineRow(entryId: number) {
+    if (openRow(entryId)) await registration.refineIcp(host);
+  }
+
+  // Escape stops a running alignment or colour run, like the Cancel buttons.
+  function onKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || !showAlign) return;
+    if (!registrationState.busy && !stationPipelineUi.busy) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('input, textarea, select')) return;
+    if (registrationState.busy) registration.cancelAlignment(host);
+    else cancelStationPipeline(host);
+    event.preventDefault();
+  }
+
   // Off by default, like every other correction: the viewer shows the capture.
   let bandWhiteBalance = $state(false);
   // Grow outward from the reference instead of matching everything to it.
@@ -91,10 +123,13 @@
   );
   const movingCount = $derived(Math.max(0, alignable.length - 1));
 
+  // Follows the reference until the user picks something else: correcting a
+  // pair is almost always correcting it against the cloud everything else was
+  // aligned to.
   const singleFixedIndex = $derived(
     singleFixed !== null && alignable.some(index => host.fileEntries.require(index).id === singleFixed)
       ? host.fileEntries.indexOf(singleFixed)
-      : (alignable[0] ?? 0),
+      : anchorIndex,
   );
 
   // Only archives carry the per-band reference patches this reads.
@@ -150,6 +185,8 @@
   const places = $derived((filesState.entries, capturePlaces(host, archiveName)));
   const placeVisible = (place: { fileIndices: number[] }) =>
     place.fileIndices.some((index) => host.fileEntries.require(index).state.visible !== false);
+
+  const placesInScope = $derived(places.filter(placeVisible).length);
 
   function togglePlace(place: any, event: Event) {
     setCapturePlaceVisible(host, place, (event.currentTarget as HTMLInputElement).checked);
@@ -208,6 +245,8 @@
     </label>
   {/if}
 {/snippet}
+
+<svelte:window onkeydown={onKeydown} />
 
 {#if hasObjects}
   <button
@@ -292,7 +331,7 @@
           <button
             class="registration-cancel"
             onclick={() => registration.cancelAlignment(host)}
-          >Cancel alignment</button>
+           title="Esc">Cancel alignment</button>
         {/if}
         <button
           class="global-align-run align-primary"
@@ -347,6 +386,21 @@
           />
           Complex scene
         </label>
+        <label
+          class="align-inline-check"
+          title="Which axis points up in these scans. The coarse search turns clouds about it."
+        >
+          Up
+          <select
+            class="global-align-up-axis"
+            bind:value={registrationState.upAxis}
+            disabled={registrationState.busy}
+          >
+            <option value="z">Z</option>
+            <option value="y">Y</option>
+            <option value="x">X</option>
+          </select>
+        </label>
       </div>
 
       {#if entries.length > 0}
@@ -368,12 +422,31 @@
             {alignedCount} aligned{failedCount > 0 ? ` · ${failedCount} failed` : ''}
           {/if}
         </div>
+        {#if !registrationState.busy && registrationState.result}
+          <!-- The run's own sentence: what it aligned to, how long it took, and
+               where the solver ran. -->
+          <div class="align-message global-align-result">{registrationState.result}</div>
+        {/if}
         <ul class="global-align-results align-list">
           {#each entries as entry (entry.id)}
             <li class={`align-row align-row-${entry.state}`}>
               <span class="align-icon">{STATE_ICON[entry.state]}</span>
               <span class="align-name" title={entry.name}>{entry.name}</span>
               <span class="align-detail">{entry.detail}</span>
+              {#if !registrationState.busy && (entry.state === 'aligned' || entry.state === 'failed')}
+                <span class="align-row-actions">
+                  <button
+                    class="align-row-fix"
+                    onclick={() => fixRow(entry.id)}
+                    title="Place this cloud on the reference by picking three matching points"
+                  >Fix</button>
+                  <button
+                    class="align-row-refine"
+                    onclick={() => refineRow(entry.id)}
+                    title="ICP against the reference from where this cloud sits now"
+                  >Refine</button>
+                </span>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -444,6 +517,13 @@
           <h5>Colour from the archive's cameras</h5>
         </header>
         <div class="align-actions">
+          {#if stationPipelineUi.busy}
+            <button
+              class="station-pipeline-cancel"
+              onclick={() => cancelStationPipeline(host)}
+              title="Stop after the scan being coloured now (Esc)"
+            >Cancel colouring</button>
+          {/if}
           <button
             class="global-align-recolor align-primary"
             onclick={() => runStationPipeline(host, archiveIndex, false)}
@@ -458,9 +538,15 @@
             disabled={stationPipelineUi.busy || registrationState.busy}
             title="Re-derives the alignment in the host first, discarding what is on screen"
           >
-            Register first
+            Re-register &amp; recolour
           </button>
         </div>
+        {#if places.length > 1 && placesInScope < places.length}
+          <p class="align-hint align-scope-hint">
+            Only {placesInScope} of {places.length} capture places are in scope; the hidden ones are
+            skipped (see Options).
+          </p>
+        {/if}
 
         {#if scans.length > 0}
           <div
@@ -501,14 +587,6 @@
             Also recolour scans that already have camera colour
           </label>
           {@render whiteBalanceToggle()}
-          <label class="align-check">
-            Up axis for the coarse search
-            <select bind:value={registrationState.upAxis}>
-              <option value="z">Z</option>
-              <option value="y">Y</option>
-              <option value="x">X</option>
-            </select>
-          </label>
 
           {#if places.length > 1}
             <div class="align-places">
@@ -560,7 +638,9 @@
           {/if}
         {/if}
       </section>
-    {:else}
+    {:else if hasCameraProfiles}
+      <!-- The up axis moved beside the align buttons; white balance is all
+           that is left here, and only cameras need it. -->
       <button
           class="align-disclosure align-options-toggle"
           onclick={() => (showOptions = !showOptions)}
@@ -568,14 +648,6 @@
         {showOptions ? '▾' : '▸'} Options
       </button>
       {#if showOptions}
-        <label class="align-check">
-          Up axis for the coarse search
-          <select bind:value={registrationState.upAxis}>
-            <option value="z">Z</option>
-            <option value="y">Y</option>
-            <option value="x">X</option>
-          </select>
-        </label>
         {@render whiteBalanceToggle()}
       {/if}
     {/if}
@@ -613,6 +685,17 @@
 {/if}
 
 <style>
+  .align-row-actions {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: auto;
+    flex: 0 0 auto;
+  }
+  .align-row-actions button {
+    padding: 0 6px;
+    font-size: 11px;
+    line-height: 18px;
+  }
   .global-align-toggle {
     /* The add button keeps `flex: 1`; this one stays at its natural width so
          the pair shares the row without a second layout rule. */

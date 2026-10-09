@@ -12,6 +12,10 @@ export interface PointCloudResult {
   /** Original pixel coordinates (u,v) for each point - used for color mapping with distorted camera models */
   pixelCoords?: Uint16Array;
   projectionDiagnostics?: { rejectedCount: number; nonConvergedCount: number };
+  /** Worker bands the projection ran in; 1 for the single-pass path. */
+  bands?: number;
+  /** Where a banded projection spent its time, for the PERF line. */
+  phases?: string;
 }
 
 /**
@@ -96,6 +100,7 @@ export function projectToPointCloud(
   }
   return {
     ...wasmResult,
+    bands: 1,
     projectionDiagnostics: {
       rejectedCount: wasmResult.rejectedCount,
       nonConvergedCount: wasmResult.nonConvergedCount,

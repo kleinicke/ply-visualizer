@@ -37,11 +37,11 @@ pub use lidar::{parse_e57, parse_las, E57ImageResult, LidarCollectionResult, Lid
 pub use mesh::{parse_off, parse_stl, MeshResult};
 pub use npy::{npy_inspect, npy_read, NpyArrayResult};
 pub use obj::{parse_obj, ObjResult};
-pub use row_ranges::{parse_row_range, plan_rows, row_stream};
 pub use ply::{parse_ply, parse_ply_at, parse_ply_native, PlyResult};
 pub use registration::bindings::{
     coarse_align, fit_correspondences, icp_refine, register_pair, RegistrationResult,
 };
+pub use row_ranges::{parse_row_range, plan_rows, row_stream};
 pub use stonex::{
     stonex_decode_frame, stonex_decode_scan, StonexRgbImage, StonexScanPoints, StonexStationSession,
 };
@@ -1942,7 +1942,8 @@ mod pcd_attribute_tests {
 
     #[test]
     fn a_pcd_that_keeps_every_row_reports_an_identity_row_map() {
-        let header = "FIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\nWIDTH 2\nHEIGHT 1\nPOINTS 2\n";
+        let header =
+            "FIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\nWIDTH 2\nHEIGHT 1\nPOINTS 2\n";
         let mut binary = format!("{header}DATA binary\n").into_bytes();
         for v in [1f32, 2., 3., 4., 5., 6.] {
             binary.extend(v.to_le_bytes());

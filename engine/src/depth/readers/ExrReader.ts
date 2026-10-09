@@ -1,5 +1,6 @@
 import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata } from '../types';
 import { decodeExrWasm } from './tiffWasm';
+import { decodeExrInBlocks } from '../depthProjectionPool';
 
 /**
  * OpenEXR depth reader backed by the Rust/WASM decoder.
@@ -18,7 +19,9 @@ export class ExrReader implements DepthReader {
   }
 
   async read(arrayBuffer: ArrayBuffer): Promise<DepthReaderResult> {
-    const exr = await decodeExrWasm(arrayBuffer);
+    // ZIP16 files decode on the projection pool, a run of blocks per worker.
+    const exr =
+      (await decodeExrInBlocks(new Uint8Array(arrayBuffer))) ?? (await decodeExrWasm(arrayBuffer));
     if (!exr) {
       throw new Error(
         'Failed to read EXR file: the WASM decoder is unavailable. ' +

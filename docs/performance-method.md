@@ -165,6 +165,30 @@ measured gain is a liability.
    buffer.** An object per triangle made a 2M-triangle STL fail outright (V8
    string limit) and an OBJ take 20 s. Ship typed arrays only.
 
+### Four more (depth, PLY and alignment work)
+
+1. **Webview workers silently fell back to the main thread.** A VS Code webview
+   page and its bundle are on different origins, so `new Worker(chunkUrl)`
+   throws there, and every depth conversion — decode and a 26-megapixel
+   projection — ran on the UI thread in one band (8–15 s) while the standalone
+   page, which is same-origin, used eight workers (1.7 s). The standalone page
+   is the fast test surface and could never show this. Put the thread a step ran
+   on into its PERF line (`on=worker/8 bands`) and read it in the extension.
+2. **Peak memory is time on this machine.** Binary PLY streamed into wasm memory
+   still held file plus output there (wasm memory never shrinks) plus the JS
+   copy: about 1 GB for a 341 MB cloud, and 4–19 s depending on swap. Decoding
+   chunk by chunk while the fetch runs keeps the heap at a few MB: ~1.7 s, and
+   steady.
+3. **`f64::min`/`max` are libm calls in wasm**, and a strided column FFT walks a
+   row per element. Both looked like arithmetic; both were memory or call
+   overhead. Rewrites that keep the operations and their order are
+   bit-identical, which is the bar for solver changes (compare the full stats
+   JSON of every pair, not one number).
+4. **A long-running `webpack --watch` keeps its old config.** After changing
+   `webpack.config.js`, a watcher started earlier rebuilds `out/` behind your
+   back with the previous options. Restart it, or check the bundle before
+   measuring.
+
 ### A/B against HEAD
 
 Build HEAD once in a scratch worktree (`git worktree add --detach <dir> HEAD`,
@@ -184,14 +208,16 @@ has stopped being the bottleneck.
 
 ## Tools
 
-| Command                                        | What it does                                    |
-| ---------------------------------------------- | ----------------------------------------------- |
-| `npm run benchmark:vscode`                     | One build, real VS Code, per-step medians       |
-| `STEPS=open,alignAll,recolorAll …`             | Adds the align and colour steps to the scenario |
-| `FILES=a,b ITER=n`                             | Choose the corpus and the sample count          |
-| `cd engine && npm run bench:backend -- <file>` | WebGL vs WebGPU on one file                     |
-| `npm run test:node`                            | Parser/logic tests headless, in seconds         |
-| `cd engine && npm test`                        | Playwright engine suite                         |
+| Command                                        | What it does                                                             |
+| ---------------------------------------------- | ------------------------------------------------------------------------ |
+| `npm run benchmark:vscode`                     | One build, real VS Code, per-step medians                                |
+| `STEPS=open,alignAll,recolorAll …`             | Adds the align and colour steps to the scenario                          |
+| `STEPS=open,alignAllNested,alignAllComplex …`  | The two growing alignment strategies                                     |
+| `STEPS=open,reapplyDepth …`                    | Re-applies a depth image's settings (the cost of every parameter change) |
+| `FILES=a,b ITER=n`                             | Choose the corpus and the sample count                                   |
+| `cd engine && npm run bench:backend -- <file>` | WebGL vs WebGPU on one file                                              |
+| `npm run test:node`                            | Parser/logic tests headless, in seconds                                  |
+| `cd engine && npm test`                        | Playwright engine suite                                                  |
 
 ### How the scenario runs
 

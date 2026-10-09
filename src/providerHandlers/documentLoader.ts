@@ -45,6 +45,8 @@ export interface DocumentLoaderHost {
 }
 
 export interface DocumentFileTypeFlags {
+  /** Set when the page was told to fetch this depth image itself. */
+  depthPrefetchUri?: string;
   fileType: { extension?: string; category?: string; isDepthFile?: boolean } | null | undefined;
   isDepthFile: boolean;
   isPfmFile: boolean;
@@ -238,15 +240,17 @@ async function sendStonexColors(
  * Returns false - having told the webview to drop any parts it received -
  * when the caller should use its sequential path instead.
  */
-async function sendStreamedTextCloud(
-  host: DocumentLoaderHost,
+export async function sendStreamedTextCloud(
+  host: Pick<DocumentLoaderHost, 'getShortPath' | 'logPerf' | 'getCurrentLoadStartedAt'>,
   webviewPanel: vscode.WebviewPanel,
   documentUri: vscode.Uri,
   format: string,
   colorMode: string,
   variant: string,
   tag: string,
-  loadStartTime: number
+  loadStartTime: number,
+  /** Added beside what is loaded ("+ Add Point Cloud") instead of replacing it. */
+  isAddFile = false
 ): Promise<boolean> {
   const streamId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   let parts = 0;
@@ -272,6 +276,7 @@ async function sendStreamedTextCloud(
       fileSizeInBytes: fs.statSync(documentUri.fsPath).size,
       data: summary,
       variant,
+      isAddFile,
       parseMode: 'wasm-parallel',
       // This message type is not stamped by the transport; the PERF line
       // needs the load's own epochs.
@@ -280,6 +285,37 @@ async function sendStreamedTextCloud(
     },
   });
   return true;
+}
+
+/** Read a depth image and post its bytes for conversion in the webview. */
+export async function sendDepthImage(
+  host: DocumentLoaderHost,
+  documentUri: vscode.Uri,
+  webviewPanel: vscode.WebviewPanel,
+  loadStartTime = performance.now()
+): Promise<void> {
+  const depthData = await vscode.workspace.fs.readFile(documentUri);
+  const fileReadTime = performance.now();
+  sendToWebview(webviewPanel, {
+    type: 'timing',
+    phase: 'read',
+    kind: 'depth',
+    ms: +(fileReadTime - loadStartTime).toFixed(1),
+  });
+
+  // Check for dataset scene metadata
+  const sceneMetadata = await host.getSceneMetadata(documentUri.fsPath);
+
+  // Send depth data to webview for conversion
+  sendToWebview(webviewPanel, {
+    type: 'depthData',
+    // Wall-clock epoch for measuring cross-process transfer cost in the webview.
+    postedAt: Date.now(),
+    fileName: path.basename(documentUri.fsPath),
+    shortPath: host.getShortPath(documentUri.fsPath),
+    data: depthData.buffer.slice(depthData.byteOffset, depthData.byteOffset + depthData.byteLength),
+    sceneMetadata: sceneMetadata || undefined,
+  });
 }
 
 export async function loadDocumentContent(
@@ -452,32 +488,20 @@ export async function loadDocumentContent(
         timestamp: loadStartTime,
       });
 
-      // Read depth file and send for webview processing
-      const depthData = await vscode.workspace.fs.readFile(documentUri);
-      const fileReadTime = performance.now();
-      sendToWebview(webviewPanel, {
-        type: 'timing',
-        phase: 'read',
-        kind: 'depth',
-        ms: +(fileReadTime - loadStartTime).toFixed(1),
-      });
-
-      // Check for dataset scene metadata
-      const sceneMetadata = await host.getSceneMetadata(documentUri.fsPath);
-
-      // Send depth data to webview for conversion
-      sendToWebview(webviewPanel, {
-        type: 'depthData',
-        // Wall-clock epoch for measuring cross-process transfer cost in the webview.
-        postedAt: Date.now(),
-        fileName: path.basename(documentUri.fsPath),
-        shortPath: host.getShortPath(documentUri.fsPath),
-        data: depthData.buffer.slice(
-          depthData.byteOffset,
-          depthData.byteOffset + depthData.byteLength
-        ),
-        sceneMetadata: sceneMetadata || undefined,
-      });
+      if (flags.depthPrefetchUri) {
+        // The page has been fetching the file since it booted; tell it which
+        // one, and send the bytes only if it asks (`depthFetchFailed`).
+        sendToWebview(webviewPanel, {
+          type: 'depthData',
+          postedAt: Date.now(),
+          fileName: path.basename(documentUri.fsPath),
+          shortPath: host.getShortPath(documentUri.fsPath),
+          fileUri: flags.depthPrefetchUri,
+          sceneMetadata: (await host.getSceneMetadata(documentUri.fsPath)) || undefined,
+        });
+      } else {
+        await sendDepthImage(host, documentUri, webviewPanel, loadStartTime);
+      }
 
       return; // Exit early for depth files
     }

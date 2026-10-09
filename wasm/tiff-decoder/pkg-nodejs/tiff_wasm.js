@@ -447,6 +447,30 @@ exports.decode_depth_pfm = function(bytes) {
     return DepthRaster.__wrap(ret[0]);
 };
 
+let cachedInt32ArrayMemory0 = null;
+
+function getInt32ArrayMemory0() {
+    if (cachedInt32ArrayMemory0 === null || cachedInt32ArrayMemory0.byteLength === 0) {
+        cachedInt32ArrayMemory0 = new Int32Array(wasm.memory.buffer);
+    }
+    return cachedInt32ArrayMemory0;
+}
+
+function getArrayI32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
+function getArrayJsValueFromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    const mem = getDataViewMemory0();
+    const result = [];
+    for (let i = ptr; i < ptr + 4 * len; i += 4) {
+        result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+    }
+    wasm.__externref_drop_slice(ptr, len);
+    return result;
+}
 /**
  * @param {Uint8Array} data
  * @param {number} page_index
@@ -460,6 +484,23 @@ exports.decode_tiff_page_fast = function(data, page_index) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return TiffResult.__wrap(ret[0]);
+};
+
+/**
+ * # Errors
+ *
+ * A malformed EXR header.
+ * @param {Uint8Array} data
+ * @returns {ExrZipPlanJs | undefined}
+ */
+exports.exr_zip_plan = function(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.exr_zip_plan(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] === 0 ? undefined : ExrZipPlanJs.__wrap(ret[0]);
 };
 
 /**
@@ -492,6 +533,17 @@ exports.decode_png_samples_fast = function(data) {
 
 /**
  * @param {Uint8Array} data
+ * @returns {TiffStripPlan | undefined}
+ */
+exports.tiff_strip_plan = function(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_strip_plan(ptr0, len0);
+    return ret === 0 ? undefined : TiffStripPlan.__wrap(ret);
+};
+
+/**
+ * @param {Uint8Array} data
  * @returns {string}
  */
 exports.extract_exif_tags = function(data) {
@@ -507,6 +559,32 @@ exports.extract_exif_tags = function(data) {
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
+};
+
+/**
+ * Decode strips `first_strip..first_strip + counts.len()` from their
+ * concatenated compressed bytes, as the f32 samples `decode_tiff_fast`
+ * produces for those rows. `fields` comes from `TiffStripPlan::fields`.
+ * @param {Uint8Array} blob
+ * @param {Uint32Array} counts
+ * @param {number} first_strip
+ * @param {Float64Array} fields
+ * @returns {Float32Array}
+ */
+exports.decode_tiff_strip_range = function(blob, counts, first_strip, fields) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArrayF64ToWasm0(fields, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_strip_range(ptr0, len0, ptr1, len1, first_strip, ptr2, len2);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v4;
 };
 
 /**
@@ -578,6 +656,41 @@ exports.decode_tiff_fast = function(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return TiffResult.__wrap(ret[0]);
+};
+
+/**
+ * Blocks `counts` (with `rows` scanlines each) of a ZIP16 EXR, as the
+ * interleaved displayed channels `decode_exr_fast` returns for those rows.
+ *
+ * # Errors
+ *
+ * Malformed or truncated blocks, or a selection outside the channels.
+ * @param {Uint8Array} blob
+ * @param {Uint32Array} counts
+ * @param {Uint32Array} rows
+ * @param {number} width
+ * @param {Uint32Array} kinds
+ * @param {Int32Array} selection
+ * @returns {Float32Array}
+ */
+exports.decode_exr_zip_blocks = function(blob, counts, rows, width, kinds, selection) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArray32ToWasm0(kinds, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ptr4 = passArray32ToWasm0(selection, wasm.__wbindgen_malloc);
+    const len4 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_exr_zip_blocks(ptr0, len0, ptr1, len1, ptr2, len2, width, ptr3, len3, ptr4, len4);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v6 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v6;
 };
 
 const DepthProjectResultFinalization = (typeof FinalizationRegistry === 'undefined')
@@ -920,6 +1033,118 @@ if (Symbol.dispose) ExrResult.prototype[Symbol.dispose] = ExrResult.prototype.fr
 
 exports.ExrResult = ExrResult;
 
+const ExrZipPlanJsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_exrzipplanjs_free(ptr >>> 0, 1));
+/**
+ * A ZIP16 scanline EXR's compressed blocks and channel layout, for decoding
+ * it in row ranges on several workers (`decode_exr_zip_blocks`). Ported from
+ * the image viewer's adapter; undefined for every other EXR layout.
+ */
+class ExrZipPlanJs {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(ExrZipPlanJs.prototype);
+        obj.__wbg_ptr = ptr;
+        ExrZipPlanJsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ExrZipPlanJsFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_exrzipplanjs_free(ptr, 0);
+    }
+    /**
+     * Each channel's pixel type: 0 u32, 1 half, 2 float.
+     * @returns {Uint32Array}
+     */
+    get channel_kinds() {
+        const ret = wasm.exrzipplanjs_channel_kinds(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Int32Array}
+     */
+    get y_coordinates() {
+        const ret = wasm.exrzipplanjs_y_coordinates(this.__wbg_ptr);
+        var v1 = getArrayI32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {string[]}
+     */
+    get displayed_names() {
+        const ret = wasm.exrzipplanjs_displayed_names(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * Move the compressed blocks out, back to back in file order.
+     * @returns {Uint8Array}
+     */
+    take_compressed() {
+        const ret = wasm.exrzipplanjs_take_compressed(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.exrzipplanjs_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    get counts() {
+        const ret = wasm.exrzipplanjs_counts(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get data_y() {
+        const ret = wasm.exrzipplanjs_data_y(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.exrzipplanjs_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * The displayed channels as indices into the file's channels (-1: absent).
+     * @returns {Int32Array}
+     */
+    get selection() {
+        const ret = wasm.exrzipplanjs_selection(this.__wbg_ptr);
+        var v1 = getArrayI32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+}
+if (Symbol.dispose) ExrZipPlanJs.prototype[Symbol.dispose] = ExrZipPlanJs.prototype.free;
+
+exports.ExrZipPlanJs = ExrZipPlanJs;
+
 const NormalizeDepthResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_normalizedepthresult_free(ptr >>> 0, 1));
@@ -1207,7 +1432,7 @@ class TiffResult {
      * @returns {number}
      */
     get rows_per_strip() {
-        const ret = wasm.tiffresult_rows_per_strip(this.__wbg_ptr);
+        const ret = wasm.exrzipplanjs_height(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -1359,6 +1584,135 @@ class TiffResult {
 if (Symbol.dispose) TiffResult.prototype[Symbol.dispose] = TiffResult.prototype.free;
 
 exports.TiffResult = TiffResult;
+
+const TiffStripPlanFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_tiffstripplan_free(ptr >>> 0, 1));
+/**
+ * A stripped TIFF's block table and layout, for decoding it in row ranges on
+ * several workers (`decode_tiff_strip_range`). Undefined for files the
+ * range decoder does not cover; those take `decode_tiff_fast`.
+ */
+class TiffStripPlan {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(TiffStripPlan.prototype);
+        obj.__wbg_ptr = ptr;
+        TiffStripPlanFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        TiffStripPlanFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_tiffstripplan_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get compression() {
+        const ret = wasm.depthprojectresult_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get sample_format() {
+        const ret = wasm.depthprojectresult_rejected_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get rows_per_strip() {
+        const ret = wasm.tiffstripplan_rows_per_strip(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get bits_per_sample() {
+        const ret = wasm.depthprojectresult_point_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.normalizedepthresult_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Compressed length of each strip.
+     * @returns {Float64Array}
+     */
+    counts() {
+        const ret = wasm.tiffstripplan_counts(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * The layout as numbers, to rebuild the plan in another worker.
+     * @returns {Float64Array}
+     */
+    fields() {
+        const ret = wasm.tiffstripplan_fields(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.normalizedepthresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Byte offset of each strip within the file.
+     * @returns {Float64Array}
+     */
+    offsets() {
+        const ret = wasm.tiffstripplan_offsets(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get channels() {
+        const ret = wasm.tiffstripplan_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get predictor() {
+        const ret = wasm.depthprojectresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * True for a plain chunky, top-left, non-CMYK strip layout: the one shape
+     * whose ranges simply stack into the image.
+     * @returns {boolean}
+     */
+    get stackable() {
+        const ret = wasm.tiffstripplan_stackable(this.__wbg_ptr);
+        return ret !== 0;
+    }
+}
+if (Symbol.dispose) TiffStripPlan.prototype[Symbol.dispose] = TiffStripPlan.prototype.free;
+
+exports.TiffStripPlan = TiffStripPlan;
 
 exports.__wbg___wbindgen_throw_b855445ff6a94295 = function(arg0, arg1) {
     throw new Error(getStringFromWasm0(arg0, arg1));

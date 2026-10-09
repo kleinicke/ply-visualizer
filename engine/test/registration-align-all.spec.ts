@@ -275,3 +275,52 @@ test.describe('Align all to one cloud', () => {
     expect(cornerDeviation(matrices[1], inverseOf(3, 0.12, -0.09, 0.04))).toBeLessThan(0.05);
   });
 });
+
+test.describe('Correcting one row of an align-all run', () => {
+  const directory = path.join(os.tmpdir(), `ply-align-row-${process.pid}`);
+  const anchorFile = path.join(directory, 'anchor.ply');
+  const movingFile = path.join(directory, 'moving.ply');
+
+  test.beforeAll(() => {
+    fs.mkdirSync(directory, { recursive: true });
+    const room = roomPoints(40000, 424242);
+    writeAsciiPly(anchorFile, room);
+    writeAsciiPly(movingFile, yawTranslate(room, 24, 1.2, -0.8, 0.15));
+  });
+
+  test.afterAll(() => {
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  test('a result row opens the pair workspace on that cloud against the reference', async ({
+    page,
+  }) => {
+    test.slow();
+    await page.goto('/');
+    await page.waitForSelector('#three-canvas');
+    await page.locator('#hiddenFileInput').setInputFiles([anchorFile, movingFile]);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(2);
+
+    await page.locator('#global-align-toggle').click();
+    await page.locator('#tools-align').click();
+    await page.locator('.global-align-run').click();
+    await expect(page.locator('#global-align-menu .align-summary')).toContainText('1 aligned', {
+      timeout: 120_000,
+    });
+    // The run says what it did and how long it took, in the workspace itself.
+    await expect(page.locator('.global-align-result')).toContainText(/Aligned 1 of 1 .* s ·/);
+
+    // The single-pair section is folded until a row asks for it, and then it
+    // starts on exactly that pair: the row's cloud moves, the reference stays.
+    await expect(page.locator('#global-align-single-fixed')).toHaveCount(0);
+    await page.locator('.global-align-results li .align-row-fix').first().click();
+    await expect(page.locator('#global-align-single-fixed')).toHaveValue('0');
+    const pair = await page.evaluate(() => {
+      const state = (window as any).__plyRegistrationState;
+      return { source: state.sourceIndex, target: state.targetIndex, workflow: state.workflow };
+    });
+    expect(pair.source).toBe(1);
+    expect(pair.target).toBe(0);
+    expect(pair.workflow).not.toBe('choose');
+  });
+});

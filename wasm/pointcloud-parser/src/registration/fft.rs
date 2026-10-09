@@ -71,7 +71,21 @@ pub fn fft2d(re: &mut [f64], im: &mut [f64], n: usize, inverse: bool) {
     for row in 0..n {
         fft1d(re, im, row * n, 1, n, inverse);
     }
+    // Columns are gathered into a contiguous run, transformed, and scattered
+    // back. Walking them in place strides a whole row per element, and that
+    // cache traffic was most of the coarse sweep's time; the arithmetic is
+    // the same operations in the same order, so the result is bit-identical.
+    let mut column_re = vec![0.0f64; n];
+    let mut column_im = vec![0.0f64; n];
     for column in 0..n {
-        fft1d(re, im, column, n, n, inverse);
+        for row in 0..n {
+            column_re[row] = re[row * n + column];
+            column_im[row] = im[row * n + column];
+        }
+        fft1d(&mut column_re, &mut column_im, 0, 1, n, inverse);
+        for row in 0..n {
+            re[row * n + column] = column_re[row];
+            im[row * n + column] = column_im[row];
+        }
     }
 }
