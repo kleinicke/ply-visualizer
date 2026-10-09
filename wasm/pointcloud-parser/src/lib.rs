@@ -23,15 +23,21 @@ use wasm_bindgen::prelude::*;
 mod text_table;
 pub use text_table::parse_text_table;
 mod lidar;
+mod mesh;
 mod npy;
+mod obj;
 mod ply;
 mod registration;
+mod row_ranges;
 mod selection;
 pub use selection::{scalar_summary, select_point_indices};
 mod stonex;
 mod volume;
 pub use lidar::{parse_e57, parse_las, E57ImageResult, LidarCollectionResult, LidarScanResult};
+pub use mesh::{parse_off, parse_stl, MeshResult};
 pub use npy::{npy_inspect, npy_read, NpyArrayResult};
+pub use obj::{parse_obj, ObjResult};
+pub use row_ranges::{parse_row_range, plan_rows, row_stream};
 pub use ply::{parse_ply, parse_ply_at, parse_ply_native, PlyResult};
 pub use registration::bindings::{
     coarse_align, fit_correspondences, icp_refine, register_pair, RegistrationResult,
@@ -49,6 +55,10 @@ pub use volume::{
 pub struct PointCloudResult {
     source_indices: Vec<u32>,
     source_count: u32,
+    /// Every source row became a point, in order: the row map is the
+    /// identity and `source_indices` is left empty rather than holding one
+    /// index per point.
+    source_rows_identity: bool,
     vertex_count: u32,
     positions: Vec<f32>,
     colors: Vec<u8>,
@@ -74,6 +84,11 @@ impl PointCloudResult {
     }
     pub fn take_source_indices(&mut self) -> Vec<u32> {
         mem::take(&mut self.source_indices)
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn source_rows_identity(&self) -> bool {
+        self.source_rows_identity
     }
 
     #[wasm_bindgen(getter)]
@@ -438,6 +453,7 @@ impl Builder {
         PointCloudResult {
             source_indices: Vec::new(),
             source_count: 0,
+            source_rows_identity: false,
             vertex_count,
             positions: self.positions,
             colors: self.colors,
@@ -872,6 +888,14 @@ pub fn parse_pcd(data: &[u8]) -> Result<PointCloudResult, JsValue> {
     }
     .map_err(|e| JsValue::from_str(&e))?;
     result.metadata = header.metadata_json();
+    // Every row kept: say so instead of shipping one index per point - 32 MB
+    // for an eight-million-point cloud, transferred and validated for nothing.
+    if !result.source_indices.is_empty()
+        && result.source_indices.len() == result.source_count as usize
+    {
+        result.source_rows_identity = true;
+        result.source_indices = Vec::new();
+    }
     Ok(result)
 }
 
@@ -1210,6 +1234,7 @@ impl PcdPointSink {
         PointCloudResult {
             source_indices: self.source_indices,
             source_count: self.source_count,
+            source_rows_identity: false,
             vertex_count,
             positions: self.positions,
             colors: self.colors,
@@ -1608,6 +1633,18 @@ impl StreamParser {
 }
 
 impl StreamParser {
+    /// A parser for data rows only, with the layout already decided.
+    pub(crate) fn with_builder(builder: Builder) -> StreamParser {
+        StreamParser {
+            format: 0,
+            builder: Some(builder),
+            header_done: true,
+            expected: 0,
+            carry: Vec::new(),
+            error: false,
+        }
+    }
+
     /// Process the data bytes of one chunk, stitching the previous chunk's
     /// trailing partial line (`carry`) onto the first line, and keeping this
     /// chunk's trailing partial line as the new carry. Avoids copying the chunk.
@@ -1902,6 +1939,26 @@ mod tests {
 #[cfg(test)]
 mod pcd_attribute_tests {
     use super::*;
+
+    #[test]
+    fn a_pcd_that_keeps_every_row_reports_an_identity_row_map() {
+        let header = "FIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\nWIDTH 2\nHEIGHT 1\nPOINTS 2\n";
+        let mut binary = format!("{header}DATA binary\n").into_bytes();
+        for v in [1f32, 2., 3., 4., 5., 6.] {
+            binary.extend(v.to_le_bytes());
+        }
+        let ascii = format!("{header}DATA ascii\n1 2 3\n4 5 6\n").into_bytes();
+        for input in [binary, ascii] {
+            let result = parse_pcd(&input).unwrap();
+            assert!(result.source_rows_identity);
+            assert!(result.source_indices.is_empty());
+            assert_eq!(result.source_count, 2);
+        }
+        let dropped = format!("{header}DATA ascii\n1 2 3\nnan 5 6\n").into_bytes();
+        let result = parse_pcd(&dropped).unwrap();
+        assert!(!result.source_rows_identity);
+        assert_eq!(result.source_indices, vec![0]);
+    }
     #[test]
     fn attributes_align_after_nan_filter_in_all_encodings() {
         let header = "FIELDS x y z label descriptor\nSIZE 4 4 4 4 4\nTYPE F F F U F\nCOUNT 1 1 1 1 2\nWIDTH 3\nHEIGHT 1\nPOINTS 3\n";

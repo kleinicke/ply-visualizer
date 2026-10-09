@@ -36,7 +36,7 @@ import { createWebviewReadyGate, type WebviewReadyGate } from './providerHandler
 import { clearVolume, reextractVolume } from './providerHandlers/volumeSessions';
 
 // Shared file handling functionality
-import { detectFileType, detectFileTypeWithContent } from '../engine/src/fileHandler';
+import { detectFileType, detectFileTypeWithContent, isPlyBinary } from '../engine/src/fileHandler';
 
 export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProvider {
   private static readonly viewType = 'plyViewer.plyEditor';
@@ -280,6 +280,11 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       switch (message.type) {
         case 'webviewReady':
           readyGate.markReady();
+          // How long the webview took to boot after its HTML was assigned.
+          // Every load waits behind this gate, so it is part of each total.
+          this.logPerf(
+            `⏱️ PERF[webview/ready] ${Date.now() - this.currentLoadStartedAt}ms after HTML`
+          );
           break;
         case 'error':
           vscode.window.showErrorMessage(message.message);
@@ -425,7 +430,12 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // Show UI immediately. Reading/parsing starts in parallel below, while
     // The transport queues outbound messages until webviewReady.
-    webviewPanel.webview.html = this.getHtmlForWebview(webviewPanel.webview);
+    webviewPanel.webview.html = this.getHtmlForWebview(
+      webviewPanel.webview,
+      fileType?.extension === 'ply'
+        ? binaryPlyPrefetchUri(document.uri, webviewPanel.webview)
+        : undefined
+    );
 
     if (document.uri.scheme === 'viz3d-agent') {
       initialLoad.markReady();
@@ -698,7 +708,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     }
   }
 
-  private getHtmlForWebview(webview: vscode.Webview): string {
+  private getHtmlForWebview(webview: vscode.Webview, plyPrefetchUri?: string): string {
     // Read the shared index.html file (single source of truth)
     const htmlPath = vscode.Uri.joinPath(this.context.extensionUri, 'engine', 'index.html');
     const htmlPathOnDisk = htmlPath.fsPath;
@@ -785,9 +795,14 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     const useWebGPU = vscode.workspace
       .getConfiguration('plyViewer')
       .get<boolean>('experimentalWebGPU', false);
+    // A local binary PLY is fetched by the page itself; naming it here lets
+    // that fetch start while the viewer boots (see startPlyPrefetch).
+    const prefetch = plyPrefetchUri
+      ? `window.__PLY_PREFETCH__ = ${JSON.stringify(plyPrefetchUri)};\n      `
+      : '';
     html = html.replace(
       /window\.__TIFF_WASM_URL__ = '/,
-      `window.__PLY_WEBGPU__ = ${useWebGPU};\n      window.__TIFF_WASM_URL__ = '`
+      `window.__PLY_WEBGPU__ = ${useWebGPU};\n      ${prefetch}window.__TIFF_WASM_URL__ = '`
     );
     html = html.replace(/src="bundle\.js"/, `nonce="${nonce}" src="${scriptUri}"`);
 
@@ -1472,4 +1487,27 @@ function getNonce(): string {
     text += possible.charAt(Math.floor(Math.random() * possible.length));
   }
   return text;
+}
+
+/**
+ * The webview URI of a local binary PLY, for the page to start fetching while
+ * it boots; undefined for ASCII PLYs (parsed in the extension host) and for
+ * anything not on disk. Reads only the header's first kilobyte.
+ */
+function binaryPlyPrefetchUri(uri: vscode.Uri, webview: vscode.Webview): string | undefined {
+  if (uri.scheme !== 'file') {
+    return undefined;
+  }
+  try {
+    const fd = fs.openSync(uri.fsPath, 'r');
+    try {
+      const head = Buffer.alloc(1024);
+      const read = fs.readSync(fd, head, 0, head.length, 0);
+      return isPlyBinary(head.subarray(0, read)) ? webview.asWebviewUri(uri).toString() : undefined;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return undefined;
+  }
 }

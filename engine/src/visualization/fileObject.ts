@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { SpatialData } from '../interfaces';
 import type { FileEntry } from '../state/fileEntries';
-import type { ObjData, ObjLine } from '../parsers/objParser';
+import { objFaceCorners, objTriangleStarts, type ObjFileData } from '../formats/meshSpatialData';
 
 import { createOptimizedPointCloud } from './PointCloudRenderer';
 
@@ -76,18 +76,23 @@ export function buildFileObject(
     isObjFile?: boolean;
     isObjWireframe?: boolean;
     objRenderType?: string;
-    objLines?: ObjLine[];
-    objData?: ObjData;
+    objLines?: Uint32Array;
+    objData?: ObjFileData;
   };
   const tag = (object: THREE.Object3D, materialName?: string) =>
     Object.assign(object, { isObjMesh: true, materialName });
-  const lines = (items: ObjLine[]) => {
-    const positions = new Float32Array(items.length * 6);
-    items.forEach((line, i) => {
-      const a = data.vertices[line.start],
-        b = data.vertices[line.end];
-      positions.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6);
-    });
+  const source = data.positionsArray!;
+  // Segment ids index pairs in `pairs` (the OBJ's line list).
+  const lines = (pairs: Uint32Array, segments?: Uint32Array) => {
+    const count = segments ? segments.length : pairs.length / 2;
+    const positions = new Float32Array(count * 6);
+    for (let i = 0; i < count; i++) {
+      const segment = segments ? segments[i] : i;
+      const a = pairs[segment * 2] * 3;
+      const b = pairs[segment * 2 + 1] * 3;
+      positions.set(source.subarray(a, a + 3), i * 6);
+      positions.set(source.subarray(b, b + 3), i * 6 + 3);
+    }
     const geometry = own(new THREE.BufferGeometry());
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     return new THREE.LineSegments(geometry, own(new THREE.LineBasicMaterial({ color: 0xff0000 })));
@@ -101,49 +106,46 @@ export function buildFileObject(
     } else if ((obj.isObjWireframe || obj.objRenderType === 'wireframe') && obj.objLines) {
       root = lines(obj.objLines);
     } else if (obj.isObjFile && obj.objRenderType === 'mesh' && data.faceCount > 0) {
-      if ((obj.objData?.materialGroups.length ?? 0) > 1) {
+      const objData = obj.objData!;
+      if (objData.materialGroups.length > 1) {
         // A hidden wrapper supplies the geometry/transform contract used by selection.
         material.visible = false;
         root = new THREE.Mesh(geometry, material);
         const group = new THREE.Group();
-        for (const part of obj.objData!.materialGroups) {
+        const triangleStarts = objTriangleStarts(objData);
+        for (const part of objData.materialGroups) {
           if (part.faces.length) {
+            // Each polygon gets its own corners, fanned as in the file.
             const positions: number[] = [],
               indices: number[] = [];
             for (const face of part.faces) {
-              if (face.indices.length < 3) {
-                continue;
-              }
+              const corners = objFaceCorners(objData, triangleStarts, face);
               const offset = positions.length / 3;
-              for (const i of face.indices) {
-                const v = data.vertices[i];
-                positions.push(v.x, v.y, v.z);
+              for (const i of corners) {
+                positions.push(source[i * 3], source[i * 3 + 1], source[i * 3 + 2]);
               }
-              for (let i = 1; i < face.indices.length - 1; i++) {
+              for (let i = 1; i < corners.length - 1; i++) {
                 indices.push(offset, offset + i, offset + i + 1);
               }
             }
-            if (positions.length) {
-              const g = own(new THREE.BufferGeometry());
-              g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-              g.setIndex(indices);
-              g.computeVertexNormals();
-              const m = own(
-                new THREE.MeshBasicMaterial({ color: 0x808080, side: THREE.DoubleSide })
-              );
-              group.add(tag(new THREE.Mesh(g, m), part.material));
-            }
-          }
-          if (part.lines.length) {
-            group.add(tag(lines(part.lines), part.material));
-          }
-          if (part.points.length) {
-            const positions = part.points.flatMap(point => {
-              const v = data.vertices[point.index];
-              return [v.x, v.y, v.z];
-            });
             const g = own(new THREE.BufferGeometry());
             g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            g.setIndex(indices);
+            g.computeVertexNormals();
+            const m = own(new THREE.MeshBasicMaterial({ color: 0x808080, side: THREE.DoubleSide }));
+            group.add(tag(new THREE.Mesh(g, m), part.material));
+          }
+          if (part.lines.length) {
+            group.add(tag(lines(objData.lineIndices, part.lines), part.material));
+          }
+          if (part.points.length) {
+            const positions = new Float32Array(part.points.length * 3);
+            part.points.forEach((point, i) => {
+              const v = objData.pointIndices[point] * 3;
+              positions.set(source.subarray(v, v + 3), i * 3);
+            });
+            const g = own(new THREE.BufferGeometry());
+            g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
             const m = own(
               new THREE.PointsMaterial({
                 color: 0xff0000,
@@ -169,11 +171,10 @@ export function buildFileObject(
             vertexColors: data.hasColors,
           })
         );
-        if (obj.objData?.hasNormals) {
+        if (objData.normalsArray) {
+          // The viewer has always paired the n-th `vn` with the n-th vertex.
           const normals = new Float32Array(data.vertexCount * 3);
-          obj.objData.normals
-            .slice(0, data.vertexCount)
-            .forEach((n, i) => normals.set([n.nx, n.ny, n.nz], i * 3));
+          normals.set(objData.normalsArray.subarray(0, normals.length));
           geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
         }
         root = new THREE.Mesh(geometry, m);

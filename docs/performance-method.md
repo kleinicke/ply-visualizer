@@ -147,6 +147,34 @@ iterative undistortion, Bayer sample); there is nothing there for LLVM to
 vectorise. Not adopted: a build flag that changes the shipped binary for no
 measured gain is a liability.
 
+### Three more traps (October 2026 load work)
+
+1. **The first wasm call in a fresh isolate runs on baseline code.** V8 compiles
+   wasm with Liftoff first and optimizes hot functions in the background, but a
+   call that is already running never switches. A whole-file parse is one call,
+   and every opened file is a fresh webview: binary PLY parsed in 315 ms against
+   110 ms once optimized. A 50k-vertex warm-up parse while the bytes are still
+   in flight fixes it (`warmUpPlyParser`). The same applies to extension-host
+   worker threads, which is why the decoder pool shares one compiled
+   `WebAssembly.Module` across workers (`parsePool.ts`).
+2. **This machine is memory-bound.** With ~20 GB of swap in use, a corpus of
+   several 300–600 MB files evicts itself from the page cache and the run
+   measures the disk. A/B one file at a time, and compare against HEAD in the
+   same session (below), never against an old number.
+3. **`postMessage` to a webview JSON-serializes everything that is not a
+   buffer.** An object per triangle made a 2M-triangle STL fail outright (V8
+   string limit) and an OBJ take 20 s. Ship typed arrays only.
+
+### A/B against HEAD
+
+Build HEAD once in a scratch worktree (`git worktree add --detach <dir> HEAD`,
+symlink `node_modules`, `engine/node_modules` and `.vscode-test`, then
+`npm run compile` there) and run `scripts/benchmark-vscode.mjs` from each tree
+for the same file, back to back. `PLY_PERF_QUIET_MS=4000` shortens the harness's
+quiet window for single-line formats. Every parser change in that work was also
+checked for byte-identical output against the old path (array hashes or
+field-by-field comparison), not only timed.
+
 ## 6. Amdahl is the honest answer
 
 When matching is 99% of align-all, a 3x matching win is a 2.9x win. When

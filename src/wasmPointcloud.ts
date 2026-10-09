@@ -38,7 +38,7 @@ export interface WasmLidarCloud extends WasmPointCloud {
   sourceOrigin: Float64Array;
 }
 
-interface WasmE57Image extends Record<string, unknown> {
+export interface WasmE57Image extends Record<string, unknown> {
   associatedPointcloudGuid?: string;
   data: Uint8Array;
   mask?: Uint8Array;
@@ -48,6 +48,12 @@ let mod: any = null;
 let attempted = false;
 
 function load(): any {
+  // In a decoder worker: the crate instantiated from the shared module (see
+  // providerHandlers/parseWorker.ts).
+  const provided = (globalThis as { plySharedPointcloudWasm?: unknown }).plySharedPointcloudWasm;
+  if (provided) {
+    return provided;
+  }
   if (attempted) {
     return mod;
   }
@@ -88,7 +94,8 @@ function takeNonEmpty(r: any, method: string): Float32Array | null {
   return value.length > 0 ? value : null;
 }
 
-function marshalLidarScan(r: any): WasmLidarCloud {
+/** A decoded LAS/LAZ/E57 scan out of wasm memory (shared with the decoder workers). */
+export function marshalLidarScan(r: any): WasmLidarCloud {
   const scalarFields: Record<string, Float32Array> = {};
   const fields: Array<[string, string]> = [
     ['intensity', 'take_intensity'],
@@ -132,7 +139,7 @@ function marshalLidarScan(r: any): WasmLidarCloud {
   return out;
 }
 
-function takeE57Images(collection: any): WasmE57Image[] {
+export function takeE57Images(collection: any): WasmE57Image[] {
   const images: WasmE57Image[] = [];
   for (let index = 0; index < Number(collection.image_count || 0); index++) {
     const image = collection.take_image(index);
@@ -150,7 +157,7 @@ function takeE57Images(collection: any): WasmE57Image[] {
   return images;
 }
 
-function associateE57Images(scans: WasmLidarCloud[], images: WasmE57Image[]): void {
+export function associateE57Images(scans: WasmLidarCloud[], images: WasmE57Image[]): void {
   if (!images.length || !scans.length) {
     return;
   }

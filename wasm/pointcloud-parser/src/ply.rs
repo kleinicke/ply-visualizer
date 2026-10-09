@@ -1062,8 +1062,157 @@ fn read_binary_body(
     Ok(())
 }
 
-#[allow(clippy::needless_range_loop)] // the index addresses several buffers at once
+/// Bounds update by comparison. `f32::min`/`max` ignore NaN the same way,
+/// but wasm has no instruction with those semantics, so they compile to calls
+/// into libm - a measurable share of the whole loop on eight million vertices.
+#[inline]
+fn widen(min: &mut [f32; 3], max: &mut [f32; 3], xyz: [f32; 3]) {
+    for axis in 0..3 {
+        if xyz[axis] < min[axis] {
+            min[axis] = xyz[axis];
+        }
+        if xyz[axis] > max[axis] {
+            max[axis] = xyz[axis];
+        }
+    }
+}
+
 fn read_vertices_fast(
+    data: &[u8],
+    start: usize,
+    stride: usize,
+    n: usize,
+    little: bool,
+    layout: &FastLayout,
+    sink: &mut VertexSink,
+) {
+    // One loop per combination of the per-file choices, so none of them is a
+    // branch per vertex. The layouts outside this table are rare enough for
+    // the dynamic version.
+    let rgb = layout.rgb.is_some();
+    let normals = layout.normals.is_some();
+    match (
+        little,
+        layout.xyz_f64,
+        rgb,
+        normals,
+        layout.intensity.is_some(),
+    ) {
+        (true, false, true, true, false) => {
+            vertex_loop::<true, false, true, true, false>(data, start, stride, n, layout, sink);
+        }
+        (true, false, true, false, false) => {
+            vertex_loop::<true, false, true, false, false>(data, start, stride, n, layout, sink);
+        }
+        (true, false, false, false, false) => {
+            vertex_loop::<true, false, false, false, false>(data, start, stride, n, layout, sink);
+        }
+        (true, false, false, true, false) => {
+            vertex_loop::<true, false, false, true, false>(data, start, stride, n, layout, sink);
+        }
+        (true, false, false, false, true) => {
+            vertex_loop::<true, false, false, false, true>(data, start, stride, n, layout, sink);
+        }
+        (true, false, true, false, true) => {
+            vertex_loop::<true, false, true, false, true>(data, start, stride, n, layout, sink);
+        }
+        (true, true, true, false, false) => {
+            vertex_loop::<true, true, true, false, false>(data, start, stride, n, layout, sink);
+        }
+        (true, true, false, false, false) => {
+            vertex_loop::<true, true, false, false, false>(data, start, stride, n, layout, sink);
+        }
+        _ => vertex_loop_dynamic(data, start, stride, n, little, layout, sink),
+    }
+}
+
+#[inline]
+fn f32_le<const LITTLE: bool>(record: &[u8], at: usize) -> f32 {
+    let bytes = [record[at], record[at + 1], record[at + 2], record[at + 3]];
+    if LITTLE {
+        f32::from_le_bytes(bytes)
+    } else {
+        f32::from_be_bytes(bytes)
+    }
+}
+
+#[inline]
+fn f64_le<const LITTLE: bool>(record: &[u8], at: usize) -> f64 {
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&record[at..at + 8]);
+    if LITTLE {
+        f64::from_le_bytes(bytes)
+    } else {
+        f64::from_be_bytes(bytes)
+    }
+}
+
+// Double-precision positions are narrowed on purpose: the GPU buffers are f32.
+#[allow(clippy::too_many_arguments, clippy::cast_possible_truncation)]
+fn vertex_loop<
+    const LITTLE: bool,
+    const F64: bool,
+    const RGB: bool,
+    const NORMALS: bool,
+    const INTENSITY: bool,
+>(
+    data: &[u8],
+    start: usize,
+    stride: usize,
+    n: usize,
+    layout: &FastLayout,
+    sink: &mut VertexSink,
+) {
+    sink.reserve_exact(n);
+    let [ox, oy, oz] = layout.xyz;
+    let rgb = layout.rgb.unwrap_or([0; 3]);
+    let nrm = layout.normals.unwrap_or([0; 3]);
+    let inten = layout.intensity.unwrap_or(0);
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    let records = data[start..start + n * stride].chunks_exact(stride);
+    let positions = sink.positions.chunks_exact_mut(3);
+    for (i, (record, position)) in records.zip(positions).enumerate() {
+        let xyz = if F64 {
+            [
+                f64_le::<LITTLE>(record, ox) as f32,
+                f64_le::<LITTLE>(record, oy) as f32,
+                f64_le::<LITTLE>(record, oz) as f32,
+            ]
+        } else {
+            [
+                f32_le::<LITTLE>(record, ox),
+                f32_le::<LITTLE>(record, oy),
+                f32_le::<LITTLE>(record, oz),
+            ]
+        };
+        position.copy_from_slice(&xyz);
+        widen(&mut min, &mut max, xyz);
+        if RGB {
+            let i3 = i * 3;
+            sink.colors[i3] = record[rgb[0]];
+            sink.colors[i3 + 1] = record[rgb[1]];
+            sink.colors[i3 + 2] = record[rgb[2]];
+        }
+        if NORMALS {
+            let i3 = i * 3;
+            sink.normals[i3] = f32_le::<LITTLE>(record, nrm[0]);
+            sink.normals[i3 + 1] = f32_le::<LITTLE>(record, nrm[1]);
+            sink.normals[i3 + 2] = f32_le::<LITTLE>(record, nrm[2]);
+        }
+        if INTENSITY {
+            sink.intensity[i] = f32_le::<LITTLE>(record, inten);
+        }
+    }
+    sink.min = min;
+    sink.max = max;
+}
+
+/// The same loop with the choices made per vertex, for the uncommon layouts
+/// the table above does not list.
+// The index addresses several buffers at once; f64 positions narrow to the f32 GPU buffers.
+#[allow(clippy::needless_range_loop, clippy::cast_possible_truncation)]
+fn vertex_loop_dynamic(
     data: &[u8],
     start: usize,
     stride: usize,
@@ -1099,12 +1248,7 @@ fn read_vertices_fast(
         positions[i3] = x;
         positions[i3 + 1] = y;
         positions[i3 + 2] = z;
-        min[0] = min[0].min(x);
-        min[1] = min[1].min(y);
-        min[2] = min[2].min(z);
-        max[0] = max[0].max(x);
-        max[1] = max[1].max(y);
-        max[2] = max[2].max(z);
+        widen(&mut min, &mut max, [x, y, z]);
 
         if let Some(rgb) = layout.rgb {
             colors[i3] = data[base + rgb[0]];

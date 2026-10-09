@@ -1,3 +1,4 @@
+import { hasSourceRows, sourceRowAt } from '../utils/sourceRows';
 import { setAgentPointSizeMode } from './agentPointSizing';
 import { comparisonState } from './agentComparison';
 /* eslint-disable @typescript-eslint/naming-convention -- MCP wire keys */
@@ -164,7 +165,9 @@ async function pickSingleView(host: ControlHost, screen: number[]) {
     source_row:
       sourceIndex === undefined
         ? null
-        : ((selected?.source ?? file)?.sourcePointIndices?.[sourceIndex] ?? null),
+        : (selected?.source ?? file)
+          ? sourceRowAt((selected?.source ?? file)!, sourceIndex)
+          : null,
     index_space:
       'source_point_index is decoded; source_row is original zero-based source record (depth raster: v*width+u), null when unavailable',
     attributes: Object.fromEntries(
@@ -279,8 +282,8 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
     faceCount: 0,
     vertexCount: indices.length,
     sourcePointCount: indices.length,
-    sourcePointIndices: source.sourcePointIndices?.length
-      ? Uint32Array.from(indices, index => source.sourcePointIndices![index])
+    sourcePointIndices: hasSourceRows(source)
+      ? Uint32Array.from(indices, index => sourceRowAt(source, index) ?? 0)
       : undefined,
     positionsArray: subset(positions, 3)!,
     colorsArray: subset(source.colorsArray, 3),

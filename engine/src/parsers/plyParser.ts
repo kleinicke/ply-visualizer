@@ -37,7 +37,8 @@ export class PlyParser {
     log(`🎯 Parser: Total parse time ${(performance.now() - parseStartTime).toFixed(1)}ms`);
     return {
       vertices: [],
-      faces: parsed.faces,
+      faces: [],
+      indicesArray: parsed.indicesArray,
       format: parsed.format,
       version: parsed.version,
       comments: parsed.comments,

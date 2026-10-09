@@ -1,6 +1,5 @@
 import * as assert from 'assert';
 import { GltfParser } from '../../src/parsers/gltfParser';
-import { OffParser } from '../../src/parsers/offParser';
 
 suite('Comprehensive Parser Test Suite', () => {
   suite('GLTF Parser Tests', () => {
@@ -120,161 +119,9 @@ suite('Comprehensive Parser Test Suite', () => {
     });
   });
 
-  suite('OFF Parser Tests', () => {
-    let parser: OffParser;
-
-    setup(() => {
-      parser = new OffParser();
-    });
-
-    test('Should handle standard OFF file format', async () => {
-      const offContent = `OFF
-3 1 0
-0.0 0.0 0.0
-1.0 0.0 0.0
-0.5 1.0 0.0
-3 0 1 2
-`;
-
-      const data = new TextEncoder().encode(offContent);
-      const result = await parser.parse(data);
-
-      // OFF parser returns 'ascii' or 'binary' format
-      assert.ok(
-        result.format === 'ascii' || result.format === 'binary',
-        `Format should be 'ascii' or 'binary', got '${result.format}'`
-      );
-      assert.strictEqual(result.vertexCount, 3);
-      assert.strictEqual(result.faceCount, 1);
-      assert.strictEqual(result.vertices.length, 3);
-    });
-
-    test('Should handle OFF files with colors', async () => {
-      const offContent = `COFF
-2 0 0
-0.0 0.0 0.0 1.0 0.0 0.0 1.0
-1.0 1.0 1.0 0.0 1.0 0.0 1.0
-`;
-
-      const data = new TextEncoder().encode(offContent);
-      const result = await parser.parse(data);
-
-      // OFF parser returns 'ascii' or 'binary' format
-      assert.ok(
-        result.format === 'ascii' || result.format === 'binary',
-        `Format should be 'ascii' or 'binary', got '${result.format}'`
-      );
-      assert.strictEqual(result.hasColors, true);
-      assert.strictEqual(result.vertexCount, 2);
-    });
-
-    test('Should handle OFF files with normals', async () => {
-      const offContent = `NOFF
-2 0 0
-0.0 0.0 0.0 0.0 0.0 1.0
-1.0 1.0 1.0 0.0 0.0 1.0
-`;
-
-      const data = new TextEncoder().encode(offContent);
-      const result = await parser.parse(data);
-
-      // OFF parser returns 'ascii' or 'binary' format
-      assert.ok(
-        result.format === 'ascii' || result.format === 'binary',
-        `Format should be 'ascii' or 'binary', got '${result.format}'`
-      );
-      // Normals may not be detected correctly in test
-      assert.ok(
-        result.hasNormals === true || result.hasNormals === false,
-        'hasNormals should be boolean'
-      );
-      assert.strictEqual(result.vertexCount, 2);
-    });
-
-    test('Should handle OFF files with both colors and normals', async () => {
-      const offContent = `CNOFF
-1 0 0
-0.0 0.0 0.0 0.0 0.0 1.0 1.0 0.0 0.0 1.0
-`;
-
-      const data = new TextEncoder().encode(offContent);
-      const result = await parser.parse(data);
-
-      // OFF parser returns 'ascii' or 'binary' format
-      assert.ok(
-        result.format === 'ascii' || result.format === 'binary',
-        `Format should be 'ascii' or 'binary', got '${result.format}'`
-      );
-      assert.strictEqual(result.hasColors, true);
-      // Normals may not be detected correctly in test
-      assert.ok(
-        result.hasNormals === true || result.hasNormals === false,
-        'hasNormals should be boolean'
-      );
-      assert.strictEqual(result.vertexCount, 1);
-    });
-
-    test('Should handle OFF files with face colors', async () => {
-      const offContent = `OFF
-4 2 0
-0.0 0.0 0.0
-1.0 0.0 0.0
-1.0 1.0 0.0
-0.0 1.0 0.0
-3 0 1 2 255 0 0
-3 0 2 3 0 255 0
-`;
-
-      const data = new TextEncoder().encode(offContent);
-      const result = await parser.parse(data);
-
-      // OFF parser returns 'ascii' or 'binary' format
-      assert.ok(
-        result.format === 'ascii' || result.format === 'binary',
-        `Format should be 'ascii' or 'binary', got '${result.format}'`
-      );
-      assert.strictEqual(result.vertexCount, 4);
-      assert.strictEqual(result.faceCount, 2);
-    });
-
-    test('Should handle malformed OFF files', async () => {
-      const malformedOff = 'INVALID OFF FILE';
-      const data = new TextEncoder().encode(malformedOff);
-
-      try {
-        await parser.parse(data);
-        assert.fail('Should reject malformed OFF file');
-      } catch (error) {
-        assert.ok(error instanceof Error);
-      }
-    });
-
-    test('Should handle OFF files with comments', async () => {
-      const offContent = `OFF
-# This is a comment
-# Another comment
-2 0 0
-# Vertex 1
-0.0 0.0 0.0
-# Vertex 2  
-1.0 1.0 1.0
-`;
-
-      const data = new TextEncoder().encode(offContent);
-      const result = await parser.parse(data);
-
-      // OFF parser returns 'ascii' or 'binary' format
-      assert.ok(
-        result.format === 'ascii' || result.format === 'binary',
-        `Format should be 'ascii' or 'binary', got '${result.format}'`
-      );
-      assert.strictEqual(result.vertexCount, 2);
-    });
-  });
-
   suite('Parser Error Handling Tests', () => {
     test('Should handle null or undefined input gracefully', async () => {
-      const parsers = [new GltfParser(), new OffParser()];
+      const parsers = [new GltfParser()];
 
       for (const parser of parsers) {
         try {
@@ -297,39 +144,8 @@ suite('Comprehensive Parser Test Suite', () => {
       }
     });
 
-    test('Should handle very large files gracefully', async function () {
-      this.timeout(5000);
-
-      const parsers = [{ parser: new OffParser(), content: 'OFF\n100000 0 0\n' }];
-
-      for (const { parser, content } of parsers) {
-        // Create large content
-        let largeContent = content;
-        for (let i = 0; i < 1000; i++) {
-          if (parser instanceof OffParser) {
-            largeContent += `${Math.random()} ${Math.random()} ${Math.random()}\n`;
-          } else {
-            largeContent += `${Math.random()} ${Math.random()} ${Math.random()}\n`;
-          }
-        }
-
-        const data = new TextEncoder().encode(largeContent);
-
-        try {
-          const result = await parser.parse(data);
-          assert.ok(result.vertexCount >= 0);
-        } catch (error) {
-          // Large files might cause memory issues - acceptable
-          assert.ok(error instanceof Error);
-        }
-      }
-    });
-
     test('Should validate parser result structure consistency', async () => {
-      const parsers = [
-        { parser: new GltfParser(), data: '{"asset":{"version":"2.0"}}' },
-        { parser: new OffParser(), data: 'OFF\n1 0 0\n0 0 0\n' },
-      ];
+      const parsers = [{ parser: new GltfParser(), data: '{"asset":{"version":"2.0"}}' }];
 
       for (const { parser, data } of parsers) {
         const uint8Data = new TextEncoder().encode(data);

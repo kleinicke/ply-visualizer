@@ -126,34 +126,30 @@ test('multi-material OBJ has one file root and inherits its transform exactly on
   await page.goto('/');
   await page.waitForFunction(() => !!(window as any).visualizer);
   await page.evaluate(async () => {
-    const vertices = [
-      { x: 0, y: 0, z: 0 },
-      { x: 1, y: 0, z: 0 },
-      { x: 0, y: 1, z: 0 },
-    ];
-    const faces = [{ indices: [0, 1, 2] }, { indices: [2, 1, 0] }];
+    // The packed shape the Rust OBJ parser produces: two triangles, each with
+    // its own material (ids 1 and 2; id 0 is "no usemtl").
     await (window as any).visualizer.handleObjData({
       type: 'objData',
       fileName: 'groups.obj',
       data: {
-        vertices,
-        faces,
-        normals: [],
-        points: [],
-        lines: [],
-        textureCoords: [],
         vertexCount: 3,
-        faceCount: 2,
-        lineCount: 0,
-        pointCount: 0,
+        positionsArray: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        normalsArray: null,
+        normalCount: 0,
+        textureCoordCount: 0,
         hasNormals: false,
         hasTextures: false,
-        materialGroups: faces.map((face, i) => ({
-          material: String(i),
-          faces: [face],
-          lines: [],
-          points: [],
-        })),
+        indicesArray: new Uint32Array([0, 1, 2, 2, 1, 0]),
+        faceCount: 2,
+        faceSizes: null,
+        faceMaterials: new Uint32Array([1, 2]),
+        lineIndices: new Uint32Array(0),
+        lineMaterials: null,
+        lineCount: 0,
+        pointIndices: new Uint32Array(0),
+        pointMaterials: null,
+        pointCount: 0,
+        materialNames: ['', '0', '1'],
       },
     });
   });

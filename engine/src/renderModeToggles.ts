@@ -1,6 +1,7 @@
 import type { FileEntryRegistry } from './state/fileEntries';
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
+import { hasCpuNormals } from './normalsVisualizer';
 
 /**
  * Per-file solid/wireframe/points/normals render-mode toggles and the mesh
@@ -407,7 +408,7 @@ export function toggleNormalsRendering(host: RenderModeHost, fileIndex: number):
 
       // 1. For PLY point clouds, try to use original normals data first
       if (spatialData.fileName?.toLowerCase().endsWith('.ply') && mesh.type === 'Points') {
-        if (spatialData.hasNormals && spatialData.vertices.length > 0) {
+        if (hasCpuNormals(spatialData)) {
           normalsVisualizer = host.createNormalsVisualizer(spatialData);
         } else {
           // Try to extract normals from Points geometry
@@ -418,8 +419,8 @@ export function toggleNormalsRendering(host: RenderModeHost, fileIndex: number):
       else if (spatialData.fileName?.toLowerCase().endsWith('.ply')) {
         normalsVisualizer = host.createComputedNormalsVisualizer(spatialData, mesh);
       }
-      // 3. If PLY data has explicit normals and populated vertices array
-      else if (spatialData.hasNormals && spatialData.vertices.length > 0) {
+      // 3. If the file carries its own normals (packed or per-vertex)
+      else if (hasCpuNormals(spatialData)) {
         normalsVisualizer = host.createNormalsVisualizer(spatialData);
       }
       // 4. If it's a triangle mesh, compute from geometry
@@ -433,6 +434,11 @@ export function toggleNormalsRendering(host: RenderModeHost, fileIndex: number):
 
       if (normalsVisualizer) {
         console.log(`✅ Created normals visualizer for file ${fileIndex}`);
+        // Built on first use, so it must pick up whatever transform the file
+        // already has; later transform changes reach it through the entry.
+        normalsVisualizer.matrix.copy(mesh.matrix);
+        normalsVisualizer.matrixAutoUpdate = false;
+        normalsVisualizer.matrixWorldNeedsUpdate = true;
         host.fileEntries.require(fileIndex).resources.normals = normalsVisualizer;
         host.scene.add(normalsVisualizer);
       } else {

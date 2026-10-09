@@ -1,4 +1,5 @@
 import { validateSpatialData } from './validateSpatialData';
+import { computePositionBounds } from './fastBounds';
 import type { FileEntryRegistry } from '../state/fileEntries';
 import * as THREE from 'three';
 import { SpatialData } from '../interfaces';
@@ -156,12 +157,13 @@ export function createGeometryFromSpatialData(
       }
     }
 
-    // Ensure normals are available for proper lighting after indices are set
-    if (!geometry.getAttribute('normal') && data.faces.length > 0) {
+    // Ensure normals are available for proper lighting after indices are set.
+    // Typed meshes carry their faces in the index, not in `data.faces`.
+    if (!geometry.getAttribute('normal') && (data.faces.length > 0 || geometry.getIndex())) {
       geometry.computeVertexNormals();
     }
 
-    geometry.computeBoundingBox();
+    computePositionBounds(geometry);
 
     const endTime = performance.now();
     const geometryMs = +(endTime - startTime).toFixed(1);

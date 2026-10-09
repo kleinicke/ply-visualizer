@@ -1,8 +1,14 @@
 import type { FileEntry, PoseEntryData } from './state/fileEntries';
 import type { FileObject } from './visualization/fileObject';
 import { ViewerLifetime } from './utils/viewerLifetime';
-import type { EntryRequest } from './hosts/viewerProtocol';
 import { listenForViewerMessages } from './hosts/viewerRouter';
+import { readViewerMessage, type EntryRequest, type MessageOf } from './hosts/viewerProtocol';
+import {
+  addPointStreamPart,
+  cancelPointStream,
+  finishPointStream,
+  type PointStreamPart,
+} from './hosts/pointStream';
 import { buildFileObject, disposeObjects, disposeFileResources } from './visualization/fileObject';
 import './textImport/prompt';
 import { handleNativeAgentRequest } from './hosts/nativeAgent';
@@ -125,6 +131,7 @@ import * as normalsVisualizer from './normalsVisualizer';
 import * as depthConversionPipeline from './depth/depthConversionPipeline';
 import * as colorImageForDepth from './depth/colorImageForDepth';
 import * as largeFileChunking from './largeFileChunking';
+import type { LargeFileChunkingHost } from './largeFileChunking';
 import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
@@ -186,6 +193,10 @@ import { buildVolumePointsAsync } from './visualization/volumePoints';
 import { buildVolumeMeshAsync } from './visualization/isosurface';
 import { buildVolumeSlicesAsync } from './visualization/volumeSlices';
 import { buildVolumeVoxelsAsync } from './visualization/volumeVoxels';
+
+// As early as the bundle allows: a binary PLY the extension named in the page
+// starts streaming into the parser while the viewer below initialises.
+binaryDataHandlers.startPlyPrefetch((window as any).__PLY_PREFETCH__);
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing
@@ -438,36 +449,7 @@ export class PointCloudVisualizer {
   private lightingMode: 'normal' | 'flat' | 'unlit' = 'normal';
 
   // Large file chunked loading state
-  chunkedFileState: Map<
-    string,
-    {
-      fileName: string;
-      totalVertices: number;
-      totalChunks: number;
-      receivedChunks: number;
-      vertices: SpatialVertex[];
-      positionsArray?: Float32Array;
-      colorsArray?: Uint8Array;
-      normalsArray?: Float32Array;
-      scalarFields?: Record<string, Float32Array>;
-      useTypedArrays: boolean;
-      hasColors: boolean;
-      hasNormals: boolean;
-      faces: SpatialFace[];
-      format: string;
-      comments: string[];
-      messageType: string;
-      startTime: number;
-      firstChunkTime: number;
-      lastChunkTime: number;
-      shortPath?: string;
-      hasIntensity?: boolean;
-      sourcePointCount?: number;
-      sourceOrigin?: [number, number, number];
-      metadata?: Record<string, unknown>;
-      fileSizeInBytes?: number;
-    }
-  > = new Map();
+  chunkedFileState: LargeFileChunkingHost['chunkedFileState'] = new Map();
 
   // Adaptive decimation tracking
 
@@ -607,7 +589,9 @@ export class PointCloudVisualizer {
 
   private async init(): Promise<void> {
     try {
+      const initStartedAt = performance.now();
       await this.initThreeJS();
+      const rendererReadyAt = performance.now();
       if (this.lifetime.disposed) {
         return;
       }
@@ -654,6 +638,10 @@ export class PointCloudVisualizer {
         // VSCode extension environment
         configureRegistrationExtensionHost(message => this.vscode.postMessage(message));
         this.setupMessageHandler();
+        // Boot phases on the webview's own clock (0 = navigation start).
+        perfLog(
+          `⏱️ PERF[webview/boot] script ${initStartedAt.toFixed(0)}ms · renderer ${(rendererReadyAt - initStartedAt).toFixed(0)}ms · ui ${(performance.now() - rendererReadyAt).toFixed(0)}ms | ready at ${performance.now().toFixed(0)}ms`
+        );
         // The extension may already be parsing a restored document, but it
         // queues all outbound messages until this listener is installed.
         this.vscode.postMessage({ type: 'webviewReady' });
@@ -1056,10 +1044,6 @@ export class PointCloudVisualizer {
 
   private updateRotationCenterModeButtons(): void {
     this.rotationCenterManager.updateModeButtons();
-  }
-
-  private rebuildAllColorAttributesForCurrentGammaSetting(): void {
-    sceneBrightness.rebuildAllColorAttributesForCurrentGammaSetting(this);
   }
 
   private setupResizeObserver(): void {
@@ -2533,6 +2517,33 @@ export class PointCloudVisualizer {
             formatDataHandlers.handlePointData(this, message)
           );
         },
+        pointStreamPart: async message => {
+          addPointStreamPart(message.streamId, message as unknown as PointStreamPart);
+        },
+        pointStreamCancel: async message => {
+          cancelPointStream(message.streamId);
+        },
+        pointStreamEnd: async message => {
+          // The closing message is an ordinary xyzVariantData without its
+          // arrays; with the joined parts filled in it is validated and
+          // handled exactly like one that arrived whole.
+          const closing = message.message as { data: Record<string, unknown> };
+          const flags = closing.data;
+          const arrays = finishPointStream(message.streamId) ?? {
+            positionsArray: new Float32Array(0),
+            colorsArray: flags.hasColors ? new Uint8Array(0) : null,
+            normalsArray: flags.hasNormals ? new Float32Array(0) : null,
+            intensityArray: flags.hasIntensity ? new Float32Array(0) : null,
+          };
+          const whole = readViewerMessage({
+            ...closing,
+            type: 'xyzVariantData',
+            data: { ...closing.data, ...arrays },
+          }) as MessageOf<'xyzVariantData'>;
+          await this.loadWithPerf('xyz', whole, () =>
+            formatDataHandlers.handlePointData(this, whole)
+          );
+        },
         cameraParams: async message => {
           this.handleCameraParams(message);
         },
@@ -2691,24 +2702,20 @@ export class PointCloudVisualizer {
 
       this.updateFileList();
 
-      // Ensure color consistency with current gamma setting
-      this.rebuildAllColorAttributesForCurrentGammaSetting();
-
       uiState.loadingVisible = false;
       return;
     }
 
-    // Normal mode
+    // Normal mode. addNewFiles has already published the file list and stats;
+    // publishing them again here forced a second synchronous list render.
     this.addNewFiles(dataArray);
-    this.updateFileStats();
-
-    this.updateFileList();
 
     this.updateCameraControlsPanel();
 
-    // Ensure color consistency with current gamma setting
-    this.rebuildAllColorAttributesForCurrentGammaSetting();
-
+    // No colour pass here. Each new file's colour attribute and material are
+    // built from the current gamma setting when it is created; re-applying the
+    // colour mode to every loaded file after each load rebuilt (and re-uploaded)
+    // all earlier files' colours, quadratically for a container's scans.
     this.autoFitCameraOnFirstLoad();
     this.showLoading(false);
     this.clearError();

@@ -6,6 +6,7 @@
 - Create jetbrains version, standalone tauri app, python, rest and mcp interface
 - open remote files
 - Provide AI Agents the commands to use the tools
+- Much faster loading of non-depth files: text point clouds (XYZ, PTS, ASCII PLY/PCD), LAS/LAZ and multi-scan E57 decode on several threads; STL, OBJ and OFF decode in Rust (large STL/OBJ meshes now load at all); quicker binary PLY/PCD and less work per load in the viewer
 
 ## [1.8.0] - 2026-08-28
 

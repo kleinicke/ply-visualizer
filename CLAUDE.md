@@ -75,18 +75,19 @@ this repository.
 
 ## Where code goes
 
-| What                        | Where                                                                                                                    |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| New format parser           | `engine/src/parsers/` (follow an existing parser)                                                                        |
-| Depth reader / camera model | `engine/src/depth/` (`readers/` for formats)                                                                             |
-| Camera controls             | `engine/src/controls.ts`                                                                                                 |
-| File detection/handling     | `engine/src/fileHandler.ts`                                                                                              |
-| Webview UI                  | Svelte 5 component in `engine/src/components/` reading `engine/src/state/*.svelte.js` — never new HTML-string generators |
-| Rendering helpers           | `engine/src/visualization/`                                                                                              |
-| Scan alignment / solvers    | `engine/src/registration/` (pure math, no DOM); host glue in `engine/src/registrationFeature.ts`                         |
-| Themes                      | `engine/src/themes/`                                                                                                     |
-| Utilities                   | `engine/src/utils/`                                                                                                      |
-| `engine/src/main.ts`        | Last resort — core Three.js scene logic only                                                                             |
+| What                        | Where                                                                                                                                   |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| New format parser           | `engine/src/parsers/` (follow an existing parser)                                                                                       |
+| Depth reader / camera model | `engine/src/depth/` (`readers/` for formats)                                                                                            |
+| Camera controls             | `engine/src/controls.ts`                                                                                                                |
+| File detection/handling     | `engine/src/fileHandler.ts`                                                                                                             |
+| Webview UI                  | Svelte 5 component in `engine/src/components/` reading `engine/src/state/*.svelte.js` — never new HTML-string generators                |
+| Rendering helpers           | `engine/src/visualization/`                                                                                                             |
+| Extension-host decoding     | Worker pool `src/providerHandlers/parsePool.ts` + `parseWorker.ts`; parallel splits in `parallelTextParse.ts` / `parallelLidarParse.ts` |
+| Scan alignment / solvers    | `engine/src/registration/` (pure math, no DOM); host glue in `engine/src/registrationFeature.ts`                                        |
+| Themes                      | `engine/src/themes/`                                                                                                                    |
+| Utilities                   | `engine/src/utils/`                                                                                                                     |
+| `engine/src/main.ts`        | Last resort — core Three.js scene logic only                                                                                            |
 
 Keep `main.ts` focused on scene composition. Put feature implementation in the
 modules above. Shared file presentation state and transforms belong to stable

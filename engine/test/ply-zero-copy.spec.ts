@@ -86,7 +86,7 @@ test('streaming into wasm memory parses identically to handing over the bytes', 
       positions: Array.from(r.positionsArray as Float32Array),
       colors: Array.from((r.colorsArray ?? []) as Uint8Array),
       quality: Array.from((r.scalarFields.quality ?? []) as Float32Array),
-      faces: r.faces.map((f: any) => f.indices),
+      faces: Array.from((r.indicesArray ?? []) as Uint32Array),
     });
     return { streamed: shape(streamed), copied: shape(copied) };
   });
@@ -94,7 +94,7 @@ test('streaming into wasm memory parses identically to handing over the bytes', 
   // Same file, same numbers — the only difference is where the bytes lived.
   expect(both.streamed).toEqual(both.copied);
   expect(both.streamed.vertexCount).toBe(64);
-  expect(both.streamed.faces).toEqual([[0, 1, 2]]);
+  expect(both.streamed.faces).toEqual([0, 1, 2]);
   expect(both.streamed.comments).toContain('zero-copy fixture');
   // Vertex i carries colour (i, 2i, 3i), so vertex 1 is the first that shows
   // the channels are not simply zeroed.

@@ -17,6 +17,20 @@ export class E57ImageResult {
 }
 
 /**
+ * One scan decoded on its own, with the errors it produced.
+ */
+export class E57ScanJobResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * The decoded scan; `undefined` when the scan could not be decoded.
+     */
+    take_scan(): LidarScanResult | undefined;
+    readonly errors_json: string;
+}
+
+/**
  * A triangle mesh, ready for a `BufferGeometry`.
  */
 export class IsosurfaceMesh {
@@ -33,6 +47,42 @@ export class IsosurfaceMesh {
     readonly step: Uint32Array;
     readonly triangle_count: number;
     readonly vertex_count: number;
+}
+
+/**
+ * The 8-bit colours of a whole LAS/LAZ file from its ranges' 16-bit ones,
+ * with the encoding decided over every channel as the whole-file parse does.
+ */
+export class LasColorBytes {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_colors(): Uint8Array;
+    readonly encoding: string;
+}
+
+/**
+ * One range of a LAS/LAZ file, decoded. Colours stay 16-bit: whether they
+ * are 8-bit-in-16-bit is a decision over the whole file (see
+ * [`las_colors_to_bytes`]).
+ */
+export class LasRangeResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    bounds(): Float32Array;
+    take_classification(): Float32Array;
+    take_colors16(): Uint16Array;
+    take_gps_time(): Float32Array;
+    take_intensity(): Float32Array;
+    take_number_of_returns(): Float32Array;
+    take_point_source_id(): Float32Array;
+    take_positions(): Float32Array;
+    take_return_number(): Float32Array;
+    take_scan_angle(): Float32Array;
+    take_user_data(): Float32Array;
+    readonly color_channels_above_byte: number;
+    readonly max_color: number;
 }
 
 export class LidarCollectionResult {
@@ -76,6 +126,24 @@ export class LidarScanResult {
 }
 
 /**
+ * A parsed triangle mesh. Buffers are moved out with the `take_*` methods.
+ */
+export class MeshResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_colors(): Uint8Array;
+    take_indices(): Uint32Array;
+    take_normals(): Float32Array;
+    take_positions(): Float32Array;
+    readonly has_colors: boolean;
+    readonly has_normals: boolean;
+    readonly metadata_json: string;
+    readonly triangle_count: number;
+    readonly vertex_count: number;
+}
+
+/**
  * One array, decoded to f32.
  */
 export class NpyArrayResult {
@@ -110,6 +178,31 @@ export class NrrdVolume {
      */
     readonly metadata_json: string;
     readonly sizes: Uint32Array;
+}
+
+/**
+ * A parsed OBJ. Buffers are moved out with the `take_*` methods.
+ */
+export class ObjResult {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    take_face_materials(): Uint32Array;
+    take_face_sizes(): Uint32Array;
+    take_indices(): Uint32Array;
+    take_line_indices(): Uint32Array;
+    take_line_materials(): Uint32Array;
+    take_normals(): Float32Array;
+    take_point_indices(): Uint32Array;
+    take_point_materials(): Uint32Array;
+    take_positions(): Float32Array;
+    readonly current_material: string;
+    readonly face_count: number;
+    readonly material_file: string;
+    readonly material_names: string[];
+    readonly normal_count: number;
+    readonly texcoord_count: number;
+    readonly vertex_count: number;
 }
 
 /**
@@ -173,6 +266,7 @@ export class PointCloudResult {
     readonly metadata_json: string;
     readonly scalar_field_names: string[];
     readonly source_count: number;
+    readonly source_rows_identity: boolean;
     readonly vertex_count: number;
 }
 
@@ -410,6 +504,23 @@ export function combine_point_indices(a: Uint32Array, b: Uint32Array, operation:
  */
 export function dealloc(ptr: number, len: number): void;
 
+/**
+ * The embedded images of an E57 on their own, for a file whose scans were
+ * decoded elsewhere. `has_origin` false records a zero origin.
+ *
+ * # Errors
+ * Fails on a file the whole-file decoder would also reject.
+ */
+export function e57_images_only(data: Uint8Array, origin_x: number, origin_y: number, origin_z: number, has_origin: boolean): LidarCollectionResult;
+
+/**
+ * Plan a scan-per-worker decode of a multi-scan E57.
+ *
+ * # Errors
+ * Fails on a file the whole-file decoder would also reject.
+ */
+export function e57_scan_plan(data: Uint8Array): string;
+
 export function export_inspection_ply(positions: Float32Array, colors: Uint8Array, normals: Float32Array, scalars: Float32Array, names_json: string, decoded: Uint32Array, original: Uint32Array, metadata: string): Uint8Array;
 
 /**
@@ -431,6 +542,17 @@ export function fit_correspondences(source: Float32Array, target: Float32Array):
 export function icp_refine(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
 
 export function inspection_fingerprint(points: Float32Array): string;
+
+export function las_colors_to_bytes(colors16: Uint16Array, max_color: number, above_byte: number): LasColorBytes;
+
+/**
+ * Split a LAS/LAZ file into about `parts` ranges a worker each can decode on
+ * its own, aligned to LAZ chunks so no range starts mid-chunk.
+ *
+ * # Errors
+ * Fails on a header the sequential reader would also reject.
+ */
+export function las_range_plan(data: Uint8Array, parts: number): string;
 
 /**
  * What a `.npy` or `.npz` holds, without decoding any of it: a JSON array of
@@ -457,15 +579,64 @@ export function parse_ascii_ply(data: Uint8Array): PointCloudResult;
  */
 export function parse_at(ptr: number, len: number, format: string): PointCloudResult;
 
+/**
+ * Decode every scan and image of an E57.
+ *
+ * # Errors
+ * Fails when the file is not a readable E57 or none of its scans decode.
+ */
 export function parse_e57(data: Uint8Array, file_name: string): LidarCollectionResult;
 
+/**
+ * Decode scan `scan_index` from the first page, the XML region and the
+ * scan's own section, rebased on `origin` when the job says it has one.
+ *
+ * # Errors
+ * Fails when the partial file cannot be opened as an E57.
+ */
+export function parse_e57_scan(head: Uint8Array, xml: Uint8Array, body: Uint8Array, job_json: string, origin_x: number, origin_y: number, origin_z: number): E57ScanJobResult;
+
+/**
+ * Decode a whole LAS or LAZ file.
+ *
+ * # Errors
+ * Fails on a malformed header or point record, or a file too large to
+ * decode within the wasm memory limit.
+ */
 export function parse_las(data: Uint8Array, file_name: string): LidarCollectionResult;
+
+/**
+ * Decode one range from a plan made by [`las_range_plan`]. `head`, `tail`
+ * and `body` are the bytes at `[0, head.len())`, `tail_start..` and
+ * `body_start..`; `gps_offset` is the plan's offset, NaN when it has none.
+ *
+ * # Errors
+ * Fails when the range needs bytes it was not given, or on corrupt data.
+ */
+export function parse_las_range(head: Uint8Array, tail: Uint8Array, body: Uint8Array, job_json: string, gps_offset: number): LasRangeResult;
 
 /**
  * Parse a NRRD volume. `payload` supplies a detached data file when the header
  * names one; pass an empty slice otherwise.
  */
 export function parse_nrrd(data: Uint8Array, detached: Uint8Array): NrrdVolume;
+
+/**
+ * Parse a Wavefront OBJ.
+ *
+ * # Errors
+ * Fails when a face, line or point refers to a vertex that does not exist.
+ */
+export function parse_obj(data: Uint8Array): ObjResult;
+
+/**
+ * Parse an ASCII OFF mesh (OFF, COFF, NOFF, CNOFF).
+ *
+ * # Errors
+ * Rejects a malformed header, counts, vertex row or face with the message the
+ * viewer shows.
+ */
+export function parse_off(data: Uint8Array): MeshResult;
 
 /**
  * Parse a PCD point cloud in any of its three encodings.
@@ -507,6 +678,17 @@ export function parse_ply_at(ptr: number, len: number): PlyResult;
  */
 export function parse_pts(data: Uint8Array): PointCloudResult;
 
+/**
+ * Parse a run of whole lines (starting at a line boundary) with a layout from
+ * [`plan_rows`].
+ */
+export function parse_row_range(data: Uint8Array, layout: Uint8Array, color: number): PointCloudResult;
+
+/**
+ * Parse an STL file, binary or ASCII.
+ */
+export function parse_stl(data: Uint8Array): MeshResult;
+
 export function parse_text_table(data: Uint8Array, options: string): PointCloudResult;
 
 /**
@@ -514,6 +696,18 @@ export function parse_text_table(data: Uint8Array, options: string): PointCloudR
  * the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
  */
 export function parse_xyz(data: Uint8Array, variant: string, color_mode: string): PointCloudResult;
+
+/**
+ * Decide how a text point cloud's rows are read, from the start of the file.
+ *
+ * `format` is `xyz`, `xyzn`, `xyzrgb`, `pts`, `ply` or `pcd`; `color_mode`
+ * is the caller's `byte`/`unit` decision for XYZRGB (ignored elsewhere).
+ * Returns JSON - `{"layout":[..],"color":c,"start":offset,"expected":n}` - or
+ * an empty string when the sample is not enough to decide (a header longer
+ * than the sample) or the file is not a plain point table (binary data, a
+ * PLY with faces); the caller then uses the sequential parser.
+ */
+export function plan_rows(head: Uint8Array, format: string, color_mode: string): string;
 
 export function point_distances(source: Float32Array, target: Float32Array, radius: number, paired: boolean): Float32Array;
 
@@ -524,6 +718,16 @@ export function point_distances(source: Float32Array, target: Float32Array, radi
  * `undefined` when nothing could be registered.
  */
 export function register_pair(source: Float32Array, target: Float32Array, settings_json: string): RegistrationResult | undefined;
+
+/**
+ * A streaming row parser preset with a layout from [`plan_rows`] and room
+ * for about `rows_hint` rows, for one
+ * range of a file: push the range in chunks of any size (lines may straddle
+ * them), then `finish`. Holding only the current chunk is what keeps eight
+ * parallel workers from each copying their whole slice into wasm memory -
+ * which never shrinks.
+ */
+export function row_stream(layout: Uint8Array, color: number, rows_hint: number): StreamParser;
 
 /**
  * Bounded attribute discovery: continuous fields never produce huge tool replies.

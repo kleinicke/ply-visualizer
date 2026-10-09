@@ -126,15 +126,28 @@ export function generatePlyFileContent(
       content += ` ${r} ${g} ${b}`;
     }
 
-    if (spatialData.hasNormals && spatialData.vertices[i]) {
+    if (spatialData.hasNormals) {
+      // Rust-decoded files carry packed normals; legacy ones vertex objects.
+      const normals = spatialData.normalsArray;
       const vertex = spatialData.vertices[i];
-      content += ` ${vertex.nx || 0} ${vertex.ny || 0} ${vertex.nz || 0}`;
+      if (normals) {
+        content += ` ${normals[i3]} ${normals[i3 + 1]} ${normals[i3 + 2]}`;
+      } else {
+        content += ` ${vertex?.nx || 0} ${vertex?.ny || 0} ${vertex?.nz || 0}`;
+      }
     }
 
     content += '\n';
   }
 
-  // Face data (if any) - these don't change with transformations
+  // Face data (if any) - these don't change with transformations. Packed
+  // meshes (STL, OBJ, OFF) keep their triangles in `indicesArray`.
+  const triangles = spatialData.faces.length === 0 ? spatialData.indicesArray : null;
+  if (triangles) {
+    for (let i = 0; i < triangles.length; i += 3) {
+      content += `3 ${triangles[i]} ${triangles[i + 1]} ${triangles[i + 2]}\n`;
+    }
+  }
   spatialData.faces.forEach(face => {
     content += `${face.indices.length}`;
     face.indices.forEach(index => {

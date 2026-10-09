@@ -34,12 +34,15 @@ export interface WasmPointCloudResult {
   scalarFields?: Record<string, Float32Array>;
   sourcePointIndices?: Uint32Array;
   sourcePointCount?: number;
+  /** The row map is the identity; `sourcePointIndices` is then absent. */
+  sourceRowsIdentity?: boolean;
 }
 
 /* eslint-disable @typescript-eslint/naming-convention -- the names below are
    the wasm-bindgen surface; they are what the compiled module exports. */
 interface RawResult {
   source_count?: number;
+  source_rows_identity?: boolean;
   take_source_indices?(): Uint32Array;
   scalar_field_names?: string[];
   take_scalar_at?(index: number): Float32Array;
@@ -67,6 +70,41 @@ interface RawPlyResult extends RawResult {
   take_face_sizes(): Uint32Array;
 }
 
+/** `MeshResult` - STL and OFF. */
+interface RawMeshResult {
+  vertex_count: number;
+  triangle_count: number;
+  has_normals: boolean;
+  has_colors: boolean;
+  metadata_json: string;
+  take_positions(): Float32Array;
+  take_normals(): Float32Array;
+  take_colors(): Uint8Array;
+  take_indices(): Uint32Array;
+  free?(): void;
+}
+
+/** `ObjResult`. */
+interface RawObjResult {
+  vertex_count: number;
+  normal_count: number;
+  texcoord_count: number;
+  face_count: number;
+  material_names: string[];
+  material_file: string;
+  current_material: string;
+  take_positions(): Float32Array;
+  take_normals(): Float32Array;
+  take_indices(): Uint32Array;
+  take_face_sizes(): Uint32Array;
+  take_face_materials(): Uint32Array;
+  take_line_indices(): Uint32Array;
+  take_line_materials(): Uint32Array;
+  take_point_indices(): Uint32Array;
+  take_point_materials(): Uint32Array;
+  free?(): void;
+}
+
 interface RawNpyResult {
   name: string;
   shape: Uint32Array;
@@ -85,6 +123,9 @@ interface PointcloudWasm {
   parse_ply_at(ptr: number, len: number): RawPlyResult;
   alloc(len: number): number;
   dealloc(ptr: number, len: number): void;
+  parse_stl(data: Uint8Array): RawMeshResult;
+  parse_off(data: Uint8Array): RawMeshResult;
+  parse_obj(data: Uint8Array): RawObjResult;
   npy_inspect(data: Uint8Array): string;
   npy_read(data: Uint8Array, name: string): RawNpyResult;
   /** Present only in the browser build, where the loader attaches it. */
@@ -113,6 +154,7 @@ export function marshalWasmPointCloud(r: RawResult): WasmPointCloudResult {
     sourcePointCount: r.source_count || undefined,
     // Readers without source-row tracking return an empty vector, not a map.
     sourcePointIndices: sourceIndices?.length ? sourceIndices : undefined,
+    sourceRowsIdentity: r.source_rows_identity || undefined,
     vertexCount: r.vertex_count,
     hasColors: r.has_colors,
     hasNormals: r.has_normals,
@@ -213,7 +255,8 @@ export interface PlyParseResult {
   normalsArray: Float32Array | null;
   intensityArray: Float32Array | null;
   scalarFields: Record<string, Float32Array>;
-  faces: { indices: number[] }[];
+  /** Faces as triangles (polygons fan-triangulated); null for point clouds. */
+  indicesArray: Uint32Array | null;
   hasColors: boolean;
   hasNormals: boolean;
   hasIntensity: boolean;
@@ -234,6 +277,46 @@ export async function parsePlyWasm(data: Uint8Array): Promise<PlyParseResult> {
     throw new Error('point-cloud wasm unavailable');
   }
   return marshalPly(wasm.parse_ply(data));
+}
+
+/**
+ * Run the PLY parser once on a small synthetic file, so V8 has optimised it
+ * before the real one arrives.
+ *
+ * A fresh page runs wasm in its baseline tier and recompiles hot functions in
+ * the background, but a call already running stays on the baseline code - and
+ * a whole-file parse is one call. Every opened file gets a fresh webview, so
+ * every binary PLY was parsed at baseline speed: 315 ms against 110 ms once
+ * optimised, for eight million vertices. A 50k-vertex parse (about 10 ms)
+ * while the real bytes are still in flight is enough to trigger the
+ * recompilation. The layout carries every attribute the fast vertex loop
+ * reads, plus faces, so all of it is exercised.
+ */
+export async function warmUpPlyParser(): Promise<void> {
+  const vertices = 50_000;
+  const faces = 2_000;
+  const header =
+    'ply\nformat binary_little_endian 1.0\n' +
+    `element vertex ${vertices}\n` +
+    'property float x\nproperty float y\nproperty float z\n' +
+    'property float nx\nproperty float ny\nproperty float nz\n' +
+    'property uchar red\nproperty uchar green\nproperty uchar blue\n' +
+    'property float intensity\n' +
+    `element face ${faces}\nproperty list uchar int vertex_indices\nend_header\n`;
+  const head = new TextEncoder().encode(header);
+  const recordBytes = 31;
+  const faceBytes = 13;
+  const bytes = new Uint8Array(head.length + vertices * recordBytes + faces * faceBytes);
+  bytes.set(head);
+  const view = new DataView(bytes.buffer);
+  let at = head.length + vertices * recordBytes;
+  for (let face = 0; face < faces; face++, at += faceBytes) {
+    view.setUint8(at, 3);
+    view.setInt32(at + 1, face, true);
+    view.setInt32(at + 5, face + 1, true);
+    view.setInt32(at + 9, face + 2, true);
+  }
+  await parsePlyWasm(bytes);
 }
 
 /**
@@ -285,6 +368,43 @@ export async function parsePlyFromResponse(response: Response): Promise<PlyParse
   }
 }
 
+/**
+ * Fan-triangulate flattened polygons (`sizes[i]` indices per face, back to
+ * back). Faces with fewer than three corners draw nothing and are dropped, as
+ * the geometry builder always did. Null when there are no triangles.
+ */
+export function triangulateFaces(indices: Uint32Array, sizes: Uint32Array): Uint32Array | null {
+  let triangles = 0;
+  let allTriangles = true;
+  for (let i = 0; i < sizes.length; i++) {
+    if (sizes[i] !== 3) {
+      allTriangles = false;
+    }
+    if (sizes[i] >= 3) {
+      triangles += sizes[i] - 2;
+    }
+  }
+  if (triangles === 0) {
+    return null;
+  }
+  if (allTriangles) {
+    return indices;
+  }
+  const out = new Uint32Array(triangles * 3);
+  let read = 0;
+  let write = 0;
+  for (let face = 0; face < sizes.length; face++) {
+    const size = sizes[face];
+    for (let k = 1; k < size - 1; k++) {
+      out[write++] = indices[read];
+      out[write++] = indices[read + k];
+      out[write++] = indices[read + k + 1];
+    }
+    read += size;
+  }
+  return out;
+}
+
 function marshalPly(raw: RawPlyResult): PlyParseResult {
   const header = JSON.parse(raw.metadata_json) as {
     format: PlyParseResult['format'];
@@ -302,30 +422,19 @@ function marshalPly(raw: RawPlyResult): PlyParseResult {
   });
 
   // Faces come back flattened - a run of indices per face - because a PLY face
-  // list is not fixed-width. The viewer wants one object per face.
-  const faceIndices = raw.take_face_indices();
-  const faceSizes = raw.take_face_sizes();
-  const faces: { indices: number[] }[] = new Array(faceSizes.length);
-  let cursor = 0;
-  for (let i = 0; i < faceSizes.length; i++) {
-    const size = faceSizes[i];
-    const indices = new Array<number>(size);
-    for (let j = 0; j < size; j++) {
-      indices[j] = faceIndices[cursor + j];
-    }
-    faces[i] = { indices };
-    cursor += size;
-  }
+  // list is not fixed-width. The geometry wants triangles, which for the usual
+  // all-triangle mesh is that buffer unchanged.
+  const indicesArray = triangulateFaces(raw.take_face_indices(), raw.take_face_sizes());
 
   const result: PlyParseResult = {
     vertexCount: raw.vertex_count,
-    faceCount: raw.face_count,
+    faceCount: indicesArray ? indicesArray.length / 3 : 0,
     positionsArray: raw.take_positions(),
     colorsArray: raw.has_colors ? raw.take_colors() : null,
     normalsArray: raw.has_normals ? raw.take_normals() : null,
     intensityArray: intensity,
     scalarFields,
-    faces,
+    indicesArray,
     hasColors: raw.has_colors,
     hasNormals: raw.has_normals,
     hasIntensity: raw.has_intensity,
@@ -368,6 +477,7 @@ export function toPointCloudPayload(
   return {
     sourcePointCount: result.sourcePointCount,
     sourcePointIndices: result.sourcePointIndices,
+    sourceRowsIdentity: result.sourceRowsIdentity,
     vertexCount: result.vertexCount,
     positionsArray: result.positionsArray,
     colorsArray: result.colorsArray,
@@ -490,4 +600,140 @@ export async function parseTextTableWasm(
     throw new Error('point-cloud wasm unavailable');
   }
   return marshalWasmPointCloud(wasm.parse_text_table(data, JSON.stringify(options)));
+}
+
+/** A triangle mesh as packed buffers: what STL and OFF decode to. */
+export interface WasmMesh {
+  vertexCount: number;
+  /** Triangles - polygons are already fan-triangulated. */
+  triangleCount: number;
+  positionsArray: Float32Array;
+  normalsArray: Float32Array | null;
+  colorsArray: Uint8Array | null;
+  indicesArray: Uint32Array;
+  hasNormals: boolean;
+  hasColors: boolean;
+}
+
+function marshalMesh(raw: RawMeshResult): WasmMesh & { metadata: Record<string, unknown> } {
+  const mesh = {
+    vertexCount: raw.vertex_count,
+    triangleCount: raw.triangle_count,
+    hasNormals: raw.has_normals,
+    hasColors: raw.has_colors,
+    metadata: JSON.parse(raw.metadata_json) as Record<string, unknown>,
+    positionsArray: raw.take_positions(),
+    normalsArray: raw.has_normals ? raw.take_normals() : null,
+    colorsArray: raw.has_colors ? raw.take_colors() : null,
+    indicesArray: raw.take_indices(),
+  };
+  raw.free?.();
+  return mesh;
+}
+
+async function requirePointcloudWasm(): Promise<PointcloudWasm> {
+  const wasm = await loadPointcloudWasm();
+  if (!wasm || typeof wasm.parse_stl !== 'function') {
+    throw new Error('point-cloud wasm unavailable');
+  }
+  return wasm;
+}
+
+/** An STL, binary or ASCII, with its corners welded into an indexed mesh. */
+export interface StlMesh extends WasmMesh {
+  format: 'ascii' | 'binary';
+  header: string;
+  /** Whether the file itself coloured any facet (RGB565 attribute words). */
+  sourceHasColors: boolean;
+}
+
+export async function parseStlWasm(data: Uint8Array): Promise<StlMesh> {
+  const wasm = await requirePointcloudWasm();
+  const { metadata, ...mesh } = marshalMesh(wasm.parse_stl(data));
+  return {
+    ...mesh,
+    format: metadata.format as StlMesh['format'],
+    header: String(metadata.header ?? ''),
+    sourceHasColors: metadata.sourceHasColors === true,
+  };
+}
+
+export interface OffMesh extends WasmMesh {
+  offVariant: 'OFF' | 'COFF' | 'NOFF' | 'CNOFF';
+  comments: string[];
+}
+
+/** Throws with the format's own message on a malformed file. */
+export async function parseOffWasm(data: Uint8Array): Promise<OffMesh> {
+  const wasm = await requirePointcloudWasm();
+  const { metadata, ...mesh } = marshalMesh(wasm.parse_off(data));
+  return {
+    ...mesh,
+    offVariant: metadata.variant as OffMesh['offVariant'],
+    comments: (metadata.comments as string[]) ?? [],
+  };
+}
+
+/**
+ * An OBJ as packed buffers. Polygons are fan-triangulated into
+ * `indicesArray`; `faceSizes` (null when every polygon is a triangle) and
+ * `faceMaterials` keep the polygon structure that material groups need.
+ * Material id 0 means "no usemtl"; names are indexed by id.
+ */
+export interface ObjMesh {
+  vertexCount: number;
+  positionsArray: Float32Array;
+  /** The file's `vn` list, in file order. */
+  normalsArray: Float32Array | null;
+  normalCount: number;
+  textureCoordCount: number;
+  hasNormals: boolean;
+  hasTextures: boolean;
+  indicesArray: Uint32Array;
+  faceCount: number;
+  faceSizes: Uint32Array | null;
+  faceMaterials: Uint32Array | null;
+  lineIndices: Uint32Array;
+  lineMaterials: Uint32Array | null;
+  lineCount: number;
+  pointIndices: Uint32Array;
+  pointMaterials: Uint32Array | null;
+  pointCount: number;
+  materialNames: string[];
+  materialFile?: string;
+  currentMaterial?: string;
+}
+
+/** Throws when a face, line or point refers to a vertex that does not exist. */
+export async function parseObjWasm(data: Uint8Array): Promise<ObjMesh> {
+  const wasm = await requirePointcloudWasm();
+  const raw = wasm.parse_obj(data);
+  const optional = (array: Uint32Array) => (array.length > 0 ? array : null);
+  const normalsArray = raw.take_normals();
+  const lineIndices = raw.take_line_indices();
+  const pointIndices = raw.take_point_indices();
+  const obj: ObjMesh = {
+    vertexCount: raw.vertex_count,
+    positionsArray: raw.take_positions(),
+    normalsArray: normalsArray.length > 0 ? normalsArray : null,
+    normalCount: raw.normal_count,
+    textureCoordCount: raw.texcoord_count,
+    hasNormals: raw.normal_count > 0,
+    hasTextures: raw.texcoord_count > 0,
+    indicesArray: raw.take_indices(),
+    faceCount: raw.face_count,
+    faceSizes: optional(raw.take_face_sizes()),
+    faceMaterials: optional(raw.take_face_materials()),
+    lineIndices,
+    lineMaterials: optional(raw.take_line_materials()),
+    lineCount: lineIndices.length / 2,
+    pointIndices,
+    pointMaterials: optional(raw.take_point_materials()),
+    pointCount: pointIndices.length,
+    materialNames: raw.material_names,
+    materialFile: raw.material_file || undefined,
+    currentMaterial: raw.current_material || undefined,
+  };
+  raw.free?.();
+  return obj;
 }

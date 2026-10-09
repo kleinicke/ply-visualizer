@@ -22,6 +22,7 @@ const files: Guard<{ name?: string; data?: ArrayBuffer | Uint8Array }[]> = (
   );
 const array: Guard<unknown[]> = Array.isArray;
 const strings: Guard<string[]> = (v): v is string[] => Array.isArray(v) && v.every(string);
+const float32: Guard<Float32Array> = (v): v is Float32Array => v instanceof Float32Array;
 const binary: Guard<ArrayBuffer | Uint8Array> = (v): v is ArrayBuffer | Uint8Array =>
   v instanceof ArrayBuffer || v instanceof Uint8Array;
 const spatial: Guard<SpatialData> = (v): v is SpatialData => {
@@ -117,6 +118,10 @@ const schemas = {
   npyData: { data: points, fileName: string },
   fileData: { data: binary, fileName: string },
   xyzVariantData: { data: points, fileName: string },
+  // A text cloud sent in parts while it is still being parsed (pointStream.ts).
+  pointStreamPart: { streamId: string, positions: float32 },
+  pointStreamCancel: { streamId: string },
+  pointStreamEnd: { streamId: string, message: object },
   cameraParams: { fx: number, cameraModel: string, depthType: string, requestId: optional(string) },
   cameraParamsCancelled: { requestId: optional(string) },
   datasetTexture: { data: binary, fileName: string },

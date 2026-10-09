@@ -331,6 +331,7 @@ dependencies = [
  "fast-float",
  "flate2",
  "las",
+ "laz",
  "serde",
  "serde_json",
  "wasm-bindgen",

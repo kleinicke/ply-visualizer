@@ -1,3 +1,4 @@
+import { computePositionBounds } from './fastBounds';
 import * as THREE from 'three';
 
 let roundPointTexture: THREE.Texture | null = null;
@@ -99,8 +100,10 @@ export function createOptimizedPointCloud(
   if (positions && positions.count > 50000) {
     // For very large point clouds, try to reduce vertex data transfer
     geometry.deleteAttribute('normal'); // Points don't need normals
-    geometry.computeBoundingBox(); // Help with frustum culling
-    geometry.computeBoundingSphere();
+  }
+  // Frustum culling needs both; the geometry builder normally supplies them.
+  if (!geometry.boundingBox || !geometry.boundingSphere) {
+    computePositionBounds(geometry);
   }
 
   return new THREE.Points(geometry, material);

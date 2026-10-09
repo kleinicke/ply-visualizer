@@ -1,4 +1,4 @@
-import { SpatialData, SpatialFace, SpatialVertex } from './interfaces';
+import { SpatialData, SpatialVertex } from './interfaces';
 import { noteContainerScanLoaded } from './utils/containerPerf';
 import { uiState } from './state/ui.svelte';
 
@@ -22,7 +22,7 @@ export interface LargeFileChunkingHost {
       useTypedArrays: boolean;
       hasColors: boolean;
       hasNormals: boolean;
-      faces: SpatialFace[];
+      indicesArray: Uint32Array | null;
       format: string;
       comments: string[];
       messageType: string;
@@ -89,7 +89,7 @@ export function handleStartLargeFile(host: LargeFileChunkingHost, message: any):
     useTypedArrays,
     hasColors: message.hasColors,
     hasNormals: message.hasNormals,
-    faces: message.faces || [],
+    indicesArray: message.indexBuffer ? new Uint32Array(message.indexBuffer) : null,
     format: message.format,
     comments: message.comments || [],
     messageType: message.messageType,
@@ -202,12 +202,13 @@ export async function handleLargeFileComplete(
   // Create complete PLY data object
   const spatialData: SpatialData = {
     vertices: fileState.vertices,
-    faces: fileState.faces,
+    faces: [],
+    indicesArray: fileState.indicesArray,
     format: fileState.format as any,
     version: '1.0',
     comments: fileState.comments,
     vertexCount: fileState.totalVertices,
-    faceCount: fileState.faces.length,
+    faceCount: fileState.indicesArray ? fileState.indicesArray.length / 3 : 0,
     hasColors: fileState.hasColors,
     hasNormals: fileState.hasNormals,
     hasIntensity: fileState.hasIntensity,

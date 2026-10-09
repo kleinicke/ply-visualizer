@@ -5,11 +5,12 @@ import { sendSceneModel } from './sceneModels';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
-import { ObjParser } from '../../engine/src/parsers/objParser';
-import { StlParser } from '../../engine/src/parsers/stlParser';
 import {
+  parseObjWasm,
+  parseOffWasm,
   parsePcdWasm,
   parsePtsWasm,
+  parseStlWasm,
   toPcdPayload,
   toPointCloudPayload,
 } from '../../engine/src/parsers/pointcloudWasm';
@@ -34,7 +35,7 @@ import {
   sendSplatContainerUri,
   SPLAT_CONTAINER_EXTENSIONS,
 } from './binaryTransfer';
-import { parseLidarWasm } from '../wasmPointcloud';
+import { decodeLidar } from './parallelLidarParse';
 import { buildInitialVolumeData, decorateVolumeData, retainVolume } from './volumeSessions';
 
 export interface AddFileHost {
@@ -50,13 +51,13 @@ export interface AddFileHost {
   ): Promise<void>;
 }
 
-function decodeLidarData(
+async function decodeLidarData(
   bytes: Uint8Array,
   extension: 'las' | 'laz' | 'e57',
   fileName: string,
   shortPath: string
-): any[] {
-  return parseLidarWasm(bytes, extension, fileName).map(cloud => ({
+): Promise<any[]> {
+  return (await decodeLidar(bytes, extension, fileName)).map(cloud => ({
     vertices: [],
     faces: [],
     format: 'binary_little_endian' as const,
@@ -160,7 +161,7 @@ export async function handleAddFile(
         if (fileExtension === '.las' || fileExtension === '.laz' || fileExtension === '.e57') {
           const bytes = await vscode.workspace.fs.readFile(files[i]);
           const extension = fileExtension.slice(1) as 'las' | 'laz' | 'e57';
-          const data = decodeLidarData(bytes, extension, fileName, shortPath);
+          const data = await decodeLidarData(bytes, extension, fileName, shortPath);
           await sendSpatialDataToWebview(webviewPanel, data, 'multiSpatialData');
           continue;
         }
@@ -276,8 +277,7 @@ export async function handleAddFile(
         // Handle OBJ files
         if (fileExtension === '.obj') {
           const objData = await vscode.workspace.fs.readFile(files[i]);
-          const objParser = new ObjParser();
-          const parsedData = await objParser.parse(objData);
+          const parsedData = await parseObjWasm(objData);
 
           sendToWebview(webviewPanel, {
             type: 'objData',
@@ -294,11 +294,24 @@ export async function handleAddFile(
           continue;
         }
 
+        // OFF meshes decode in Rust here, like STL, so only packed buffers cross.
+        if (fileExtension === '.off') {
+          const offBytes = await vscode.workspace.fs.readFile(files[i]);
+          sendToWebview(webviewPanel, {
+            type: 'offData',
+            fileName: fileName,
+            shortPath: shortPath,
+            fileSizeInBytes: offBytes.byteLength,
+            data: await parseOffWasm(offBytes),
+            isAddFile: true,
+          });
+          continue;
+        }
+
         // Handle STL files
         if (fileExtension === '.stl') {
           const stlData = await vscode.workspace.fs.readFile(files[i]);
-          const stlParser = new StlParser();
-          const parsedData = await stlParser.parse(stlData);
+          const parsedData = await parseStlWasm(stlData);
 
           sendToWebview(webviewPanel, {
             type: 'stlData',
@@ -466,7 +479,7 @@ export async function handleAddFileFromPath(
     }
     if (ext === '.las' || ext === '.laz' || ext === '.e57') {
       const bytes = await vscode.workspace.fs.readFile(fileUri);
-      const data = decodeLidarData(
+      const data = await decodeLidarData(
         bytes,
         ext.slice(1) as 'las' | 'laz' | 'e57',
         fileName,
@@ -580,8 +593,7 @@ export async function handleAddFileFromPath(
     }
     if (ext === '.obj') {
       const objData = await vscode.workspace.fs.readFile(fileUri);
-      const objParser = new ObjParser();
-      const parsedData = await objParser.parse(objData);
+      const parsedData = await parseObjWasm(objData);
       sendToWebview(webviewPanel, {
         type: 'objData',
         fileName,
@@ -592,10 +604,21 @@ export async function handleAddFileFromPath(
       await host.tryAutoLoadMtl(webviewPanel, fileUri, parsedData, 0);
       return;
     }
+    if (ext === '.off') {
+      const offBytes = await vscode.workspace.fs.readFile(fileUri);
+      sendToWebview(webviewPanel, {
+        type: 'offData',
+        fileName,
+        shortPath,
+        fileSizeInBytes: offBytes.byteLength,
+        data: await parseOffWasm(offBytes),
+        isAddFile: true,
+      });
+      return;
+    }
     if (ext === '.stl') {
       const stlData = await vscode.workspace.fs.readFile(fileUri);
-      const stlParser = new StlParser();
-      const parsedData = await stlParser.parse(stlData);
+      const parsedData = await parseStlWasm(stlData);
       sendToWebview(webviewPanel, {
         type: 'stlData',
         fileName,
@@ -766,7 +789,7 @@ export async function handleDroppedFilesFromWebview(
       }
 
       if (ext === '.las' || ext === '.laz' || ext === '.e57') {
-        const data = decodeLidarData(
+        const data = await decodeLidarData(
           fileData,
           ext.slice(1) as 'las' | 'laz' | 'e57',
           fileName,
@@ -832,8 +855,7 @@ export async function handleDroppedFilesFromWebview(
       }
 
       if (ext === '.obj') {
-        const objParser = new ObjParser();
-        const parsedData = await objParser.parse(fileData);
+        const parsedData = await parseObjWasm(fileData);
         sendToWebview(webviewPanel, {
           type: 'objData',
           fileName,
@@ -844,9 +866,20 @@ export async function handleDroppedFilesFromWebview(
         continue;
       }
 
+      if (ext === '.off') {
+        sendToWebview(webviewPanel, {
+          type: 'offData',
+          fileName,
+          shortPath,
+          fileSizeInBytes: fileData.byteLength,
+          data: await parseOffWasm(fileData),
+          isAddFile: true,
+        });
+        continue;
+      }
+
       if (ext === '.stl') {
-        const stlParser = new StlParser();
-        const parsedData = await stlParser.parse(fileData);
+        const parsedData = await parseStlWasm(fileData);
         sendToWebview(webviewPanel, {
           type: 'stlData',
           fileName,

@@ -172,60 +172,8 @@ export async function parseFileData(
  * Convert parser-specific data format to unified format
  */
 export function convertToUnifiedFormat(data: any, fileName: string): UnifiedFileData {
-  let vertices = data.vertices || [];
-  let faces = data.faces || [];
-
-  // Handle STL format specifically
-  if (data.triangles && Array.isArray(data.triangles)) {
-    console.log(`🔄 Converting STL data: ${data.triangles.length} triangles`);
-
-    // STL stores triangles directly with vertex coordinates
-    // We need to extract unique vertices and create face indices
-    const vertexMap = new Map<string, number>();
-    const convertedVertices: any[] = [];
-    const convertedFaces: any[] = [];
-
-    data.triangles.forEach((triangle: any) => {
-      const faceIndices: number[] = [];
-
-      // Process each vertex in the triangle
-      triangle.vertices.forEach((vertex: any) => {
-        // Create a unique key for the vertex
-        const vertexKey = `${vertex.x.toFixed(6)}_${vertex.y.toFixed(6)}_${vertex.z.toFixed(6)}`;
-
-        let vertexIndex = vertexMap.get(vertexKey);
-        if (vertexIndex === undefined) {
-          // New unique vertex
-          vertexIndex = convertedVertices.length;
-          vertexMap.set(vertexKey, vertexIndex);
-
-          convertedVertices.push({
-            x: vertex.x,
-            y: vertex.y,
-            z: vertex.z,
-            nx: triangle.normal?.x || 0,
-            ny: triangle.normal?.y || 0,
-            nz: triangle.normal?.z || 0,
-            red: triangle.color?.red || DEFAULT_COLORS.UNCOLORED_VERTEX.red,
-            green: triangle.color?.green || DEFAULT_COLORS.UNCOLORED_VERTEX.green,
-            blue: triangle.color?.blue || DEFAULT_COLORS.UNCOLORED_VERTEX.blue,
-          });
-        }
-
-        faceIndices.push(vertexIndex);
-      });
-
-      // Add the face with proper indices format
-      convertedFaces.push({
-        indices: faceIndices,
-      });
-    });
-
-    vertices = convertedVertices;
-    faces = convertedFaces;
-
-    console.log(`✅ STL conversion: ${vertices.length} unique vertices, ${faces.length} faces`);
-  }
+  const vertices = data.vertices || [];
+  const faces = data.faces || [];
 
   const unified: UnifiedFileData = {
     ...data,
@@ -244,7 +192,7 @@ export function convertToUnifiedFormat(data: any, fileName: string): UnifiedFile
     hasColors: data.hasColors || false,
     // OBJ normals use face-corner indices, not the unified vertex indices.
     // No per-vertex normal array is produced here; mesh construction computes it.
-    hasNormals: /\.obj$/i.test(fileName) ? false : (data.hasNormals ?? !!data.triangles),
+    hasNormals: /\.obj$/i.test(fileName) ? false : (data.hasNormals ?? false),
     hasIntensity: data.hasIntensity || false,
     fileName: fileName,
   };
@@ -258,6 +206,7 @@ export function convertToUnifiedFormat(data: any, fileName: string): UnifiedFile
     unified.scalarFields = data.scalarFields ?? {};
     unified.sourcePointCount = data.sourcePointCount;
     unified.sourcePointIndices = data.sourcePointIndices;
+    unified.sourceRowsIdentity = data.sourceRowsIdentity;
   }
 
   return unified;

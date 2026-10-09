@@ -129,7 +129,9 @@ const isContainerSummary = tag => /^[^/]+\/all\b/.test(tag);
  * a container is involved, so the full window is only ever paid by formats
  * that emit a single line and are done.
  */
-const QUIET_MS = 20000;
+// PLY_PERF_QUIET_MS shortens the window for corpora of single-line formats,
+// where the generous default only adds idle time to every open.
+const QUIET_MS = Number(process.env.PLY_PERF_QUIET_MS || 20000);
 async function settle(logRoot, previousCount, deadline) {
   let lines = scrape(logRoot);
   let count = lines.length;

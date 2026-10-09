@@ -45,6 +45,14 @@ function candidatePaths(join: (...parts: string[]) => string): string[] {
 }
 
 export async function loadRegistrationWasm(): Promise<RegistrationWasm | null> {
+  // A decoder worker instantiates the crate from a module compiled once by
+  // the extension host (src/providerHandlers/parseWorker.ts) and offers it
+  // here, so it is not compiled - and optimized - again per worker.
+  const provided = (globalThis as { plySharedPointcloudWasm?: RegistrationWasm })
+    .plySharedPointcloudWasm;
+  if (provided) {
+    return provided;
+  }
   if (attempted) {
     return instance;
   }

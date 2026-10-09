@@ -11,6 +11,7 @@ module.exports = [
     entry: {
       extension: './src/extension.ts',
       registrationWorker: './src/providerHandlers/registrationWorker.ts',
+      parseWorker: './src/providerHandlers/parseWorker.ts',
     },
     output: {
       path: path.resolve(__dirname, 'out'),
@@ -38,6 +39,17 @@ module.exports = [
             to: 'wasm/pointcloud-parser',
             globOptions: {
               ignore: ['**/package.json', '**/.gitignore', '**/*.d.ts'],
+            },
+          },
+          {
+            // The same crate built for `initSync`: the extension host compiles
+            // it once and hands the compiled module to every decoder worker
+            // (parsePool.ts), so code V8 optimizes in one worker serves them
+            // all instead of each fresh worker starting at the baseline tier.
+            from: 'wasm/pointcloud-parser/pkg-web',
+            to: 'wasm/pointcloud-parser-web',
+            globOptions: {
+              ignore: ['**/.gitignore', '**/*.d.ts'],
             },
           },
           {

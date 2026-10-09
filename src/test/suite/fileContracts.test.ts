@@ -68,15 +68,21 @@ suite('File entry ownership and decoding contracts', () => {
     assert.strictEqual(data.faceCount, 1);
   });
 
-  test('normals for entry zero stay on that entry when another load finishes first', async () => {
+  test('loading never builds a normals visualizer, even when another load finishes first', async () => {
+    // Normals start hidden and are built on first toggle, for the entry that
+    // was toggled; building them during a load cost two extra vertices per
+    // point and could attach them to whichever entry finished last.
     const fileEntries = new FileEntryRegistry();
     const spatialFiles: SpatialData[] = [];
-    const normals = new THREE.LineSegments();
+    let built = 0;
     const host = {
       fileEntries,
       spatialFiles,
       scene: new THREE.Scene(),
-      createNormalsVisualizer: () => normals,
+      createNormalsVisualizer: () => {
+        built++;
+        return new THREE.LineSegments();
+      },
       showStatus() {},
       async displayFiles(files: SpatialData[]) {
         files[0].fileIndex = 0;
@@ -102,10 +108,9 @@ suite('File entry ownership and decoding contracts', () => {
         normalsArray: new Float32Array([0, 0, 1]),
       },
     });
-    assert.strictEqual(fileEntries.require(0).resources.normals, normals);
+    assert.strictEqual(built, 0);
+    assert.strictEqual(fileEntries.require(0).resources.normals, null);
     assert.strictEqual(fileEntries.require(1).resources.normals, null);
-    normals.geometry.dispose();
-    (normals.material as THREE.Material).dispose();
   });
 
   test('raw-file boundary rejects malformed payloads before parsing', () => {
@@ -123,7 +128,8 @@ suite('File entry ownership and decoding contracts', () => {
 
   test('registered raw-file route decodes OFF and KITTI without host-specific branches', async () => {
     assert.strictEqual(decodesInViewer('scan.CSV'), true);
-    assert.strictEqual(decodesInViewer('model.off'), true);
+    // OFF decodes in the extension host now; the raw-file route still reads it.
+    assert.strictEqual(decodesInViewer('model.off'), false);
     assert.strictEqual(decodesInViewer('points.bin'), true);
     assert.strictEqual(decodesInViewer('scan.ply'), false);
     const off = await decodeFileMessage({

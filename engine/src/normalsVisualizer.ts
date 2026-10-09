@@ -1,46 +1,59 @@
 import * as THREE from 'three';
 import { SpatialData } from './interfaces';
 
+/** True when the file carries its own per-vertex normals on the CPU side. */
+export function hasCpuNormals(data: SpatialData): boolean {
+  return data.hasNormals && (!!data.normalsArray || data.vertices.length > 0);
+}
+
+/**
+ * Line segments from each vertex along its stored normal.
+ *
+ * Reads the packed `normalsArray` when the parser produced one - which every
+ * Rust-decoded format does - and the legacy vertex objects otherwise. Built
+ * on demand when the user first shows normals, never during a load: normals
+ * start hidden, and for a large cloud this is two extra vertices per point.
+ */
 export function createNormalsVisualizer(data: SpatialData): THREE.LineSegments {
-  const normalsGeometry = new THREE.BufferGeometry();
-  const lines = [];
   const normalLength = 0.1; // Controls how long the normal lines are
-  const normalColor = new THREE.Color(0x00ffff); // Cyan color for visibility
-
-  console.log(
-    `🔍 Creating normals visualizer for ${data.fileName}: hasNormals=${data.hasNormals}, vertices=${data.vertices.length}`
-  );
-
-  let validNormals = 0;
-  for (const p of data.vertices) {
-    if (p.nx === undefined || p.ny === undefined || p.nz === undefined) {
-      // Debug first few vertices to see what properties they have
-      if (validNormals === 0) {
-        console.log(`❌ Vertex missing normals:`, Object.keys(p), p);
+  const typed = data.normalsArray && data.positionsArray;
+  const count = typed ? data.positionsArray!.length / 3 : data.vertices.length;
+  const segments = new Float32Array(count * 6);
+  let written = 0;
+  if (typed) {
+    const positions = data.positionsArray!;
+    const normals = data.normalsArray!;
+    for (let i = 0; i < positions.length; i += 3) {
+      const x = positions[i];
+      const y = positions[i + 1];
+      const z = positions[i + 2];
+      segments[written++] = x;
+      segments[written++] = y;
+      segments[written++] = z;
+      segments[written++] = x + normals[i] * normalLength;
+      segments[written++] = y + normals[i + 1] * normalLength;
+      segments[written++] = z + normals[i + 2] * normalLength;
+    }
+  } else {
+    for (const p of data.vertices) {
+      if (p.nx === undefined || p.ny === undefined || p.nz === undefined) {
+        continue;
       }
-      continue;
+      segments[written++] = p.x;
+      segments[written++] = p.y;
+      segments[written++] = p.z;
+      segments[written++] = p.x + p.nx * normalLength;
+      segments[written++] = p.y + p.ny * normalLength;
+      segments[written++] = p.z + p.nz * normalLength;
     }
-    validNormals++;
-    if (validNormals === 1) {
-      console.log(`✅ Found vertex with normals:`, { nx: p.nx, ny: p.ny, nz: p.nz }, p);
-    }
-
-    const start = new THREE.Vector3(p.x, p.y, p.z);
-    const end = new THREE.Vector3(
-      p.x + p.nx * normalLength,
-      p.y + p.ny * normalLength,
-      p.z + p.nz * normalLength
-    );
-    lines.push(start, end);
   }
 
-  console.log(
-    `📊 Normals summary: ${validNormals} valid normals out of ${data.vertices.length} vertices, ${lines.length} line points`
+  const normalsGeometry = new THREE.BufferGeometry();
+  normalsGeometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(written < segments.length ? segments.slice(0, written) : segments, 3)
   );
-
-  normalsGeometry.setFromPoints(lines);
-
-  const normalsMaterial = new THREE.LineBasicMaterial({ color: normalColor });
+  const normalsMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color(0x00ffff) });
 
   const normalsVisualizer = new THREE.LineSegments(normalsGeometry, normalsMaterial);
   normalsVisualizer.name = 'Normals';

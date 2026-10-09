@@ -60,6 +60,52 @@ export class E57ImageResult {
 if (Symbol.dispose) E57ImageResult.prototype[Symbol.dispose] = E57ImageResult.prototype.free;
 
 /**
+ * One scan decoded on its own, with the errors it produced.
+ */
+export class E57ScanJobResult {
+    static __wrap(ptr) {
+        const obj = Object.create(E57ScanJobResult.prototype);
+        obj.__wbg_ptr = ptr;
+        E57ScanJobResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        E57ScanJobResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_e57scanjobresult_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    get errors_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.e57scanjobresult_errors_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * The decoded scan; `undefined` when the scan could not be decoded.
+     * @returns {LidarScanResult | undefined}
+     */
+    take_scan() {
+        const ret = wasm.e57scanjobresult_take_scan(this.__wbg_ptr);
+        return ret === 0 ? undefined : LidarScanResult.__wrap(ret);
+    }
+}
+if (Symbol.dispose) E57ScanJobResult.prototype[Symbol.dispose] = E57ScanJobResult.prototype.free;
+
+/**
  * A triangle mesh, ready for a `BufferGeometry`.
  */
 export class IsosurfaceMesh {
@@ -141,6 +187,192 @@ export class IsosurfaceMesh {
     }
 }
 if (Symbol.dispose) IsosurfaceMesh.prototype[Symbol.dispose] = IsosurfaceMesh.prototype.free;
+
+/**
+ * The 8-bit colours of a whole LAS/LAZ file from its ranges' 16-bit ones,
+ * with the encoding decided over every channel as the whole-file parse does.
+ */
+export class LasColorBytes {
+    static __wrap(ptr) {
+        const obj = Object.create(LasColorBytes.prototype);
+        obj.__wbg_ptr = ptr;
+        LasColorBytesFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        LasColorBytesFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_lascolorbytes_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    get encoding() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.lascolorbytes_encoding(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    take_colors() {
+        const ret = wasm.lascolorbytes_take_colors(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+}
+if (Symbol.dispose) LasColorBytes.prototype[Symbol.dispose] = LasColorBytes.prototype.free;
+
+/**
+ * One range of a LAS/LAZ file, decoded. Colours stay 16-bit: whether they
+ * are 8-bit-in-16-bit is a decision over the whole file (see
+ * [`las_colors_to_bytes`]).
+ */
+export class LasRangeResult {
+    static __wrap(ptr) {
+        const obj = Object.create(LasRangeResult.prototype);
+        obj.__wbg_ptr = ptr;
+        LasRangeResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        LasRangeResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_lasrangeresult_free(ptr, 0);
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    bounds() {
+        const ret = wasm.lasrangeresult_bounds(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get color_channels_above_byte() {
+        const ret = wasm.lasrangeresult_color_channels_above_byte(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get max_color() {
+        const ret = wasm.lasrangeresult_max_color(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_classification() {
+        const ret = wasm.lasrangeresult_take_classification(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Uint16Array}
+     */
+    take_colors16() {
+        const ret = wasm.lasrangeresult_take_colors16(this.__wbg_ptr);
+        var v1 = getArrayU16FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 2, 2);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_gps_time() {
+        const ret = wasm.lasrangeresult_take_gps_time(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_intensity() {
+        const ret = wasm.lasrangeresult_take_intensity(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_number_of_returns() {
+        const ret = wasm.lasrangeresult_take_number_of_returns(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_point_source_id() {
+        const ret = wasm.lasrangeresult_take_point_source_id(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_positions() {
+        const ret = wasm.lasrangeresult_take_positions(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_return_number() {
+        const ret = wasm.lasrangeresult_take_return_number(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_scan_angle() {
+        const ret = wasm.lasrangeresult_take_scan_angle(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_user_data() {
+        const ret = wasm.lasrangeresult_take_user_data(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+}
+if (Symbol.dispose) LasRangeResult.prototype[Symbol.dispose] = LasRangeResult.prototype.free;
 
 export class LidarCollectionResult {
     static __wrap(ptr) {
@@ -415,6 +647,108 @@ export class LidarScanResult {
 if (Symbol.dispose) LidarScanResult.prototype[Symbol.dispose] = LidarScanResult.prototype.free;
 
 /**
+ * A parsed triangle mesh. Buffers are moved out with the `take_*` methods.
+ */
+export class MeshResult {
+    static __wrap(ptr) {
+        const obj = Object.create(MeshResult.prototype);
+        obj.__wbg_ptr = ptr;
+        MeshResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        MeshResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_meshresult_free(ptr, 0);
+    }
+    /**
+     * @returns {boolean}
+     */
+    get has_colors() {
+        const ret = wasm.meshresult_has_colors(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get has_normals() {
+        const ret = wasm.meshresult_has_normals(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {string}
+     */
+    get metadata_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.meshresult_metadata_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    take_colors() {
+        const ret = wasm.meshresult_take_colors(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    take_indices() {
+        const ret = wasm.meshresult_take_indices(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_normals() {
+        const ret = wasm.meshresult_take_normals(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_positions() {
+        const ret = wasm.meshresult_take_positions(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get triangle_count() {
+        const ret = wasm.meshresult_triangle_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get vertex_count() {
+        const ret = wasm.meshresult_vertex_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) MeshResult.prototype[Symbol.dispose] = MeshResult.prototype.free;
+
+/**
  * One array, decoded to f32.
  */
 export class NpyArrayResult {
@@ -560,6 +894,177 @@ export class NrrdVolume {
     }
 }
 if (Symbol.dispose) NrrdVolume.prototype[Symbol.dispose] = NrrdVolume.prototype.free;
+
+/**
+ * A parsed OBJ. Buffers are moved out with the `take_*` methods.
+ */
+export class ObjResult {
+    static __wrap(ptr) {
+        const obj = Object.create(ObjResult.prototype);
+        obj.__wbg_ptr = ptr;
+        ObjResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ObjResultFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_objresult_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    get current_material() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.objresult_current_material(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    get face_count() {
+        const ret = wasm.objresult_face_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {string}
+     */
+    get material_file() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.objresult_material_file(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string[]}
+     */
+    get material_names() {
+        const ret = wasm.objresult_material_names(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get normal_count() {
+        const ret = wasm.objresult_normal_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    take_face_materials() {
+        const ret = wasm.objresult_take_face_materials(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    take_face_sizes() {
+        const ret = wasm.objresult_take_face_sizes(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    take_indices() {
+        const ret = wasm.objresult_take_indices(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    take_line_indices() {
+        const ret = wasm.objresult_take_line_indices(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    take_line_materials() {
+        const ret = wasm.objresult_take_line_materials(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_normals() {
+        const ret = wasm.objresult_take_normals(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    take_point_indices() {
+        const ret = wasm.objresult_take_point_indices(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    take_point_materials() {
+        const ret = wasm.objresult_take_point_materials(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_positions() {
+        const ret = wasm.objresult_take_positions(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get texcoord_count() {
+        const ret = wasm.objresult_texcoord_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get vertex_count() {
+        const ret = wasm.objresult_vertex_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) ObjResult.prototype[Symbol.dispose] = ObjResult.prototype.free;
 
 /**
  * Parsed PLY, handed to JS. Large buffers move out with the `take_*` methods.
@@ -809,6 +1314,13 @@ export class PointCloudResult {
     get source_count() {
         const ret = wasm.pointcloudresult_source_count(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get source_rows_identity() {
+        const ret = wasm.pointcloudresult_source_rows_identity(this.__wbg_ptr);
+        return ret !== 0;
     }
     /**
      * @returns {Uint8Array}
@@ -1390,6 +1902,12 @@ if (Symbol.dispose) StonexStationSession.prototype[Symbol.dispose] = StonexStati
  * then `finish`. Partial lines are stitched across chunk boundaries via carry.
  */
 export class StreamParser {
+    static __wrap(ptr) {
+        const obj = Object.create(StreamParser.prototype);
+        obj.__wbg_ptr = ptr;
+        StreamParserFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -1665,6 +2183,58 @@ export function dealloc(ptr, len) {
 }
 
 /**
+ * The embedded images of an E57 on their own, for a file whose scans were
+ * decoded elsewhere. `has_origin` false records a zero origin.
+ *
+ * # Errors
+ * Fails on a file the whole-file decoder would also reject.
+ * @param {Uint8Array} data
+ * @param {number} origin_x
+ * @param {number} origin_y
+ * @param {number} origin_z
+ * @param {boolean} has_origin
+ * @returns {LidarCollectionResult}
+ */
+export function e57_images_only(data, origin_x, origin_y, origin_z, has_origin) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.e57_images_only(ptr0, len0, origin_x, origin_y, origin_z, has_origin);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return LidarCollectionResult.__wrap(ret[0]);
+}
+
+/**
+ * Plan a scan-per-worker decode of a multi-scan E57.
+ *
+ * # Errors
+ * Fails on a file the whole-file decoder would also reject.
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+export function e57_scan_plan(data) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.e57_scan_plan(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * @param {Float32Array} positions
  * @param {Uint8Array} colors
  * @param {Float32Array} normals
@@ -1780,6 +2350,50 @@ export function inspection_fingerprint(points) {
 }
 
 /**
+ * @param {Uint16Array} colors16
+ * @param {number} max_color
+ * @param {number} above_byte
+ * @returns {LasColorBytes}
+ */
+export function las_colors_to_bytes(colors16, max_color, above_byte) {
+    const ptr0 = passArray16ToWasm0(colors16, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.las_colors_to_bytes(ptr0, len0, max_color, above_byte);
+    return LasColorBytes.__wrap(ret);
+}
+
+/**
+ * Split a LAS/LAZ file into about `parts` ranges a worker each can decode on
+ * its own, aligned to LAZ chunks so no range starts mid-chunk.
+ *
+ * # Errors
+ * Fails on a header the sequential reader would also reject.
+ * @param {Uint8Array} data
+ * @param {number} parts
+ * @returns {string}
+ */
+export function las_range_plan(data, parts) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.las_range_plan(ptr0, len0, parts);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * What a `.npy` or `.npz` holds, without decoding any of it: a JSON array of
  * `{name, shape, dtype}`. Callers use it to decide whether a file is a point
  * cloud or a depth image, and which member of an archive to ask for.
@@ -1861,6 +2475,10 @@ export function parse_at(ptr, len, format) {
 }
 
 /**
+ * Decode every scan and image of an E57.
+ *
+ * # Errors
+ * Fails when the file is not a readable E57 or none of its scans decode.
  * @param {Uint8Array} data
  * @param {string} file_name
  * @returns {LidarCollectionResult}
@@ -1878,6 +2496,42 @@ export function parse_e57(data, file_name) {
 }
 
 /**
+ * Decode scan `scan_index` from the first page, the XML region and the
+ * scan's own section, rebased on `origin` when the job says it has one.
+ *
+ * # Errors
+ * Fails when the partial file cannot be opened as an E57.
+ * @param {Uint8Array} head
+ * @param {Uint8Array} xml
+ * @param {Uint8Array} body
+ * @param {string} job_json
+ * @param {number} origin_x
+ * @param {number} origin_y
+ * @param {number} origin_z
+ * @returns {E57ScanJobResult}
+ */
+export function parse_e57_scan(head, xml, body, job_json, origin_x, origin_y, origin_z) {
+    const ptr0 = passArray8ToWasm0(head, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(xml, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(body, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(job_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.parse_e57_scan(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, origin_x, origin_y, origin_z);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return E57ScanJobResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a whole LAS or LAZ file.
+ *
+ * # Errors
+ * Fails on a malformed header or point record, or a file too large to
+ * decode within the wasm memory limit.
  * @param {Uint8Array} data
  * @param {string} file_name
  * @returns {LidarCollectionResult}
@@ -1892,6 +2546,36 @@ export function parse_las(data, file_name) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return LidarCollectionResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode one range from a plan made by [`las_range_plan`]. `head`, `tail`
+ * and `body` are the bytes at `[0, head.len())`, `tail_start..` and
+ * `body_start..`; `gps_offset` is the plan's offset, NaN when it has none.
+ *
+ * # Errors
+ * Fails when the range needs bytes it was not given, or on corrupt data.
+ * @param {Uint8Array} head
+ * @param {Uint8Array} tail
+ * @param {Uint8Array} body
+ * @param {string} job_json
+ * @param {number} gps_offset
+ * @returns {LasRangeResult}
+ */
+export function parse_las_range(head, tail, body, job_json, gps_offset) {
+    const ptr0 = passArray8ToWasm0(head, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(tail, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(body, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passStringToWasm0(job_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.parse_las_range(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, gps_offset);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return LasRangeResult.__wrap(ret[0]);
 }
 
 /**
@@ -1911,6 +2595,43 @@ export function parse_nrrd(data, detached) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return NrrdVolume.__wrap(ret[0]);
+}
+
+/**
+ * Parse a Wavefront OBJ.
+ *
+ * # Errors
+ * Fails when a face, line or point refers to a vertex that does not exist.
+ * @param {Uint8Array} data
+ * @returns {ObjResult}
+ */
+export function parse_obj(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parse_obj(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ObjResult.__wrap(ret[0]);
+}
+
+/**
+ * Parse an ASCII OFF mesh (OFF, COFF, NOFF, CNOFF).
+ *
+ * # Errors
+ * Rejects a malformed header, counts, vertex row or face with the message the
+ * viewer shows.
+ * @param {Uint8Array} data
+ * @returns {MeshResult}
+ */
+export function parse_off(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parse_off(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return MeshResult.__wrap(ret[0]);
 }
 
 /**
@@ -1990,6 +2711,35 @@ export function parse_pts(data) {
 }
 
 /**
+ * Parse a run of whole lines (starting at a line boundary) with a layout from
+ * [`plan_rows`].
+ * @param {Uint8Array} data
+ * @param {Uint8Array} layout
+ * @param {number} color
+ * @returns {PointCloudResult}
+ */
+export function parse_row_range(data, layout, color) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(layout, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.parse_row_range(ptr0, len0, ptr1, len1, color);
+    return PointCloudResult.__wrap(ret);
+}
+
+/**
+ * Parse an STL file, binary or ASCII.
+ * @param {Uint8Array} data
+ * @returns {MeshResult}
+ */
+export function parse_stl(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.parse_stl(ptr0, len0);
+    return MeshResult.__wrap(ret);
+}
+
+/**
  * @param {Uint8Array} data
  * @param {string} options
  * @returns {PointCloudResult}
@@ -2023,6 +2773,39 @@ export function parse_xyz(data, variant, color_mode) {
     const len2 = WASM_VECTOR_LEN;
     const ret = wasm.parse_xyz(ptr0, len0, ptr1, len1, ptr2, len2);
     return PointCloudResult.__wrap(ret);
+}
+
+/**
+ * Decide how a text point cloud's rows are read, from the start of the file.
+ *
+ * `format` is `xyz`, `xyzn`, `xyzrgb`, `pts`, `ply` or `pcd`; `color_mode`
+ * is the caller's `byte`/`unit` decision for XYZRGB (ignored elsewhere).
+ * Returns JSON - `{"layout":[..],"color":c,"start":offset,"expected":n}` - or
+ * an empty string when the sample is not enough to decide (a header longer
+ * than the sample) or the file is not a plain point table (binary data, a
+ * PLY with faces); the caller then uses the sequential parser.
+ * @param {Uint8Array} head
+ * @param {string} format
+ * @param {string} color_mode
+ * @returns {string}
+ */
+export function plan_rows(head, format, color_mode) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArray8ToWasm0(head, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(format, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(color_mode, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.plan_rows(ptr0, len0, ptr1, len1, ptr2, len2);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
 }
 
 /**
@@ -2062,6 +2845,25 @@ export function register_pair(source, target, settings_json) {
     const len2 = WASM_VECTOR_LEN;
     const ret = wasm.register_pair(ptr0, len0, ptr1, len1, ptr2, len2);
     return ret === 0 ? undefined : RegistrationResult.__wrap(ret);
+}
+
+/**
+ * A streaming row parser preset with a layout from [`plan_rows`] and room
+ * for about `rows_hint` rows, for one
+ * range of a file: push the range in chunks of any size (lines may straddle
+ * them), then `finish`. Holding only the current chunk is what keeps eight
+ * parallel workers from each copying their whole slice into wasm memory -
+ * which never shrinks.
+ * @param {Uint8Array} layout
+ * @param {number} color
+ * @param {number} rows_hint
+ * @returns {StreamParser}
+ */
+export function row_stream(layout, color, rows_hint) {
+    const ptr0 = passArray8ToWasm0(layout, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.row_stream(ptr0, len0, color, rows_hint);
+    return StreamParser.__wrap(ret);
 }
 
 /**
@@ -2203,21 +3005,36 @@ function __wbg_get_imports() {
 const E57ImageResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_e57imageresult_free(ptr, 1));
+const E57ScanJobResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_e57scanjobresult_free(ptr, 1));
 const IsosurfaceMeshFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_isosurfacemesh_free(ptr, 1));
+const LasColorBytesFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_lascolorbytes_free(ptr, 1));
+const LasRangeResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_lasrangeresult_free(ptr, 1));
 const LidarCollectionResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_lidarcollectionresult_free(ptr, 1));
 const LidarScanResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_lidarscanresult_free(ptr, 1));
+const MeshResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_meshresult_free(ptr, 1));
 const NpyArrayResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_npyarrayresult_free(ptr, 1));
 const NrrdVolumeFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_nrrdvolume_free(ptr, 1));
+const ObjResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_objresult_free(ptr, 1));
 const PlyResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_plyresult_free(ptr, 1));

@@ -31,6 +31,43 @@ export async function readFileFast(uri: vscode.Uri): Promise<Uint8Array> {
 }
 
 /**
+ * Read a file into memory that the decoder workers can share.
+ *
+ * The decoders run in worker threads (parsePool.ts), and a range or scan job
+ * needs only part of the file. A SharedArrayBuffer lets every worker read the
+ * same bytes without each being sent a copy; a worker hands only its own part
+ * to wasm.
+ */
+export async function readFileShared(uri: vscode.Uri): Promise<Uint8Array> {
+  if (uri.scheme === 'file') {
+    try {
+      const handle = await fs.promises.open(uri.fsPath, 'r');
+      try {
+        const size = (await handle.stat()).size;
+        const bytes = new Uint8Array(new SharedArrayBuffer(size));
+        let filled = 0;
+        while (filled < size) {
+          const { bytesRead } = await handle.read(bytes, filled, size - filled, filled);
+          if (bytesRead === 0) {
+            throw new Error(`${uri.fsPath} ended early`);
+          }
+          filled += bytesRead;
+        }
+        return bytes;
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      /* fall back to the workspace filesystem */
+    }
+  }
+  const read = await vscode.workspace.fs.readFile(uri);
+  const shared = new Uint8Array(new SharedArrayBuffer(read.byteLength));
+  shared.set(read);
+  return shared;
+}
+
+/**
  * Read just the first `maxBytes` of a local file (for header detection before
  * deciding whether to stream the body). Returns a copy sized to bytes actually
  * read; throws on non-file schemes / IO errors (callers fall back).
@@ -239,6 +276,28 @@ export async function sendSpatialDataToWebview(
   }
 }
 
+/**
+ * A file's faces as one triangle index buffer: the parser's own when it made
+ * one, otherwise the face objects fan-triangulated. (Taking each face's first
+ * three indices, as this used to, dropped half of every quad.)
+ */
+function triangleIndices(spatialData: any): Uint32Array | null {
+  if (spatialData.indicesArray instanceof Uint32Array) {
+    return spatialData.indicesArray;
+  }
+  const faces: { indices: number[] }[] = spatialData.faces ?? [];
+  if (faces.length === 0) {
+    return null;
+  }
+  const flat: number[] = [];
+  for (const face of faces) {
+    for (let k = 1; k < face.indices.length - 1; k++) {
+      flat.push(face.indices[0], face.indices[k], face.indices[k + 1]);
+    }
+  }
+  return flat.length > 0 ? Uint32Array.from(flat) : null;
+}
+
 export async function sendBinaryData(
   webviewPanel: vscode.WebviewPanel,
   spatialData: any,
@@ -302,19 +361,7 @@ export async function sendBinaryData(
     }
   }
 
-  // Handle faces if present
-  let indexBuffer: Uint32Array | null = null;
-  if (spatialData.faces && spatialData.faces.length > 0) {
-    const faces = spatialData.faces;
-    indexBuffer = new Uint32Array(faces.length * 3); // Assuming triangles
-
-    for (let i = 0; i < faces.length; i++) {
-      const face = faces[i];
-      indexBuffer[i * 3] = face.indices[0];
-      indexBuffer[i * 3 + 1] = face.indices[1];
-      indexBuffer[i * 3 + 2] = face.indices[2];
-    }
-  }
+  const indexBuffer = triangleIndices(spatialData);
 
   // Calculate total binary size
   const scalarSize = Object.values(spatialData.scalarFields || {}).reduce(
@@ -339,7 +386,7 @@ export async function sendBinaryData(
     fileName: spatialData.fileName,
     shortPath: spatialData.shortPath,
     vertexCount: vertexCount,
-    faceCount: spatialData.faceCount,
+    faceCount: indexBuffer ? indexBuffer.length / 3 : 0,
     hasColors: hasColors,
     hasNormals: hasNormals,
     hasIntensity: !!spatialData.hasIntensity,
@@ -386,7 +433,7 @@ export async function sendLargeFileInChunksOptimized(
   const vertices = spatialData.vertices;
   const colors = spatialData.colors;
   const normals = spatialData.normals;
-  const faces = spatialData.faces;
+  const indices = triangleIndices(spatialData);
 
   const totalChunks = Math.ceil(totalVertices / CHUNK_SIZE);
   console.log(
@@ -410,7 +457,7 @@ export async function sendLargeFileInChunksOptimized(
     totalChunks: totalChunks,
     hasColors: spatialData.hasColors,
     hasNormals: spatialData.hasNormals,
-    faces: faces,
+    indexBuffer: indices ? indices.buffer : null,
     format: spatialData.format,
     comments: spatialData.comments,
     messageType: messageType,

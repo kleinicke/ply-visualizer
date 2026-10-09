@@ -5,7 +5,9 @@ import {
 import type { FileEntryRegistry } from './state/fileEntries';
 import { decodeFileMessage, readFileDataMessage } from './formats/fileMessage';
 import * as THREE from 'three';
-import { SpatialData, SpatialFace, SpatialVertex } from './interfaces';
+import { SpatialData, SpatialVertex } from './interfaces';
+import type { ObjMesh, OffMesh, StlMesh } from './parsers/pointcloudWasm';
+import { objSpatialData, offSpatialData, stlSpatialData } from './formats/meshSpatialData';
 
 export interface FormatDataHandlersHost extends GeometryReplacementHost {
   scene: THREE.Scene;
@@ -25,21 +27,6 @@ export interface FormatDataHandlersHost extends GeometryReplacementHost {
   createMaterialForFile(data: SpatialData, fileIndex: number): THREE.Material;
 
   fileEntries: FileEntryRegistry;
-}
-
-function attachNormalsVisualizer(host: FormatDataHandlersHost, spatialData: SpatialData): void {
-  // Set initial visibility based on stored state (default true)
-  const fileIndex = spatialData.fileIndex ?? host.spatialFiles.length - 1;
-  if (host.spatialFiles[fileIndex] !== spatialData) {
-    return;
-  }
-  const normalsVisualizer = host.createNormalsVisualizer(spatialData);
-  const initialVisible = host.fileEntries.require(fileIndex).state.normalsVisible !== false;
-  normalsVisualizer.visible = initialVisible;
-
-  host.scene.add(normalsVisualizer);
-
-  host.fileEntries.require(fileIndex).resources.normals = normalsVisualizer;
 }
 
 export async function handlePcdData(host: FormatDataHandlersHost, message: any): Promise<void> {
@@ -67,6 +54,7 @@ export async function handlePcdData(host: FormatDataHandlersHost, message: any):
       ],
       sourcePointCount: pcdData.sourcePointCount,
       sourcePointIndices: pcdData.sourcePointIndices,
+      sourceRowsIdentity: pcdData.sourceRowsIdentity,
       vertexCount: pcdData.vertexCount,
       faceCount: 0,
       hasColors: pcdData.hasColors,
@@ -119,11 +107,6 @@ export async function handlePcdData(host: FormatDataHandlersHost, message: any):
       }
     }
 
-    // Create normals visualizer if PCD has normals
-    if (spatialData.hasNormals) {
-      attachNormalsVisualizer(host, spatialData);
-    }
-
     host.showStatus(`PCD: loaded ${pcdData.vertexCount} points from ${message.fileName}`);
   } catch (error) {
     console.error('Error handling PCD data:', error);
@@ -135,48 +118,16 @@ export async function handlePcdData(host: FormatDataHandlersHost, message: any):
 
 export async function handleOffData(host: FormatDataHandlersHost, message: any): Promise<void> {
   try {
-    console.log(`Load: recv OFF ${message.fileName}`);
-    host.showStatus(`OFF: processing ${message.fileName}`);
-
-    const offData = message.data;
-    console.log(
-      `OFF: ${offData.vertexCount} vertices, ${offData.faceCount} faces, variant=${offData.offVariant}, colors=${offData.hasColors}, normals=${offData.hasNormals}`
-    );
-
-    // Convert OFF data to PLY format for rendering
-    const spatialData: SpatialData = {
-      vertices: offData.vertices,
-      faces: offData.faces,
-      format: 'ascii',
-      version: '1.0',
-      comments: [
-        `Converted from OFF: ${message.fileName}`,
-        `OFF variant: ${offData.offVariant}`,
-        ...offData.comments,
-      ],
-      vertexCount: offData.vertexCount,
-      faceCount: offData.faceCount,
-      hasColors: offData.hasColors,
-      hasNormals: offData.hasNormals,
-      fileName: message.fileName,
-      shortPath: message.shortPath,
-      fileSizeInBytes: message.fileSizeInBytes,
-    };
-
+    const off = message.data as OffMesh;
+    const spatialData = offSpatialData(off, message);
     if (message.isAddFile) {
       host.addNewFiles([spatialData]);
     } else {
       await host.displayFiles([spatialData]);
     }
-
-    // Create normals visualizer if OFF has normals (for both meshes and point clouds)
-    if (spatialData.hasNormals) {
-      attachNormalsVisualizer(host, spatialData);
-    }
-
-    const meshType = offData.faceCount > 0 ? 'mesh' : 'point cloud';
+    const meshType = off.triangleCount > 0 ? 'mesh' : 'point cloud';
     host.showStatus(
-      `OFF: loaded ${offData.vertexCount} vertices, ${offData.faceCount} faces as ${meshType} from ${message.fileName}`
+      `OFF: loaded ${off.vertexCount} vertices, ${off.triangleCount} faces as ${meshType} from ${message.fileName}`
     );
   } catch (error) {
     console.error('Error handling OFF data:', error);
@@ -322,101 +273,34 @@ export async function handleGltfData(host: FormatDataHandlersHost, message: any)
 
 export async function handleObjData(host: FormatDataHandlersHost, message: any): Promise<void> {
   try {
-    console.log(`Load: recv OBJ ${message.fileName}`);
-    host.showStatus(`OBJ: processing ${message.fileName}`);
-
-    const objData = message.data;
-    const hasFaces = objData.faceCount > 0;
-    const hasLines = objData.lineCount > 0;
-    const hasPoints = objData.pointCount > 0;
-
-    console.log(
-      `OBJ: v=${objData.vertexCount}, pts=${objData.pointCount}, f=${objData.faceCount}, lines=${objData.lineCount}, groups=${objData.materialGroups ? objData.materialGroups.length : 0}`
-    );
-
-    // Convert OBJ vertices to PLY format
-    const vertices: SpatialVertex[] = objData.vertices.map((v: any) => ({
-      x: v.x,
-      y: v.y,
-      z: v.z,
-      red: 128, // Default gray color
-      green: 128,
-      blue: 128,
-    }));
-
-    // Convert OBJ faces to PLY format if they exist
-    const faces: SpatialFace[] = [];
-    if (hasFaces) {
-      for (const objFace of objData.faces) {
-        if (objFace.indices.length >= 3) {
-          faces.push({
-            indices: objFace.indices,
-          });
-        }
-      }
-    }
-
-    // Create PLY data structure
-    const spatialData: SpatialData = {
-      vertices,
-      faces,
-      format: 'ascii',
-      version: '1.0',
-      comments: [`Converted from OBJ file: ${message.fileName}`],
-      vertexCount: vertices.length,
-      faceCount: faces.length,
-      hasColors: true,
-      // OBJ corner normals are kept in objData; these vertices have no normals.
-      hasNormals: false,
-      fileName: message.fileName, // Keep original OBJ filename
-      shortPath: message.shortPath,
-      fileIndex: host.spatialFiles.length,
-      fileSizeInBytes: message.fileSizeInBytes,
-    };
-
-    // Store OBJ-specific data for enhanced rendering
-    (spatialData as any).objData = objData;
-    (spatialData as any).isObjFile = true;
-    (spatialData as any).objRenderType = hasFaces ? 'mesh' : 'wireframe';
-
-    // Store line data for wireframe rendering (either as primary or secondary visualization)
-    if (hasLines) {
-      (spatialData as any).objLines = objData.lines;
-      (spatialData as any).hasWireframe = true;
-    }
-
-    // Store point data for point rendering
-    if (hasPoints) {
-      (spatialData as any).objPoints = objData.points;
-      (spatialData as any).hasPoints = true;
-    }
-
-    // Add to visualization
+    const obj = message.data as ObjMesh;
+    const spatialData = objSpatialData(obj, message);
+    spatialData.fileIndex = host.spatialFiles.length;
     if (message.isAddFile) {
       host.addNewFiles([spatialData]);
     } else {
       await host.displayFiles([spatialData]);
     }
 
-    // Status message based on what was loaded
-    const statusParts = [`${vertices.length.toLocaleString()} vertices`];
-    if (hasPoints) {
-      statusParts.push(`${objData.pointCount} points`);
+    const statusParts = [`${obj.vertexCount.toLocaleString()} vertices`];
+    if (obj.pointCount > 0) {
+      statusParts.push(`${obj.pointCount} points`);
     }
-    if (hasFaces) {
-      statusParts.push(`${faces.length.toLocaleString()} faces`);
+    if (obj.faceCount > 0) {
+      statusParts.push(`${obj.faceCount.toLocaleString()} faces`);
     }
-    if (hasLines) {
-      statusParts.push(`${objData.lineCount} line segments`);
+    if (obj.lineCount > 0) {
+      statusParts.push(`${obj.lineCount} line segments`);
     }
-    if (objData.hasTextures) {
-      statusParts.push(`${objData.textureCoordCount} texture coords`);
+    if (obj.hasTextures) {
+      statusParts.push(`${obj.textureCoordCount} texture coords`);
     }
-    if (objData.hasNormals) {
-      statusParts.push(`${objData.normalCount} normals`);
+    if (obj.hasNormals) {
+      statusParts.push(`${obj.normalCount} normals`);
     }
-
-    host.showStatus(`OBJ ${hasFaces ? 'mesh' : 'wireframe'} loaded: ${statusParts.join(', ')}`);
+    host.showStatus(
+      `OBJ ${obj.faceCount > 0 ? 'mesh' : 'wireframe'} loaded: ${statusParts.join(', ')}`
+    );
   } catch (error) {
     console.error('Error handling OBJ data:', error);
     host.showError(
@@ -427,152 +311,26 @@ export async function handleObjData(host: FormatDataHandlersHost, message: any):
 
 export async function handleStlData(host: FormatDataHandlersHost, message: any): Promise<void> {
   try {
-    console.log(`Load: recv STL ${message.fileName}`);
-    host.showStatus(`STL: processing ${message.fileName}`);
-
-    const stlData = message.data;
-    const hasColors = stlData.hasColors;
-
-    console.log(
-      `STL: ${stlData.triangleCount} triangles, format=${stlData.format}, colors=${hasColors}`
-    );
-
-    // Handle empty STL files
-    if (stlData.triangleCount === 0 || !stlData.triangles || stlData.triangles.length === 0) {
-      console.log('STL: Empty mesh detected');
-      host.showStatus(`STL: Empty mesh loaded (${message.fileName})`);
-
-      // Create minimal PLY data for empty mesh
-      const spatialData: SpatialData = {
-        vertices: [],
-        faces: [],
-        format: stlData.format === 'binary' ? 'binary_little_endian' : 'ascii',
-        version: '1.0',
-        comments: [
-          `Empty STL mesh: ${message.fileName}`,
-          `Original format: ${stlData.format}`,
-          ...(stlData.header ? [`Header: ${stlData.header}`] : []),
-        ],
-        vertexCount: 0,
-        faceCount: 0,
-        hasColors: false,
-        hasNormals: false,
-        fileName: message.fileName.replace(/\.stl$/i, '_empty.ply'),
-        shortPath: message.shortPath,
-        fileIndex: host.spatialFiles.length,
-        fileSizeInBytes: message.fileSizeInBytes,
-      };
-
-      // Add to visualization (even empty files should be tracked)
-      if (message.isAddFile) {
-        host.addNewFiles([spatialData]);
-      } else {
-        await host.displayFiles([spatialData]);
-      }
-
-      return;
-    }
-
-    // Convert STL triangles to PLY vertices and faces
-    const vertices: SpatialVertex[] = [];
-    const faces: SpatialFace[] = [];
-    const vertexMap = new Map<string, number>(); // For deduplication
-
-    let vertexIndex = 0;
-
-    for (let i = 0; i < stlData.triangles.length; i++) {
-      const triangle = stlData.triangles[i];
-      const faceIndices: number[] = [];
-
-      // Process each vertex of the triangle
-      for (let j = 0; j < 3; j++) {
-        const vertex = triangle.vertices[j];
-        const key = `${vertex.x},${vertex.y},${vertex.z}`;
-
-        let vIndex = vertexMap.get(key);
-        if (vIndex === undefined) {
-          // New vertex
-          vIndex = vertexIndex++;
-          vertexMap.set(key, vIndex);
-
-          const plyVertex: SpatialVertex = {
-            x: vertex.x,
-            y: vertex.y,
-            z: vertex.z,
-            nx: triangle.normal.x,
-            ny: triangle.normal.y,
-            nz: triangle.normal.z,
-          };
-
-          // Add color if available
-          if (hasColors && triangle.color) {
-            plyVertex.red = triangle.color.red;
-            plyVertex.green = triangle.color.green;
-            plyVertex.blue = triangle.color.blue;
-          } else {
-            // Default gray color
-            plyVertex.red = 180;
-            plyVertex.green = 180;
-            plyVertex.blue = 180;
-          }
-
-          vertices.push(plyVertex);
-        }
-
-        faceIndices.push(vIndex);
-      }
-
-      // Add the face
-      faces.push({
-        indices: faceIndices,
-      });
-    }
-
-    // Create PLY data structure
-    const spatialData: SpatialData = {
-      vertices,
-      faces,
-      format: stlData.format === 'binary' ? 'binary_little_endian' : 'ascii',
-      version: '1.0',
-      comments: [
-        `Converted from STL file: ${message.fileName}`,
-        `Original format: ${stlData.format}`,
-        `Triangle count: ${stlData.triangleCount}`,
-        ...(stlData.header ? [`Header: ${stlData.header}`] : []),
-      ],
-      vertexCount: vertices.length,
-      faceCount: faces.length,
-      hasColors: true,
-      hasNormals: true,
-      fileName: message.fileName.replace(/\.stl$/i, '_mesh.ply'),
-      shortPath: message.shortPath,
-      fileIndex: host.spatialFiles.length,
-      fileSizeInBytes: message.fileSizeInBytes,
-    };
-
-    // Store STL-specific data for enhanced rendering
-    (spatialData as any).stlData = stlData;
-    (spatialData as any).isStlFile = true;
-    (spatialData as any).stlFormat = stlData.format;
-    (spatialData as any).stlTriangleCount = stlData.triangleCount;
-
-    // Add to visualization
+    const stl = message.data as StlMesh;
+    const spatialData = stlSpatialData(stl, message);
+    spatialData.fileIndex = host.spatialFiles.length;
     if (message.isAddFile) {
       host.addNewFiles([spatialData]);
     } else {
       await host.displayFiles([spatialData]);
     }
-
-    // Status message
+    if (stl.triangleCount === 0) {
+      host.showStatus(`STL: Empty mesh loaded (${message.fileName})`);
+      return;
+    }
     const statusParts = [
-      `${vertices.length.toLocaleString()} vertices`,
-      `${faces.length.toLocaleString()} triangles`,
-      `${stlData.format} format`,
+      `${stl.vertexCount.toLocaleString()} vertices`,
+      `${stl.triangleCount.toLocaleString()} triangles`,
+      `${stl.format} format`,
     ];
-    if (hasColors) {
+    if (stl.sourceHasColors) {
       statusParts.push('with colors');
     }
-
     host.showStatus(`STL mesh loaded: ${statusParts.join(', ')}`);
   } catch (error) {
     console.error('Error handling STL data:', error);
@@ -872,9 +630,6 @@ export async function handlePointData(
     host.addNewFiles([data]);
   } else {
     await host.displayFiles([data]);
-  }
-  if (data.hasNormals) {
-    attachNormalsVisualizer(host, data);
   }
   host.showStatus(`Loaded ${data.vertexCount.toLocaleString()} points from ${message.fileName}`);
 }

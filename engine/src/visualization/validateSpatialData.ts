@@ -107,8 +107,17 @@ export function validateSpatialData(value: unknown): asserts value is SpatialDat
       fail('indicesArray', 'must be Uint32Array');
     }
     length('indicesArray', data.indicesArray, data.faceCount * 3);
-    for (const index of data.indicesArray) {
-      checkIndex(index);
+    // Uint32 entries are non-negative integers by construction, so only the
+    // upper bound needs checking - one tight loop over millions of indices.
+    const indices = data.indicesArray;
+    let max = 0;
+    for (let i = 0; i < indices.length; i++) {
+      if (indices[i] > max) {
+        max = indices[i];
+      }
+    }
+    if (indices.length > 0) {
+      checkIndex(max);
     }
   } else if (data.sceneModel) {
     // Native loaders preserve their original scene. faceCount summarizes that

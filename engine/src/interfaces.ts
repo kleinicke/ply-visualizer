@@ -87,6 +87,8 @@ export interface SpatialData {
   sourcePointCount?: number;
   /** Original zero-based source record index (depth: row-major raster pixel) for each decoded point. */
   sourcePointIndices?: Uint32Array;
+  /** Every source row became a point in order: the row map is the identity. */
+  sourceRowsIdentity?: boolean;
   /** Source-space origin subtracted before conversion to float32 GPU positions. */
   sourceOrigin?: [number, number, number];
   /** Format-specific header/scan metadata retained for inspection and export. */

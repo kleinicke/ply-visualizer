@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/naming-convention -- MCP wire keys */
+import { hasSourceRows, sourceRowsOf } from '../utils/sourceRows';
 import { exportAgentModels } from './agentModelExport';
 import type { ControlHost } from './agentControls';
 import { selectionData } from './agentInspection';
@@ -43,7 +44,7 @@ export async function agentExport(host: ControlHost, a: Record<string, any>) {
       local_to_world: host.fileEntries.require(host.spatialFiles.indexOf(data)).transform.toArray(),
       source_origin: data.sourceOrigin ?? null,
       source_file: item.source.fileName,
-      original_rows_available: !!data.sourcePointIndices?.length,
+      original_rows_available: hasSourceRows(data),
     };
     const bytes = wasm.export_inspection_ply(
       data.positionsArray!,
@@ -52,7 +53,7 @@ export async function agentExport(host: ControlHost, a: Record<string, any>) {
       flat,
       JSON.stringify(entries.map(([key]) => key)),
       item.indices,
-      data.sourcePointIndices ?? new Uint32Array(),
+      sourceRowsOf(data) ?? new Uint32Array(),
       JSON.stringify(metadata)
     );
     const id = storeExport(host, bytes);

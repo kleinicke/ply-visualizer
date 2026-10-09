@@ -1,7 +1,5 @@
 import * as assert from 'assert';
 import { PlyParser } from '../../src/parsers/plyParser';
-import { ObjParser } from '../../src/parsers/objParser';
-import { StlParser } from '../../src/parsers/stlParser';
 
 suite('Parser Error Handling Test Suite', () => {
   test('PLY Parser should handle corrupted headers gracefully', async () => {
@@ -69,43 +67,6 @@ end_header
     // Should handle gracefully, possibly with fewer vertices than declared
     assert.ok(result.vertexCount >= 0);
     assert.ok(result.vertices.length >= 0);
-  });
-
-  test('OBJ Parser should handle malformed face indices', async () => {
-    const objParser = new ObjParser();
-
-    const malformedObj = `v 0.0 0.0 0.0
-v 1.0 0.0 0.0  
-v 0.5 1.0 0.0
-f 1 INVALID 3
-f 1 2 999`;
-
-    const data = new TextEncoder().encode(malformedObj);
-    const result = await objParser.parse(data);
-
-    // Should skip invalid faces but continue parsing
-    assert.ok(result.vertexCount === 3);
-    assert.ok(result.vertices.length === 3);
-  });
-
-  test('STL Parser should handle truncated binary files', async () => {
-    const stlParser = new StlParser();
-
-    // Create truncated binary STL (less than required header + count)
-    const truncatedBuffer = new ArrayBuffer(50); // Less than minimum 84 bytes
-    const data = new Uint8Array(truncatedBuffer);
-
-    try {
-      await stlParser.parse(data);
-      assert.fail('Should have thrown error for truncated STL');
-    } catch (error) {
-      assert.ok(error instanceof Error);
-      assert.ok(
-        error.message.includes('Invalid') ||
-          error.message.includes('truncated') ||
-          error.message.includes('STL')
-      );
-    }
   });
 
   test('All parsers should handle extremely large files gracefully', async function () {

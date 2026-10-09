@@ -68,7 +68,10 @@ export function updateAllPointSizesForDistance(host: PointSizeScalingHost): void
     if (object instanceof THREE.Points || object instanceof THREE.Mesh) {
       const geometry = object.geometry;
       if (geometry) {
-        geometry.computeBoundingBox();
+        // Positions do not change after a load; the transform is applied below.
+        if (!geometry.boundingBox) {
+          geometry.computeBoundingBox();
+        }
         if (geometry.boundingBox) {
           const transformedBox = geometry.boundingBox.clone().applyMatrix4(object.matrixWorld);
           box.union(transformedBox);

@@ -33,6 +33,7 @@ const BACKGROUND_CHANGE_MESSAGES = new Set([
   'colmapImages',
   'npyData',
   'xyzVariantData',
+  'pointStreamEnd',
   'poseData',
 ]);
 

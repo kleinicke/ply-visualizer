@@ -6,8 +6,6 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
-import { ObjParser } from '../../engine/src/parsers/objParser';
-import { StlParser } from '../../engine/src/parsers/stlParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
@@ -19,17 +17,14 @@ import {
   parseAsciiPlyWasm,
   streamParseFile,
   detectXyzColorMode,
-  parseLidarWasm,
 } from '../wasmPointcloud';
-import {
-  parsePcdWasm,
-  parsePtsWasm,
-  toPcdPayload,
-  toPointCloudPayload,
-} from '../../engine/src/parsers/pointcloudWasm';
+import { toPointCloudPayload } from '../../engine/src/parsers/pointcloudWasm';
 import { isPlyBinary } from '../../engine/src/fileHandler';
+import { parallelParseTextFile, parallelStreamTextFile } from './parallelTextParse';
+import { decodeInWorker, decodeLidar } from './parallelLidarParse';
 import {
   readFileFast,
+  readFileShared,
   readFileHead,
   pcdViewpointIsIdentity,
   sendSpatialDataToWebview,
@@ -234,6 +229,59 @@ async function sendStonexColors(
   }
 }
 
+/**
+ * Parse a large local text cloud on the decoder pool and send it to the
+ * webview in parts as the slices finish (see engine/src/hosts/pointStream.ts),
+ * so the copy into the webview overlaps the parse instead of following it.
+ * The closing message is the usual `xyzVariantData` without its arrays.
+ *
+ * Returns false - having told the webview to drop any parts it received -
+ * when the caller should use its sequential path instead.
+ */
+async function sendStreamedTextCloud(
+  host: DocumentLoaderHost,
+  webviewPanel: vscode.WebviewPanel,
+  documentUri: vscode.Uri,
+  format: string,
+  colorMode: string,
+  variant: string,
+  tag: string,
+  loadStartTime: number
+): Promise<boolean> {
+  const streamId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let parts = 0;
+  const summary = await parallelStreamTextFile(documentUri.fsPath, format, colorMode, part => {
+    parts++;
+    return sendToWebview(webviewPanel, { type: 'pointStreamPart', streamId, ...part });
+  });
+  if (!summary) {
+    if (parts > 0) {
+      void sendToWebview(webviewPanel, { type: 'pointStreamCancel', streamId });
+    }
+    return false;
+  }
+  host.logPerf(
+    `⏱️ PERF[${tag}/ext] load ${(performance.now() - loadStartTime).toFixed(1)}ms (${summary.vertexCount} pts, wasm-parallel, ${parts} parts) for ${path.basename(documentUri.fsPath)}`
+  );
+  await sendToWebview(webviewPanel, {
+    type: 'pointStreamEnd',
+    streamId,
+    message: {
+      fileName: path.basename(documentUri.fsPath),
+      shortPath: host.getShortPath(documentUri.fsPath),
+      fileSizeInBytes: fs.statSync(documentUri.fsPath).size,
+      data: summary,
+      variant,
+      parseMode: 'wasm-parallel',
+      // This message type is not stamped by the transport; the PERF line
+      // needs the load's own epochs.
+      loadStartedAt: host.getCurrentLoadStartedAt(),
+      postedAt: Date.now(),
+    },
+  });
+  return true;
+}
+
 export async function loadDocumentContent(
   host: DocumentLoaderHost,
   documentUri: vscode.Uri,
@@ -297,11 +345,11 @@ export async function loadDocumentContent(
     }
 
     if (isLidarFile) {
-      const bytes = await readFileFast(documentUri);
+      const bytes = await readFileShared(documentUri);
       const readTime = performance.now();
       const extension = path.extname(documentUri.fsPath).slice(1).toLowerCase() as
         'las' | 'laz' | 'e57';
-      const decoded = parseLidarWasm(bytes, extension, path.basename(documentUri.fsPath));
+      const decoded = await decodeLidar(bytes, extension, path.basename(documentUri.fsPath));
       const parsedData = decoded.map((cloud, index) => ({
         vertices: [],
         faces: [],
@@ -468,97 +516,35 @@ export async function loadDocumentContent(
       return; // Exit early for NPY point cloud files
     }
 
-    if (isObjFile) {
-      // Handle OBJ file
-      sendToWebview(webviewPanel, {
-        type: 'timingUpdate',
-        message: '🚀 Extension: Starting OBJ file processing...',
-        timestamp: loadStartTime,
-      });
-
-      const objData = await vscode.workspace.fs.readFile(documentUri);
-      const fileReadTime = performance.now();
-      sendToWebview(webviewPanel, {
-        type: 'timingUpdate',
-        message: `📁 Extension: OBJ file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
-        timestamp: fileReadTime,
-      });
-
-      const objParser = new ObjParser();
-      const timingCallback = (message: string) => {
-        sendToWebview(webviewPanel, {
-          type: 'timingUpdate',
-          message: message,
-          timestamp: performance.now(),
-        });
-      };
-
-      const parsedData = await objParser.parse(objData, timingCallback);
-      const parseTime = performance.now();
-      sendToWebview(webviewPanel, {
-        type: 'timingUpdate',
-        message: `🎯 Extension: OBJ parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
-        timestamp: parseTime,
-      });
-
-      // Send parsed OBJ data to webview
-      sendToWebview(webviewPanel, {
-        type: 'objData',
+    const isOffFile = fileType?.extension === 'off';
+    if (isObjFile || isStlFile || isOffFile) {
+      // Decoded in Rust into packed buffers, which cross to the webview as raw
+      // ArrayBuffers. The old object-per-triangle form crossed as JSON and
+      // either took tens of seconds or exceeded V8's string limit outright.
+      // Decoding here rather than in the webview also keeps the parse off the
+      // UI thread and overlaps it with the webview's startup.
+      const bytes = await readFileShared(documentUri);
+      const readTime = performance.now();
+      const kind = isObjFile ? 'obj' : isStlFile ? 'stl' : 'off';
+      const parsed = await decodeInWorker<{ vertexCount: number; materialFile?: string }>(
+        kind,
+        bytes,
+        path.basename(documentUri.fsPath)
+      );
+      host.logPerf(
+        `⏱️ PERF[${kind}/ext] read ${(readTime - loadStartTime).toFixed(1)}ms, parse ${(performance.now() - readTime).toFixed(1)}ms (${parsed.vertexCount} vertices) for ${path.basename(documentUri.fsPath)}`
+      );
+      await sendToWebview(webviewPanel, {
+        type: `${kind}Data`,
         fileName: path.basename(documentUri.fsPath),
         shortPath: host.getShortPath(documentUri.fsPath),
-        fileSizeInBytes: objData.byteLength,
-        data: parsedData,
+        fileSizeInBytes: bytes.byteLength,
+        data: parsed,
       });
-
-      // Try to auto-load MTL file
-      await host.tryAutoLoadMtl(webviewPanel, documentUri, parsedData, 0);
-
-      return; // Exit early for OBJ files
-    }
-
-    if (isStlFile) {
-      // Handle STL file
-      sendToWebview(webviewPanel, {
-        type: 'timingUpdate',
-        message: '🚀 Extension: Starting STL file processing...',
-        timestamp: loadStartTime,
-      });
-
-      const stlData = await vscode.workspace.fs.readFile(documentUri);
-      const fileReadTime = performance.now();
-      sendToWebview(webviewPanel, {
-        type: 'timingUpdate',
-        message: `📁 Extension: STL file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
-        timestamp: fileReadTime,
-      });
-
-      const stlParser = new StlParser();
-      const timingCallback = (message: string) => {
-        sendToWebview(webviewPanel, {
-          type: 'timingUpdate',
-          message: message,
-          timestamp: performance.now(),
-        });
-      };
-
-      const parsedData = await stlParser.parse(stlData, timingCallback);
-      const parseTime = performance.now();
-      sendToWebview(webviewPanel, {
-        type: 'timingUpdate',
-        message: `🎯 Extension: STL parsing took ${(parseTime - fileReadTime).toFixed(1)}ms`,
-        timestamp: parseTime,
-      });
-
-      // Send parsed STL data to webview
-      sendToWebview(webviewPanel, {
-        type: 'stlData',
-        fileName: path.basename(documentUri.fsPath),
-        shortPath: host.getShortPath(documentUri.fsPath),
-        fileSizeInBytes: stlData.byteLength,
-        data: parsedData,
-      });
-
-      return; // Exit early for STL files
+      if (isObjFile) {
+        await host.tryAutoLoadMtl(webviewPanel, documentUri, parsed, 0);
+      }
+      return;
     }
 
     if (isPcdFile) {
@@ -581,7 +567,22 @@ export async function loadDocumentContent(
           const headText = Buffer.from(head).toString('latin1');
           const isAsciiPcd = /[\r\n]DATA\s+ascii/i.test('\n' + headText);
           if (isAsciiPcd && pcdViewpointIsIdentity(head)) {
+            if (
+              await sendStreamedTextCloud(
+                host,
+                webviewPanel,
+                documentUri,
+                'pcd',
+                'auto',
+                'pcd',
+                'pcd',
+                loadStartTime
+              )
+            ) {
+              return;
+            }
             const streamed = await streamParseFile(documentUri.fsPath, 'pcd');
+            const pcdMode = 'wasm-stream';
             if (streamed) {
               let pcdBytes = head.byteLength;
               try {
@@ -590,7 +591,7 @@ export async function loadDocumentContent(
                 /* size is best-effort for logging only */
               }
               host.logPerf(
-                `⏱️ PERF[pcd/ext] load ${(performance.now() - loadStartTime).toFixed(1)}ms (${streamed.vertexCount} pts, wasm-stream) for ${path.basename(documentUri.fsPath)}`
+                `⏱️ PERF[pcd/ext] load ${(performance.now() - loadStartTime).toFixed(1)}ms (${streamed.vertexCount} pts, ${pcdMode}) for ${path.basename(documentUri.fsPath)}`
               );
               sendToWebview(webviewPanel, {
                 type: 'xyzVariantData',
@@ -599,7 +600,7 @@ export async function loadDocumentContent(
                 fileSizeInBytes: pcdBytes,
                 data: streamed,
                 variant: 'pcd',
-                parseMode: 'wasm-stream',
+                parseMode: pcdMode,
               });
               return;
             }
@@ -609,7 +610,7 @@ export async function loadDocumentContent(
         }
       }
 
-      const pcdData = await readFileFast(documentUri);
+      const pcdData = await readFileShared(documentUri);
       const fileReadTime = performance.now();
       sendToWebview(webviewPanel, {
         type: 'timingUpdate',
@@ -617,7 +618,11 @@ export async function loadDocumentContent(
         timestamp: fileReadTime,
       });
 
-      const parsedData = toPcdPayload(await parsePcdWasm(pcdData));
+      const parsedData = await decodeInWorker<Record<string, any>>(
+        'pcd',
+        pcdData,
+        path.basename(documentUri.fsPath)
+      );
       const parseTime = performance.now();
       host.logPerf(
         `⏱️ PERF[pcd/ext] parse ${(parseTime - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
@@ -648,17 +653,29 @@ export async function loadDocumentContent(
         timestamp: loadStartTime,
       });
 
-      const ptsData = await readFileFast(documentUri);
-      const fileReadTime = performance.now();
-      sendToWebview(webviewPanel, {
-        type: 'timingUpdate',
-        message: `📁 Extension: PTS file read took ${(fileReadTime - loadStartTime).toFixed(1)}ms`,
-        timestamp: fileReadTime,
-      });
-
-      const parsedData = toPointCloudPayload(await parsePtsWasm(ptsData), 'pts');
+      const parallel =
+        documentUri.scheme === 'file'
+          ? await parallelParseTextFile(documentUri.fsPath, 'pts')
+          : null;
+      let parsedData: Record<string, unknown>;
+      let ptsBytes: number;
+      if (parallel) {
+        parsedData = toPointCloudPayload(
+          { ...parallel, metadataJson: '', scalarFields: {} },
+          'pts'
+        );
+        ptsBytes = fs.statSync(documentUri.fsPath).size;
+      } else {
+        const ptsData = await readFileShared(documentUri);
+        parsedData = await decodeInWorker<Record<string, unknown>>(
+          'pts',
+          ptsData,
+          path.basename(documentUri.fsPath)
+        );
+        ptsBytes = ptsData.byteLength;
+      }
       host.logPerf(
-        `⏱️ PERF[pts/ext] parse ${(performance.now() - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
+        `⏱️ PERF[pts/ext] load ${(performance.now() - loadStartTime).toFixed(1)}ms (${parsedData.vertexCount} pts, ${parallel ? 'wasm-parallel' : 'wasm'}) for ${path.basename(documentUri.fsPath)}`
       );
 
       // Send parsed PTS data to webview
@@ -666,8 +683,9 @@ export async function loadDocumentContent(
         type: 'ptsData',
         fileName: path.basename(documentUri.fsPath),
         shortPath: host.getShortPath(documentUri.fsPath),
-        fileSizeInBytes: ptsData.byteLength,
+        fileSizeInBytes: ptsBytes,
         data: parsedData,
+        parseMode: parallel ? 'wasm-parallel' : 'wasm',
       });
 
       return; // Exit early for PTS files
@@ -821,7 +839,22 @@ export async function loadDocumentContent(
         }
       }
 
-      if (ENABLE_XYZ_STREAMING && documentUri.scheme === 'file') {
+      if (
+        documentUri.scheme === 'file' &&
+        (await sendStreamedTextCloud(
+          host,
+          webviewPanel,
+          documentUri,
+          xyzVariant,
+          xyzColorMode,
+          xyzVariant,
+          'xyz',
+          loadStartTime
+        ))
+      ) {
+        return;
+      }
+      if (!xyzParsed && ENABLE_XYZ_STREAMING && documentUri.scheme === 'file') {
         const streamed = await streamParseFile(documentUri.fsPath, xyzVariant, xyzColorMode);
         if (streamed) {
           xyzParsed = streamed;
@@ -937,7 +970,22 @@ export async function loadDocumentContent(
       try {
         const head = await readFileHead(documentUri, 65536);
         if (!isPlyBinary(head)) {
+          if (
+            await sendStreamedTextCloud(
+              host,
+              webviewPanel,
+              documentUri,
+              'ply',
+              'auto',
+              'ply',
+              'ply',
+              loadStartTime
+            )
+          ) {
+            return;
+          }
           const streamed = await streamParseFile(documentUri.fsPath, 'ply');
+          const plyMode = 'wasm-stream';
           if (streamed) {
             let plyBytes = head.byteLength;
             try {
@@ -946,7 +994,7 @@ export async function loadDocumentContent(
               /* size is best-effort for logging only */
             }
             host.logPerf(
-              `⏱️ PERF[ply/ext] load ${(performance.now() - loadStartTime).toFixed(1)}ms (${streamed.vertexCount} pts, wasm-stream) for ${path.basename(documentUri.fsPath)}`
+              `⏱️ PERF[ply/ext] load ${(performance.now() - loadStartTime).toFixed(1)}ms (${streamed.vertexCount} pts, ${plyMode}) for ${path.basename(documentUri.fsPath)}`
             );
             sendToWebview(webviewPanel, {
               type: 'xyzVariantData',
@@ -955,7 +1003,7 @@ export async function loadDocumentContent(
               fileSizeInBytes: plyBytes,
               data: streamed,
               variant: 'ply',
-              parseMode: 'wasm-stream',
+              parseMode: plyMode,
             });
             return;
           }
