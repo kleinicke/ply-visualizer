@@ -26,6 +26,7 @@ import {
   SpatialFace,
   SpatialData,
   CameraParams,
+  DepthBytes,
   DepthConversionResult,
 } from './interfaces';
 import { CustomArcballControls, TurntableControls, VirtualBallControls } from './controls';
@@ -191,6 +192,7 @@ import {
   inspectNpyWasm,
   isNpyPointCloudShape,
   parsePlyBytes,
+  parsePlyFromRanges,
   parsePlyFromResponse,
   parsePlyWasm,
   readNpyWasm,
@@ -203,7 +205,10 @@ import { buildVolumeVoxelsAsync } from './visualization/volumeVoxels';
 
 // As early as the bundle allows: a binary PLY the extension named in the page
 // starts streaming into the parser while the viewer below initialises.
-binaryDataHandlers.startPlyPrefetch((window as any).__PLY_PREFETCH__);
+binaryDataHandlers.startPlyPrefetch(
+  (window as any).__PLY_PREFETCH__,
+  (window as any).__PLY_PREFETCH_SIZE__
+);
 depthConversionPipeline.startDepthPrefetch((window as any).__DEPTH_PREFETCH__);
 
 /**
@@ -1834,7 +1839,9 @@ export class PointCloudVisualizer {
   // typed path is zero-copy (shares the parser's array). MESHES are unchanged:
   // they keep the Float32 + LUT path (few vertices, memory is a non-issue, and
   // their lit materials read linear vertex colors directly).
-  private buildOriginalColorArray(data: SpatialData): Float32Array | Uint8Array | null {
+  private buildOriginalColorArray(
+    data: SpatialData
+  ): Float32Array | Uint16Array | Uint8Array | null {
     return colorModeUtils.buildOriginalColorArray(this, data);
   }
 
@@ -2548,7 +2555,9 @@ export class PointCloudVisualizer {
             type: 'xyzVariantData',
             data: { ...closing.data, ...arrays },
           }) as MessageOf<'xyzVariantData'>;
-          await this.loadWithPerf('xyz', whole, () =>
+          // The PERF tag names the format; PTS streams through the same route.
+          const kind = (closing as { variant?: string }).variant === 'pts' ? 'pts' : 'xyz';
+          await this.loadWithPerf(kind, whole, () =>
             formatDataHandlers.handlePointData(this, whole)
           );
         },
@@ -3651,7 +3660,7 @@ export class PointCloudVisualizer {
   }
 
   async processDepthToPointCloud(
-    depthData: ArrayBuffer,
+    depthData: ArrayBuffer | DepthBytes,
     fileName: string,
     cameraParams: CameraParams,
     colorImageData?: ImageData,
@@ -4316,6 +4325,7 @@ export class PointCloudVisualizer {
 // spec has no other way to reach it.
 (window as any).__plyParsePly = {
   parsePlyBytes,
+  parsePlyFromRanges,
   parsePlyFromResponse,
   parsePlyWasm,
 };

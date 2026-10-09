@@ -1,3 +1,5 @@
+/** A per-point scalar field: floats, or exact small integers (see `scalarFields`). */
+export type ScalarArray = Float32Array | Uint8Array | Uint16Array | Int16Array;
 export interface SceneModelData {
   root: import('three').Object3D;
   clips: import('three').AnimationClip[];
@@ -35,8 +37,18 @@ export interface SpatialFace {
   indices: number[];
 }
 
+/**
+ * A depth file's bytes, read again when needed rather than held for the life
+ * of the file (see depth/depthBytes.ts). Each `load()` returns a buffer the
+ * caller owns. The object's identity names the file across settings changes.
+ */
+export interface DepthBytes {
+  load(): Promise<ArrayBuffer>;
+}
+
 export interface DepthSource {
-  originalData: ArrayBuffer;
+  /** The file itself, or - where the viewer can read it again - a loader. */
+  originalData: ArrayBuffer | DepthBytes;
   fileName: string;
   cameraParams: CameraParams;
   depthDimensions: { width: number; height: number };
@@ -45,6 +57,11 @@ export interface DepthSource {
 }
 
 export interface SpatialData {
+  /**
+   * Bounds of `positionsArray` computed off the main thread, consumed (and
+   * removed) by the geometry builder.
+   */
+  positionBounds?: import('./visualization/positionBounds').PositionBounds;
   depthSource?: DepthSource;
   /** Browser-owned full scene; never serialized through postMessage. */
   sceneModel?: SceneModelData;
@@ -81,7 +98,12 @@ export interface SpatialData {
    */
   indicesArray?: Uint32Array | null;
   intensityArray?: Float32Array | null;
-  scalarFields?: Record<string, Float32Array>;
+  /**
+   * Extra per-point fields. Float32, or - for fields whose values are all
+   * small whole numbers, such as LAS classification - the narrowest integer
+   * type that holds them exactly (`compactScalarFields`).
+   */
+  scalarFields?: Record<string, ScalarArray>;
   useTypedArrays?: boolean;
   /** Full source point count (can differ from vertexCount for filtered invalid records). */
   sourcePointCount?: number;
@@ -183,6 +205,8 @@ export interface DepthConversionResult {
    * thread), so the caller can fold them into the one PERF line for the load
    * rather than emitting separate ones. See utils/perfLog.ts.
    */
+  /** Bounds of `vertices`, computed where they were produced (the worker). */
+  positionBounds?: import('./visualization/positionBounds').PositionBounds;
   timings?: {
     decodeMs: number;
     projectMs: number;

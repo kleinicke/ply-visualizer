@@ -37,9 +37,15 @@ export function volumeSliceRanges(volume: VolumeData): VolumeValueRange[] {
     const end = (k + 1) * sliceSize;
     for (let index = k * sliceSize; index < end; index++) {
       const value = volume.samples[index];
-      if (!Number.isFinite(value)) {continue;}
-      if (value < min) {min = value;}
-      if (value > max) {max = value;}
+      if (!Number.isFinite(value)) {
+        continue;
+      }
+      if (value < min) {
+        min = value;
+      }
+      if (value > max) {
+        max = value;
+      }
     }
     return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : { min: 0, max: 1 };
   });
@@ -96,8 +102,7 @@ export function volumeGreyByteForSlice(
     );
   }
 
-  const range =
-    mode === 'slice-auto' ? request.sliceRanges?.[k] : request.volumeRange;
+  const range = mode === 'slice-auto' ? request.sliceRanges?.[k] : request.volumeRange;
   if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max)) {
     return volumeGreyByte(
       value,
@@ -109,7 +114,9 @@ export function volumeGreyByteForSlice(
   const width = range.max - range.min;
   // The 2D viewer renders a constant-valued image as black after auto
   // normalization, including MONOCHROME1 images.
-  if (!(width > 0)) {return 0;}
+  if (!(width > 0)) {
+    return 0;
+  }
   let mapped = Math.max(0, Math.min(1, (value - range.min) / width));
   if (photometricInterpretation.trim().toUpperCase() === 'MONOCHROME1') {
     mapped = 1 - mapped;

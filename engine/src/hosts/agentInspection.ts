@@ -3,10 +3,15 @@ import { setAgentPointSizeMode } from './agentPointSizing';
 import { comparisonState } from './agentComparison';
 /* eslint-disable @typescript-eslint/naming-convention -- MCP wire keys */
 import * as THREE from 'three';
-import type { SpatialData } from '../interfaces';
+import type { ScalarArray, SpatialData } from '../interfaces';
 import type { SelectionManager } from '../SelectionManager';
 import { loadRegistrationWasm } from '../registration/wasmLoader';
 import { fitAgentView, type ControlHost } from './agentControls';
+
+/** The Rust inspectors read floats; integer fields are widened for them. */
+function asFloat32(values: ScalarArray): Float32Array {
+  return values instanceof Float32Array ? values : Float32Array.from(values);
+}
 
 export type Pose = {
   position: number[];
@@ -242,7 +247,7 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
     a.indices ??
     wasm.select_point_indices(
       positions,
-      values ?? new Float32Array(),
+      values ? asFloat32(values) : new Float32Array(),
       new Float32Array(a.values ?? []),
       new Float64Array(matrix.elements),
       new Float64Array(a.bounds ?? []),
@@ -260,7 +265,7 @@ export async function agentSelection(host: ControlHost, a: Record<string, any>) 
       : '';
     throw new Error('Selection matched no points; previous selection is unchanged.' + available);
   }
-  const subset = <T extends Float32Array | Uint8Array>(
+  const subset = <T extends Float32Array | Uint8Array | Uint16Array | Int16Array>(
     array: T | null | undefined,
     stride: number
   ): T | null => {
@@ -357,7 +362,7 @@ export async function agentAttributes(files: readonly SpatialData[]) {
       summary = Object.fromEntries(
         Object.entries(file.scalarFields ?? {}).map(([name, values]) => [
           name,
-          JSON.parse(wasm.scalar_summary(values)),
+          JSON.parse(wasm.scalar_summary(asFloat32(values))),
         ])
       );
       summaries.set(file, summary);

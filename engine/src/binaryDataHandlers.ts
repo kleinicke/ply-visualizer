@@ -1,8 +1,10 @@
-import { SpatialData } from './interfaces';
+import { ScalarArray, SpatialData } from './interfaces';
+import { scalarArrayFromBuffer } from './utils/scalarFields';
 import { PerfTimer } from './utils/perfLog';
 import { noteContainerScanLoaded } from './utils/containerPerf';
 import {
   parsePlyBytes,
+  parsePlyFromRanges,
   parsePlyFromResponse,
   warmUpPlyParser,
   type PlyParseResult,
@@ -58,18 +60,36 @@ export async function loadWithPerf(
  */
 let plyPrefetch: { uri: string; parsed: Promise<PlyParseResult> } | null = null;
 
-export function startPlyPrefetch(uri: unknown): void {
+/** Below this one request is about as fast as several. */
+const MIN_BYTES_FOR_RANGES = 32 * 1024 * 1024;
+
+/**
+ * @param size the file's length, from the extension: with it a large binary
+ *   point cloud is fetched as four ranges at once (`parsePlyFromRanges`).
+ */
+export function startPlyPrefetch(uri: unknown, size?: unknown): void {
   if (typeof uri !== 'string' || !uri || plyPrefetch) {
     return;
   }
   // Optimise the parser while the bytes are still in flight (see the helper).
   void warmUpPlyParser().catch(() => undefined);
-  const parsed = fetch(uri).then(response => {
-    if (!response.ok) {
-      throw new Error(`fetch failed: ${response.status}`);
-    }
-    return parsePlyFromResponse(response);
-  });
+  const whole = () =>
+    fetch(uri).then(response => {
+      if (!response.ok) {
+        throw new Error(`fetch failed: ${response.status}`);
+      }
+      return parsePlyFromResponse(response);
+    });
+  const parsed =
+    typeof size === 'number' && size >= MIN_BYTES_FOR_RANGES
+      ? // Four, measured: eight were slower again on large files (341 MB:
+        // 2.7 s against 1.3 s) - more parts in flight than the transport and
+        // the single decoding thread keep up with.
+        parsePlyFromRanges(uri, size, 4).catch(error => {
+          console.warn('[PLY] ranged fetch declined, fetching in one request:', error);
+          return whole();
+        })
+      : whole();
   // Rejections are handled where the result is taken; never let an unused
   // prefetch surface as an unhandled rejection.
   parsed.catch(() => undefined);
@@ -380,15 +400,19 @@ export async function handleBinarySpatialData(
     normalArray = new Float32Array(message.normalBuffer);
   }
 
-  const scalarFields: Record<string, Float32Array> = {};
+  const scalarFields: Record<string, ScalarArray> = {};
   for (const [name, buffer] of Object.entries(message.scalarFieldBuffers || {})) {
-    scalarFields[name] = new Float32Array(buffer as ArrayBuffer);
+    scalarFields[name] = scalarArrayFromBuffer(
+      buffer as ArrayBuffer,
+      message.scalarFieldTypes?.[name]
+    );
   }
   spatialData.positionsArray = positionArray;
   spatialData.colorsArray = colorArray;
   spatialData.normalsArray = normalArray;
   spatialData.scalarFields = scalarFields;
-  spatialData.intensityArray = scalarFields.intensity ?? null;
+  // Intensity is never compacted (see compactScalarFields).
+  spatialData.intensityArray = (scalarFields.intensity as Float32Array | undefined) ?? null;
 
   // Faces arrive as one triangle index buffer and go to the GPU as they are.
   if (message.indexBuffer) {

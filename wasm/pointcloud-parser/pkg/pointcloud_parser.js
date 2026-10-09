@@ -2915,6 +2915,36 @@ function parse_pcd(data) {
 exports.parse_pcd = parse_pcd;
 
 /**
+ * `DATA binary` rows `first_row..`, decoded from those rows' bytes alone
+ * (`body`; whole records only) with the header read from `head`.
+ *
+ * Source row indices are absolute, so the ranges of a file concatenate into
+ * exactly what `parse_pcd` returns - except that this never collapses an
+ * all-rows-kept map to the identity flag: only the caller, holding every
+ * range, can tell.
+ *
+ * # Errors
+ *
+ * A header that is incomplete or not `DATA binary`.
+ * @param {Uint8Array} head
+ * @param {Uint8Array} body
+ * @param {number} first_row
+ * @returns {PointCloudResult}
+ */
+function parse_pcd_binary_range(head, body, first_row) {
+    const ptr0 = passArray8ToWasm0(head, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(body, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.parse_pcd_binary_range(ptr0, len0, ptr1, len1, first_row);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return PointCloudResult.__wrap(ret[0]);
+}
+exports.parse_pcd_binary_range = parse_pcd_binary_range;
+
+/**
  * Parse a PLY file in either encoding, with faces, scalar fields and 3DGS
  * colour synthesis.
  * @param {Uint8Array} data
@@ -3043,6 +3073,30 @@ function parse_xyz(data, variant, color_mode) {
     return PointCloudResult.__wrap(ret);
 }
 exports.parse_xyz = parse_xyz;
+
+/**
+ * Where a `DATA binary` PCD's records are, as JSON
+ * `{"dataStart","stride","rows"}`, so the caller can split them into row
+ * ranges for several workers (`parse_pcd_binary_range`). Empty for any other
+ * encoding, or when `head` does not hold the whole header.
+ * @param {Uint8Array} head
+ * @returns {string}
+ */
+function pcd_binary_plan(head) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passArray8ToWasm0(head, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.pcd_binary_plan(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+exports.pcd_binary_plan = pcd_binary_plan;
 
 /**
  * Decide how a text point cloud's rows are read, from the start of the file.

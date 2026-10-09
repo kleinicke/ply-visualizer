@@ -10,6 +10,7 @@ import {
   type WasmLidarCloud,
 } from '../wasmPointcloud';
 import {
+  marshalWasmPointCloud,
   parseObjWasm,
   parseOffWasm,
   parsePcdWasm,
@@ -91,6 +92,19 @@ export interface LasColorsResult {
 export interface E57PlanResult {
   plan: string;
   images: WasmE57Image[];
+}
+
+/**
+ * One row range of a `DATA binary` PCD: the header `[0, headEnd)` and the
+ * range's records `[bodyStart, bodyEnd)` of the shared file bytes.
+ */
+export interface PcdRangeJob {
+  kind: 'pcdRange';
+  bytes: Uint8Array;
+  headEnd: number;
+  bodyStart: number;
+  bodyEnd: number;
+  firstRow: number;
 }
 
 export interface TextRangeJob {
@@ -205,6 +219,7 @@ interface RowWasm {
     aboveByte: number
   ): { encoding: string; take_colors(): Uint8Array; free(): void };
   las_range_plan(data: Uint8Array, parts: number): string;
+  parse_pcd_binary_range(head: Uint8Array, body: Uint8Array, firstRow: number): unknown;
   e57_scan_plan(data: Uint8Array): string;
   e57_images_only(data: Uint8Array, x: number, y: number, z: number, hasOrigin: boolean): unknown;
   parse_e57_scan(
@@ -440,7 +455,8 @@ function plan(wasm: RowWasm, job: PlanJob): string | E57PlanResult {
   return { plan, images };
 }
 
-type Job = TextRangeJob | LasRangeJob | E57ScanJob | DecodeJob | PlanJob | LasColorsJob;
+type Job =
+  TextRangeJob | LasRangeJob | E57ScanJob | DecodeJob | PlanJob | LasColorsJob | PcdRangeJob;
 
 async function run(wasm: RowWasm, job: Job): Promise<{ result: unknown; transfer: ArrayBuffer[] }> {
   switch (job.kind) {
@@ -450,6 +466,16 @@ async function run(wasm: RowWasm, job: Job): Promise<{ result: unknown; transfer
       return e57Scan(wasm, job);
     case 'text':
       return textRange(wasm, job);
+    case 'pcdRange': {
+      // Wasm takes ordinary memory; the shared views are copied into it.
+      const raw = wasm.parse_pcd_binary_range(
+        job.bytes.subarray(0, job.headEnd),
+        job.bytes.subarray(job.bodyStart, job.bodyEnd),
+        job.firstRow
+      );
+      const result = marshalWasmPointCloud(raw as never);
+      return { result, transfer: transferables(result) };
+    }
     case 'decode': {
       const result = await decode(job);
       return { result, transfer: transferables(result) };

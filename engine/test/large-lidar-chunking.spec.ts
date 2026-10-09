@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import './helpers/svelteRunes';
 import {
   handleLargeFileChunk,
   handleLargeFileComplete,
@@ -34,6 +35,8 @@ test('typed LiDAR chunks preserve packed arrays, scalar fields, and metadata', a
     hasIntensity: true,
     useTypedArrays: true,
     scalarFieldNames: ['intensity', 'classification'],
+    // Compacted on the host (compactScalarFields): one byte per point.
+    scalarFieldTypes: { intensity: 'Float32Array', classification: 'Uint8Array' },
     faces: [],
     format: 'binary_little_endian',
     comments: [],
@@ -65,7 +68,7 @@ test('typed LiDAR chunks preserve packed arrays, scalar fields, and metadata', a
       colorBuffer: new Uint8Array(colors).buffer,
       scalarFieldBuffers: {
         intensity: new Float32Array(intensity).buffer,
-        classification: new Float32Array(classification).buffer,
+        classification: new Uint8Array(classification).buffer,
       },
     });
 
@@ -80,6 +83,7 @@ test('typed LiDAR chunks preserve packed arrays, scalar fields, and metadata', a
   expect(Array.from(received?.positionsArray ?? [])).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   expect(Array.from(received?.colorsArray ?? [])).toEqual([255, 0, 0, 0, 255, 0, 0, 0, 255]);
   expect(Array.from(received?.scalarFields?.intensity ?? [])).toEqual([10, 20, 30]);
+  expect(received?.scalarFields?.classification).toBeInstanceOf(Uint8Array);
   expect(Array.from(received?.scalarFields?.classification ?? [])).toEqual([2, 6, 9]);
   expect(received?.sourceOrigin).toEqual([4_000_000, 500_000, 100]);
   expect(received?.metadata?.format).toBe('LAZ');

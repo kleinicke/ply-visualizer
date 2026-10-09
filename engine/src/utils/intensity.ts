@@ -1,4 +1,4 @@
-import { SpatialData } from '../interfaces';
+import { SpatialData, type ScalarArray } from '../interfaces';
 
 export function getIntensityArray(data: SpatialData): Float32Array | null {
   const direct = (data as any).intensityArray as Float32Array | null | undefined;
@@ -83,13 +83,7 @@ export function buildIntensityColorArrayForMode(
   pointCount: number,
   colorMode: string
 ): Float32Array {
-  const mapName =
-    colorMode === 'intensity-viridis'
-      ? 'viridis'
-      : colorMode === 'intensity-colors'
-        ? 'colors'
-        : 'grayscale';
-  return buildScalarColorArray(values, pointCount, mapName);
+  return buildScalarColorArray(values, pointCount, intensityMapName(colorMode));
 }
 
 /**
@@ -97,11 +91,58 @@ export function buildIntensityColorArrayForMode(
  * finite min/max (non-finite values render at 0.75 like missing intensity).
  */
 export function buildScalarColorArray(
-  values: Float32Array,
+  values: ScalarArray,
   pointCount: number,
   mapName: 'grayscale' | 'viridis' | 'colors'
 ): Float32Array {
   const colors = new Float32Array(pointCount * 3);
+  writeScalarColors(values, pointCount, mapName, colors, 1, 0);
+  return colors;
+}
+
+/**
+ * `buildScalarColorArray` as 16-bit unsigned values, for a normalized colour
+ * attribute. Half the memory of floats - 6 bytes a point instead of 12, or
+ * 48 MB saved on eight million points for as long as an intensity or field
+ * colour mode is shown - and 1/65535 steps are far below anything the screen
+ * can show, even in the dark end of the grey map. (8-bit would not be: these
+ * values are linear, and the output encoding stretches the darkest steps.)
+ */
+export function buildScalarColorArray16(
+  values: ScalarArray,
+  pointCount: number,
+  mapName: 'grayscale' | 'viridis' | 'colors'
+): Uint16Array {
+  const colors = new Uint16Array(pointCount * 3);
+  writeScalarColors(values, pointCount, mapName, colors, 65535, 0.5);
+  return colors;
+}
+
+export function buildIntensityColorArray16ForMode(
+  values: Float32Array,
+  pointCount: number,
+  colorMode: string
+): Uint16Array {
+  return buildScalarColorArray16(values, pointCount, intensityMapName(colorMode));
+}
+
+function intensityMapName(colorMode: string): 'grayscale' | 'viridis' | 'colors' {
+  return colorMode === 'intensity-viridis'
+    ? 'viridis'
+    : colorMode === 'intensity-colors'
+      ? 'colors'
+      : 'grayscale';
+}
+
+/** The colour loop, into floats (scale 1) or integers (scale, +0.5 rounding). */
+function writeScalarColors(
+  values: ScalarArray,
+  pointCount: number,
+  mapName: 'grayscale' | 'viridis' | 'colors',
+  colors: Float32Array | Uint16Array,
+  scale: number,
+  round: number
+): void {
   let min = Infinity;
   let max = -Infinity;
 
@@ -141,9 +182,10 @@ export function buildScalarColorArray(
 
     const i3 = i * 3;
     if (grayscale) {
-      colors[i3] = normalized;
-      colors[i3 + 1] = normalized;
-      colors[i3 + 2] = normalized;
+      const level = normalized * scale + round;
+      colors[i3] = level;
+      colors[i3 + 1] = level;
+      colors[i3 + 2] = level;
       continue;
     }
     const scaled = normalized * lastStop;
@@ -152,10 +194,8 @@ export function buildScalarColorArray(
     const t = scaled - index;
     const a = index * 3;
     const b = a + 3;
-    colors[i3] = stops[a] + (stops[b] - stops[a]) * t;
-    colors[i3 + 1] = stops[a + 1] + (stops[b + 1] - stops[a + 1]) * t;
-    colors[i3 + 2] = stops[a + 2] + (stops[b + 2] - stops[a + 2]) * t;
+    colors[i3] = (stops[a] + (stops[b] - stops[a]) * t) * scale + round;
+    colors[i3 + 1] = (stops[a + 1] + (stops[b + 1] - stops[a + 1]) * t) * scale + round;
+    colors[i3 + 2] = (stops[a + 2] + (stops[b + 2] - stops[a + 2]) * t) * scale + round;
   }
-
-  return colors;
 }

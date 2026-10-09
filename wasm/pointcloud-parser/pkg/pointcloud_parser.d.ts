@@ -716,6 +716,21 @@ export function parse_off(data: Uint8Array): MeshResult;
 export function parse_pcd(data: Uint8Array): PointCloudResult;
 
 /**
+ * `DATA binary` rows `first_row..`, decoded from those rows' bytes alone
+ * (`body`; whole records only) with the header read from `head`.
+ *
+ * Source row indices are absolute, so the ranges of a file concatenate into
+ * exactly what `parse_pcd` returns - except that this never collapses an
+ * all-rows-kept map to the identity flag: only the caller, holding every
+ * range, can tell.
+ *
+ * # Errors
+ *
+ * A header that is incomplete or not `DATA binary`.
+ */
+export function parse_pcd_binary_range(head: Uint8Array, body: Uint8Array, first_row: number): PointCloudResult;
+
+/**
  * Parse a PLY file in either encoding, with faces, scalar fields and 3DGS
  * colour synthesis.
  */
@@ -765,6 +780,14 @@ export function parse_text_table(data: Uint8Array, options: string): PointCloudR
  * the first valid row (3 = xyz, 4 = xyz+intensity, 6 = xyz+rgb).
  */
 export function parse_xyz(data: Uint8Array, variant: string, color_mode: string): PointCloudResult;
+
+/**
+ * Where a `DATA binary` PCD's records are, as JSON
+ * `{"dataStart","stride","rows"}`, so the caller can split them into row
+ * ranges for several workers (`parse_pcd_binary_range`). Empty for any other
+ * encoding, or when `head` does not hold the whole header.
+ */
+export function pcd_binary_plan(head: Uint8Array): string;
 
 /**
  * Decide how a text point cloud's rows are read, from the start of the file.

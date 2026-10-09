@@ -4,7 +4,7 @@ import {
 } from '../visualization/replaceSpatialGeometry';
 import type { EntryRequest } from '../hosts/viewerProtocol';
 import type { FileEntryRegistry } from '../state/fileEntries';
-import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
+import { CameraParams, DepthBytes, DepthConversionResult, SpatialData } from '../interfaces';
 import { applyDepthResultTypedArrays } from './depthResultArrays';
 import { ColorImageLoader } from '../colorImageLoader';
 
@@ -14,7 +14,7 @@ export interface ColorImageForDepthHost extends GeometryReplacementHost {
   colorImageLoader: ColorImageLoader;
   needsRender: boolean;
   processDepthToPointCloud(
-    depthData: ArrayBuffer,
+    depthData: ArrayBuffer | DepthBytes,
     fileName: string,
     cameraParams: CameraParams,
     colorImageData?: ImageData,

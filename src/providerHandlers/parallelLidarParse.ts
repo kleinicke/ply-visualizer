@@ -22,6 +22,7 @@ import type {
   PlanJob,
 } from './parseWorker';
 import { defaultParallelism, runParseJobs } from './parsePool';
+import { compactScalarFields } from '../../engine/src/utils/scalarFields';
 
 /**
  * Decode a LAS or LAZ file on several threads at once.
@@ -324,18 +325,26 @@ export async function decodeLidar(
   extension: 'las' | 'laz' | 'e57',
   fileName: string
 ): Promise<WasmLidarCloud[]> {
+  // Small whole-number attributes (classification, return numbers, ...) are
+  // stored and sent at their natural width - see compactScalarFields.
+  const compacted = (clouds: WasmLidarCloud[]) => {
+    for (const cloud of clouds) {
+      cloud.scalarFields = compactScalarFields(cloud.scalarFields) ?? {};
+    }
+    return clouds;
+  };
   if (extension === 'e57') {
     const scans = await parallelParseE57(bytes, fileName);
     if (scans) {
-      return scans;
+      return compacted(scans);
     }
   } else {
     const parallel = await parallelParseLas(bytes, fileName);
     if (parallel) {
-      return [parallel];
+      return compacted([parallel]);
     }
   }
-  return decodeInWorker<WasmLidarCloud[]>(extension, bytes, fileName);
+  return compacted(await decodeInWorker<WasmLidarCloud[]>(extension, bytes, fileName));
 }
 
 /**

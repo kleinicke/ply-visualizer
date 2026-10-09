@@ -22,6 +22,33 @@ import * as wasm from '../../../wasm/pointcloud-parser/pkg-web/pointcloud_parser
 import type { RegistrationWasm } from './wasmLoader';
 
 let ready: Promise<RegistrationWasm | null> | null = null;
+let compiled: Promise<WebAssembly.Module | null> | null = null;
+
+/**
+ * The crate compiled once in the page, for a worker that needs it (the depth
+ * worker reads NumPy files with it). A worker started from a blob inside a VS
+ * Code webview cannot fetch the binary itself - the request just hangs - so it
+ * is handed this module instead (`__PLY_POINTCLOUD_WASM_MODULE__`).
+ */
+export function pointcloudWasmModule(): Promise<WebAssembly.Module | null> {
+  if (!compiled) {
+    compiled = (async () => {
+      try {
+        // @ts-ignore -- emitted only by the web bundle, as an asset URL
+        const url = new URL(
+          '../../../wasm/pointcloud-parser/pkg-web/pointcloud_parser_bg.wasm',
+          import.meta.url
+        );
+        const response = await fetch(url);
+        return response.ok ? await WebAssembly.compile(await response.arrayBuffer()) : null;
+      } catch (error) {
+        console.warn('[pointcloud-wasm] could not compile the module for a worker:', error);
+        return null;
+      }
+    })();
+  }
+  return compiled;
+}
 
 /**
  * Resolves to the whole module namespace, not just the four registration
@@ -35,10 +62,18 @@ let ready: Promise<RegistrationWasm | null> | null = null;
  * it belongs to the object `init()` resolves to - and the parsers need it to
  * write a file into wasm memory instead of handing it across the boundary.
  */
+// Offered to the depth worker client through a global: that client is also
+// bundled into the extension host, where this browser-only loader is not.
+(
+  globalThis as { __plyPointcloudWasmModule?: typeof pointcloudWasmModule }
+).__plyPointcloudWasmModule = pointcloudWasmModule;
+
 export function loadRegistrationWasm(): Promise<RegistrationWasm | null> {
   if (!ready) {
+    const handed = (globalThis as { __PLY_POINTCLOUD_WASM_MODULE__?: WebAssembly.Module })
+      .__PLY_POINTCLOUD_WASM_MODULE__;
     ready = wasm
-      .default()
+      .default(handed ? { module_or_path: handed } : undefined)
       .then(instance => {
         const module = wasm as unknown as Record<string, unknown>;
         return { ...module, memory: instance.memory } as unknown as RegistrationWasm;

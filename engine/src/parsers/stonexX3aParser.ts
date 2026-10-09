@@ -1190,6 +1190,9 @@ export class StonexX3aParser {
       );
       const session = new stonexWasm.StonexColourSession(framePixels, JSON.stringify(descriptors));
       colourSession = session;
+      // Its own phase: building the session (the frames' pixels crossing into
+      // wasm) is separate work from colouring the scans with it.
+      markPhase('camera session');
 
       for (const scan of scanColumns) {
         if (scan.frames.length === 0) {

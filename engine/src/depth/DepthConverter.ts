@@ -146,6 +146,20 @@ export class DepthConverter {
     }
 
     const { image, meta } = await readDepth(fileName, depthData);
+    // A reader that misread its header must fail here, with a message, rather
+    // than hand the projection a NaN-sized image it never returns from.
+    if (
+      !Number.isInteger(image.width) ||
+      !Number.isInteger(image.height) ||
+      image.width <= 0 ||
+      image.height <= 0 ||
+      image.data.length < image.width * image.height
+    ) {
+      throw new Error(
+        `Could not read ${fileName}: decoded size ${image.width} x ${image.height} ` +
+          `with ${image.data.length} samples`
+      );
+    }
     return { image, meta };
   }
 

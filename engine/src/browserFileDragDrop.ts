@@ -2,7 +2,7 @@ import type { ViewerLifetime } from './utils/viewerLifetime';
 import { isSceneModel } from './models/modelFormats';
 import { loadSceneModel } from './models/loadSceneModel';
 import { setupRemoteFileLoader } from './remoteFileLoader';
-import { CameraParams, SpatialData } from './interfaces';
+import { CameraParams, DepthConversionResult, SpatialData } from './interfaces';
 import {
   BrowserMessageHandler,
   createBrowserFileHandler,
@@ -52,6 +52,12 @@ export interface BrowserFileDragDropHost {
   removeFileByIndex(fileIndex: number): void;
   handleCameraParams(message: any): Promise<void>;
   promptForCameraParameters(fileName: string): Promise<CameraParams | null>;
+  /** The depth worker, shared with images opened in VS Code. */
+  processDepthToPointCloud(
+    depthData: ArrayBuffer,
+    fileName: string,
+    cameraParams: CameraParams
+  ): Promise<DepthConversionResult>;
   handleCameraProfile(data: any, fileName: string): void;
   handlePoseData(message: any): Promise<void>;
   displayFiles(dataArray: SpatialData[]): Promise<void>;
@@ -666,19 +672,30 @@ export async function handleBrowserFiles(
           console.log(`⏭️ Skipping ${depthFile.name} - camera parameters cancelled`);
           continue;
         }
-        const parse = await convertDepthToUnified(depthFile.name, depthFile.data.buffer, {
-          fx: params.fx,
-          fy: params.fy ?? params.fx,
-          cx: params.cx ?? undefined,
-          cy: params.cy ?? undefined,
-          cameraModel: params.cameraModel,
-          depthType: params.depthType,
-          convention: params.convention ?? 'opengl',
-          baseline: params.baseline,
-          pngScaleFactor: params.pngScaleFactor,
-          depthScale: params.depthScale,
-          depthBias: params.depthBias,
-        });
+        const parse = await convertDepthToUnified(
+          depthFile.name,
+          depthFile.data.buffer,
+          {
+            fx: params.fx,
+            fy: params.fy ?? params.fx,
+            cx: params.cx ?? undefined,
+            cy: params.cy ?? undefined,
+            cameraModel: params.cameraModel,
+            depthType: params.depthType,
+            convention: params.convention ?? 'opengl',
+            baseline: params.baseline,
+            pngScaleFactor: params.pngScaleFactor,
+            depthScale: params.depthScale,
+            depthBias: params.depthBias,
+          },
+          // The worker gets the dialog's full parameters, distortion included.
+          (bytes, name) =>
+            host.processDepthToPointCloud(bytes, name, {
+              ...params,
+              fy: params.fy ?? params.fx,
+              convention: params.convention ?? 'opengl',
+            })
+        );
         const data = parse.data as SpatialData;
         (data as any).isDepthDerived = true;
         // Record dimensions if provided

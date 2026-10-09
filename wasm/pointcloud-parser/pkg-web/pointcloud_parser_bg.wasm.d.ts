@@ -119,6 +119,7 @@ export const parse_nrrd: (a: number, b: number, c: number, d: number) => [number
 export const parse_obj: (a: number, b: number) => [number, number, number];
 export const parse_off: (a: number, b: number) => [number, number, number];
 export const parse_pcd: (a: number, b: number) => [number, number, number];
+export const parse_pcd_binary_range: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
 export const parse_ply: (a: number, b: number) => [number, number, number];
 export const parse_ply_at: (a: number, b: number) => [number, number, number];
 export const parse_pts: (a: number, b: number) => number;
@@ -126,6 +127,7 @@ export const parse_row_range: (a: number, b: number, c: number, d: number, e: nu
 export const parse_stl: (a: number, b: number) => number;
 export const parse_text_table: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const parse_xyz: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+export const pcd_binary_plan: (a: number, b: number) => [number, number];
 export const plan_rows: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
 export const plyresult_bbox: (a: number) => [number, number];
 export const plyresult_face_count: (a: number) => number;

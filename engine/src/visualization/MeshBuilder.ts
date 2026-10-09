@@ -3,6 +3,7 @@ import { computePositionBounds } from './fastBounds';
 import type { FileEntryRegistry } from '../state/fileEntries';
 import * as THREE from 'three';
 import { SpatialData } from '../interfaces';
+import { compactScalarFields } from '../utils/scalarFields';
 
 export interface MeshBuilderHost {
   convertSrgbToLinear: boolean;
@@ -25,6 +26,8 @@ export function createGeometryFromSpatialData(
   data: SpatialData,
   initialColorMode?: string
 ): { geometry: THREE.BufferGeometry; geometryMs: number } {
+  // Whole-number fields at their natural width (no-op once compacted).
+  compactScalarFields(data.scalarFields);
   validateSpatialData(data);
   const geometry = new THREE.BufferGeometry();
 
@@ -163,7 +166,10 @@ export function createGeometryFromSpatialData(
       geometry.computeVertexNormals();
     }
 
-    computePositionBounds(geometry);
+    // Bounds the depth worker already computed are used once, then dropped,
+    // so they can never describe positions edited afterwards.
+    computePositionBounds(geometry, data.positionBounds);
+    delete data.positionBounds;
 
     const endTime = performance.now();
     const geometryMs = +(endTime - startTime).toFixed(1);

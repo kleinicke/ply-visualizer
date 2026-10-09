@@ -67,7 +67,7 @@ for (const [suffix, compress] of [
       await expect(page.locator('body')).toContainText(
         'This runtime does not support brotli decompression'
       );
-      await expect(page.locator('#file-list')).toBeEmpty();
+      await expect(page.locator('#file-list .file-item')).toHaveCount(0);
     }
   });
 }

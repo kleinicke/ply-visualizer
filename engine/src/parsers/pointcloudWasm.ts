@@ -503,110 +503,114 @@ async function parsePlyInWasmMemory(
   }
 }
 
+/** The final arrays a streamed binary point cloud is decoded into. */
+interface PlyOutputs {
+  positions: Float32Array;
+  colors: Uint8Array | null;
+  normals: Float32Array | null;
+  intensity: Float32Array | null;
+  scalars: Float32Array[];
+}
+
+function allocatePlyOutputs(stream: RawPlyStream, count: number): PlyOutputs {
+  return {
+    positions: new Float32Array(count * 3),
+    colors: stream.has_colors ? new Uint8Array(count * 3) : null,
+    normals: stream.has_normals ? new Float32Array(count * 3) : null,
+    intensity: stream.has_intensity ? new Float32Array(count) : null,
+    scalars: stream.scalar_field_names.map(() => new Float32Array(count)),
+  };
+}
+
 /**
- * A binary point cloud decoded while the rest of it is still arriving (see
- * `PlyVertexStream` in ply.rs for why). Records are gathered into the
- * stream's scratch buffer; each full buffer is decoded and its vertices
- * copied into the final arrays, which are the only full-size buffers there
- * ever are. Produces exactly what `marshalPly(parse_ply_at(...))` would.
+ * Decode `recordCount` vertex records, starting with `initial` and continuing
+ * with whatever `reader` delivers, into `out` from record `firstRecord` on.
+ * Records are gathered into the stream's scratch buffer; each full buffer is
+ * decoded and its vertices copied straight into the final arrays. Returns how
+ * many records were decoded; the caller decides what a shortfall means.
  */
-async function streamPlyVertices(
+async function decodeRecordsInto(
   wasm: PointcloudWasm,
   stream: RawPlyStream,
-  prefix: Uint8Array,
-  reader: ReadableStreamDefaultReader<Uint8Array>
-): Promise<PlyParseResult> {
-  const count = stream.vertex_count;
+  out: PlyOutputs,
+  firstRecord: number,
+  recordCount: number,
+  initial: Uint8Array,
+  reader: ReadableStreamDefaultReader<Uint8Array> | null
+): Promise<number> {
   const stride = stream.stride;
   const capacity = stream.chunk_records;
-  const names = stream.scalar_field_names;
-  const positions = new Float32Array(count * 3);
-  const colors = stream.has_colors ? new Uint8Array(count * 3) : null;
-  const normals = stream.has_normals ? new Float32Array(count * 3) : null;
-  const intensity = stream.has_intensity ? new Float32Array(count) : null;
-  const scalars = names.map(() => new Float32Array(count));
-
   // Bytes waiting in the scratch buffer (`filled`), always fewer than a full
   // buffer between calls.
   let filled = 0;
   let decoded = 0;
   const decode = (records: number) => {
-    const n = stream.decode(records);
+    const n = Math.min(stream.decode(records), recordCount - decoded);
     // Views after the call: decoding the first chunk grows wasm memory.
     const memory = wasm.memory!.buffer;
-    positions.set(new Float32Array(memory, stream.positions_ptr(), n * 3), decoded * 3);
-    colors?.set(new Uint8Array(memory, stream.colors_ptr(), n * 3), decoded * 3);
-    normals?.set(new Float32Array(memory, stream.normals_ptr(), n * 3), decoded * 3);
-    intensity?.set(new Float32Array(memory, stream.intensity_ptr(), n), decoded);
-    scalars.forEach((out, index) =>
-      out.set(new Float32Array(memory, stream.scalar_ptr(index), n), decoded)
+    const at = firstRecord + decoded;
+    out.positions.set(new Float32Array(memory, stream.positions_ptr(), n * 3), at * 3);
+    out.colors?.set(new Uint8Array(memory, stream.colors_ptr(), n * 3), at * 3);
+    out.normals?.set(new Float32Array(memory, stream.normals_ptr(), n * 3), at * 3);
+    out.intensity?.set(new Float32Array(memory, stream.intensity_ptr(), n), at);
+    out.scalars.forEach((array, index) =>
+      array.set(new Float32Array(memory, stream.scalar_ptr(index), n), at)
     );
     decoded += n;
-    return n;
   };
   const take = (bytes: Uint8Array) => {
     let at = 0;
-    while (at < bytes.byteLength && decoded < count) {
-      const room = capacity * stride - filled;
-      const part = bytes.subarray(at, at + room);
+    while (at < bytes.byteLength && decoded < recordCount) {
+      // A batch is a full scratch buffer, or what is left of this range.
+      const batch = Math.min(capacity, recordCount - decoded) * stride;
+      const part = bytes.subarray(at, at + batch - filled);
       // Pointer first: the first call allocates the buffer and can grow (and
       // so detach) wasm memory.
       const input = stream.input_ptr();
       new Uint8Array(wasm.memory!.buffer, input, capacity * stride).set(part, filled);
       filled += part.byteLength;
       at += part.byteLength;
-      if (filled === capacity * stride) {
-        decode(capacity);
+      if (filled === batch) {
+        decode(batch / stride);
         filled = 0;
       }
     }
   };
 
-  take(prefix.subarray(stream.data_start));
-  while (decoded < count) {
+  take(initial);
+  while (reader && decoded < recordCount) {
     const { done, value } = await reader.read();
     if (done) {
       break;
     }
     take(value);
   }
-  if (decoded < count && filled >= stride) {
+  if (decoded < recordCount && filled >= stride) {
     decode(Math.floor(filled / stride));
   }
-  // Whatever follows the vertices (an element the viewer ignores) is not
-  // needed; stop the transfer rather than read it.
-  void reader.cancel().catch(() => undefined);
+  return decoded;
+}
 
-  if (decoded !== count) {
-    throw new Error(
-      `PLY vertex data is truncated: header declares ${count} vertices, but only ${decoded} complete records are present`
-    );
-  }
-  if (stream.first_non_finite > 0) {
-    throw new Error(
-      `PLY contains a non-finite x/y/z coordinate at vertex ${stream.first_non_finite}`
-    );
-  }
-
+function plyStreamResult(stream: RawPlyStream, out: PlyOutputs, count: number): PlyParseResult {
   const header = JSON.parse(stream.metadata_json) as {
     format: PlyParseResult['format'];
     version: string;
     comments: string[];
   };
   const scalarFields: Record<string, Float32Array> = {};
-  if (intensity) {
-    scalarFields.intensity = intensity;
+  if (out.intensity) {
+    scalarFields.intensity = out.intensity;
   }
-  names.forEach((name, index) => {
-    scalarFields[name] = scalars[index];
+  stream.scalar_field_names.forEach((name, index) => {
+    scalarFields[name] = out.scalars[index];
   });
   return {
     vertexCount: count,
     faceCount: 0,
-    positionsArray: positions,
-    colorsArray: colors,
-    normalsArray: normals,
-    intensityArray: intensity,
+    positionsArray: out.positions,
+    colorsArray: out.colors,
+    normalsArray: out.normals,
+    intensityArray: out.intensity,
     scalarFields,
     indicesArray: null,
     hasColors: stream.has_colors,
@@ -617,6 +621,170 @@ async function streamPlyVertices(
     version: header.version,
     comments: header.comments,
   };
+}
+
+function truncatedError(count: number, decoded: number): Error {
+  return new Error(
+    `PLY vertex data is truncated: header declares ${count} vertices, but only ${decoded} complete records are present`
+  );
+}
+
+/**
+ * A binary point cloud fetched as several byte ranges at once, each range
+ * decoded as it arrives into its own slice of the final arrays.
+ *
+ * VS Code serves a webview's local files at about 250 MB/s per request, and
+ * that - not the decode - is the cost of opening a large binary PLY. Four
+ * requests in flight together arrive in about half the time. An earlier
+ * attempt read the ranges in file order, so the later ones stalled on
+ * backpressure until reached and the gain vanished (a 341 MB cloud got
+ * slower). Here every range starts on a vertex record and is decoded on its
+ * own, so all of them drain concurrently and nothing is buffered whole.
+ *
+ * Rejects - and the caller fetches the file in one request - whenever the file
+ * is not a fixed-stride binary point cloud, the server ignores ranges, or a
+ * range comes back short. Produces exactly what `parsePlyFromResponse` would.
+ */
+export async function parsePlyFromRanges(
+  uri: string,
+  size: number,
+  parts: number
+): Promise<PlyParseResult> {
+  const wasm = await loadPointcloudWasm();
+  if (!wasm?.memory || !wasm.PlyVertexStream) {
+    throw new Error('point-cloud wasm unavailable');
+  }
+  // One failed range stops the others: the caller fetches the whole file.
+  const stop = new AbortController();
+  const ranged = async (start: number, end: number) => {
+    const response = await fetch(uri, {
+      headers: { Range: `bytes=${start}-${end}` },
+      signal: stop.signal,
+    });
+    if (response.status !== 206 || !response.body) {
+      void response.body?.cancel().catch(() => undefined);
+      throw new Error(`range request was not honoured (${response.status})`);
+    }
+    return response;
+  };
+
+  const head = new Uint8Array(await (await ranged(0, Math.min(size, 65536) - 1)).arrayBuffer());
+  const headerEnd = findHeaderEnd([head], head.byteLength);
+  const opened: RawPlyStream[] = [];
+  const open = () => {
+    const stream =
+      headerEnd >= 0 ? wasm.PlyVertexStream!.open(head.subarray(0, headerEnd)) : undefined;
+    if (stream) {
+      opened.push(stream);
+    }
+    return stream;
+  };
+  try {
+    const first = open();
+    if (!first) {
+      throw new Error('not a streamable binary point cloud');
+    }
+    const count = first.vertex_count;
+    const stride = first.stride;
+    const dataStart = first.data_start;
+    if (dataStart + count * stride > size) {
+      throw new Error('PLY vertex data is truncated');
+    }
+    const out = allocatePlyOutputs(first, count);
+    const perPart = Math.ceil(count / parts);
+    const ranges = Array.from({ length: parts }, (_, index) => {
+      const firstRecord = index * perPart;
+      return { firstRecord, records: Math.max(0, Math.min(perPart, count - firstRecord)) };
+    }).filter(range => range.records > 0);
+    const streams = ranges.map((_, index) => (index === 0 ? first : open()!));
+
+    // Settled, not raced: no range may still be writing into a stream after
+    // this function frees it.
+    const settled = await Promise.allSettled(
+      ranges.map(async ({ firstRecord, records }, index) => {
+        const start = dataStart + firstRecord * stride;
+        let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+        try {
+          const response = await ranged(start, start + records * stride - 1);
+          reader = response.body!.getReader();
+          return await decodeRecordsInto(
+            wasm,
+            streams[index],
+            out,
+            firstRecord,
+            records,
+            new Uint8Array(0),
+            reader
+          );
+        } catch (error) {
+          stop.abort();
+          throw error;
+        } finally {
+          void reader?.cancel().catch(() => undefined);
+        }
+      })
+    );
+    const failed = settled.find(result => result.status === 'rejected');
+    if (failed) {
+      throw (failed as PromiseRejectedResult).reason;
+    }
+    const decodedCounts = settled.map(result => (result as PromiseFulfilledResult<number>).value);
+    ranges.forEach((range, index) => {
+      if (decodedCounts[index] !== range.records) {
+        throw truncatedError(count, range.firstRecord + decodedCounts[index]);
+      }
+    });
+    // The first bad vertex in the file, wherever its range was.
+    for (let index = 0; index < ranges.length; index++) {
+      const local = streams[index].first_non_finite;
+      if (local > 0) {
+        throw new Error(
+          `PLY contains a non-finite x/y/z coordinate at vertex ${ranges[index].firstRecord + local}`
+        );
+      }
+    }
+    return plyStreamResult(first, out, count);
+  } finally {
+    for (const stream of opened) {
+      stream.free?.();
+    }
+  }
+}
+
+/**
+ * A binary point cloud decoded while the rest of it is still arriving (see
+ * `PlyVertexStream` in ply.rs for why). Produces exactly what
+ * `marshalPly(parse_ply_at(...))` would.
+ */
+async function streamPlyVertices(
+  wasm: PointcloudWasm,
+  stream: RawPlyStream,
+  prefix: Uint8Array,
+  reader: ReadableStreamDefaultReader<Uint8Array>
+): Promise<PlyParseResult> {
+  const count = stream.vertex_count;
+  const out = allocatePlyOutputs(stream, count);
+  const decoded = await decodeRecordsInto(
+    wasm,
+    stream,
+    out,
+    0,
+    count,
+    prefix.subarray(stream.data_start),
+    reader
+  );
+  // Whatever follows the vertices (an element the viewer ignores) is not
+  // needed; stop the transfer rather than read it.
+  void reader.cancel().catch(() => undefined);
+  if (decoded !== count) {
+    throw truncatedError(count, decoded);
+  }
+  if (stream.first_non_finite > 0) {
+    throw new Error(
+      `PLY contains a non-finite x/y/z coordinate at vertex ${stream.first_non_finite}`
+    );
+  }
+  return plyStreamResult(stream, out, count);
 }
 
 /**

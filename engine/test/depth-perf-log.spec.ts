@@ -47,3 +47,22 @@ test('a depth load emits exactly one PERF line whose phases sum to the total', a
   // boundary, performance.now() inside the webview), so allow a small drift.
   expect(Math.abs(sum - total)).toBeLessThan(Math.max(20, total * 0.1));
 });
+
+test('a picked depth image is kept as typed arrays, not one object per point', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForSelector('#three-canvas');
+  await page.locator('#hiddenFileInput').setInputFiles(path.resolve('../testfiles/tif/depth.tif'));
+  await page.locator('#depth-ok').click({ timeout: 10000 });
+  await expect(page.locator('#file-list .file-item')).toHaveCount(1, { timeout: 15000 });
+  const kept = await page.evaluate(() => {
+    const data = (window as any).visualizer.spatialFiles[0];
+    return {
+      objects: data.vertices.length,
+      positions: data.positionsArray instanceof Float32Array,
+      count: data.vertexCount,
+    };
+  });
+  expect(kept.objects).toBe(0);
+  expect(kept.positions).toBe(true);
+  expect(kept.count).toBeGreaterThan(0);
+});

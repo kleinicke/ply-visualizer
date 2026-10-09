@@ -14,16 +14,25 @@
  * logarithmic over it, so a per-band range bands the image) and the band's row
  * offset (for the returned pixel coordinates).
  */
+import { BAND_ROWS_MISSING } from './depthBandProtocol';
 import {
+  createDepthBandSession,
   decodeExrZipBlocksSync,
   decodeTiffStripRangeSync,
   ensureTiffWasmGlueLoaded,
   initTiffWasm,
+  projectDepthBandSessionSync,
   projectDepthBandWasmSync,
 } from './readers/tiffWasm';
 import type { DepthBandRequest, DepthBandResponse } from './depthProjectionPool';
 
 const workerScope: any = self;
+
+/** This worker's band, when the pool asked it to keep one. */
+let session: {
+  key: string;
+  handle: { free(): void; project(...args: unknown[]): unknown };
+} | null = null;
 
 workerScope.onmessage = async (event: MessageEvent<DepthBandRequest>) => {
   const request = event.data;
@@ -64,15 +73,43 @@ workerScope.onmessage = async (event: MessageEvent<DepthBandRequest>) => {
       return;
     }
 
-    const band = projectDepthBandWasmSync(
-      new Float32Array(request.depth),
-      request.width,
-      request.height,
-      request.rowOffset,
-      request.depthMin,
-      request.depthMax,
-      request.params
-    );
+    let band: ReturnType<typeof projectDepthBandWasmSync>;
+    if (request.bandKey) {
+      // Rows sent once and kept in wasm; a parameter change sends only the
+      // key (see `DepthBandSession`).
+      if (request.depth.byteLength > 0) {
+        session?.handle.free();
+        session = null;
+        const handle = createDepthBandSession(
+          new Float32Array(request.depth),
+          request.width,
+          request.height,
+          request.rowOffset
+        );
+        if (handle) {
+          session = { key: request.bandKey, handle };
+        }
+      }
+      if (!session || session.key !== request.bandKey) {
+        throw new Error(BAND_ROWS_MISSING);
+      }
+      band = projectDepthBandSessionSync(
+        session.handle,
+        request.depthMin,
+        request.depthMax,
+        request.params
+      );
+    } else {
+      band = projectDepthBandWasmSync(
+        new Float32Array(request.depth),
+        request.width,
+        request.height,
+        request.rowOffset,
+        request.depthMin,
+        request.depthMax,
+        request.params
+      );
+    }
     if (!band) {
       throw new Error('Depth projection worker produced no result');
     }

@@ -1,4 +1,6 @@
 import { sendToWebview } from './webviewTransport';
+import { scalarArrayTypes } from '../../engine/src/utils/scalarFields';
+import type { ScalarArray } from '../../engine/src/interfaces';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 
@@ -400,8 +402,11 @@ export async function sendBinaryData(
     scalarFieldBuffers: Object.fromEntries(
       Object.entries(spatialData.scalarFields || {}).map(([name, values]) => [
         name,
-        (values as Float32Array).buffer,
+        (values as ScalarArray).buffer,
       ])
+    ),
+    scalarFieldTypes: scalarArrayTypes(
+      spatialData.scalarFields as Record<string, ScalarArray> | undefined
     ),
     sourcePointCount: spatialData.sourcePointCount,
     sourceOrigin: spatialData.sourceOrigin,
@@ -444,7 +449,7 @@ export async function sendLargeFileInChunksOptimized(
   let firstChunkTime = 0;
 
   const transferId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const scalarFields = (spatialData.scalarFields || {}) as Record<string, Float32Array>;
+  const scalarFields: Record<string, ScalarArray> = spatialData.scalarFields || {};
 
   // Send start message. A unique key matters for E57 files whose scans may
   // legally have duplicate or missing names.
@@ -464,6 +469,7 @@ export async function sendLargeFileInChunksOptimized(
     useTypedArrays: typed,
     hasIntensity: !!spatialData.hasIntensity,
     scalarFieldNames: Object.keys(scalarFields),
+    scalarFieldTypes: scalarArrayTypes(scalarFields),
     sourcePointCount: spatialData.sourcePointCount,
     sourceOrigin: spatialData.sourceOrigin,
     metadata: spatialData.metadata,

@@ -21,6 +21,7 @@ import {
 import { toPointCloudPayload } from '../../engine/src/parsers/pointcloudWasm';
 import { isPlyBinary } from '../../engine/src/fileHandler';
 import { parallelParseTextFile, parallelStreamTextFile } from './parallelTextParse';
+import { parallelParsePcd } from './parallelPcdParse';
 import { decodeInWorker, decodeLidar } from './parallelLidarParse';
 import {
   readFileFast,
@@ -642,11 +643,18 @@ export async function loadDocumentContent(
         timestamp: fileReadTime,
       });
 
-      const parsedData = await decodeInWorker<Record<string, any>>(
-        'pcd',
-        pcdData,
-        path.basename(documentUri.fsPath)
-      );
+      // A large DATA binary file decodes in row ranges on several threads;
+      // anything else, or any failure there, in one worker.
+      const parsedData =
+        ((await parallelParsePcd(pcdData).catch(error => {
+          console.warn('[pcd] parallel decode failed, decoding in one worker:', error);
+          return null;
+        })) as Record<string, any> | null) ??
+        (await decodeInWorker<Record<string, any>>(
+          'pcd',
+          pcdData,
+          path.basename(documentUri.fsPath)
+        ));
       const parseTime = performance.now();
       host.logPerf(
         `⏱️ PERF[pcd/ext] parse ${(parseTime - fileReadTime).toFixed(1)}ms (${parsedData.vertexCount} pts) for ${path.basename(documentUri.fsPath)}`
@@ -677,6 +685,24 @@ export async function loadDocumentContent(
         timestamp: loadStartTime,
       });
 
+      // Streamed in parts while the threads parse, like the other text
+      // formats; sending the joined cloud only at the end cost ~300 ms of
+      // transfer on an 8M-point file.
+      if (
+        documentUri.scheme === 'file' &&
+        (await sendStreamedTextCloud(
+          host,
+          webviewPanel,
+          documentUri,
+          'pts',
+          'auto',
+          'pts',
+          'pts',
+          loadStartTime
+        ))
+      ) {
+        return;
+      }
       const parallel =
         documentUri.scheme === 'file'
           ? await parallelParseTextFile(documentUri.fsPath, 'pts')

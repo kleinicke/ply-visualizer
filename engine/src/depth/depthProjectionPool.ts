@@ -24,6 +24,7 @@ import {
   type DepthProjectWasmResult,
 } from './readers/tiffWasm';
 import { spawnWorker, WorkerScript } from '../utils/webviewWorker';
+import { BAND_ROWS_MISSING } from './depthBandProtocol';
 
 export interface DepthBandRequest {
   id: number;
@@ -37,6 +38,11 @@ export interface DepthBandRequest {
   tiffWasmGlueUrl?: string;
   tiffWasmUrl?: string;
   tiffWasmModule?: WebAssembly.Module;
+  /**
+   * Keep these rows in the worker under this key; an empty `depth` then means
+   * "project the rows you kept".
+   */
+  bandKey?: string;
   /** Set instead of a projection: decode this run of TIFF strips. */
   strips?: { blob: ArrayBuffer; counts: Uint32Array; firstStrip: number; fields: Float64Array };
   /** Or this run of ZIP16 EXR blocks. */
@@ -97,6 +103,9 @@ async function startWorkers(): Promise<Worker[] | null> {
     const glueUrl = (globalThis as any).__TIFF_WASM_GLUE_URL__ as string | undefined;
     const scripts = glueUrl ? [new URL(glueUrl, location.href).href] : [];
     const started: Worker[] = [];
+    // Set when a sibling fails while others are still starting: those are
+    // stopped as they arrive, and the pool is never armed.
+    let failed = false;
     const pool = await Promise.all(
       Array.from({ length: poolSize() }, async (_, index) => {
         const worker = await spawnWorker(bandWorkerScript(), {
@@ -104,6 +113,11 @@ async function startWorkers(): Promise<Worker[] | null> {
           scripts,
         });
         started.push(worker);
+        if (failed) {
+          released.add(worker);
+          worker.terminate();
+          return worker;
+        }
         worker.onmessage = (event: MessageEvent<DepthBandResponse>) => {
           const entry = pending.get(event.data.id);
           if (entry) {
@@ -116,6 +130,7 @@ async function startWorkers(): Promise<Worker[] | null> {
           // Left alone, the error would also reach the worker that owns this
           // pool and fail its whole conversion.
           event.preventDefault();
+          failed = true;
           // A worker that failed - typically one that could not even start -
           // never answers again, and a later job posted to it would wait
           // forever. Give the pool up for good; callers then work in one pass.
@@ -134,6 +149,9 @@ async function startWorkers(): Promise<Worker[] | null> {
         return worker;
       })
     );
+    if (failed) {
+      return null;
+    }
     startedPool = pool;
     return pool;
   } catch (error) {
@@ -297,6 +315,20 @@ function concat<T extends Float32Array | Uint8Array | Uint16Array>(
   return out;
 }
 
+/** Which rows each worker keeps (see `DepthBandSession`). */
+const heldBands = new WeakMap<Worker, string>();
+const depthImageIds = new WeakMap<Float32Array, number>();
+let nextDepthImageId = 1;
+
+function depthImageId(data: Float32Array): number {
+  let id = depthImageIds.get(data);
+  if (id === undefined) {
+    id = nextDepthImageId++;
+    depthImageIds.set(data, id);
+  }
+  return id;
+}
+
 /**
  * Positive finite depth range, remembered per array: a settings change that
  * leaves the depth values alone (anything but scale, bias, disparity or
@@ -363,6 +395,42 @@ export async function projectDepthInBands(
   const glueUrl = (globalThis as any).__TIFF_WASM_GLUE_URL__;
   const wasmUrl = (globalThis as any).__TIFF_WASM_URL__;
 
+  // Each band goes to the same worker every time, which keeps its rows in
+  // wasm after the first projection (`DepthBandSession`): a parameter change
+  // then sends only the parameters, not 100 MB of rows.
+  const imageId = depthImageId(data);
+  const project = (index: number, rowOffset: number, rows: number, withRows: boolean) => {
+    const worker = pool[index];
+    const bandKey = `${imageId}:${width}:${rowOffset}:${rows}`;
+    const sendRows = withRows || heldBands.get(worker) !== bandKey;
+    return runBand(worker, {
+      id: nextRequestId++,
+      // Only this band's rows cross, as a transfer rather than a copy - and
+      // only when the worker does not hold them already.
+      depth: sendRows
+        ? data.slice(rowOffset * width, (rowOffset + rows) * width).buffer
+        : new ArrayBuffer(0),
+      bandKey,
+      width,
+      height: rows,
+      rowOffset,
+      depthMin,
+      depthMax,
+      // The rays are computed from row indices inside the slice, so the
+      // principal point moves with it.
+      params: { ...params, cy: params.cy - rowOffset },
+      tiffWasmGlueUrl: glueUrl,
+      tiffWasmUrl: wasmUrl,
+      tiffWasmModule: tiffWasm ?? undefined,
+    }).then(response => {
+      if (response.ok) {
+        heldBands.set(worker, bandKey);
+      } else {
+        heldBands.delete(worker);
+      }
+      return response;
+    });
+  };
   const jobs: Array<Promise<DepthBandResponse>> = [];
   for (let index = 0; index < bandCount; index++) {
     const rowOffset = index * rowsPerBand;
@@ -370,25 +438,13 @@ export async function projectDepthInBands(
     if (rows <= 0) {
       break;
     }
-    // Only this band's rows cross, and they cross as a transfer rather than a
-    // copy on the way in.
-    const slice = data.slice(rowOffset * width, (rowOffset + rows) * width);
     jobs.push(
-      runBand(pool[index], {
-        id: nextRequestId++,
-        depth: slice.buffer,
-        width,
-        height: rows,
-        rowOffset,
-        depthMin,
-        depthMax,
-        // The rays are computed from row indices inside the slice, so the
-        // principal point moves with it.
-        params: { ...params, cy: params.cy - rowOffset },
-        tiffWasmGlueUrl: glueUrl,
-        tiffWasmUrl: wasmUrl,
-        tiffWasmModule: tiffWasm ?? undefined,
-      })
+      project(index, rowOffset, rows, false).then(response =>
+        // A worker that lost its rows (restarted) gets them once more.
+        !response.ok && response.error === BAND_ROWS_MISSING
+          ? project(index, rowOffset, rows, true)
+          : response
+      )
     );
   }
 

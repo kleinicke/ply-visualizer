@@ -4,7 +4,28 @@
     {
       "type": "npm",
       "script": "watch",
-      "problemMatcher": "$ts-webpack-watch",
+      "problemMatcher": {
+        "owner": "webpack",
+        "fileLocation": "absolute",
+        "pattern": [
+          {
+            "regexp": "^\\[tsl\\] (ERROR|WARNING) in (.*)\\((\\d+),(\\d+)\\)$",
+            "severity": 1,
+            "file": 2,
+            "line": 3,
+            "column": 4
+          },
+          {
+            "regexp": "^\\s*(TS\\d+:.*)$",
+            "message": 1
+          }
+        ],
+        "background": {
+          "activeBegins": true,
+          "beginsPattern": "^(asset |webpack is watching|\\[webpack-cli\\]|assets by )",
+          "endsPattern": "^webpack \\d+\\.\\d+\\.\\d+ compiled"
+        }
+      },
       "isBackground": true,
       "presentation": {
         "reveal": "never"
@@ -17,7 +38,23 @@
     {
       "type": "npm",
       "script": "compile",
-      "problemMatcher": "$ts-webpack",
+      "problemMatcher": {
+        "owner": "webpack",
+        "fileLocation": "absolute",
+        "pattern": [
+          {
+            "regexp": "^\\[tsl\\] (ERROR|WARNING) in (.*)\\((\\d+),(\\d+)\\)$",
+            "severity": 1,
+            "file": 2,
+            "line": 3,
+            "column": 4
+          },
+          {
+            "regexp": "^\\s*(TS\\d+:.*)$",
+            "message": 1
+          }
+        ]
+      },
       "group": "build",
       "presentation": {
         "reveal": "never"

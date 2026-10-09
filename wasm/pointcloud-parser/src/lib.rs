@@ -1267,6 +1267,65 @@ fn parse_pcd_binary_records(data: &[u8], header: &PcdHeader) -> Result<PointClou
     Ok(sink.finish())
 }
 
+/// Where a `DATA binary` PCD's records are, as JSON
+/// `{"dataStart","stride","rows"}`, so the caller can split them into row
+/// ranges for several workers (`parse_pcd_binary_range`). Empty for any other
+/// encoding, or when `head` does not hold the whole header.
+#[wasm_bindgen]
+pub fn pcd_binary_plan(head: &[u8]) -> String {
+    let Ok(header) = parse_pcd_header(head) else {
+        return String::new();
+    };
+    if header.data_kind != "binary" {
+        return String::new();
+    }
+    let Ok((_, stride)) = pcd_field_descs(&header) else {
+        return String::new();
+    };
+    format!(
+        "{{\"dataStart\":{},\"stride\":{},\"rows\":{}}}",
+        header.data_start,
+        stride,
+        header.vertex_count()
+    )
+}
+
+/// `DATA binary` rows `first_row..`, decoded from those rows' bytes alone
+/// (`body`; whole records only) with the header read from `head`.
+///
+/// Source row indices are absolute, so the ranges of a file concatenate into
+/// exactly what `parse_pcd` returns - except that this never collapses an
+/// all-rows-kept map to the identity flag: only the caller, holding every
+/// range, can tell.
+///
+/// # Errors
+///
+/// A header that is incomplete or not `DATA binary`.
+#[wasm_bindgen]
+pub fn parse_pcd_binary_range(
+    head: &[u8],
+    body: &[u8],
+    first_row: u32,
+) -> Result<PointCloudResult, JsValue> {
+    let header = parse_pcd_header(head).map_err(|e| JsValue::from_str(&e))?;
+    if header.data_kind != "binary" {
+        return Err(JsValue::from_str("not a DATA binary PCD"));
+    }
+    let (descs, stride) = pcd_field_descs(&header).map_err(|e| JsValue::from_str(&e))?;
+    let rows = body.len() / stride;
+    let mut sink = PcdPointSink::new(&descs, rows);
+    for row in 0..rows {
+        let base = row * stride;
+        sink.push_point(body, &descs, |d| base + d.off);
+    }
+    let mut result = sink.finish();
+    for index in &mut result.source_indices {
+        *index += first_row;
+    }
+    result.metadata = header.metadata_json();
+    Ok(result)
+}
+
 /// `DATA binary_compressed`: an LZF-compressed, column-major payload behind two
 /// little-endian u32 lengths.
 fn parse_pcd_binary_compressed(
@@ -1939,6 +1998,58 @@ mod tests {
 #[cfg(test)]
 mod pcd_attribute_tests {
     use super::*;
+
+    #[test]
+    fn binary_pcd_ranges_concatenate_to_the_whole_file() {
+        // x y z, a packed rgb and an extra scalar; every seventh row NaN, so
+        // the source-row map is not the identity.
+        let rows = 1000u32;
+        let mut data = format!(
+            "FIELDS x y z rgb label\nSIZE 4 4 4 4 4\nTYPE F F F F U\nCOUNT 1 1 1 1 1\nWIDTH {rows}\nHEIGHT 1\nPOINTS {rows}\nDATA binary\n"
+        )
+        .into_bytes();
+        let data_start = data.len();
+        for row in 0..rows {
+            let x = if row % 7 == 3 {
+                f32::NAN
+            } else {
+                row as f32 * 0.5
+            };
+            for value in [x, -(row as f32), 1.5] {
+                data.extend(value.to_le_bytes());
+            }
+            let rgb = f32::from_bits(0x00ff_0000 | (row % 256) << 8 | (row * 3) % 256);
+            data.extend(rgb.to_le_bytes());
+            data.extend((row * 11).to_le_bytes());
+        }
+        let whole = parse_pcd(&data).unwrap();
+        let plan = pcd_binary_plan(&data[..data_start]);
+        assert_eq!(
+            plan,
+            format!("{{\"dataStart\":{data_start},\"stride\":20,\"rows\":{rows}}}")
+        );
+
+        let mut positions = Vec::new();
+        let mut colors = Vec::new();
+        let mut labels = Vec::new();
+        let mut indices = Vec::new();
+        for (first, last) in [(0u32, 333u32), (333, 334), (334, 1000)] {
+            let body = &data[data_start + first as usize * 20..data_start + last as usize * 20];
+            let part = parse_pcd_binary_range(&data[..data_start], body, first).unwrap();
+            positions.extend_from_slice(&part.positions);
+            colors.extend_from_slice(&part.colors);
+            labels.extend_from_slice(&part.scalars[0].1);
+            indices.extend_from_slice(&part.source_indices);
+        }
+        assert_eq!(positions, whole.positions);
+        assert_eq!(colors, whole.colors);
+        assert_eq!(labels, whole.scalars[0].1);
+        assert_eq!(indices, whole.source_indices);
+        assert!(
+            !whole.source_indices.is_empty(),
+            "NaN rows make a real row map"
+        );
+    }
 
     #[test]
     fn a_pcd_that_keeps_every_row_reports_an_identity_row_map() {

@@ -96,13 +96,16 @@ export function generatePlyFileContent(
 
   content += 'end_header\n';
 
-  // Point-cloud colors are stored as raw 8-bit sRGB (Uint8); mesh/intensity
-  // colors as Float32 [0,1]. Scale accordingly so export matches what's shown.
-  const colorIsByte =
-    hasColors &&
-    (colorAttribute.array instanceof Uint8Array ||
-      colorAttribute.array instanceof Uint8ClampedArray);
-  const colorScale = colorIsByte ? 1 : 255;
+  // Point-cloud colors are stored as raw 8-bit sRGB (Uint8); mesh and
+  // intensity/field colors as 16-bit normalized [0,1] (Uint16), and older
+  // paths as Float32 [0,1]. Scale accordingly so export matches what's shown.
+  const colorArray = hasColors ? colorAttribute.array : null;
+  const colorScale =
+    colorArray instanceof Uint8Array || colorArray instanceof Uint8ClampedArray
+      ? 1
+      : colorArray instanceof Uint16Array
+        ? 255 / 65535
+        : 255;
 
   // Export through matrixWorld so the editable per-file transform is reflected
   // in the saved coordinates, as promised by the save action.

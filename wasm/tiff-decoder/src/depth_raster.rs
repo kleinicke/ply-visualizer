@@ -105,4 +105,17 @@ mod raster_tests {
             assert_eq!((result.width, result.height, result.channels), (1, 2, 3));
         }
     }
+
+    /// Some writers put a `#` comment in the header (numpy-based tools record
+    /// the array shape there). The depth reader relies on this decoder for it.
+    #[test]
+    fn pfm_header_may_carry_a_comment_line() {
+        let mut bytes = b"Pf\n#{\"shape\": [2, 1]}\n1 2\n-1.0\n".to_vec();
+        for value in [7f32, 9.] {
+            bytes.extend(value.to_le_bytes());
+        }
+        let result = decode_depth_pfm(&bytes).unwrap();
+        assert_eq!((result.width, result.height, result.channels), (1, 2, 1));
+        assert_eq!(result.data, vec![9., 7.]);
+    }
 }

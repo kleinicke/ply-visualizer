@@ -86,7 +86,101 @@ pub fn sample_grbg(frame: &BayerFrame, portrait_x: f64, portrait_y: f64) -> [f64
 }
 
 /// Decodes a whole frame at `CAMERA_RGB_SCALE`.
+/// One lattice axis of `sample_lattice`, worked out once for a whole output
+/// row or column: the two clamped lattice indices and the blend weight.
+#[derive(Clone, Copy)]
+struct LatticeTap {
+    first: usize,
+    second: usize,
+    weight: f64,
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped to the lattice first
+fn lattice_tap(raw: f64, parity: usize, raw_extent: usize) -> LatticeTap {
+    let lattice = (raw - parity as f64) * 0.5;
+    let start = lattice.floor();
+    let max = ((raw_extent as f64 - 1.0 - parity as f64) * 0.5).floor();
+    LatticeTap {
+        first: start.clamp(0.0, max) as usize,
+        second: (start + 1.0).clamp(0.0, max) as usize,
+        weight: lattice - start,
+    }
+}
+
+/// `decode_rgb`, with the sampling geometry hoisted out of the pixel loop.
+///
+/// Every output pixel used to call `sample_lattice` four times, and each call
+/// re-derived its lattice position, floor, weights and clamped indices from
+/// scratch - in a rotated frame, where those depend only on the output row
+/// (the raw column) or only on the output column (the raw row). Here they are
+/// computed once per row and once per column and the per-pixel work is just
+/// the reads and the same blend, in the same order on the same values, so the
+/// image is bit-identical (`fast_decode_matches_the_reference` checks it).
+/// Demosaicing every camera frame was about half of colouring an archive.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // channel values are clamped to 0..=255
 pub fn decode_rgb(frame: &BayerFrame) -> RgbImage {
+    let width = (frame.image_width as f64 * CAMERA_RGB_SCALE).ceil() as usize;
+    let height = (frame.image_height as f64 * CAMERA_RGB_SCALE).ceil() as usize;
+    let mut data = vec![0u8; width * height * 3];
+    // Output row y reads raw column `raw_x = portrait_y`; output column x reads
+    // raw row `raw_y = raw_height - 1 - portrait_x` (see `sample_grbg`).
+    let column_taps = |parity: usize| -> Vec<LatticeTap> {
+        (0..height)
+            .map(|y| {
+                let portrait_y = (y as f64 + 0.5) / CAMERA_RGB_SCALE - 0.5;
+                lattice_tap(portrait_y, parity, frame.raw_width)
+            })
+            .collect()
+    };
+    let row_taps = |parity: usize| -> Vec<LatticeTap> {
+        (0..width)
+            .map(|x| {
+                let portrait_x = (x as f64 + 0.5) / CAMERA_RGB_SCALE - 0.5;
+                let raw_y = frame.raw_height as f64 - 1.0 - portrait_x;
+                lattice_tap(raw_y, parity, frame.raw_height)
+            })
+            .collect()
+    };
+    let (columns_even, columns_odd) = (column_taps(0), column_taps(1));
+    let (rows_even, rows_odd) = (row_taps(0), row_taps(1));
+    let read = |cx: usize, cy: usize, parity_x: usize, parity_y: usize| -> f64 {
+        let offset = (cy * 2 + parity_y) * frame.raw_width + cx * 2 + parity_x;
+        f64::from(frame.pixels.get(offset).copied().unwrap_or(0))
+    };
+    let sample = |column: LatticeTap, row: LatticeTap, parity_x: usize, parity_y: usize| -> f64 {
+        let (tx, ty) = (column.weight, row.weight);
+        let top = read(column.first, row.first, parity_x, parity_y) * (1.0 - tx)
+            + read(column.second, row.first, parity_x, parity_y) * tx;
+        let bottom = read(column.first, row.second, parity_x, parity_y) * (1.0 - tx)
+            + read(column.second, row.second, parity_x, parity_y) * tx;
+        top * (1.0 - ty) + bottom * ty
+    };
+    // Column-major over the output: the inner loop then walks along raw rows,
+    // which is where the reads are contiguous.
+    for x in 0..width {
+        let (row_even, row_odd) = (rows_even[x], rows_odd[x]);
+        for y in 0..height {
+            let (column_even, column_odd) = (columns_even[y], columns_odd[y]);
+            let red = sample(column_odd, row_even, 1, 0);
+            let green =
+                (sample(column_even, row_even, 0, 0) + sample(column_odd, row_odd, 1, 1)) * 0.5;
+            let blue = sample(column_even, row_odd, 0, 1);
+            let offset = (y * width + x) * 3;
+            data[offset] = red.min(255.0).round() as u8;
+            data[offset + 1] = green.min(255.0).round() as u8;
+            data[offset + 2] = blue.min(255.0).round() as u8;
+        }
+    }
+    RgbImage {
+        width,
+        height,
+        data,
+    }
+}
+
+/// The original per-pixel decode, kept as the reference `decode_rgb` must match.
+#[cfg(test)]
+pub fn decode_rgb_reference(frame: &BayerFrame) -> RgbImage {
     let width = (frame.image_width as f64 * CAMERA_RGB_SCALE).ceil() as usize;
     let height = (frame.image_height as f64 * CAMERA_RGB_SCALE).ceil() as usize;
     let mut data = vec![0u8; width * height * 3];
@@ -163,6 +257,73 @@ mod tests {
             raw_height: 4,
             image_width: 4,
             image_height: 4,
+        }
+    }
+
+    #[test]
+    fn fast_decode_matches_the_reference() {
+        // Odd and even sizes, wide and tall rasters, image sizes that do and do
+        // not match the raw plane: the hoisted decode must equal the per-pixel
+        // one byte for byte in every case.
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 24) as u8
+        };
+        for (raw_width, raw_height, image_width, image_height) in [
+            (4, 4, 4, 4),
+            (6, 5, 5, 6),
+            (37, 23, 23, 37),
+            (64, 48, 48, 64),
+            (101, 77, 80, 99),
+        ] {
+            let pixels: Vec<u8> = (0..raw_width * raw_height).map(|_| next()).collect();
+            let frame = BayerFrame {
+                pixels: &pixels,
+                raw_width,
+                raw_height,
+                image_width,
+                image_height,
+            };
+            let fast = decode_rgb(&frame);
+            let reference = decode_rgb_reference(&frame);
+            assert_eq!(
+                (fast.width, fast.height),
+                (reference.width, reference.height)
+            );
+            assert!(
+                fast.data == reference.data,
+                "decode differs for {raw_width}x{raw_height} -> {image_width}x{image_height}"
+            );
+        }
+    }
+
+    /// `cargo test --release --lib demosaic_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore = "timing only"]
+    fn demosaic_timing() {
+        let (raw_width, raw_height) = (4000, 3000);
+        let pixels: Vec<u8> = (0..raw_width * raw_height)
+            .map(|i| (i * 31 % 251) as u8)
+            .collect();
+        let frame = BayerFrame {
+            pixels: &pixels,
+            raw_width,
+            raw_height,
+            image_width: raw_height,
+            image_height: raw_width,
+        };
+        for _ in 0..2 {
+            let started = std::time::Instant::now();
+            let reference = decode_rgb_reference(&frame);
+            let reference_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let started = std::time::Instant::now();
+            let fast = decode_rgb(&frame);
+            let fast_ms = started.elapsed().as_secs_f64() * 1000.0;
+            assert!(fast.data == reference.data);
+            println!("reference {reference_ms:.0} ms, hoisted {fast_ms:.0} ms");
         }
     }
 

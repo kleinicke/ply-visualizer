@@ -3,7 +3,7 @@ import {
   type GeometryReplacementHost,
 } from '../visualization/replaceSpatialGeometry';
 import type { FileEntryRegistry } from '../state/fileEntries';
-import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
+import { CameraParams, DepthBytes, DepthConversionResult, SpatialData } from '../interfaces';
 import { applyDepthResultTypedArrays } from './depthResultArrays';
 import { runWithFileActivity } from '../fileActivity';
 import { PerfTimer } from '../utils/perfLog';
@@ -12,7 +12,7 @@ export interface LiveDepthUpdateHost extends GeometryReplacementHost {
   smallViewAffordance?: { notifyGeometryReplaced(): void };
   getDepthSettings(fileIndex: number): CameraParams;
   processDepthToPointCloud(
-    depthData: ArrayBuffer,
+    depthData: ArrayBuffer | DepthBytes,
     fileName: string,
     cameraParams: CameraParams,
     colorImageData?: ImageData,

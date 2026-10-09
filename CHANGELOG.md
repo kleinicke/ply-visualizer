@@ -10,6 +10,14 @@
 - Depth images convert on worker threads inside VS Code too (they ran on the UI thread before): a 26-megapixel TIFF opens in under a second instead of 8-15 s, large TIFFs and ZIP-compressed EXRs decode on several threads, and changing depth settings no longer decodes the file again
 - Binary PLY point clouds are decoded while they stream in, using far less memory (a 341 MB cloud: ~1.7 s instead of 4-19 s); ASCII PLY clouds added with "+ Add Point Cloud" use the same fast parser as opened ones
 - Align all is about five times faster (pairs run side by side, faster coarse search); each result row gets Fix and Refine buttons, the run reports its duration, Escape cancels it, and the up axis sits next to the align buttons; archive colouring can be cancelled
+- Less memory per loaded file: intensity/field colour modes and mesh colours use half the colour memory, and the depth worker caps its decoded-image cache at about 192 MB instead of keeping four full images
+- Adding XYZ files with "+ Add Point Cloud" now parses them in Rust like opened ones (the old path built one JavaScript object per point)
+- Large binary PLY files are fetched as four byte ranges at once and decoded as they arrive (113 MB: ~0.6 s → ~0.37 s; 341 MB: ~1.3 s); large binary PCD files decode on several threads; PTS files stream in like the other text formats; X3A archives demosaic their camera images faster when colouring
+- Changing a depth image's camera settings is faster again: the projection workers keep the image's rows between changes instead of receiving them every time (26 MP: ~0.35 s → ~0.21 s)
+- LAS/LAZ/E57 attributes that are whole numbers (classification, return numbers, user data, point source ID, ...) are stored at their natural width instead of as floats: a 1.6M-point LAS keeps 16 MB of attributes instead of 46 MB and opens faster
+- Depth images keep less memory: in VS Code the file is read again on the rare occasion it is needed instead of staying in memory while open, and on the standalone page a depth image no longer builds one JavaScript object per point (a 3.7M-point TIFF: 285 MB less memory, opens in ~0.2 s instead of ~0.65 s) and converts on the depth workers, with lens distortion from the dialog applied
+- KITTI .bin scans open on the standalone page again; cancelling one alignment no longer stalls the ones queued behind it
+- NumPy (.npy/.npz) depth images convert on the worker in VS Code (they hit a 30 s timeout first); PFM depth images decode in Rust and PFM headers with a comment line open again
 
 ## [1.8.0] - 2026-08-28
 

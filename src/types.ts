@@ -29,6 +29,6 @@ export interface BaseParserData {
   colorsArray?: Uint8Array | null;
   normalsArray?: Float32Array | null;
   intensityArray?: Float32Array | null;
-  scalarFields?: Record<string, Float32Array>;
+  scalarFields?: Record<string, import('../engine/src/interfaces').ScalarArray>;
   useTypedArrays?: boolean;
 }

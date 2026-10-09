@@ -3,6 +3,7 @@ import { DecodedDepthImage, DepthConverter } from './DepthConverter';
 import { applyColorToDepthResult } from './applyColorToDepthResult';
 import { ensureTiffWasmGlueLoaded, initTiffWasm } from './readers/tiffWasm';
 import { adoptWorkerPublicPath } from '../utils/webviewWorker';
+import { positionBounds } from '../visualization/positionBounds';
 
 // This worker starts the projection pool's workers; their chunk URLs must
 // point at the bundle even when this worker runs from a blob.
@@ -18,17 +19,21 @@ interface DepthWorkerRequest {
   tiffWasmGlueUrl?: string;
   tiffWasmUrl?: string;
   tiffWasmModule?: WebAssembly.Module;
+  pointcloudWasmModule?: WebAssembly.Module;
 }
 
 interface DepthWorkerSuccess {
   id: number;
   ok: true;
   result: DepthConversionResult;
+  /** Decoded images this worker no longer holds (see `maxDecodedCacheBytes`). */
+  evicted: string[];
 }
 
 interface DepthWorkerFailure {
   id: number;
   ok: false;
+  evicted: string[];
   error: string;
 }
 
@@ -36,6 +41,18 @@ const converter = new DepthConverter();
 const decodedCache = new Map<string, DecodedDepthImage>();
 const decodedCacheOrder: string[] = [];
 const maxDecodedCacheEntries = 4;
+/**
+ * Decoded images kept for live parameter changes, by size as well as count:
+ * a 26-megapixel float image is 100 MB decoded, and four of them sat in this
+ * worker for as long as the view was open. The newest is always kept.
+ */
+const maxDecodedCacheBytes = 192 * 1024 * 1024;
+/** Keys dropped since the last reply, so the client stops assuming them. */
+let evictedSinceReply: string[] = [];
+
+function decodedBytes(decoded: DecodedDepthImage): number {
+  return decoded.image.data.byteLength;
+}
 
 function transferListFor(result: DepthConversionResult): Transferable[] {
   const transfers: Transferable[] = [result.vertices.buffer];
@@ -64,11 +81,18 @@ async function getDecodedDepth(message: DepthWorkerRequest): Promise<DecodedDept
   );
   decodedCache.set(message.cacheKey, decoded);
   decodedCacheOrder.push(message.cacheKey);
-  while (decodedCacheOrder.length > maxDecodedCacheEntries) {
-    const oldest = decodedCacheOrder.shift();
-    if (oldest) {
-      decodedCache.delete(oldest);
-    }
+  let total = 0;
+  for (const key of decodedCacheOrder) {
+    total += decodedBytes(decodedCache.get(key)!);
+  }
+  while (
+    decodedCacheOrder.length > 1 &&
+    (decodedCacheOrder.length > maxDecodedCacheEntries || total > maxDecodedCacheBytes)
+  ) {
+    const oldest = decodedCacheOrder.shift()!;
+    total -= decodedBytes(decodedCache.get(oldest)!);
+    decodedCache.delete(oldest);
+    evictedSinceReply.push(oldest);
   }
   return decoded;
 }
@@ -81,6 +105,9 @@ self.onmessage = async (event: MessageEvent<DepthWorkerRequest>) => {
     }
     if (message.tiffWasmGlueUrl) {
       (globalThis as any).__TIFF_WASM_GLUE_URL__ = message.tiffWasmGlueUrl;
+    }
+    if (message.pointcloudWasmModule) {
+      (globalThis as any).__PLY_POINTCLOUD_WASM_MODULE__ = message.pointcloudWasmModule;
     }
     if (message.tiffWasmModule) {
       (globalThis as any).__TIFF_WASM_MODULE__ = message.tiffWasmModule;
@@ -114,19 +141,25 @@ self.onmessage = async (event: MessageEvent<DepthWorkerRequest>) => {
     if (message.colorImageData) {
       applyColorToDepthResult(result, message.colorImageData, message.cameraParams);
     }
+    // Two passes over every point, here rather than on the main thread.
+    result.positionBounds = positionBounds(result.vertices, result.pointCount);
 
     const response: DepthWorkerSuccess = {
       id: message.id,
       ok: true,
       result,
+      evicted: evictedSinceReply,
     };
+    evictedSinceReply = [];
     (self as any).postMessage(response, transferListFor(result));
   } catch (error) {
     const response: DepthWorkerFailure = {
       id: message.id,
       ok: false,
+      evicted: evictedSinceReply,
       error: error instanceof Error ? error.message : String(error),
     };
+    evictedSinceReply = [];
     (self as any).postMessage(response);
   }
 };

@@ -6,7 +6,12 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { sendStreamedTextCloud } from './documentLoader';
-import { streamParseFile } from '../wasmPointcloud';
+import {
+  detectXyzColorMode,
+  parseAsciiPlyWasm,
+  parseXyzWasm,
+  streamParseFile,
+} from '../wasmPointcloud';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
 import {
   parseObjWasm,
@@ -55,14 +60,19 @@ export interface AddFileHost {
 }
 
 /**
- * Add an ASCII PLY point cloud through the threaded text parser, streaming its
- * parts in as the open path does. False when the file is binary, a mesh, or
- * otherwise not a plain text cloud; the caller then takes its whole-file path.
+ * Add a text point cloud - ASCII PLY or an XYZ variant - through the threaded
+ * text parser, streaming its parts in as the open path does, or below that
+ * parser's size floor through the single-thread Rust stream parser. Either way
+ * the webview receives typed arrays: the old routes parsed ASCII PLY with the
+ * JavaScript parser here and plain XYZ into one object per point in the page.
+ * False when the file is binary, a mesh, or otherwise not a plain text cloud;
+ * the caller then takes its whole-file path.
  */
-async function streamAsciiPlyCloud(
+async function streamTextCloudForAdd(
   host: AddFileHost,
   webviewPanel: vscode.WebviewPanel,
-  fileUri: vscode.Uri
+  fileUri: vscode.Uri,
+  format: 'ply' | 'xyz' | 'xyzn' | 'xyzrgb'
 ): Promise<boolean> {
   if (fileUri.scheme !== 'file') {
     return false;
@@ -77,9 +87,12 @@ async function streamAsciiPlyCloud(
     } finally {
       await handle.close();
     }
-    if (isPlyBinary(head)) {
+    if (format === 'ply' && isPlyBinary(head)) {
       return false;
     }
+    // XYZRGB has no type header: decide ints or floats once, from the head,
+    // exactly as the open path does.
+    const colorMode = format === 'xyzrgb' ? detectXyzColorMode(head, format) : 'auto';
     const startedAt = Date.now();
     host.setLoadStartedAt(startedAt);
     const threaded = await sendStreamedTextCloud(
@@ -90,19 +103,17 @@ async function streamAsciiPlyCloud(
       },
       webviewPanel,
       fileUri,
-      'ply',
-      'auto',
-      'ply',
-      'ply',
+      format,
+      colorMode,
+      format,
+      format === 'ply' ? 'ply' : 'xyz',
       performance.now(),
       true
     );
     if (threaded) {
       return true;
     }
-    // Below the threaded parser's size floor: the same single-thread Rust
-    // stream parse the open path uses, rather than the JavaScript parser.
-    const streamed = await streamParseFile(fileUri.fsPath, 'ply');
+    const streamed = await streamParseFile(fileUri.fsPath, format, colorMode);
     if (!streamed) {
       return false;
     }
@@ -112,7 +123,7 @@ async function streamAsciiPlyCloud(
       shortPath: host.getShortPath(fileUri.fsPath),
       fileSizeInBytes: fs.statSync(fileUri.fsPath).size,
       data: streamed,
-      variant: 'ply',
+      variant: format,
       parseMode: 'wasm-stream',
       isAddFile: true,
     });
@@ -281,7 +292,7 @@ export async function handleAddFile(
           // An ASCII point cloud parses on the decoder threads and streams in,
           // as when it is opened; the whole-file paths below are for binary
           // PLY and for what the stream declines (meshes).
-          if (await streamAsciiPlyCloud(host, webviewPanel, files[i])) {
+          if (await streamTextCloudForAdd(host, webviewPanel, files[i], 'ply')) {
             continue;
           }
           // Read file data
@@ -336,6 +347,9 @@ export async function handleAddFile(
 
         // Handle XYZ files
         if (fileExtension === '.xyz') {
+          if (await streamTextCloudForAdd(host, webviewPanel, files[i], 'xyz')) {
+            continue;
+          }
           const xyzData = await vscode.workspace.fs.readFile(files[i]);
 
           // Send XYZ data to webview for parsing
@@ -490,6 +504,16 @@ export async function handleAddFile(
 
         // Handle XYZN/XYZRGB variants
         if (fileExtension === '.xyzn' || fileExtension === '.xyzrgb') {
+          if (
+            await streamTextCloudForAdd(
+              host,
+              webviewPanel,
+              files[i],
+              fileExtension === '.xyzn' ? 'xyzn' : 'xyzrgb'
+            )
+          ) {
+            continue;
+          }
           const xyzData = await vscode.workspace.fs.readFile(files[i]);
 
           sendToWebview(webviewPanel, {
@@ -632,7 +656,7 @@ export async function handleAddFileFromPath(
       return;
     }
     if (ext === '.ply') {
-      if (await streamAsciiPlyCloud(host, webviewPanel, fileUri)) {
+      if (await streamTextCloudForAdd(host, webviewPanel, fileUri, 'ply')) {
         return;
       }
       const spatialData = await vscode.workspace.fs.readFile(fileUri);
@@ -661,6 +685,9 @@ export async function handleAddFileFromPath(
       return;
     }
     if (ext === '.xyz') {
+      if (await streamTextCloudForAdd(host, webviewPanel, fileUri, 'xyz')) {
+        return;
+      }
       const xyzData = await vscode.workspace.fs.readFile(fileUri);
       sendToWebview(webviewPanel, {
         type: 'xyzData',
@@ -747,6 +774,16 @@ export async function handleAddFileFromPath(
       return;
     }
     if (ext === '.xyzn' || ext === '.xyzrgb') {
+      if (
+        await streamTextCloudForAdd(
+          host,
+          webviewPanel,
+          fileUri,
+          ext === '.xyzn' ? 'xyzn' : 'xyzrgb'
+        )
+      ) {
+        return;
+      }
       const xyzData = await vscode.workspace.fs.readFile(fileUri);
       sendToWebview(webviewPanel, {
         type: 'xyzVariantData',
@@ -912,6 +949,23 @@ export async function handleDroppedFilesFromWebview(
             host.logPerf.bind(host)
           );
         } else {
+          // Point clouds parse in Rust into typed arrays, as when opened;
+          // meshes (null) and 3DGS splats take the JavaScript parser.
+          const head = new TextDecoder('utf-8').decode(fileData.subarray(0, 4096));
+          const parsed = head.includes('f_dc_0') ? null : parseAsciiPlyWasm(fileData);
+          if (parsed) {
+            sendToWebview(webviewPanel, {
+              type: 'xyzVariantData',
+              fileName,
+              shortPath,
+              fileSizeInBytes: fileData.byteLength,
+              data: parsed,
+              variant: 'ply',
+              parseMode: 'wasm',
+              isAddFile: true,
+            });
+            continue;
+          }
           const parsedData = await parser.parse(fileData);
           parsedData.fileName = fileName;
           parsedData.shortPath = shortPath;
@@ -924,13 +978,30 @@ export async function handleDroppedFilesFromWebview(
       }
 
       if (ext === '.xyz') {
-        sendToWebview(webviewPanel, {
-          type: 'xyzData',
-          fileName,
-          shortPath,
-          data: toArrayBuffer(fileData),
-          isAddFile: true,
-        });
+        // Parsed here in Rust into typed arrays; the page's own XYZ handler
+        // builds an object per point.
+        const parsed = parseXyzWasm(fileData, 'xyz');
+        sendToWebview(
+          webviewPanel,
+          parsed
+            ? {
+                type: 'xyzVariantData',
+                fileName,
+                shortPath,
+                fileSizeInBytes: fileData.byteLength,
+                data: parsed,
+                variant: 'xyz',
+                parseMode: 'wasm',
+                isAddFile: true,
+              }
+            : {
+                type: 'xyzData',
+                fileName,
+                shortPath,
+                data: toArrayBuffer(fileData),
+                isAddFile: true,
+              }
+        );
         continue;
       }
 

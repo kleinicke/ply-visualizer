@@ -1,4 +1,4 @@
-import { SpatialData } from '../interfaces';
+import { ScalarArray, SpatialData } from '../interfaces';
 
 // Properties consumed by geometry/color/normal handling — everything else
 // numeric is an "extra" scalar field the user can color by.
@@ -100,10 +100,104 @@ export function parseScalarColorMode(
 export function getScalarFieldForColorMode(
   data: SpatialData,
   colorMode: string
-): Float32Array | null {
+): ScalarArray | null {
   const parsed = parseScalarColorMode(colorMode);
   if (!parsed) {
     return null;
   }
   return data.scalarFields?.[parsed.field] ?? null;
+}
+
+/**
+ * Store each scalar field at the narrowest type that holds it exactly.
+ *
+ * Decoders hand every extra field over as Float32, but most lidar attributes
+ * are small whole numbers: LAS classification, return number, number of
+ * returns, user data (0-255), point source ID (0-65535), scan angle rank.
+ * Kept as floats they cost four bytes a point each - for a LAS file more than
+ * the positions and colours together. A field whose every value is a finite
+ * integer in range becomes Uint8, Uint16 or Int16; the values are unchanged,
+ * so colour modes, legends and exports read the same numbers. Intensity stays
+ * Float32: the intensity modes and depth tools read it as floats.
+ */
+export function compactScalarFields(
+  fields: Record<string, ScalarArray> | undefined
+): Record<string, ScalarArray> | undefined {
+  if (!fields) {
+    return fields;
+  }
+  for (const [name, values] of Object.entries(fields)) {
+    if (!(values instanceof Float32Array) || INTENSITY_ALIASES.has(name.toLowerCase())) {
+      continue;
+    }
+    let min = Infinity;
+    let max = -Infinity;
+    let whole = true;
+    for (let i = 0; i < values.length; i++) {
+      const value = values[i];
+      if (!Number.isInteger(value)) {
+        whole = false;
+        break;
+      }
+      if (value < min) {
+        min = value;
+      }
+      if (value > max) {
+        max = value;
+      }
+    }
+    if (!whole || values.length === 0) {
+      continue;
+    }
+    // In range, so the typed-array conversion copies every value exactly.
+    if (min >= 0 && max <= 255) {
+      fields[name] = new Uint8Array(values);
+    } else if (min >= 0 && max <= 65535) {
+      fields[name] = new Uint16Array(values);
+    } else if (min >= -32768 && max <= 32767) {
+      fields[name] = new Int16Array(values);
+    }
+  }
+  return fields;
+}
+
+/**
+ * Scalar fields cross postMessage as bare buffers, so the array type travels
+ * beside them: a compacted classification field is a Uint8Array, and reading
+ * its buffer as floats would be garbage (or throw, for a length not divisible
+ * by four).
+ */
+const SCALAR_ARRAY_TYPES = { Float32Array, Uint8Array, Uint16Array, Int16Array };
+export type ScalarArrayType = keyof typeof SCALAR_ARRAY_TYPES;
+
+export function scalarArrayType(values: ScalarArray): ScalarArrayType {
+  return values instanceof Uint8Array
+    ? 'Uint8Array'
+    : values instanceof Uint16Array
+      ? 'Uint16Array'
+      : values instanceof Int16Array
+        ? 'Int16Array'
+        : 'Float32Array';
+}
+
+export function scalarArrayTypes(
+  fields: Record<string, ScalarArray> | undefined
+): Record<string, ScalarArrayType> {
+  return Object.fromEntries(
+    Object.entries(fields ?? {}).map(([name, values]) => [name, scalarArrayType(values)])
+  );
+}
+
+function scalarConstructor(type: string | undefined) {
+  return SCALAR_ARRAY_TYPES[(type ?? 'Float32Array') as ScalarArrayType] ?? Float32Array;
+}
+
+/** View a transferred buffer as the type it was sent as (floats when unnamed). */
+export function scalarArrayFromBuffer(buffer: ArrayBuffer, type?: string): ScalarArray {
+  return new (scalarConstructor(type))(buffer);
+}
+
+/** An empty field of the named type, for assembling chunks. */
+export function allocateScalarArray(type: string | undefined, length: number): ScalarArray {
+  return new (scalarConstructor(type))(length);
 }

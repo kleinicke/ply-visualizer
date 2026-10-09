@@ -129,3 +129,73 @@ test('bands reproduce a whole-image projection exactly', async ({ page }) => {
     expect(result, `${result.model} at ${result.bands} bands`).toMatchObject({ same: true });
   }
 });
+
+/**
+ * The pool keeps each band's rows in its worker after the first projection,
+ * so a parameter change sends only the parameters. Every later projection of
+ * the same image with other intrinsics must still equal a whole-image one.
+ */
+test('re-projecting kept rows with new parameters matches a whole-image projection', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForSelector('#three-canvas');
+  await page.waitForFunction(
+    () => (window as any).__plyDepth !== undefined && (window as any).__plyDepthPool !== undefined
+  );
+
+  const outcome = await page.evaluate(async () => {
+    const depthApi = (window as any).__plyDepth;
+    const { projectDepthInBands } = (window as any).__plyDepthPool;
+    if (!(await depthApi.initTiffWasm())) {
+      return { skipped: true, results: [] as any[] };
+    }
+    const width = 1200;
+    const height = 900;
+    const data = new Float32Array(width * height);
+    for (let i = 0; i < data.length; i++) {
+      data[i] = i % 97 === 0 ? 0 : 1 + ((i * 7919) % 1000) / 250;
+    }
+    const digest = (...arrays: any[]) => {
+      let hash = 0x811c9dc5;
+      for (const array of arrays) {
+        const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+        for (let index = 0; index < bytes.length; index++) {
+          hash = Math.imul(hash ^ bytes[index], 0x01000193) >>> 0;
+        }
+      }
+      return hash >>> 0;
+    };
+    const results: any[] = [];
+    for (const fx of [900, 1400, 900]) {
+      const params = {
+        kind: 'euclidean',
+        cameraModel: 'pinhole-opencv',
+        convention: 'opengl',
+        fx,
+        fy: fx,
+        cx: width / 2,
+        cy: height / 2,
+        coefficients: [-0.2, 0.05, 0.0003, -0.0001, -0.01],
+      };
+      const whole = depthApi.projectDepthWasmSync(data, width, height, params);
+      const banded = await projectDepthInBands(data, width, height, params);
+      results.push({
+        fx,
+        banded: !!banded,
+        same:
+          !!banded &&
+          banded.pointCount === whole.pointCount &&
+          digest(banded.vertices, banded.colors) === digest(whole.vertices, whole.colors),
+      });
+    }
+    return { skipped: false, results };
+  });
+
+  test.skip(outcome.skipped, 'camera-model kernel unavailable in this browser');
+  expect(outcome.results).toEqual([
+    { fx: 900, banded: true, same: true },
+    { fx: 1400, banded: true, same: true },
+    { fx: 900, banded: true, same: true },
+  ]);
+});

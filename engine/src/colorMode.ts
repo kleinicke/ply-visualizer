@@ -5,8 +5,8 @@ import { isDepthDerivedFile } from './depth/commentSettings';
 import {
   getIntensityArray,
   hasIntensityData,
-  buildIntensityColorArrayForMode,
-  buildScalarColorArray,
+  buildIntensityColorArray16ForMode,
+  buildScalarColorArray16,
 } from './utils/intensity';
 import { parseScalarColorMode, getScalarFieldForColorMode } from './utils/scalarFields';
 
@@ -69,25 +69,27 @@ export interface ColorArrayHost extends SrgbHost {
 export function buildOriginalColorArray(
   host: ColorArrayHost,
   data: SpatialData
-): Float32Array | Uint8Array | null {
+): Float32Array | Uint16Array | Uint8Array | null {
   const isMesh = (data.faceCount || 0) > 0;
   const typedColors = (data as any).colorsArray as Uint8Array | null | undefined;
   if (typedColors && data.hasColors) {
     if (!isMesh) {
       return typedColors; // raw 8-bit sRGB, decoded in-shader; zero-copy
     }
-    const colorFloats = new Float32Array(typedColors.length);
+    // Linear mesh colours as 16-bit normalized values rather than floats: half
+    // the memory, and steps far finer than the 8-bit source they come from.
+    const colorLevels = new Uint16Array(typedColors.length);
     if (host.convertSrgbToLinear) {
       const lut = host.colorProcessor.ensureSrgbLUT();
       for (let i = 0; i < typedColors.length; i++) {
-        colorFloats[i] = lut[typedColors[i]];
+        colorLevels[i] = lut[typedColors[i]] * 65535 + 0.5;
       }
     } else {
       for (let i = 0; i < typedColors.length; i++) {
-        colorFloats[i] = typedColors[i] / 255;
+        colorLevels[i] = typedColors[i] * 257; // exactly value/255 of full scale
       }
     }
-    return colorFloats;
+    return colorLevels;
   }
 
   if (!data.hasColors || !data.vertices?.length) {
@@ -136,9 +138,11 @@ export function applyColorModeToGeometry(
   if (colorMode.startsWith('intensity')) {
     const intensity = getIntensityArray(data);
     if (intensity) {
+      // 16-bit normalized: see buildScalarColorArray16.
       const colorAttribute = new THREE.BufferAttribute(
-        buildIntensityColorArrayForMode(intensity, pointCount, colorMode),
-        3
+        buildIntensityColorArray16ForMode(intensity, pointCount, colorMode),
+        3,
+        true
       );
       geometry.setAttribute('color', colorAttribute);
       colorAttribute.needsUpdate = true;
@@ -151,8 +155,9 @@ export function applyColorModeToGeometry(
     const values = data.scalarFields?.[scalarMode.field];
     if (values) {
       const colorAttribute = new THREE.BufferAttribute(
-        buildScalarColorArray(values, pointCount, scalarMode.map),
-        3
+        buildScalarColorArray16(values, pointCount, scalarMode.map),
+        3,
+        true
       );
       geometry.setAttribute('color', colorAttribute);
       colorAttribute.needsUpdate = true;
@@ -176,9 +181,9 @@ export function applyColorModeToGeometry(
   if (colorMode === 'original' && data.hasColors) {
     const colors = buildOriginalColorArray(host, data);
     if (colors) {
-      // Uint8 (point-cloud sRGB) attributes are normalized so the GPU reads
-      // 0..1; Float32 (mesh, already linear) are not.
-      const normalized = colors instanceof Uint8Array;
+      // Integer attributes - Uint8 point-cloud sRGB, Uint16 linear mesh
+      // colour - are normalized so the GPU reads 0..1; Float32 are not.
+      const normalized = !(colors instanceof Float32Array);
       const colorAttribute = new THREE.BufferAttribute(colors, 3, normalized);
       geometry.setAttribute('color', colorAttribute);
       colorAttribute.needsUpdate = true;

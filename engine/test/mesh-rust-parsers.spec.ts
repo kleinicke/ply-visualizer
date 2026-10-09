@@ -71,7 +71,9 @@ test('binary STL: shared corners are welded and keep their first facet normal', 
     ])
   );
   const file = await loaded(page);
-  expect(file.fileName).toBe('quad_mesh.ply');
+  // The standalone page lists an STL under its own name (the extension
+  // renames it to `quad_mesh.ply`).
+  expect(file.fileName).toBe('quad.stl');
   expect(file.vertexCount).toBe(4);
   expect(file.faceCount).toBe(2);
   expect(file.indices).toEqual([0, 1, 2, 1, 3, 2]);

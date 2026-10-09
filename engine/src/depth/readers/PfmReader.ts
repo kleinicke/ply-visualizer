@@ -1,65 +1,50 @@
 import { DepthReader, DepthReaderResult, DepthImage, DepthMetadata } from '../types';
+import { decodeDepthPfmWasm } from './tiffWasm';
 
-function readAsciiLine(view: DataView, offset: number): { line: string; next: number } {
-  const bytes: number[] = [];
-  for (let i = offset; i < view.byteLength; i++) {
-    const b = view.getUint8(i);
-    if (b === 0x0a /*\n*/) {
-      return { line: new TextDecoder().decode(new Uint8Array(bytes)), next: i + 1 };
-    }
-    if (b !== 0x0d /*\r*/) {
-      bytes.push(b);
-    }
-  }
-  return { line: new TextDecoder().decode(new Uint8Array(bytes)), next: view.byteLength };
+/**
+ * The scale line of a PFM header (the third non-comment line). Its magnitude
+ * is the depth scale; its sign only says which byte order the samples use,
+ * which the decoder handles. Some writers put `#` comment lines in the
+ * header, which the format does not define but every common reader accepts.
+ */
+function headerScale(bytes: Uint8Array): number {
+  const text = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.length, 4096)));
+  const lines = text.split('\n').filter(line => !line.trimStart().startsWith('#'));
+  const scale = parseFloat(lines[2] ?? '');
+  return Number.isFinite(scale) ? scale : 1;
 }
 
+/**
+ * Portable float maps, decoded by the shared Rust decoder (the one the agent
+ * tools already used). The JavaScript reader it replaces read a header with a
+ * comment line as NaN x NaN, and the conversion of that never finished.
+ */
 export class PfmReader implements DepthReader {
   canRead(filename: string): boolean {
     return filename.toLowerCase().endsWith('.pfm');
   }
 
   async read(arrayBuffer: ArrayBuffer): Promise<DepthReaderResult> {
-    const view = new DataView(arrayBuffer);
-    let offset = 0;
-    // Header
-    let r1 = readAsciiLine(view, offset);
-    offset = r1.next;
-    const id = r1.line.trim();
-    if (id !== 'Pf' && id !== 'PF') {
-      throw new Error('Invalid PFM header');
+    const bytes = new Uint8Array(arrayBuffer);
+    const raster = await decodeDepthPfmWasm(bytes);
+    const { width, height, channels } = raster;
+    if (!(width > 0 && height > 0) || raster.data.length < width * height * channels) {
+      throw new Error('Invalid PFM file');
     }
-    const channels = id === 'PF' ? 3 : 1;
-    let r2 = readAsciiLine(view, offset);
-    offset = r2.next;
-    const dims = r2.line.trim().split(/\s+/);
-    if (dims.length < 2) {
-      throw new Error('Invalid PFM dimensions');
-    }
-    const width = parseInt(dims[0], 10);
-    const height = parseInt(dims[1], 10);
-    let r3 = readAsciiLine(view, offset);
-    offset = r3.next;
-    const scaleStr = r3.line.trim();
-    const scale = parseFloat(scaleStr);
-    const littleEndian = scale < 0;
-
-    const numFloats = width * height * channels;
-    const data = new Float32Array(width * height);
-    const dv = new DataView(arrayBuffer, offset);
-    const step = 4 * channels;
-    // PFM stores scanlines from bottom to top
-    for (let y = height - 1; y >= 0; y--) {
-      const rowStart = (height - 1 - y) * width * step;
-      for (let x = 0; x < width; x++) {
-        const base = rowStart + x * step;
-        const d = dv.getFloat32(base, littleEndian);
-        data[y * width + x] = d;
+    // A colour (PF) map carries depth in its first channel.
+    let data = raster.data;
+    if (channels > 1) {
+      data = new Float32Array(width * height);
+      for (let i = 0; i < data.length; i++) {
+        data[i] = raster.data[i * channels];
       }
     }
-
     const image: DepthImage = { width, height, data };
-    const meta: DepthMetadata = { kind: 'depth', unit: 'meter', scale: Math.abs(scale) || 1 };
+    const meta: DepthMetadata = {
+      kind: 'depth',
+      unit: 'meter',
+      scale: Math.abs(headerScale(bytes)) || 1,
+    };
     return { image, meta };
   }
 }

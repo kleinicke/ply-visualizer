@@ -194,6 +194,10 @@ export function tiffWasmModule(): Promise<WebAssembly.Module | null> {
   return modulePromise;
 }
 
+// Note: every `take_*` accessor of the generated glue already returns a fresh
+// copy (`.slice()` out of wasm memory); wrapping it in another typed-array
+// constructor copied it a second time - tens of megabytes per projection.
+
 /** Initialize the WASM module once. Resolves false if unavailable (→ fallback). */
 export async function initTiffWasm(): Promise<boolean> {
   if (initPromise) {
@@ -260,15 +264,13 @@ export function projectDepthWasmSync(
 
     const hasPixelCoords = !!result.has_pixel_coords;
     return {
-      sourceIndices: params.retainIndices
-        ? new Uint32Array(result.take_source_indices())
-        : undefined,
-      vertices: new Float32Array(result.take_positions()),
-      colors: new Uint8Array(result.take_colors()),
+      sourceIndices: params.retainIndices ? result.take_source_indices() : undefined,
+      vertices: result.take_positions(),
+      colors: result.take_colors(),
       pointCount: result.point_count,
       width: result.width,
       height: result.height,
-      pixelCoords: hasPixelCoords ? new Uint16Array(result.take_pixel_coords()) : undefined,
+      pixelCoords: hasPixelCoords ? result.take_pixel_coords() : undefined,
       rejectedCount: result.rejected_count,
       nonConvergedCount: result.non_converged_count,
     };
@@ -372,7 +374,7 @@ export function exrZipPlanSync(bytes: Uint8Array): ExrZipPlanInfo | null {
       displayedChannels: Array.from(plan.displayed_names as string[]),
       counts: new Uint32Array(plan.counts),
       yCoordinates: new Int32Array(plan.y_coordinates),
-      compressed: new Uint8Array(plan.take_compressed()),
+      compressed: plan.take_compressed(),
     };
   } finally {
     plan.free?.();
@@ -409,6 +411,28 @@ export function decodeTiffStripRangeSync(
   return wasmApi.decode_tiff_strip_range(blob, counts, firstStrip, fields);
 }
 
+function bandResult(result: any): DepthProjectWasmResult {
+  const hasPixelCoords = !!result.has_pixel_coords;
+  return {
+    vertices: result.take_positions(),
+    colors: result.take_colors(),
+    pointCount: result.point_count,
+    width: result.width,
+    height: result.height,
+    pixelCoords: hasPixelCoords ? result.take_pixel_coords() : undefined,
+    rejectedCount: result.rejected_count,
+    nonConvergedCount: result.non_converged_count,
+  };
+}
+
+function freeQuietly(result: any): void {
+  try {
+    result?.free?.();
+  } catch {
+    /* already freed */
+  }
+}
+
 export function projectDepthBandWasmSync(
   data: Float32Array,
   width: number,
@@ -422,7 +446,6 @@ export function projectDepthBandWasmSync(
   if (!ready || typeof wasmApi?.project_depth_band !== 'function') {
     return null;
   }
-
   let result: any = null;
   try {
     result = wasmApi.project_depth_band(
@@ -441,27 +464,59 @@ export function projectDepthBandWasmSync(
       params.cy,
       new Float64Array(params.coefficients)
     );
-
-    const hasPixelCoords = !!result.has_pixel_coords;
-    return {
-      vertices: new Float32Array(result.take_positions()),
-      colors: new Uint8Array(result.take_colors()),
-      pointCount: result.point_count,
-      width: result.width,
-      height: result.height,
-      pixelCoords: hasPixelCoords ? new Uint16Array(result.take_pixel_coords()) : undefined,
-      rejectedCount: result.rejected_count,
-      nonConvergedCount: result.non_converged_count,
-    };
+    return bandResult(result);
   } catch (error) {
     console.warn('[TiffWasm] band projection failed:', error);
     return null;
   } finally {
-    try {
-      result?.free?.();
-    } catch {
-      /* already freed */
-    }
+    freeQuietly(result);
+  }
+}
+
+/**
+ * A band's rows held in wasm memory (`DepthBandSession` in the adapter), so a
+ * later projection of the same rows sends only the parameters. Null when the
+ * module is not ready or predates sessions.
+ */
+export function createDepthBandSession(
+  data: Float32Array,
+  width: number,
+  height: number,
+  rowOffset: number
+): { project(...args: unknown[]): unknown; free(): void } | null {
+  const wasmApi = getWasmBindgen();
+  if (!ready || typeof wasmApi?.DepthBandSession !== 'function') {
+    return null;
+  }
+  return new wasmApi.DepthBandSession(data, width, height, rowOffset);
+}
+
+export function projectDepthBandSessionSync(
+  session: { project(...args: unknown[]): unknown },
+  depthMin: number,
+  depthMax: number,
+  params: DepthProjectWasmParams
+): DepthProjectWasmResult | null {
+  let result: any = null;
+  try {
+    result = session.project(
+      depthMin,
+      depthMax,
+      params.kind || 'depth',
+      params.cameraModel,
+      params.convention || 'opengl',
+      params.fx,
+      params.fy,
+      params.cx,
+      params.cy,
+      new Float64Array(params.coefficients)
+    );
+    return bandResult(result);
+  } catch (error) {
+    console.warn('[TiffWasm] band projection failed:', error);
+    return null;
+  } finally {
+    freeQuietly(result);
   }
 }
 
@@ -580,7 +635,7 @@ export function normalizeDepthWasmSync(
     return {
       width: result.width,
       height: result.height,
-      data: new Float32Array(result.take_data()),
+      data: result.take_data(),
       kind: result.kind,
       unit: result.unit,
     };
@@ -620,7 +675,7 @@ export async function decodePng16Wasm(
       channels: result.channels,
       bitDepth: result.bit_depth,
       colorType: result.color_type,
-      data: new Uint16Array(result.take_data_as_u16()),
+      data: result.take_data_as_u16(),
     };
   } finally {
     try {
@@ -652,7 +707,7 @@ export async function decodeExrWasm(buffer: ArrayBuffer): Promise<ExrWasmResult 
       channels: result.channels,
       channelNames: splitCsv(result.channel_names_csv),
       displayedChannels: splitCsv(result.displayed_channels_csv),
-      data: new Float32Array(result.take_data_as_f32()),
+      data: result.take_data_as_f32(),
     };
   } finally {
     try {
@@ -690,7 +745,7 @@ export async function decodeTiffWasm(buffer: ArrayBuffer): Promise<TiffWasmResul
       sampleFormat: result.sample_format,
       compression: result.compression,
       predictor: result.predictor,
-      data: new Float32Array(result.take_data_as_f32()),
+      data: result.take_data_as_f32(),
       min: result.min_value,
       max: result.max_value,
     };
@@ -710,7 +765,8 @@ export async function decodeColmapDepthWasm(bytes: Uint8Array): Promise<Float32A
   if (!(await initTiffWasm())) {
     throw new Error('Depth WASM unavailable');
   }
-  return new Float32Array(getWasmBindgen().decode_colmap_depth(bytes));
+  // wasm-bindgen already returns a fresh copy.
+  return getWasmBindgen().decode_colmap_depth(bytes) as Float32Array;
 }
 
 export async function decodeDepthPfmWasm(bytes: Uint8Array) {
@@ -723,7 +779,7 @@ export async function decodeDepthPfmWasm(bytes: Uint8Array) {
       width: result.width as number,
       height: result.height as number,
       channels: result.channels as number,
-      data: new Float32Array(result.take_data()),
+      data: result.take_data(),
     };
   } finally {
     result.free();

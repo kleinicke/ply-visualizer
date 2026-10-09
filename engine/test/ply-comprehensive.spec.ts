@@ -43,7 +43,7 @@ test.describe('Comprehensive PLY File Loading Tests', () => {
     });
 
     // Step 1: Verify initial state
-    await expect(page.locator('#file-list')).toBeEmpty();
+    await expect(page.locator('#file-list .file-item')).toHaveCount(0);
     await expect(page.locator('.tab-button')).toHaveCount(4); // Files, Camera, Controls, Info tabs
 
     // Step 2: Click Add File button (equivalent to context menu in VS Code)
@@ -123,8 +123,9 @@ test.describe('Comprehensive PLY File Loading Tests', () => {
     );
     const parsingCompleted = loadingMessages.some(msg => msg.includes('Parser: Total parse time'));
     const geometryCreated = loadingMessages.some(msg => msg.includes('Render: geometry'));
-    const fileProcessed = loadingMessages.some(
-      msg => msg.includes('sample_mesh.ply') && msg.includes('faceCount')
+    // The file list shows the mesh with its faces.
+    const fileProcessed = /sample_mesh\.ply[\s\S]*1,200 faces/.test(
+      (await page.locator('#file-list').textContent()) ?? ''
     );
 
     expect(parsingStarted).toBe(true);
@@ -184,21 +185,6 @@ test.describe('Comprehensive PLY File Loading Tests', () => {
     }
 
     // Monitor for mesh statistics
-    let verticesFound = false;
-    let trianglesFound = false;
-
-    page.on('console', msg => {
-      const text = msg.text();
-      if (text.includes('faceCount=1200')) {
-        trianglesFound = true;
-        console.log('✅ Found triangle count in console: 1200');
-      }
-      if (text.includes('600 vertices') || text.includes('vertices')) {
-        verticesFound = true;
-        console.log('✅ Found vertex information in console');
-      }
-    });
-
     // Load PLY file
     await page.locator('#hiddenFileInput').setInputFiles(plyFilePath);
     await page.waitForTimeout(5000);
@@ -209,7 +195,7 @@ test.describe('Comprehensive PLY File Loading Tests', () => {
     await expect(fileStats).toContainText('Vertices');
 
     // The mesh should have triangles and vertices
-    expect(trianglesFound).toBe(true);
+    await expect(page.locator('#file-list')).toContainText('1,200 faces');
     console.log('✅ PLY mesh statistics verified (triangles: 1200)');
   });
 

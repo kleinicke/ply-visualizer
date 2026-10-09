@@ -450,7 +450,9 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
     // Show UI immediately. Reading/parsing starts in parallel below, while
     // The transport queues outbound messages until webviewReady.
-    const depthPrefetchUri = depthImagePrefetchUri(document.uri, webviewPanel.webview);
+    const depthPrefetchUri = isDepthFile
+      ? depthImagePrefetchUri(document.uri, webviewPanel.webview)
+      : undefined;
     webviewPanel.webview.html = this.getHtmlForWebview(
       webviewPanel.webview,
       fileType?.extension === 'ply'
@@ -733,7 +735,7 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
 
   private getHtmlForWebview(
     webview: vscode.Webview,
-    plyPrefetchUri?: string,
+    plyPrefetchUri?: { uri: string; size: number },
     depthPrefetchUri?: string
   ): string {
     // Read the shared index.html file (single source of truth)
@@ -826,7 +828,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     // that fetch start while the viewer boots (see startPlyPrefetch).
     const prefetch =
       (plyPrefetchUri
-        ? `window.__PLY_PREFETCH__ = ${JSON.stringify(plyPrefetchUri)};\n      `
+        ? `window.__PLY_PREFETCH__ = ${JSON.stringify(plyPrefetchUri.uri)};\n      ` +
+          `window.__PLY_PREFETCH_SIZE__ = ${plyPrefetchUri.size};\n      `
         : '') +
       (depthPrefetchUri
         ? `window.__DEPTH_PREFETCH__ = ${JSON.stringify(depthPrefetchUri)};\n      `
@@ -1536,7 +1539,10 @@ function depthImagePrefetchUri(uri: vscode.Uri, webview: vscode.Webview): string
     : undefined;
 }
 
-function binaryPlyPrefetchUri(uri: vscode.Uri, webview: vscode.Webview): string | undefined {
+function binaryPlyPrefetchUri(
+  uri: vscode.Uri,
+  webview: vscode.Webview
+): { uri: string; size: number } | undefined {
   if (uri.scheme !== 'file') {
     return undefined;
   }
@@ -1545,7 +1551,10 @@ function binaryPlyPrefetchUri(uri: vscode.Uri, webview: vscode.Webview): string 
     try {
       const head = Buffer.alloc(1024);
       const read = fs.readSync(fd, head, 0, head.length, 0);
-      return isPlyBinary(head.subarray(0, read)) ? webview.asWebviewUri(uri).toString() : undefined;
+      // The size lets the page fetch a large file as several ranges at once.
+      return isPlyBinary(head.subarray(0, read))
+        ? { uri: webview.asWebviewUri(uri).toString(), size: fs.fstatSync(fd).size }
+        : undefined;
     } finally {
       fs.closeSync(fd);
     }

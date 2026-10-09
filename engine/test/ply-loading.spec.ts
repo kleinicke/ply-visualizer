@@ -180,7 +180,7 @@ test.describe('PLY File Loading', () => {
 
   test('should initialize with empty state', async ({ page }) => {
     // Check initial state
-    await expect(page.locator('#file-list')).toBeEmpty();
+    await expect(page.locator('#file-list .file-item')).toHaveCount(0);
     // Note: Website doesn't show "No objects loaded" text, just empty file stats
 
     // Check that main UI elements are present

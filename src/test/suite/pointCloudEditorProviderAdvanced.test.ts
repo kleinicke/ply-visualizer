@@ -216,6 +216,41 @@ suite('Point Cloud Editor Provider Advanced Test Suite', () => {
     assert.deepStrictEqual(Array.from(added.data.colorsArray), [255, 0, 0, 0, 128, 255]);
   });
 
+  test('Should add an XYZ point cloud as typed arrays, not per-point objects', async () => {
+    const fileName = `add-xyz-test-${process.pid}-${Date.now()}.xyz`;
+    const filePath = path.join(os.tmpdir(), fileName);
+    fs.writeFileSync(filePath, '1 2 3\n-4 5 -6\n7 8 9\n');
+
+    const messages: any[] = [];
+    const host = {
+      getShortPath: (value: string) => path.basename(value),
+      logPerf: () => undefined,
+      setLoadStartedAt: () => undefined,
+      tryAutoLoadMtl: async () => undefined,
+    };
+    const webviewPanel = {
+      webview: {
+        postMessage: async (message: any) => {
+          messages.push(message);
+          return true;
+        },
+      },
+    } as unknown as vscode.WebviewPanel;
+
+    try {
+      await handleAddFileFromPath(host, webviewPanel, filePath);
+    } finally {
+      fs.unlinkSync(filePath);
+    }
+
+    assert.ok(!messages.some(message => message.type === 'xyzData'), 'no raw text to the page');
+    const added = messages.find(message => message.type === 'xyzVariantData');
+    assert.ok(added, 'XYZ should arrive as parsed point data');
+    assert.strictEqual(added.isAddFile, true);
+    assert.strictEqual(added.data.vertexCount, 3);
+    assert.deepStrictEqual(Array.from(added.data.positionsArray), [1, 2, 3, -4, 5, -6, 7, 8, 9]);
+  });
+
   test('Should add a KITTI BIN file to an existing scene', async () => {
     const fileName = `add-kitti-test-${process.pid}-${Date.now()}.bin`;
     const filePath = path.join(os.tmpdir(), fileName);

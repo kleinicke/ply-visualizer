@@ -57,7 +57,7 @@ export function stlSpatialData(stl: StlMesh, facts: FileFacts): SpatialData {
       // Every welded vertex has a colour: the file's RGB565 one, or grey.
       hasColors: true,
       hasNormals: true,
-      fileName: facts.fileName.replace(/\.stl$/i, '_mesh.ply'),
+      fileName: facts.fileName,
       shortPath: facts.shortPath,
       fileSizeInBytes: facts.fileSizeInBytes,
       useTypedArrays: true,

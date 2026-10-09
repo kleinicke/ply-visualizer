@@ -313,6 +313,9 @@ export async function handleStlData(host: FormatDataHandlersHost, message: any):
   try {
     const stl = message.data as StlMesh;
     const spatialData = stlSpatialData(stl, message);
+    // The extension has always listed an STL as `<name>_mesh.ply`; the
+    // standalone page keeps the file's own name.
+    spatialData.fileName = message.fileName.replace(/\.stl$/i, '_mesh.ply');
     spatialData.fileIndex = host.spatialFiles.length;
     if (message.isAddFile) {
       host.addNewFiles([spatialData]);

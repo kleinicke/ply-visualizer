@@ -1,4 +1,5 @@
-import { CameraParams, DepthConversionResult, SpatialData } from '../interfaces';
+import { CameraParams, DepthBytes, DepthConversionResult, SpatialData } from '../interfaces';
+import { depthBytesFromUri } from './depthBytes';
 import { PerfTimer } from '../utils/perfLog';
 import { colorsToUint8 } from './depthResultArrays';
 import {
@@ -15,7 +16,7 @@ export interface DepthConversionPipelineHost {
   pendingDepthFiles: Map<
     string,
     {
-      data: ArrayBuffer;
+      data: ArrayBuffer | DepthBytes;
       fileName: string;
       shortPath?: string;
       isAddFile: boolean;
@@ -42,7 +43,7 @@ export interface DepthConversionPipelineHost {
   addNewFiles(newFiles: SpatialData[]): void;
   displayFiles(dataArray: SpatialData[]): Promise<void>;
   processDepthToPointCloud(
-    depthData: ArrayBuffer,
+    depthData: ArrayBuffer | DepthBytes,
     fileName: string,
     cameraParams: CameraParams,
     colorImageData?: any
@@ -102,7 +103,13 @@ export async function handleDepthData(
       host.vscode.postMessage({ type: 'depthFetchFailed', fileName: message.fileName });
       return;
     }
-    message = { ...message, data: bytes };
+    // Opened from a file the webview can read again: keep a way to read it
+    // rather than the bytes (see depthBytes.ts).
+    message = {
+      ...message,
+      data: depthBytesFromUri(message.fileUri, bytes),
+      byteLength: bytes.byteLength,
+    };
   }
   try {
     console.log('Received depth data for processing:', message.fileName);
@@ -122,7 +129,7 @@ export async function handleDepthData(
       loadStartedAt: message.loadStartedAt,
       postedAt: message.postedAt,
       receivedAt: Date.now(),
-      byteLength: (message.data && message.data.byteLength) || 0,
+      byteLength: message.byteLength ?? message.data?.byteLength ?? 0,
     });
 
     // Check if this is a dataset scene - store metadata but let UI load normally
@@ -240,7 +247,7 @@ export async function showDepthConversionUI(
 export async function processDepthWithDefaults(
   host: DepthConversionPipelineHost,
   fileName: string,
-  data: ArrayBuffer,
+  data: ArrayBuffer | DepthBytes,
   requestId: string
 ): Promise<void> {
   console.log('⚡ Processing depth with defaults for:', fileName);
@@ -395,6 +402,7 @@ export async function processDepthWithParams(
   };
   (spatialData as any).useTypedArrays = true;
   (spatialData as any).positionsArray = result.vertices;
+  spatialData.positionBounds = result.positionBounds;
   (spatialData as any).colorsArray = colorsU8;
   (spatialData as any).normalsArray = null;
   (spatialData as any).intensityArray = null;

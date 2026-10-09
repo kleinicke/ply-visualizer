@@ -91,8 +91,13 @@ export function validateSpatialData(value: unknown): asserts value is SpatialDat
       fail('scalarFields', 'must be a record');
     }
     for (const [name, array] of Object.entries(data.scalarFields)) {
-      if (!(array instanceof Float32Array)) {
-        fail(`scalarFields.${name}`, 'must be Float32Array');
+      if (!(
+        array instanceof Float32Array ||
+        array instanceof Uint8Array ||
+        array instanceof Uint16Array ||
+        array instanceof Int16Array
+      )) {
+        fail(`scalarFields.${name}`, 'must be Float32Array, Uint8Array, Uint16Array or Int16Array');
       }
       length(`scalarFields.${name}`, array, data.vertexCount);
     }

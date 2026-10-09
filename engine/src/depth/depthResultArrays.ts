@@ -26,6 +26,7 @@ export function applyDepthResultTypedArrays(
   spatialData.hasColors = !!result.colors;
   spatialData.useTypedArrays = true;
   spatialData.positionsArray = result.vertices;
+  spatialData.positionBounds = result.positionBounds;
   spatialData.colorsArray = colorsToUint8(result.colors);
   spatialData.hasNormals = false;
   spatialData.hasIntensity = false;

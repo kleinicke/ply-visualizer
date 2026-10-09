@@ -1,8 +1,8 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const __wbg_depthbandsession_free: (a: number, b: number) => void;
 export const __wbg_depthprojectresult_free: (a: number, b: number) => void;
-export const __wbg_depthraster_free: (a: number, b: number) => void;
 export const __wbg_exrresult_free: (a: number, b: number) => void;
 export const __wbg_exrzipplanjs_free: (a: number, b: number) => void;
 export const __wbg_get_depthraster_channels: (a: number) => number;
@@ -29,6 +29,8 @@ export const decode_tiff_fast: (a: number, b: number) => [number, number, number
 export const decode_tiff_page: (a: number, b: number, c: number) => [number, number, number];
 export const decode_tiff_page_fast: (a: number, b: number, c: number) => [number, number, number];
 export const decode_tiff_strip_range: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+export const depthbandsession_new: (a: number, b: number, c: number, d: number, e: number) => number;
+export const depthbandsession_project: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => [number, number, number];
 export const depthprojectresult_has_pixel_coords: (a: number) => number;
 export const depthprojectresult_height: (a: number) => number;
 export const depthprojectresult_non_converged_count: (a: number) => number;
@@ -127,6 +129,7 @@ export const tiffstripplan_height: (a: number) => number;
 export const tiffstripplan_predictor: (a: number) => number;
 export const tiffstripplan_sample_format: (a: number) => number;
 export const tiffstripplan_width: (a: number) => number;
+export const __wbg_depthraster_free: (a: number, b: number) => void;
 export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

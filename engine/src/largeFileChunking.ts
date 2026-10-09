@@ -1,4 +1,5 @@
-import { SpatialData, SpatialVertex } from './interfaces';
+import { ScalarArray, SpatialData, SpatialVertex } from './interfaces';
+import { allocateScalarArray, scalarArrayFromBuffer, scalarArrayType } from './utils/scalarFields';
 import { noteContainerScanLoaded } from './utils/containerPerf';
 import { uiState } from './state/ui.svelte';
 
@@ -18,7 +19,7 @@ export interface LargeFileChunkingHost {
       positionsArray?: Float32Array;
       colorsArray?: Uint8Array;
       normalsArray?: Float32Array;
-      scalarFields?: Record<string, Float32Array>;
+      scalarFields?: Record<string, ScalarArray>;
       useTypedArrays: boolean;
       hasColors: boolean;
       hasNormals: boolean;
@@ -68,7 +69,7 @@ export function handleStartLargeFile(host: LargeFileChunkingHost, message: any):
     ? Object.fromEntries(
         (message.scalarFieldNames || []).map((name: string) => [
           name,
-          new Float32Array(message.totalVertices),
+          allocateScalarArray(message.scalarFieldTypes?.[name], message.totalVertices),
         ])
       )
     : undefined;
@@ -137,7 +138,11 @@ export function handleLargeFileChunk(host: LargeFileChunkingHost, message: any):
       fileState.normalsArray.set(new Float32Array(message.normalBuffer), startIndex * 3);
     }
     for (const [name, buffer] of Object.entries(message.scalarFieldBuffers || {})) {
-      fileState.scalarFields?.[name]?.set(new Float32Array(buffer as ArrayBuffer), startIndex);
+      const field = fileState.scalarFields?.[name];
+      field?.set(
+        scalarArrayFromBuffer(buffer as ArrayBuffer, scalarArrayType(field)) as never,
+        startIndex
+      );
     }
   } else {
     for (let i = 0; i < chunkVertices.length; i++) {
@@ -218,7 +223,8 @@ export async function handleLargeFileComplete(
     positionsArray: fileState.positionsArray,
     colorsArray: fileState.colorsArray ?? null,
     normalsArray: fileState.normalsArray ?? null,
-    intensityArray: fileState.scalarFields?.intensity ?? null,
+    // Intensity is never compacted (see compactScalarFields).
+    intensityArray: (fileState.scalarFields?.intensity as Float32Array | undefined) ?? null,
     scalarFields: fileState.scalarFields,
     useTypedArrays: fileState.useTypedArrays,
     sourcePointCount: fileState.sourcePointCount,

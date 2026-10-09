@@ -260,6 +260,74 @@ pub fn project_depth_band(
     )
 }
 
+/// One band's depth rows, kept in wasm memory between projections.
+///
+/// A depth-parameter change re-projects the same decoded image with new
+/// intrinsics. `project_depth_band` takes the rows as an argument, so every
+/// change copied each band out of the image, across to its worker and into
+/// wasm again - 100 MB per change on a 26-megapixel image. A session holds its
+/// rows once; later projections send only the parameters. Wasm memory never
+/// shrinks, so keeping them resident costs nothing the last copy had not
+/// already claimed.
+#[wasm_bindgen]
+pub struct DepthBandSession {
+    data: Vec<f32>,
+    width: u32,
+    height: u32,
+    row_offset: u32,
+}
+
+#[wasm_bindgen]
+impl DepthBandSession {
+    #[wasm_bindgen(constructor)]
+    #[must_use]
+    pub fn new(data: Vec<f32>, width: u32, height: u32, row_offset: u32) -> DepthBandSession {
+        DepthBandSession {
+            data,
+            width,
+            height,
+            row_offset,
+        }
+    }
+
+    /// `project_depth_band` over the session's rows.
+    ///
+    /// # Errors
+    ///
+    /// As `project_depth_band`: an unknown camera model or mismatched rows.
+    #[allow(clippy::too_many_arguments)] // Preserve the JavaScript calling convention.
+    pub fn project(
+        &self,
+        depth_min: f32,
+        depth_max: f32,
+        kind: &str,
+        camera_model: &str,
+        convention: &str,
+        fx: f32,
+        fy: f32,
+        cx: f32,
+        cy: f32,
+        coefficients: &[f64],
+    ) -> Result<DepthProjectResult, JsValue> {
+        project_depth_impl(
+            &self.data,
+            self.width,
+            self.height,
+            self.row_offset,
+            Some((depth_min, depth_max)),
+            kind,
+            camera_model,
+            convention,
+            fx,
+            fy,
+            cx,
+            cy,
+            coefficients,
+            false,
+        )
+    }
+}
+
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)] // Preserve the JavaScript calling convention.
 pub fn project_depth_fast(

@@ -104,6 +104,49 @@ suite('Registration extension-host bridge', () => {
     cancelRegistrationRequest(panel as never);
   });
 
+  test('cancelling the running jobs still starts the queued ones', async () => {
+    const replies: any[] = [];
+    const panel = {
+      webview: {
+        postMessage: async (message: unknown) => {
+          replies.push(message);
+          return true;
+        },
+      },
+    };
+    const points = new Float32Array(300_000);
+    for (let index = 0; index < points.length; index++) {
+      points[index] = Math.sin(index);
+    }
+    // More slow jobs than the pool has workers (at most six), so the quick
+    // one has to wait in the queue behind them.
+    const slow = Array.from({ length: 7 }, (_, index) =>
+      handleRegistrationRequest(panel as never, {
+        id: `slow-${index}`,
+        kind: 'register',
+        source: points,
+        target: points,
+      })
+    );
+    const triangle = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    const quick = handleRegistrationRequest(panel as never, {
+      id: 'queued',
+      kind: 'fit',
+      source: triangle,
+      target: triangle,
+    });
+    for (let index = 0; index < slow.length; index++) {
+      cancelRegistrationRequest(panel as never, `slow-${index}`);
+    }
+    await Promise.all(slow);
+    await quick;
+    assert.deepStrictEqual(
+      replies.map(reply => reply.id),
+      ['queued']
+    );
+    cancelRegistrationRequest(panel as never);
+  });
+
   test('client cancellation rejects promptly, sends a cancel message and ignores a late reply', async () => {
     const messages: any[] = [];
     configureRegistrationExtensionHost(message => {

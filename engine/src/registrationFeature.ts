@@ -2201,7 +2201,8 @@ export async function alignAllTo(
     // each one lands, in whatever order that is.
     let running = 0;
     const alignOne = async (position: number): Promise<'stop' | void> => {
-      const fileIndex = targets[position];
+      let fileIndex = targets[position];
+      const entryId = host.fileEntries.at(fileIndex)?.id;
       const name = host.spatialFiles[fileIndex]?.fileName ?? `File ${fileIndex + 1}`;
       const finish = (state: 'aligned' | 'failed', detail: string) => {
         const entry = registrationState.alignEntries[position];
@@ -2261,13 +2262,21 @@ export async function alignAllTo(
           return;
         }
 
+        // The solve awaited: the cloud may have moved in the list or gone.
+        fileIndex = entryId === undefined ? -1 : host.fileEntries.indexOf(entryId);
+        if (fileIndex < 0) {
+          finish('failed', 'file was closed');
+          return;
+        }
         const applyStarted = performance.now();
-        commitAlignmentTransform(host, fileIndex, result.matrix, undoAll, guard);
+        try {
+          commitAlignmentTransform(host, fileIndex, result.matrix, undoAll, guard);
+        } catch (error) {
+          finish('failed', describeFailure(error));
+          return;
+        }
         aligned++;
-        registrationState.alignedIds = [
-          ...registrationState.alignedIds,
-          host.fileEntries.require(fileIndex).id,
-        ];
+        registrationState.alignedIds = [...registrationState.alignedIds, entryId!];
         applyMs += performance.now() - applyStarted;
 
         const margin =

@@ -105,18 +105,19 @@ export function cancelRegistrationRequest(panel: vscode.WebviewPanel, id?: strin
     }
     return;
   }
-  for (const job of pool.queue.filter(job => id === undefined || job.id === id)) {
+  for (const job of pool.queue.filter(job => job.id === id)) {
     pool.queue.splice(pool.queue.indexOf(job), 1);
     job.reject(abortError());
   }
-  for (const state of pool.workers.filter(
-    state => state.active && (id === undefined || state.active.id === id)
-  )) {
+  for (const state of pool.workers.filter(state => state.active?.id === id)) {
     pool.workers.splice(pool.workers.indexOf(state), 1);
     state.active!.reject(abortError());
     state.active = undefined;
     void state.worker.terminate();
   }
+  // The terminated worker may have been the only one; queued jobs still need
+  // somewhere to run.
+  pump(pool);
 }
 
 function startWorker(pool: PanelPool): HostWorker {

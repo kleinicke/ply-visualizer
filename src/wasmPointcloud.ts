@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import type { ScalarArray } from '../engine/src/interfaces';
 import { createRequire } from 'module';
 
 /**
@@ -33,7 +34,8 @@ export interface WasmPointCloud {
 export interface WasmLidarCloud extends WasmPointCloud {
   name: string;
   sourcePointCount: number;
-  scalarFields: Record<string, Float32Array>;
+  /** Float32, or exact small integers once compacted (compactScalarFields). */
+  scalarFields: Record<string, ScalarArray>;
   metadata: Record<string, unknown>;
   sourceOrigin: Float64Array;
 }

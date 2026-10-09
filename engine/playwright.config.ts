@@ -41,7 +41,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'cd dist && python3 -m http.server 8001',
+    // Not plain `python3 -m http.server`: see the script for why.
+    command: 'python3 scripts/serve-dist.py 8001',
     port: 8001,
     reuseExistingServer: !process.env.CI,
   },

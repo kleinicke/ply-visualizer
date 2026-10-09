@@ -1,4 +1,4 @@
-import { CameraParams, DepthConversionResult } from '../interfaces';
+import { CameraParams, DepthBytes, DepthConversionResult } from '../interfaces';
 import { DepthConverter } from './DepthConverter';
 import { applyColorToDepthResult } from './applyColorToDepthResult';
 import { initTiffWasm, tiffWasmModule } from './readers/tiffWasm';
@@ -13,6 +13,8 @@ interface PendingRequest {
 interface WorkerResponse {
   id: number;
   ok: boolean;
+  /** Decoded images the worker dropped; their sources must be sent again. */
+  evicted?: string[];
   result?: DepthConversionResult;
   error?: string;
 }
@@ -44,7 +46,7 @@ export class DepthWorkerClient {
   /** Workers that reported an error; nothing is posted to them again. */
   private brokenWorkers = new WeakSet<Worker>();
   private primedCacheKeys = new Set<string>();
-  private sourceIds = new WeakMap<ArrayBuffer, number>();
+  private sourceIds = new WeakMap<ArrayBuffer | DepthBytes, number>();
   private nextSourceId = 1;
   private tail: Promise<unknown> = Promise.resolve();
   private lifetime = new AbortController();
@@ -66,7 +68,7 @@ export class DepthWorkerClient {
   constructor(private readonly fallbackConverter: DepthConverter) {}
 
   async processDepthToPointCloud(
-    depthData: ArrayBuffer,
+    depthData: ArrayBuffer | DepthBytes,
     fileName: string,
     cameraParams: CameraParams,
     colorImageData?: ImageData,
@@ -85,13 +87,25 @@ export class DepthWorkerClient {
   }
 
   private async process(
-    depthData: ArrayBuffer,
+    depthData: ArrayBuffer | DepthBytes,
     fileName: string,
     cameraParams: CameraParams,
     colorImageData: ImageData | undefined,
     signal: AbortSignal
   ): Promise<DepthConversionResult> {
-    const [worker, tiffWasm] = await Promise.all([this.getWorker(), tiffWasmModule()]);
+    // NumPy files are read with the point-cloud crate, which a blob worker
+    // cannot fetch for itself either (see registration/wasmLoader.browser.ts).
+    const needsPointcloudWasm = /\.np[yz]$/i.test(fileName);
+    const pointcloudModule = needsPointcloudWasm
+      ? (
+          globalThis as { __plyPointcloudWasmModule?: () => Promise<WebAssembly.Module | null> }
+        ).__plyPointcloudWasmModule?.()
+      : undefined;
+    const [worker, tiffWasm, pointcloudWasm] = await Promise.all([
+      this.getWorker(),
+      tiffWasmModule(),
+      pointcloudModule ?? null,
+    ]);
     signal.throwIfAborted();
     // A worker that failed while it was starting (its script did not load or
     // did not parse) is dead: a request posted to it would never be answered.
@@ -108,7 +122,14 @@ export class DepthWorkerClient {
     }
     const cacheKey = `${sourceId}:${configKey}`;
     const shouldSendDepthData = !this.primedCacheKeys.has(cacheKey);
-    const copiedDepthData = shouldSendDepthData ? depthData.slice(0) : undefined;
+    // A held buffer is copied, since its owner keeps it; a loaded one is ours
+    // to transfer. Either way, nothing is read when the worker has the image.
+    const copiedDepthData = !shouldSendDepthData
+      ? undefined
+      : depthData instanceof ArrayBuffer
+        ? depthData.slice(0)
+        : await depthData.load();
+    signal.throwIfAborted();
 
     let onAbort: () => void;
     return new Promise<DepthConversionResult>((resolve, reject) => {
@@ -121,10 +142,6 @@ export class DepthWorkerClient {
       this.pending.set(id, {
         resolve: result => {
           this.primedCacheKeys.add(cacheKey);
-          // Match the worker's four-entry insertion-order decoded cache.
-          if (this.primedCacheKeys.size > 4) {
-            this.primedCacheKeys.delete(this.primedCacheKeys.values().next().value!);
-          }
           resolve(result);
         },
         reject,
@@ -141,6 +158,7 @@ export class DepthWorkerClient {
             tiffWasmGlueUrl: (globalThis as any).__TIFF_WASM_GLUE_URL__,
             tiffWasmUrl: (globalThis as any).__TIFF_WASM_URL__,
             tiffWasmModule: tiffWasm ?? undefined,
+            pointcloudWasmModule: pointcloudWasm ?? undefined,
           },
           copiedDepthData ? [copiedDepthData] : []
         );
@@ -183,6 +201,9 @@ export class DepthWorkerClient {
           return;
         }
         this.pending.delete(response.id);
+        for (const key of response.evicted ?? []) {
+          this.primedCacheKeys.delete(key);
+        }
         if (response.ok && response.result) {
           pending.resolve(response.result);
         } else {
@@ -205,7 +226,7 @@ export class DepthWorkerClient {
   }
 
   private async processOnMainThread(
-    depthData: ArrayBuffer,
+    depthData: ArrayBuffer | DepthBytes,
     fileName: string,
     cameraParams: CameraParams,
     colorImageData: ImageData | undefined,
@@ -218,8 +239,10 @@ export class DepthWorkerClient {
       throw new Error(`${cameraParams.cameraModel} requires the Rust/WASM camera-model kernel`);
     }
     signal.throwIfAborted();
+    const bytes = depthData instanceof ArrayBuffer ? depthData : await depthData.load();
+    signal.throwIfAborted();
     const result = await this.fallbackConverter.processDepthToPointCloud(
-      depthData,
+      bytes,
       fileName,
       cameraParams,
       signal

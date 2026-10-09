@@ -41,8 +41,9 @@ test('PLY file loading works correctly', async ({ page }) => {
   );
   const parsingCompleted = loadingMessages.some(msg => msg.includes('Parser: Total parse time'));
   const geometryCreated = loadingMessages.some(msg => msg.includes('Render: geometry'));
-  const fileProcessed = loadingMessages.some(
-    msg => msg.includes('sample_mesh.ply') && msg.includes('faceCount')
+  // The file list shows the mesh with its faces.
+  const fileProcessed = /sample_mesh\.ply[\s\S]*1,200 faces/.test(
+    (await page.locator('#file-list').textContent()) ?? ''
   );
 
   console.log('\n=== PLY LOADING TEST RESULTS ===');

@@ -1,14 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Unproject one pixel to a unit OpenCV-coordinate ray. Returns
- * `[valid, converged, iterations, x, y, z]`.
- */
-export function camera_unproject(camera_model: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array, u: number, v: number): Float64Array;
-export function project_depth_inspection(data: Float32Array, width: number, height: number, kind: string, camera_model: string, convention: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array): DepthProjectResult;
-export function normalize_depth_fast(data: Float32Array, width: number, height: number, kind: string, unit: string, scale: number, depth_scale: number, depth_bias: number, fx: number, baseline: number, disparity_offset: number, has_clamp_min: boolean, clamp_min: number, has_clamp_max: boolean, clamp_max: number): NormalizeDepthResult;
-export function project_depth_fast(data: Float32Array, width: number, height: number, kind: string, camera_model: string, convention: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array): DepthProjectResult;
-/**
  * Project selected 3D points after applying a row-major 4x4 transform.
  *
  * `positions` contains interleaved xyz values and `indices` selects the
@@ -18,10 +10,18 @@ export function project_depth_fast(data: Float32Array, width: number, height: nu
  */
 export function camera_project_points_indexed(camera_model: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array, positions: Float32Array, indices: Uint32Array, transform: Float64Array, max_normalized_x: number, max_normalized_y: number): Float32Array;
 /**
+ * Unproject one pixel to a unit OpenCV-coordinate ray. Returns
+ * `[valid, converged, iterations, x, y, z]`.
+ */
+export function camera_unproject(camera_model: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array, u: number, v: number): Float64Array;
+export function project_depth_fast(data: Float32Array, width: number, height: number, kind: string, camera_model: string, convention: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array): DepthProjectResult;
+export function normalize_depth_fast(data: Float32Array, width: number, height: number, kind: string, unit: string, scale: number, depth_scale: number, depth_bias: number, fx: number, baseline: number, disparity_offset: number, has_clamp_min: boolean, clamp_min: number, has_clamp_max: boolean, clamp_max: number): NormalizeDepthResult;
+/**
  * Project one OpenCV-coordinate ray. Returns
  * `[valid, converged, iterations, u, v]`.
  */
 export function camera_project(camera_model: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array, x: number, y: number, z: number): Float64Array;
+export function project_depth_inspection(data: Float32Array, width: number, height: number, kind: string, camera_model: string, convention: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array): DepthProjectResult;
 /**
  * One horizontal band of an image, projected with the *whole* image's depth
  * range and row offset.
@@ -73,6 +73,30 @@ export function decode_tiff_fast(data: Uint8Array): TiffResult;
  * Malformed or truncated blocks, or a selection outside the channels.
  */
 export function decode_exr_zip_blocks(blob: Uint8Array, counts: Uint32Array, rows: Uint32Array, width: number, kinds: Uint32Array, selection: Int32Array): Float32Array;
+/**
+ * One band's depth rows, kept in wasm memory between projections.
+ *
+ * A depth-parameter change re-projects the same decoded image with new
+ * intrinsics. `project_depth_band` takes the rows as an argument, so every
+ * change copied each band out of the image, across to its worker and into
+ * wasm again - 100 MB per change on a 26-megapixel image. A session holds its
+ * rows once; later projections send only the parameters. Wasm memory never
+ * shrinks, so keeping them resident costs nothing the last copy had not
+ * already claimed.
+ */
+export class DepthBandSession {
+  free(): void;
+  [Symbol.dispose](): void;
+  constructor(data: Float32Array, width: number, height: number, row_offset: number);
+  /**
+   * `project_depth_band` over the session's rows.
+   *
+   * # Errors
+   *
+   * As `project_depth_band`: an unknown camera model or mismatched rows.
+   */
+  project(depth_min: number, depth_max: number, kind: string, camera_model: string, convention: string, fx: number, fy: number, cx: number, cy: number, coefficients: Float64Array): DepthProjectResult;
+}
 export class DepthProjectResult {
   private constructor();
   free(): void;
