@@ -174,7 +174,20 @@ and tests rebuilt WASM as well.
   runs only when a visible point cloud uses a uniform material colour and masks
   per-point RGB/projected/intensity/scalar-coloured pixels from darkening; all
   visible geometry still contributes to the shared depth buffer. Keep this
-  eligibility tied to the active colour mode, not merely to source RGB data.
+  eligibility tied to the active colour mode, not merely to source RGB data. A
+  cloud's child objects (the round-disc pass) share its eligibility.
+- The render loop sleeps after 1.2 s without a frame or camera change
+  (`rendering/renderLoopSleep.ts`). Input, host messages and `requestRender()`
+  (or any `needsRender = true`) wake it; a 4 Hz watchdog only catches camera
+  moves. Code that changes the scene in any other way must call
+  `requestRender()` - a frame is no longer drawn just because the loop ticks.
+- A viewer hidden for 10 s gives its WebGL context back and restores it when
+  shown (`visualization/contextRecovery.ts`, `viewVisibility` message), except
+  while loading, recording or showing splats. Work that must draw while hidden
+  awaits `gpuResidency.ensureResident()` first, as agent requests do.
+- The optional WebGPU picker and visibility renderer start after the viewer is
+  ready (`visualizer.webgpuReady`); their capabilities live in `viewerState` for
+  the UI. Specs that read WebGPU state await `webgpuReady` first.
 - `engine/index.html` is the single source of truth for the UI shell.
   `src/pointCloudEditorProvider.ts` reads and rewrites it at runtime — never
   duplicate HTML between the two hosts.

@@ -189,6 +189,39 @@ measured gain is a liability.
    back with the previous options. Restart it, or check the bundle before
    measuring.
 
+### Rendering and memory on Apple silicon (October 2026)
+
+Measured on an M1 Pro through Chromium's Metal ANGLE backend, frames timed with
+a `readPixels` after each render so the GPU work is inside the number:
+
+1. **Every WebGL buffer costs its size twice in the GPU process.** A bare page
+   uploading 200 MB grew the GPU process by 396 MB. `geometry.dispose()` frees
+   almost none of it - ANGLE pools the buffers - while losing the context frees
+   all of it. That is why a hidden viewer releases its context
+   (`visualization/contextRecovery.ts`) rather than its geometries.
+2. **Wasm memory is the other silent cost.** A whole-file PLY parse left the
+   page at 246 MB of wasm memory, and the depth worker ~390 MB beyond its decode
+   cache, for as long as the view stayed open. Look for it in a heap snapshot
+   (`Memory` behind a wasm `Instance`), and remember that workers' memory counts
+   in the same process but not in a main-thread snapshot.
+3. **The round-disc pass costs its discard, not its texture.** Replacing the
+   alpha-map lookup with an analytic `gl_PointCoord` test was no faster; the
+   discard itself defeats the GPU's hidden-surface removal. What helped was not
+   running a pass that rejects every vertex (`AdaptivePointRenderer`).
+4. **VS Code posts a typed array as its whole underlying buffer.** Its
+   serializer sends `view.buffer` plus an offset, and the webview copies all of
+   it. Per-scan recolour updates were `subarray` views into archive-wide arrays,
+   so eight messages moved 1.7 GB and took ~3 s of a 10 s recolour.
+   `sendToWebview` now copies such views to their own size; code that posts
+   `.buffer` itself must do the same (`ownBuffer` in binaryTransfer.ts).
+5. **Freed memory is not returned.** After an OHP_FRONT parse in Node, JS held
+   nothing yet the process stayed at ~4 GB resident: "Malloc Large (empty)" in
+   `vmmap --summary`, freed large blocks macOS keeps. Fewer large transient
+   copies is the lever; check with `vmmap`, not only a heap snapshot.
+6. **Refuted: overlapping X3A geometry delivery with the parallel colour pass.**
+   Both got slower and the geometry reached the screen later - the workers and
+   the 630 MB message copy compete for the same memory bandwidth.
+
 ### A/B against HEAD
 
 Build HEAD once in a scratch worktree (`git worktree add --detach <dir> HEAD`,
