@@ -464,7 +464,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
       fileType?.extension === 'ply'
         ? binaryPlyPrefetchUri(document.uri, webviewPanel.webview)
         : undefined,
-      depthPrefetchUri
+      depthPrefetchUri,
+      depthPrefetchUri ? depthImagePrefetchSize(document.uri) : undefined
     );
 
     if (document.uri.scheme === 'viz3d-agent') {
@@ -742,7 +743,8 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
   private getHtmlForWebview(
     webview: vscode.Webview,
     plyPrefetchUri?: { uri: string; size: number },
-    depthPrefetchUri?: string
+    depthPrefetchUri?: string,
+    depthPrefetchSize?: number
   ): string {
     // Read the shared index.html file (single source of truth)
     const htmlPath = vscode.Uri.joinPath(this.context.extensionUri, 'engine', 'index.html');
@@ -838,7 +840,10 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
           `window.__PLY_PREFETCH_SIZE__ = ${plyPrefetchUri.size};\n      `
         : '') +
       (depthPrefetchUri
-        ? `window.__DEPTH_PREFETCH__ = ${JSON.stringify(depthPrefetchUri)};\n      `
+        ? `window.__DEPTH_PREFETCH__ = ${JSON.stringify(depthPrefetchUri)};\n      ` +
+          (depthPrefetchSize !== undefined
+            ? `window.__DEPTH_PREFETCH_SIZE__ = ${depthPrefetchSize};\n      `
+            : '')
         : '');
     html = html.replace(
       /window\.__TIFF_WASM_URL__ = '/,
@@ -1543,6 +1548,15 @@ function depthImagePrefetchUri(uri: vscode.Uri, webview: vscode.Webview): string
   return uri.scheme === 'file' && /\.(tiff?|pfm|exr|png)$/i.test(uri.fsPath)
     ? webview.asWebviewUri(uri).toString()
     : undefined;
+}
+
+/** Lets the page fetch a large depth image as several ranges at once. */
+function depthImagePrefetchSize(uri: vscode.Uri): number | undefined {
+  try {
+    return fs.statSync(uri.fsPath).size;
+  } catch {
+    return undefined;
+  }
 }
 
 function binaryPlyPrefetchUri(

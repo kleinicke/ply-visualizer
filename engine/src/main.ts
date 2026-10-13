@@ -212,7 +212,10 @@ binaryDataHandlers.startPlyPrefetch(
   (window as any).__PLY_PREFETCH__,
   (window as any).__PLY_PREFETCH_SIZE__
 );
-depthConversionPipeline.startDepthPrefetch((window as any).__DEPTH_PREFETCH__);
+depthConversionPipeline.startDepthPrefetch(
+  (window as any).__DEPTH_PREFETCH__,
+  (window as any).__DEPTH_PREFETCH_SIZE__
+);
 
 /**
  * Modern point cloud visualizer with unified file management and Depth image processing

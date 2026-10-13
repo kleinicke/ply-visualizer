@@ -1,3 +1,4 @@
+import { fetchInRanges, RANGED_FETCH_MIN_BYTES } from '../utils/rangedFetch';
 import { CameraParams, DepthBytes, DepthConversionResult, SpatialData } from '../interfaces';
 import { depthBytesFromUri } from './depthBytes';
 import { PerfTimer } from '../utils/perfLog';
@@ -59,16 +60,25 @@ let depthPrefetch: { uri: string; bytes: Promise<ArrayBuffer> } | null = null;
  * sends only the URI; posting the bytes after the viewer was ready used to put
  * the whole transfer behind the boot.
  */
-export function startDepthPrefetch(uri: unknown): void {
+export function startDepthPrefetch(uri: unknown, size?: unknown): void {
   if (typeof uri !== 'string' || !uri || depthPrefetch) {
     return;
   }
-  const bytes = fetch(uri).then(response => {
-    if (!response.ok) {
-      throw new Error(`fetch failed: ${response.status}`);
-    }
-    return response.arrayBuffer();
-  });
+  const whole = () =>
+    fetch(uri).then(response => {
+      if (!response.ok) {
+        throw new Error(`fetch failed: ${response.status}`);
+      }
+      return response.arrayBuffer();
+    });
+  // A large image arrives faster as concurrent ranges (see fetchInRanges).
+  const bytes =
+    typeof size === 'number' && Number.isFinite(size) && size >= RANGED_FETCH_MIN_BYTES
+      ? fetchInRanges(uri, size).catch(error => {
+          console.warn('[depth] ranged prefetch failed, fetching whole:', error);
+          return whole();
+        })
+      : whole();
   bytes.catch(() => undefined);
   depthPrefetch = { uri, bytes };
 }
