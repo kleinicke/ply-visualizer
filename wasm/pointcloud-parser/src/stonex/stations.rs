@@ -36,7 +36,7 @@ const ELEVATION_BINS: usize = 512;
 const FRAME_AZIMUTH_WINDOW_DEGREES: f64 = 30.0;
 
 fn angular_difference(a: f64, b: f64) -> f64 {
-    (((a - b + 540.0) % 360.0) - 180.0).abs()
+    (super::rem_360(a - b + 540.0) - 180.0).abs()
 }
 
 /// Nearest measured range per direction, as seen from one station.
@@ -83,7 +83,14 @@ impl StationDepth {
         if !(0.0..1.0).contains(&elevation_t) {
             return None;
         }
-        let azimuth_bin = (((azimuth + 360.0) % 360.0) / 360.0 * AZIMUTH_BINS as f64).floor()
+        // The wrapped azimuth lies in [0, 360), so the bin is a small
+        // non-negative integer below AZIMUTH_BINS.
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let azimuth_bin = (super::rem_360(azimuth + 360.0) / 360.0 * AZIMUTH_BINS as f64).floor()
             as usize
             % AZIMUTH_BINS;
         let elevation_bin =

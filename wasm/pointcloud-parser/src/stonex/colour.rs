@@ -76,7 +76,7 @@ pub struct ColourResult {
 }
 
 fn angular_difference(a: f64, b: f64) -> f64 {
-    (((a - b + 540.0) % 360.0) - 180.0).abs()
+    (super::rem_360(a - b + 540.0) - 180.0).abs()
 }
 
 /// Scores a projected pixel: centred and clear of the edge is best.

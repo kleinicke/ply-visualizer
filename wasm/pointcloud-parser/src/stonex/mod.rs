@@ -15,6 +15,78 @@ mod stations;
 
 use wasm_bindgen::prelude::*;
 
+/// `value % 360.0`, without the software `fmod` that wasm makes of `%`.
+///
+/// The colour passes reduce every candidate's azimuth this way, and `fmod`
+/// showed up as one of the costliest calls in their profile. For the ranges
+/// angles actually take, subtracting one or two turns is exact (Sterbenz:
+/// `x - y` is exact when `y / 2 <= x <= 2 * y`), so the result has the same
+/// bits as `fmod`, including signed zeros; anything else, NaN included, still
+/// goes through `%`.
+#[inline]
+pub(crate) fn rem_360(value: f64) -> f64 {
+    if (0.0..360.0).contains(&value) || (value > -360.0 && value < 0.0) {
+        value
+    } else if (360.0..720.0).contains(&value) {
+        value - 360.0
+    } else if (720.0..1080.0).contains(&value) {
+        value - 720.0
+    } else {
+        value % 360.0
+    }
+}
+
+#[cfg(test)]
+mod rem_360_tests {
+    use super::rem_360;
+
+    fn check(value: f64) {
+        let expected = value % 360.0;
+        let actual = rem_360(value);
+        assert!(
+            actual.to_bits() == expected.to_bits() || (actual.is_nan() && expected.is_nan()),
+            "{value:e}: {actual:e} != {expected:e}"
+        );
+    }
+
+    #[test]
+    fn matches_fmod_bit_for_bit() {
+        let edges = [
+            0.0,
+            -0.0,
+            360.0,
+            -360.0,
+            720.0,
+            1080.0,
+            180.0,
+            540.0,
+            900.0,
+            1e-300,
+            -1e-300,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e9,
+            -1e9,
+        ];
+        for edge in edges {
+            check(edge);
+            check(f64::from_bits(edge.to_bits().wrapping_add(1)));
+            check(f64::from_bits(edge.to_bits().wrapping_sub(1)));
+        }
+        // A deterministic spread over every branch, at full mantissa detail.
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        for _ in 0..2_000_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            #[allow(clippy::cast_precision_loss)] // only spreads test inputs
+            let unit = (state >> 11) as f64 / (1u64 << 53) as f64;
+            check(unit * 2_400.0 - 1_200.0);
+        }
+    }
+}
+
 /// One decoded X3R record, for comparison against the TypeScript decoder.
 #[wasm_bindgen]
 pub struct StonexScanPoints {
