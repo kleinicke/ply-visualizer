@@ -13,6 +13,8 @@ interface DepthWorkerRequest {
   id: number;
   cacheKey: string;
   depthData?: ArrayBuffer;
+  /** An image this worker decoded earlier and parked with the page (see `park`). */
+  decoded?: DecodedDepthImage;
   fileName: string;
   cameraParams: CameraParams;
   colorImageData?: ImageData;
@@ -28,6 +30,15 @@ interface DepthWorkerSuccess {
   result: DepthConversionResult;
   /** Decoded images this worker no longer holds (see `maxDecodedCacheBytes`). */
   evicted: string[];
+}
+
+/** Asks the worker to hand back its decoded images before it is terminated. */
+interface DepthWorkerParkRequest {
+  park: true;
+}
+
+interface DepthWorkerParked {
+  parked: { cacheKey: string; decoded: DecodedDepthImage }[];
 }
 
 interface DepthWorkerFailure {
@@ -70,15 +81,13 @@ async function getDecodedDepth(message: DepthWorkerRequest): Promise<DecodedDept
   if (cached) {
     return cached;
   }
-  if (!message.depthData) {
+  if (!message.depthData && !message.decoded) {
     throw new Error('Depth worker cache miss without source image bytes');
   }
 
-  const decoded = await converter.decodeDepthImage(
-    message.depthData,
-    message.fileName,
-    message.cameraParams
-  );
+  const decoded =
+    message.decoded ??
+    (await converter.decodeDepthImage(message.depthData!, message.fileName, message.cameraParams));
   decodedCache.set(message.cacheKey, decoded);
   decodedCacheOrder.push(message.cacheKey);
   let total = 0;
@@ -97,7 +106,24 @@ async function getDecodedDepth(message: DepthWorkerRequest): Promise<DecodedDept
   return decoded;
 }
 
-self.onmessage = async (event: MessageEvent<DepthWorkerRequest>) => {
+self.onmessage = async (event: MessageEvent<DepthWorkerRequest | DepthWorkerParkRequest>) => {
+  if ('park' in event.data) {
+    const parked = decodedCacheOrder.map(cacheKey => ({
+      cacheKey,
+      decoded: decodedCache.get(cacheKey)!,
+    }));
+    decodedCache.clear();
+    decodedCacheOrder.length = 0;
+    const response: DepthWorkerParked = { parked };
+    // Moved, not copied; a buffer two images share is listed once.
+    const transfers = [...new Set(parked.map(entry => entry.decoded.image.data.buffer))];
+    try {
+      (self as any).postMessage(response, transfers);
+    } catch {
+      (self as any).postMessage(response);
+    }
+    return;
+  }
   const message = event.data;
   try {
     if (message.tiffWasmUrl) {
@@ -117,7 +143,7 @@ self.onmessage = async (event: MessageEvent<DepthWorkerRequest>) => {
 
     // Timed here rather than logged here: the main thread folds these into the
     // single PERF line for the load (see utils/perfLog.ts).
-    const wasCached = decodedCache.has(message.cacheKey);
+    const wasCached = decodedCache.has(message.cacheKey) || !!message.decoded;
     const decodeStart = performance.now();
     const decoded = await getDecodedDepth(message);
     const decodeMs = performance.now() - decodeStart;

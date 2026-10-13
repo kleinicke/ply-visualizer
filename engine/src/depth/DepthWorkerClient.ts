@@ -1,5 +1,5 @@
 import { CameraParams, DepthBytes, DepthConversionResult } from '../interfaces';
-import { DepthConverter } from './DepthConverter';
+import { DecodedDepthImage, DepthConverter } from './DepthConverter';
 import { applyColorToDepthResult } from './applyColorToDepthResult';
 import { initTiffWasm, tiffWasmModule } from './readers/tiffWasm';
 import { spawnWorker, WorkerScript } from '../utils/webviewWorker';
@@ -17,6 +17,22 @@ interface WorkerResponse {
   evicted?: string[];
   result?: DepthConversionResult;
   error?: string;
+}
+
+/**
+ * How long the worker may sit idle before it is parked. Its wasm memory only
+ * grows - to the file plus its decoded image, ~390 MB beyond the decoded
+ * image itself for a 26-megapixel float TIFF - and nothing gives it back
+ * short of ending the worker. Parking hands the decoded images to the page
+ * first, so a later parameter change still skips the decode.
+ */
+const IDLE_PARK_MS = 15_000;
+/** The worker's own decoded-cache bounds, applied to what it parks. */
+const MAX_PARKED_ENTRIES = 4;
+const MAX_PARKED_BYTES = 192 * 1024 * 1024;
+
+interface ParkedResponse {
+  parked: { cacheKey: string; decoded: DecodedDepthImage }[];
 }
 
 /**
@@ -50,12 +66,20 @@ export class DepthWorkerClient {
   private nextSourceId = 1;
   private tail: Promise<unknown> = Promise.resolve();
   private lifetime = new AbortController();
+  /** Decoded images a parked worker handed back, oldest first. */
+  private parked = new Map<string, DecodedDepthImage>();
+  /** Requests accepted and not yet settled, queued ones included. */
+  private active = 0;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  private parking: Promise<void> | null = null;
 
   dispose(): void {
     if (this.lifetime.signal.aborted) {
       return;
     }
     this.lifetime.abort();
+    clearTimeout(this.idleTimer);
+    this.parked.clear();
     this.resetWorker();
   }
 
@@ -76,6 +100,8 @@ export class DepthWorkerClient {
   ): Promise<DepthConversionResult> {
     const combined = AbortSignal.any([this.lifetime.signal, ...(signal ? [signal] : [])]);
     combined.throwIfAborted();
+    this.active++;
+    clearTimeout(this.idleTimer);
     // A single active request lets cancellation stop synchronous WASM too,
     // without terminating another file's conversion. Queued jobs copy no bytes.
     const job = this.tail.then(async () => {
@@ -83,7 +109,72 @@ export class DepthWorkerClient {
       return this.process(depthData, fileName, cameraParams, colorImageData, combined);
     });
     this.tail = job.catch(() => {});
+    void job
+      .catch(() => {})
+      .finally(() => {
+        this.active--;
+        this.scheduleParking();
+      });
     return job;
+  }
+
+  private scheduleParking(): void {
+    clearTimeout(this.idleTimer);
+    if (this.active > 0 || !this.worker || this.lifetime.signal.aborted) {
+      return;
+    }
+    this.idleTimer = setTimeout(() => {
+      this.parking = this.park().finally(() => (this.parking = null));
+    }, IDLE_PARK_MS);
+  }
+
+  /** Take the worker's decoded images, then end it to free its wasm memory. */
+  private async park(): Promise<void> {
+    const worker = await this.worker;
+    if (this.active > 0 || !worker || this.brokenWorkers.has(worker)) {
+      return;
+    }
+    const reply = await new Promise<ParkedResponse | null>(resolve => {
+      const timer = setTimeout(() => finish(null), 5_000);
+      const finish = (value: ParkedResponse | null) => {
+        clearTimeout(timer);
+        worker.removeEventListener('message', listener);
+        resolve(value);
+      };
+      const listener = (event: MessageEvent) => {
+        if (event.data && 'parked' in event.data) {
+          finish(event.data as ParkedResponse);
+        }
+      };
+      worker.addEventListener('message', listener);
+      worker.postMessage({ park: true });
+    });
+    // A viewer disposed meanwhile keeps nothing.
+    if (reply && !this.lifetime.signal.aborted) {
+      for (const { cacheKey, decoded } of reply.parked) {
+        this.parked.delete(cacheKey);
+        this.parked.set(cacheKey, decoded);
+      }
+      this.trimParked();
+    }
+    this.resetWorker();
+  }
+
+  private trimParked(): void {
+    let bytes = 0;
+    for (const decoded of this.parked.values()) {
+      bytes += decoded.image.data.byteLength;
+    }
+    for (const [key, decoded] of this.parked) {
+      if (this.parked.size <= 1) {
+        break;
+      }
+      if (this.parked.size <= MAX_PARKED_ENTRIES && bytes <= MAX_PARKED_BYTES) {
+        break;
+      }
+      this.parked.delete(key);
+      bytes -= decoded.image.data.byteLength;
+    }
   }
 
   private async process(
@@ -93,6 +184,7 @@ export class DepthWorkerClient {
     colorImageData: ImageData | undefined,
     signal: AbortSignal
   ): Promise<DepthConversionResult> {
+    await this.parking;
     // NumPy files are read with the point-cloud crate, which a blob worker
     // cannot fetch for itself either (see registration/wasmLoader.browser.ts).
     const needsPointcloudWasm = /\.np[yz]$/i.test(fileName);
@@ -121,7 +213,17 @@ export class DepthWorkerClient {
       this.sourceIds.set(depthData, sourceId);
     }
     const cacheKey = `${sourceId}:${configKey}`;
-    const shouldSendDepthData = !this.primedCacheKeys.has(cacheKey);
+    // An image the worker parked goes back instead of the source: no decode.
+    const parkedImage = this.primedCacheKeys.has(cacheKey) ? undefined : this.parked.get(cacheKey);
+    this.parked.delete(cacheKey);
+    // Moved back unless another parked image still shares its buffer; that
+    // one would be left detached, so this one is copied instead.
+    const transferParked =
+      parkedImage &&
+      ![...this.parked.values()].some(
+        other => other.image.data.buffer === parkedImage.image.data.buffer
+      );
+    const shouldSendDepthData = !this.primedCacheKeys.has(cacheKey) && !parkedImage;
     // A held buffer is copied, since its owner keeps it; a loaded one is ours
     // to transfer. Either way, nothing is read when the worker has the image.
     const copiedDepthData = !shouldSendDepthData
@@ -152,6 +254,7 @@ export class DepthWorkerClient {
             id,
             cacheKey,
             depthData: copiedDepthData,
+            decoded: parkedImage,
             fileName,
             cameraParams: { ...cameraParams },
             colorImageData,
@@ -160,7 +263,10 @@ export class DepthWorkerClient {
             tiffWasmModule: tiffWasm ?? undefined,
             pointcloudWasmModule: pointcloudWasm ?? undefined,
           },
-          copiedDepthData ? [copiedDepthData] : []
+          [
+            ...(copiedDepthData ? [copiedDepthData] : []),
+            ...(transferParked ? [parkedImage.image.data.buffer] : []),
+          ]
         );
       } catch (error) {
         this.pending.delete(id);
