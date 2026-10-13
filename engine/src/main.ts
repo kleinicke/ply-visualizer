@@ -137,7 +137,7 @@ import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { mountErrorOverlay } from './errorOverlayMount';
-import { setupContextRecovery } from './visualization/contextRecovery';
+import { setupContextRecovery, type ContextResidency } from './visualization/contextRecovery';
 import { mountLoadingOverlay } from './loadingOverlayMount';
 import { mountTabNav } from './tabNavMount';
 import { mountWelcomeMessage } from './welcomeMessageMount';
@@ -261,6 +261,8 @@ export class PointCloudVisualizer {
   // crashes the webview. This is the safety net for the multi-window
   // out-of-VRAM case (each window is a separate context sharing one GPU).
   private contextLost = false;
+  /** Releases the WebGL context while the viewer is hidden; see contextRecovery.ts. */
+  gpuResidency: ContextResidency | null = null;
   controls!:
     | TrackballControls
     | OrbitControls
@@ -1417,13 +1419,17 @@ export class PointCloudVisualizer {
     this.needsRender = true;
   }
 
-  /** Keep restored contexts idle until the user chooses to re-upload the scene. */
+  /**
+   * Keep a context lost while visible idle until the user chooses to re-upload
+   * the scene; release and restore it silently around hidden periods.
+   */
   private setupContextLossHandling(canvas: HTMLCanvasElement): void {
-    if (this.rendererBackend !== 'webgl') {
+    if (this.rendererBackend !== 'webgl' || !this.webglRenderer) {
       return;
     }
-    setupContextRecovery(
+    this.gpuResidency = setupContextRecovery(
       canvas,
+      this.webglRenderer.getContext(),
       this.lifetime,
       () => {
         this.contextLost = true;
@@ -2339,6 +2345,9 @@ export class PointCloudVisualizer {
         },
         benchmarkScenario: async message => {
           await runBenchmarkScenario(this, message.step, message.anchorIndex ?? 0);
+        },
+        viewVisibility: async message => {
+          this.gpuResidency?.setHidden(!message.visible);
         },
         timing: async message => {
           this.handleTimingMessage(message);

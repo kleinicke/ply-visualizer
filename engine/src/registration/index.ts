@@ -161,6 +161,29 @@ const pending = new Map<
 >();
 
 let workerReady: Promise<Worker | null> | null = null;
+/** A worker has answered; `registrationBackend` keeps saying so after release. */
+let workerUsed = false;
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * How long the worker outlives its last request. Its wasm memory holds copies
+ * of the clouds it last aligned plus the solver's search structures, and wasm
+ * memory never shrinks, so a worker kept for the life of the viewer keeps that
+ * peak for good. Align-all sends its pairs back to back, well inside this.
+ */
+const WORKER_IDLE_MS = 30_000;
+
+function releaseWorkerWhenIdle(): void {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    idleTimer = undefined;
+    if (pending.size === 0 && worker) {
+      worker.terminate();
+      worker = null;
+      workerReady = null;
+    }
+  }, WORKER_IDLE_MS);
+}
 
 type ExtensionPostMessage = (
   message:
@@ -235,6 +258,8 @@ async function ensureWorker(signal?: AbortSignal): Promise<Worker | null> {
   if (workerUnavailable || typeof Worker === 'undefined' || typeof document === 'undefined') {
     return null;
   }
+  clearTimeout(idleTimer);
+  idleTimer = undefined;
   if (workerReady) {
     return workerReady;
   }
@@ -496,6 +521,7 @@ async function dispatchNow(
 
   const id = nextRequestId++;
   const request: RegistrationRequest = { id, kind, source, target, settingsJson };
+  workerUsed = true;
   return pendingResult(
     pending,
     id,
@@ -510,7 +536,11 @@ async function dispatchNow(
       worker = null;
       workerReady = null;
     }
-  );
+  ).finally(() => {
+    if (pending.size === 0) {
+      releaseWorkerWhenIdle();
+    }
+  });
 }
 
 function icpSettings(options: IcpOptions): Record<string, unknown> {
@@ -533,7 +563,10 @@ export function registrationBackend(): 'extension host' | 'worker' | 'in page' |
   if (worker) {
     return 'worker';
   }
-  return workerUnavailable ? 'in page' : 'not started';
+  if (workerUnavailable) {
+    return 'in page';
+  }
+  return workerUsed ? 'worker' : 'not started';
 }
 
 /**

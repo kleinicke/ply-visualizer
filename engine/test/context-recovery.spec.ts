@@ -115,3 +115,55 @@ test('removal releases unused WebGPU buffers and retains the remaining hidden cl
   expect(result.remaining).toEqual([1, 2]);
   expect(result.after).toEqual([0, 0]);
 });
+
+test('a hidden viewer releases its context and silently restores the scene when shown', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-visualizer-ready', 'true');
+  await page.locator('#hiddenFileInput').setInputFiles({
+    name: 'hidden.ply',
+    mimeType: 'application/octet-stream',
+    buffer: Buffer.from(
+      'ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 0 0\n0 1 0\n'
+    ),
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).visualizer.spatialFiles.length))
+    .toBe(1);
+  await page.clock.install();
+  const lost = () =>
+    page.evaluate(() => (window as any).visualizer.renderer.getContext().isContextLost());
+  await page.evaluate(() => {
+    const w = window as any;
+    const gl = w.visualizer.renderer.getContext();
+    w.hiddenUploads = 0;
+    const upload = gl.bufferData.bind(gl);
+    gl.bufferData = (...args: any[]) => {
+      w.hiddenUploads++;
+      return upload(...args);
+    };
+    w.visualizer.gpuResidency.setHidden(true);
+  });
+  // A quick tab switch keeps the context.
+  await page.clock.runFor(5_000);
+  expect(await lost()).toBe(false);
+  await page.clock.runFor(6_000);
+  expect(await lost()).toBe(true);
+  const banner = page.getByRole('alert', { name: 'GPU recovery' });
+  await expect(banner).toBeHidden();
+
+  await page.evaluate(() => (window as any).visualizer.gpuResidency.setHidden(false));
+  await expect.poll(lost).toBe(false);
+  await page.clock.runFor(100);
+  await expect.poll(() => page.evaluate(() => (window as any).hiddenUploads)).toBeGreaterThan(0);
+  await expect(banner).toBeHidden();
+
+  // Work that needs the GPU while hidden (agent capture) brings it back first.
+  await page.evaluate(() => (window as any).visualizer.gpuResidency.setHidden(true));
+  await page.clock.runFor(11_000);
+  expect(await lost()).toBe(true);
+  await page.evaluate(() => (window as any).visualizer.gpuResidency.ensureResident());
+  expect(await lost()).toBe(false);
+  await expect(banner).toBeHidden();
+});

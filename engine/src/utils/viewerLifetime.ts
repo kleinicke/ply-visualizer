@@ -1,5 +1,9 @@
 /** Callbacks, listeners and timers owned by one viewer instance. */
-type ViewerEvents = WindowEventMap & { webglcontextlost: Event; webglcontextrestored: Event };
+type ViewerEvents = WindowEventMap & {
+  webglcontextlost: Event;
+  webglcontextrestored: Event;
+  visibilitychange: Event;
+};
 export class ViewerLifetime {
   private readonly controller = new AbortController();
   private cleanups: (() => void)[] = [];

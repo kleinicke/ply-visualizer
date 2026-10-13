@@ -9,6 +9,8 @@ interface DecodeRequest {
   data: Uint8Array;
   extension: 'las' | 'laz' | 'e57';
   fileName: string;
+  /** The crate, compiled by the page; absent where it could not be. */
+  module?: WebAssembly.Module | null;
 }
 
 // Keep WebWorker globals local to this module. A triple-slash WebWorker lib
@@ -144,10 +146,10 @@ function transferables(scans: SpatialData[]): Transferable[] {
 }
 
 workerScope.onmessage = async (event: MessageEvent<DecodeRequest>) => {
-  const { id, data, extension, fileName } = event.data;
+  const { id, data, extension, fileName, module } = event.data;
   let collection: any;
   try {
-    initPromise ??= initWasm();
+    initPromise ??= initWasm(module ? { module_or_path: module } : undefined);
     await initPromise;
     collection = extension === 'e57' ? parse_e57(data, fileName) : parse_las(data, fileName);
     const warnings = JSON.parse(collection.errors_json || '[]') as string[];

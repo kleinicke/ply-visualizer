@@ -490,9 +490,17 @@ export async function sendLargeFileInChunksOptimized(
     throw new Error(`The webview rejected the chunked-transfer header for ${spatialData.fileName}`);
   }
 
+  // Chunks posted but not yet confirmed. Allowing a second one overlaps
+  // slicing the next chunk with the IPC copy of the previous, at the cost of
+  // one more chunk alive at a time; postMessage keeps their order.
+  const MAX_IN_FLIGHT = 2;
+  const inFlight: Array<Promise<void>> = [];
   try {
     // Send chunks with minimal overhead
     for (let i = 0; i < totalChunks; i++) {
+      if (inFlight.length >= MAX_IN_FLIGHT) {
+        await inFlight.shift();
+      }
       const startIdx = i * CHUNK_SIZE;
       const endIdx = Math.min(startIdx + CHUNK_SIZE, totalVertices);
       const chunkSize = endIdx - startIdx;
@@ -522,7 +530,8 @@ export async function sendLargeFileInChunksOptimized(
       const chunkColors = !typed && colors ? colors.slice(startIdx, endIdx) : undefined;
       const chunkNormals = !typed && normals ? normals.slice(startIdx, endIdx) : undefined;
 
-      const delivered = await sendToWebview(webviewPanel, {
+      const chunkIndex = i;
+      const sent = sendToWebview(webviewPanel, {
         type: 'largeFileChunk',
         transferId,
         fileName: spatialData.fileName,
@@ -537,21 +546,28 @@ export async function sendLargeFileInChunksOptimized(
         colorBuffer,
         normalBuffer,
         scalarFieldBuffers,
+      }).then(delivered => {
+        if (!delivered) {
+          throw new Error(
+            `The webview rejected chunk ${chunkIndex + 1}/${totalChunks} for ${spatialData.fileName}`
+          );
+        }
+        if (chunkIndex === 0) {
+          firstChunkTime = performance.now();
+        }
       });
-      if (!delivered) {
-        throw new Error(
-          `The webview rejected chunk ${i + 1}/${totalChunks} for ${spatialData.fileName}`
-        );
-      }
-
-      if (i === 0) {
-        firstChunkTime = performance.now();
-      }
+      // Settled by the await below or in the catch; never left unhandled.
+      sent.catch(() => {});
+      inFlight.push(sent);
 
       // Log only every 5th chunk to reduce console spam
       if (i % 5 === 0 || i === totalChunks - 1) {
         console.log(`Chunk ${i + 1}/${totalChunks} (${chunkSize} vertices)`);
       }
+    }
+
+    while (inFlight.length > 0) {
+      await inFlight.shift();
     }
 
     // Send completion message

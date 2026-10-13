@@ -39,10 +39,13 @@ export function compactPointNormals(data: SpatialData): void {
 export function packUnitNormals(source: Float32Array, out: Int16Array, offset: number): boolean {
   // Kept to a single plain branch in the common case - measured in Chromium
   // on 24M values, this is ~34 ms where clamping every value cost ~55-75 ms.
+  // floor(x + 0.5) rather than Math.round: the same result for every float32
+  // in range (checked exhaustively), and about 3x faster in V8 - 9M values
+  // went from ~78 ms to ~25 ms, which was most of a 3M-point PLY's build.
   for (let i = 0; i < source.length; i++) {
     const value = source[i];
     if (value >= -1 && value <= 1) {
-      out[offset + i] = Math.round(value * SNORM16);
+      out[offset + i] = Math.floor(value * SNORM16 + 0.5);
       continue;
     }
     // A hair past 1 is float rounding in a normalized vector; anything more

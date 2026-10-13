@@ -4,7 +4,7 @@
   let { state, resume }: { state: Readable<ContextRecoveryState>; resume: () => void } = $props();
 </script>
 
-{#if $state !== 'running'}
+{#if $state === 'lost' || $state === 'paused'}
   <aside class="context-recovery" role="alert" aria-label="GPU recovery">
     <strong>Rendering paused after a GPU reset</strong>
     <p>
