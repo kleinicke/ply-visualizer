@@ -707,6 +707,7 @@ export class PointCloudVisualizer {
       document.documentElement.dataset.visualizerReady = 'true';
       releaseStartupListeners();
       window.dispatchEvent(new Event('visualizer-ready'));
+      this.precompileWhenIdle();
       for (const files of pendingFiles.splice(0)) {
         if (this.lifetime.disposed) {
           break;
@@ -1417,6 +1418,29 @@ export class PointCloudVisualizer {
       return;
     }
     this.needsRender = true;
+  }
+
+  /**
+   * Compile the drag-only axes shaders once the viewer is up: a few
+   * milliseconds that do not belong on the startup path, done long before
+   * anyone can start a drag.
+   */
+  private precompileWhenIdle(): void {
+    const precompile = () => {
+      if (!this.lifetime.disposed && this.webglRenderer && !this.contextLost) {
+        axesFeature.precompileAxes(
+          this.webglRenderer,
+          this,
+          this.edlPass?.sceneRenderTarget ?? null
+        );
+      }
+    };
+    if (typeof requestIdleCallback === 'function') {
+      const id = requestIdleCallback(precompile, { timeout: 2000 });
+      this.lifetime.add(() => cancelIdleCallback(id));
+    } else {
+      this.lifetime.defer(precompile);
+    }
   }
 
   /**

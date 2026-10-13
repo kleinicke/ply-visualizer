@@ -269,6 +269,11 @@ export class EDLPass extends Pass {
     }
   }
 
+  /** The target the scene is drawn into; programs compiled for it match EDL frames. */
+  get sceneRenderTarget(): THREE.WebGLRenderTarget {
+    return this.renderTarget;
+  }
+
   /** Exposed for diagnostics and browser regressions without exposing the set itself. */
   get eligibleObjectCount(): number {
     return this.eligibleRoots;

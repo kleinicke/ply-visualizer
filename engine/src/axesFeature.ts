@@ -104,6 +104,38 @@ export function addAxesHelper(host: AxesFeatureHost): void {
   (host as any).axesHelper = axesHelper;
 }
 
+/**
+ * The axes only appear once a drag starts, so their line and sprite programs
+ * used to compile on the first drag: a cold Metal compile froze that first
+ * interaction for ~0.5 s. Start the compile in the background instead, for both
+ * targets the axes can be drawn into (the canvas, and EDL's linear target).
+ */
+export function precompileAxes(
+  renderer: THREE.WebGLRenderer,
+  host: Pick<AxesFeatureHost, 'camera' | 'scene'>,
+  edlTarget: THREE.WebGLRenderTarget | null
+): void {
+  const axesGroup = (host as any).axesGroup as THREE.Group | undefined;
+  if (!axesGroup) {
+    return;
+  }
+  const previous = renderer.getRenderTarget();
+  try {
+    for (const target of edlTarget ? [null, edlTarget] : [null]) {
+      renderer.setRenderTarget(target);
+      // compile(), not compileAsync(): creating the programs starts the
+      // driver's (parallel) compile, and compileAsync's status polling outlived
+      // a viewer disposed meanwhile and threw from its timer.
+      renderer.compile(axesGroup, host.camera, host.scene);
+    }
+  } catch (error) {
+    // Purely an optimisation: the first drag compiles them as before.
+    console.warn('Axes shader precompile failed:', error);
+  } finally {
+    renderer.setRenderTarget(previous);
+  }
+}
+
 export function createAxisLabels(host: AxesFeatureHost, axesGroup: THREE.Group): void {
   // Function to create text texture (creates new canvas for each call)
   const createTextTexture = (text: string, color: string) => {
