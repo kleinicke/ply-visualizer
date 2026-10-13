@@ -592,7 +592,11 @@ async function colourScansInParallel(
     );
     const job: StonexColourScanJob = {
       scans: group.map(({ scan, range }) => ({
-        positions: positions.slice(scan.pointOffset * 3, (scan.pointOffset + range.pointCount) * 3),
+        // A view when the points are shared, else a copy to transfer.
+        positions:
+          typeof SharedArrayBuffer !== 'undefined' && positions.buffer instanceof SharedArrayBuffer
+            ? positions.subarray(scan.pointOffset * 3, (scan.pointOffset + range.pointCount) * 3)
+            : positions.slice(scan.pointOffset * 3, (scan.pointOffset + range.pointCount) * 3),
         azimuths: scan.azimuths.slice(),
         counts: scan.counts.slice(),
         activeFrames: Uint32Array.from(scan.frames.map(frame => frames.indexOf(frame))),
@@ -1061,7 +1065,12 @@ export class StonexX3aParser {
     }
 
     markPhase('scan layout scan');
-    const positions = new Float32Array(vertexCount * 3);
+    // In shared memory when the host colours on its threads: each job then
+    // posts a view of its scans' points instead of a ~500 MB copy of them.
+    const positions =
+      this.colourScans && typeof SharedArrayBuffer !== 'undefined'
+        ? new Float32Array(new SharedArrayBuffer(vertexCount * 3 * Float32Array.BYTES_PER_ELEMENT))
+        : new Float32Array(vertexCount * 3);
     const intensity = new Float32Array(vertexCount);
     const photographicColor = cameraFrames.length > 0 && this.cameraProjector;
     const deferColorCorrection = photographicColor && !!onGeometryReady;

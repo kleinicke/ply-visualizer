@@ -34,14 +34,15 @@ export const colourStonexScansInParallel: StonexColourScans = async (
       return {
         message,
         transfer: [
-          job.pixels.buffer as ArrayBuffer,
+          job.pixels.buffer,
           ...job.scans.flatMap(scan => [
-            scan.positions.buffer as ArrayBuffer,
-            scan.azimuths.buffer as ArrayBuffer,
-            scan.counts.buffer as ArrayBuffer,
-            scan.activeFrames.buffer as ArrayBuffer,
+            scan.positions.buffer,
+            scan.azimuths.buffer,
+            scan.counts.buffer,
+            scan.activeFrames.buffer,
           ]),
-        ],
+          // Shared memory is shared, not transferred (and cannot be listed).
+        ].filter((buffer): buffer is ArrayBuffer => buffer instanceof ArrayBuffer),
       };
     }),
     defaultParallelism()
