@@ -104,9 +104,13 @@ for (const mode of ['intensity', 'intensity-viridis']) {
 test('mesh colours: 16-bit linear colours render like floats', async ({ page }) => {
   await page.goto('/');
   await page.waitForSelector('#three-canvas');
-  await page
-    .locator('#hiddenFileInput')
-    .setInputFiles(path.resolve('../testfiles/ply/test_small_mesh.ply'));
+  await page.locator('#hiddenFileInput').setInputFiles({
+    name: 'precision-mesh.ply',
+    mimeType: 'application/octet-stream',
+    buffer: Buffer.from(
+      'ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face 4\nproperty list uchar int vertex_indices\nend_header\n0 0 0 255 0 0\n1 0 0 0 255 0\n0 1 0 0 0 255\n0 0 1 255 255 0\n3 0 2 1\n3 0 1 3\n3 0 3 2\n3 1 2 3\n'
+    ),
+  });
   await expect(page.locator('#file-list .file-item')).toHaveCount(1, { timeout: 20_000 });
   await page.waitForTimeout(500);
   const { noise, swap, colours } = await colourDifference(page, 0);

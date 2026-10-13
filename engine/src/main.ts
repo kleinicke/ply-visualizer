@@ -1478,16 +1478,16 @@ export class PointCloudVisualizer {
     }
     this.smallViewAffordance.update();
     updateSceneGuides(this);
-    const visibilityContext = this.getVisibilityRenderContext();
     const useEDL = edl.prepareEDLFrame(this);
-    const useVisibilityRenderer =
+    const visibilityContext =
       this.pointRenderingImplementation === 'webgpu-visibility' &&
       !useEDL &&
       !this.allowTransparency &&
-      !!this.webgpuVisibilityRenderer &&
-      this.webgpuVisibilityRenderer.canRender(visibilityContext);
+      this.webgpuVisibilityRenderer
+        ? this.getVisibilityRenderContext()
+        : null;
 
-    if (useVisibilityRenderer && this.webgpuVisibilityRenderer) {
+    if (visibilityContext && this.webgpuVisibilityRenderer?.canRender(visibilityContext)) {
       const visibility = visibilityContext.pointClouds.map(cloud => cloud.visible);
       for (const cloud of visibilityContext.pointClouds) {
         cloud.visible = false;
@@ -1524,26 +1524,27 @@ export class PointCloudVisualizer {
   }
 
   private getVisibilityRenderContext(): VisibilityRenderContext {
-    const pointClouds = this.meshes.filter(
-      (mesh, index): mesh is THREE.Points =>
-        !!mesh &&
-        this.fileEntries.require(index).state.visible &&
-        mesh.visible &&
-        mesh instanceof THREE.Points &&
-        mesh.material instanceof THREE.PointsMaterial
-    );
+    const pointClouds: THREE.Points[] = [];
+    let hasDepthConflicts = false;
+    for (const entry of this.fileEntries.all) {
+      const mesh = entry.spatial?.object;
+      if (!mesh || !entry.state.visible || !mesh.visible) {
+        continue;
+      }
+      if (mesh instanceof THREE.Points) {
+        if (mesh.material instanceof THREE.PointsMaterial) {
+          pointClouds.push(mesh);
+        }
+      } else {
+        hasDepthConflicts = true;
+      }
+    }
     return {
       camera: this.camera,
       pointClouds,
       clippingPlanes: this.renderer.clippingPlanes,
       brightnessStops: this.brightnessStops,
-      hasDepthConflicts: this.meshes.some(
-        (mesh, index) =>
-          !!mesh &&
-          this.fileEntries.require(index).state.visible &&
-          mesh.visible &&
-          !(mesh instanceof THREE.Points)
-      ),
+      hasDepthConflicts,
     };
   }
 

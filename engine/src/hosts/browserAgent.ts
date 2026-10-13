@@ -1,7 +1,8 @@
+import { randomUUID } from '../utils/randomUUID';
 import { executeAgentCommand, type AgentViewerHost } from './agentBridge';
 
 const endpoint = 'http://127.0.0.1:8767';
-const rendererId = crypto.randomUUID();
+const rendererId = randomUUID();
 
 function localFetch(path: string, options: RequestInit = {}): Promise<Response> {
   return fetch(`${endpoint}${path}`, {

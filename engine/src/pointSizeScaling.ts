@@ -28,6 +28,8 @@ function setPointSize(
   material: THREE.PointsMaterial,
   size: number
 ): void {
+  // Size is a uniform: invalidating the program here also invalidates the
+  // adaptive round pass and forces shader-parameter work on every zoom update.
   material.size = size;
 }
 
@@ -93,7 +95,6 @@ export function updateAllPointSizesForDistance(host: PointSizeScalingHost): void
       const material = mesh.material as THREE.PointsMaterial;
       const baseSize = entry.state.pointSize || 1.0;
       setPointSize(host, material, calculateScreenSpacePointSize(baseSize, cameraDistance));
-      material.needsUpdate = true;
     }
   });
 
@@ -104,7 +105,6 @@ export function updateAllPointSizesForDistance(host: PointSizeScalingHost): void
       const material = vertexPoints.material as THREE.PointsMaterial;
       const baseSize = entry.state.pointSize || 1.0;
       setPointSize(host, material, calculateScreenSpacePointSize(baseSize, cameraDistance));
-      material.needsUpdate = true;
     }
   });
 
@@ -117,7 +117,6 @@ export function updateAllPointSizesForDistance(host: PointSizeScalingHost): void
           const material = child.material as THREE.PointsMaterial;
           const baseSize = entry.state.pointSize || DEFAULT_POINT_SIZE;
           setPointSize(host, material, calculateScreenSpacePointSize(baseSize, cameraDistance));
-          material.needsUpdate = true;
         }
       });
     }
@@ -267,7 +266,6 @@ export function restoreOriginalPointSizes(host: PointSizeScalingHost): void {
     if (mesh instanceof THREE.Points && mesh.material instanceof THREE.PointsMaterial) {
       const material = mesh.material as THREE.PointsMaterial;
       setPointSize(host, material, entry.state.pointSize || 1.0);
-      material.needsUpdate = true;
     }
   });
 
@@ -276,7 +274,6 @@ export function restoreOriginalPointSizes(host: PointSizeScalingHost): void {
     if (vertexPoints && vertexPoints.material instanceof THREE.PointsMaterial) {
       const material = vertexPoints.material as THREE.PointsMaterial;
       setPointSize(host, material, entry.state.pointSize || 1.0);
-      material.needsUpdate = true;
     }
   });
 
@@ -287,7 +284,6 @@ export function restoreOriginalPointSizes(host: PointSizeScalingHost): void {
         if (child instanceof THREE.Points && child.material instanceof THREE.PointsMaterial) {
           const material = child.material as THREE.PointsMaterial;
           setPointSize(host, material, entry.state.pointSize || DEFAULT_POINT_SIZE);
-          material.needsUpdate = true;
         }
       });
     }

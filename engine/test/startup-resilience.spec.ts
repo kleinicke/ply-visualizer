@@ -63,3 +63,36 @@ test('an unavailable optional picker chunk keeps the WebGL viewer usable', async
   );
   await expect(page.locator('#error')).toBeHidden();
 });
+
+test('renderer identity works when the page has no secure-context UUID API', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(crypto, 'randomUUID', { value: undefined });
+  });
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-visualizer-ready', 'true');
+  await expect(page.locator('#error')).toBeHidden();
+});
+
+test('blocked storage does not prevent startup or theme switching', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', {
+      get() {
+        throw new DOMException('Storage blocked', 'SecurityError');
+      },
+    });
+  });
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-visualizer-ready', 'true');
+  await page.locator('[data-tab="controls"]').click();
+  await page.locator('#theme-selector').selectOption('light-modern');
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        document.documentElement.style.getPropertyValue('--vscode-editor-background')
+      )
+    )
+    .toBe('#FFFFFF');
+  expect(errors).toEqual([]);
+});

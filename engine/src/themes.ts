@@ -37,6 +37,7 @@ const THEME_CONFIGS = [
  * Theme cache to avoid repeated network requests
  */
 const themeCache = new Map<string, VSCodeTheme>();
+let sessionThemeName = 'dark-modern';
 
 /**
  * Load a theme from JSON file
@@ -101,8 +102,13 @@ export function applyTheme(theme: VSCodeTheme): void {
     root.style.setProperty(cssVar, colorValue);
   });
 
-  // Store the current theme in localStorage for persistence
-  localStorage.setItem('ply-visualizer-theme', theme.name);
+  // Persistence is optional: embedded viewers may be denied storage entirely.
+  sessionThemeName = theme.name;
+  try {
+    localStorage.setItem('ply-visualizer-theme', theme.name);
+  } catch {
+    // Keep the selected theme for this viewer session.
+  }
 
   console.log(`Applied theme: ${theme.displayName}`);
 }
@@ -111,7 +117,11 @@ export function applyTheme(theme: VSCodeTheme): void {
  * Get the currently active theme name from localStorage
  */
 export function getCurrentThemeName(): string {
-  return localStorage.getItem('ply-visualizer-theme') || 'dark-modern';
+  try {
+    return localStorage.getItem('ply-visualizer-theme') || sessionThemeName;
+  } catch {
+    return sessionThemeName;
+  }
 }
 
 /**

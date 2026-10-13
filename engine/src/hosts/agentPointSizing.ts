@@ -30,11 +30,11 @@ export function setAgentPointSizeMode(
   updateAgentPointSizes(host);
 }
 export function updateAgentPointSizes(host: ControlHost) {
-  host.spatialFiles.forEach((file, i) => {
-    const mesh = host.meshes[i];
-    if (!adaptive.has(file) || !mesh) {
-      return;
+  for (const [i, entry] of host.fileEntries.all.entries()) {
+    if (!entry.spatial || !adaptive.has(entry.spatial.data)) {
+      continue;
     }
+    const { data: file, object: mesh } = entry.spatial;
     const center = new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3());
     host.camera.updateMatrixWorld(true);
     const distance = Math.max(
@@ -47,10 +47,8 @@ export function updateAgentPointSizes(host: ControlHost) {
       1e-8,
       (pixels * 2 * distance) / Math.max(1, host.renderer.domElement.clientHeight)
     );
-    if (
-      Math.abs(host.fileEntries.require(i).state.pointSize - size) > Math.max(1e-10, size * 0.01)
-    ) {
+    if (Math.abs(entry.state.pointSize - size) > Math.max(1e-10, size * 0.01)) {
       host.updatePointSize(i, size);
     }
-  });
+  }
 }
