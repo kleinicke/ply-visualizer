@@ -31,7 +31,11 @@ function parsed(page: Page) {
       hasIntensity: !!file.hasIntensity,
       positions: Array.from((file.positionsArray as Float32Array) ?? []),
       colors: Array.from((file.colorsArray as Uint8Array) ?? []),
-      normals: Array.from((file.normalsArray as Float32Array) ?? []),
+      // A point cloud's unit normals are kept as snorm16 (utils/normals.ts).
+      normalsType: file.normalsArray?.constructor.name as string | undefined,
+      normals: Array.from((file.normalsArray as Float32Array | Int16Array) ?? [], value =>
+        file.normalsArray instanceof Int16Array ? value / 32767 : value
+      ),
       intensity: Array.from((file.intensityArray as Float32Array) ?? []),
     };
   });
@@ -67,6 +71,7 @@ test('XYZN: the trailing three columns are normals, not colours', async ({ page 
   expect(file.vertexCount).toBe(3);
   expect(file.hasNormals).toBe(true);
   expect(file.hasColors).toBe(false);
+  expect(file.normalsType).toBe('Int16Array');
   expect(file.normals.slice(0, 3)).toEqual([0, 0, 1]);
 });
 

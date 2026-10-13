@@ -1,3 +1,4 @@
+import { compactPointNormals } from '../utils/normals';
 import { validateSpatialData } from './validateSpatialData';
 import { computePositionBounds } from './fastBounds';
 import type { FileEntryRegistry } from '../state/fileEntries';
@@ -29,6 +30,8 @@ export function createGeometryFromSpatialData(
   // Whole-number fields at their natural width (no-op once compacted).
   compactScalarFields(data.scalarFields);
   validateSpatialData(data);
+  // A point cloud keeps its normals only on the CPU; half the size as snorm16.
+  compactPointNormals(data);
   const geometry = new THREE.BufferGeometry();
 
   try {
@@ -45,6 +48,7 @@ export function createGeometryFromSpatialData(
     // Check if we have direct TypedArrays (new ultra-fast path)
     if ((data as any).useTypedArrays) {
       const positions = (data as any).positionsArray as Float32Array;
+      // Meshes are never packed (compactPointNormals), so these are floats.
       const normals = (data as any).normalsArray as Float32Array | null;
 
       // Direct assignment - zero copying, zero processing!

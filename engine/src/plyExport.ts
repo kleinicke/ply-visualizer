@@ -134,7 +134,9 @@ export function generatePlyFileContent(
       const normals = spatialData.normalsArray;
       const vertex = spatialData.vertices[i];
       if (normals) {
-        content += ` ${normals[i3]} ${normals[i3 + 1]} ${normals[i3 + 2]}`;
+        // Packed point-cloud normals are snorm16 (utils/normals.ts).
+        const scale = normals instanceof Int16Array ? 1 / 32767 : 1;
+        content += ` ${normals[i3] * scale} ${normals[i3 + 1] * scale} ${normals[i3 + 2] * scale}`;
       } else {
         content += ` ${vertex?.nx || 0} ${vertex?.ny || 0} ${vertex?.nz || 0}`;
       }

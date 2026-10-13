@@ -1,5 +1,6 @@
 import { sendToWebview } from './webviewTransport';
 import { scalarArrayTypes } from '../../engine/src/utils/scalarFields';
+import { compactPointNormals } from '../../engine/src/utils/normals';
 import type { ScalarArray } from '../../engine/src/interfaces';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
@@ -239,6 +240,10 @@ export async function sendSpatialDataToWebview(
     );
     const startTime = performance.now();
     let usedChunking = false;
+    // Packed here, off the viewer's UI thread, rather than when the webview
+    // builds the cloud; it also halves the normals on the wire. The message
+    // says which type they are (normalType) - a buffer carries no type.
+    compactPointNormals(spatialData);
 
     try {
       const scalarBytes = Object.values(spatialData.scalarFields || {}).reduce(
@@ -312,7 +317,7 @@ export async function sendBinaryData(
 
   let positionBuffer: Float32Array;
   let colorBuffer: Uint8Array | null = null;
-  let normalBuffer: Float32Array | null = null;
+  let normalBuffer: Float32Array | Int16Array | null = null;
 
   if (spatialData.useTypedArrays) {
     // Ultra-fast: Use TypedArrays directly (zero-copy)
@@ -398,6 +403,7 @@ export async function sendBinaryData(
     positionBuffer: positionBuffer.buffer,
     colorBuffer: colorBuffer ? colorBuffer.buffer : null,
     normalBuffer: normalBuffer ? normalBuffer.buffer : null,
+    normalType: normalBuffer instanceof Int16Array ? 'Int16Array' : 'Float32Array',
     indexBuffer: indexBuffer ? indexBuffer.buffer : null,
     scalarFieldBuffers: Object.fromEntries(
       Object.entries(spatialData.scalarFields || {}).map(([name, values]) => [
@@ -462,6 +468,7 @@ export async function sendLargeFileInChunksOptimized(
     totalChunks: totalChunks,
     hasColors: spatialData.hasColors,
     hasNormals: spatialData.hasNormals,
+    normalType: spatialData.normalsArray instanceof Int16Array ? 'Int16Array' : 'Float32Array',
     indexBuffer: indices ? indices.buffer : null,
     format: spatialData.format,
     comments: spatialData.comments,

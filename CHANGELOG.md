@@ -16,6 +16,7 @@
 - Changing a depth image's camera settings is faster again: the projection workers keep the image's rows between changes instead of receiving them every time (26 MP: ~0.35 s → ~0.21 s)
 - LAS/LAZ/E57 attributes that are whole numbers (classification, return numbers, user data, point source ID, ...) are stored at their natural width instead of as floats: a 1.6M-point LAS keeps 16 MB of attributes instead of 46 MB and opens faster
 - Depth images keep less memory: in VS Code the file is read again on the rare occasion it is needed instead of staying in memory while open, and on the standalone page a depth image no longer builds one JavaScript object per point (a 3.7M-point TIFF: 285 MB less memory, opens in ~0.2 s instead of ~0.65 s) and converts on the depth workers, with lens distortion from the dialog applied
+- Point clouds with normals keep them at 16 bits instead of 32 (unit normals only; meshes and non-unit normals are unchanged): 47 MB less for 7.9M points, at most 0.00002 off per component
 - KITTI .bin scans open on the standalone page again; cancelling one alignment no longer stalls the ones queued behind it
 - NumPy (.npy/.npz) depth images convert on the worker in VS Code (they hit a 30 s timeout first); PFM depth images decode in Rust and PFM headers with a comment line open again
 

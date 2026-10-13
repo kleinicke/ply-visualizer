@@ -35,11 +35,13 @@ test('extension binary transfer preserves typed LiDAR arrays and metadata', asyn
       vertexCount: 2,
       faceCount: 0,
       hasColors: true,
-      hasNormals: false,
+      hasNormals: true,
       hasIntensity: true,
       positionBuffer: positions.buffer,
       colorBuffer: colors.buffer,
-      normalBuffer: null,
+      // Packed on the host (utils/normals.ts): 12 bytes for two points.
+      normalBuffer: new Int16Array([0, 0, 32767, 0, -32767, 0]).buffer,
+      normalType: 'Int16Array',
       indexBuffer: null,
       scalarFieldBuffers: { classification: classification.buffer, gpsTime: gpsTime.buffer },
       // Unnamed types are floats, as before.
@@ -54,6 +56,8 @@ test('extension binary transfer preserves typed LiDAR arrays and metadata', asyn
   expect(received?.useTypedArrays).toBe(true);
   expect(Array.from(received?.positionsArray ?? [])).toEqual(Array.from(positions));
   expect(Array.from(received?.colorsArray ?? [])).toEqual(Array.from(colors));
+  expect(received?.normalsArray).toBeInstanceOf(Int16Array);
+  expect(Array.from(received?.normalsArray ?? [])).toEqual([0, 0, 32767, 0, -32767, 0]);
   expect(received?.scalarFields?.classification).toBeInstanceOf(Uint8Array);
   expect(Array.from(received?.scalarFields?.classification ?? [])).toEqual([2, 6]);
   expect(Array.from(received?.scalarFields?.gpsTime ?? [])).toEqual([0.5, 1.25]);

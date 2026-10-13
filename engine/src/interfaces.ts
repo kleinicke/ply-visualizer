@@ -89,7 +89,8 @@ export interface SpatialData {
   fileSizeInBytes?: number;
   positionsArray?: Float32Array;
   colorsArray?: Uint8Array | null;
-  normalsArray?: Float32Array | null;
+  /** Float32, or snorm16 for a point cloud's unit normals once built (utils/normals.ts). */
+  normalsArray?: Float32Array | Int16Array | null;
   /**
    * Triangle indices for meshes on the typed-array path, replacing `faces`.
    * An isosurface is millions of triangles, where an object per face costs

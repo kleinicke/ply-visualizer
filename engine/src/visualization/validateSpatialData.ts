@@ -74,7 +74,9 @@ export function validateSpatialData(value: unknown): asserts value is SpatialDat
   ] as const) {
     const array = data[key];
     if (array != null) {
-      if (!(array instanceof Type)) {
+      // A built point cloud's normals may already be packed (utils/normals.ts).
+      const packedNormals = key === 'normalsArray' && array instanceof Int16Array;
+      if (!(array instanceof Type) && !packedNormals) {
         fail(key, `must be ${Type.name}`);
       }
       length(key, array, count);

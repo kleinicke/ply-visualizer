@@ -18,7 +18,7 @@ export interface LargeFileChunkingHost {
       vertices: SpatialVertex[];
       positionsArray?: Float32Array;
       colorsArray?: Uint8Array;
-      normalsArray?: Float32Array;
+      normalsArray?: Float32Array | Int16Array;
       scalarFields?: Record<string, ScalarArray>;
       useTypedArrays: boolean;
       hasColors: boolean;
@@ -84,7 +84,10 @@ export function handleStartLargeFile(host: LargeFileChunkingHost, message: any):
       useTypedArrays && message.hasColors ? new Uint8Array(message.totalVertices * 3) : undefined,
     normalsArray:
       useTypedArrays && message.hasNormals
-        ? new Float32Array(message.totalVertices * 3)
+        ? // A point cloud's unit normals arrive packed (utils/normals.ts).
+          message.normalType === 'Int16Array'
+          ? new Int16Array(message.totalVertices * 3)
+          : new Float32Array(message.totalVertices * 3)
         : undefined,
     scalarFields,
     useTypedArrays,
@@ -135,7 +138,13 @@ export function handleLargeFileChunk(host: LargeFileChunkingHost, message: any):
       fileState.colorsArray.set(new Uint8Array(message.colorBuffer), startIndex * 3);
     }
     if (fileState.normalsArray && message.normalBuffer) {
-      fileState.normalsArray.set(new Float32Array(message.normalBuffer), startIndex * 3);
+      const normals = fileState.normalsArray;
+      normals.set(
+        normals instanceof Int16Array
+          ? new Int16Array(message.normalBuffer)
+          : new Float32Array(message.normalBuffer),
+        startIndex * 3
+      );
     }
     for (const [name, buffer] of Object.entries(message.scalarFieldBuffers || {})) {
       const field = fileState.scalarFields?.[name];

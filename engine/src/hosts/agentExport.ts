@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/naming-convention -- MCP wire keys */
+import { normalsAsFloat32 } from '../utils/normals';
 import { hasSourceRows, sourceRowsOf } from '../utils/sourceRows';
 import { exportAgentModels } from './agentModelExport';
 import type { ControlHost } from './agentControls';
@@ -49,7 +50,7 @@ export async function agentExport(host: ControlHost, a: Record<string, any>) {
     const bytes = wasm.export_inspection_ply(
       data.positionsArray!,
       data.colorsArray ?? new Uint8Array(),
-      data.normalsArray ?? new Float32Array(),
+      data.normalsArray ? normalsAsFloat32(data.normalsArray) : new Float32Array(),
       flat,
       JSON.stringify(entries.map(([key]) => key)),
       item.indices,

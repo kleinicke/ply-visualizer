@@ -31,7 +31,8 @@ test('typed LiDAR chunks preserve packed arrays, scalar fields, and metadata', a
     totalVertices: 3,
     totalChunks: 2,
     hasColors: true,
-    hasNormals: false,
+    hasNormals: true,
+    normalType: 'Int16Array',
     hasIntensity: true,
     useTypedArrays: true,
     scalarFieldNames: ['intensity', 'classification'],
@@ -65,6 +66,7 @@ test('typed LiDAR chunks preserve packed arrays, scalar fields, and metadata', a
       totalChunks: 2,
       vertexCount: intensity.length,
       positionBuffer: new Float32Array(positions).buffer,
+      normalBuffer: new Int16Array(positions.map(() => 32767)).buffer,
       colorBuffer: new Uint8Array(colors).buffer,
       scalarFieldBuffers: {
         intensity: new Float32Array(intensity).buffer,
@@ -83,6 +85,8 @@ test('typed LiDAR chunks preserve packed arrays, scalar fields, and metadata', a
   expect(Array.from(received?.positionsArray ?? [])).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   expect(Array.from(received?.colorsArray ?? [])).toEqual([255, 0, 0, 0, 255, 0, 0, 0, 255]);
   expect(Array.from(received?.scalarFields?.intensity ?? [])).toEqual([10, 20, 30]);
+  expect(received?.normalsArray).toBeInstanceOf(Int16Array);
+  expect(Array.from(received?.normalsArray ?? [])).toEqual(new Array(9).fill(32767));
   expect(received?.scalarFields?.classification).toBeInstanceOf(Uint8Array);
   expect(Array.from(received?.scalarFields?.classification ?? [])).toEqual([2, 6, 9]);
   expect(received?.sourceOrigin).toEqual([4_000_000, 500_000, 100]);

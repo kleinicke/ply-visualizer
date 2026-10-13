@@ -10,6 +10,8 @@
  * into the arrays the ordinary point-data path expects.
  */
 
+import { packUnitNormals } from '../utils/normals';
+
 export interface PointStreamPart {
   positions: Float32Array;
   colors?: Uint8Array | null;
@@ -20,7 +22,8 @@ export interface PointStreamPart {
 export interface PointStreamArrays {
   positionsArray: Float32Array;
   colorsArray: Uint8Array | null;
-  normalsArray: Float32Array | null;
+  /** Packed to snorm16 when every value is a unit-range component (utils/normals.ts). */
+  normalsArray: Float32Array | Int16Array | null;
   intensityArray: Float32Array | null;
 }
 
@@ -63,6 +66,32 @@ function join<T extends Float32Array | Uint8Array>(
 }
 
 /**
+ * The parts' normals packed while they are joined: the join copies every
+ * value anyway, so packing there costs little more than the copy, and the
+ * full-size float array is never allocated. Floats when any value is not a
+ * unit-range component.
+ */
+function joinNormals(parts: PointStreamPart[]): Float32Array | Int16Array | null {
+  const present = parts.map(part => part.normals);
+  if (present.length === 0 || present.some(array => !array)) {
+    return null;
+  }
+  const packed = new Int16Array(present.reduce((sum, array) => sum + array!.length, 0));
+  let offset = 0;
+  for (const array of present) {
+    if (!packUnitNormals(array!, packed, offset)) {
+      return join(
+        parts,
+        part => part.normals,
+        n => new Float32Array(n)
+      );
+    }
+    offset += array!.length;
+  }
+  return packed;
+}
+
+/**
  * The joined arrays of a finished stream, which is then forgotten. Null when
  * no part arrived under this id (an empty cloud sends none).
  */
@@ -83,11 +112,7 @@ export function finishPointStream(streamId: string): PointStreamArrays | null {
       part => part.colors,
       n => new Uint8Array(n)
     ),
-    normalsArray: join(
-      parts,
-      part => part.normals,
-      n => new Float32Array(n)
-    ),
+    normalsArray: joinNormals(parts),
     intensityArray: join(
       parts,
       part => part.intensity,

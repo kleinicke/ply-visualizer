@@ -23,6 +23,8 @@ export function createNormalsVisualizer(data: SpatialData): THREE.LineSegments {
   if (typed) {
     const positions = data.positionsArray!;
     const normals = data.normalsArray!;
+    // Packed point-cloud normals are snorm16 (utils/normals.ts).
+    const length = normals instanceof Int16Array ? normalLength / 32767 : normalLength;
     for (let i = 0; i < positions.length; i += 3) {
       const x = positions[i];
       const y = positions[i + 1];
@@ -30,9 +32,9 @@ export function createNormalsVisualizer(data: SpatialData): THREE.LineSegments {
       segments[written++] = x;
       segments[written++] = y;
       segments[written++] = z;
-      segments[written++] = x + normals[i] * normalLength;
-      segments[written++] = y + normals[i + 1] * normalLength;
-      segments[written++] = z + normals[i + 2] * normalLength;
+      segments[written++] = x + normals[i] * length;
+      segments[written++] = y + normals[i + 1] * length;
+      segments[written++] = z + normals[i + 2] * length;
     }
   } else {
     for (const p of data.vertices) {

@@ -1,3 +1,4 @@
+import { normalsAsFloat32 } from '../../../engine/src/utils/normals';
 import * as assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -144,11 +145,27 @@ suite('Parallel text point-cloud parse', function () {
         );
         assert.ok(summary, `${workers} workers streamed a result`);
         const joined = finishPointStream(streamId)!;
+        // The assembler packs unit normals to snorm16 (utils/normals.ts): equal
+        // within half a step once decoded.
+        const normals = joined.normalsArray
+          ? Array.from(normalsAsFloat32(joined.normalsArray))
+          : null;
+        assert.strictEqual(
+          normals?.length,
+          expected.normals?.length,
+          `${workers} workers, normals`
+        );
+        normals?.forEach((value, i) =>
+          assert.ok(
+            Math.abs(value - expected.normals![i]) <= 0.5 / 32767 + 1e-7,
+            `${workers} workers, streamed normal ${i}`
+          )
+        );
         assert.deepStrictEqual(
           {
             positions: Array.from(joined.positionsArray),
             colors: joined.colorsArray ? Array.from(joined.colorsArray) : null,
-            normals: joined.normalsArray ? Array.from(joined.normalsArray) : null,
+            normals: expected.normals,
             intensity: joined.intensityArray ? Array.from(joined.intensityArray) : null,
           },
           expected,

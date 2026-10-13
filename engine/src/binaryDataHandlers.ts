@@ -395,9 +395,13 @@ export async function handleBinarySpatialData(
   }
 
   // Convert normal buffer if present
-  let normalArray: Float32Array | null = null;
+  let normalArray: Float32Array | Int16Array | null = null;
   if (message.normalBuffer) {
-    normalArray = new Float32Array(message.normalBuffer);
+    // A point cloud's unit normals arrive packed (utils/normals.ts).
+    normalArray =
+      message.normalType === 'Int16Array'
+        ? new Int16Array(message.normalBuffer)
+        : new Float32Array(message.normalBuffer);
   }
 
   const scalarFields: Record<string, ScalarArray> = {};
