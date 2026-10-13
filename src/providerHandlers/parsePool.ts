@@ -18,8 +18,22 @@ import { webWasmPath } from './pointcloudWebGlue';
 
 const IDLE_MS = 3_000;
 
+/**
+ * A worker whose wasm memory a job grew past this is ended once it is free
+ * rather than kept for the next job. Large jobs come in phases - an X3A's
+ * scan decodes, then its colour groups, then its station pass - and each
+ * phase's workers otherwise held their memory through the next: on a
+ * 42M-point archive the pool kept ~3 GB nobody used. A replacement starts
+ * from the shared compiled module, so it costs a thread start.
+ */
+const RETIRE_WASM_BYTES = 256 * 1024 * 1024;
+
 interface PoolWorker {
   worker: Worker;
+  /** Jobs posted and not yet answered. */
+  busy: number;
+  /** Out of the pool; ended when its last job is answered. */
+  retired: boolean;
 }
 
 let pool: PoolWorker[] = [];
@@ -76,20 +90,30 @@ function workers(count: number): PoolWorker[] {
     idleTimer = undefined;
   }
   while (pool.length < count) {
-    const worker = new Worker(join(__dirname, 'parseWorker.js'), {
-      workerData: { wasmModule: sharedModule() },
-    });
-    // Never keep the extension host alive just for an idle decoder.
-    worker.unref();
-    const entry: PoolWorker = { worker };
-    const forget = () => {
-      pool = pool.filter(candidate => candidate !== entry);
-    };
-    worker.on('error', forget);
-    worker.on('exit', forget);
-    pool.push(entry);
+    spawn();
   }
   return pool.slice(0, count);
+}
+
+function spawn(): PoolWorker {
+  const worker = new Worker(join(__dirname, 'parseWorker.js'), {
+    workerData: { wasmModule: sharedModule() },
+  });
+  // Never keep the extension host alive just for an idle decoder.
+  worker.unref();
+  const entry: PoolWorker = { worker, busy: 0, retired: false };
+  const forget = () => {
+    pool = pool.filter(candidate => candidate !== entry);
+  };
+  worker.on('error', forget);
+  worker.on('exit', forget);
+  pool.push(entry);
+  return entry;
+}
+
+/** The entry itself while it serves, else a fresh worker in its place. */
+function serving(entry: PoolWorker): PoolWorker {
+  return entry.retired ? spawn() : entry;
 }
 
 function scheduleRelease(): void {
@@ -110,8 +134,15 @@ function runJob<T>(
   onProgress?: (value: unknown) => void
 ): Promise<T> {
   const id = nextJobId++;
+  entry.busy++;
   return new Promise<T>((resolve, reject) => {
-    const onMessage = (value: { id: number; result?: T; error?: string; progress?: unknown }) => {
+    const onMessage = (value: {
+      id: number;
+      result?: T;
+      error?: string;
+      progress?: unknown;
+      wasmBytes?: number;
+    }) => {
       if (value.id !== id) {
         return;
       }
@@ -120,6 +151,13 @@ function runJob<T>(
         return;
       }
       cleanup();
+      if ((value.wasmBytes ?? 0) > RETIRE_WASM_BYTES && !entry.retired) {
+        entry.retired = true;
+        pool = pool.filter(candidate => candidate !== entry);
+      }
+      if (entry.retired && entry.busy === 0) {
+        void entry.worker.terminate();
+      }
       if (value.result !== undefined) {
         resolve(value.result);
       } else {
@@ -131,6 +169,7 @@ function runJob<T>(
       reject(new Error(`decoder worker exited (${code})`));
     };
     const cleanup = () => {
+      entry.busy--;
       entry.worker.off('message', onMessage);
       entry.worker.off('exit', onExit);
     };
@@ -160,10 +199,12 @@ export async function runParseJobs<T>(
     let failure: unknown = null;
     let next = 0;
     await Promise.all(
-      entries.map(async entry => {
+      entries.map(async first => {
+        let entry = first;
         // After a failure the run is lost; do not start what is left of it.
         while (next < jobs.length && !failure) {
           const index = next++;
+          entry = serving(entry);
           try {
             results[index] = await runJob<T>(
               entry,

@@ -579,7 +579,10 @@ parentPort!.on('message', async ({ id, job }: { id: number; job: Job }) => {
     const { result, transfer } = await run(wasm, job, progress =>
       parentPort!.postMessage({ id, progress })
     );
-    parentPort!.postMessage({ id, result }, transfer);
+    // The pool retires a worker whose memory a job grew large (parsePool.ts).
+    const memory = (globalThis as { plySharedPointcloudWasm?: { memory?: WebAssembly.Memory } })
+      .plySharedPointcloudWasm?.memory;
+    parentPort!.postMessage({ id, result, wasmBytes: memory?.buffer.byteLength }, transfer);
   } catch (error) {
     parentPort!.postMessage({ id, error: error instanceof Error ? error.message : String(error) });
   }
