@@ -1615,7 +1615,10 @@ export class StonexX3aParser {
       data,
       fileName,
       timingCallback,
-      geometry => onGeometryReady?.(splitByScan(geometry, null, true)),
+      // Views, not copies: the hand-over only posts them, and the transfer
+      // copies each to its own bytes as it goes (chunked for large scans) -
+      // a copy here was ~670 MB more on a 42M-point archive.
+      geometry => onGeometryReady?.(splitByScan(geometry, null, false)),
       pipeline?.scopeScanStems
     );
 
