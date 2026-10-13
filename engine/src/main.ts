@@ -137,6 +137,7 @@ import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { mountErrorOverlay } from './errorOverlayMount';
+import { setupContextRecovery, type ContextResidency } from './visualization/contextRecovery';
 import { mountLoadingOverlay } from './loadingOverlayMount';
 import { mountTabNav } from './tabNavMount';
 import { mountWelcomeMessage } from './welcomeMessageMount';
@@ -260,6 +261,8 @@ export class PointCloudVisualizer {
   // crashes the webview. This is the safety net for the multi-window
   // out-of-VRAM case (each window is a separate context sharing one GPU).
   private contextLost = false;
+  /** Releases the WebGL context while the viewer is hidden; see contextRecovery.ts. */
+  gpuResidency: ContextResidency | null = null;
   controls!:
     | TrackballControls
     | OrbitControls
@@ -601,6 +604,38 @@ export class PointCloudVisualizer {
   }
 
   private async init(): Promise<void> {
+    // Keep startup failures visible even when no WebGL context can be created.
+    mountErrorOverlay(this.lifetime);
+    const pendingFiles: File[][] = [];
+    let acceptingFiles = false;
+    const captureFiles = (event: Event): void => {
+      if (acceptingFiles) {
+        return;
+      }
+      const files =
+        event.type === 'drop'
+          ? (event as DragEvent).dataTransfer?.files
+          : (event.target as HTMLInputElement)?.id === 'hiddenFileInput'
+            ? (event.target as HTMLInputElement).files
+            : null;
+      if (!files?.length) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      pendingFiles.push(Array.from(files));
+    };
+    document.addEventListener('change', captureFiles, true);
+    document.addEventListener('drop', captureFiles, true);
+    const releaseStartupListeners = (): void => {
+      acceptingFiles = true;
+      document.removeEventListener('change', captureFiles, true);
+      document.removeEventListener('drop', captureFiles, true);
+    };
+    this.lifetime.add(() => {
+      releaseStartupListeners();
+      pendingFiles.length = 0;
+    });
     try {
       const initStartedAt = performance.now();
       await this.initThreeJS();
@@ -611,7 +646,6 @@ export class PointCloudVisualizer {
       this.applyEnvironmentSpecificUI();
       this.setupEventListeners();
       mountSvelteSmokeTest(this.lifetime);
-      mountErrorOverlay(this.lifetime);
       mountLoadingOverlay(this.lifetime);
       mountFileActivityIndicator(this.lifetime);
       mountPerformanceStats(this.lifetime);
@@ -671,8 +705,17 @@ export class PointCloudVisualizer {
       // Hosts may deliver their first file only after the asynchronous renderer
       // and file/message listeners are ready (construction alone is too early).
       document.documentElement.dataset.visualizerReady = 'true';
+      releaseStartupListeners();
       window.dispatchEvent(new Event('visualizer-ready'));
+      for (const files of pendingFiles.splice(0)) {
+        if (this.lifetime.disposed) {
+          break;
+        }
+        await browserFileDragDrop.handleDroppedFiles(this, files);
+      }
     } catch (error) {
+      releaseStartupListeners();
+      pendingFiles.length = 0;
       this.showError(
         `Failed to initialize 3D Visualizer: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -781,8 +824,14 @@ export class PointCloudVisualizer {
     // Initialize selection manager
     const selectionManager = new SelectionManager(this.getSelectionContext());
     this.selectionManager = selectionManager;
-    await selectionManager.initializeWebGPUPicker();
+    // Independent devices/pipelines can initialize concurrently. Both must
+    // settle before publishing capabilities or disposing a cancelled viewer.
+    const [, visibilitySelection] = await Promise.all([
+      selectionManager.initializeWebGPUPicker(),
+      WebGPUVisibilityRenderer.create(container),
+    ]);
     if (this.lifetime.disposed) {
+      visibilitySelection.renderer?.dispose();
       selectionManager.dispose();
       return;
     }
@@ -795,11 +844,6 @@ export class PointCloudVisualizer {
         : `ℹ️ WebGPU point picking unavailable; using CPU (${this.webgpuPickingUnavailableReason})`
     );
 
-    const visibilitySelection = await WebGPUVisibilityRenderer.create(container);
-    if (this.lifetime.disposed) {
-      visibilitySelection.renderer?.dispose();
-      return;
-    }
     this.webgpuVisibilityRenderer = visibilitySelection.renderer;
     this.webgpuPointRenderingAvailable = visibilitySelection.renderer !== null;
     this.webgpuPointRenderingUnavailableReason = visibilitySelection.unavailableReason;
@@ -1376,45 +1420,27 @@ export class PointCloudVisualizer {
   }
 
   /**
-   * Recover gracefully from WebGL context loss instead of crashing.
-   *
-   * Context loss happens when the GPU runs out of memory — common when several
-   * extension windows each hold a large cloud, since every webview is a separate
-   * WebGL context but they all share one GPU's VRAM. Without this handler the
-   * next GL call throws and takes down the whole webview. We preventDefault() to
-   * let the browser attempt restoration, pause rendering while lost, and resume
-   * on restore (Three.js re-uploads geometries/textures automatically on the
-   * next render because their CPU-side arrays still exist).
+   * Keep a context lost while visible idle until the user chooses to re-upload
+   * the scene; release and restore it silently around hidden periods.
    */
   private setupContextLossHandling(canvas: HTMLCanvasElement): void {
-    // `webglcontextlost` never fires for a WebGPU canvas; that backend reports
-    // device loss through the renderer instead. Nothing listens for it yet, so
-    // a lost WebGPU device is simply not recovered from — acceptable while the
-    // backend is an opt-in experiment, and noted in docs/WEBGPU_READINESS.md.
-    if (this.rendererBackend !== 'webgl') {
+    if (this.rendererBackend !== 'webgl' || !this.webglRenderer) {
       return;
     }
-    this.lifetime.listen(
+    this.gpuResidency = setupContextRecovery(
       canvas,
-      'webglcontextlost',
-      event => {
-        event.preventDefault(); // required so the context can be restored
-        this.contextLost = true;
-        console.warn('WebGL context lost — pausing rendering until restored.');
-        this.showStatus('GPU context lost (likely out of memory). Recovering…');
-      },
-      false
-    );
-    this.lifetime.listen(
-      canvas,
-      'webglcontextrestored',
+      this.webglRenderer.getContext(),
+      this.lifetime,
       () => {
-        this.contextLost = false;
-        console.warn('WebGL context restored — resuming.');
-        this.showStatus('GPU context restored.');
-        this.requestRender();
+        this.contextLost = true;
+        this.gpuTimer.dispose();
+        this.gpuTimer = NULL_GPU_TIMER;
       },
-      false
+      () => {
+        this.gpuTimer = createGpuTimer(this.renderer);
+        this.contextLost = false;
+        this.requestRender();
+      }
     );
   }
 
@@ -1426,7 +1452,7 @@ export class PointCloudVisualizer {
     if (this.lifetime.disposed) {
       return;
     }
-    // The GPU is gone while the context is lost; any GL call would throw.
+    // Also stay paused after restoration: replaying a large upload can lose it again.
     if (this.contextLost) {
       return;
     }
@@ -1437,16 +1463,16 @@ export class PointCloudVisualizer {
     }
     this.smallViewAffordance.update();
     updateSceneGuides(this);
-    const visibilityContext = this.getVisibilityRenderContext();
     const useEDL = edl.prepareEDLFrame(this);
-    const useVisibilityRenderer =
+    const visibilityContext =
       this.pointRenderingImplementation === 'webgpu-visibility' &&
       !useEDL &&
       !this.allowTransparency &&
-      !!this.webgpuVisibilityRenderer &&
-      this.webgpuVisibilityRenderer.canRender(visibilityContext);
+      this.webgpuVisibilityRenderer
+        ? this.getVisibilityRenderContext()
+        : null;
 
-    if (useVisibilityRenderer && this.webgpuVisibilityRenderer) {
+    if (visibilityContext && this.webgpuVisibilityRenderer?.canRender(visibilityContext)) {
       const visibility = visibilityContext.pointClouds.map(cloud => cloud.visible);
       for (const cloud of visibilityContext.pointClouds) {
         cloud.visible = false;
@@ -1483,26 +1509,27 @@ export class PointCloudVisualizer {
   }
 
   private getVisibilityRenderContext(): VisibilityRenderContext {
-    const pointClouds = this.meshes.filter(
-      (mesh, index): mesh is THREE.Points =>
-        !!mesh &&
-        this.fileEntries.require(index).state.visible &&
-        mesh.visible &&
-        mesh instanceof THREE.Points &&
-        mesh.material instanceof THREE.PointsMaterial
-    );
+    const pointClouds: THREE.Points[] = [];
+    let hasDepthConflicts = false;
+    for (const entry of this.fileEntries.all) {
+      const mesh = entry.spatial?.object;
+      if (!mesh || !entry.state.visible || !mesh.visible) {
+        continue;
+      }
+      if (mesh instanceof THREE.Points) {
+        if (mesh.material instanceof THREE.PointsMaterial) {
+          pointClouds.push(mesh);
+        }
+      } else {
+        hasDepthConflicts = true;
+      }
+    }
     return {
       camera: this.camera,
       pointClouds,
       clippingPlanes: this.renderer.clippingPlanes,
       brightnessStops: this.brightnessStops,
-      hasDepthConflicts: this.meshes.some(
-        (mesh, index) =>
-          !!mesh &&
-          this.fileEntries.require(index).state.visible &&
-          mesh.visible &&
-          !(mesh instanceof THREE.Points)
-      ),
+      hasDepthConflicts,
     };
   }
 
@@ -2318,6 +2345,9 @@ export class PointCloudVisualizer {
         },
         benchmarkScenario: async message => {
           await runBenchmarkScenario(this, message.step, message.anchorIndex ?? 0);
+        },
+        viewVisibility: async message => {
+          this.gpuResidency?.setHidden(!message.visible);
         },
         timing: async message => {
           this.handleTimingMessage(message);
@@ -3421,6 +3451,17 @@ export class PointCloudVisualizer {
         disposeObjects([entry.pose?.object, entry.pose?.labelsGroup, entry.camera?.object]);
       }
     }
+
+    // Optional WebGPU caches must release removed files even if no further
+    // pick or visibility render occurs (including removal of the last file).
+    const geometries = new Set<THREE.BufferGeometry>();
+    for (const entry of this.fileEntries.all) {
+      if (entry.spatial) {
+        geometries.add(entry.spatial.object.geometry);
+      }
+    }
+    this.selectionManager?.releaseUnusedPointBuffers(geometries);
+    this.webgpuVisibilityRenderer?.retainGeometries(geometries);
 
     // Reassign file indices
     this.fileEntries.ofKind('spatial').forEach((entry, index) => {

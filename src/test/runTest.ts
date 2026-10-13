@@ -47,7 +47,15 @@ async function main() {
       vscodeExecutablePath,
       extensionDevelopmentPath,
       extensionTestsPath,
-      launchArgs: [workspace, '--disable-workspace-trust'],
+      launchArgs: [
+        workspace,
+        '--disable-workspace-trust',
+        // Hosted Linux CI has no physical GPU. Explicit software WebGL keeps
+        // real-webview tests independent of Electron's changing GPU defaults.
+        ...(process.env.VSCODE_TEST_SOFTWARE_GL === '1'
+          ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist']
+          : []),
+      ],
     });
   } catch (err) {
     console.error('Failed to run tests');

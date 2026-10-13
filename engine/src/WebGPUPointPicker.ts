@@ -80,12 +80,13 @@ export class WebGPUPointPicker {
       };
     }
 
+    let device: any;
     try {
       const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
       if (!adapter) {
         return { picker: null, unavailableReason: 'no WebGPU adapter was returned' };
       }
-      const device = await adapter.requestDevice();
+      device = await adapter.requestDevice();
       const module = device.createShaderModule({ code: PICK_SHADER });
       const bindGroupLayout = device.createBindGroupLayout({
         entries: [
@@ -118,12 +119,13 @@ export class WebGPUPointPicker {
       // The async form waits for WGSL validation. A browser that exposes
       // navigator.gpu but cannot compile this picker is treated as unavailable
       // before the Controls UI is mounted.
-      const firstPassPipeline = device.createComputePipelineAsync
-        ? await device.createComputePipelineAsync(firstPassDescriptor)
-        : device.createComputePipeline(firstPassDescriptor);
-      const secondPassPipeline = device.createComputePipelineAsync
-        ? await device.createComputePipelineAsync(secondPassDescriptor)
-        : device.createComputePipeline(secondPassDescriptor);
+      const [firstPassPipeline, secondPassPipeline] = await Promise.all(
+        [firstPassDescriptor, secondPassDescriptor].map(descriptor =>
+          device.createComputePipelineAsync
+            ? device.createComputePipelineAsync(descriptor)
+            : device.createComputePipeline(descriptor)
+        )
+      );
 
       return {
         picker: new WebGPUPointPicker(
@@ -135,6 +137,7 @@ export class WebGPUPointPicker {
         unavailableReason: null,
       };
     } catch (error) {
+      device?.destroy();
       return {
         picker: null,
         unavailableReason: error instanceof Error ? error.message : String(error),
@@ -182,7 +185,7 @@ export class WebGPUPointPicker {
     const dispatches: PickDispatch[] = [];
     let idOffset = 0;
     try {
-      this.prunePositionBuffers(
+      this.retainPositionBuffers(
         new Set(pointCloudMeshes.map(mesh => mesh.geometry.getAttribute('position')))
       );
       context.camera.updateMatrixWorld();
@@ -193,7 +196,9 @@ export class WebGPUPointPicker {
 
       for (const mesh of pointCloudMeshes) {
         const position = mesh.geometry.getAttribute('position');
-        if (!position || position.count === 0) {continue;}
+        if (!position || position.count === 0) {
+          continue;
+        }
         if (idOffset + position.count >= NO_RESULT) {
           throw new Error('WebGPU picker point ID space exceeded');
         }
@@ -236,7 +241,9 @@ export class WebGPUPointPicker {
         idOffset += position.count;
       }
 
-      if (dispatches.length === 0) {return null;}
+      if (dispatches.length === 0) {
+        return null;
+      }
 
       const encoder = this.device.createCommandEncoder();
       const firstPass = encoder.beginComputePass();
@@ -260,12 +267,16 @@ export class WebGPUPointPicker {
       await readbackBuffer.mapAsync(gpuMapMode().READ);
       const result = new Uint32Array(readbackBuffer.getMappedRange()).slice();
       readbackBuffer.unmap();
-      if (result[1] === NO_RESULT) {return null;}
+      if (result[1] === NO_RESULT) {
+        return null;
+      }
 
       const dispatch = dispatches.find(
         item => result[1] >= item.idOffset && result[1] < item.idOffset + item.count
       );
-      if (!dispatch) {throw new Error('WebGPU picker returned an unknown point ID');}
+      if (!dispatch) {
+        throw new Error('WebGPU picker returned an unknown point ID');
+      }
       const pointIndex = dispatch.pointOffset + result[1] - dispatch.idOffset;
       return this.describeHit(
         dispatch.mesh,
@@ -276,7 +287,9 @@ export class WebGPUPointPicker {
         context
       );
     } finally {
-      for (const dispatch of dispatches) {dispatch.uniformBuffer.destroy();}
+      for (const dispatch of dispatches) {
+        dispatch.uniformBuffer.destroy();
+      }
       resultBuffer.destroy();
       readbackBuffer.destroy();
     }
@@ -284,16 +297,22 @@ export class WebGPUPointPicker {
 
   dispose(): void {
     this.disposed = true;
-    for (const buffer of this.ownedPositionBuffers) {buffer.destroy();}
+    for (const buffer of this.ownedPositionBuffers) {
+      buffer.destroy();
+    }
     this.ownedPositionBuffers.clear();
+    this.positionBuffers.clear();
     this.device.destroy();
   }
 
-  private prunePositionBuffers(
+  /** Release removed clouds even when no further pick is made. */
+  retainPositionBuffers(
     activeAttributes: Set<THREE.BufferAttribute | THREE.InterleavedBufferAttribute>
   ): void {
     for (const [attribute, cached] of this.positionBuffers) {
-      if (activeAttributes.has(attribute as THREE.BufferAttribute)) {continue;}
+      if (activeAttributes.has(attribute as THREE.BufferAttribute)) {
+        continue;
+      }
       for (const chunk of cached.chunks) {
         chunk.buffer.destroy();
         this.ownedPositionBuffers.delete(chunk.buffer);
@@ -386,7 +405,9 @@ export class WebGPUPointPicker {
     if (gpuError) {
       throw new Error(`WebGPU picker error: ${gpuError.message ?? String(gpuError)}`);
     }
-    if (operationError) {throw operationError;}
+    if (operationError) {
+      throw operationError;
+    }
     return result as T;
   }
 
@@ -449,7 +470,9 @@ export class WebGPUPointPicker {
     }
     const extraPadding = Math.min(20, renderedSize * 0.2);
     let pixelRadius = renderedSize * 0.5 + 3 + extraPadding;
-    if (viewDepth < 0.01) {pixelRadius = Math.max(pixelRadius, renderedSize * 0.75);}
+    if (viewDepth < 0.01) {
+      pixelRadius = Math.max(pixelRadius, renderedSize * 0.75);
+    }
     pixelRadius = Math.min(150, pixelRadius);
     return {
       mesh,

@@ -170,9 +170,9 @@ export function updateModelPlayback(
   },
   delta: number
 ): void {
-  host.spatialFiles.forEach((data, index) => {
-    if (host.fileEntries.require(index).state.visible && data.sceneModel?.update(delta)) {
+  for (const entry of host.fileEntries.all) {
+    if (entry.state.visible && entry.spatial?.data.sceneModel?.update(delta)) {
       host.requestRender();
     }
-  });
+  }
 }

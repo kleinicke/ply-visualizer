@@ -10,6 +10,7 @@ export const externalFixtureSpecs = [
   'depth-multi-file-settings.spec.ts',
   'depth-panel-state-persistence.spec.ts',
   'depth-perf-log.spec.ts',
+  'depth-strip-decode.spec.ts',
   'edl-auto.spec.ts',
   'file-entry-ordering.spec.ts',
   'file-list-interactions.spec.ts',

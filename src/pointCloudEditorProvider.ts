@@ -196,7 +196,13 @@ export class PointCloudEditorProvider implements vscode.CustomReadonlyEditorProv
     this.panelToPath.set(webviewPanel, document.uri.fsPath);
     this.panelVolumeSessions.set(webviewPanel, new Set([document.uri.toString()]));
     registerWebviewTransport(webviewPanel, readyGate, () => loadStartedAt, initialLoad);
+    // Hidden editors release their WebGL context (engine contextRecovery.ts):
+    // all webviews share one renderer process and its 16-context limit.
+    const visibility = webviewPanel.onDidChangeViewState(() => {
+      void sendToWebview(webviewPanel, { type: 'viewVisibility', visible: webviewPanel.visible });
+    });
     webviewPanel.onDidDispose(() => {
+      visibility.dispose();
       sequenceReader.dispose();
       cancelRegistrationRequest(webviewPanel);
       readyGate.dispose();

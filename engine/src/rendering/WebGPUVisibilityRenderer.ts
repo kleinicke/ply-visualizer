@@ -125,7 +125,9 @@ export class WebGPUVisibilityRenderer {
     let canvas: HTMLCanvasElement | null = null;
     try {
       const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
-      if (!adapter) {return { renderer: null, unavailableReason: 'no WebGPU adapter was returned' };}
+      if (!adapter) {
+        return { renderer: null, unavailableReason: 'no WebGPU adapter was returned' };
+      }
       device = await adapter.requestDevice();
 
       canvas = document.createElement('canvas');
@@ -140,7 +142,9 @@ export class WebGPUVisibilityRenderer {
       container.appendChild(canvas);
 
       const context = canvas.getContext('webgpu') as GPUAny;
-      if (!context) {throw new Error('could not create a WebGPU canvas context');}
+      if (!context) {
+        throw new Error('could not create a WebGPU canvas context');
+      }
       const canvasFormat = gpu.getPreferredCanvasFormat();
       context.configure({
         device,
@@ -172,18 +176,12 @@ export class WebGPUVisibilityRenderer {
           layout: computePipelineLayout,
           compute: { module, entryPoint },
         });
-      const [clearPipeline, depthPipeline, idPipeline, shadePipeline] = await Promise.all([
-        makeCompute('clear_visibility'),
-        makeCompute('resolve_depth'),
-        makeCompute('resolve_id'),
-        makeCompute('shade_winners'),
-      ]);
 
       const presentModule = device.createShaderModule({ code: PRESENT_SHADER });
       const presentLayout = device.createBindGroupLayout({
         entries: [{ binding: 0, visibility: stage.FRAGMENT, texture: {} }],
       });
-      const presentPipeline = await device.createRenderPipelineAsync({
+      const present = device.createRenderPipelineAsync({
         layout: device.createPipelineLayout({ bindGroupLayouts: [presentLayout] }),
         vertex: { module: presentModule, entryPoint: 'vertex_main' },
         fragment: {
@@ -193,6 +191,17 @@ export class WebGPUVisibilityRenderer {
         },
         primitive: { topology: 'triangle-list' },
       });
+
+      // Presentation does not depend on the compute pipelines. Compile all five
+      // together instead of adding a second pipeline wait to viewer startup.
+      const [clearPipeline, depthPipeline, idPipeline, shadePipeline, presentPipeline] =
+        await Promise.all([
+          makeCompute('clear_visibility'),
+          makeCompute('resolve_depth'),
+          makeCompute('resolve_id'),
+          makeCompute('shade_winners'),
+          present,
+        ]);
 
       return {
         renderer: new WebGPUVisibilityRenderer(
@@ -225,30 +234,48 @@ export class WebGPUVisibilityRenderer {
   }
 
   canRender(context: VisibilityRenderContext): boolean {
-    if (this.disposed || context.pointClouds.length === 0) {return false;}
-    if (context.hasDepthConflicts) {return false;}
-    if ((context.clippingPlanes?.length ?? 0) > MAX_CLIPPING_PLANES) {return false;}
+    if (this.disposed || context.pointClouds.length === 0) {
+      return false;
+    }
+    if (context.hasDepthConflicts) {
+      return false;
+    }
+    if ((context.clippingPlanes?.length ?? 0) > MAX_CLIPPING_PLANES) {
+      return false;
+    }
 
     this.resizeToDisplaySize();
     context.camera.updateMatrixWorld();
     const height = Math.max(1, this.canvas.height);
     for (const cloud of context.pointClouds) {
-      if (!(cloud.material instanceof THREE.PointsMaterial)) {return false;}
+      if (!(cloud.material instanceof THREE.PointsMaterial)) {
+        return false;
+      }
       const material = cloud.material;
-      if (material.transparent || material.opacity < 1) {return false;}
+      if (material.transparent || material.opacity < 1) {
+        return false;
+      }
       const sphere = cloud.geometry.boundingSphere;
-      if (!sphere) {cloud.geometry.computeBoundingSphere();}
+      if (!sphere) {
+        cloud.geometry.computeBoundingSphere();
+      }
       const bounds = cloud.geometry.boundingSphere;
-      if (!bounds) {return false;}
+      if (!bounds) {
+        return false;
+      }
       cloud.updateMatrixWorld();
       const center = bounds.center.clone().applyMatrix4(cloud.matrixWorld);
       const radius = bounds.radius * cloud.matrixWorld.getMaxScaleOnAxis();
       center.applyMatrix4(context.camera.matrixWorldInverse);
       const nearestDepth = -center.z - radius;
-      if (nearestDepth <= 0) {return false;}
+      if (nearestDepth <= 0) {
+        return false;
+      }
       if (material.sizeAttenuation) {
         const maximumPixels = (material.size * height * 0.5) / Math.max(nearestDepth, 0.001);
-        if (maximumPixels > 1.25) {return false;}
+        if (maximumPixels > 1.25) {
+          return false;
+        }
       } else if (material.size > 1.25) {
         return false;
       }
@@ -257,11 +284,15 @@ export class WebGPUVisibilityRenderer {
   }
 
   render(context: VisibilityRenderContext): boolean {
-    if (!this.canRender(context)) {return false;}
-    if (this.width === 0 || this.height === 0) {return false;}
+    if (!this.canRender(context)) {
+      return false;
+    }
+    if (this.width === 0 || this.height === 0) {
+      return false;
+    }
 
     const active = new Set(context.pointClouds.map(cloud => cloud.geometry));
-    this.pruneCache(active);
+    this.retainGeometries(active);
     const usage = (globalThis as any).GPUBufferUsage;
     const dispatches: Dispatch[] = [];
     let globalOffset = 0;
@@ -274,7 +305,9 @@ export class WebGPUVisibilityRenderer {
 
     for (const cloud of context.pointClouds) {
       const position = cloud.geometry.getAttribute('position');
-      if (!position) {continue;}
+      if (!position) {
+        continue;
+      }
       const cached = this.getGeometryCache(cloud.geometry);
       cloud.updateMatrixWorld();
       for (const chunk of cached.chunks) {
@@ -305,7 +338,9 @@ export class WebGPUVisibilityRenderer {
       }
       globalOffset += position.count;
     }
-    if (dispatches.length === 0) {return false;}
+    if (dispatches.length === 0) {
+      return false;
+    }
 
     const encoder = this.device.createCommandEncoder();
     const pixelCount = this.width * this.height;
@@ -369,7 +404,9 @@ export class WebGPUVisibilityRenderer {
     this.device.queue.submit([encoder.finish()]);
 
     this.device.queue.onSubmittedWorkDone().finally(() => {
-      for (const dispatch of dispatches) {dispatch.uniformBuffer.destroy();}
+      for (const dispatch of dispatches) {
+        dispatch.uniformBuffer.destroy();
+      }
     });
     return true;
   }
@@ -377,7 +414,9 @@ export class WebGPUVisibilityRenderer {
   dispose(): void {
     this.disposed = true;
     this.destroyFrameResources();
-    for (const cached of this.geometryCache.values()) {this.destroyCache(cached);}
+    for (const cached of this.geometryCache.values()) {
+      this.destroyCache(cached);
+    }
     this.geometryCache.clear();
     this.canvas.remove();
     this.device.destroy();
@@ -392,7 +431,9 @@ export class WebGPUVisibilityRenderer {
     const cssHeight = parent?.clientHeight ?? this.canvas.clientHeight;
     const width = Math.max(1, Math.round(cssWidth * pixelRatio));
     const height = Math.max(1, Math.round(cssHeight * pixelRatio));
-    if (width === this.width && height === this.height) {return;}
+    if (width === this.width && height === this.height) {
+      return;
+    }
     this.width = width;
     this.height = height;
     this.canvas.width = width;
@@ -441,7 +482,9 @@ export class WebGPUVisibilityRenderer {
     ) {
       return existing;
     }
-    if (existing) {this.destroyCache(existing);}
+    if (existing) {
+      this.destroyCache(existing);
+    }
 
     const usage = (globalThis as any).GPUBufferUsage;
     const chunks: GeometryChunk[] = [];
@@ -497,9 +540,12 @@ export class WebGPUVisibilityRenderer {
     return data;
   }
 
-  private pruneCache(active: Set<THREE.BufferGeometry>): void {
+  /** Also called on removal while this renderer is inactive. */
+  retainGeometries(active: Set<THREE.BufferGeometry>): void {
     for (const [geometry, cached] of this.geometryCache) {
-      if (active.has(geometry)) {continue;}
+      if (active.has(geometry)) {
+        continue;
+      }
       this.destroyCache(cached);
       this.geometryCache.delete(geometry);
     }

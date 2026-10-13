@@ -6,6 +6,34 @@ import { E57EmbeddedImage, SpatialData } from '../interfaces';
 
 let initPromise: Promise<unknown> | null = null;
 let worker: Worker | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * How long the decoder worker outlives its last request.
+ *
+ * The decoder copies the whole file into the worker's wasm memory and builds
+ * every output array there before handing it over, and wasm memory never
+ * shrinks. A worker kept for the life of the viewer therefore holds a heap
+ * sized for the largest file it ever decoded - a few hundred MB per viewer for
+ * a typical airborne LAS, multiplied by every open viewer. Ending the worker
+ * returns all of it. The next load pays about 100 ms to start a worker and grow
+ * a fresh heap (3M-point LAS: ~870 ms instead of ~770 ms), against ~290 MB kept
+ * per viewer otherwise. The delay lets files opened together share one.
+ */
+const WORKER_IDLE_MS = 5000;
+
+function scheduleIdleTermination(): void {
+  if (idleTimer !== undefined) {
+    clearTimeout(idleTimer);
+  }
+  idleTimer = setTimeout(() => {
+    idleTimer = undefined;
+    if (pending.size === 0) {
+      worker?.terminate();
+      worker = null;
+    }
+  }, WORKER_IDLE_MS);
+}
 let nextRequestId = 1;
 const pending = new Map<
   number,
@@ -15,6 +43,10 @@ const pending = new Map<
 function ensureWorker(): Worker | null {
   if (typeof Worker === 'undefined') {
     return null;
+  }
+  if (idleTimer !== undefined) {
+    clearTimeout(idleTimer);
+    idleTimer = undefined;
   }
   if (worker) {
     return worker;
@@ -28,6 +60,9 @@ function ensureWorker(): Worker | null {
       return;
     }
     pending.delete(event.data.id);
+    if (pending.size === 0) {
+      scheduleIdleTermination();
+    }
     if (event.data.error) {
       request.reject(new Error(event.data.error));
       return;
@@ -164,6 +199,11 @@ export async function parseLidarFile(
   extension: 'las' | 'laz' | 'e57',
   fileName: string
 ): Promise<SpatialData[]> {
+  // Compiled once in the page and handed to each worker, so restarting one
+  // after an idle release (WORKER_IDLE_MS) does not compile the crate again.
+  const module = await (
+    globalThis as { __plyPointcloudWasmModule?: () => Promise<WebAssembly.Module | null> }
+  ).__plyPointcloudWasmModule?.();
   const decoderWorker = ensureWorker();
   if (decoderWorker) {
     const id = nextRequestId++;
@@ -171,7 +211,7 @@ export async function parseLidarFile(
       pending.set(id, { resolve, reject, fileName });
     });
     try {
-      decoderWorker.postMessage({ id, data, extension, fileName }, [data.buffer]);
+      decoderWorker.postMessage({ id, data, extension, fileName, module }, [data.buffer]);
     } catch (error) {
       pending.delete(id);
       throw error;

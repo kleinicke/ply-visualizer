@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
-  await page.waitForFunction(() => (window as any).visualizer !== undefined);
+  await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
 
   // Give every panel enough content to make the shared tab-content element
   // scrollable without depending on whichever controls happen to be present.

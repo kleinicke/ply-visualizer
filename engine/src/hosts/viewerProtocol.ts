@@ -85,6 +85,7 @@ const schemas = {
   nativeAgentRequest: { id: string, operation: string, arguments: object },
   registrationResult: { id: string, error: optional(string) },
   benchmarkScenario: { step },
+  viewVisibility: { visible: boolean },
   timing: { phase: string, kind: string, ms: optional(number) },
   startLoading: { fileName: optional(string) },
   backgroundOperationComplete: {},

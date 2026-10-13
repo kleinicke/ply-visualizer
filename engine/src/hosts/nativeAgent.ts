@@ -1,5 +1,5 @@
 import { detectFileTypeWithContent } from '../fileHandler';
- 
+
 import * as THREE from 'three';
 import type { ControlHost } from './agentControls';
 import { executeAgentCommand, type AgentViewerHost } from './agentBridge';
@@ -185,6 +185,9 @@ export async function handleNativeAgentRequest(host: ControlHost, message: any):
       }
       await new Promise(resolve => setTimeout(resolve, 50));
     }
+    // A hidden editor may have handed its WebGL context back; captures and
+    // readbacks need it live.
+    await host.gpuResidency?.ensureResident();
     if (message.operation === 'native_load') {
       await load(host, message.arguments);
     }

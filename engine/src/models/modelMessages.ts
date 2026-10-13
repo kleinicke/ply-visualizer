@@ -1,3 +1,4 @@
+import { randomUUID } from '../utils/randomUUID';
 import { loadSceneModel, type ModelResource } from './loadSceneModel';
 import type { SpatialData } from '../interfaces';
 import type { CadResult } from './cadTypes';
@@ -13,7 +14,7 @@ export async function handleSceneModelMessage(
   const data = message.data instanceof Uint8Array ? message.data : new Uint8Array(message.data);
   const readResource = (relative: string) =>
     new Promise<ModelResource>((resolve, reject) => {
-      const requestId = crypto.randomUUID();
+      const requestId = randomUUID();
       const timer = window.setTimeout(() => {
         window.removeEventListener('message', listener);
         reject(new Error(`Timed out reading ${relative}`));
@@ -48,18 +49,22 @@ export async function handleSceneModelMessage(
       // the webview's strict CSP by decoding in an extension-host worker.
       decodeCad: (bytes, format) =>
         new Promise<CadResult>((resolve, reject) => {
-          const requestId = crypto.randomUUID();
+          const requestId = randomUUID();
           const timer = window.setTimeout(() => {
             window.removeEventListener('message', listener);
             reject(new Error('CAD conversion timed out.'));
           }, 125_000);
           const listener = (event: MessageEvent) => {
-            if (event.data?.type !== 'cadDecodeResult' || event.data.requestId !== requestId)
-              {return;}
+            if (event.data?.type !== 'cadDecodeResult' || event.data.requestId !== requestId) {
+              return;
+            }
             clearTimeout(timer);
             window.removeEventListener('message', listener);
-            if (event.data.error) {reject(new Error(event.data.error));}
-            else {resolve(event.data.result);}
+            if (event.data.error) {
+              reject(new Error(event.data.error));
+            } else {
+              resolve(event.data.result);
+            }
           };
           window.addEventListener('message', listener);
           host.vscode.postMessage({ type: 'cadDecodeRequest', requestId, bytes, format });

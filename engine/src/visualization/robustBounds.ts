@@ -56,11 +56,11 @@ export function robustPointBounds(positions: Float32Array): THREE.Box3 | null {
   const components: Array<'x' | 'y' | 'z'> = ['x', 'y', 'z'];
   for (let axis = 0; axis < 3; axis++) {
     const values = axes[axis].subarray(0, written);
-    values.sort();
     const low = Math.floor(written * TRIM);
     const high = Math.min(written - 1, Math.ceil(written * (1 - TRIM)));
-    min[components[axis]] = values[low];
-    max[components[axis]] = values[high];
+    const [lowValue, highValue] = orderStatistics(values, low, high);
+    min[components[axis]] = lowValue;
+    max[components[axis]] = highValue;
   }
 
   if (!Number.isFinite(min.x) || !Number.isFinite(max.x)) {
@@ -86,4 +86,85 @@ export function boundsAreOutlierDominated(full: THREE.Box3, robust: THREE.Box3):
     const extent = fullSize[axis];
     return extent > 1e-9 && robustSize[axis] < extent * 0.5;
   });
+}
+
+/** `a` sorts before `b` in TypedArray#sort order: -0 before +0 (NaN is handled by the caller). */
+function sortsBefore(a: number, b: number): boolean {
+  return a < b || (a === 0 && b === 0 && Object.is(a, -0) && !Object.is(b, -0));
+}
+
+/**
+ * `values[low]` and `values[high]` as they would be after `values.sort()`
+ * (NaN last, -0 before +0), reordering `values` in place. Two quickselects
+ * rather than a sort: framing needs two percentiles per axis, and sorting the
+ * three 50k-sample axes was ~10-20 ms of every large load.
+ */
+export function orderStatistics(values: Float32Array, low: number, high: number): [number, number] {
+  // NaNs go to the end, where sort puts them; the rest is selected among.
+  let finite = values.length;
+  for (let i = 0; i < finite;) {
+    if (Number.isNaN(values[i])) {
+      finite--;
+      values[i] = values[finite];
+      values[finite] = NaN;
+    } else {
+      i++;
+    }
+  }
+  if (low >= finite) {
+    return [NaN, NaN];
+  }
+  select(values, 0, finite - 1, low);
+  if (high >= finite) {
+    return [values[low], NaN];
+  }
+  // Everything before `low` is now no greater than values[low].
+  select(values, low, finite - 1, high);
+  return [values[low], values[high]];
+}
+
+/** Hoare quickselect: puts the element of sorted rank `k` at `values[k]`, within [lo, hi]. */
+function select(values: Float32Array, lo: number, hi: number, k: number): void {
+  while (hi > lo) {
+    const mid = (lo + hi) >>> 1;
+    // Median of three, so already sorted input does not go quadratic.
+    if (sortsBefore(values[mid], values[lo])) {
+      swap(values, mid, lo);
+    }
+    if (sortsBefore(values[hi], values[lo])) {
+      swap(values, hi, lo);
+    }
+    if (sortsBefore(values[hi], values[mid])) {
+      swap(values, hi, mid);
+    }
+    const pivot = values[mid];
+    let i = lo;
+    let j = hi;
+    while (i <= j) {
+      while (sortsBefore(values[i], pivot)) {
+        i++;
+      }
+      while (sortsBefore(pivot, values[j])) {
+        j--;
+      }
+      if (i <= j) {
+        swap(values, i, j);
+        i++;
+        j--;
+      }
+    }
+    if (k <= j) {
+      hi = j;
+    } else if (k >= i) {
+      lo = i;
+    } else {
+      return;
+    }
+  }
+}
+
+function swap(values: Float32Array, a: number, b: number): void {
+  const t = values[a];
+  values[a] = values[b];
+  values[b] = t;
 }

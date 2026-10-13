@@ -1,4 +1,4 @@
-import { parsePlyWasm } from './pointcloudWasm';
+import { parsePlyBytes } from './pointcloudWasm';
 import { isGaussianSplatLayout } from '../utils/scalarFields';
 
 import type { SpatialData } from '../interfaces';
@@ -22,6 +22,11 @@ export class PlyParser {
   /**
    * Parse a PLY into the viewer's shape. Delegates to the Rust parser; kept as
    * a method because call sites and tests address it this way.
+   *
+   * Through `parsePlyBytes`, not `parsePlyWasm`: copying the whole file into
+   * wasm memory grows that memory to the file plus its decoded arrays, and wasm
+   * memory never shrinks, so every viewer opened from a file picker kept that
+   * peak (182 MB for 3M points) for as long as it lived.
    */
   async parse(data: Uint8Array, timingCallback?: (message: string) => void): Promise<SpatialData> {
     const log = timingCallback || console.log;
@@ -29,7 +34,7 @@ export class PlyParser {
     // The wording of these two lines is asserted by the browser specs and read
     // by the timing panel; keep them in step with any change there.
     log(`📋 Parser: Starting PLY/XYZ parsing (${data.length} bytes)...`);
-    const parsed = await parsePlyWasm(data);
+    const parsed = await parsePlyBytes(data);
     log(
       `🎯 Parser: ${parsed.vertexCount.toLocaleString()} vertices, ` +
         `${parsed.faceCount.toLocaleString()} faces (${parsed.format})`

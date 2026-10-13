@@ -137,11 +137,23 @@ interface RawPlyStream {
   free?(): void;
 }
 
+interface RawRowStream {
+  push(chunk: Uint8Array): void;
+  finish(): RawResult;
+  free(): void;
+}
+
 interface PointcloudWasm {
   parse_text_table(data: Uint8Array, options: string): RawResult;
   parse_xyz(data: Uint8Array, variant: string, colorMode: string): RawResult;
   parse_pts(data: Uint8Array): RawResult;
   parse_pcd(data: Uint8Array): RawResult;
+  /** See `parsePcdBinaryInChunks`. */
+  pcd_binary_plan?(head: Uint8Array): string;
+  parse_pcd_binary_range?(head: Uint8Array, body: Uint8Array, firstRow: number): RawResult;
+  /** See `parseRowsInChunks`. */
+  plan_rows?(head: Uint8Array, format: string, colorMode: string): string;
+  row_stream?(layout: Uint8Array, color: number, rowsHint: number): RawRowStream;
   parse_ply(data: Uint8Array): RawPlyResult;
   /** Parses a file already written into wasm memory - see `parsePlyFromResponse`. */
   parse_ply_at(ptr: number, len: number): RawPlyResult;
@@ -250,6 +262,71 @@ export function detectXyzColorMode(data: Uint8Array, variant: string): string {
   return 'byte';
 }
 
+/** Bytes handed to the row parser per call (see `parseRowsInChunks`). */
+const ROW_CHUNK_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Parse a header-less text point cloud (XYZ and its variants, PTS) by pushing
+ * the file through the row parser a chunk at a time.
+ *
+ * `parse_xyz` and `parse_pts` take the whole file, so wasm-bindgen copies it
+ * into wasm memory first - and wasm memory never shrinks. For a 100 MB XYZRGB
+ * that left every viewer that had ever opened one holding the file a second
+ * time for the rest of its life. Here wasm memory only ever holds one chunk
+ * and the decoded arrays. `plan_rows` makes the same layout and colour
+ * decisions as the whole-file parsers and the rows go through the same
+ * builder, so the result is the same (it is what the extension host's
+ * parallel parse already relies on). Null when the plan cannot be made from
+ * the start of the file; the caller then parses the whole file.
+ */
+function parseRowsInChunks(
+  wasm: PointcloudWasm,
+  data: Uint8Array,
+  format: string,
+  colorMode: string
+): WasmPointCloudResult | null {
+  if (!wasm.plan_rows || !wasm.row_stream || data.length <= ROW_CHUNK_BYTES) {
+    return null;
+  }
+  const head = data.subarray(0, 64 * 1024);
+  const planJson = wasm.plan_rows(head, format, colorMode);
+  if (!planJson) {
+    return null;
+  }
+  const plan = JSON.parse(planJson) as {
+    layout: number[];
+    color: number;
+    start: number;
+    expected: number;
+  };
+  if (plan.start !== 0 || plan.expected !== 0) {
+    return null;
+  }
+  // Sized from the sample's row length, so the arrays are not grown by
+  // doubling (which copies them and briefly holds both). Unused capacity is
+  // never touched and costs no memory.
+  let rows = 0;
+  for (let i = 0; i < head.length; i++) {
+    rows += head[i] === 10 ? 1 : 0;
+  }
+  const rowsHint = Math.ceil((data.length / (head.length / Math.max(1, rows))) * 1.1);
+  const stream = wasm.row_stream(
+    Uint8Array.from(plan.layout),
+    plan.color,
+    Math.min(rowsHint, 2 ** 32 - 1)
+  );
+  let raw: RawResult;
+  try {
+    for (let at = 0; at < data.length; at += ROW_CHUNK_BYTES) {
+      stream.push(data.subarray(at, at + ROW_CHUNK_BYTES));
+    }
+    raw = stream.finish();
+  } finally {
+    stream.free();
+  }
+  return marshalWasmPointCloud(raw);
+}
+
 /** Parse plain XYZ, XYZN or XYZRGB. Throws if the crate is unavailable. */
 export async function parseXyzWasm(
   data: Uint8Array,
@@ -259,7 +336,11 @@ export async function parseXyzWasm(
   if (!wasm) {
     throw new Error('point-cloud wasm unavailable');
   }
-  return marshalWasmPointCloud(wasm.parse_xyz(data, variant, detectXyzColorMode(data, variant)));
+  const colorMode = detectXyzColorMode(data, variant);
+  return (
+    parseRowsInChunks(wasm, data, variant, colorMode) ??
+    marshalWasmPointCloud(wasm.parse_xyz(data, variant, colorMode))
+  );
 }
 
 /** Parse a PTS point cloud. Throws if the crate is unavailable. */
@@ -268,7 +349,7 @@ export async function parsePtsWasm(data: Uint8Array): Promise<WasmPointCloudResu
   if (!wasm) {
     throw new Error('point-cloud wasm unavailable');
   }
-  return marshalWasmPointCloud(wasm.parse_pts(data));
+  return parseRowsInChunks(wasm, data, 'pts', '') ?? marshalWasmPointCloud(wasm.parse_pts(data));
 }
 
 /** A PLY as the viewer consumes it: typed arrays plus the header's own facts. */
@@ -878,8 +959,115 @@ export async function parsePcdWasm(
   if (!wasm) {
     throw new Error('point-cloud wasm unavailable');
   }
-  const result = marshalWasmPointCloud(wasm.parse_pcd(data));
+  const result = parsePcdBinaryInChunks(wasm, data) ?? marshalWasmPointCloud(wasm.parse_pcd(data));
   return { ...result, header: JSON.parse(result.metadataJson) as PcdHeaderInfo };
+}
+
+/**
+ * Parse a `DATA binary` PCD a slice of rows at a time, for the same reason as
+ * `parseRowsInChunks`: `parse_pcd` copies the whole file into wasm memory,
+ * which never shrinks. Each slice goes through `parse_pcd_binary_range`, the
+ * decoder the extension host's parallel parse uses, and is copied straight
+ * into arrays sized for every row, so no second full-size copy is made unless
+ * rows were dropped (non-finite positions). Null for any other encoding, or a
+ * file small enough that the copy does not matter; the caller then parses the
+ * whole file.
+ */
+function parsePcdBinaryInChunks(
+  wasm: PointcloudWasm,
+  data: Uint8Array
+): WasmPointCloudResult | null {
+  if (!wasm.pcd_binary_plan || !wasm.parse_pcd_binary_range || data.length <= ROW_CHUNK_BYTES) {
+    return null;
+  }
+  const planJson = wasm.pcd_binary_plan(data.subarray(0, Math.min(data.length, 65536)));
+  if (!planJson) {
+    return null;
+  }
+  const plan = JSON.parse(planJson) as { dataStart: number; stride: number; rows: number };
+  // Whole records actually present, as `parse_pcd` clamps them.
+  const rows = Math.min(plan.rows, Math.floor((data.length - plan.dataStart) / plan.stride));
+  if (!(rows > 0)) {
+    return null;
+  }
+  const head = data.subarray(0, plan.dataStart);
+  const rowsPerChunk = Math.max(1, Math.floor(ROW_CHUNK_BYTES / plan.stride));
+
+  let out: WasmPointCloudResult | null = null;
+  let kept = 0;
+  // Allocated only once a row is dropped; until then the map is the identity.
+  let indices: Uint32Array | null = null;
+  const bbox = new Float32Array([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]);
+  for (let firstRow = 0; firstRow < rows; firstRow += rowsPerChunk) {
+    const count = Math.min(rowsPerChunk, rows - firstRow);
+    const bodyStart = plan.dataStart + firstRow * plan.stride;
+    const part = marshalWasmPointCloud(
+      wasm.parse_pcd_binary_range(
+        head,
+        data.subarray(bodyStart, bodyStart + count * plan.stride),
+        firstRow
+      )
+    );
+    if (!out) {
+      out = {
+        ...part,
+        positionsArray: new Float32Array(rows * 3),
+        colorsArray: part.colorsArray ? new Uint8Array(rows * 3) : null,
+        normalsArray: part.normalsArray ? new Float32Array(rows * 3) : null,
+        intensityArray: part.intensityArray ? new Float32Array(rows) : null,
+        scalarFields: Object.fromEntries(
+          Object.keys(part.scalarFields ?? {}).map(name => [name, new Float32Array(rows)])
+        ),
+      };
+    }
+    const n = part.vertexCount;
+    out.positionsArray.set(part.positionsArray, kept * 3);
+    if (out.colorsArray && part.colorsArray) {
+      out.colorsArray.set(part.colorsArray, kept * 3);
+    }
+    if (out.normalsArray && part.normalsArray) {
+      out.normalsArray.set(part.normalsArray, kept * 3);
+    }
+    if (out.intensityArray && part.intensityArray) {
+      out.intensityArray.set(part.intensityArray, kept);
+    }
+    for (const [name, values] of Object.entries(part.scalarFields ?? {})) {
+      out.scalarFields![name]?.set(values, kept);
+    }
+    if (n !== count && !indices) {
+      indices = new Uint32Array(rows);
+      for (let i = 0; i < kept; i++) {
+        indices[i] = i;
+      }
+    }
+    if (indices) {
+      indices.set(part.sourcePointIndices ?? new Uint32Array(0), kept);
+    }
+    if (n > 0) {
+      for (let axis = 0; axis < 3; axis++) {
+        bbox[axis] = Math.min(bbox[axis], part.bbox[axis]);
+        bbox[axis + 3] = Math.max(bbox[axis + 3], part.bbox[axis + 3]);
+      }
+    }
+    kept += n;
+  }
+  const result = out!;
+  const trim = <T extends Float32Array | Uint8Array | Uint32Array>(a: T, width: number): T =>
+    kept === rows ? a : (a.slice(0, kept * width) as T);
+  result.vertexCount = kept;
+  result.positionsArray = trim(result.positionsArray, 3);
+  result.colorsArray = result.colorsArray && trim(result.colorsArray, 3);
+  result.normalsArray = result.normalsArray && trim(result.normalsArray, 3);
+  result.intensityArray = result.intensityArray && trim(result.intensityArray, 1);
+  for (const name of Object.keys(result.scalarFields!)) {
+    result.scalarFields![name] = trim(result.scalarFields![name], 1);
+  }
+  result.bbox = kept === 0 ? new Float32Array(6) : bbox;
+  result.sourcePointCount = rows;
+  // As parse_pcd: when every row was kept, say so instead of a map.
+  result.sourcePointIndices = indices && kept > 0 ? indices.slice(0, kept) : undefined;
+  result.sourceRowsIdentity = indices ? undefined : true;
+  return result;
 }
 
 /**

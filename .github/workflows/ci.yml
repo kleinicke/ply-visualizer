@@ -77,6 +77,15 @@ jobs:
       - name: Build standalone page
         run: npm run build --workspace=engine
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Prepare Python and MCP integration fixtures
+        run: |
+          npm run build:python-viewer
+          python -m pip install './packages/python[mcp]'
+
       - name: Install Playwright browsers
         run: npm exec -- playwright install --with-deps chromium
 
@@ -117,6 +126,7 @@ jobs:
         run: xvfb-run -a npm test
         env:
           VSCODE_TEST_VERSION: ${{ matrix.vscode }}
+          VSCODE_TEST_SOFTWARE_GL: '1'
 
   rust:
     name: Rust tests and rebuilt WASM
