@@ -137,6 +137,7 @@ import * as binaryDataHandlers from './binaryDataHandlers';
 import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { mountErrorOverlay } from './errorOverlayMount';
+import { setupContextRecovery } from './visualization/contextRecovery';
 import { mountLoadingOverlay } from './loadingOverlayMount';
 import { mountTabNav } from './tabNavMount';
 import { mountWelcomeMessage } from './welcomeMessageMount';
@@ -1416,46 +1417,24 @@ export class PointCloudVisualizer {
     this.needsRender = true;
   }
 
-  /**
-   * Recover gracefully from WebGL context loss instead of crashing.
-   *
-   * Context loss happens when the GPU runs out of memory — common when several
-   * extension windows each hold a large cloud, since every webview is a separate
-   * WebGL context but they all share one GPU's VRAM. Without this handler the
-   * next GL call throws and takes down the whole webview. We preventDefault() to
-   * let the browser attempt restoration, pause rendering while lost, and resume
-   * on restore (Three.js re-uploads geometries/textures automatically on the
-   * next render because their CPU-side arrays still exist).
-   */
+  /** Keep restored contexts idle until the user chooses to re-upload the scene. */
   private setupContextLossHandling(canvas: HTMLCanvasElement): void {
-    // `webglcontextlost` never fires for a WebGPU canvas; that backend reports
-    // device loss through the renderer instead. Nothing listens for it yet, so
-    // a lost WebGPU device is simply not recovered from — acceptable while the
-    // backend is an opt-in experiment, and noted in docs/WEBGPU_READINESS.md.
     if (this.rendererBackend !== 'webgl') {
       return;
     }
-    this.lifetime.listen(
+    setupContextRecovery(
       canvas,
-      'webglcontextlost',
-      event => {
-        event.preventDefault(); // required so the context can be restored
-        this.contextLost = true;
-        console.warn('WebGL context lost — pausing rendering until restored.');
-        this.showStatus('GPU context lost (likely out of memory). Recovering…');
-      },
-      false
-    );
-    this.lifetime.listen(
-      canvas,
-      'webglcontextrestored',
+      this.lifetime,
       () => {
-        this.contextLost = false;
-        console.warn('WebGL context restored — resuming.');
-        this.showStatus('GPU context restored.');
-        this.requestRender();
+        this.contextLost = true;
+        this.gpuTimer.dispose();
+        this.gpuTimer = NULL_GPU_TIMER;
       },
-      false
+      () => {
+        this.gpuTimer = createGpuTimer(this.renderer);
+        this.contextLost = false;
+        this.requestRender();
+      }
     );
   }
 
@@ -1467,7 +1446,7 @@ export class PointCloudVisualizer {
     if (this.lifetime.disposed) {
       return;
     }
-    // The GPU is gone while the context is lost; any GL call would throw.
+    // Also stay paused after restoration: replaying a large upload can lose it again.
     if (this.contextLost) {
       return;
     }
@@ -3463,6 +3442,17 @@ export class PointCloudVisualizer {
         disposeObjects([entry.pose?.object, entry.pose?.labelsGroup, entry.camera?.object]);
       }
     }
+
+    // Optional WebGPU caches must release removed files even if no further
+    // pick or visibility render occurs (including removal of the last file).
+    const geometries = new Set<THREE.BufferGeometry>();
+    for (const entry of this.fileEntries.all) {
+      if (entry.spatial) {
+        geometries.add(entry.spatial.object.geometry);
+      }
+    }
+    this.selectionManager?.releaseUnusedPointBuffers(geometries);
+    this.webgpuVisibilityRenderer?.retainGeometries(geometries);
 
     // Reassign file indices
     this.fileEntries.ofKind('spatial').forEach((entry, index) => {

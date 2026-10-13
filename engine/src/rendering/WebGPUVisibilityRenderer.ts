@@ -292,7 +292,7 @@ export class WebGPUVisibilityRenderer {
     }
 
     const active = new Set(context.pointClouds.map(cloud => cloud.geometry));
-    this.pruneCache(active);
+    this.retainGeometries(active);
     const usage = (globalThis as any).GPUBufferUsage;
     const dispatches: Dispatch[] = [];
     let globalOffset = 0;
@@ -540,7 +540,8 @@ export class WebGPUVisibilityRenderer {
     return data;
   }
 
-  private pruneCache(active: Set<THREE.BufferGeometry>): void {
+  /** Also called on removal while this renderer is inactive. */
+  retainGeometries(active: Set<THREE.BufferGeometry>): void {
     for (const [geometry, cached] of this.geometryCache) {
       if (active.has(geometry)) {
         continue;

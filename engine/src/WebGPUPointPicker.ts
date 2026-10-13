@@ -185,7 +185,7 @@ export class WebGPUPointPicker {
     const dispatches: PickDispatch[] = [];
     let idOffset = 0;
     try {
-      this.prunePositionBuffers(
+      this.retainPositionBuffers(
         new Set(pointCloudMeshes.map(mesh => mesh.geometry.getAttribute('position')))
       );
       context.camera.updateMatrixWorld();
@@ -301,10 +301,12 @@ export class WebGPUPointPicker {
       buffer.destroy();
     }
     this.ownedPositionBuffers.clear();
+    this.positionBuffers.clear();
     this.device.destroy();
   }
 
-  private prunePositionBuffers(
+  /** Release removed clouds even when no further pick is made. */
+  retainPositionBuffers(
     activeAttributes: Set<THREE.BufferAttribute | THREE.InterleavedBufferAttribute>
   ): void {
     for (const [attribute, cached] of this.positionBuffers) {

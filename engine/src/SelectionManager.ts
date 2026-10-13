@@ -154,6 +154,20 @@ export class SelectionManager {
     return hit ? this.resolvePickHit(hit, 'CPU') : null;
   }
 
+  releaseUnusedPointBuffers(geometries: Set<THREE.BufferGeometry>): void {
+    if (!this.webgpuPicker) {
+      return;
+    }
+    const attributes = new Set<THREE.BufferAttribute | THREE.InterleavedBufferAttribute>();
+    for (const geometry of geometries) {
+      const position = geometry.getAttribute('position');
+      if (position) {
+        attributes.add(position);
+      }
+    }
+    this.webgpuPicker.retainPositionBuffers(attributes);
+  }
+
   dispose(): void {
     this.webgpuPicker?.dispose();
     this.webgpuPicker = null;
