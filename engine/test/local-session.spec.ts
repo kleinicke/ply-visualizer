@@ -1,6 +1,15 @@
 import { expect, test } from '@playwright/test';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
+
+// packages/python declares requires-python >= 3.10. A machine whose python3 is
+// older (macOS ships 3.9) cannot import viz3d at all, which is not something
+// these specs test; point PLY_TEST_PYTHON at a newer interpreter to run them.
+const PYTHON = process.env.PLY_TEST_PYTHON ?? 'python3';
+const pythonSupported =
+  spawnSync(PYTHON, ['-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'])
+    .status === 0;
+test.skip(!pythonSupported, `viz3d needs Python 3.10+; set PLY_TEST_PYTHON (tried ${PYTHON})`);
 
 test('Python point arrays and CLI files open in the shared 3D viewer', async ({ page }) => {
   const cases = [
@@ -11,7 +20,7 @@ test('Python point arrays and CLI files open in the shared 3D viewer', async ({ 
     ['-m', 'viz3d', '--no-browser', path.resolve('examples/example-point-cloud.ply')],
   ];
   for (const args of cases) {
-    const child = spawn('python3', args, {
+    const child = spawn(PYTHON, args, {
       // eslint-disable-next-line @typescript-eslint/naming-convention -- Python's standard environment variable
       env: { ...process.env, PYTHONPATH: path.resolve('../packages/python') },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -68,7 +77,7 @@ test('inline training viewer preserves camera, switches batches, and draws vecto
   page,
 }) => {
   const child = spawn(
-    'python3',
+    PYTHON,
     [
       '-u',
       '-c',
@@ -192,7 +201,7 @@ test('agent bridge inspects geometry, applies camera and captures rendered pixel
   page,
 }) => {
   const child = spawn(
-    'python3',
+    PYTHON,
     [
       '-u',
       '-c',
