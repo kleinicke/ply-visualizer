@@ -138,6 +138,7 @@ import * as datasetWorkflow from './depth/datasetWorkflow';
 import { mountSvelteSmokeTest } from './svelteSmokeTestMount';
 import { mountErrorOverlay } from './errorOverlayMount';
 import { setupContextRecovery, type ContextResidency } from './visualization/contextRecovery';
+import { RenderLoopSleep } from './rendering/renderLoopSleep';
 import { mountLoadingOverlay } from './loadingOverlayMount';
 import { mountTabNav } from './tabNavMount';
 import { mountWelcomeMessage } from './welcomeMessageMount';
@@ -166,6 +167,7 @@ import { FileEntryRegistry } from './state/fileEntries';
 import { insertEntryState } from './state/fileEntryState';
 import { viewerState } from './state/viewer.svelte';
 import { uiState } from './state/ui.svelte';
+import { filmState } from './state/film.svelte';
 import { acceptVolumeResponse, setVolumeError, updateVolumeProgress } from './state/volume.svelte';
 import { flushSync } from 'svelte';
 import { formatFileSize } from './utils/format';
@@ -302,7 +304,17 @@ export class PointCloudVisualizer {
   filmManager: FilmManager | null = null;
 
   // On-demand rendering state
-  needsRender: boolean = false;
+  private renderRequested = false;
+  get needsRender(): boolean {
+    return this.renderRequested;
+  }
+  /** Any request for a frame also wakes a loop that went to sleep. */
+  set needsRender(value: boolean) {
+    this.renderRequested = value;
+    if (value) {
+      this.loopSleep?.wake();
+    }
+  }
   private animationId: number | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private screenAnchor: ScreenAnchorController | null = null;
@@ -587,6 +599,14 @@ export class PointCloudVisualizer {
   readonly fileColors: [number, number, number][] = DEFAULT_COLORS.FILE_COLORS;
 
   readonly lifetime = new ViewerLifetime();
+  private readonly loopSleep = new RenderLoopSleep(
+    this.lifetime,
+    () => this.startRenderLoop(),
+    () =>
+      !this.camera.position.equals(this.lastCameraPosition) ||
+      !this.camera.quaternion.equals(this.lastCameraQuaternion) ||
+      !this.controls.target.equals(this.lastRotationCenter)
+  );
 
   constructor() {
     // Forward PERF lines to the extension's "3D Visualizer" Output channel.
@@ -1312,6 +1332,10 @@ export class PointCloudVisualizer {
 
     // Track render event for resize renders too
     this.trackRender();
+    // A resize needs no input inside the page, so wake a sleeping loop: its
+    // ticks reposition camera-relative overlays such as measurement labels.
+    // (Waking, not requesting: this frame is already drawn.)
+    this.loopSleep.wake();
   }
 
   private modelLastFrameTime = performance.now();
@@ -1387,6 +1411,7 @@ export class PointCloudVisualizer {
       this.needsRender = true;
     }
 
+    const rendered = this.needsRender;
     // Always render when needed (this covers camera damping/momentum)
     if (this.needsRender) {
       // Consume the current invalidation before rendering. Renderer callbacks
@@ -1411,6 +1436,7 @@ export class PointCloudVisualizer {
       // Track render event
       this.trackRender();
     }
+    this.sleepIfIdle(rendered || positionChanged || rotationChanged || rotationCenterChanged);
   }
 
   requestRender(): void {
@@ -1603,6 +1629,15 @@ export class PointCloudVisualizer {
     renderStats.updateFPSDisplay(this);
   }
 
+  /** End of a loop tick: stop the loop once nothing has happened for a while. */
+  private sleepIfIdle(active: boolean): void {
+    // A recording copies every frame of the canvas, rendered or not.
+    if (this.loopSleep.tick(active, !filmState.recording) && this.animationId !== null) {
+      cancelAnimationFrame(this.animationId);
+      this.animationId = null;
+    }
+  }
+
   private startRenderLoop(): void {
     if (this.lifetime.disposed) {
       return;
@@ -1613,6 +1648,7 @@ export class PointCloudVisualizer {
   }
 
   private stopRenderLoop(): void {
+    this.loopSleep.cancel();
     if (this.animationId !== null) {
       cancelAnimationFrame(this.animationId);
       this.animationId = null;
