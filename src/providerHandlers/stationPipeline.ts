@@ -21,6 +21,7 @@ import {
   type StonexStationPipelineTiming,
 } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
+import { colourStonexScansInParallel } from './parallelStonexColour';
 import { readFileFast } from './binaryTransfer';
 import { logStonexPhases } from './documentLoader';
 
@@ -82,7 +83,7 @@ export async function handleStationPipeline(
     const progressivelyPublishedScans = new Set<string>();
     const bytes = await readFileFast(vscode.Uri.file(documentPath));
     const readMs = performance.now() - startedAt;
-    const parser = new StonexX3aParser(stonexCameraProjector);
+    const parser = new StonexX3aParser(stonexCameraProjector, colourStonexScansInParallel);
     const parseStarted = performance.now();
     const parsed = await parser.parseAll(bytes, path.basename(documentPath), notify, {
       ...options,

@@ -95,3 +95,101 @@ export async function loadStonexWasm(): Promise<StonexWasm | null> {
   const wasm = (await loadRegistrationWasm()) as unknown as StonexWasm | null;
   return wasm && typeof (wasm as any).StonexColourSession === 'function' ? wasm : null;
 }
+
+/**
+ * Photographic colouring of a group of scans that share frames, self-contained
+ * so a host can run it on another thread: the scans' points and column
+ * bookkeeping, and the raw planes of only the frames they use. Scans that share
+ * a frame share a job, so each frame is still demosaiced once.
+ */
+export interface StonexColourScanJob {
+  scans: Array<{
+    positions: Float32Array;
+    azimuths: Float64Array;
+    counts: Uint32Array;
+    /** Session-local indices of the scan's frames, in the order it lists them. */
+    activeFrames: Uint32Array;
+  }>;
+  /** Raw planes of the group's frames, in archive order. */
+  pixels: Uint8Array;
+  /** Descriptors of those frames, offsets into `pixels`. */
+  descriptorsJson: string;
+  /** Downscale for each frame's preview, made while its demosaic is at hand. */
+  previewScale: number;
+}
+
+export interface StonexFramePreview {
+  width: number;
+  height: number;
+  rgba: Uint8Array;
+}
+
+export interface StonexColourScanResult {
+  scans: Array<{
+    colours: Uint8Array;
+    /** Session-local frame per point (the job's frame order), or no-frame. */
+    frameIndices: Uint16Array;
+    coloured: number;
+    candidateTotal: number;
+    pixelsInFrame: number;
+  }>;
+  /** One per job frame, in the job's (archive) order. */
+  previews: StonexFramePreview[];
+}
+
+/**
+ * Colours independent groups of scans at once, or returns null so the caller
+ * colours them itself. Groups share no state: a session only caches each
+ * frame's demosaic, and a group holds every frame its scans read.
+ */
+export type StonexColourScans = (
+  jobs: StonexColourScanJob[]
+) => Promise<StonexColourScanResult[] | null>;
+
+/** Run one job in a fresh session (a worker, or a test comparing paths). */
+export function runStonexColourScanJob(
+  wasm: StonexWasm,
+  job: StonexColourScanJob
+): StonexColourScanResult {
+  const session = new wasm.StonexColourSession(job.pixels, job.descriptorsJson);
+  try {
+    const scans = job.scans.map(scan => {
+      const result = session.colour_scan(
+        scan.positions,
+        scan.azimuths,
+        scan.counts,
+        scan.activeFrames
+      );
+      try {
+        return {
+          colours: result.take_colours(),
+          frameIndices: result.take_frame_indices(),
+          coloured: result.coloured_points,
+          candidateTotal: result.candidate_total,
+          pixelsInFrame: result.pixels_in_frame,
+        };
+      } finally {
+        result.free?.();
+      }
+    });
+    const frames = (JSON.parse(job.descriptorsJson) as unknown[]).length;
+    return { scans, previews: stonexFramePreviews(session, frames, job.previewScale) };
+  } finally {
+    session.free?.();
+  }
+}
+
+/** Previews of a session's first `count` frames. */
+export function stonexFramePreviews(
+  session: StonexColourSession,
+  count: number,
+  scale: number
+): StonexFramePreview[] {
+  const previews: StonexFramePreview[] = [];
+  for (let index = 0; index < count; index++) {
+    const preview = session.frame_preview(index, scale);
+    previews.push({ width: preview.width, height: preview.height, rgba: preview.take_rgba() });
+    preview.free?.();
+  }
+  return previews;
+}

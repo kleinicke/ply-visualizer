@@ -19,6 +19,11 @@ import {
   toPcdPayload,
   toPointCloudPayload,
 } from '../../engine/src/parsers/pointcloudWasm';
+import {
+  runStonexColourScanJob,
+  type StonexColourScanJob,
+  type StonexWasm,
+} from '../../engine/src/parsers/stonexWasm';
 
 /**
  * One worker of the extension host's decoders (see parsePool.ts).
@@ -35,6 +40,8 @@ import {
  * - `text`: a byte range of a text point cloud (parallelTextParse.ts).
  * - `lasPlan`/`las`: the plan and one point range of a LAS/LAZ file, and
  *   `e57Plan`/`e57`: the plan and one scan of an E57 (parallelLidarParse.ts).
+ * - `stonexColour`: one group of X3A scans coloured from their photographs
+ *   (parallelStonexColour.ts).
  *
  * File bytes arrive in a SharedArrayBuffer (readFileShared), so the jobs of
  * one file share them; each passes only its own part to wasm.
@@ -455,8 +462,20 @@ function plan(wasm: RowWasm, job: PlanJob): string | E57PlanResult {
   return { plan, images };
 }
 
+/** A group of X3A scans to colour from their photographs (parallelStonexColour.ts). */
+export interface StonexColourJob extends StonexColourScanJob {
+  kind: 'stonexColour';
+}
+
 type Job =
-  TextRangeJob | LasRangeJob | E57ScanJob | DecodeJob | PlanJob | LasColorsJob | PcdRangeJob;
+  | TextRangeJob
+  | LasRangeJob
+  | E57ScanJob
+  | DecodeJob
+  | PlanJob
+  | LasColorsJob
+  | PcdRangeJob
+  | StonexColourJob;
 
 async function run(wasm: RowWasm, job: Job): Promise<{ result: unknown; transfer: ArrayBuffer[] }> {
   switch (job.kind) {
@@ -479,6 +498,19 @@ async function run(wasm: RowWasm, job: Job): Promise<{ result: unknown; transfer
     case 'decode': {
       const result = await decode(job);
       return { result, transfer: transferables(result) };
+    }
+    case 'stonexColour': {
+      const result = runStonexColourScanJob(wasm as unknown as StonexWasm, job);
+      return {
+        result,
+        transfer: [
+          ...result.scans.flatMap(scan => [
+            scan.colours.buffer as ArrayBuffer,
+            scan.frameIndices.buffer as ArrayBuffer,
+          ]),
+          ...result.previews.map(preview => preview.rgba.buffer as ArrayBuffer),
+        ],
+      };
     }
     case 'lasColors': {
       const converted = wasm.las_colors_to_bytes(job.colors16, job.maxColor, job.aboveByte);

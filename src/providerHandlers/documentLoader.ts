@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import { PlyParser } from '../../engine/src/parsers/plyParser';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
+import { colourStonexScansInParallel } from './parallelStonexColour';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
 import { NrrdParser } from '../../engine/src/parsers/nrrdParser';
@@ -423,7 +424,7 @@ export async function loadDocumentContent(
     if (isStonexX3aFile) {
       const bytes = await readFileFast(documentUri);
       const readTime = performance.now();
-      const parser = new StonexX3aParser(stonexCameraProjector);
+      const parser = new StonexX3aParser(stonexCameraProjector, colourStonexScansInParallel);
       let geometrySent = false;
       const archiveName = path.basename(documentUri.fsPath);
       const colorContainer = {

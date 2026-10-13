@@ -16,7 +16,14 @@
  */
 
 import { registerPair, type UpAxis } from '../registration';
-import { loadStonexWasm, type StonexColourSession } from './stonexWasm';
+import {
+  loadStonexWasm,
+  stonexFramePreviews,
+  type StonexColourScanJob,
+  type StonexColourScans,
+  type StonexColourSession,
+  type StonexWasm,
+} from './stonexWasm';
 import { colorFromAllStations, type StationFrame, type StationScan } from './stonexStationColoring';
 import {
   applyStonexColorCorrectionToPoints,
@@ -475,6 +482,139 @@ export function stonexFrameDescriptorForComparison(
   return stonexFrameDescriptor(frame, pixelOffset);
 }
 
+/** Camera previews are a 1/8-scale demosaic of each frame. */
+const FRAME_PREVIEW_SCALE = 8;
+
+interface ColourWork {
+  scan: { frames: CameraFrame[]; azimuths: Float64Array; counts: Uint32Array; pointOffset: number };
+  range: ScanPointRange;
+}
+
+/**
+ * Colour the scans on the host's threads. Scans that share a frame form one
+ * job, so every frame is still demosaiced exactly once; independent groups run
+ * at once. Returns false - leaving everything untouched - when there is
+ * nothing to gain (fewer than two groups) or the host declines, and the caller
+ * colours them in its own session.
+ *
+ * The results are the single session's: a session caches each frame's
+ * demosaic and nothing else, frames keep their archive order, and each scan's
+ * own frame order is passed through as before.
+ */
+async function colourScansInParallel(
+  colourScans: StonexColourScans,
+  wasm: StonexWasm,
+  work: ColourWork[],
+  cameraFrames: CameraFrame[],
+  positions: Float32Array,
+  data: Uint8Array,
+  apply: (
+    scan: ColourWork['scan'],
+    range: ScanPointRange,
+    colours: Uint8Array,
+    scanFrames: Uint16Array,
+    frameAt: (local: number) => CameraFrame | undefined,
+    totals: { coloured: number; candidateTotal: number; pixelsInFrame: number }
+  ) => void
+): Promise<boolean> {
+  // Connected components of "shares a frame", in scan order.
+  const groups: ColourWork[][] = [];
+  for (const item of work) {
+    const touching = groups.filter(group =>
+      group.some(other => other.scan.frames.some(frame => item.scan.frames.includes(frame)))
+    );
+    const merged = [...touching.flat(), item].sort((a, b) => work.indexOf(a) - work.indexOf(b));
+    for (const group of touching) {
+      groups.splice(groups.indexOf(group), 1);
+    }
+    groups.push(merged);
+  }
+  if (groups.length < 2) {
+    return false;
+  }
+  const framesPlane = (frames: CameraFrame[]) => {
+    let bytes = 0;
+    const offsets = frames.map(frame => {
+      const offset = bytes;
+      bytes += frame.rawWidth * frame.rawHeight;
+      return offset;
+    });
+    const pixels = new Uint8Array(bytes);
+    frames.forEach((frame, index) =>
+      pixels.set(
+        data.subarray(frame.pixelsOffset, frame.pixelsOffset + frame.rawWidth * frame.rawHeight),
+        offsets[index]
+      )
+    );
+    const descriptorsJson = JSON.stringify(
+      frames.map((frame, index) => stonexFrameDescriptor(frame, offsets[index]))
+    );
+    return { pixels, descriptorsJson };
+  };
+  const plans = groups.map(group => {
+    // Archive order, as in the single session; each scan's own order below.
+    const frames = cameraFrames.filter(frame =>
+      group.some(({ scan }) => scan.frames.includes(frame))
+    );
+    const job: StonexColourScanJob = {
+      scans: group.map(({ scan, range }) => ({
+        positions: positions.slice(scan.pointOffset * 3, (scan.pointOffset + range.pointCount) * 3),
+        azimuths: scan.azimuths.slice(),
+        counts: scan.counts.slice(),
+        activeFrames: Uint32Array.from(scan.frames.map(frame => frames.indexOf(frame))),
+      })),
+      ...framesPlane(frames),
+      previewScale: FRAME_PREVIEW_SCALE,
+    };
+    return { group, frames, job };
+  });
+  let results;
+  try {
+    results = await colourScans(plans.map(plan => plan.job));
+  } catch (error) {
+    console.warn('[stonex] parallel colouring failed, colouring here instead:', error);
+    return false;
+  }
+  if (
+    !results ||
+    results.length !== plans.length ||
+    results.some((result, index) => result.scans.length !== plans[index].group.length)
+  ) {
+    return false;
+  }
+  plans.forEach((plan, index) => {
+    const result = results[index];
+    plan.group.forEach(({ scan, range }, scanIndex) => {
+      const coloured = result.scans[scanIndex];
+      apply(
+        scan,
+        range,
+        coloured.colours,
+        coloured.frameIndices,
+        local => plan.frames[local],
+        coloured
+      );
+    });
+    plan.frames.forEach((frame, local) => {
+      frame.preview ??= result.previews[local];
+    });
+  });
+  // Frames no scan drew on still get their preview, as in the single session.
+  const rest = cameraFrames.filter(frame => !frame.preview);
+  if (rest.length > 0) {
+    const { pixels, descriptorsJson } = framesPlane(rest);
+    const session = new wasm.StonexColourSession(pixels, descriptorsJson);
+    try {
+      stonexFramePreviews(session, rest.length, FRAME_PREVIEW_SCALE).forEach(
+        (preview, index) => (rest[index].preview = preview)
+      );
+    } finally {
+      session.free?.();
+    }
+  }
+  return true;
+}
+
 /** Frame description in the shape the Rust colour pass takes. */
 function stonexFrameDescriptor(frame: CameraFrame, pixelOffset: number): Record<string, unknown> {
   const calibration = frame.calibration;
@@ -735,7 +875,11 @@ export interface StonexStationPipelineTiming {
 }
 
 export class StonexX3aParser {
-  constructor(private readonly cameraProjector?: StonexCameraBatchProjector) {}
+  constructor(
+    private readonly cameraProjector?: StonexCameraBatchProjector,
+    /** Colours independent scans on other threads (see `StonexColourScans`). */
+    private readonly colourScans?: StonexColourScans
+  ) {}
 
   async parse(
     data: Uint8Array,
@@ -1165,7 +1309,53 @@ export class StonexX3aParser {
     const stonexWasm = rawColors && frameIndices ? await loadStonexWasm() : null;
     let colourSession: StonexColourSession | null = null;
     let usedRustColour = false;
-    if (rawColors && colors && frameIndices && stonexWasm) {
+    const applyScanColour = (
+      scan: (typeof scanColumns)[number],
+      range: ScanPointRange,
+      colours: Uint8Array,
+      scanFrames: Uint16Array,
+      frameAt: (local: number) => CameraFrame | undefined,
+      totals: { coloured: number; candidateTotal: number; pixelsInFrame: number }
+    ) => {
+      // The Rust session sees only scoped frames and returns its compact
+      // indices. Point-colour updates are applied to an already-loaded
+      // archive whose calibration keeps the complete X3I order, so preserve
+      // those stable archive IDs across the boundary.
+      for (let index = 0; index < scanFrames.length; index++) {
+        const localFrame = scanFrames[index];
+        if (localFrame !== STONEX_NO_FRAME) {
+          scanFrames[index] = frameAt(localFrame)?.archiveFrameIndex ?? STONEX_NO_FRAME;
+        }
+      }
+      counters.candidateTotal = (counters.candidateTotal ?? 0) + totals.candidateTotal;
+      counters.pixelsInFrame = (counters.pixelsInFrame ?? 0) + totals.pixelsInFrame;
+      counters.samplesTaken = (counters.samplesTaken ?? 0) + totals.coloured;
+      rawColors!.set(colours, scan.pointOffset * 3);
+      // Indices already address the archive's frame list.
+      frameIndices!.set(scanFrames, scan.pointOffset);
+      range.photographicallyColoredPoints = totals.coloured;
+      photographicallyColoredPoints += totals.coloured;
+    };
+    const colouredInParallel =
+      rawColors && colors && frameIndices && stonexWasm && this.colourScans
+        ? await colourScansInParallel(
+            this.colourScans,
+            stonexWasm,
+            scanColumns.flatMap(scan => {
+              const range = scanPointRanges.find(entry => entry.pointOffset === scan.pointOffset);
+              return scan.frames.length > 0 && range && range.pointCount > 0
+                ? [{ scan, range }]
+                : [];
+            }),
+            cameraFrames,
+            positions,
+            data,
+            applyScanColour
+          )
+        : false;
+    if (colouredInParallel) {
+      usedRustColour = true;
+    } else if (rawColors && colors && frameIndices && stonexWasm) {
       usedRustColour = true;
       const framePixelOffsets = new Map<CameraFrame, number>();
       let pixelBytes = 0;
@@ -1211,30 +1401,20 @@ export class StonexX3aParser {
         );
         const scanColours = result.take_colours() as Uint8Array;
         const scanFrames = result.take_frame_indices() as Uint16Array;
-        // The Rust session sees only scoped frames and returns its compact
-        // indices. Point-colour updates are applied to an already-loaded
-        // archive whose calibration keeps the complete X3I order, so preserve
-        // those stable archive IDs across the boundary.
-        for (let index = 0; index < scanFrames.length; index++) {
-          const localFrame = scanFrames[index];
-          if (localFrame !== STONEX_NO_FRAME) {
-            scanFrames[index] = cameraFrames[localFrame]?.archiveFrameIndex ?? STONEX_NO_FRAME;
-          }
-        }
-        const coloured = result.coloured_points as number;
-        counters.candidateTotal =
-          (counters.candidateTotal ?? 0) + (result.candidate_total as number);
-        counters.pixelsInFrame = (counters.pixelsInFrame ?? 0) + (result.pixels_in_frame as number);
-        counters.samplesTaken = (counters.samplesTaken ?? 0) + coloured;
+        const totals = {
+          coloured: result.coloured_points as number,
+          candidateTotal: result.candidate_total as number,
+          pixelsInFrame: result.pixels_in_frame as number,
+        };
         result.free?.();
-
-        rawColors.set(scanColours, scan.pointOffset * 3);
-        // Indices already address the archive's frame list.
-        frameIndices.set(scanFrames, scan.pointOffset);
-        if (range) {
-          range.photographicallyColoredPoints = coloured;
-        }
-        photographicallyColoredPoints += coloured;
+        applyScanColour(
+          scan,
+          range!,
+          scanColours,
+          scanFrames,
+          local => cameraFrames[local],
+          totals
+        );
       }
     } else if (rawColors && colors && frameIndices) {
       // No JavaScript colour pass any more. There used to be one that marshalled
@@ -1282,7 +1462,7 @@ export class StonexX3aParser {
     markPhase(deferColorCorrection ? 'colour correction deferred' : 'colour correction');
     if (colourSession) {
       for (let index = 0; index < cameraFrames.length; index++) {
-        const preview = colourSession.frame_preview(index, 8);
+        const preview = colourSession.frame_preview(index, FRAME_PREVIEW_SCALE);
         cameraFrames[index].preview = {
           width: preview.width,
           height: preview.height,
