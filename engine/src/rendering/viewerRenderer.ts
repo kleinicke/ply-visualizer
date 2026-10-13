@@ -37,6 +37,8 @@ export interface ViewerRenderer {
   render(scene: THREE.Object3D, camera: THREE.Camera): void;
   setSize(width: number, height: number, updateStyle?: boolean): void;
   setPixelRatio(value: number): void;
+  getPixelRatio(): number;
+  getSize(target: THREE.Vector2): THREE.Vector2;
   setClearColor(color: THREE.ColorRepresentation, alpha?: number): void;
   setClearAlpha(alpha: number): void;
   toneMapping: THREE.ToneMapping;
