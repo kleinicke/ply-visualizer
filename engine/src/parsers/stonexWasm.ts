@@ -193,3 +193,54 @@ export function stonexFramePreviews(
   }
   return previews;
 }
+
+/** One X3R record to decode on another thread, its layout already scanned. */
+export interface StonexDecodeScanJob {
+  /** The record's bytes; a view into a SharedArrayBuffer, so nothing is copied to post it. */
+  record: Uint8Array;
+  columns: number;
+  rows: number;
+  /** Offset of the first column within `record`. */
+  columnOffset: number;
+  columnStride: number;
+  validPoints: number;
+}
+
+export interface StonexDecodeScanResult {
+  positions: Float32Array;
+  intensity: Float32Array;
+  azimuths: Float64Array;
+  counts: Uint32Array;
+}
+
+/** Decodes scans concurrently, or returns null so the caller decodes them itself. */
+export type StonexDecodeScans = (
+  jobs: StonexDecodeScanJob[],
+  /** Called as each scan finishes, so its arrays can be consumed and dropped. */
+  onDecoded?: (index: number, result: StonexDecodeScanResult) => void
+) => Promise<StonexDecodeScanResult[] | null>;
+
+/** Decode one record exactly as the parser's in-process path does. */
+export function runStonexDecodeScanJob(
+  wasm: StonexWasm,
+  job: StonexDecodeScanJob
+): StonexDecodeScanResult {
+  const decoded = wasm.stonex_decode_scan_known_layout(
+    job.record,
+    job.columns,
+    job.rows,
+    job.columnOffset,
+    job.columnStride,
+    job.validPoints
+  );
+  try {
+    return {
+      positions: decoded.take_positions(),
+      intensity: decoded.take_intensity(),
+      azimuths: decoded.take_column_azimuths(),
+      counts: decoded.take_points_per_column(),
+    };
+  } finally {
+    decoded.free?.();
+  }
+}

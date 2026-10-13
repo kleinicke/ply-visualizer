@@ -2,8 +2,11 @@ import type {
   StonexColourScanJob,
   StonexColourScanResult,
   StonexColourScans,
+  StonexDecodeScanJob,
+  StonexDecodeScanResult,
+  StonexDecodeScans,
 } from '../../engine/src/parsers/stonexWasm';
-import type { StonexColourJob } from './parseWorker';
+import type { StonexColourJob, StonexDecodeJob } from './parseWorker';
 import { defaultParallelism, runParseJobs } from './parsePool';
 
 /**
@@ -42,5 +45,28 @@ export const colourStonexScansInParallel: StonexColourScans = async (
       };
     }),
     defaultParallelism()
+  );
+};
+
+/**
+ * Decodes an X3A archive's scan records on the decoder pool. The archive must
+ * be in shared memory (readFileShared), so each job posts only a view of its
+ * record. Point decode was a single-threaded quarter of a recolour's re-parse
+ * (~1 s on OHP_FRONT); the output is the same call's.
+ */
+export const decodeStonexScansInParallel: StonexDecodeScans = async (
+  jobs: StonexDecodeScanJob[],
+  onDecoded?: (index: number, result: StonexDecodeScanResult) => void
+): Promise<StonexDecodeScanResult[] | null> => {
+  if (jobs.length < 2 || defaultParallelism() < 2) {
+    return null;
+  }
+  return runParseJobs<StonexDecodeScanResult>(
+    jobs.map(job => {
+      const message: StonexDecodeJob = { kind: 'stonexDecode', ...job };
+      return { message };
+    }),
+    defaultParallelism(),
+    onDecoded
   );
 };

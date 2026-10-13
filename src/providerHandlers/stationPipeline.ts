@@ -21,8 +21,8 @@ import {
   type StonexStationPipelineTiming,
 } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
-import { colourStonexScansInParallel } from './parallelStonexColour';
-import { readFileFast } from './binaryTransfer';
+import { colourStonexScansInParallel, decodeStonexScansInParallel } from './parallelStonexColour';
+import { readFileShared } from './binaryTransfer';
 import { logStonexPhases } from './documentLoader';
 
 /** Panels whose running colour pass the user asked to stop. */
@@ -81,9 +81,14 @@ export async function handleStationPipeline(
   try {
     const startedAt = performance.now();
     const progressivelyPublishedScans = new Set<string>();
-    const bytes = await readFileFast(vscode.Uri.file(documentPath));
+    // Shared memory lets the decoder pool read each scan record in place.
+    const bytes = await readFileShared(vscode.Uri.file(documentPath));
     const readMs = performance.now() - startedAt;
-    const parser = new StonexX3aParser(stonexCameraProjector, colourStonexScansInParallel);
+    const parser = new StonexX3aParser(
+      stonexCameraProjector,
+      colourStonexScansInParallel,
+      decodeStonexScansInParallel
+    );
     const parseStarted = performance.now();
     const parsed = await parser.parseAll(bytes, path.basename(documentPath), notify, {
       ...options,

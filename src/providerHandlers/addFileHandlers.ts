@@ -24,7 +24,7 @@ import {
 } from '../../engine/src/parsers/pointcloudWasm';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
-import { colourStonexScansInParallel } from './parallelStonexColour';
+import { colourStonexScansInParallel, decodeStonexScansInParallel } from './parallelStonexColour';
 import { isColmapModelFile } from '../../engine/src/formats/colmap/colmapFiles';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
@@ -42,6 +42,7 @@ import {
   sendUltimateRawBinary,
   sendSpatialDataToWebview,
   sendSplatContainerUri,
+  readFileShared,
   SPLAT_CONTAINER_EXTENSIONS,
 } from './binaryTransfer';
 import { decodeLidar } from './parallelLidarParse';
@@ -175,7 +176,8 @@ async function addStonexX3aData(
 ): Promise<void> {
   const parsedData: any[] = await new StonexX3aParser(
     stonexCameraProjector,
-    colourStonexScansInParallel
+    colourStonexScansInParallel,
+    decodeStonexScansInParallel
   ).parseAll(bytes, fileName, host.logPerf.bind(host));
   for (const scan of parsedData) {
     scan.shortPath = shortPath;
@@ -249,7 +251,8 @@ export async function handleAddFile(
         }
 
         if (fileExtension === '.x3a' || fileExtension === '.x3r') {
-          const bytes = await vscode.workspace.fs.readFile(files[i]);
+          // Shared memory lets the decoder pool split the archive's scans.
+          const bytes = await readFileShared(files[i]);
           await addStonexX3aData(host, webviewPanel, bytes, fileName, shortPath);
           continue;
         }

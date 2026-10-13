@@ -3,7 +3,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { StonexX3aParser, type StonexX3aData } from '../../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../../wasmCameraModels';
-import { colourStonexScansInParallel } from '../../providerHandlers/parallelStonexColour';
+import {
+  colourStonexScansInParallel,
+  decodeStonexScansInParallel,
+} from '../../providerHandlers/parallelStonexColour';
 import { releaseParseWorkers } from '../../providerHandlers/parsePool';
 
 // Three photographed scans with disjoint frames: three independent groups.
@@ -47,5 +50,24 @@ suite('Parallel Stonex colouring', () => {
 
     assert.strictEqual(groups, 3);
     assert.deepStrictEqual(colourState(parallel), colourState(single));
+
+    // Read into shared memory, the scans also decode on the pool.
+    const shared = new Uint8Array(new SharedArrayBuffer(bytes.byteLength));
+    shared.set(bytes);
+    let decodeJobs = 0;
+    const pooled = await new StonexX3aParser(
+      stonexCameraProjector,
+      colourStonexScansInParallel,
+      async (jobs, onDecoded) => {
+        decodeJobs = jobs.length;
+        return decodeStonexScansInParallel(jobs, onDecoded);
+      }
+    ).parseAll(shared, 'OHP_FRONT.x3a');
+    assert.strictEqual(decodeJobs, 8);
+    assert.deepStrictEqual(
+      pooled.map(scan => Buffer.from(scan.positionsArray.buffer).toString('base64')),
+      single.map(scan => Buffer.from(scan.positionsArray.buffer).toString('base64'))
+    );
+    assert.deepStrictEqual(colourState(pooled), colourState(single));
   });
 });

@@ -21,7 +21,9 @@ import {
 } from '../../engine/src/parsers/pointcloudWasm';
 import {
   runStonexColourScanJob,
+  runStonexDecodeScanJob,
   type StonexColourScanJob,
+  type StonexDecodeScanJob,
   type StonexWasm,
 } from '../../engine/src/parsers/stonexWasm';
 
@@ -40,7 +42,8 @@ import {
  * - `text`: a byte range of a text point cloud (parallelTextParse.ts).
  * - `lasPlan`/`las`: the plan and one point range of a LAS/LAZ file, and
  *   `e57Plan`/`e57`: the plan and one scan of an E57 (parallelLidarParse.ts).
- * - `stonexColour`: one group of X3A scans coloured from their photographs
+ * - `stonexColour`: one group of X3A scans coloured from their photographs,
+ *   and `stonexDecode`: one X3A scan record decoded from shared memory
  *   (parallelStonexColour.ts).
  *
  * File bytes arrive in a SharedArrayBuffer (readFileShared), so the jobs of
@@ -462,6 +465,11 @@ function plan(wasm: RowWasm, job: PlanJob): string | E57PlanResult {
   return { plan, images };
 }
 
+/** One X3A scan record to decode, read from shared memory (parallelStonexColour.ts). */
+export interface StonexDecodeJob extends StonexDecodeScanJob {
+  kind: 'stonexDecode';
+}
+
 /** A group of X3A scans to colour from their photographs (parallelStonexColour.ts). */
 export interface StonexColourJob extends StonexColourScanJob {
   kind: 'stonexColour';
@@ -475,7 +483,8 @@ type Job =
   | PlanJob
   | LasColorsJob
   | PcdRangeJob
-  | StonexColourJob;
+  | StonexColourJob
+  | StonexDecodeJob;
 
 async function run(wasm: RowWasm, job: Job): Promise<{ result: unknown; transfer: ArrayBuffer[] }> {
   switch (job.kind) {
@@ -498,6 +507,18 @@ async function run(wasm: RowWasm, job: Job): Promise<{ result: unknown; transfer
     case 'decode': {
       const result = await decode(job);
       return { result, transfer: transferables(result) };
+    }
+    case 'stonexDecode': {
+      const result = runStonexDecodeScanJob(wasm as unknown as StonexWasm, job);
+      return {
+        result,
+        transfer: [
+          result.positions.buffer as ArrayBuffer,
+          result.intensity.buffer as ArrayBuffer,
+          result.azimuths.buffer as ArrayBuffer,
+          result.counts.buffer as ArrayBuffer,
+        ],
+      };
     }
     case 'stonexColour': {
       const result = runStonexColourScanJob(wasm as unknown as StonexWasm, job);

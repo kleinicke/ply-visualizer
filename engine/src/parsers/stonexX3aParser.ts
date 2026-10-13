@@ -19,6 +19,10 @@ import { registerPair, type UpAxis } from '../registration';
 import {
   loadStonexWasm,
   stonexFramePreviews,
+  runStonexDecodeScanJob,
+  type StonexDecodeScanJob,
+  type StonexDecodeScanResult,
+  type StonexDecodeScans,
   type StonexColourScanJob,
   type StonexColourScans,
   type StonexColourSession,
@@ -908,7 +912,9 @@ export class StonexX3aParser {
   constructor(
     private readonly cameraProjector?: StonexCameraBatchProjector,
     /** Colours independent scans on other threads (see `StonexColourScans`). */
-    private readonly colourScans?: StonexColourScans
+    private readonly colourScans?: StonexColourScans,
+    /** Decodes scans on other threads when the archive is in shared memory. */
+    private readonly decodeScans?: StonexDecodeScans
   ) {}
 
   async parse(
@@ -1099,32 +1105,76 @@ export class StonexX3aParser {
     // Points in Rust when it is available: same byte-for-byte output, checked
     // against this loop on a real archive in src/test/suite/stonexScan.test.ts.
     const scanWasm = await loadStonexWasm();
+    const decodeJob = (layout: (typeof layouts)[number]): StonexDecodeScanJob => ({
+      record: data.subarray(layout.offset, layout.offset + layout.size),
+      columns: layout.columns,
+      rows: layout.rows,
+      columnOffset: layout.columnOffset - layout.offset,
+      columnStride: layout.columnStride,
+      validPoints: layout.validPoints,
+    });
+    // Scans decode independently. When the archive sits in shared memory the
+    // host's threads can read their records without a copy, so they decode
+    // at once; the result is the same call's.
+    let predecoded: StonexDecodeScanResult[] | null = null;
+    const placedEarly = new Set<number>();
+    const earlyOffsets: number[] = [];
+    if (
+      scanWasm &&
+      this.decodeScans &&
+      layouts.length > 1 &&
+      typeof SharedArrayBuffer !== 'undefined' &&
+      data.buffer instanceof SharedArrayBuffer
+    ) {
+      // Each scan lands in the combined arrays as it arrives, so all the
+      // decoded copies are never held at once (~670 MB on a 42M-point archive).
+      const offsets = earlyOffsets;
+      layouts.reduce((offset, layout) => (offsets.push(offset), offset + layout.validPoints), 0);
+      try {
+        predecoded = await this.decodeScans(layouts.map(decodeJob), (index, result) => {
+          if (result.intensity.length === layouts[index].validPoints) {
+            positions.set(result.positions, offsets[index] * 3);
+            intensity.set(result.intensity, offsets[index]);
+            placedEarly.add(index);
+            result.positions = new Float32Array(0);
+            result.intensity = new Float32Array(0);
+          }
+        });
+      } catch (error) {
+        console.warn('[stonex] parallel decode failed, decoding here instead:', error);
+      }
+      if (predecoded && predecoded.length !== layouts.length) {
+        predecoded = null;
+        placedEarly.clear();
+      }
+    }
 
-    for (const layout of layouts) {
+    for (const [layoutIndex, layout] of layouts.entries()) {
       const pointOffset = outputIndex;
       if (scanWasm) {
         const scanStemRust = layout.name.replace(/\.x3r$/i, '');
         const exactRust = cameraFrames.filter(frame => frame.scanStem === scanStemRust);
         const framesRust =
           exactRust.length > 0 ? exactRust : photographicScanStems.size === 1 ? cameraFrames : [];
-        const record = data.subarray(layout.offset, layout.offset + layout.size);
-        const decoded = scanWasm.stonex_decode_scan_known_layout(
-          record,
-          layout.columns,
-          layout.rows,
-          layout.columnOffset - layout.offset,
-          layout.columnStride,
-          layout.validPoints
-        );
-        const decodedPositions = decoded.take_positions();
-        const decodedIntensity = decoded.take_intensity();
-        const azimuths = decoded.take_column_azimuths();
-        const counts = decoded.take_points_per_column();
-        decoded.free?.();
+        const decoded =
+          predecoded?.[layoutIndex] ?? runStonexDecodeScanJob(scanWasm, decodeJob(layout));
+        const decodedPositions = decoded.positions;
+        const decodedIntensity = decoded.intensity;
+        const azimuths = decoded.azimuths;
+        const counts = decoded.counts;
 
-        positions.set(decodedPositions, pointOffset * 3);
-        intensity.set(decodedIntensity, pointOffset);
-        outputIndex += decodedIntensity.length;
+        if (placedEarly.has(layoutIndex)) {
+          // Placed at the offset the layout scan predicted; that holds only
+          // while every scan before it decoded exactly its predicted count.
+          if (pointOffset !== earlyOffsets[layoutIndex]) {
+            throw new Error(`Stonex X3A: ${layout.name} decoded out of place.`);
+          }
+          outputIndex += layout.validPoints;
+        } else {
+          positions.set(decodedPositions, pointOffset * 3);
+          intensity.set(decodedIntensity, pointOffset);
+          outputIndex += decodedIntensity.length;
+        }
 
         scanColumns.push({
           frames: framesRust,
