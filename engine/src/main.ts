@@ -601,6 +601,38 @@ export class PointCloudVisualizer {
   }
 
   private async init(): Promise<void> {
+    // Keep startup failures visible even when no WebGL context can be created.
+    mountErrorOverlay(this.lifetime);
+    const pendingFiles: File[][] = [];
+    let acceptingFiles = false;
+    const captureFiles = (event: Event): void => {
+      if (acceptingFiles) {
+        return;
+      }
+      const files =
+        event.type === 'drop'
+          ? (event as DragEvent).dataTransfer?.files
+          : (event.target as HTMLInputElement)?.id === 'hiddenFileInput'
+            ? (event.target as HTMLInputElement).files
+            : null;
+      if (!files?.length) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      pendingFiles.push(Array.from(files));
+    };
+    document.addEventListener('change', captureFiles, true);
+    document.addEventListener('drop', captureFiles, true);
+    const releaseStartupListeners = (): void => {
+      acceptingFiles = true;
+      document.removeEventListener('change', captureFiles, true);
+      document.removeEventListener('drop', captureFiles, true);
+    };
+    this.lifetime.add(() => {
+      releaseStartupListeners();
+      pendingFiles.length = 0;
+    });
     try {
       const initStartedAt = performance.now();
       await this.initThreeJS();
@@ -611,7 +643,6 @@ export class PointCloudVisualizer {
       this.applyEnvironmentSpecificUI();
       this.setupEventListeners();
       mountSvelteSmokeTest(this.lifetime);
-      mountErrorOverlay(this.lifetime);
       mountLoadingOverlay(this.lifetime);
       mountFileActivityIndicator(this.lifetime);
       mountPerformanceStats(this.lifetime);
@@ -671,8 +702,17 @@ export class PointCloudVisualizer {
       // Hosts may deliver their first file only after the asynchronous renderer
       // and file/message listeners are ready (construction alone is too early).
       document.documentElement.dataset.visualizerReady = 'true';
+      releaseStartupListeners();
       window.dispatchEvent(new Event('visualizer-ready'));
+      for (const files of pendingFiles.splice(0)) {
+        if (this.lifetime.disposed) {
+          break;
+        }
+        await browserFileDragDrop.handleDroppedFiles(this, files);
+      }
     } catch (error) {
+      releaseStartupListeners();
+      pendingFiles.length = 0;
       this.showError(
         `Failed to initialize 3D Visualizer: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -781,8 +821,14 @@ export class PointCloudVisualizer {
     // Initialize selection manager
     const selectionManager = new SelectionManager(this.getSelectionContext());
     this.selectionManager = selectionManager;
-    await selectionManager.initializeWebGPUPicker();
+    // Independent devices/pipelines can initialize concurrently. Both must
+    // settle before publishing capabilities or disposing a cancelled viewer.
+    const [, visibilitySelection] = await Promise.all([
+      selectionManager.initializeWebGPUPicker(),
+      WebGPUVisibilityRenderer.create(container),
+    ]);
     if (this.lifetime.disposed) {
+      visibilitySelection.renderer?.dispose();
       selectionManager.dispose();
       return;
     }
@@ -795,11 +841,6 @@ export class PointCloudVisualizer {
         : `ℹ️ WebGPU point picking unavailable; using CPU (${this.webgpuPickingUnavailableReason})`
     );
 
-    const visibilitySelection = await WebGPUVisibilityRenderer.create(container);
-    if (this.lifetime.disposed) {
-      visibilitySelection.renderer?.dispose();
-      return;
-    }
     this.webgpuVisibilityRenderer = visibilitySelection.renderer;
     this.webgpuPointRenderingAvailable = visibilitySelection.renderer !== null;
     this.webgpuPointRenderingUnavailableReason = visibilitySelection.unavailableReason;

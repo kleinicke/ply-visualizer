@@ -165,6 +165,12 @@ async function run() {
     throw new Error('Missing PLY performance runner environment');
   }
 
+  // On a fresh profile, openWith can wait indefinitely for a provider that
+  // has not activated yet. Match the integration runner before starting timing.
+  const extension = vscode.extensions.getExtension('kleinicke.ply-visualizer');
+  if (!extension) { throw new Error('PLY Visualizer extension is not installed'); }
+  await extension.activate();
+
   const results = [];
   for (const input of inputs) {
     const measurements = [];

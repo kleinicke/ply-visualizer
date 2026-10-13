@@ -46,7 +46,7 @@ test('a depth image opened from a URI is read again on demand, not held', async 
     });
   });
   await page.goto('/');
-  await page.waitForFunction(() => !!(window as any).visualizer);
+  await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
   await page.evaluate(() =>
     window.postMessage(
       { type: 'depthData', fileUri: `${location.origin}/__depth/plane.pfm`, fileName: 'plane.pfm' },
@@ -83,7 +83,7 @@ test('a depth image opened from a URI is read again on demand, not held', async 
 test('a picked depth image uses the distortion coefficients from the dialog', async ({ page }) => {
   const project = async (coefficients: string) => {
     await page.goto('/');
-    await page.waitForSelector('#three-canvas');
+    await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
     await page.locator('#hiddenFileInput').setInputFiles({
       name: 'plane.pfm',
       mimeType: 'application/octet-stream',

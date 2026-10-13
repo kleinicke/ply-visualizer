@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 async function open(page, name: string, text: string) {
   await page.goto('/');
-  await page.waitForSelector('#three-canvas');
+  await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
   await page
     .locator('#hiddenFileInput')
     .setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text) });
@@ -63,7 +63,7 @@ test('VS Code message route uses the same panel and parser', async ({ page }) =>
     });
   });
   await page.goto('/');
-  await page.waitForSelector('#three-canvas');
+  await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
   await page.evaluate(() =>
     window.postMessage(
       {

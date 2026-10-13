@@ -64,13 +64,19 @@ export class SelectionManager {
   }
 
   async initializeWebGPUPicker(): Promise<void> {
-    const { WebGPUPointPicker } = await import(
-      /* webpackChunkName: "webgpu-point-picker" */ './WebGPUPointPicker'
-    );
-    const result = await WebGPUPointPicker.create();
-    this.webgpuPicker = result.picker;
-    this.webgpuUnavailableReason = result.unavailableReason;
-    this.pointPickingImplementation = result.picker ? 'webgpu' : 'cpu';
+    try {
+      const { WebGPUPointPicker } = await import(
+        /* webpackChunkName: "webgpu-point-picker" */ './WebGPUPointPicker'
+      );
+      const result = await WebGPUPointPicker.create();
+      this.webgpuPicker = result.picker;
+      this.webgpuUnavailableReason = result.unavailableReason;
+      this.pointPickingImplementation = result.picker ? 'webgpu' : 'cpu';
+    } catch (error) {
+      // An optional picker chunk must not prevent the WebGL viewer loading.
+      this.webgpuUnavailableReason = error instanceof Error ? error.message : String(error);
+      this.pointPickingImplementation = 'cpu';
+    }
   }
 
   isWebGPUPickingAvailable(): boolean {
