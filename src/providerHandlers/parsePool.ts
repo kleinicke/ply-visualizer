@@ -103,11 +103,20 @@ function scheduleRelease(): void {
   idleTimer.unref?.();
 }
 
-function runJob<T>(entry: PoolWorker, message: unknown, transfer: ArrayBuffer[]): Promise<T> {
+function runJob<T>(
+  entry: PoolWorker,
+  message: unknown,
+  transfer: ArrayBuffer[],
+  onProgress?: (value: unknown) => void
+): Promise<T> {
   const id = nextJobId++;
   return new Promise<T>((resolve, reject) => {
-    const onMessage = (value: { id: number; result?: T; error?: string }) => {
+    const onMessage = (value: { id: number; result?: T; error?: string; progress?: unknown }) => {
       if (value.id !== id) {
+        return;
+      }
+      if ('progress' in value) {
+        onProgress?.(value.progress);
         return;
       }
       cleanup();
@@ -174,6 +183,25 @@ export async function runParseJobs<T>(
       throw failure;
     }
     return results;
+  } finally {
+    activeRuns--;
+    scheduleRelease();
+  }
+}
+
+/**
+ * Run one long job on a pool worker, hearing its progress reports as they
+ * come. The worker's wasm memory is released with the pool, where this
+ * thread's would stay at its peak.
+ */
+export async function runParseJob<T>(
+  message: unknown,
+  transfer: ArrayBuffer[],
+  onProgress: (value: unknown) => void
+): Promise<T> {
+  activeRuns++;
+  try {
+    return await runJob<T>(workers(1)[0], message, transfer, onProgress);
   } finally {
     activeRuns--;
     scheduleRelease();

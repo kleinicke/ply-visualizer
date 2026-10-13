@@ -17,8 +17,10 @@
 
 import { registerPair, type UpAxis } from '../registration';
 import {
+  gatherStonexPixels,
   loadStonexWasm,
   stonexFramePreviews,
+  stonexPixelSource,
   runStonexDecodeScanJob,
   type StonexDecodeScanJob,
   type StonexDecodeScanResult,
@@ -28,7 +30,12 @@ import {
   type StonexColourSession,
   type StonexWasm,
 } from './stonexWasm';
-import { colorFromAllStations, type StationFrame, type StationScan } from './stonexStationColoring';
+import {
+  colorFromAllStations,
+  type StationFrame,
+  type StationScan,
+  type StonexStationColouring,
+} from './stonexStationColoring';
 import {
   applyStonexColorCorrectionToPoints,
   buildStonexColorCalibration,
@@ -566,24 +573,13 @@ async function colourScansInParallel(
   if (groups.length < 2) {
     return false;
   }
+  // From shared memory each worker gathers its frames' planes itself.
   const framesPlane = (frames: CameraFrame[]) => {
-    let bytes = 0;
-    const offsets = frames.map(frame => {
-      const offset = bytes;
-      bytes += frame.rawWidth * frame.rawHeight;
-      return offset;
-    });
-    const pixels = new Uint8Array(bytes);
-    frames.forEach((frame, index) =>
-      pixels.set(
-        data.subarray(frame.pixelsOffset, frame.pixelsOffset + frame.rawWidth * frame.rawHeight),
-        offsets[index]
-      )
-    );
+    const { source, offsets } = stonexPixelSource(data, frames);
     const descriptorsJson = JSON.stringify(
       frames.map((frame, index) => stonexFrameDescriptor(frame, offsets[index]))
     );
-    return { pixels, descriptorsJson };
+    return { pixels: source, descriptorsJson };
   };
   const plans = groups.map(group => {
     // Archive order, as in the single session; each scan's own order below.
@@ -641,7 +637,7 @@ async function colourScansInParallel(
   const rest = cameraFrames.filter(frame => !frame.preview);
   if (rest.length > 0) {
     const { pixels, descriptorsJson } = framesPlane(rest);
-    const session = new wasm.StonexColourSession(pixels, descriptorsJson);
+    const session = new wasm.StonexColourSession(gatherStonexPixels(pixels), descriptorsJson);
     try {
       stonexFramePreviews(session, rest.length, FRAME_PREVIEW_SCALE).forEach(
         (preview, index) => (rest[index].preview = preview)
@@ -918,7 +914,9 @@ export class StonexX3aParser {
     /** Colours independent scans on other threads (see `StonexColourScans`). */
     private readonly colourScans?: StonexColourScans,
     /** Decodes scans on other threads when the archive is in shared memory. */
-    private readonly decodeScans?: StonexDecodeScans
+    private readonly decodeScans?: StonexDecodeScans,
+    /** Runs the cross-station colour pass on another thread. */
+    private readonly colourStations?: StonexStationColouring
   ) {}
 
   async parse(
@@ -1065,19 +1063,24 @@ export class StonexX3aParser {
     }
 
     markPhase('scan layout scan');
-    // In shared memory when the host colours on its threads: each job then
-    // posts a view of its scans' points instead of a ~500 MB copy of them.
-    const positions =
-      this.colourScans && typeof SharedArrayBuffer !== 'undefined'
-        ? new Float32Array(new SharedArrayBuffer(vertexCount * 3 * Float32Array.BYTES_PER_ELEMENT))
-        : new Float32Array(vertexCount * 3);
-    const intensity = new Float32Array(vertexCount);
+    // In shared memory when the host works on its threads: jobs then post
+    // views of the combined arrays instead of copies (~500 MB of points
+    // alone), and write their results straight into them.
+    const sharedArrays =
+      typeof SharedArrayBuffer !== 'undefined' &&
+      !!(this.colourScans || this.decodeScans || this.colourStations);
+    const allocate = (bytes: number) =>
+      sharedArrays ? new SharedArrayBuffer(bytes) : new ArrayBuffer(bytes);
+    const positions = new Float32Array(allocate(vertexCount * 3 * Float32Array.BYTES_PER_ELEMENT));
+    const intensity = new Float32Array(allocate(vertexCount * Float32Array.BYTES_PER_ELEMENT));
     const photographicColor = cameraFrames.length > 0 && this.cameraProjector;
     const deferColorCorrection = photographicColor && !!onGeometryReady;
     // Raw (un-white-balanced) samples plus the frame each point came from. Both
     // are kept so colour correction stays switchable; `colors` is the corrected
     // array the GPU attribute shares.
-    const rawColors = photographicColor ? new Uint8Array(vertexCount * 3).fill(255) : null;
+    const rawColors = photographicColor
+      ? new Uint8Array(allocate(vertexCount * 3)).fill(255)
+      : null;
     // Geometry-first hosts send raw RGB once and correct it in the webview.
     // Aliasing avoids a second 3-byte-per-point array that would never cross
     // the process boundary; traditional parse callers still receive the
@@ -1088,7 +1091,7 @@ export class StonexX3aParser {
         : new Uint8Array(vertexCount * 3).fill(255)
       : null;
     const frameIndices = photographicColor
-      ? new Uint16Array(vertexCount).fill(STONEX_NO_FRAME)
+      ? new Uint16Array(allocate(vertexCount * Uint16Array.BYTES_PER_ELEMENT)).fill(STONEX_NO_FRAME)
       : null;
     const candidateIndices = new Map<CameraFrame, number[]>();
     if (colors) {
@@ -1135,13 +1138,27 @@ export class StonexX3aParser {
       typeof SharedArrayBuffer !== 'undefined' &&
       data.buffer instanceof SharedArrayBuffer
     ) {
-      // Each scan lands in the combined arrays as it arrives, so all the
-      // decoded copies are never held at once (~670 MB on a 42M-point archive).
+      // Each scan is written straight into the combined arrays (when they are
+      // shared) or lands there as it arrives, so the decoded copies are never
+      // all held at once (~670 MB on a 42M-point archive).
       const offsets = earlyOffsets;
       layouts.reduce((offset, layout) => (offsets.push(offset), offset + layout.validPoints), 0);
+      const placedJob = (layout: (typeof layouts)[number], index: number) => {
+        const job = decodeJob(layout);
+        if (intensity.buffer instanceof SharedArrayBuffer) {
+          const end = offsets[index] + layout.validPoints;
+          job.into = {
+            positions: positions.subarray(offsets[index] * 3, end * 3),
+            intensity: intensity.subarray(offsets[index], end),
+          };
+        }
+        return job;
+      };
       try {
-        predecoded = await this.decodeScans(layouts.map(decodeJob), (index, result) => {
-          if (result.intensity.length === layouts[index].validPoints) {
+        predecoded = await this.decodeScans(layouts.map(placedJob), (index, result) => {
+          if (result.placed) {
+            placedEarly.add(index);
+          } else if (result.intensity.length === layouts[index].validPoints) {
             positions.set(result.positions, offsets[index] * 3);
             intensity.set(result.intensity, offsets[index]);
             placedEarly.add(index);
@@ -1811,8 +1828,13 @@ export class StonexX3aParser {
       frameIndices.fill(STONEX_NO_FRAME);
     }
 
+    // Shared with a pass on another thread, which writes them in place.
+    const allocate = (bytes: number) =>
+      this.colourStations && typeof SharedArrayBuffer !== 'undefined'
+        ? new SharedArrayBuffer(bytes)
+        : new ArrayBuffer(bytes);
     // A point counts as coloured exactly when the first pass gave it a frame.
-    const colored = new Uint8Array(combined.vertexCount);
+    const colored = new Uint8Array(allocate(combined.vertexCount));
     for (let i = 0; i < colored.length; i++) {
       colored[i] = frameIndices[i] === STONEX_NO_FRAME ? 0 : 1;
     }
@@ -1836,25 +1858,12 @@ export class StonexX3aParser {
     // change is most likely to make expensive.
     const colouringStarted = performance.now();
 
-    // One buffer holding every selected frame's raw sensor plane, so a frame
+    // Every selected frame's raw sensor plane back to back, so a frame
     // crosses into wasm once for the pass however many scans draw on it — the
-    // same arrangement the parser's own colour session uses.
-    const pixelOffsets = new Map<CameraFrame, number>();
-    let pixelBytes = 0;
-    for (const frame of selectedFrames) {
-      pixelOffsets.set(frame, pixelBytes);
-      pixelBytes += frame.rawWidth * frame.rawHeight;
-    }
-    const framePixels = new Uint8Array(pixelBytes);
-    for (const frame of selectedFrames) {
-      framePixels.set(
-        sources.data.subarray(
-          frame.pixelsOffset,
-          frame.pixelsOffset + frame.rawWidth * frame.rawHeight
-        ),
-        pixelOffsets.get(frame)!
-      );
-    }
+    // same arrangement the parser's own colour session uses. From shared
+    // memory the thread running the pass gathers them.
+    const { source: framePixels, offsets } = stonexPixelSource(sources.data, selectedFrames);
+    const pixelOffsets = new Map(selectedFrames.map((frame, index) => [frame, offsets[index]]));
 
     const frames: StationFrame[] = selectedFrames.map(frame => ({
       // Keep the original archive index: colour correction and the camera list
@@ -1882,7 +1891,7 @@ export class StonexX3aParser {
 
     const gatherMs = performance.now() - colouringStarted;
     const passStarted = performance.now();
-    const changed = new Uint8Array(combined.vertexCount);
+    const changed = new Uint8Array(allocate(combined.vertexCount));
     const result = await colorFromAllStations(
       combined.positionsArray,
       rawColors,
@@ -1895,6 +1904,7 @@ export class StonexX3aParser {
       {
         recolorAlreadyColored: options.recolorAlreadyColored,
         ownStationOnly: diagnostic === 'own-station-only',
+        colourStations: this.colourStations,
         onScanColored: scan =>
           options.onScanColored?.({
             scanStem: scan.scanStem,

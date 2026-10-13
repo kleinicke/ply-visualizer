@@ -6,8 +6,12 @@ import type {
   StonexDecodeScanResult,
   StonexDecodeScans,
 } from '../../engine/src/parsers/stonexWasm';
-import type { StonexColourJob, StonexDecodeJob } from './parseWorker';
-import { defaultParallelism, runParseJobs } from './parsePool';
+import type {
+  StationColoringResult,
+  StonexStationColouring,
+} from '../../engine/src/parsers/stonexStationColoring';
+import type { StonexColourJob, StonexDecodeJob, StonexStationColourJob } from './parseWorker';
+import { defaultParallelism, runParseJob, runParseJobs } from './parsePool';
 
 /**
  * Colours an X3A archive's independent scan groups on the decoder pool.
@@ -34,7 +38,8 @@ export const colourStonexScansInParallel: StonexColourScans = async (
       return {
         message,
         transfer: [
-          job.pixels.buffer,
+          // A gathered copy moves; an archive in shared memory is gathered there.
+          ...(job.pixels instanceof Uint8Array ? [job.pixels.buffer] : []),
           ...job.scans.flatMap(scan => [
             scan.positions.buffer,
             scan.azimuths.buffer,
@@ -70,4 +75,24 @@ export const decodeStonexScansInParallel: StonexDecodeScans = async (
     defaultParallelism(),
     onDecoded
   );
+};
+
+const isShared = (array: ArrayBufferView) =>
+  typeof SharedArrayBuffer !== 'undefined' && array.buffer instanceof SharedArrayBuffer;
+
+/**
+ * Colours an X3A archive from every station on a decoder thread. The session
+ * copies the archive's points, colours and photographs into wasm - 1.3 GB
+ * for OHP_FRONT - and wasm memory never shrinks, so in the extension host's
+ * own instance that stayed resident until it restarted; a pool worker gives
+ * it back when it is released. The arrays must be in shared memory: the
+ * worker writes each scan's result into them and reports it, and the host
+ * publishes it from there.
+ */
+export const colourStationsOnPool: StonexStationColouring = async (job, onScanColored) => {
+  if (![job.positions, job.rawColors, job.frameIndices, job.colored, job.changed].every(isShared)) {
+    return null;
+  }
+  const message: StonexStationColourJob = { kind: 'stonexStation', ...job };
+  return runParseJob<StationColoringResult>(message, [], index => onScanColored(index as number));
 };

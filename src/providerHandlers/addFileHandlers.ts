@@ -24,7 +24,11 @@ import {
 } from '../../engine/src/parsers/pointcloudWasm';
 import { StonexX3aParser } from '../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../wasmCameraModels';
-import { colourStonexScansInParallel, decodeStonexScansInParallel } from './parallelStonexColour';
+import {
+  colourStationsOnPool,
+  colourStonexScansInParallel,
+  decodeStonexScansInParallel,
+} from './parallelStonexColour';
 import { isColmapModelFile } from '../../engine/src/formats/colmap/colmapFiles';
 import { GltfParser } from '../../engine/src/parsers/gltfParser';
 import { NpyParser } from '../../engine/src/parsers/npyParser';
@@ -177,7 +181,8 @@ async function addStonexX3aData(
   const parsedData: any[] = await new StonexX3aParser(
     stonexCameraProjector,
     colourStonexScansInParallel,
-    decodeStonexScansInParallel
+    decodeStonexScansInParallel,
+    colourStationsOnPool
   ).parseAll(bytes, fileName, host.logPerf.bind(host));
   for (const scan of parsedData) {
     scan.shortPath = shortPath;

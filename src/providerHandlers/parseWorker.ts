@@ -26,6 +26,10 @@ import {
   type StonexDecodeScanJob,
   type StonexWasm,
 } from '../../engine/src/parsers/stonexWasm';
+import {
+  runStonexStationJob,
+  type StonexStationJob,
+} from '../../engine/src/parsers/stonexStationColoring';
 
 /**
  * One worker of the extension host's decoders (see parsePool.ts).
@@ -43,8 +47,9 @@ import {
  * - `lasPlan`/`las`: the plan and one point range of a LAS/LAZ file, and
  *   `e57Plan`/`e57`: the plan and one scan of an E57 (parallelLidarParse.ts).
  * - `stonexColour`: one group of X3A scans coloured from their photographs,
- *   and `stonexDecode`: one X3A scan record decoded from shared memory
- *   (parallelStonexColour.ts).
+ *   `stonexDecode`: one X3A scan record decoded from shared memory, and
+ *   `stonexStation`: an archive coloured from every station, reporting each
+ *   scan as it lands in the shared arrays (parallelStonexColour.ts).
  *
  * File bytes arrive in a SharedArrayBuffer (readFileShared), so the jobs of
  * one file share them; each passes only its own part to wasm.
@@ -475,6 +480,11 @@ export interface StonexColourJob extends StonexColourScanJob {
   kind: 'stonexColour';
 }
 
+/** An X3A archive coloured from every station, in shared memory (parallelStonexColour.ts). */
+export interface StonexStationColourJob extends StonexStationJob {
+  kind: 'stonexStation';
+}
+
 type Job =
   | TextRangeJob
   | LasRangeJob
@@ -484,9 +494,14 @@ type Job =
   | LasColorsJob
   | PcdRangeJob
   | StonexColourJob
-  | StonexDecodeJob;
+  | StonexDecodeJob
+  | StonexStationColourJob;
 
-async function run(wasm: RowWasm, job: Job): Promise<{ result: unknown; transfer: ArrayBuffer[] }> {
+async function run(
+  wasm: RowWasm,
+  job: Job,
+  progress: (value: unknown) => void
+): Promise<{ result: unknown; transfer: ArrayBuffer[] }> {
   switch (job.kind) {
     case 'las':
       return lasRange(wasm, job);
@@ -533,6 +548,12 @@ async function run(wasm: RowWasm, job: Job): Promise<{ result: unknown; transfer
         ],
       };
     }
+    case 'stonexStation': {
+      // Results land in the job's shared arrays; each scan is reported as it
+      // is written so the host can publish it.
+      const result = await runStonexStationJob(wasm as unknown as StonexWasm, job, progress);
+      return { result, transfer: [] };
+    }
     case 'lasColors': {
       const converted = wasm.las_colors_to_bytes(job.colors16, job.maxColor, job.aboveByte);
       const result: LasColorsResult = {
@@ -555,7 +576,9 @@ parentPort!.on('message', async ({ id, job }: { id: number; job: Job }) => {
     if (!wasm || typeof wasm.row_stream !== 'function') {
       throw new Error('The point-cloud WebAssembly module failed to load.');
     }
-    const { result, transfer } = await run(wasm, job);
+    const { result, transfer } = await run(wasm, job, progress =>
+      parentPort!.postMessage({ id, progress })
+    );
     parentPort!.postMessage({ id, result }, transfer);
   } catch (error) {
     parentPort!.postMessage({ id, error: error instanceof Error ? error.message : String(error) });

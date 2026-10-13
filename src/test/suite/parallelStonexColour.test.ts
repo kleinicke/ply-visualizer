@@ -4,6 +4,7 @@ import * as path from 'path';
 import { StonexX3aParser, type StonexX3aData } from '../../../engine/src/parsers/stonexX3aParser';
 import { stonexCameraProjector } from '../../wasmCameraModels';
 import {
+  colourStationsOnPool,
   colourStonexScansInParallel,
   decodeStonexScansInParallel,
 } from '../../providerHandlers/parallelStonexColour';
@@ -69,5 +70,54 @@ suite('Parallel Stonex colouring', () => {
       single.map(scan => Buffer.from(scan.positionsArray.buffer).toString('base64'))
     );
     assert.deepStrictEqual(colourState(pooled), colourState(single));
+  });
+
+  test('colours from every station on the decoder pool exactly as in-process', async function () {
+    if (!fs.existsSync(ARCHIVE)) {
+      this.skip();
+    }
+    this.timeout(300_000);
+    const bytes = new Uint8Array(fs.readFileSync(ARCHIVE));
+    const shared = new Uint8Array(new SharedArrayBuffer(bytes.byteLength));
+    shared.set(bytes);
+    const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const stems = (await new StonexX3aParser().parseAll(bytes, 'OHP_FRONT.x3a')).map(scan =>
+      (scan.fileName ?? '').replace(/\.x3r$/i, '')
+    );
+    const recolour = async (parser: StonexX3aParser, data: Uint8Array) => {
+      const published: string[] = [];
+      const scans = await parser.parseAll(data, 'OHP_FRONT.x3a', undefined, {
+        transforms: Object.fromEntries(stems.map(stem => [stem, identity])),
+        colorUncolored: true,
+        recolorAlreadyColored: false,
+        onScanColored: async update => {
+          published.push(update.scanStem);
+        },
+      });
+      return { scans, published };
+    };
+    let ranOnPool = false;
+    const pooled = await recolour(
+      new StonexX3aParser(
+        stonexCameraProjector,
+        colourStonexScansInParallel,
+        decodeStonexScansInParallel,
+        async (job, onScanColored) => {
+          const result = await colourStationsOnPool(job, onScanColored);
+          ranOnPool = result !== null;
+          return result;
+        }
+      ),
+      shared
+    );
+    const single = await recolour(new StonexX3aParser(stonexCameraProjector), bytes);
+
+    assert.ok(ranOnPool);
+    assert.deepStrictEqual(pooled.published, single.published);
+    assert.deepStrictEqual(
+      pooled.scans[0].metadata.stationColoringResult,
+      single.scans[0].metadata.stationColoringResult
+    );
+    assert.deepStrictEqual(colourState(pooled.scans), colourState(single.scans));
   });
 });

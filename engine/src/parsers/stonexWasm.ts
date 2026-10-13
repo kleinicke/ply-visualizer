@@ -97,6 +97,54 @@ export async function loadStonexWasm(): Promise<StonexWasm | null> {
 }
 
 /**
+ * Frames' raw sensor planes, back to back: either gathered already, or still in
+ * the archive as `[offset, length]` pairs in plane order. An archive in shared
+ * memory is gathered by the thread that uses it, so the host never holds a
+ * second copy of the photographs.
+ */
+export type StonexPixelSource = Uint8Array | { archive: Uint8Array; ranges: Float64Array };
+
+export function gatherStonexPixels(source: StonexPixelSource): Uint8Array {
+  if (source instanceof Uint8Array) {
+    return source;
+  }
+  let bytes = 0;
+  for (let index = 1; index < source.ranges.length; index += 2) {
+    bytes += source.ranges[index];
+  }
+  const pixels = new Uint8Array(bytes);
+  let cursor = 0;
+  for (let index = 0; index < source.ranges.length; index += 2) {
+    const offset = source.ranges[index];
+    const length = source.ranges[index + 1];
+    pixels.set(source.archive.subarray(offset, offset + length), cursor);
+    cursor += length;
+  }
+  return pixels;
+}
+
+/** The frames' planes in `frames` order: their offsets into the gathered planes, and the source. */
+export function stonexPixelSource(
+  archive: Uint8Array,
+  frames: ReadonlyArray<{ pixelsOffset: number; rawWidth: number; rawHeight: number }>
+): { source: StonexPixelSource; offsets: number[] } {
+  const ranges = new Float64Array(frames.length * 2);
+  const offsets: number[] = [];
+  let bytes = 0;
+  frames.forEach((frame, index) => {
+    const length = frame.rawWidth * frame.rawHeight;
+    ranges[index * 2] = frame.pixelsOffset;
+    ranges[index * 2 + 1] = length;
+    offsets.push(bytes);
+    bytes += length;
+  });
+  const shared =
+    typeof SharedArrayBuffer !== 'undefined' && archive.buffer instanceof SharedArrayBuffer;
+  const source = { archive, ranges };
+  return { source: shared ? source : gatherStonexPixels(source), offsets };
+}
+
+/**
  * Photographic colouring of a group of scans that share frames, self-contained
  * so a host can run it on another thread: the scans' points and column
  * bookkeeping, and the raw planes of only the frames they use. Scans that share
@@ -111,8 +159,8 @@ export interface StonexColourScanJob {
     activeFrames: Uint32Array;
   }>;
   /** Raw planes of the group's frames, in archive order. */
-  pixels: Uint8Array;
-  /** Descriptors of those frames, offsets into `pixels`. */
+  pixels: StonexPixelSource;
+  /** Descriptors of those frames, offsets into the gathered planes. */
   descriptorsJson: string;
   /** Downscale for each frame's preview, made while its demosaic is at hand. */
   previewScale: number;
@@ -151,7 +199,7 @@ export function runStonexColourScanJob(
   wasm: StonexWasm,
   job: StonexColourScanJob
 ): StonexColourScanResult {
-  const session = new wasm.StonexColourSession(job.pixels, job.descriptorsJson);
+  const session = new wasm.StonexColourSession(gatherStonexPixels(job.pixels), job.descriptorsJson);
   try {
     const scans = job.scans.map(scan => {
       const result = session.colour_scan(
@@ -204,11 +252,19 @@ export interface StonexDecodeScanJob {
   columnOffset: number;
   columnStride: number;
   validPoints: number;
+  /**
+   * Where the points belong in the archive's combined arrays, when those are
+   * in shared memory: they are written there, and the result carries none.
+   */
+  into?: { positions: Float32Array; intensity: Float32Array };
 }
 
 export interface StonexDecodeScanResult {
+  /** Empty when `placed`. */
   positions: Float32Array;
   intensity: Float32Array;
+  /** Written into the job's `into` arrays, which it exactly filled. */
+  placed?: boolean;
   azimuths: Float64Array;
   counts: Uint32Array;
 }
@@ -234,12 +290,27 @@ export function runStonexDecodeScanJob(
     job.validPoints
   );
   try {
-    return {
-      positions: decoded.take_positions(),
-      intensity: decoded.take_intensity(),
-      azimuths: decoded.take_column_azimuths(),
-      counts: decoded.take_points_per_column(),
-    };
+    const positions = decoded.take_positions();
+    const intensity = decoded.take_intensity();
+    const azimuths = decoded.take_column_azimuths();
+    const counts = decoded.take_points_per_column();
+    const into = job.into;
+    if (
+      into &&
+      into.positions.length === positions.length &&
+      into.intensity.length === intensity.length
+    ) {
+      into.positions.set(positions);
+      into.intensity.set(intensity);
+      return {
+        positions: new Float32Array(0),
+        intensity: new Float32Array(0),
+        placed: true,
+        azimuths,
+        counts,
+      };
+    }
+    return { positions, intensity, azimuths, counts };
   } finally {
     decoded.free?.();
   }

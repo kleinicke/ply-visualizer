@@ -16,7 +16,12 @@
  * from another station gets the same pixel a point coloured from its own would.
  */
 
-import { loadStonexWasm } from './stonexWasm';
+import {
+  gatherStonexPixels,
+  loadStonexWasm,
+  type StonexPixelSource,
+  type StonexWasm,
+} from './stonexWasm';
 
 /** A camera frame, with everything needed to project and sample it. */
 export interface StationFrame {
@@ -67,6 +72,79 @@ export interface StationColoringOptions {
    */
   occlusionTolerance?: number;
   occlusionRelativeTolerance?: number;
+  /** Runs the pass on another thread when it can (see `StonexStationColouring`). */
+  colourStations?: StonexStationColouring;
+}
+
+/**
+ * One cross-station pass, self-contained so a host can run it on another
+ * thread. The arrays are the caller's and are written in place: each scan's
+ * colours and frames as it finishes, `colored` and `changed` at the end.
+ */
+export interface StonexStationJob {
+  positions: Float32Array;
+  rawColors: Uint8Array;
+  frameIndices: Uint16Array;
+  colored: Uint8Array;
+  changed: Uint8Array;
+  pixels: StonexPixelSource;
+  scans: Array<{ pointOffset: number; pointCount: number }>;
+  framesJson: string;
+  scansJson: string;
+  optionsJson: string;
+}
+
+/**
+ * Runs a station job elsewhere, calling `onScanColored` with each scan's index
+ * once its colours are in the arrays. Null when it cannot (the arrays must be
+ * in shared memory); the pass then runs here. A failure is not retried here:
+ * the arrays may be half written.
+ */
+export type StonexStationColouring = (
+  job: StonexStationJob,
+  onScanColored: (index: number) => void
+) => Promise<StationColoringResult | null>;
+
+/** Run a station job in this thread's wasm, writing results into its arrays. */
+export async function runStonexStationJob(
+  wasm: StonexWasm,
+  job: StonexStationJob,
+  onScanColored: (index: number) => void | Promise<void>
+): Promise<StationColoringResult> {
+  const session = new wasm.StonexStationSession(
+    job.positions,
+    gatherStonexPixels(job.pixels),
+    job.rawColors,
+    job.frameIndices,
+    job.colored,
+    job.framesJson,
+    job.scansJson,
+    job.optionsJson
+  );
+  try {
+    for (let index = 0; index < job.scans.length; index++) {
+      if (session.colour_scan(index)) {
+        // Copy this scan's result back before publishing it: the host reads
+        // from its own arrays, and the rest of the archive is still being
+        // worked on inside the session.
+        const scan = job.scans[index];
+        job.rawColors.set(session.scan_colours(index), scan.pointOffset * 3);
+        job.frameIndices.set(session.scan_frame_indices(index), scan.pointOffset);
+      }
+      await onScanColored(index);
+    }
+    // The per-scan copies above cover everything the pass wrote, but `colored`
+    // and `changed` are archive-wide bookkeeping the caller reads afterwards.
+    job.colored.set(session.take_coloured());
+    job.changed.set(session.take_changed());
+    return {
+      newlyColored: session.newly_colored,
+      recolored: session.recolored,
+      occludedSamples: session.occluded_samples,
+    };
+  } finally {
+    session.free?.();
+  }
 }
 
 export interface StationColoringResult {
@@ -87,8 +165,9 @@ export interface StationColoringResult {
  *
  * `rawColors` and `frameIndices` are the parser's raw (un-white-balanced)
  * arrays; the caller re-runs `stonexColorCorrection` afterwards so the modes
- * stay switchable. `pixels` holds every frame's raw sensor plane back to back,
- * with `StationFrame.pixelOffset` pointing into it.
+ * stay switchable. `pixels` holds every frame's raw sensor plane back to back
+ * (or says where to gather them from), with `StationFrame.pixelOffset`
+ * pointing into it.
  */
 export async function colorFromAllStations(
   positions: Float32Array,
@@ -98,7 +177,7 @@ export async function colorFromAllStations(
   /** Set to 1 for every point this pass writes; lets callers ship only the
    * scans that actually changed rather than every colour in the archive. */
   changed: Uint8Array,
-  pixels: Uint8Array,
+  pixels: StonexPixelSource,
   scans: readonly StationScan[],
   frames: readonly StationFrame[],
   options: StationColoringOptions = {}
@@ -114,18 +193,15 @@ export async function colorFromAllStations(
     return empty;
   }
 
-  const wasm = await loadStonexWasm();
-  if (!wasm) {
-    return empty;
-  }
-
-  const session = new wasm.StonexStationSession(
+  const job: StonexStationJob = {
     positions,
-    pixels,
     rawColors,
     frameIndices,
     colored,
-    JSON.stringify(
+    changed,
+    pixels,
+    scans: scans.map(({ pointOffset, pointCount }) => ({ pointOffset, pointCount })),
+    framesJson: JSON.stringify(
       usableFrames.map(frame => ({
         frameNumber: frame.frameNumber,
         station: stationOfStem.get(frame.scanStem)!,
@@ -145,7 +221,7 @@ export async function colorFromAllStations(
         maxNormalizedY: frame.maxNormalizedY,
       }))
     ),
-    JSON.stringify(
+    scansJson: JSON.stringify(
       scans.map((scan, index) => ({
         station: index,
         pointOffset: scan.pointOffset,
@@ -153,44 +229,42 @@ export async function colorFromAllStations(
         transform: [...scan.transform],
       }))
     ),
-    JSON.stringify({
+    optionsJson: JSON.stringify({
       occlusionTolerance: options.occlusionTolerance ?? 0.08,
       occlusionRelativeTolerance: options.occlusionRelativeTolerance ?? 0.02,
       recolorAlreadyColored: options.recolorAlreadyColored === true,
       ownStationOnly: options.ownStationOnly === true,
-    })
-  );
+    }),
+  };
 
-  try {
-    for (let index = 0; index < scans.length; index++) {
-      const wrote = session.colour_scan(index);
-      if (wrote) {
-        // Copy this scan's result back before publishing it: the host reads
-        // from its own arrays, and the rest of the archive is still being
-        // worked on inside the session.
-        const scan = scans[index];
-        rawColors.set(session.scan_colours(index), scan.pointOffset * 3);
-        frameIndices.set(session.scan_frame_indices(index), scan.pointOffset);
-      }
-      // Publish each completed scan before starting the next one. In the VS
-      // Code host a long uninterrupted archive pass otherwise queues every
-      // postMessage until all stations are done, which looks exactly like no
-      // progressive colouring exists even though callbacks are issued per scan.
-      await options.onScanColored?.(scans[index]);
-      await new Promise<void>(resolve => setTimeout(resolve, 0));
+  // On another thread the session's copy of the archive - over a gigabyte for
+  // 42M points - leaves with the worker; this thread's wasm memory never
+  // shrinks. Scans are published in order while the next ones are coloured.
+  if (options.colourStations) {
+    let publishing: Promise<void> = Promise.resolve();
+    let result: StationColoringResult | null;
+    try {
+      result = await options.colourStations(job, index => {
+        publishing = publishing.then(() => options.onScanColored?.(scans[index]));
+      });
+    } finally {
+      await publishing;
     }
-
-    const result: StationColoringResult = {
-      newlyColored: session.newly_colored,
-      recolored: session.recolored,
-      occludedSamples: session.occluded_samples,
-    };
-    // The per-scan copies above cover everything the pass wrote, but `colored`
-    // and `changed` are archive-wide bookkeeping the caller reads afterwards.
-    colored.set(session.take_coloured());
-    changed.set(session.take_changed());
-    return result;
-  } finally {
-    session.free?.();
+    if (result) {
+      return result;
+    }
   }
+
+  const wasm = await loadStonexWasm();
+  if (!wasm) {
+    return empty;
+  }
+  return runStonexStationJob(wasm, job, async index => {
+    // Publish each completed scan before starting the next one. In the VS
+    // Code host a long uninterrupted archive pass otherwise queues every
+    // postMessage until all stations are done, which looks exactly like no
+    // progressive colouring exists even though callbacks are issued per scan.
+    await options.onScanColored?.(scans[index]);
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+  });
 }
