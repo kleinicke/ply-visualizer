@@ -69,6 +69,49 @@ test.describe('Automatic Eye Dome Lighting', () => {
     await expect.poll(() => page.evaluate(() => (window as any).visualizer.edlMode)).toBe('auto');
   });
 
+  test('Auto shades disc-sized points of a uniform cloud exactly like All', async ({ page }) => {
+    await page.locator('#hiddenFileInput').setInputFiles(uniformPly);
+    await expect(page.locator('#file-list .file-item')).toHaveCount(1);
+    const frame = (mode: string, enabled = true) =>
+      page.evaluate(
+        ([edlMode, edlEnabled]) => {
+          const viewer: any = (window as any).visualizer;
+          viewer.stopRenderLoop();
+          // Large enough that the points are drawn by the round (disc) pass.
+          viewer.updatePointSize(0, 0.2);
+          viewer.edlMode = edlMode;
+          viewer.edlEnabled = edlEnabled;
+          viewer.performRender();
+          const round = viewer.meshes[0].children.find(
+            (child: any) => child.name === 'adaptive-round-pass'
+          );
+          const gl = viewer.renderer.getContext();
+          const pixels = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+          gl.readPixels(
+            0,
+            0,
+            gl.drawingBufferWidth,
+            gl.drawingBufferHeight,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            pixels
+          );
+          let hash = 0;
+          for (let i = 0; i < pixels.length; i++) {
+            hash = (hash * 31 + pixels[i]) | 0;
+          }
+          return { hash, discs: round.visible };
+        },
+        [mode, enabled] as const
+      );
+    const auto = await frame('auto');
+    const all = await frame('all');
+    const off = await frame('off', false);
+    expect(auto.discs).toBe(true);
+    expect(auto.hash).toBe(all.hash);
+    expect(auto.hash).not.toBe(off.hash);
+  });
+
   test('renders per-point colours identically in Auto and Off beside a uniform cloud', async ({
     page,
   }) => {

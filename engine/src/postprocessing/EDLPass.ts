@@ -183,6 +183,7 @@ export class EDLPass extends Pass {
   private edlDepthTarget: THREE.WebGLRenderTarget;
   private selective = false;
   private eligibleObjects = new Set<THREE.Object3D>();
+  private eligibleRoots = 0;
   private _width: number;
   private _height: number;
 
@@ -258,12 +259,19 @@ export class EDLPass extends Pass {
   /** Configure whether this frame shades all geometry or only these point clouds. */
   setEligibleObjects(objects: Iterable<THREE.Object3D> | null): void {
     this.selective = objects !== null;
-    this.eligibleObjects = new Set(objects ?? []);
+    // A cloud draws its larger points through child objects (the round pass of
+    // AdaptivePointRenderer); without them, Auto never shaded a zoomed-in cloud.
+    this.eligibleObjects = new Set();
+    this.eligibleRoots = 0;
+    for (const object of objects ?? []) {
+      this.eligibleRoots++;
+      object.traverse(child => this.eligibleObjects.add(child));
+    }
   }
 
   /** Exposed for diagnostics and browser regressions without exposing the set itself. */
   get eligibleObjectCount(): number {
-    return this.eligibleObjects.size;
+    return this.eligibleRoots;
   }
 
   get isSelective(): boolean {
@@ -285,23 +293,35 @@ export class EDLPass extends Pass {
     renderer.setRenderTarget(this.renderTarget);
     renderer.render(this.scene, this.camera);
 
-    if (this.selective) {
-      const visibility = new Map<THREE.Object3D, boolean>();
-      this.scene.traverse(object => {
+    // The mask render only differs from the scene render when something
+    // visible is ineligible. A lone uniform cloud is the common Auto case, and
+    // drawing it twice cost ~45% of the frame.
+    let selective = this.selective;
+    if (selective) {
+      const ineligible: THREE.Object3D[] = [];
+      this.scene.traverseVisible(object => {
         const renderable =
           object instanceof THREE.Points ||
           object instanceof THREE.Mesh ||
           object instanceof THREE.Line ||
           object instanceof THREE.Sprite;
-        if (!renderable) {return;}
-        visibility.set(object, object.visible);
-        object.visible = object.visible && this.eligibleObjects.has(object);
+        if (renderable && !this.eligibleObjects.has(object)) {
+          ineligible.push(object);
+        }
       });
-      try {
-        renderer.setRenderTarget(this.edlDepthTarget);
-        renderer.render(this.scene, this.camera);
-      } finally {
-        visibility.forEach((visible, object) => (object.visible = visible));
+      selective = ineligible.length > 0;
+      if (selective) {
+        for (const object of ineligible) {
+          object.visible = false;
+        }
+        try {
+          renderer.setRenderTarget(this.edlDepthTarget);
+          renderer.render(this.scene, this.camera);
+        } finally {
+          for (const object of ineligible) {
+            object.visible = true;
+          }
+        }
       }
     }
 
@@ -310,7 +330,7 @@ export class EDLPass extends Pass {
     this.edlMaterial.uniforms.tDiffuse.value = this.renderTarget.texture;
     this.edlMaterial.uniforms.tDepth.value = this.renderTarget.depthTexture;
     this.edlMaterial.uniforms.tEdlDepth.value = this.edlDepthTarget.depthTexture;
-    this.edlMaterial.uniforms.selective.value = this.selective;
+    this.edlMaterial.uniforms.selective.value = selective;
     this.edlMaterial.uniforms.edlStrength.value = this.edlStrength;
     this.edlMaterial.uniforms.radius.value = this.edlRadius;
     this.edlMaterial.uniforms.responseScale.value = 300.0;
