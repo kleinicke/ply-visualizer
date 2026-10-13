@@ -45,12 +45,24 @@ export interface ContextResidency {
  * rendering that same scene a moment ago, so it is restored and resumed
  * without asking.
  */
+export interface ContextReleasePolicy {
+  /**
+   * False while a deliberate release would interrupt something (a load, a
+   * recording) or lose what three.js cannot rebuild (Spark's splat state);
+   * the release is then retried after another delay.
+   */
+  canRelease(): boolean;
+  /** Free GPU memory the WebGL context does not own (the WebGPU helpers). */
+  beforeRelease(): void;
+}
+
 export function setupContextRecovery(
   canvas: HTMLCanvasElement,
   gl: WebGLRenderingContext | WebGL2RenderingContext,
   lifetime: ViewerLifetime,
   pause: () => void,
-  resume: () => void
+  resume: () => void,
+  policy?: ContextReleasePolicy
 ): ContextResidency {
   let current: ContextRecoveryState = 'running';
   const state = writable<ContextRecoveryState>(current);
@@ -83,9 +95,15 @@ export function setupContextRecovery(
     }
     releaseTimer = setTimeout(() => {
       releaseTimer = undefined;
-      if (hidden && current === 'running' && !lifetime.disposed && !gl.isContextLost()) {
-        loseContext.loseContext();
+      if (!hidden || current !== 'running' || lifetime.disposed || gl.isContextLost()) {
+        return;
       }
+      if (policy && !policy.canRelease()) {
+        scheduleRelease();
+        return;
+      }
+      policy?.beforeRelease();
+      loseContext.loseContext();
     }, RELEASE_HIDDEN_AFTER_MS);
   };
   const restore = () => {

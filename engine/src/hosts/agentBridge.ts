@@ -21,6 +21,8 @@ export interface AgentViewerHost {
   meshes: readonly (THREE.Object3D | null)[];
   fitCameraToAllObjects(): void;
   performRender(): void;
+  /** Absent on backends that never release their context. */
+  gpuResidency?: { ensureResident(): Promise<void> } | null;
 }
 
 const rendererId = Array.from(crypto.getRandomValues(new Uint8Array(16)), n =>
@@ -67,6 +69,9 @@ export async function executeAgentCommand(
   let reply: { id: string; result?: unknown; error?: string } = { id: command.id };
   try {
     validateAgentCommand(command.operation, command.arguments);
+    // A hidden tab or editor may have handed its WebGL context back; captures
+    // and readbacks need it live.
+    await host.gpuResidency?.ensureResident();
     if (requireLocalSession && document.documentElement.dataset.localSession !== 'loaded') {
       throw new Error(
         localSessionState.error

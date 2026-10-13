@@ -167,3 +167,97 @@ test('a hidden viewer releases its context and silently restores the scene when 
   expect(await lost()).toBe(false);
   await expect(banner).toBeHidden();
 });
+
+const uniformGrid = () => {
+  const rows = Array.from({ length: 40 * 40 }, (_, i) => {
+    const x = (i % 40) / 10;
+    const y = Math.floor(i / 40) / 10;
+    return `${x} ${y} ${(Math.sin(x * 3) * Math.cos(y * 2)) / 4}`;
+  });
+  return Buffer.from(
+    `ply\nformat ascii 1.0\nelement vertex ${rows.length}\n` +
+      'property float x\nproperty float y\nproperty float z\nend_header\n' +
+      rows.join('\n') +
+      '\n'
+  );
+};
+
+test('a hidden viewer keeps its context while releasing it would lose splat state', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-visualizer-ready', 'true');
+  await page.locator('#hiddenFileInput').setInputFiles({
+    name: 'guarded.ply',
+    mimeType: 'application/octet-stream',
+    buffer: uniformGrid(),
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).visualizer.spatialFiles.length))
+    .toBe(1);
+  await page.clock.install();
+  const lost = () =>
+    page.evaluate(() => (window as any).visualizer.renderer.getContext().isContextLost());
+  await page.evaluate(() => {
+    const v = (window as any).visualizer;
+    v.fileEntries.require(0).state.splatModeActive = true;
+    v.gpuResidency.setHidden(true);
+  });
+  await page.clock.runFor(25_000);
+  expect(await lost()).toBe(false);
+  // Once nothing stands in the way, the retried release goes ahead.
+  await page.evaluate(() => {
+    (window as any).visualizer.fileEntries.require(0).state.splatModeActive = false;
+  });
+  await page.clock.runFor(11_000);
+  expect(await lost()).toBe(true);
+});
+
+test('an EDL-shaded viewer redraws the same frame after a hidden release', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-visualizer-ready', 'true');
+  // No per-point colour, so Auto EDL and its render targets are in use.
+  await page.locator('#hiddenFileInput').setInputFiles({
+    name: 'uniform.ply',
+    mimeType: 'application/octet-stream',
+    buffer: uniformGrid(),
+  });
+  await expect
+    .poll(() => page.evaluate(() => (window as any).visualizer.spatialFiles.length))
+    .toBe(1);
+  const frame = () =>
+    page.evaluate(() => {
+      const v = (window as any).visualizer;
+      v.stopRenderLoop();
+      v.updatePointSize(0, 0.05);
+      v.performRender();
+      const gl = v.renderer.getContext();
+      const pixels = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
+      gl.readPixels(
+        0,
+        0,
+        gl.drawingBufferWidth,
+        gl.drawingBufferHeight,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        pixels
+      );
+      let hash = 0;
+      for (let i = 0; i < pixels.length; i++) {
+        hash = (hash * 31 + pixels[i]) | 0;
+      }
+      return { hash, edlClouds: v.edlPass?.eligibleObjectCount };
+    });
+  const before = await frame();
+  expect(before.edlClouds).toBe(1);
+  await page.clock.install();
+  const lost = () =>
+    page.evaluate(() => (window as any).visualizer.renderer.getContext().isContextLost());
+  await page.evaluate(() => (window as any).visualizer.gpuResidency.setHidden(true));
+  await page.clock.runFor(11_000);
+  expect(await lost()).toBe(true);
+  await page.evaluate(() => (window as any).visualizer.gpuResidency.setHidden(false));
+  await expect.poll(lost).toBe(false);
+  await page.clock.runFor(100);
+  expect(await frame()).toEqual(before);
+});

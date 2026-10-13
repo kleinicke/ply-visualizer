@@ -185,8 +185,8 @@ export async function handleNativeAgentRequest(host: ControlHost, message: any):
       }
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    // A hidden editor may have handed its WebGL context back; captures and
-    // readbacks need it live.
+    // A hidden editor may have handed its WebGL context back; the load below
+    // uploads geometry, so bring it back first (the executor does too).
     await host.gpuResidency?.ensureResident();
     if (message.operation === 'native_load') {
       await load(host, message.arguments);

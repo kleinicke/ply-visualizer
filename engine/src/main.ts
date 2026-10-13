@@ -1490,6 +1490,21 @@ export class PointCloudVisualizer {
         this.gpuTimer = createGpuTimer(this.renderer);
         this.contextLost = false;
         this.requestRender();
+      },
+      {
+        canRelease: () =>
+          !filmState.recording &&
+          !uiState.fileLoading &&
+          uiState.backgroundChanges === 0 &&
+          !this.fileEntries.all.some(
+            entry => entry.state.splatModeActive || entry.spatial?.data.splatSource
+          ),
+        // The WebGPU picker and visibility renderer keep their own copies of
+        // the clouds' positions; they rebuild them on next use.
+        beforeRelease: () => {
+          this.selectionManager?.releaseUnusedPointBuffers(new Set());
+          this.webgpuVisibilityRenderer?.retainGeometries(new Set());
+        },
       }
     );
   }
