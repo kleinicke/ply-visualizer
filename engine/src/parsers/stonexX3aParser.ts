@@ -482,6 +482,36 @@ export function stonexFrameDescriptorForComparison(
   return stonexFrameDescriptor(frame, pixelOffset);
 }
 
+const LITTLE_ENDIAN_PLATFORM = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+
+/**
+ * Valid ranges among `rows` samples (an int32 range every 8 bytes, little
+ * endian) from `start`. An aligned column is read through an Int32Array: the
+ * DataView call per sample was most of the layout scan, ~0.2 s on a 42M-point
+ * archive. Same count either way.
+ */
+function countValidRanges(data: Uint8Array, view: DataView, start: number, rows: number): number {
+  let valid = 0;
+  const absolute = data.byteOffset + start;
+  if (LITTLE_ENDIAN_PLATFORM && absolute % 4 === 0) {
+    const samples = new Int32Array(data.buffer, absolute, rows * 2);
+    for (let index = 0; index < samples.length; index += 2) {
+      const rawRange = samples[index];
+      if (rawRange > 0 && rawRange < INVALID_RANGE_MAX) {
+        valid++;
+      }
+    }
+    return valid;
+  }
+  for (let row = 0, offset = start; row < rows; row++, offset += 8) {
+    const rawRange = view.getInt32(offset, true);
+    if (rawRange > 0 && rawRange < INVALID_RANGE_MAX) {
+      valid++;
+    }
+  }
+  return valid;
+}
+
 /** Camera previews are a 1/8-scale demosaic of each frame. */
 const FRAME_PREVIEW_SCALE = 8;
 
@@ -1017,13 +1047,7 @@ export class StonexX3aParser {
         if (ascii(data, blockOffset, 4) !== COLUMN_MAGIC) {
           throw new Error(`Stonex X3A: invalid column ${column} in ${member.name}.`);
         }
-        let sampleOffset = blockOffset + X3R_COLUMN_HEADER_BYTES;
-        for (let row = 0; row < rows; row++, sampleOffset += 8) {
-          const rawRange = view.getInt32(sampleOffset, true);
-          if (rawRange > 0 && rawRange < INVALID_RANGE_MAX) {
-            validPoints++;
-          }
-        }
+        validPoints += countValidRanges(data, view, blockOffset + X3R_COLUMN_HEADER_BYTES, rows);
       }
       sourcePointCount += columns * rows;
       vertexCount += validPoints;
@@ -1320,11 +1344,19 @@ export class StonexX3aParser {
       // The Rust session sees only scoped frames and returns its compact
       // indices. Point-colour updates are applied to an already-loaded
       // archive whose calibration keeps the complete X3I order, so preserve
-      // those stable archive IDs across the boundary.
+      // those stable archive IDs across the boundary. Each local index is
+      // resolved once: a call per point was ~175 ms of a 42M-point open.
+      const UNRESOLVED = 0xffffffff;
+      const archiveIndexOf = new Uint32Array(STONEX_NO_FRAME + 1).fill(UNRESOLVED);
       for (let index = 0; index < scanFrames.length; index++) {
         const localFrame = scanFrames[index];
         if (localFrame !== STONEX_NO_FRAME) {
-          scanFrames[index] = frameAt(localFrame)?.archiveFrameIndex ?? STONEX_NO_FRAME;
+          let archiveIndex = archiveIndexOf[localFrame];
+          if (archiveIndex === UNRESOLVED) {
+            archiveIndex = frameAt(localFrame)?.archiveFrameIndex ?? STONEX_NO_FRAME;
+            archiveIndexOf[localFrame] = archiveIndex;
+          }
+          scanFrames[index] = archiveIndex;
         }
       }
       counters.candidateTotal = (counters.candidateTotal ?? 0) + totals.candidateTotal;
