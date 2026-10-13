@@ -298,6 +298,8 @@ export class PointCloudVisualizer {
   pointPickingImplementation: PointPickingImplementation = 'cpu';
   webgpuPointRenderingAvailable: boolean = false;
   webgpuPointRenderingUnavailableReason: string | null = 'WebGPU availability has not been checked';
+  /** Settles (never rejects) once the optional WebGPU helpers are known. */
+  webgpuReady: Promise<void> = Promise.resolve();
   pointRenderingImplementation: PointRenderingImplementation = 'current';
   private webgpuVisibilityRenderer: WebGPUVisibilityRenderer | null = null;
   // Video mode: camera keyframes, playback and recording (film/FilmManager.ts)
@@ -845,29 +847,44 @@ export class PointCloudVisualizer {
     // Initialize selection manager
     const selectionManager = new SelectionManager(this.getSelectionContext());
     this.selectionManager = selectionManager;
-    // Independent devices/pipelines can initialize concurrently. Both must
-    // settle before publishing capabilities or disposing a cancelled viewer.
-    const [, visibilitySelection] = await Promise.all([
+    // The WebGPU picker and visibility renderer are optional, and creating
+    // their devices and pipelines cold took ~220 ms - on the first viewer of a
+    // VS Code session, ahead of its file. They now finish after the viewer is
+    // ready; until then picking takes the CPU path and points render as usual.
+    // Both must settle before publishing capabilities or disposing them.
+    this.webgpuReady = Promise.allSettled([
       selectionManager.initializeWebGPUPicker(),
       WebGPUVisibilityRenderer.create(container),
-    ]);
-    if (this.lifetime.disposed) {
-      visibilitySelection.renderer?.dispose();
-      selectionManager.dispose();
-      return;
-    }
-    this.webgpuPickingAvailable = this.selectionManager.isWebGPUPickingAvailable();
-    this.webgpuPickingUnavailableReason = this.selectionManager.getWebGPUUnavailableReason();
-    this.pointPickingImplementation = this.selectionManager.getPointPickingImplementation();
-    console.log(
-      this.webgpuPickingAvailable
-        ? '⚡ WebGPU point picking available and enabled'
-        : `ℹ️ WebGPU point picking unavailable; using CPU (${this.webgpuPickingUnavailableReason})`
-    );
-
-    this.webgpuVisibilityRenderer = visibilitySelection.renderer;
-    this.webgpuPointRenderingAvailable = visibilitySelection.renderer !== null;
-    this.webgpuPointRenderingUnavailableReason = visibilitySelection.unavailableReason;
+    ]).then(([picker, visibility]) => {
+      // One helper failing must not leak the other's device.
+      const visibilityRenderer =
+        visibility.status === 'fulfilled' ? visibility.value.renderer : null;
+      if (this.lifetime.disposed) {
+        visibilityRenderer?.dispose();
+        selectionManager.dispose();
+        return;
+      }
+      for (const result of [picker, visibility]) {
+        if (result.status === 'rejected') {
+          console.warn('Optional WebGPU helper failed to start:', result.reason);
+        }
+      }
+      this.webgpuPickingAvailable = selectionManager.isWebGPUPickingAvailable();
+      this.webgpuPickingUnavailableReason = selectionManager.getWebGPUUnavailableReason();
+      this.pointPickingImplementation = selectionManager.getPointPickingImplementation();
+      console.log(
+        this.webgpuPickingAvailable
+          ? '⚡ WebGPU point picking available and enabled'
+          : `ℹ️ WebGPU point picking unavailable; using CPU (${this.webgpuPickingUnavailableReason})`
+      );
+      this.webgpuVisibilityRenderer = visibilityRenderer;
+      this.webgpuPointRenderingAvailable = visibilityRenderer !== null;
+      this.webgpuPointRenderingUnavailableReason =
+        visibility.status === 'fulfilled'
+          ? visibility.value.unavailableReason
+          : String(visibility.reason);
+      this.publishWebGPUCapabilities();
+    });
 
     // Initialize video mode (camera keyframes / recording)
     this.filmManager = new FilmManager(this);
@@ -1776,10 +1793,20 @@ export class PointCloudVisualizer {
     rotationCenterFeature.setRotationCenterToOrigin(this);
   }
 
+  /** Mirror the WebGPU capabilities into the reactive state the Controls tab reads. */
+  private publishWebGPUCapabilities(): void {
+    viewerState.webgpuPickingAvailable = this.webgpuPickingAvailable;
+    viewerState.webgpuPickingUnavailableReason = this.webgpuPickingUnavailableReason;
+    viewerState.pointPickingImplementation = this.pointPickingImplementation;
+    viewerState.webgpuPointRenderingAvailable = this.webgpuPointRenderingAvailable;
+    viewerState.webgpuPointRenderingUnavailableReason = this.webgpuPointRenderingUnavailableReason;
+  }
+
   setPointPickingImplementation(implementation: PointPickingImplementation): void {
     this.selectionManager?.setPointPickingImplementation(implementation);
     this.pointPickingImplementation =
       this.selectionManager?.getPointPickingImplementation() ?? 'cpu';
+    viewerState.pointPickingImplementation = this.pointPickingImplementation;
     this.showStatus(
       this.pointPickingImplementation === 'webgpu'
         ? 'Using WebGPU point picking'

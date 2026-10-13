@@ -26,7 +26,9 @@ test('retains a file selected while optional GPU initialization is pending', asy
       };
     }
   });
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  // The WebGPU backend awaits its adapter before the viewer is ready (the
+  // optional picker no longer holds the default WebGL boot back).
+  await page.goto('/?webgpu=1', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!(window as any).visualizer);
   expect(await page.locator('html').getAttribute('data-visualizer-ready')).not.toBe('true');
   await page.locator('#hiddenFileInput').setInputFiles({
@@ -40,6 +42,44 @@ test('retains a file selected while optional GPU initialization is pending', asy
   await expect
     .poll(() => page.evaluate(() => (window as any).visualizer.spatialFiles.length))
     .toBe(1);
+});
+
+test('the WebGL viewer is ready before the optional WebGPU helpers finish', async ({ page }) => {
+  await page.addInitScript(() => {
+    const gpu = (navigator as any).gpu;
+    if (gpu) {
+      const request = gpu.requestAdapter.bind(gpu);
+      gpu.requestAdapter = async (...args: any[]) => {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        return request(...args);
+      };
+    }
+  });
+  await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-visualizer-ready', 'true', {
+    timeout: 1000,
+  });
+  const settled = await page.evaluate(async () => {
+    const v = (window as any).visualizer;
+    let done = false;
+    void v.webgpuReady.then(() => (done = true));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const before = done;
+    await v.webgpuReady;
+    return { before, after: v.webgpuPickingUnavailableReason };
+  });
+  expect(settled.before).toBe(false);
+  // Known by now, whether or not this machine has WebGPU.
+  expect(settled.after).not.toBe('WebGPU availability has not been checked');
+  await page.locator('[data-tab="controls"]').click();
+  const webgpuPicking = page.locator('#point-picking-webgpu');
+  const available = await page.evaluate(() => (window as any).visualizer.webgpuPickingAvailable);
+  if (available) {
+    await expect(webgpuPicking).toBeEnabled();
+    await expect(webgpuPicking).toHaveClass(/active/);
+  } else {
+    await expect(webgpuPicking).toBeDisabled();
+  }
 });
 
 test('an unavailable optional picker chunk keeps the WebGL viewer usable', async ({ page }) => {
@@ -57,6 +97,8 @@ test('an unavailable optional picker chunk keeps the WebGL viewer usable', async
   });
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-visualizer-ready', 'true');
+  // The optional picker loads after the viewer is ready.
+  await page.evaluate(() => (window as any).visualizer.webgpuReady);
   expect(blocked).toBe(true);
   expect(await page.evaluate(() => (window as any).visualizer.pointPickingImplementation)).toBe(
     'cpu'

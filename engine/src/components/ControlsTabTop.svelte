@@ -17,7 +17,6 @@
   // svelte-ignore state_referenced_locally
   let rotationCenterMode = $state(host.rotationCenterManager.getMode());
   // svelte-ignore state_referenced_locally
-  let pointPickingImplementation = $state(host.pointPickingImplementation);
   // svelte-ignore state_referenced_locally
   let pointRenderingImplementation = $state(host.pointRenderingImplementation);
 
@@ -145,7 +144,6 @@
   }
   function setPointPickingImplementation(implementation: 'cpu' | 'webgpu') {
     host.setPointPickingImplementation(implementation);
-    pointPickingImplementation = host.pointPickingImplementation;
   }
   function setPointRenderingImplementation(implementation: 'current' | 'webgpu-visibility') {
     host.setPointRenderingImplementation(implementation);
@@ -617,7 +615,7 @@
     <button
       id="point-picking-cpu"
       class="control-button"
-      class:active={pointPickingImplementation === 'cpu'}
+      class:active={viewerState.pointPickingImplementation === 'cpu'}
       onclick={() => setPointPickingImplementation('cpu')}
     >
       CPU
@@ -625,11 +623,11 @@
     <button
       id="point-picking-webgpu"
       class="control-button"
-      class:active={pointPickingImplementation === 'webgpu'}
-      disabled={!host.webgpuPickingAvailable}
-      title={host.webgpuPickingAvailable
+      class:active={viewerState.pointPickingImplementation === 'webgpu'}
+      disabled={!viewerState.webgpuPickingAvailable}
+      title={viewerState.webgpuPickingAvailable
         ? 'Use the GPU compute picker'
-        : `WebGPU unavailable: ${host.webgpuPickingUnavailableReason}`}
+        : `WebGPU unavailable: ${viewerState.webgpuPickingUnavailableReason}`}
       onclick={() => setPointPickingImplementation('webgpu')}
     >
       WebGPU
@@ -655,10 +653,10 @@
       id="point-rendering-webgpu"
       class="control-button"
       class:active={pointRenderingImplementation === 'webgpu-visibility'}
-      disabled={!host.webgpuPointRenderingAvailable}
-      title={host.webgpuPointRenderingAvailable
+      disabled={!viewerState.webgpuPointRenderingAvailable}
+      title={viewerState.webgpuPointRenderingAvailable
         ? 'Resolve opaque one-pixel point visibility with WebGPU compute'
-        : `WebGPU unavailable: ${host.webgpuPointRenderingUnavailableReason}`}
+        : `WebGPU unavailable: ${viewerState.webgpuPointRenderingUnavailableReason}`}
       onclick={() => setPointRenderingImplementation('webgpu-visibility')}
     >
       WebGPU Visibility

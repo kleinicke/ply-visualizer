@@ -33,6 +33,8 @@ test('default boot uses the WebGL backend', async ({ page }) => {
 test('point controls expose independent fallbacks when WebGPU is unavailable', async ({ page }) => {
   await page.goto('/');
   await page.waitForFunction(() => document.documentElement.dataset.visualizerReady === 'true');
+  // The optional WebGPU helpers finish after the viewer is ready.
+  await page.evaluate(() => (window as any).visualizer.webgpuReady);
 
   const state = await page.evaluate(() => {
     const visualizer = (window as any).visualizer;

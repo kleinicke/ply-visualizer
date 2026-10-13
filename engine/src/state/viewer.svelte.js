@@ -16,6 +16,11 @@ export const viewerState = $state(
    *   cameraPositionText: string;
    *   cameraRotationText: string;
    *   cameraTargetText: string;
+   *   webgpuPickingAvailable: boolean;
+   *   webgpuPickingUnavailableReason: string | null;
+   *   pointPickingImplementation: 'cpu' | 'webgpu';
+   *   webgpuPointRenderingAvailable: boolean;
+   *   webgpuPointRenderingUnavailableReason: string | null;
    * }}
    */ ({
     controlScheme: 'legacy-trackball',
@@ -36,5 +41,12 @@ export const viewerState = $state(
     cameraPositionText: '(0.000, 0.000, 0.000)',
     cameraRotationText: '(0.0°, 0.0°, 0.0°)',
     cameraTargetText: '(0.000, 0.000, 0.000)',
+    // The optional WebGPU helpers start after the viewer is ready (main.ts,
+    // webgpuReady); the Controls tab follows these as they become known.
+    webgpuPickingAvailable: false,
+    webgpuPickingUnavailableReason: 'WebGPU availability is still being checked',
+    pointPickingImplementation: 'cpu',
+    webgpuPointRenderingAvailable: false,
+    webgpuPointRenderingUnavailableReason: 'WebGPU availability is still being checked',
   })
 );

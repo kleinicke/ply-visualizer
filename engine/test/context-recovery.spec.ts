@@ -65,8 +65,9 @@ test('removal releases unused WebGPU buffers and retains the remaining hidden cl
 }) => {
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-visualizer-ready', 'true');
-  const available = await page.evaluate(() => {
+  const available = await page.evaluate(async () => {
     const v = (window as any).visualizer;
+    await v.webgpuReady;
     return !!v.selectionManager.webgpuPicker && !!v.webgpuVisibilityRenderer;
   });
   test.skip(!available, 'Requires a working WebGPU adapter');
