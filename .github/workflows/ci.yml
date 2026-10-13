@@ -83,8 +83,8 @@ jobs:
 
       - name: Prepare Python and MCP integration fixtures
         run: |
-          python -m pip install './packages/python[mcp]'
           npm run build:python-viewer
+          python -m pip install './packages/python[mcp]'
 
       - name: Install Playwright browsers
         run: npm exec -- playwright install --with-deps chromium
