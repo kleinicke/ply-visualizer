@@ -34,6 +34,19 @@ export async function readFileFast(uri: vscode.Uri): Promise<Uint8Array> {
 }
 
 /**
+ * A typed array's own bytes as an ArrayBuffer. The webview rebuilds each array
+ * from a whole buffer, so a view into a larger one would arrive as the wrong
+ * data; it is copied, and an array that owns its buffer is sent as is.
+ */
+function ownBuffer(view: ArrayBufferView): ArrayBuffer {
+  const shared =
+    typeof SharedArrayBuffer !== 'undefined' && view.buffer instanceof SharedArrayBuffer;
+  return view.byteOffset === 0 && view.byteLength === view.buffer.byteLength && !shared
+    ? (view.buffer as ArrayBuffer)
+    : (new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice().buffer as ArrayBuffer);
+}
+
+/**
  * Read a file into memory that the decoder workers can share.
  *
  * The decoders run in worker threads (parsePool.ts), and a range or scan job
@@ -400,15 +413,15 @@ export async function sendBinaryData(
     format: spatialData.format,
     comments: spatialData.comments,
     // Binary buffers (will be transferred efficiently)
-    positionBuffer: positionBuffer.buffer,
-    colorBuffer: colorBuffer ? colorBuffer.buffer : null,
-    normalBuffer: normalBuffer ? normalBuffer.buffer : null,
+    positionBuffer: ownBuffer(positionBuffer),
+    colorBuffer: colorBuffer ? ownBuffer(colorBuffer) : null,
+    normalBuffer: normalBuffer ? ownBuffer(normalBuffer) : null,
     normalType: normalBuffer instanceof Int16Array ? 'Int16Array' : 'Float32Array',
-    indexBuffer: indexBuffer ? indexBuffer.buffer : null,
+    indexBuffer: indexBuffer ? ownBuffer(indexBuffer) : null,
     scalarFieldBuffers: Object.fromEntries(
       Object.entries(spatialData.scalarFields || {}).map(([name, values]) => [
         name,
-        (values as ScalarArray).buffer,
+        ownBuffer(values as ScalarArray),
       ])
     ),
     scalarFieldTypes: scalarArrayTypes(
