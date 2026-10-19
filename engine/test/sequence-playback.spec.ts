@@ -219,6 +219,11 @@ test('the shared sequence decoder loads binary PLY, mesh, point and depth frames
       )
       .toEqual([fixture.name, fixture.vertices, fixture.faces]);
     await expect(page.locator('#file-list .file-name')).toHaveText(fixture.name);
+    if (fixture.name === 'depth.pfm') {
+      expect(
+        await page.evaluate(() => (window as any).visualizer.sequenceCache.get(0).state.colorMode)
+      ).toBe('0');
+    }
     if (fixture.name === 'points.pts') {
       expect(
         await page.evaluate(() => (window as any).visualizer.sequenceCache.get(0).state.colorMode)

@@ -45,6 +45,7 @@ uniform sampler2D tDiffuse;     // Color buffer from scene render
 uniform sampler2D tDepth;       // Depth buffer from scene render
 uniform sampler2D tEdlDepth;    // Visible depth of Auto-mode eligible point clouds
 uniform bool selective;
+uniform bool reversedDepth;
 uniform float screenWidth;
 uniform float screenHeight;
 uniform float edlStrength;
@@ -63,11 +64,15 @@ varying vec2 vUv;
 /**
  * Linearize depth from the depth buffer.
  * The hardware depth buffer uses a hyperbolic distribution;
- * we convert to linear [0,1] range for meaningful comparisons.
+ * we recover camera-space distance for meaningful comparisons.
  */
 float getLinearDepth(vec2 coord) {
   float fragDepth = texture2D(tDepth, coord).r;
   // If depth is essentially at the far plane, treat as "no geometry"
+  if (reversedDepth) {
+    if (fragDepth <= 0.0) return 0.0;
+    return cameraNear / (fragDepth + (1.0 - fragDepth) * (cameraNear / cameraFar));
+  }
   if (fragDepth >= 1.0) return 0.0;
   // Convert hyperbolic depth to linear
   float viewZ = (cameraNear * cameraFar) / (cameraFar - fragDepth * (cameraFar - cameraNear));
@@ -135,7 +140,9 @@ void main() {
       // Both depth textures render the same scene and camera. The small epsilon
       // tolerates texture precision without allowing an eligible cloud hidden
       // behind a coloured cloud to darken the foreground pixel.
-      shadePixel = edlDepth < 1.0 && abs(edlDepth - rawDepth) <= 0.000001;
+      shadePixel = reversedDepth
+        ? edlDepth > 0.0 && abs(edlDepth - rawDepth) <= max(abs(edlDepth), abs(rawDepth)) * 0.000001
+        : edlDepth < 1.0 && abs(edlDepth - rawDepth) <= 0.000001;
     }
     if (shadePixel) {
       float response = edlResponse(depth);
@@ -236,6 +243,7 @@ export class EDLPass extends Pass {
         tDepth: { value: null },
         tEdlDepth: { value: null },
         selective: { value: false },
+        reversedDepth: { value: false },
         screenWidth: { value: width },
         screenHeight: { value: height },
         edlStrength: { value: this.edlStrength },
@@ -294,6 +302,34 @@ export class EDLPass extends Pass {
     _readBuffer: THREE.WebGLRenderTarget
     /*, deltaTime?: number, maskActive?: boolean */
   ): void {
+    // Scope the convention to EDL's existing draws. Picking, WebGPU visibility,
+    // and subsequent direct renders must see the original camera projection.
+    const reverse = renderer.extensions.has('EXT_clip_control');
+    const camera = this.camera as THREE.PerspectiveCamera & { _reversedDepth: boolean };
+    const previousCameraDepth = camera.reversedDepth;
+    const previousRendererDepth = renderer.state.buffers.depth.getReversed();
+    this.edlMaterial.uniforms.reversedDepth.value = reverse;
+    try {
+      if (reverse !== previousRendererDepth) {
+        renderer.state.buffers.depth.setReversed(reverse);
+      }
+      if (reverse !== previousCameraDepth) {
+        camera._reversedDepth = reverse;
+        camera.updateProjectionMatrix();
+      }
+      this.renderEDL(renderer, writeBuffer);
+    } finally {
+      if (camera.reversedDepth !== previousCameraDepth) {
+        camera._reversedDepth = previousCameraDepth;
+        camera.updateProjectionMatrix();
+      }
+      if (renderer.state.buffers.depth.getReversed() !== previousRendererDepth) {
+        renderer.state.buffers.depth.setReversed(previousRendererDepth);
+      }
+    }
+  }
+
+  private renderEDL(renderer: THREE.WebGLRenderer, writeBuffer: THREE.WebGLRenderTarget): void {
     // Step 1: Render scene to our render target (captures color + depth)
     renderer.setRenderTarget(this.renderTarget);
     renderer.render(this.scene, this.camera);

@@ -1,3 +1,4 @@
+import { isConvertedDepthCloud } from './colorMode';
 import { estimateSequenceBytes } from './sequenceMemory';
 import * as THREE from 'three';
 import { hasIntensityData } from './utils/intensity';
@@ -266,11 +267,13 @@ async function decodeFrame(
     }
     signal.throwIfAborted();
     entry = host.fileEntries.prepare('spatial');
-    entry.state.colorMode = data.hasColors
-      ? 'original'
-      : hasIntensityData(data)
-        ? 'intensity'
-        : 'assigned';
+    entry.state.colorMode = isConvertedDepthCloud(data)
+      ? '0'
+      : data.hasColors
+        ? 'original'
+        : hasIntensityData(data)
+          ? 'intensity'
+          : 'assigned';
     entry.state.pointSize = 2.5;
     const object = buildFileObject(host, data, message.index, entry);
     entry.spatial = { data, object };

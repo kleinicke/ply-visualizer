@@ -10,6 +10,13 @@ import {
 } from './utils/intensity';
 import { parseScalarColorMode, getScalarFieldForColorMode } from './utils/scalarFields';
 
+/** Live depth conversions retain grayscale colours as an optional view. */
+export function isConvertedDepthCloud(data: SpatialData): boolean {
+  return !!(
+    data.depthSource || (data as SpatialData & { isDepthDerived?: boolean }).isDepthDerived
+  );
+}
+
 export interface SrgbHost {
   convertSrgbToLinear: boolean;
 }

@@ -3449,11 +3449,12 @@ export class PointCloudVisualizer {
 
       // Initialize color mode before creating material. The slot already exists
       // at entryIndex, so this only assigns.
-      const initialColorMode =
-        (data.metadata?.volumeRenderMode === 'slices' ||
-          data.metadata?.volumeRenderMode === 'points' ||
-          data.metadata?.volumeRenderMode === 'voxels') &&
-        data.hasColors
+      const initialColorMode = colorModeUtils.isConvertedDepthCloud(data)
+        ? '0' // White, independent of the file's palette index; eligible for Auto EDL.
+        : (data.metadata?.volumeRenderMode === 'slices' ||
+              data.metadata?.volumeRenderMode === 'points' ||
+              data.metadata?.volumeRenderMode === 'voxels') &&
+            data.hasColors
           ? 'original'
           : this.useOriginalColors && data.hasColors
             ? 'original'

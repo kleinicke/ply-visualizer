@@ -1,5 +1,5 @@
 import type { SpatialData } from './interfaces';
-import { getColorName, getRecoloredColors } from './colorMode';
+import { getColorName, getRecoloredColors, isConvertedDepthCloud } from './colorMode';
 import { getExtraScalarFieldNames } from './utils/scalarFields';
 
 export interface PointCloudColorOption {
@@ -28,7 +28,13 @@ export function getPointCloudColorOptions(
   if (data.hasColors || includeUnavailableOriginal) {
     options.push({
       value: 'original',
-      label: hasProjectedSourceColor(data) ? 'Camera colour (projected)' : 'Original',
+      label: hasProjectedSourceColor(data)
+        ? 'Camera colour (projected)'
+        : isConvertedDepthCloud(data) &&
+            !data.depthSource?.colorImageData &&
+            !(data as any).datasetTexture
+          ? 'Depth (grayscale)'
+          : 'Original',
     });
   }
   if (getRecoloredColors(data)) {
