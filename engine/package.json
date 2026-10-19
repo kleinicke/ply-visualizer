@@ -15,7 +15,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "@types/three": "^0.185.3",
+    "@types/three": "^0.186.0",
     "copy-webpack-plugin": "^14.0.0",
     "css-loader": "^7.1.4",
     "mini-css-extract-plugin": "^2.10.2",
@@ -34,6 +34,6 @@
     "@sparkjsdev/spark": "^2.1.0",
     "js-yaml": "^5.2.3",
     "occt-import-js": "0.0.23",
-    "three": "^0.185.1"
+    "three": "^0.186.1"
   }
 }

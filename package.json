@@ -2897,7 +2897,7 @@
     "@types/mocha": "^10.0.1",
     "@types/node": "22.20.0",
     "@types/pako": "^2.0.4",
-    "@types/three": "^0.185.3",
+    "@types/three": "^0.186.0",
     "@types/vscode": "1.106.0",
     "@typescript-eslint/eslint-plugin": "^8.66.0",
     "@typescript-eslint/parser": "^8.66.0",
@@ -2930,7 +2930,7 @@
     "ajv": "^8.20.0",
     "js-yaml": "^5.2.3",
     "lzma": "^2.3.2",
-    "three": "^0.185.1"
+    "three": "^0.186.1"
   },
   "vsce": {
     "dependencies": false
