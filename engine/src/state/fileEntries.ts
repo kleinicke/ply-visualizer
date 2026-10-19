@@ -7,6 +7,8 @@ import type { MtlData } from '../parsers/mtlParser';
 export type FileEntryKind = 'spatial' | 'pose' | 'camera';
 
 export interface EntryPresentation {
+  /** Manual sidebar order; registry indices and rendering remain stable. */
+  listOrder: number | null;
   depthIsDefault: boolean;
   depthForm: import('../depth/panelState').DepthForm | null;
   visible: boolean;
@@ -24,6 +26,7 @@ export interface EntryPresentation {
 
 export function defaultEntryPresentation(): EntryPresentation {
   return {
+    listOrder: null,
     depthIsDefault: false,
     depthForm: null,
     visible: true,

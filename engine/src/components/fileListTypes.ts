@@ -64,17 +64,23 @@ export interface FileRow {
   cameraName: string;
 }
 export function fileRows(host: FileItemHost, entries: readonly FileEntry[]): FileRow[] {
-  return entries.map((entry, index) => {
-    const kindIndex = host.fileEntries.kindIndexAt(index);
-    return {
-      entry,
-      index,
-      kindIndex,
-      kind: entry.kind === 'spatial' ? 'pointcloud' : entry.kind,
-      data: entry.spatial?.data ?? null,
-      pose: entry.pose?.meta ?? null,
-      cameraGroup: entry.camera?.object ?? null,
-      cameraName: entry.camera?.name ?? '',
-    };
-  });
+  return entries
+    .map<FileRow>((entry, index) => {
+      const kindIndex = host.fileEntries.kindIndexAt(index);
+      return {
+        entry,
+        index,
+        kindIndex,
+        kind: entry.kind === 'spatial' ? 'pointcloud' : entry.kind,
+        data: entry.spatial?.data ?? null,
+        pose: entry.pose?.meta ?? null,
+        cameraGroup: entry.camera?.object ?? null,
+        cameraName: entry.camera?.name ?? '',
+      };
+    })
+    .sort(
+      (a, b) =>
+        (a.entry.state.listOrder ?? Number.MAX_SAFE_INTEGER) -
+          (b.entry.state.listOrder ?? Number.MAX_SAFE_INTEGER) || a.index - b.index
+    );
 }

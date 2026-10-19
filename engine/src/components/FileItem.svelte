@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { longPressFileReorder } from './longPressFileReorder';
   import type { FileItemHost, FileRow } from './fileListTypes';
   import ModelAnimationPanel from './ModelAnimationPanel.svelte';
   import { filesState } from '../state/files.svelte';
@@ -542,8 +543,17 @@
   );
 </script>
 
-<div class="file-item">
-  <div class="file-item-main">
+<div
+  class="file-item"
+  data-entry-id={row.entry.id}
+  use:longPressFileReorder={{ host, entryId: row.entry.id }}
+  style:touch-action={collapsed ? 'none' : undefined}
+>
+  <div
+    class="file-item-main"
+    style="touch-action: none; user-select: none;"
+    title="Hold to reorder"
+  >
     <button
       class="collapse-toggle"
       data-file-index={index}
