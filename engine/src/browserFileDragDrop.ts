@@ -19,6 +19,7 @@ import {
   parseColmapModel,
 } from './formats/colmap/colmapFiles';
 import { SPLAT_CONTAINER_REGEX } from './visualization/splatMode';
+import { isCameraProfileData } from './cameraProfile';
 import { filmState } from './state/film.svelte';
 import type { FilmManager } from './film/FilmManager';
 
@@ -735,7 +736,7 @@ export async function handleBrowserFiles(
         const jsonData = JSON.parse(jsonText);
 
         // Check if this is a camera profile JSON
-        if (jsonData && jsonData.cameras && typeof jsonData.cameras === 'object') {
+        if (isCameraProfileData(jsonData)) {
           console.log(`📷 Camera profile detected: ${file.name}`);
           host.handleCameraProfile(jsonData, file.name);
         } else {

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { FileEntryRegistry } from './state/fileEntries';
 import { insertEntryState } from './state/fileEntryState';
+import { isCameraProfileData } from './cameraProfile';
 
 export interface PoseJoint {
   x: number;
@@ -712,8 +713,8 @@ export async function handlePoseData(host: PoseHost, message: any): Promise<void
   const fileName: string = message.fileName || 'pose.json';
   const data = message.data;
   try {
-    // Check if this is a camera profile JSON
-    if (data && data.cameras && typeof data.cameras === 'object') {
+    // Camera profiles and rigs share the .json extension with poses
+    if (isCameraProfileData(data)) {
       host.handleCameraProfile(data, fileName);
       return;
     }
